@@ -98,6 +98,14 @@ func TestPublicationDeploymentRequiresManagementPrivilege(t *testing.T) {
 		t.Fatalf("viewer authorization error = %v", err)
 	}
 	owner := testPrincipal(t, ctx, store, "owner-publication@example.com", "Owner", "owner")
+	if _, err := testAccessRepository(store).CreateGrant(ctx, access.GrantInput{
+		Object:      access.ProjectEnvironmentObject("project", "prod"),
+		SubjectType: access.SubjectPrincipal,
+		SubjectID:   owner.ID,
+		Privilege:   access.PrivilegeManagePublications,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := server.routes.deploymentModule.AuthorizePublicationDeployment(ctx, owner.ID, "prod", targets); err != nil {
 		t.Fatalf("owner authorization: %v", err)
 	}

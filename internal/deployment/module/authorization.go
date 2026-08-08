@@ -3,6 +3,8 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
@@ -34,13 +36,28 @@ func (m *Module) AuthorizePublicationDeployment(ctx context.Context, actor, envi
 }
 
 func authorizePublicationDeployment(ctx context.Context, actor, environment string, targets []apiadapter.TargetRequest, config PublicationAuthorizationConfig) error {
-	if servingstate.NormalizeEnvironment(servingstate.Environment(environment)) != servingstate.Environment("prod") {
+	normalizedEnvironment := servingstate.NormalizeEnvironment(servingstate.Environment(environment))
+	if normalizedEnvironment != servingstate.Environment("prod") {
 		return nil
 	}
+	projectID := ""
+	requiresAuthorization := false
 	for _, target := range targets {
 		state, err := config.States.ByID(ctx, servingstate.ID(target.CandidateID))
 		if err != nil {
 			return err
+		}
+		stateProjectID := strings.TrimSpace(state.ProjectID)
+		if stateProjectID == "" {
+			return fmt.Errorf("publication serving state %q has no project identity", target.CandidateID)
+		}
+		if projectID == "" {
+			projectID = stateProjectID
+		} else if projectID != stateProjectID {
+			return fmt.Errorf("publication deployment spans multiple projects: %q and %q", projectID, stateProjectID)
+		}
+		if stateWorkspaceID := strings.TrimSpace(string(state.WorkspaceID)); stateWorkspaceID != strings.TrimSpace(target.Workspace) {
+			return fmt.Errorf("publication serving state %q belongs to workspace %q, want %q", target.CandidateID, stateWorkspaceID, target.Workspace)
 		}
 		var configured map[string]json.RawMessage
 		if state.DashboardPublicationsJSON != "" {
@@ -48,19 +65,27 @@ func authorizePublicationDeployment(ctx context.Context, actor, environment stri
 				return err
 			}
 		}
-		if len(configured) == 0 || config.Bypass != nil && config.Bypass(actor) {
-			continue
+		if len(configured) > 0 {
+			requiresAuthorization = true
 		}
-		if config.AuthorizeObject == nil {
-			return ErrPublicationForbidden
-		}
-		allowed, err := config.AuthorizeObject(ctx, actor, access.PrivilegeManagePublications, access.WorkspaceObject(target.Workspace))
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return ErrPublicationForbidden
-		}
+	}
+	if !requiresAuthorization || config.Bypass != nil && config.Bypass(actor) {
+		return nil
+	}
+	if config.AuthorizeObject == nil {
+		return ErrPublicationForbidden
+	}
+	allowed, err := config.AuthorizeObject(
+		ctx,
+		actor,
+		access.PrivilegeManagePublications,
+		access.ProjectEnvironmentObject(projectID, string(normalizedEnvironment)),
+	)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrPublicationForbidden
 	}
 	return nil
 }
