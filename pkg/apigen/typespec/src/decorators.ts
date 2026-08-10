@@ -44,9 +44,17 @@ export interface AsyncExecutionOptions {
   cancellation: "supported" | "unsupported";
 }
 
+export interface CommandFailureOptions {
+  kind: string;
+  statusCode: number;
+  code: string;
+  publicDetail: string;
+}
+
 export interface CommandOptions {
   audit: AuditOptions;
   execution?: AsyncExecutionOptions;
+  failures: CommandFailureOptions[];
   additionalExposures?: Array<"ui" | "agent" | "automation">;
   targetParameter?: string;
 }

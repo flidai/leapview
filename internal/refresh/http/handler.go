@@ -9,8 +9,10 @@ import (
 	nethttp "net/http"
 	"strings"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/go-chi/chi/v5"
@@ -87,12 +89,12 @@ func PipelineRunResponseFor(run refreshrun.RunRecord) (PipelineRunResponse, bool
 }
 
 func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
-	repo, workspaceID, ok := h.runRepository(w, r)
+	repo, workspaceID, ok := h.commandRunRepository(w, r, "createRefreshRun")
 	if !ok {
 		return
 	}
 	if h.RunnerConfigured != nil && !h.RunnerConfigured() {
-		writeJSONError(w, fmt.Errorf("materialization refresh runner is not configured"), nethttp.StatusServiceUnavailable)
+		writeCommandFailure(w, r, "createRefreshRun", apigenfailure.New("unavailable", "materialization refresh runner is not configured"), nethttp.StatusServiceUnavailable)
 		return
 	}
 	var input materializationRunRequest
@@ -109,47 +111,50 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 		}
 	}
 	if strings.TrimSpace(input.PipelineID) == "" {
-		writeJSONError(w, fmt.Errorf("pipelineId is required"), nethttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createRefreshRun", apigenfailure.New("invalid", "pipelineId is required"), nethttp.StatusUnprocessableEntity)
 		return
 	}
 	if h.AuthorizePipelineRun != nil {
 		allowed, err := h.AuthorizePipelineRun(r, workspaceID, input.PipelineID)
 		if err != nil {
-			writeJSONError(w, err, nethttp.StatusInternalServerError)
+			writeCommandFailure(w, r, "createRefreshRun", apigenfailure.Wrap("unavailable", err), nethttp.StatusInternalServerError)
 			return
 		}
 		if !allowed {
-			writeJSONError(w, fmt.Errorf("forbidden"), nethttp.StatusForbidden)
+			writeCommandFailure(w, r, "createRefreshRun", apigenfailure.New("forbidden", "refresh run is not permitted"), nethttp.StatusForbidden)
 			return
 		}
 	}
 	if input.RetryOf != "" {
 		prior, err := repo.GetRun(r.Context(), workspaceID, input.RetryOf)
 		if err != nil {
-			writeJSONError(w, fmt.Errorf("retryOf does not identify a refresh run in this workspace"), nethttp.StatusUnprocessableEntity)
+			writeCommandFailure(w, r, "createRefreshRun", apigenfailure.New("invalid", "retryOf does not identify a refresh run in this workspace"), nethttp.StatusUnprocessableEntity)
 			return
 		}
 		if prior.Status == refreshrun.RunStatusQueued || prior.Status == refreshrun.RunStatusRunning {
-			writeJSONError(w, fmt.Errorf("retryOf refresh run is not terminal"), nethttp.StatusConflict)
+			writeCommandFailure(w, r, "createRefreshRun", apigenfailure.New("conflict", "retryOf refresh run is not terminal"), nethttp.StatusConflict)
 			return
 		}
 		if prior.Environment != h.environment(r) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.TargetID != workspaceID+"."+input.PipelineID {
-			writeJSONError(w, fmt.Errorf("retryOf does not belong to pipelineId"), nethttp.StatusUnprocessableEntity)
+			writeCommandFailure(w, r, "createRefreshRun", apigenfailure.New("invalid", "retryOf does not belong to pipelineId"), nethttp.StatusUnprocessableEntity)
 			return
 		}
 	}
 	if h.QueuePipeline == nil {
-		writeJSONError(w, fmt.Errorf("refresh pipeline runner is not configured"), nethttp.StatusServiceUnavailable)
+		writeCommandFailure(w, r, "createRefreshRun", apigenfailure.New("unavailable", "refresh pipeline runner is not configured"), nethttp.StatusServiceUnavailable)
 		return
 	}
 	run, err := h.QueuePipeline(r.Context(), workspaceID, h.environment(r), input.PipelineID, principalID, input.RetryOf)
 	if err != nil {
-		writeJSONError(w, err, nethttp.StatusBadRequest)
+		if _, classified := apigenfailure.KindOf(err); !classified {
+			err = apigenfailure.Wrap("unavailable", err)
+		}
+		writeCommandFailure(w, r, "createRefreshRun", err, nethttp.StatusServiceUnavailable)
 		return
 	}
 	if h.RunCreated != nil {
 		if err := h.RunCreated(r.Context(), run); err != nil {
-			writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+			writeCommandFailure(w, r, "createRefreshRun", apigenfailure.Wrap("unavailable", err), nethttp.StatusServiceUnavailable)
 			return
 		}
 	}
@@ -159,7 +164,7 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 	w.Header().Set("Location", strings.TrimSuffix(r.URL.Path, "/")+"/"+run.ID)
 	response, ok := PipelineRunResponseFor(run)
 	if !ok {
-		writeJSONError(w, fmt.Errorf("refresh service returned a non-pipeline run"), nethttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "createRefreshRun", fmt.Errorf("refresh service returned a non-pipeline run"), nethttp.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, nethttp.StatusAccepted, response)
@@ -281,6 +286,27 @@ func (h Handler) runRepository(w nethttp.ResponseWriter, r *nethttp.Request) (re
 	return repo, workspaceID, true
 }
 
+func (h Handler) commandRunRepository(w nethttp.ResponseWriter, r *nethttp.Request, operationID string) (refreshrun.RunRepository, string, bool) {
+	if h.Repository == nil {
+		writeCommandFailure(w, r, operationID, apigenfailure.New("unavailable", "refresh persistence is not configured"), nethttp.StatusServiceUnavailable)
+		return nil, "", false
+	}
+	repo, err := h.Repository()
+	if err != nil {
+		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("unavailable", err), nethttp.StatusServiceUnavailable)
+		return nil, "", false
+	}
+	workspaceID := chi.URLParam(r, "workspace")
+	if h.WorkspaceID != nil {
+		workspaceID = h.WorkspaceID(workspaceID)
+	}
+	if workspaceID == "" {
+		writeCommandFailure(w, r, operationID, apigenfailure.New("invalid", "workspace id is required"), nethttp.StatusUnprocessableEntity)
+		return nil, "", false
+	}
+	return repo, workspaceID, true
+}
+
 type pageResponse struct {
 	NextCursor string `json:"nextCursor"`
 }
@@ -338,6 +364,13 @@ func writeJSONError(w nethttp.ResponseWriter, err error, status int) {
 		Details:   map[string]any{},
 		RequestID: "",
 	})
+}
+
+// writeCommandFailure resolves classified refresh command errors through the
+// generated operation vocabulary. The final argument is retained only for
+// source compatibility with transport-owned call sites.
+func writeCommandFailure(w nethttp.ResponseWriter, r *nethttp.Request, operationID string, err error, _ int) {
+	httptransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, refreshgen.GetAPIGenCommandFailureContracts, err)
 }
 
 func firstNonEmpty(values ...string) string {

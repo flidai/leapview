@@ -89,6 +89,14 @@ func TestFinalizeReleaseGeneratedExecutionContractEndToEnd(t *testing.T) {
 		eventTypes = append(eventTypes, event.EventType)
 	}
 	require.Contains(t, eventTypes, execution.InitialEvent)
+
+	missingResponse := httptest.NewRecorder()
+	module.FinalizeRelease(missingResponse, httptest.NewRequest("POST", "/api/v1/projects/project_1/releases/missing/finalize", nil), "project_1", "missing", "finalize_2")
+	require.Equal(t, http.StatusNotFound, missingResponse.Code, missingResponse.Body.String())
+	var problem map[string]any
+	require.NoError(t, json.Unmarshal(missingResponse.Body.Bytes(), &problem))
+	require.Equal(t, "RELEASE_NOT_FOUND", problem["code"])
+	require.Equal(t, "Release not found.", problem["detail"])
 }
 
 func TestFinalizeReleaseRejectsJobHandlerRegistrationDrift(t *testing.T) {

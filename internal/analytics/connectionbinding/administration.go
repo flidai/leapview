@@ -12,10 +12,11 @@ import (
 	"strings"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	platformsecret "github.com/flidai/leapview/internal/platform/security/secret"
 )
 
-var ErrConfirmationRequired = errors.New("connection binding change confirmation required")
+var ErrConfirmationRequired = apigenfailure.New("confirmation_required", "connection binding change confirmation required")
 
 type AdministrationPermission string
 

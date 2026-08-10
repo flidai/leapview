@@ -16,6 +16,7 @@ import (
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	accessapi "github.com/flidai/leapview/internal/access/api"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
@@ -136,7 +137,7 @@ func (h Handler) ListCurrentAPITokens(w stdhttp.ResponseWriter, r *stdhttp.Reque
 func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
-		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		writeCommandFailure(w, r, "createCurrentAPIToken", fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
 		return
 	}
 	var input struct {
@@ -146,21 +147,21 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		ExpiresAt   string   `json:"expiresAt"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createCurrentAPIToken", apigenfailure.Wrap("invalid", err), stdhttp.StatusBadRequest)
 		return
 	}
 	var expiresAt time.Time
 	if strings.TrimSpace(input.ExpiresAt) != "" {
 		parsed, err := time.Parse(time.RFC3339, input.ExpiresAt)
 		if err != nil {
-			writeJSONError(w, err, stdhttp.StatusBadRequest)
+			writeCommandFailure(w, r, "createCurrentAPIToken", apigenfailure.Wrap("invalid", err), stdhttp.StatusBadRequest)
 			return
 		}
 		expiresAt = parsed
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "createCurrentAPIToken", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	var token string
@@ -174,7 +175,7 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return accessAuditInput(r, "api_token.created", principal.ID, row.WorkspaceID, "api_token", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"name": row.Name, "privileges": row.Privileges}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "createCurrentAPIToken", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"token": token, "apiToken": apiTokenDTO(row)})
@@ -183,12 +184,12 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
-		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		writeCommandFailure(w, r, "revokeCurrentAPIToken", fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "revokeCurrentAPIToken", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	tokenID := chi.URLParam(r, "token")
@@ -206,7 +207,7 @@ func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return accessAuditInput(r, "api_token.revoked", principal.ID, revoked.WorkspaceID, "api_token", tokenID, access.PrivilegeManageGrants, "success", map[string]any{"name": revoked.Name, "privileges": revoked.Privileges}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, "revokeCurrentAPIToken", err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -246,10 +247,10 @@ func (h Handler) listPrincipalSessions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 func (h Handler) RevokeCurrentSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
-		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		writeCommandFailure(w, r, "revokeCurrentSession", fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
 		return
 	}
-	h.revokePrincipalSession(w, r, principal.ID, principal.ID, access.PrivilegeUseWorkspace, nil)
+	h.revokePrincipalSession(w, r, "revokeCurrentSession", principal.ID, principal.ID, access.PrivilegeUseWorkspace, nil)
 }
 
 func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -257,6 +258,7 @@ func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Req
 	h.revokePrincipalSession(
 		w,
 		r,
+		"revokePrincipalSession",
 		h.currentPrincipalID(r),
 		targetPrincipalID,
 		access.PrivilegeManageGrants,
@@ -267,6 +269,7 @@ func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Req
 func (h Handler) revokePrincipalSession(
 	w stdhttp.ResponseWriter,
 	r *stdhttp.Request,
+	operationID string,
 	actorPrincipalID string,
 	targetPrincipalID string,
 	privilege access.Privilege,
@@ -274,7 +277,7 @@ func (h Handler) revokePrincipalSession(
 ) {
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, operationID, err, stdhttp.StatusInternalServerError)
 		return
 	}
 	sessionID := chi.URLParam(r, "session")
@@ -283,7 +286,7 @@ func (h Handler) revokePrincipalSession(
 		return accessAuditInput(r, "session.revoked", actorPrincipalID, "", "session", sessionID, privilege, "success", metadata), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, operationID, err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -327,12 +330,12 @@ func (h Handler) CreatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		if err := decodeStrictJSON(r, &input); err != nil {
-			writeJSONError(w, err, stdhttp.StatusBadRequest)
+			writeCommandFailure(w, r, "createPrincipal", err, stdhttp.StatusBadRequest)
 			return
 		}
 	} else {
 		if err := r.ParseForm(); err != nil {
-			writeJSONError(w, err, stdhttp.StatusBadRequest)
+			writeCommandFailure(w, r, "createPrincipal", err, stdhttp.StatusBadRequest)
 			return
 		}
 		input.Email = r.Form.Get("email")
@@ -340,7 +343,7 @@ func (h Handler) CreatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "createPrincipal", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	var created access.LocalPasswordReset
@@ -364,13 +367,13 @@ func (h Handler) CreatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				map[string]any{"email": email, "reason": "duplicate"},
 			)
 			if auditErr := access.PersistAuditEvent(r.Context(), repo, audit); auditErr != nil {
-				writeAuditedMutationError(w, fmt.Errorf("%w: %v", access.ErrAuditTransaction, auditErr), stdhttp.StatusInternalServerError)
+				writeAuditedMutationError(w, r, "createPrincipal", fmt.Errorf("%w: %v", access.ErrAuditTransaction, auditErr), stdhttp.StatusInternalServerError)
 				return
 			}
-			writeAuditedMutationError(w, err, stdhttp.StatusConflict)
+			writeAuditedMutationError(w, r, "createPrincipal", err, stdhttp.StatusConflict)
 			return
 		}
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "createPrincipal", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, localPasswordResetDTO(created))
@@ -393,23 +396,27 @@ func (h Handler) GetPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "deletePrincipal", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	id := chi.URLParam(r, "principal")
 	existing, err := repo.PrincipalByID(r.Context(), id)
 	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+		status := statusForNotFound(err)
+		if status == stdhttp.StatusNotFound {
+			err = apigenfailure.Wrap("not_found", err)
+		}
+		writeCommandFailure(w, r, "deletePrincipal", err, status)
 		return
 	}
 	if !principalKindAllowsGenericMutation(existing.Kind) {
-		writeJSONError(w, fmt.Errorf("principal kind %q is managed by its owning subsystem", existing.Kind), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, "deletePrincipal", apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)), stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	if _, ok := repo.(interface {
 		DeletePrincipal(context.Context, string) error
 	}); !ok {
-		writeJSONError(w, fmt.Errorf("principal deletion is unavailable"), stdhttp.StatusServiceUnavailable)
+		writeCommandFailure(w, r, "deletePrincipal", fmt.Errorf("principal deletion is unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
 	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
@@ -425,7 +432,7 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, "deletePrincipal", err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -434,7 +441,7 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "resetPrincipalPassword", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	var reset access.LocalPasswordReset
@@ -444,7 +451,7 @@ func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return accessAuditInput(r, "principal.local_password.reset", h.currentPrincipalID(r), "", "principal", reset.Principal.ID, access.PrivilegeManageGrants, "success", map[string]any{"email": reset.Principal.Email}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, "resetPrincipalPassword", err, statusForNotFound(err))
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, localPasswordResetDTO(reset))
@@ -455,21 +462,25 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "updatePrincipal", err, stdhttp.StatusBadRequest)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "updatePrincipal", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	existing, err := repo.PrincipalByID(r.Context(), chi.URLParam(r, "principal"))
 	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+		status := statusForNotFound(err)
+		if status == stdhttp.StatusNotFound {
+			err = apigenfailure.Wrap("not_found", err)
+		}
+		writeCommandFailure(w, r, "updatePrincipal", err, status)
 		return
 	}
 	if !principalKindAllowsGenericMutation(existing.Kind) {
-		writeJSONError(w, fmt.Errorf("principal kind %q is managed by its owning subsystem", existing.Kind), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, "updatePrincipal", apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)), stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	if !requireIfMatch(w, r, resourceETag(principalDTO(existing))) {
@@ -487,7 +498,7 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "updatePrincipal", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(principal))
@@ -551,7 +562,7 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "oauth.token.created", principal.ID, input.WorkspaceID, "api_token", row.ID, "", "success", map[string]any{"grantType": "client_credentials"}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeSecretJSON(w, stdhttp.StatusOK, map[string]any{
@@ -601,12 +612,12 @@ func (h Handler) CreateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createServicePrincipal", err, stdhttp.StatusBadRequest)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "createServicePrincipal", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	var row access.Principal
@@ -616,7 +627,7 @@ func (h Handler) CreateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return accessAuditInput(r, "service_principal.created", principal.ID, "", "service_principal", row.ID, access.PrivilegeManagePlatform, "success", nil), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "createServicePrincipal", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, principalDTO(row))
@@ -628,17 +639,24 @@ func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "updateServicePrincipal", err, stdhttp.StatusBadRequest)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "updateServicePrincipal", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	existing, err := repo.PrincipalByID(r.Context(), chi.URLParam(r, "servicePrincipal"))
-	if err != nil || existing.Kind != access.PrincipalKindServicePrincipal {
-		writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = apigenfailure.Wrap("not_found", err)
+		}
+		writeCommandFailure(w, r, "updateServicePrincipal", err, stdhttp.StatusInternalServerError)
+		return
+	}
+	if existing.Kind != access.PrincipalKindServicePrincipal {
+		writeCommandFailure(w, r, "updateServicePrincipal", apigenfailure.Wrap("not_found", sql.ErrNoRows), stdhttp.StatusNotFound)
 		return
 	}
 	if !requireIfMatch(w, r, resourceETag(principalDTO(existing))) {
@@ -651,7 +669,7 @@ func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return accessAuditInput(r, "service_principal.updated", principal.ID, "", "service_principal", row.ID, access.PrivilegeManagePlatform, "success", nil), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, "updateServicePrincipal", err, statusForNotFound(err))
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
@@ -661,7 +679,7 @@ func (h Handler) DeleteServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "deleteServicePrincipal", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	id := chi.URLParam(r, "servicePrincipal")
@@ -670,7 +688,7 @@ func (h Handler) DeleteServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return accessAuditInput(r, "service_principal.deleted", principal.ID, "", "service_principal", id, access.PrivilegeManagePlatform, "success", nil), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, "deleteServicePrincipal", err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -683,21 +701,21 @@ func (h Handler) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 		ExpiresAt string `json:"expiresAt"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createServicePrincipalSecret", err, stdhttp.StatusBadRequest)
 		return
 	}
 	var expiresAt time.Time
 	if strings.TrimSpace(input.ExpiresAt) != "" {
 		parsed, err := time.Parse(time.RFC3339, input.ExpiresAt)
 		if err != nil {
-			writeJSONError(w, err, stdhttp.StatusBadRequest)
+			writeCommandFailure(w, r, "createServicePrincipalSecret", err, stdhttp.StatusBadRequest)
 			return
 		}
 		expiresAt = parsed
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "createServicePrincipalSecret", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	var rawSecret string
@@ -708,7 +726,7 @@ func (h Handler) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 		return accessAuditInput(r, "service_principal_secret.created", principal.ID, "", "service_principal", row.ServicePrincipalID, access.PrivilegeManagePlatform, "success", map[string]any{"secretId": row.ID}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "createServicePrincipalSecret", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"secret": rawSecret, "clientSecret": servicePrincipalSecretDTO(row, "")})
@@ -764,7 +782,7 @@ func (h Handler) RevokeServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "revokeServicePrincipalSecret", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	servicePrincipalID := chi.URLParam(r, "servicePrincipal")
@@ -774,7 +792,7 @@ func (h Handler) RevokeServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 		return accessAuditInput(r, "service_principal_secret.revoked", principal.ID, "", "service_principal", servicePrincipalID, access.PrivilegeManagePlatform, "success", map[string]any{"secretId": secretID}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, "revokeServicePrincipalSecret", err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -804,12 +822,12 @@ func (h Handler) CreateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createGroup", err, stdhttp.StatusBadRequest)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "createGroup", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	name := firstNonEmpty(input.DisplayName, input.Name)
@@ -820,14 +838,14 @@ func (h Handler) CreateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "group.created", h.currentPrincipalID(r), group.WorkspaceID, "group", group.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(group)), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "createGroup", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, groupDTO(group))
 }
 
 func (h Handler) GetGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	group, ok := h.groupByID(w, r)
+	group, ok := h.groupByID(w, r, "")
 	if !ok {
 		return
 	}
@@ -839,10 +857,10 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "updateGroup", err, stdhttp.StatusBadRequest)
 		return
 	}
-	group, ok := h.groupByID(w, r)
+	group, ok := h.groupByID(w, r, "updateGroup")
 	if !ok {
 		return
 	}
@@ -851,7 +869,7 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "updateGroup", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	var updated access.Group
@@ -861,20 +879,20 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "group.updated", h.currentPrincipalID(r), updated.WorkspaceID, "group", updated.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(updated)), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "updateGroup", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, groupDTO(updated))
 }
 
 func (h Handler) DeleteGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	group, ok := h.groupByID(w, r)
+	group, ok := h.groupByID(w, r, "deleteGroup")
 	if !ok {
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "deleteGroup", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
@@ -882,7 +900,7 @@ func (h Handler) DeleteGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "group.deleted", h.currentPrincipalID(r), group.WorkspaceID, "group", group.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(group)), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "deleteGroup", err, stdhttp.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -909,7 +927,7 @@ func (h Handler) ListGroupMembers(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "addGroupMember", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
@@ -920,7 +938,7 @@ func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "group.member_added", h.currentPrincipalID(r), workspaceID, "group_member", groupID+":"+principalID, access.PrivilegeManageGrants, "success", map[string]any{"groupId": groupID, "memberPrincipalId": principalID}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, "addGroupMember", err, statusForNotFound(err))
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]string{"status": "added"})
@@ -929,7 +947,7 @@ func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "removeGroupMember", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
@@ -940,7 +958,7 @@ func (h Handler) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		return accessAuditInput(r, "group.member_removed", h.currentPrincipalID(r), workspaceID, "group_member", groupID+":"+principalID, access.PrivilegeManageGrants, "success", map[string]any{"groupId": groupID, "memberPrincipalId": principalID}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, "removeGroupMember", err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1001,18 +1019,18 @@ func (h Handler) GetRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h Handler) CreateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	input, ok := decodeRoleBindingInput(w, r)
+	input, ok := decodeRoleBindingInput(w, r, "createRoleBinding")
 	if !ok {
 		return
 	}
 	commands := h.RoleBindingCommands
 	if commands == nil {
-		writeJSONError(w, fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "createRoleBinding", fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
 	row, err := commands.CreateRoleBinding(r.Context(), h.roleBindingInvocation(r), input)
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "createRoleBinding", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, apiRoleBindingDTO(row))
@@ -1091,10 +1109,10 @@ func (h Handler) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Privilege   string `json:"privilege"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createGrant", err, stdhttp.StatusBadRequest)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, "createGrant", input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
@@ -1103,24 +1121,24 @@ func (h Handler) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
 	if !knownGrantSubjectType(subjectType) {
-		writeJSONError(w, fmt.Errorf("unsupported subject type %q", input.SubjectType), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createGrant", apigenfailure.New("invalid", fmt.Sprintf("unsupported subject type %q", input.SubjectType)), stdhttp.StatusBadRequest)
 		return
 	}
 	privilege := access.Privilege(strings.TrimSpace(input.Privilege))
 	if !knownPrivilege(privilege) {
-		writeJSONError(w, fmt.Errorf("unsupported privilege %q", input.Privilege), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createGrant", apigenfailure.New("invalid", fmt.Sprintf("unsupported privilege %q", input.Privilege)), stdhttp.StatusBadRequest)
 		return
 	}
 	commands := h.GrantCommands
 	if commands == nil {
-		writeJSONError(w, fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "createGrant", fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
 	grant, err := commands.CreateGrant(r.Context(), h.grantInvocation(r), access.GrantInput{
 		Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege,
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "createGrant", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, grantDTO(grant))
@@ -1148,14 +1166,18 @@ func (h Handler) GetGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "updateGrant", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
 	id := chi.URLParam(r, "grant")
 	current, err := repo.GetGrant(r.Context(), workspaceID, id)
 	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+		status := statusForNotFound(err)
+		if status == stdhttp.StatusNotFound {
+			err = apigenfailure.Wrap("not_found", err)
+		}
+		writeCommandFailure(w, r, "updateGrant", err, status)
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromGrant(current)) {
@@ -1168,10 +1190,10 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		ObjectType, ObjectID, SubjectType, SubjectID, Privilege string
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "updateGrant", err, stdhttp.StatusBadRequest)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, "updateGrant", input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
@@ -1181,19 +1203,19 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
 	privilege := access.Privilege(strings.TrimSpace(input.Privilege))
 	if !knownGrantSubjectType(subjectType) || !knownPrivilege(privilege) {
-		writeJSONError(w, fmt.Errorf("unsupported grant subject or privilege"), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, "updateGrant", apigenfailure.New("invalid", "unsupported grant subject or privilege"), stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	commands := h.GrantCommands
 	if commands == nil {
-		writeJSONError(w, fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "updateGrant", fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
 	updated, err := commands.UpdateGrant(r.Context(), h.grantInvocation(r), workspaceID, id, access.GrantInput{
 		Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege,
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusUnprocessableEntity)
+		writeAuditedMutationError(w, r, "updateGrant", err, stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	dto := grantDTO(updated)
@@ -1204,13 +1226,17 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) DeleteGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "deleteGrant", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
 	grant, err := repo.GetGrant(r.Context(), workspaceID, chi.URLParam(r, "grant"))
 	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+		status := statusForNotFound(err)
+		if status == stdhttp.StatusNotFound {
+			err = apigenfailure.Wrap("not_found", err)
+		}
+		writeCommandFailure(w, r, "deleteGrant", err, status)
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromGrant(grant)) {
@@ -1218,12 +1244,12 @@ func (h Handler) DeleteGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	commands := h.GrantCommands
 	if commands == nil {
-		writeJSONError(w, fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "deleteGrant", fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
 	_, err = commands.DeleteGrant(r.Context(), h.grantInvocation(r), workspaceID, grant.ID)
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "deleteGrant", err, stdhttp.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1265,10 +1291,10 @@ func (h Handler) CreateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		Expression  map[string]any `json:"expression"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createDataPolicy", err, stdhttp.StatusBadRequest)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, "createDataPolicy", input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
@@ -1276,31 +1302,31 @@ func (h Handler) CreateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return
 	}
 	if !knownDataPolicyType(input.PolicyType) {
-		writeJSONError(w, fmt.Errorf("unsupported policyType %q", input.PolicyType), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createDataPolicy", apigenfailure.New("invalid", fmt.Sprintf("unsupported policyType %q", input.PolicyType)), stdhttp.StatusBadRequest)
 		return
 	}
 	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
 	subjectID := strings.TrimSpace(input.SubjectID)
 	if subjectType != "" && !knownDataPolicySubjectType(subjectType) {
-		writeJSONError(w, fmt.Errorf("unsupported subjectType %q", input.SubjectType), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createDataPolicy", apigenfailure.New("invalid", fmt.Sprintf("unsupported subjectType %q", input.SubjectType)), stdhttp.StatusBadRequest)
 		return
 	}
 	if subjectType != "" && subjectID == "" {
-		writeJSONError(w, fmt.Errorf("subjectId is required when subjectType is set"), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createDataPolicy", apigenfailure.New("invalid", "subjectId is required when subjectType is set"), stdhttp.StatusBadRequest)
 		return
 	}
 	if subjectType == "" && subjectID != "" {
-		writeJSONError(w, fmt.Errorf("subjectType is required when subjectId is set"), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createDataPolicy", apigenfailure.New("invalid", "subjectType is required when subjectId is set"), stdhttp.StatusBadRequest)
 		return
 	}
 	expression, err := json.Marshal(input.Expression)
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "createDataPolicy", err, stdhttp.StatusBadRequest)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "createDataPolicy", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	var row access.DataPolicy
@@ -1310,7 +1336,7 @@ func (h Handler) CreateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return accessAuditInput(r, "data_policy.created", principal.ID, row.WorkspaceID, "data_policy", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": row.ObjectID, "policyType": row.PolicyType}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "createDataPolicy", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, dataPolicyDTO(row))
@@ -1339,14 +1365,18 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "updateDataPolicy", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
 	id := chi.URLParam(r, "policy")
 	current, err := repo.GetDataPolicy(r.Context(), workspaceID, id)
 	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+		status := statusForNotFound(err)
+		if status == stdhttp.StatusNotFound {
+			err = apigenfailure.Wrap("not_found", err)
+		}
+		writeCommandFailure(w, r, "updateDataPolicy", err, status)
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromCanonical(current.WorkspaceID, current.ObjectID)) {
@@ -1364,25 +1394,25 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		Expression  map[string]any `json:"expression"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "updateDataPolicy", err, stdhttp.StatusBadRequest)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, "updateDataPolicy", input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
 	if !knownDataPolicyType(input.PolicyType) {
-		writeJSONError(w, fmt.Errorf("unsupported policyType %q", input.PolicyType), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, "updateDataPolicy", apigenfailure.New("invalid", fmt.Sprintf("unsupported policyType %q", input.PolicyType)), stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
 	if subjectType != "" && (!knownDataPolicySubjectType(subjectType) || strings.TrimSpace(input.SubjectID) == "") {
-		writeJSONError(w, fmt.Errorf("invalid data policy subject"), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, "updateDataPolicy", apigenfailure.New("invalid", "invalid data policy subject"), stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	expression, err := json.Marshal(input.Expression)
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "updateDataPolicy", err, stdhttp.StatusBadRequest)
 		return
 	}
 	var updated access.DataPolicy
@@ -1392,7 +1422,7 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return accessAuditInput(r, "data_policy.updated", principal.ID, updated.WorkspaceID, "data_policy", updated.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": updated.ObjectID, "policyType": updated.PolicyType}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusUnprocessableEntity)
+		writeAuditedMutationError(w, r, "updateDataPolicy", err, stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	dto := dataPolicyDTO(updated)
@@ -1425,7 +1455,7 @@ func (h Handler) CheckAuthorizationBatch(w stdhttp.ResponseWriter, r *stdhttp.Re
 			writeJSONError(w, fmt.Errorf("unsupported privilege %q", item.Privilege), stdhttp.StatusUnprocessableEntity)
 			return
 		}
-		object, valid := objectRefFromValues(w, r, item.ObjectType, item.ObjectID)
+		object, valid := objectRefFromValues(w, r, "", item.ObjectType, item.ObjectID)
 		if !valid {
 			return
 		}
@@ -1455,13 +1485,17 @@ func (h Handler) DeleteDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "deleteDataPolicy", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
 	row, err := repo.GetDataPolicy(r.Context(), workspaceID, chi.URLParam(r, "policy"))
 	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+		status := statusForNotFound(err)
+		if status == stdhttp.StatusNotFound {
+			err = apigenfailure.Wrap("not_found", err)
+		}
+		writeCommandFailure(w, r, "deleteDataPolicy", err, status)
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromCanonical(row.WorkspaceID, row.ObjectID)) {
@@ -1472,7 +1506,7 @@ func (h Handler) DeleteDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return accessAuditInput(r, "data_policy.deleted", principal.ID, row.WorkspaceID, "data_policy", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": row.ObjectID, "policyType": row.PolicyType}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "deleteDataPolicy", err, stdhttp.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1486,10 +1520,10 @@ func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		OwnerPrincipalID string `json:"ownerPrincipalId"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, "transferOwnership", err, stdhttp.StatusBadRequest)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, "transferOwnership", input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
@@ -1498,7 +1532,7 @@ func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "transferOwnership", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	var updated access.SecurableObject
@@ -1508,7 +1542,7 @@ func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		return accessAuditInput(r, "ownership.transferred", principal.ID, updated.WorkspaceID, "securable_object", updated.ID, access.PrivilegeManageItem, "success", map[string]any{"ownerPrincipalId": updated.OwnerPrincipalID, "objectType": string(updated.Type)}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "transferOwnership", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, securableObjectDTO(updated))
@@ -1517,30 +1551,34 @@ func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request)
 func (h Handler) UpdateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "updateRoleBinding", err, stdhttp.StatusInternalServerError)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
 	current, err := repo.GetRoleBinding(r.Context(), workspaceID, chi.URLParam(r, "binding"))
 	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+		status := statusForNotFound(err)
+		if status == stdhttp.StatusNotFound {
+			err = apigenfailure.Wrap("not_found", err)
+		}
+		writeCommandFailure(w, r, "updateRoleBinding", err, status)
 		return
 	}
 	if !requireIfMatch(w, r, resourceETag(apiRoleBindingDTO(current))) {
 		return
 	}
-	input, ok := decodeRoleBindingInput(w, r)
+	input, ok := decodeRoleBindingInput(w, r, "updateRoleBinding")
 	if !ok {
 		return
 	}
 	commands := h.RoleBindingCommands
 	if commands == nil {
-		writeJSONError(w, fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "updateRoleBinding", fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
 	row, err := commands.UpdateRoleBinding(r.Context(), h.roleBindingInvocation(r), input.WorkspaceID, chi.URLParam(r, "binding"), input)
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, "updateRoleBinding", err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, apiRoleBindingDTO(row))
@@ -1551,12 +1589,12 @@ func (h Handler) DeleteRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	bindingID := chi.URLParam(r, "binding")
 	commands := h.RoleBindingCommands
 	if commands == nil {
-		writeJSONError(w, fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, "deleteRoleBinding", fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
 	_, err := commands.DeleteRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, bindingID)
 	if err != nil {
-		writeAuditedMutationError(w, err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, "deleteRoleBinding", err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1844,11 +1882,25 @@ func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation fun
 	})
 }
 
-func writeAuditedMutationError(w stdhttp.ResponseWriter, err error, mutationStatus int) {
-	if errors.Is(err, access.ErrAuditTransaction) {
-		mutationStatus = stdhttp.StatusInternalServerError
+func writeCommandFailure(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string, err error, _ int) {
+	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, accessgen.GetAPIGenCommandFailureContracts, err)
+}
+
+func writeAuditedMutationError(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string, err error, mutationStatus int) {
+	if mutationStatus == stdhttp.StatusNotFound && errors.Is(err, sql.ErrNoRows) {
+		err = apigenfailure.Wrap("not_found", err)
 	}
-	writeJSONError(w, err, mutationStatus)
+	if _, classified := apigenfailure.KindOf(err); !classified {
+		switch operationID {
+		case "createCurrentAPIToken", "createServicePrincipal", "createServicePrincipalSecret", "createGroup", "createRoleBinding", "createGrant", "transferOwnership", "createDataPolicy":
+			err = apigenfailure.Wrap("invalid", err)
+		case "updateGrant", "updateDataPolicy":
+			if mutationStatus == stdhttp.StatusUnprocessableEntity {
+				err = apigenfailure.Wrap("invalid", err)
+			}
+		}
+	}
+	writeCommandFailure(w, r, operationID, err, mutationStatus)
 }
 
 func auditEventDTO(row access.AuditEvent) map[string]any {
@@ -1968,38 +2020,45 @@ func knownDataPolicyType(value string) bool {
 }
 
 func objectRefFromRequest(w stdhttp.ResponseWriter, r *stdhttp.Request) (access.ObjectRef, bool) {
-	return objectRefFromValues(w, r, r.URL.Query().Get("objectType"), r.URL.Query().Get("objectId"))
+	return objectRefFromValues(w, r, "", r.URL.Query().Get("objectType"), r.URL.Query().Get("objectId"))
 }
 
-func objectRefFromValues(w stdhttp.ResponseWriter, r *stdhttp.Request, objectType, objectID string) (access.ObjectRef, bool) {
+func objectRefFromValues(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID, objectType, objectID string) (access.ObjectRef, bool) {
+	writeInvalid := func(err error) {
+		if operationID != "" {
+			writeCommandFailure(w, r, operationID, apigenfailure.Wrap("invalid", err), stdhttp.StatusBadRequest)
+			return
+		}
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+	}
 	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace"))
 	if workspaceID == "" {
-		writeJSONError(w, fmt.Errorf("workspace is required"), stdhttp.StatusBadRequest)
+		writeInvalid(fmt.Errorf("workspace is required"))
 		return access.ObjectRef{}, false
 	}
 	objectType = strings.TrimSpace(objectType)
 	objectID = strings.TrimSpace(objectID)
 	if objectType == "" || objectType == string(access.SecurableWorkspace) {
 		if objectID != "" {
-			writeJSONError(w, fmt.Errorf("workspace objectId must be empty"), stdhttp.StatusBadRequest)
+			writeInvalid(fmt.Errorf("workspace objectId must be empty"))
 			return access.ObjectRef{}, false
 		}
 		return access.WorkspaceObject(workspaceID), true
 	}
 	if access.SecurableType(objectType) == access.SecurablePlatform {
 		if objectID != "" {
-			writeJSONError(w, fmt.Errorf("platform objectId must be empty"), stdhttp.StatusBadRequest)
+			writeInvalid(fmt.Errorf("platform objectId must be empty"))
 			return access.ObjectRef{}, false
 		}
 		return access.PlatformObject(), true
 	}
 	typ := access.SecurableType(objectType)
 	if !validWorkspaceSecurableType(typ) {
-		writeJSONError(w, fmt.Errorf("unsupported securable object type %q", objectType), stdhttp.StatusBadRequest)
+		writeInvalid(fmt.Errorf("unsupported securable object type %q", objectType))
 		return access.ObjectRef{}, false
 	}
 	if objectID == "" {
-		writeJSONError(w, fmt.Errorf("objectId is required for %s grants", objectType), stdhttp.StatusBadRequest)
+		writeInvalid(fmt.Errorf("objectId is required for %s grants", objectType))
 		return access.ObjectRef{}, false
 	}
 	if typ == access.SecurableProjectEnvironment {
@@ -2114,15 +2173,22 @@ func objectAuthorizationDenialStatus(r *stdhttp.Request) int {
 	return stdhttp.StatusForbidden
 }
 
-func (h Handler) groupByID(w stdhttp.ResponseWriter, r *stdhttp.Request) (access.Group, bool) {
+func (h Handler) groupByID(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string) (access.Group, bool) {
+	writeFailure := func(err error) {
+		if operationID != "" {
+			writeCommandFailure(w, r, operationID, err, stdhttp.StatusInternalServerError)
+			return
+		}
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+	}
 	repo, err := h.repository()
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeFailure(err)
 		return access.Group{}, false
 	}
 	rows, err := repo.ListGroups(r.Context(), h.workspaceID(chi.URLParam(r, "workspace")))
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		writeFailure(err)
 		return access.Group{}, false
 	}
 	for _, row := range rows {
@@ -2130,18 +2196,22 @@ func (h Handler) groupByID(w stdhttp.ResponseWriter, r *stdhttp.Request) (access
 			return row, true
 		}
 	}
-	writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
+	if operationID != "" {
+		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("not_found", sql.ErrNoRows), stdhttp.StatusNotFound)
+	} else {
+		writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
+	}
 	return access.Group{}, false
 }
 
-func decodeRoleBindingInput(w stdhttp.ResponseWriter, r *stdhttp.Request) (access.RoleBindingInput, bool) {
+func decodeRoleBindingInput(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string) (access.RoleBindingInput, bool) {
 	var input struct {
 		SubjectType string `json:"subjectType"`
 		SubjectID   string `json:"subjectId"`
 		Role        string `json:"role"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("invalid", err), stdhttp.StatusBadRequest)
 		return access.RoleBindingInput{}, false
 	}
 	return access.RoleBindingInput{

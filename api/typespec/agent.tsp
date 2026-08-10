@@ -96,6 +96,9 @@ interface AgentConversations {
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "agent.conversation.created", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "unavailable", statusCode: 503, code: "AGENT_SERVICE_UNAVAILABLE", publicDetail: "Agent service is unavailable." },
+    ],
     additionalExposures: #["ui"],
   })
   @operationId("createAgentConversation")
@@ -105,7 +108,12 @@ interface AgentConversations {
   @route("/{conversation}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
-  @apigen.command(#{ audit: #{ required: true, successAction: "agent.conversation.archived", guarantee: "best-effort" } })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "agent.conversation.archived", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "AGENT_CONVERSATION_NOT_FOUND", publicDetail: "Agent conversation not found." },
+    ],
+  })
   @operationId("archiveAgentConversation")
   archiveAgentConversation(@path conversation: string): EmptyResponse | CommonErrors;
 
@@ -120,7 +128,13 @@ interface AgentConversations {
   @route("/{conversation}")
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
-  @apigen.command(#{ audit: #{ required: true, successAction: "agent.conversation.updated", guarantee: "best-effort" } })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "agent.conversation.updated", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "AGENT_CONVERSATION_NOT_FOUND", publicDetail: "Agent conversation not found." },
+      #{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_CONVERSATION", publicDetail: "The agent conversation request is invalid." },
+    ],
+  })
   @operationId("updateAgentConversation")
   updateAgentConversation(@path conversation: string, @header("If-Match") ifMatch: string, @body body: AgentConversationPatchRequest): UpdateAgentConversationOK | CommonErrors;
 
@@ -158,6 +172,12 @@ interface AgentConversations {
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "agent.run.created", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "AGENT_CONVERSATION_NOT_FOUND", publicDetail: "Agent conversation not found." },
+      #{ kind: "conflict", statusCode: 409, code: "AGENT_RUN_CONFLICT", publicDetail: "The agent conversation already has an active run." },
+      #{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_RUN", publicDetail: "The agent run request is invalid." },
+      #{ kind: "unavailable", statusCode: 503, code: "AGENT_SERVICE_UNAVAILABLE", publicDetail: "Agent service is unavailable." },
+    ],
     additionalExposures: #["ui"],
     execution: #{
       mode: "async",
@@ -181,6 +201,11 @@ interface AgentConversations {
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "agent.run.cancelled", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "AGENT_RUN_NOT_FOUND", publicDetail: "Agent run not found." },
+      #{ kind: "not_cancellable", statusCode: 409, code: "AGENT_RUN_NOT_CANCELLABLE", publicDetail: "The agent run cannot be cancelled in its current state." },
+      #{ kind: "unavailable", statusCode: 503, code: "AGENT_SERVICE_UNAVAILABLE", publicDetail: "Agent service is unavailable." },
+    ],
     targetParameter: "conversation",
   })
   @operationId("cancelAgentRun")

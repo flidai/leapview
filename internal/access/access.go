@@ -4,15 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"strings"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	accesspolicy "github.com/flidai/leapview/internal/access/policy"
 )
 
-var ErrAuditTransaction = errors.New("audit transaction failed")
-var ErrPrincipalAlreadyExists = errors.New("principal already exists")
+var ErrAuditTransaction = apigenfailure.New("audit_transaction", "audit transaction failed")
+var ErrPrincipalAlreadyExists = apigenfailure.New("conflict", "principal already exists")
 
 type Privilege string
 

@@ -1055,6 +1055,25 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 			if !command.Audit.Required || command.Audit.SuccessAction == "" {
 				t.Errorf("command %s does not require a stable success audit: %#v", operationID, command.Audit)
 			}
+			if command.Failures == nil {
+				t.Errorf("command %s did not explicitly declare its failure vocabulary", operationID)
+			}
+			runtimeFailures, ok := apiaggregate.GetAPIGenCommandFailureContracts(operationID)
+			if !ok {
+				t.Errorf("command %s has no generated runtime failure contract", operationID)
+			} else if len(runtimeFailures) != len(command.Failures) {
+				t.Errorf("command %s runtime failure count = %d, generated count = %d", operationID, len(runtimeFailures), len(command.Failures))
+			} else {
+				for index, failure := range command.Failures {
+					runtimeFailure := runtimeFailures[index]
+					if runtimeFailure.Kind != failure.Kind || runtimeFailure.StatusCode != failure.StatusCode || runtimeFailure.Code != failure.Code || runtimeFailure.PublicDetail != failure.PublicDetail {
+						t.Errorf("command %s runtime failure %#v differs from generated failure %#v", operationID, runtimeFailure, failure)
+					}
+					if !slices.Contains(contract.DocumentedStatusCodes, failure.StatusCode) {
+						t.Errorf("command %s failure %q status %d is not documented", operationID, failure.Kind, failure.StatusCode)
+					}
+				}
+			}
 			if command.Audit.Guarantee != "transactional" && command.Audit.Guarantee != "best-effort" {
 				t.Errorf("command %s has no supported audit guarantee: %#v", operationID, command.Audit)
 			}

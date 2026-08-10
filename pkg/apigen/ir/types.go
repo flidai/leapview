@@ -118,12 +118,21 @@ type Command struct {
 	Owner               string           `json:"owner"`
 	Audit               AuditPolicy      `json:"audit"`
 	Execution           *AsyncExecution  `json:"execution,omitempty"`
+	Failures            []CommandFailure `json:"failures"`
 	AdditionalExposures []string         `json:"additional_exposures,omitempty"`
 	Target              *OperationTarget `json:"target,omitempty"`
 	Idempotency         string           `json:"idempotency,omitempty"`
 	Concurrency         string           `json:"concurrency,omitempty"`
 	AuthzMode           string           `json:"authz_mode,omitempty"`
 	Privilege           string           `json:"privilege,omitempty"`
+}
+
+// CommandFailure maps a transport-neutral domain failure kind to public behavior.
+type CommandFailure struct {
+	Kind         string `json:"kind"`
+	StatusCode   int    `json:"status_code"`
+	Code         string `json:"code"`
+	PublicDetail string `json:"public_detail"`
 }
 
 // AsyncExecution describes the durable workflow started by a command.

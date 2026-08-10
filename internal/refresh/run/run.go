@@ -4,10 +4,12 @@ package run
 import (
 	"context"
 	"errors"
+
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 )
 
 var (
-	ErrRunNotCancellable = errors.New("refresh run is not cancellable")
+	ErrRunNotCancellable = apigenfailure.New("not_cancellable", "refresh run is not cancellable")
 	ErrLeaseLost         = errors.New("refresh job lease fence is no longer active")
 )
 

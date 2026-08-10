@@ -80,6 +80,17 @@ interface ManagedDataS3MultipartUploads {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "managed_data.s3_multipart_upload.created", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." },
+      #{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." },
+      #{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." },
+      #{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." },
+      #{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." },
+      #{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." },
+      #{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." },
+      #{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." },
+      #{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." },
+    ],
     targetParameter: "project",
   })
   createManagedDataS3MultipartUpload(
@@ -116,6 +127,18 @@ interface ManagedDataS3MultipartUploads {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "managed_data.s3_multipart_upload.completed", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." },
+      #{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." },
+      #{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." },
+      #{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." },
+      #{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." },
+      #{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." },
+      #{ kind: "too_large", statusCode: 413, code: "MANAGED_DATA_UPLOAD_TOO_LARGE", publicDetail: "Managed-data upload request is too large." },
+      #{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." },
+      #{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." },
+      #{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." },
+    ],
     targetParameter: "project",
   })
   completeManagedDataS3MultipartUpload(
@@ -135,6 +158,17 @@ interface ManagedDataS3MultipartUploads {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "managed_data.s3_multipart_upload.aborted", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." },
+      #{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." },
+      #{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." },
+      #{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." },
+      #{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." },
+      #{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." },
+      #{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." },
+      #{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." },
+      #{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." },
+    ],
     targetParameter: "project",
   })
   abortManagedDataS3MultipartUpload(

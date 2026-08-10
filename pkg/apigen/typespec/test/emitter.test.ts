@@ -139,6 +139,7 @@ describe("APIGen TypeSpec emitter", () => {
         @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
         @apigen.command(#{
           audit: #{ required: true, successAction: "role_binding.created", guarantee: "best-effort" },
+          failures: #[],
           additionalExposures: #["ui", "automation"],
         })
         create(
@@ -195,6 +196,7 @@ describe("APIGen TypeSpec emitter", () => {
       @operationId("finalizeRelease")
       @apigen.command(#{
         audit: #{ required: true, successAction: "release.validating", guarantee: "transactional" },
+        failures: #[],
         execution: #{
           mode: "async",
           guarantee: "transactional",
@@ -269,7 +271,7 @@ describe("APIGen TypeSpec emitter", () => {
         message: "explicit @operationId is required",
         operation: `
           @post
-          @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" } })
+          @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" }, failures: #[] })
           op create(@header("Idempotency-Key") key: string): string;
         `,
       },
@@ -278,7 +280,7 @@ describe("APIGen TypeSpec emitter", () => {
         operation: `
           @post
           @operationId("createWidget")
-          @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" } })
+          @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" }, failures: #[] })
           op create(): string;
         `,
       },
@@ -287,7 +289,7 @@ describe("APIGen TypeSpec emitter", () => {
         operation: `
           @patch
           @operationId("updateWidget")
-          @apigen.command(#{ audit: #{ required: true, successAction: "widget.updated" } })
+          @apigen.command(#{ audit: #{ required: true, successAction: "widget.updated" }, failures: #[] })
           op update(): string;
         `,
       },
@@ -297,7 +299,7 @@ describe("APIGen TypeSpec emitter", () => {
           @route("/{workspace}/widgets/{widget}")
           @delete
           @operationId("deleteWidget")
-          @apigen.command(#{ audit: #{ required: true, successAction: "widget.deleted" } })
+          @apigen.command(#{ audit: #{ required: true, successAction: "widget.deleted" }, failures: #[] })
           op delete(@path workspace: string, @path widget: string): string;
         `,
       },
@@ -306,7 +308,7 @@ describe("APIGen TypeSpec emitter", () => {
         operation: `
           @delete
           @operationId("deleteWidget")
-          @apigen.command(#{ audit: #{ required: true, successAction: "Widget Deleted" } })
+          @apigen.command(#{ audit: #{ required: true, successAction: "Widget Deleted" }, failures: #[] })
           op delete(): string;
         `,
       },
@@ -317,6 +319,7 @@ describe("APIGen TypeSpec emitter", () => {
           @operationId("finalizeWidget")
           @apigen.command(#{
             audit: #{ required: true, successAction: "widget.validating", guarantee: "best-effort" },
+            failures: #[],
             execution: #{
               mode: "async",
               guarantee: "transactional",
@@ -481,6 +484,53 @@ describe("APIGen TypeSpec emitter", () => {
         internal: { status_code: 500, code: "internal", public_detail: "Internal server error." },
       },
     });
+  });
+
+  it("emits typed command failure contracts", async () => {
+    const doc = await compileSource(`
+      using Http;
+      using TypeSpec.OpenAPI;
+
+      @service(#{ title: "Command Failures" })
+      namespace CommandFailures;
+
+      model Accepted { @statusCode statusCode: 202; }
+      model ConflictFailure { @statusCode statusCode: 409; }
+
+      @route("/widgets/{widget}/finalize")
+      @post
+      @operationId("finalizeWidget")
+      @apigen.command(#{
+        audit: #{ required: false },
+        failures: #[
+          #{ kind: "conflict", statusCode: 409, code: "WIDGET_CONFLICT", publicDetail: "The widget conflicts with its current state." },
+        ],
+      })
+      op finalizeWidget(@path widget: string, @header("Idempotency-Key") key: string): Accepted | ConflictFailure;
+    `);
+
+    expect(doc.endpoints[0].command.failures).toEqual([{
+      kind: "conflict",
+      status_code: 409,
+      code: "WIDGET_CONFLICT",
+      public_detail: "The widget conflicts with its current state.",
+    }]);
+  });
+
+  it("requires every command to declare its failure vocabulary", async () => {
+    await expectCompileFails(`
+      using Http;
+      using TypeSpec.OpenAPI;
+
+      @service(#{ title: "Command Failures" })
+      namespace CommandFailures;
+
+      @route("/widgets")
+      @post
+      @operationId("createWidget")
+      @apigen.command(#{ audit: #{ required: false } })
+      op createWidget(@header("Idempotency-Key") key: string): string;
+    `, "apigen.CommandOptions");
   });
 
   it("emits v4 IR for optimized TypeSpec HTTP authoring", async () => {

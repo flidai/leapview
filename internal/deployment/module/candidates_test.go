@@ -361,7 +361,8 @@ func TestCandidateSynchronizationRejectsReadyCandidateWithInvalidProvenance(t *t
 		},
 	)
 	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Body.String())
-	require.Contains(t, response.Body.String(), "reset target state")
+	require.Contains(t, response.Body.String(), "INVALID_CANDIDATE")
+	require.NotContains(t, response.Body.String(), "reset target state")
 	current, err := module.candidates.Get(t.Context(), candidateScope(ready))
 	require.NoError(t, err)
 	require.Equal(t, ready, current)

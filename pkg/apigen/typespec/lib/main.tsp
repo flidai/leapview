@@ -50,9 +50,17 @@ model AsyncExecutionOptions {
   cancellation: "supported" | "unsupported";
 }
 
+model CommandFailureOptions {
+  kind: string;
+  statusCode: int32;
+  code: string;
+  publicDetail: string;
+}
+
 model CommandOptions {
   audit: AuditOptions;
   execution?: AsyncExecutionOptions;
+  failures: CommandFailureOptions[];
   additionalExposures?: ("ui" | "agent" | "automation")[];
   targetParameter?: string;
 }

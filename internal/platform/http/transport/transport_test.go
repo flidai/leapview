@@ -1,9 +1,14 @@
 package transport
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 )
 
 func TestWriteJSONNormalizesTimestampsAndRequiredCollections(t *testing.T) {
@@ -55,3 +60,45 @@ func TestKeysetPageRejectsCursorFromAnotherCollection(t *testing.T) {
 }
 
 func int32Pointer(value int32) *int32 { return &value }
+
+func TestWriteAPIGenCommandFailureUsesGeneratedPublicContract(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/widgets/widget_1/finalize", nil)
+	response := httptest.NewRecorder()
+	lookup := func(operationID string) ([]apigenfailure.Contract, bool) {
+		if operationID != "finalizeWidget" {
+			return nil, false
+		}
+		return []apigenfailure.Contract{{
+			Kind: "conflict", StatusCode: http.StatusConflict,
+			Code: "WIDGET_CONFLICT", PublicDetail: "The widget conflicts with its current state.",
+		}}, true
+	}
+
+	WriteAPIGenCommandFailure(context.Background(), response, request, nil, "finalizeWidget", lookup, apigenfailure.New("conflict", "private storage detail"))
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusConflict)
+	}
+	var problem ProblemDetails
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != "WIDGET_CONFLICT" || problem.Detail != "The widget conflicts with its current state." {
+		t.Fatalf("problem = %#v", problem)
+	}
+}
+
+func TestWriteAPIGenCommandFailureHidesUnknownCause(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/widgets/widget_1/finalize", nil)
+	response := httptest.NewRecorder()
+
+	WriteAPIGenCommandFailure(context.Background(), response, request, nil, "finalizeWidget", nil, errors.New("database password is secret"))
+
+	var problem ProblemDetails
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusInternalServerError || problem.Code != "INTERNAL_ERROR" || problem.Detail != "The request could not be completed." {
+		t.Fatalf("problem = %#v", problem)
+	}
+}

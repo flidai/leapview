@@ -56,6 +56,19 @@ func TestReleaseLifecycleOperationContracts(t *testing.T) {
 		finalize.Cancellation != "unsupported" {
 		t.Fatalf("finalize release execution contract = %#v", finalize)
 	}
+	failures, ok := releasegen.GetAPIGenCommandFailureContracts("finalizeRelease")
+	if !ok || len(failures) != 5 {
+		t.Fatalf("finalize release failure contracts = %#v, %v", failures, ok)
+	}
+	wantFailures := map[string]string{
+		"conflict": "RELEASE_CONFLICT", "immutable": "RELEASE_IMMUTABLE", "incomplete": "RELEASE_INCOMPLETE",
+		"not_found": "RELEASE_NOT_FOUND", "queue_unavailable": "ASYNC_QUEUE_UNAVAILABLE",
+	}
+	for _, failure := range failures {
+		if wantFailures[failure.Kind] != failure.Code {
+			t.Errorf("finalize release failure %q = %#v", failure.Kind, failure)
+		}
+	}
 }
 
 func releaseGeneratedOperationKind(contract releasegen.GenOperationContract) string {

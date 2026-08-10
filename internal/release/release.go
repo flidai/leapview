@@ -1,15 +1,15 @@
 // Package release models immutable, project-wide deployment releases.
 package release
 
-import "errors"
+import apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 
 var (
-	ErrInvalid    = errors.New("invalid release")
-	ErrNotFound   = errors.New("release not found")
-	ErrConflict   = errors.New("release conflict")
-	ErrIncomplete = errors.New("release artifacts are incomplete")
-	ErrImmutable  = errors.New("release is immutable")
-	ErrDigest     = errors.New("content digest mismatch")
+	ErrInvalid    = apigenfailure.New("invalid", "invalid release")
+	ErrNotFound   = apigenfailure.New("not_found", "release not found")
+	ErrConflict   = apigenfailure.New("conflict", "release conflict")
+	ErrIncomplete = apigenfailure.New("incomplete", "release artifacts are incomplete")
+	ErrImmutable  = apigenfailure.New("immutable", "release is immutable")
+	ErrDigest     = apigenfailure.New("digest_mismatch", "content digest mismatch")
 )
 
 type Status string

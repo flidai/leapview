@@ -218,10 +218,11 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 				Parameters: []ir.Parameter{{
 					Name: "workspace", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"},
 				}},
-				Responses: []ir.Response{{StatusCode: 200, Description: "ok"}},
+				Responses: []ir.Response{{StatusCode: 200, Description: "ok"}, {StatusCode: 409, Description: "conflict"}},
 				Command: &ir.Command{
 					Owner:               "WidgetAPI",
 					Audit:               ir.AuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort"},
+					Failures:            []ir.CommandFailure{{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."}},
 					AdditionalExposures: []string{"ui"},
 					Target:              &ir.OperationTarget{Parameter: "workspace", Type: "workspace"},
 				},
@@ -245,8 +246,9 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 	content := string(b)
 	require.Contains(t, content, "Extensions map[string]any")
 	require.Contains(t, content, `Namespace: "WidgetAPI"`)
-	require.Contains(t, content, `Command: &GenCommandContract{Owner: "WidgetAPI", Audit: GenAuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort"}, Execution: nil, AdditionalExposures: []GenOperationSurface{"ui"}, Target: &GenOperationTarget{Parameter: "workspace", Type: "workspace"}`)
+	require.Contains(t, content, `Command: &GenCommandContract{Owner: "WidgetAPI", Audit: GenAuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort"}, Execution: nil, Failures: []GenCommandFailure{{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."}}, AdditionalExposures: []GenOperationSurface{"ui"}, Target: &GenOperationTarget{Parameter: "workspace", Type: "workspace"}`)
 	require.Contains(t, content, `func GetAPIGenCommandRuntimeContract(operationID string) (apigencommand.Contract, bool)`)
+	require.Contains(t, content, `func GetAPIGenCommandFailureContracts(operationID string) ([]apigenfailure.Contract, bool)`)
 	require.Contains(t, content, `Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee)`)
 	require.Contains(t, content, `Extensions: map[string]any{"x-downstream": map[string]any{`)
 

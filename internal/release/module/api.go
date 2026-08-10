@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
@@ -51,7 +52,7 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 	input := release.CreateInput{ProjectID: project, ProjectDigest: body.ProjectDigest, IdempotencyKey: idempotencyKey, CreatedBy: principal.ID}
 	provenance, err := releaseProvenanceFromAPI(body.Provenance)
 	if err != nil {
-		writeError(w, r, fmt.Errorf("%w: invalid provenance", release.ErrInvalid))
+		m.writeCommandFailure(w, r, string(releasegen.GenOperationCreateRelease), fmt.Errorf("%w: invalid provenance", release.ErrInvalid))
 		return
 	}
 	input.Provenance = provenance
@@ -63,7 +64,7 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 	}
 	created, err := m.service.Create(r.Context(), input)
 	if err != nil {
-		writeError(w, r, err)
+		m.writeCommandFailure(w, r, string(releasegen.GenOperationCreateRelease), err)
 		return
 	}
 	m.recordBestEffortEvent(
@@ -109,7 +110,7 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 	}
 	artifact, err := m.service.UploadArtifact(r.Context(), project, releaseID, workspaceID, contentDigest, http.MaxBytesReader(w, r.Body, releasefilesystem.MaxUploadBytes))
 	if err != nil {
-		writeError(w, r, err)
+		m.writeCommandFailure(w, r, string(releasegen.GenOperationUploadReleaseArtifact), err)
 		return
 	}
 	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, WorkspaceID: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes}
@@ -124,16 +125,16 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project, releaseID, _ string) {
 	payload, err := json.Marshal(FinalizeJob{Project: project, Release: releaseID})
 	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Release finalization could not be queued", nil)
+		m.writeCommandFailure(w, r, string(releasegen.GenOperationFinalizeRelease), err)
 		return
 	}
 	event, err := json.Marshal(map[string]any{"releaseId": releaseID, "projectId": project, "status": m.finalizeExecution.InitialState})
 	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Release finalization could not be queued", nil)
+		m.writeCommandFailure(w, r, string(releasegen.GenOperationFinalizeRelease), err)
 		return
 	}
 	if m.api.Workflow == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE", "Release finalization could not be queued", nil)
+		m.writeCommandFailure(w, r, string(releasegen.GenOperationFinalizeRelease), apigenfailure.New("queue_unavailable", "release workflow is unavailable"))
 		return
 	}
 	var row release.Release
@@ -162,11 +163,15 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 		})
 	}
 	if err != nil {
-		writeError(w, r, err)
+		m.writeCommandFailure(w, r, string(releasegen.GenOperationFinalizeRelease), err)
 		return
 	}
 	w.Header().Set("Location", location(project, releaseID))
 	apitransport.WriteJSON(w, http.StatusAccepted, response(row))
+}
+
+func (m *Module) writeCommandFailure(w http.ResponseWriter, r *http.Request, operationID string, err error) {
+	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, m.logger, operationID, releasegen.GetAPIGenCommandFailureContracts, err)
 }
 
 func (m *Module) ListReleaseEvents(w http.ResponseWriter, r *http.Request, project, releaseID string, limit *int32, pageToken *string) {

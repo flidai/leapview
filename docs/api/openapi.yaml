@@ -311,6 +311,23 @@ paths:
           required: true
           success_action: authoring.device.decided
         authz_mode: authenticated
+        failures:
+          - code: DEVICE_AUTHORIZATION_DENIED
+            kind: denied
+            public_detail: Device authorization was denied.
+            status_code: !!float 400
+          - code: DEVICE_AUTHORIZATION_EXPIRED
+            kind: expired
+            public_detail: Device authorization has expired.
+            status_code: !!float 400
+          - code: INVALID_PRINCIPAL
+            kind: invalid_principal
+            public_detail: The authorizing principal is invalid.
+            status_code: !!float 400
+          - code: DEVICE_AUTHORIZATION_NOT_FOUND
+            kind: not_found
+            public_detail: Device authorization was not found.
+            status_code: !!float 404
         idempotency: required
         owner: LeapViewAPI.Access
   /api/v1/agent/conversations:
@@ -886,6 +903,11 @@ paths:
           required: true
           success_action: agent.conversation.created
         authz_mode: privilege
+        failures:
+          - code: AGENT_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Agent service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Agent
         privilege: USE_AGENT
@@ -1149,6 +1171,11 @@ paths:
           required: true
           success_action: agent.conversation.archived
         authz_mode: privilege
+        failures:
+          - code: AGENT_CONVERSATION_NOT_FOUND
+            kind: not_found
+            public_detail: Agent conversation not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Agent
         target:
           parameter: conversation
@@ -1711,6 +1738,15 @@ paths:
           success_action: agent.conversation.updated
         authz_mode: privilege
         concurrency: if-match
+        failures:
+          - code: INVALID_AGENT_CONVERSATION
+            kind: invalid
+            public_detail: The agent conversation request is invalid.
+            status_code: !!float 422
+          - code: AGENT_CONVERSATION_NOT_FOUND
+            kind: not_found
+            public_detail: Agent conversation not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Agent
         target:
           parameter: conversation
@@ -2607,6 +2643,23 @@ paths:
           mode: async
           resource_kind: agent_run
           status_operation: getAgentRun
+        failures:
+          - code: AGENT_RUN_CONFLICT
+            kind: conflict
+            public_detail: The agent conversation already has an active run.
+            status_code: !!float 409
+          - code: INVALID_AGENT_RUN
+            kind: invalid
+            public_detail: The agent run request is invalid.
+            status_code: !!float 422
+          - code: AGENT_CONVERSATION_NOT_FOUND
+            kind: not_found
+            public_detail: Agent conversation not found.
+            status_code: !!float 404
+          - code: AGENT_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Agent service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Agent
         target:
@@ -3183,6 +3236,19 @@ paths:
           required: true
           success_action: agent.run.cancelled
         authz_mode: privilege
+        failures:
+          - code: AGENT_RUN_NOT_CANCELLABLE
+            kind: not_cancellable
+            public_detail: The agent run cannot be cancelled in its current state.
+            status_code: !!float 409
+          - code: AGENT_RUN_NOT_FOUND
+            kind: not_found
+            public_detail: Agent run not found.
+            status_code: !!float 404
+          - code: AGENT_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Agent service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Agent
         target:
@@ -4728,6 +4794,11 @@ paths:
           required: true
           success_action: api_token.created
         authz_mode: privilege
+        failures:
+          - code: API_TOKEN_INVALID
+            kind: invalid
+            public_detail: The API token request is invalid.
+            status_code: !!float 400
         idempotency: required
         owner: LeapViewAPI.Access
         privilege: MANAGE_GRANTS
@@ -4992,6 +5063,11 @@ paths:
           required: true
           success_action: api_token.revoked
         authz_mode: privilege
+        failures:
+          - code: API_TOKEN_NOT_FOUND
+            kind: not_found
+            public_detail: API token not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: token
@@ -5550,6 +5626,15 @@ paths:
           required: true
           success_action: authoring.session.revoked
         authz_mode: privilege
+        failures:
+          - code: INVALID_AUTHORING_CREDENTIAL
+            kind: invalid_credential
+            public_detail: The authoring session is invalid.
+            status_code: !!float 400
+          - code: AUTHORING_SESSION_NOT_FOUND
+            kind: not_found
+            public_detail: Authoring session not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: session
@@ -6365,6 +6450,11 @@ paths:
           required: true
           success_action: session.revoked
         authz_mode: privilege
+        failures:
+          - code: SESSION_NOT_FOUND
+            kind: not_found
+            public_detail: Session not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: session
@@ -6955,6 +7045,11 @@ paths:
           required: true
           success_action: principal.local_user.created
         authz_mode: privilege
+        failures:
+          - code: PRINCIPAL_ALREADY_EXISTS
+            kind: conflict
+            public_detail: A principal with this email already exists.
+            status_code: !!float 409
         idempotency: required
         owner: LeapViewAPI.Access
         privilege: MANAGE_GRANTS
@@ -7219,6 +7314,15 @@ paths:
           required: true
           success_action: principal.deleted
         authz_mode: privilege
+        failures:
+          - code: PRINCIPAL_NOT_MUTABLE
+            kind: invalid
+            public_detail: This principal cannot be deleted by this operation.
+            status_code: !!float 422
+          - code: PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Principal not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: principal
@@ -7775,6 +7879,15 @@ paths:
           success_action: principal.updated
         authz_mode: privilege
         concurrency: if-match
+        failures:
+          - code: PRINCIPAL_NOT_MUTABLE
+            kind: invalid
+            public_detail: This principal cannot be modified by this operation.
+            status_code: !!float 422
+          - code: PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Principal not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: principal
@@ -8062,6 +8175,11 @@ paths:
           required: true
           success_action: principal.local_password.reset
         authz_mode: privilege
+        failures:
+          - code: PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Principal not found.
+            status_code: !!float 404
         idempotency: required
         owner: LeapViewAPI.Access
         target:
@@ -8627,6 +8745,11 @@ paths:
           required: true
           success_action: session.revoked
         authz_mode: privilege
+        failures:
+          - code: SESSION_NOT_FOUND
+            kind: not_found
+            public_detail: Session not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: principal
@@ -9761,6 +9884,23 @@ paths:
           required: true
           success_action: candidate.cancelled
         authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -10068,6 +10208,27 @@ paths:
           required: true
           success_action: candidate.source_blob_uploaded
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Candidate source blob audit is temporarily unavailable.
+            status_code: !!float 503
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+          - code: INVALID_CANDIDATE_SOURCE_BLOB
+            kind: source_blob_invalid
+            public_detail: Candidate source blob headers do not match the canonical content identity.
+            status_code: !!float 422
         owner: LeapViewAPI.Deployment
         target:
           parameter: project
@@ -10385,6 +10546,23 @@ paths:
           required: true
           success_action: candidate.ready
         authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -10988,6 +11166,27 @@ paths:
           required: true
           success_action: candidate.started
         authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_QUOTA_EXCEEDED
+            kind: candidate_quota
+            public_detail: Candidate quota exceeded.
+            status_code: !!float 429
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -11583,6 +11782,23 @@ paths:
           required: true
           success_action: candidate.artifact_replaced
         authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -11886,6 +12102,23 @@ paths:
           required: true
           success_action: candidate.cancelled
         authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -12275,6 +12508,59 @@ paths:
           mode: async
           resource_kind: deployment
           status_operation: getDeployment
+        failures:
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Publication activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: PUBLICATION_MANAGEMENT_REQUIRED
+            kind: publication_forbidden
+            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            status_code: !!float 403
+          - code: RELEASE_INCOMPLETE
+            kind: release_incomplete
+            public_detail: The release is missing a workspace artifact.
+            status_code: !!float 409
+          - code: RELEASE_NOT_READY
+            kind: release_not_ready
+            public_detail: Only ready releases can be deployed.
+            status_code: !!float 409
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -12578,6 +12864,23 @@ paths:
           required: true
           success_action: candidate.retried
         authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -14666,6 +14969,47 @@ paths:
           required: true
           success_action: managed_data.upload_session.created
         authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_TOO_LARGE
+            kind: too_large
+            public_detail: Managed-data upload request is too large.
+            status_code: !!float 413
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
@@ -15308,6 +15652,47 @@ paths:
           required: true
           success_action: managed_data.upload_session.cancelled
         authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_TOO_LARGE
+            kind: too_large
+            public_detail: Managed-data upload request is too large.
+            status_code: !!float 413
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
@@ -15985,6 +16370,47 @@ paths:
           mode: async
           resource_kind: upload
           status_operation: getManagedDataUploadSession
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_TOO_LARGE
+            kind: too_large
+            public_detail: Managed-data upload request is too large.
+            status_code: !!float 413
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
@@ -16306,6 +16732,43 @@ paths:
           required: true
           success_action: managed_data.s3_multipart_upload.created
         authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
@@ -16622,6 +17085,43 @@ paths:
           required: true
           success_action: managed_data.s3_multipart_upload.aborted
         authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
@@ -16949,6 +17449,47 @@ paths:
           required: true
           success_action: managed_data.s3_multipart_upload.completed
         authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_TOO_LARGE
+            kind: too_large
+            public_detail: Managed-data upload request is too large.
+            status_code: !!float 413
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
@@ -18008,6 +18549,59 @@ paths:
           mode: async
           resource_kind: deployment
           status_operation: getDeployment
+        failures:
+          - code: DEPLOYMENT_APPROVAL_CONFLICT
+            kind: approval_conflict
+            public_detail: The deployment approval conflicts with its current state.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Publication activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: PUBLICATION_MANAGEMENT_REQUIRED
+            kind: publication_forbidden
+            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            status_code: !!float 403
+          - code: RELEASE_INCOMPLETE
+            kind: release_incomplete
+            public_detail: The release is missing a workspace artifact.
+            status_code: !!float 409
+          - code: RELEASE_NOT_READY
+            kind: release_not_ready
+            public_detail: Only ready releases can be deployed.
+            status_code: !!float 409
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -18731,6 +19325,55 @@ paths:
           mode: async
           resource_kind: deployment
           status_operation: getDeployment
+        failures:
+          - code: ACTIVATION_FORBIDDEN
+            kind: activation_forbidden
+            public_detail: Deployment activation is forbidden.
+            status_code: !!float 403
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: An approved deployment is required for activation.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: ACTIVATION_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded activation credential is required.
+            status_code: !!float 401
+          - code: APPROVAL_FORBIDDEN
+            kind: approval_forbidden
+            public_detail: Deployment approval is forbidden.
+            status_code: !!float 403
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Deployment activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: ASYNC_QUEUE_UNAVAILABLE
+            kind: queue_unavailable
+            public_detail: Deployment activation could not be persisted.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -19039,6 +19682,39 @@ paths:
           required: true
           success_action: deployment.approval_requested
         authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: The deployment approval is not valid for this action.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -19356,6 +20032,39 @@ paths:
           required: true
           success_action: deployment.approved
         authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: The deployment approval is not valid for this action.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded approval credential is required.
+            status_code: !!float 401
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: SEPARATION_OF_DUTY_REQUIRED
+            kind: separation_of_duty
+            public_detail: A separate principal must approve this deployment.
+            status_code: !!float 409
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -19673,6 +20382,39 @@ paths:
           required: true
           success_action: deployment.denied
         authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: The deployment approval is not valid for this action.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded approval credential is required.
+            status_code: !!float 401
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: SEPARATION_OF_DUTY_REQUIRED
+            kind: separation_of_duty
+            public_detail: A separate principal must approve this deployment.
+            status_code: !!float 409
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -19990,6 +20732,39 @@ paths:
           required: true
           success_action: deployment.approval_revoked
         authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: The deployment approval is not valid for this action.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded approval credential is required.
+            status_code: !!float 401
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: SEPARATION_OF_DUTY_REQUIRED
+            kind: separation_of_duty
+            public_detail: A separate principal must approve this deployment.
+            status_code: !!float 409
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -20359,6 +21134,27 @@ paths:
           required: true
           success_action: deployment.cancelled
         authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: ASYNC_QUEUE_UNAVAILABLE
+            kind: queue_unavailable
+            public_detail: Deployment cancellation could not be persisted.
+            status_code: !!float 503
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -21057,6 +21853,43 @@ paths:
           mode: async
           resource_kind: deployment
           status_operation: getDeployment
+        failures:
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Publication activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: PUBLICATION_MANAGEMENT_REQUIRED
+            kind: publication_forbidden
+            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            status_code: !!float 403
+          - code: RELEASE_INCOMPLETE
+            kind: release_incomplete
+            public_detail: The release is missing a workspace artifact.
+            status_code: !!float 409
+          - code: RELEASE_NOT_READY
+            kind: release_not_ready
+            public_detail: Only ready releases can be deployed.
+            status_code: !!float 409
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -21436,6 +22269,43 @@ paths:
           mode: async
           resource_kind: deployment
           status_operation: getDeployment
+        failures:
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Publication activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: PUBLICATION_MANAGEMENT_REQUIRED
+            kind: publication_forbidden
+            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            status_code: !!float 403
+          - code: RELEASE_INCOMPLETE
+            kind: release_incomplete
+            public_detail: The release is missing a workspace artifact.
+            status_code: !!float 409
+          - code: RELEASE_NOT_READY
+            kind: release_not_ready
+            public_detail: Only ready releases can be deployed.
+            status_code: !!float 409
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -22179,6 +23049,15 @@ paths:
           required: true
           success_action: release.created
         authz_mode: privilege
+        failures:
+          - code: RELEASE_CONFLICT
+            kind: conflict
+            public_detail: The release conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_RELEASE
+            kind: invalid
+            public_detail: The release request is invalid.
+            status_code: !!float 422
         idempotency: required
         owner: LeapViewAPI.Release
         target:
@@ -23183,6 +24062,27 @@ paths:
           mode: async
           resource_kind: release
           status_operation: getRelease
+        failures:
+          - code: RELEASE_CONFLICT
+            kind: conflict
+            public_detail: The release conflicts with its current state.
+            status_code: !!float 409
+          - code: RELEASE_IMMUTABLE
+            kind: immutable
+            public_detail: The release is immutable.
+            status_code: !!float 409
+          - code: RELEASE_INCOMPLETE
+            kind: incomplete
+            public_detail: The release artifacts are incomplete.
+            status_code: !!float 409
+          - code: RELEASE_NOT_FOUND
+            kind: not_found
+            public_detail: Release not found.
+            status_code: !!float 404
+          - code: ASYNC_QUEUE_UNAVAILABLE
+            kind: queue_unavailable
+            public_detail: Release finalization could not be queued.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Release
         target:
@@ -23498,6 +24398,27 @@ paths:
           required: true
           success_action: release.artifact_uploaded
         authz_mode: privilege
+        failures:
+          - code: RELEASE_CONFLICT
+            kind: conflict
+            public_detail: The release conflicts with its current state.
+            status_code: !!float 409
+          - code: CONTENT_DIGEST_MISMATCH
+            kind: digest_mismatch
+            public_detail: The release artifact digest does not match the expected content.
+            status_code: !!float 422
+          - code: RELEASE_IMMUTABLE
+            kind: immutable
+            public_detail: The release is immutable.
+            status_code: !!float 409
+          - code: INVALID_RELEASE
+            kind: invalid
+            public_detail: The release artifact request is invalid.
+            status_code: !!float 422
+          - code: RELEASE_NOT_FOUND
+            kind: not_found
+            public_detail: Release or workspace artifact not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Release
         target:
           parameter: project
@@ -24700,6 +25621,11 @@ paths:
           required: true
           success_action: service_principal.created
         authz_mode: privilege
+        failures:
+          - code: SERVICE_PRINCIPAL_INVALID
+            kind: invalid
+            public_detail: The service principal request is invalid.
+            status_code: !!float 400
         idempotency: required
         owner: LeapViewAPI.Access
         privilege: MANAGE_PLATFORM
@@ -24963,6 +25889,11 @@ paths:
           required: true
           success_action: service_principal.deleted
         authz_mode: privilege
+        failures:
+          - code: SERVICE_PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Service principal not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: servicePrincipal
@@ -25517,6 +26448,11 @@ paths:
           success_action: service_principal.updated
         authz_mode: privilege
         concurrency: if-match
+        failures:
+          - code: SERVICE_PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Service principal not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: servicePrincipal
@@ -26105,6 +27041,11 @@ paths:
           required: true
           success_action: service_principal_secret.created
         authz_mode: privilege
+        failures:
+          - code: SERVICE_PRINCIPAL_SECRET_INVALID
+            kind: invalid
+            public_detail: The service principal secret request is invalid.
+            status_code: !!float 400
         idempotency: required
         owner: LeapViewAPI.Access
         target:
@@ -26377,6 +27318,11 @@ paths:
           required: true
           success_action: service_principal_secret.revoked
         authz_mode: privilege
+        failures:
+          - code: SERVICE_PRINCIPAL_SECRET_NOT_FOUND
+            kind: not_found
+            public_detail: Service principal secret not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: servicePrincipal
@@ -30111,6 +31057,19 @@ paths:
           required: true
           success_action: dashboard_publication.resumed
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Dashboard publication audit could not be persisted.
+            status_code: !!float 503
+          - code: PUBLICATION_NOT_CONFIGURED
+            kind: conflict
+            public_detail: Dashboard publication is not present in the active configuration.
+            status_code: !!float 409
+          - code: PUBLICATION_NOT_FOUND
+            kind: not_found
+            public_detail: Dashboard publication not found.
+            status_code: !!float 404
         idempotency: required
         owner: LeapViewAPI.Dashboard
         target:
@@ -30416,6 +31375,19 @@ paths:
           required: true
           success_action: dashboard_publication.public_id_rotated
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Dashboard publication audit could not be persisted.
+            status_code: !!float 503
+          - code: PUBLICATION_NOT_CONFIGURED
+            kind: conflict
+            public_detail: Dashboard publication is not present in the active configuration.
+            status_code: !!float 409
+          - code: PUBLICATION_NOT_FOUND
+            kind: not_found
+            public_detail: Dashboard publication not found.
+            status_code: !!float 404
         idempotency: required
         owner: LeapViewAPI.Dashboard
         target:
@@ -30721,6 +31693,19 @@ paths:
           required: true
           success_action: dashboard_publication.suspended
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Dashboard publication audit could not be persisted.
+            status_code: !!float 503
+          - code: PUBLICATION_NOT_CONFIGURED
+            kind: conflict
+            public_detail: Dashboard publication is not present in the active configuration.
+            status_code: !!float 409
+          - code: PUBLICATION_NOT_FOUND
+            kind: not_found
+            public_detail: Dashboard publication not found.
+            status_code: !!float 404
         idempotency: required
         owner: LeapViewAPI.Dashboard
         target:
@@ -33895,6 +34880,11 @@ paths:
           required: true
           success_action: data_policy.created
         authz_mode: privilege
+        failures:
+          - code: DATA_POLICY_INVALID
+            kind: invalid
+            public_detail: The data policy request is invalid.
+            status_code: !!float 400
         idempotency: required
         owner: LeapViewAPI.Access
         target:
@@ -34167,6 +35157,11 @@ paths:
           required: true
           success_action: data_policy.deleted
         authz_mode: privilege
+        failures:
+          - code: DATA_POLICY_NOT_FOUND
+            kind: not_found
+            public_detail: Data policy not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -34747,6 +35742,15 @@ paths:
           success_action: data_policy.updated
         authz_mode: privilege
         concurrency: if-match
+        failures:
+          - code: DATA_POLICY_INVALID
+            kind: invalid
+            public_detail: The data policy is invalid.
+            status_code: !!float 422
+          - code: DATA_POLICY_NOT_FOUND
+            kind: not_found
+            public_detail: Data policy not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -35660,6 +36664,11 @@ paths:
           required: true
           success_action: grant.created
         authz_mode: privilege
+        failures:
+          - code: GRANT_INVALID
+            kind: invalid
+            public_detail: The grant request is invalid.
+            status_code: !!float 400
         idempotency: required
         owner: LeapViewAPI.Access
         target:
@@ -35934,6 +36943,11 @@ paths:
           required: true
           success_action: grant.deleted
         authz_mode: privilege
+        failures:
+          - code: GRANT_NOT_FOUND
+            kind: not_found
+            public_detail: Grant not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -36516,6 +37530,15 @@ paths:
           success_action: grant.updated
         authz_mode: privilege
         concurrency: if-match
+        failures:
+          - code: GRANT_INVALID
+            kind: invalid
+            public_detail: The grant is invalid.
+            status_code: !!float 422
+          - code: GRANT_NOT_FOUND
+            kind: not_found
+            public_detail: Grant not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -37098,6 +38121,11 @@ paths:
           required: true
           success_action: group.created
         authz_mode: privilege
+        failures:
+          - code: GROUP_INVALID
+            kind: invalid
+            public_detail: The group request is invalid.
+            status_code: !!float 400
         idempotency: required
         owner: LeapViewAPI.Access
         target:
@@ -37370,6 +38398,11 @@ paths:
           required: true
           success_action: group.deleted
         authz_mode: privilege
+        failures:
+          - code: GROUP_NOT_FOUND
+            kind: not_found
+            public_detail: Group not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -37934,6 +38967,11 @@ paths:
           success_action: group.updated
         authz_mode: privilege
         concurrency: if-match
+        failures:
+          - code: GROUP_NOT_FOUND
+            kind: not_found
+            public_detail: Group not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -38504,6 +39542,11 @@ paths:
           required: true
           success_action: group.member_removed
         authz_mode: privilege
+        failures:
+          - code: GROUP_MEMBER_NOT_FOUND
+            kind: not_found
+            public_detail: Group member not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -38786,6 +39829,11 @@ paths:
           required: true
           success_action: group.member_added
         authz_mode: privilege
+        failures:
+          - code: GROUP_MEMBER_NOT_FOUND
+            kind: not_found
+            public_detail: Group or principal not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -39082,6 +40130,11 @@ paths:
           required: true
           success_action: ownership.transferred
         authz_mode: privilege
+        failures:
+          - code: OWNERSHIP_TRANSFER_INVALID
+            kind: invalid
+            public_detail: The ownership transfer request is invalid.
+            status_code: !!float 400
         idempotency: required
         owner: LeapViewAPI.Access
         target:
@@ -40066,6 +41119,23 @@ paths:
           mode: async
           resource_kind: refresh
           status_operation: getRefreshRun
+        failures:
+          - code: REFRESH_RUN_CONFLICT
+            kind: conflict
+            public_detail: The refresh run conflicts with its current state.
+            status_code: !!float 409
+          - code: REFRESH_RUN_FORBIDDEN
+            kind: forbidden
+            public_detail: The refresh run is not permitted.
+            status_code: !!float 403
+          - code: INVALID_REFRESH_RUN
+            kind: invalid
+            public_detail: The refresh run request is invalid.
+            status_code: !!float 422
+          - code: REFRESH_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Refresh service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Refresh
         target:
@@ -40647,6 +41717,23 @@ paths:
           required: true
           success_action: refresh.cancelled
         authz_mode: privilege
+        failures:
+          - code: REFRESH_RUN_FORBIDDEN
+            kind: forbidden
+            public_detail: The refresh run is not permitted.
+            status_code: !!float 403
+          - code: REFRESH_RUN_NOT_CANCELLABLE
+            kind: not_cancellable
+            public_detail: Only queued refresh runs can be cancelled.
+            status_code: !!float 409
+          - code: REFRESH_RUN_NOT_FOUND
+            kind: not_found
+            public_detail: Refresh run not found.
+            status_code: !!float 404
+          - code: REFRESH_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Refresh service is unavailable.
+            status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Refresh
         target:
@@ -41578,6 +42665,11 @@ paths:
           required: true
           success_action: role_binding.created
         authz_mode: privilege
+        failures:
+          - code: ROLE_BINDING_INVALID
+            kind: invalid
+            public_detail: The role binding request is invalid.
+            status_code: !!float 400
         idempotency: required
         owner: LeapViewAPI.Access
         target:
@@ -41852,6 +42944,15 @@ paths:
           required: true
           success_action: role_binding.deleted
         authz_mode: privilege
+        failures:
+          - code: ROLE_BINDING_INVALID
+            kind: invalid
+            public_detail: The role binding request is invalid.
+            status_code: !!float 400
+          - code: ROLE_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Role binding not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -42426,6 +43527,11 @@ paths:
           success_action: role_binding.updated
         authz_mode: privilege
         concurrency: if-match
+        failures:
+          - code: ROLE_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Role binding not found.
+            status_code: !!float 404
         owner: LeapViewAPI.Access
         target:
           parameter: workspace
@@ -47071,6 +48177,35 @@ paths:
           required: true
           success_action: connection.binding.created
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_TEST_FAILED
+            kind: credential_invalid
+            public_detail: Connection validation failed.
+            status_code: !!float 422
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
         idempotency: required
         owner: LeapViewAPI.Analytics
         target:
@@ -47730,6 +48865,39 @@ paths:
           required: true
           success_action: connection.binding.updated
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONFIRMATION_REQUIRED
+            kind: confirmation_required
+            public_detail: Dependency confirmation is required.
+            status_code: !!float 412
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_BINDING_DISABLED
+            kind: disabled
+            public_detail: Connection binding is disabled.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
         owner: LeapViewAPI.Analytics
         target:
           parameter: workspace
@@ -48060,6 +49228,35 @@ paths:
           required: true
           success_action: connection.binding.disabled
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_BINDING_DISABLED
+            kind: disabled
+            public_detail: Connection binding is disabled.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
         idempotency: required
         owner: LeapViewAPI.Analytics
         target:
@@ -48391,6 +49588,31 @@ paths:
           required: true
           success_action: connection.binding.enabled
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
         idempotency: required
         owner: LeapViewAPI.Analytics
         target:
@@ -49321,6 +50543,39 @@ paths:
           required: true
           success_action: credential.refresh.requested
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_TEST_FAILED
+            kind: credential_invalid
+            public_detail: Connection validation failed.
+            status_code: !!float 422
+          - code: CONNECTION_BINDING_DISABLED
+            kind: disabled
+            public_detail: Connection binding is disabled.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
         idempotency: required
         owner: LeapViewAPI.Analytics
         target:
@@ -49639,6 +50894,39 @@ paths:
           required: true
           success_action: credential.test.requested
         authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_TEST_FAILED
+            kind: credential_invalid
+            public_detail: Connection validation failed.
+            status_code: !!float 422
+          - code: CONNECTION_BINDING_DISABLED
+            kind: disabled
+            public_detail: Connection binding is disabled.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
         idempotency: required
         owner: LeapViewAPI.Analytics
         target:

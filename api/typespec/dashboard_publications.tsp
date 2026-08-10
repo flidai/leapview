@@ -59,6 +59,11 @@ interface DashboardPublications {
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PUBLICATIONS" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "dashboard_publication.suspended", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "PUBLICATION_NOT_FOUND", publicDetail: "Dashboard publication not found." },
+      #{ kind: "conflict", statusCode: 409, code: "PUBLICATION_NOT_CONFIGURED", publicDetail: "Dashboard publication is not present in the active configuration." },
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
+    ],
     targetParameter: "workspace",
   })
   @operationId("suspendDashboardPublication")
@@ -70,6 +75,11 @@ interface DashboardPublications {
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PUBLICATIONS" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "dashboard_publication.resumed", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "PUBLICATION_NOT_FOUND", publicDetail: "Dashboard publication not found." },
+      #{ kind: "conflict", statusCode: 409, code: "PUBLICATION_NOT_CONFIGURED", publicDetail: "Dashboard publication is not present in the active configuration." },
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
+    ],
     targetParameter: "workspace",
   })
   @operationId("resumeDashboardPublication")
@@ -81,6 +91,11 @@ interface DashboardPublications {
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PUBLICATIONS" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "dashboard_publication.public_id_rotated", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "PUBLICATION_NOT_FOUND", publicDetail: "Dashboard publication not found." },
+      #{ kind: "conflict", statusCode: 409, code: "PUBLICATION_NOT_CONFIGURED", publicDetail: "Dashboard publication is not present in the active configuration." },
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
+    ],
     targetParameter: "workspace",
   })
   @operationId("rotateDashboardPublication")

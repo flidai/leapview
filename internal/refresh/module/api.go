@@ -2,11 +2,13 @@ package module
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
@@ -84,41 +86,45 @@ func (m *Module) GetRefreshRun(w http.ResponseWriter, r *http.Request, _, _ stri
 
 func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, workspaceID, runID string) {
 	if m == nil || m.runs == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "REFRESH_SERVICE_UNAVAILABLE", "Refresh service is unavailable", nil)
+		writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", apigenfailure.New("unavailable", "Refresh service is unavailable"))
 		return
 	}
 	resolvedWorkspaceID := m.workspaceID(workspaceID)
 	prior, err := m.GetRun(r.Context(), resolvedWorkspaceID, runID)
 	if err != nil || prior.Environment != m.environment {
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
+		writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
 	publicPrior, ok := materializehttp.PipelineRunResponseFor(prior)
 	if !ok {
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
+		writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
 	allowed, err := m.authorize(r, resolvedWorkspaceID, publicPrior.PipelineID, true)
 	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "REFRESH_AUTHORIZATION_FAILED", "Refresh authorization failed", nil)
+		writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", apigenfailure.Wrap("unavailable", err))
 		return
 	}
 	if !allowed {
-		apitransport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Refresh run is not accessible", nil)
+		writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", apigenfailure.New("forbidden", "Refresh run is not accessible"))
 		return
 	}
 	row, err := m.CancelRun(r.Context(), resolvedWorkspaceID, runID)
 	if err != nil {
 		if errors.Is(err, refreshrun.ErrRunNotCancellable) {
-			apitransport.WriteProblem(w, r, http.StatusConflict, "REFRESH_NOT_CANCELLABLE", "Only queued refresh runs can be cancelled", nil)
+			writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", err)
 			return
 		}
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", apigenfailure.Wrap("not_found", err))
+		} else {
+			writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", apigenfailure.Wrap("unavailable", err))
+		}
 		return
 	}
 	response, ok := materializehttp.PipelineRunResponseFor(row)
 	if !ok {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "REFRESH_RESPONSE_INVALID", "Refresh response is invalid", nil)
+		writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", errors.New("refresh response is invalid"))
 		return
 	}
 	logger := m.logger
@@ -127,7 +133,7 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, worksp
 	}
 	executor, err := apigencommand.NewExecutor(refreshgen.GetAPIGenCommandRuntimeContract, logger)
 	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INVALID_COMMAND_CONTRACT", "Refresh command contract is unavailable", nil)
+		writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", err)
 		return
 	}
 	if err := executor.Execute(r.Context(), string(refreshgen.GenOperationCancelRefreshRun), apigencommand.Execution{
@@ -137,11 +143,15 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, worksp
 		LogMessage:    "refresh audit failed",
 		LogAttributes: []slog.Attr{slog.String("refresh_run_id", runID)},
 	}); err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INVALID_COMMAND_CONTRACT", "Refresh command contract is unavailable", nil)
+		writeRefreshCommandFailure(m, w, r, "cancelRefreshRun", err)
 		return
 	}
 	w.Header().Set("Location", "/api/v1/workspaces/"+workspaceID+"/refresh-runs/"+runID)
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
+}
+
+func writeRefreshCommandFailure(_ *Module, w http.ResponseWriter, r *http.Request, operationID string, err error) {
+	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, refreshgen.GetAPIGenCommandFailureContracts, err)
 }
 
 func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, workspaceID, runID string, limit *int32, pageToken *string) {

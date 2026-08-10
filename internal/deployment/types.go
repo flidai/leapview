@@ -2,16 +2,16 @@
 package deployment
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/platform/jobs"
 )
 
 var (
-	ErrNotFound = errors.New("deployment not found")
-	ErrConflict = errors.New("deployment conflict")
+	ErrNotFound = apigenfailure.New("not_found", "deployment not found")
+	ErrConflict = apigenfailure.New("conflict", "deployment conflict")
 )
 
 type Status string

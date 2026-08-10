@@ -19,6 +19,7 @@ var toolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var auditActionPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
 var stableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 var jobKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
+var failureCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // Load parses and validates an IR document from disk.
 func Load(path string) (Document, error) {
@@ -269,6 +270,9 @@ func validateCommand(endpoint Endpoint) error {
 	if guarantee := strings.TrimSpace(command.Audit.Guarantee); guarantee != "" && guarantee != "transactional" && guarantee != "best-effort" {
 		return fmt.Errorf("%s audit has unsupported guarantee %q", context, guarantee)
 	}
+	if command.Failures == nil {
+		return fmt.Errorf("%s failures declaration is required; use an empty array when the command has no operation-owned failures", context)
+	}
 	if execution := command.Execution; execution != nil {
 		if execution.Mode != "async" {
 			return fmt.Errorf("%s execution has unsupported mode %q", context, execution.Mode)
@@ -303,6 +307,37 @@ func validateCommand(endpoint Endpoint) error {
 		if !hasAccepted {
 			return fmt.Errorf("%s async execution requires a 202 response", context)
 		}
+	}
+	statusCodes := make(map[int]struct{}, len(endpoint.Responses))
+	for _, response := range endpoint.Responses {
+		statusCodes[response.StatusCode] = struct{}{}
+	}
+	seenFailureKinds := make(map[string]struct{}, len(command.Failures))
+	seenFailureCodes := make(map[string]struct{}, len(command.Failures))
+	for _, failure := range command.Failures {
+		if !stableNamePattern.MatchString(failure.Kind) {
+			return fmt.Errorf("%s failure kind %q must be a stable lower_snake_case name", context, failure.Kind)
+		}
+		if failure.StatusCode < 400 || failure.StatusCode > 599 {
+			return fmt.Errorf("%s failure %q has invalid status_code %d", context, failure.Kind, failure.StatusCode)
+		}
+		if _, ok := statusCodes[failure.StatusCode]; !ok {
+			return fmt.Errorf("%s failure %q status_code %d is not documented by the operation", context, failure.Kind, failure.StatusCode)
+		}
+		if !failureCodePattern.MatchString(failure.Code) {
+			return fmt.Errorf("%s failure %q code %q must be stable UPPER_SNAKE_CASE", context, failure.Kind, failure.Code)
+		}
+		if strings.TrimSpace(failure.PublicDetail) == "" {
+			return fmt.Errorf("%s failure %q public_detail is required", context, failure.Kind)
+		}
+		if _, exists := seenFailureKinds[failure.Kind]; exists {
+			return fmt.Errorf("%s has duplicate failure kind %q", context, failure.Kind)
+		}
+		if _, exists := seenFailureCodes[failure.Code]; exists {
+			return fmt.Errorf("%s has duplicate failure code %q", context, failure.Code)
+		}
+		seenFailureKinds[failure.Kind] = struct{}{}
+		seenFailureCodes[failure.Code] = struct{}{}
 	}
 	seenExposures := make(map[string]struct{}, len(command.AdditionalExposures))
 	for _, exposure := range command.AdditionalExposures {
@@ -1271,6 +1306,9 @@ func Normalize(doc *Document) error {
 		}
 		if command := doc.Endpoints[i].Command; command != nil {
 			sort.Strings(command.AdditionalExposures)
+			sort.Slice(command.Failures, func(left, right int) bool {
+				return command.Failures[left].Kind < command.Failures[right].Kind
+			})
 		}
 		if tool := doc.Endpoints[i].Tool; tool != nil && tool.Confirmation == "" {
 			tool.Confirmation = defaultToolConfirmation(tool.Effect)

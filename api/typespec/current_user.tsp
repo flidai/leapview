@@ -88,7 +88,12 @@ interface CurrentAPITokens {
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "principal")
-  @apigen.command(#{ audit: #{ required: true, successAction: "api_token.created", guarantee: "transactional" } })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "api_token.created", guarantee: "transactional" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "API_TOKEN_INVALID", publicDetail: "The API token request is invalid." },
+    ],
+  })
   @operationId("createCurrentAPIToken")
   createCurrentAPIToken(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: APITokenCreateRequest): CreateCurrentAPITokenCreated | CommonErrors;
 
@@ -97,7 +102,12 @@ interface CurrentAPITokens {
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "principal")
-  @apigen.command(#{ audit: #{ required: true, successAction: "api_token.revoked", guarantee: "transactional" } })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "api_token.revoked", guarantee: "transactional" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "API_TOKEN_NOT_FOUND", publicDetail: "API token not found." },
+    ],
+  })
   @operationId("revokeCurrentAPIToken")
   revokeCurrentAPIToken(@path token: string): EmptyResponse | CommonErrors;
 }
@@ -130,7 +140,12 @@ interface CurrentSessions {
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
   @extension("x-leapview-object-scope", "principal")
-  @apigen.command(#{ audit: #{ required: true, successAction: "session.revoked", guarantee: "transactional" } })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "session.revoked", guarantee: "transactional" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "SESSION_NOT_FOUND", publicDetail: "Session not found." },
+    ],
+  })
   @operationId("revokeCurrentSession")
   revokeCurrentSession(@path session: string): EmptyResponse | CommonErrors;
 }

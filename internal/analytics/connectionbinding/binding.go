@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -12,23 +11,24 @@ import (
 	"strings"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/analytics/connectors"
 )
 
 var (
-	ErrInvalidBinding                 = errors.New("invalid connection binding")
-	ErrBindingNotFound                = errors.New("connection binding not found")
-	ErrIncompatibleBinding            = errors.New("incompatible connection binding")
-	ErrDisabledBinding                = errors.New("connection binding disabled")
-	ErrUnauthorizedBinding            = errors.New("connection binding unauthorized")
-	ErrCredentialSerialization        = errors.New("credential snapshot cannot be serialized")
-	ErrCredentialDenied               = errors.New("credential access denied")
-	ErrCredentialNotFound             = errors.New("credential not found")
-	ErrCredentialRateLimited          = errors.New("credential provider rate limited")
-	ErrProviderUnavailable            = errors.New("credential provider unavailable")
-	ErrInvalidCredentialBundle        = errors.New("invalid credential bundle")
-	ErrRotationAuditUnavailable       = errors.New("credential rotation audit unavailable")
-	ErrAdministrationAuditUnavailable = errors.New("connection administration audit unavailable")
+	ErrInvalidBinding                 = apigenfailure.New("invalid", "invalid connection binding")
+	ErrBindingNotFound                = apigenfailure.New("not_found", "connection binding not found")
+	ErrIncompatibleBinding            = apigenfailure.New("conflict", "incompatible connection binding")
+	ErrDisabledBinding                = apigenfailure.New("disabled", "connection binding disabled")
+	ErrUnauthorizedBinding            = apigenfailure.New("unauthorized", "connection binding unauthorized")
+	ErrCredentialSerialization        = apigenfailure.New("credential_serialization", "credential snapshot cannot be serialized")
+	ErrCredentialDenied               = apigenfailure.New("credential_invalid", "credential access denied")
+	ErrCredentialNotFound             = apigenfailure.New("credential_invalid", "credential not found")
+	ErrCredentialRateLimited          = apigenfailure.New("provider_unavailable", "credential provider rate limited")
+	ErrProviderUnavailable            = apigenfailure.New("provider_unavailable", "credential provider unavailable")
+	ErrInvalidCredentialBundle        = apigenfailure.New("credential_invalid", "invalid credential bundle")
+	ErrRotationAuditUnavailable       = apigenfailure.New("audit_unavailable", "credential rotation audit unavailable")
+	ErrAdministrationAuditUnavailable = apigenfailure.New("audit_unavailable", "connection administration audit unavailable")
 
 	logicalConnectionPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 	identifierPattern        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$`)

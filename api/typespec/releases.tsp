@@ -146,6 +146,10 @@ interface Releases {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "release.created", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 422, code: "INVALID_RELEASE", publicDetail: "The release request is invalid." },
+      #{ kind: "conflict", statusCode: 409, code: "RELEASE_CONFLICT", publicDetail: "The release conflicts with its current state." },
+    ],
   })
   @operationId("createRelease")
   createRelease(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ReleaseCreateRequest): CreatedJson<ReleaseResponse> | CommonErrors;
@@ -165,6 +169,13 @@ interface Releases {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "release.artifact_uploaded", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 422, code: "INVALID_RELEASE", publicDetail: "The release artifact request is invalid." },
+      #{ kind: "not_found", statusCode: 404, code: "RELEASE_NOT_FOUND", publicDetail: "Release or workspace artifact not found." },
+      #{ kind: "conflict", statusCode: 409, code: "RELEASE_CONFLICT", publicDetail: "The release conflicts with its current state." },
+      #{ kind: "immutable", statusCode: 409, code: "RELEASE_IMMUTABLE", publicDetail: "The release is immutable." },
+      #{ kind: "digest_mismatch", statusCode: 422, code: "CONTENT_DIGEST_MISMATCH", publicDetail: "The release artifact digest does not match the expected content." },
+    ],
     targetParameter: "project",
   })
   @apigen.manual
@@ -178,6 +189,13 @@ interface Releases {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "release.validating", guarantee: "transactional" },
+    failures: #[
+      #{ kind: "conflict", statusCode: 409, code: "RELEASE_CONFLICT", publicDetail: "The release conflicts with its current state." },
+      #{ kind: "immutable", statusCode: 409, code: "RELEASE_IMMUTABLE", publicDetail: "The release is immutable." },
+      #{ kind: "incomplete", statusCode: 409, code: "RELEASE_INCOMPLETE", publicDetail: "The release artifacts are incomplete." },
+      #{ kind: "not_found", statusCode: 404, code: "RELEASE_NOT_FOUND", publicDetail: "Release not found." },
+      #{ kind: "queue_unavailable", statusCode: 503, code: "ASYNC_QUEUE_UNAVAILABLE", publicDetail: "Release finalization could not be queued." },
+    ],
     execution: #{
       mode: "async",
       guarantee: "transactional",

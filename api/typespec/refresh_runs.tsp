@@ -48,6 +48,12 @@ interface RefreshRuns {
   @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "refresh.queued", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 422, code: "INVALID_REFRESH_RUN", publicDetail: "The refresh run request is invalid." },
+      #{ kind: "conflict", statusCode: 409, code: "REFRESH_RUN_CONFLICT", publicDetail: "The refresh run conflicts with its current state." },
+      #{ kind: "forbidden", statusCode: 403, code: "REFRESH_RUN_FORBIDDEN", publicDetail: "The refresh run is not permitted." },
+      #{ kind: "unavailable", statusCode: 503, code: "REFRESH_SERVICE_UNAVAILABLE", publicDetail: "Refresh service is unavailable." },
+    ],
     execution: #{
       mode: "async",
       guarantee: "transactional",
@@ -83,6 +89,12 @@ interface RefreshRuns {
   @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "refresh.cancelled", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "REFRESH_RUN_NOT_FOUND", publicDetail: "Refresh run not found." },
+      #{ kind: "forbidden", statusCode: 403, code: "REFRESH_RUN_FORBIDDEN", publicDetail: "The refresh run is not permitted." },
+      #{ kind: "not_cancellable", statusCode: 409, code: "REFRESH_RUN_NOT_CANCELLABLE", publicDetail: "Only queued refresh runs can be cancelled." },
+      #{ kind: "unavailable", statusCode: 503, code: "REFRESH_SERVICE_UNAVAILABLE", publicDetail: "Refresh service is unavailable." },
+    ],
     targetParameter: "workspace",
   })
   @operationId("cancelRefreshRun")

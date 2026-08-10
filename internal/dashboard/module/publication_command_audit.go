@@ -3,17 +3,17 @@ package module
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 )
 
-var errPublicationCommandAuditUnavailable = errors.New("dashboard publication command audit is unavailable")
+var errPublicationCommandAuditUnavailable = apigenfailure.New("audit_unavailable", "dashboard publication command audit is unavailable")
 
 type publicationCommandAuditContract struct {
 	owner     string

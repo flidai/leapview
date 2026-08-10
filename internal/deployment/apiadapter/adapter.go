@@ -6,18 +6,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/manageddata"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/jobs"
 )
 
-var ErrInvalid = errors.New("invalid deployment request")
+var ErrInvalid = apigenfailure.New("invalid", "invalid deployment request")
 
 type Status string
 

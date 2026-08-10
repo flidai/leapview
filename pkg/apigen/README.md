@@ -121,6 +121,14 @@ interface RoleBindings {
       successAction: "role_binding.created",
       guarantee: "transactional",
     },
+    failures: #[
+      #{
+        kind: "conflict",
+        statusCode: 409,
+        code: "ROLE_BINDING_CONFLICT",
+        publicDetail: "The role binding conflicts with current state.",
+      },
+    ],
     additionalExposures: #["ui"],
   })
   @operationId("createRoleBinding")
@@ -144,6 +152,16 @@ audit actions, a required `Idempotency-Key` on POST commands, and a required
 operation registries, aggregate registries, and OpenAPI `x-apigen-command`.
 Idempotency and concurrency fields describe HTTP transport policy; executors
 must not assume they apply to direct UI, agent, or automation invocation.
+
+Every command must explicitly declare `failures`, using `#[]` when it has no
+operation-owned domain failures. Each failure binds a transport-neutral stable
+lower-snake-case `kind` to one documented HTTP status, stable upper-snake-case
+public `code`, and safe `publicDetail`. Generated registries expose
+`GetAPIGenCommandFailureContracts`; `runtime/failure` classifies domain errors
+without embedding HTTP behavior in the domain. The same generated vocabulary
+is therefore available to HTTP, CLI, UI, automation, and agent consumers.
+Unclassified implementation errors retain the generated transport fallback and
+are never allowed to leak their internal detail.
 
 Audit `guarantee` describes runtime failure semantics. `transactional` means a
 successful mutation and its audit record commit or roll back together.

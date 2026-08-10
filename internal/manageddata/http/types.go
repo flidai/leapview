@@ -3,20 +3,21 @@ package http
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	stdhttp "net/http"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
 )
 
 var (
-	ErrInvalid  = control.ErrInvalid
-	ErrNotFound = control.ErrNotFound
-	ErrConflict = control.ErrConflict
-	ErrTooLarge = errors.New("managed-data request is too large")
-	ErrBackend  = control.ErrBackend
+	ErrInvalid     = control.ErrInvalid
+	ErrNotFound    = control.ErrNotFound
+	ErrConflict    = control.ErrConflict
+	ErrTooLarge    = apigenfailure.New("too_large", "managed-data request is too large")
+	ErrBackend     = control.ErrBackend
+	ErrUnavailable = apigenfailure.New("unavailable", "managed-data service is not configured")
 )
 
 type Principal struct {

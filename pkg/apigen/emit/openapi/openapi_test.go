@@ -132,10 +132,11 @@ func TestEmitYAMLIncludesTypedCommandMetadata(t *testing.T) {
 				{Name: "workspace", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"}},
 				{Name: "binding", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"}},
 			},
-			Responses: []ir.Response{{StatusCode: 204, Description: "deleted"}},
+			Responses: []ir.Response{{StatusCode: 204, Description: "deleted"}, {StatusCode: 409, Description: "conflict"}},
 			Command: &ir.Command{
 				Owner:               "CommandAPI.Access",
 				Audit:               ir.AuditPolicy{Required: true, SuccessAction: "binding.deleted", Guarantee: "transactional"},
+				Failures:            []ir.CommandFailure{{Kind: "conflict", StatusCode: 409, Code: "BINDING_CONFLICT", PublicDetail: "The binding conflicts with its current state."}},
 				AdditionalExposures: []string{"ui"},
 				Target:              &ir.OperationTarget{Parameter: "binding", Type: "binding"},
 				AuthzMode:           "privilege",
@@ -150,8 +151,11 @@ func TestEmitYAMLIncludesTypedCommandMetadata(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(content, &raw))
 	operation := raw["paths"].(map[string]any)["/workspaces/{workspace}/bindings/{binding}"].(map[string]any)["delete"].(map[string]any)
 	require.Equal(t, map[string]any{
-		"owner":                "CommandAPI.Access",
-		"audit":                map[string]any{"required": true, "success_action": "binding.deleted", "guarantee": "transactional"},
+		"owner": "CommandAPI.Access",
+		"audit": map[string]any{"required": true, "success_action": "binding.deleted", "guarantee": "transactional"},
+		"failures": []any{map[string]any{
+			"kind": "conflict", "status_code": float64(409), "code": "BINDING_CONFLICT", "public_detail": "The binding conflicts with its current state.",
+		}},
 		"additional_exposures": []any{"ui"},
 		"target":               map[string]any{"parameter": "binding", "type": "binding"},
 		"authz_mode":           "privilege",
@@ -172,7 +176,7 @@ func TestEmitYAMLIncludesAsyncExecutionMetadata(t *testing.T) {
 				Parameters: []ir.Parameter{{Name: "Idempotency-Key", In: "header", Required: true, Schema: ir.SchemaRef{Type: "string"}}},
 				Responses:  []ir.Response{{StatusCode: 202, Description: "accepted"}},
 				Command: &ir.Command{
-					Owner: "ReleaseAPI", Audit: ir.AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional"}, Idempotency: "required",
+					Owner: "ReleaseAPI", Audit: ir.AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional"}, Failures: []ir.CommandFailure{}, Idempotency: "required",
 					Execution: &ir.AsyncExecution{Mode: "async", Guarantee: "transactional", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
 				},
 			},

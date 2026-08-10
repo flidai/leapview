@@ -73,6 +73,7 @@ func TestLoad_AcceptsAndNormalizesTypedCommand(t *testing.T) {
     "command": {
       "owner": "CommandAPI.Access",
       "audit": {"required": true, "success_action": "role_binding.created"},
+      "failures": [],
       "additional_exposures": ["ui", "automation"],
       "target": {"parameter": "workspace", "type": "workspace"},
       "idempotency": "required",
@@ -102,9 +103,10 @@ func TestValidate_RejectsInvalidTypedCommands(t *testing.T) {
 		},
 		Responses: []Response{{StatusCode: 204, Description: "deleted"}},
 		Command: &Command{
-			Owner:  "CommandAPI.Access",
-			Audit:  AuditPolicy{Required: true, SuccessAction: "role_binding.deleted", Guarantee: "transactional"},
-			Target: &OperationTarget{Parameter: "binding", Type: "binding"},
+			Owner:    "CommandAPI.Access",
+			Audit:    AuditPolicy{Required: true, SuccessAction: "role_binding.deleted", Guarantee: "transactional"},
+			Failures: []CommandFailure{},
+			Target:   &OperationTarget{Parameter: "binding", Type: "binding"},
 		},
 	}
 	tests := []struct {
@@ -149,7 +151,7 @@ func TestValidateAsyncExecutionContract(t *testing.T) {
 					Parameters: []Parameter{{Name: "Idempotency-Key", In: "header", Required: true, Schema: SchemaRef{Type: "string"}}},
 					Responses:  []Response{{StatusCode: 202, Description: "accepted"}},
 					Command: &Command{
-						Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional"}, Idempotency: "required",
+						Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional"}, Failures: []CommandFailure{}, Idempotency: "required",
 						Execution: &AsyncExecution{Mode: "async", Guarantee: "transactional", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
 					},
 				},
@@ -176,13 +178,50 @@ func TestValidateAsyncExecutionContract(t *testing.T) {
 		{name: "unknown status operation", mutate: func(doc *Document) { doc.Endpoints[2].Command.Execution.StatusOperation = "missingRelease" }, wantErr: "references unknown operation"},
 		{name: "status command", mutate: func(doc *Document) {
 			doc.Endpoints[0].Kind = "command"
-			doc.Endpoints[0].Command = &Command{Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.read", Guarantee: "transactional"}}
+			doc.Endpoints[0].Command = &Command{Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.read", Guarantee: "transactional"}, Failures: []CommandFailure{}}
 		}, wantErr: "must reference a GET query"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			doc := validDocument()
 			test.mutate(&doc)
+			require.ErrorContains(t, Validate(doc), test.wantErr)
+		})
+	}
+}
+
+func TestValidateCommandFailureContract(t *testing.T) {
+	valid := Document{
+		SchemaVersion: CurrentSchemaVersion, API: API{BasePath: "/"}, Info: Info{Title: "Failures", Version: "1"},
+		Endpoints: []Endpoint{{
+			Method: "delete", Path: "/widgets/{widget}", OperationID: "deleteWidget", Kind: "command",
+			Responses: []Response{{StatusCode: 204, Description: "deleted"}, {StatusCode: 409, Description: "conflict"}},
+			Command: &Command{Owner: "Widgets", Audit: AuditPolicy{Required: false}, Failures: []CommandFailure{{
+				Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "The widget conflicts with its current state.",
+			}}},
+		}},
+	}
+	require.NoError(t, Validate(valid))
+
+	tests := []struct {
+		name    string
+		mutate  func(*CommandFailure)
+		wantErr string
+	}{
+		{name: "kind", mutate: func(f *CommandFailure) { f.Kind = "Widget Conflict" }, wantErr: "stable lower_snake_case"},
+		{name: "status", mutate: func(f *CommandFailure) { f.StatusCode = 422 }, wantErr: "is not documented"},
+		{name: "code", mutate: func(f *CommandFailure) { f.Code = "widget-conflict" }, wantErr: "UPPER_SNAKE_CASE"},
+		{name: "detail", mutate: func(f *CommandFailure) { f.PublicDetail = "" }, wantErr: "public_detail is required"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			doc := valid
+			endpoint := valid.Endpoints[0]
+			command := *endpoint.Command
+			command.Failures = append([]CommandFailure(nil), endpoint.Command.Failures...)
+			test.mutate(&command.Failures[0])
+			endpoint.Command = &command
+			doc.Endpoints = []Endpoint{endpoint}
 			require.ErrorContains(t, Validate(doc), test.wantErr)
 		})
 	}

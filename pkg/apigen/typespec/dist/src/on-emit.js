@@ -667,6 +667,7 @@ function operationKind(program, builder, operation) {
 const auditActionPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 const stableNamePattern = /^[a-z][a-z0-9_]*$/;
 const jobKindPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/;
+const failureCodePattern = /^[A-Z][A-Z0-9_]*$/;
 function commandMetadata(program, builder, operation, parameters) {
     const options = getCommand({ program }, operation.operation);
     if (!options) {
@@ -715,6 +716,36 @@ function commandMetadata(program, builder, operation, parameters) {
             cancellation: options.execution.cancellation,
         };
     }
+    const failures = [];
+    const failureKinds = new Set();
+    const failureCodes = new Set();
+    for (const authored of options.failures ?? []) {
+        const kind = authored.kind.trim();
+        const code = authored.code.trim();
+        const publicDetail = authored.publicDetail.trim();
+        if (!stableNamePattern.test(kind)) {
+            builder.invalidCommand("failure kind must be a stable lower_snake_case name", operation.operation);
+        }
+        if (authored.statusCode < 400 || authored.statusCode > 599) {
+            builder.invalidCommand(`failure ${JSON.stringify(kind)} statusCode must be between 400 and 599`, operation.operation);
+        }
+        if (!failureCodePattern.test(code)) {
+            builder.invalidCommand(`failure ${JSON.stringify(kind)} code must be stable UPPER_SNAKE_CASE`, operation.operation);
+        }
+        if (!publicDetail) {
+            builder.invalidCommand(`failure ${JSON.stringify(kind)} publicDetail is required`, operation.operation);
+        }
+        if (failureKinds.has(kind)) {
+            builder.invalidCommand(`failure kind ${JSON.stringify(kind)} is duplicated`, operation.operation);
+        }
+        if (failureCodes.has(code)) {
+            builder.invalidCommand(`failure code ${JSON.stringify(code)} is duplicated`, operation.operation);
+        }
+        failureKinds.add(kind);
+        failureCodes.add(code);
+        failures.push({ kind, status_code: authored.statusCode, code, public_detail: publicDetail });
+    }
+    failures.sort((left, right) => left.kind.localeCompare(right.kind));
     const additionalExposures = [...(options.additionalExposures ?? [])];
     if (new Set(additionalExposures).size !== additionalExposures.length) {
         builder.invalidCommand("additionalExposures must not contain duplicates", operation.operation);
@@ -756,6 +787,7 @@ function commandMetadata(program, builder, operation, parameters) {
         owner: namespaceName(operation.operation.namespace) ?? "",
         audit: prune({ required: options.audit.required, success_action: successAction, guarantee }),
         execution,
+        failures,
         additional_exposures: additionalExposures.length > 0 ? additionalExposures : undefined,
         target,
         idempotency,
@@ -1520,7 +1552,7 @@ function prune(value) {
             if (child === undefined) {
                 continue;
             }
-            if (Array.isArray(child) && child.length === 0) {
+            if (Array.isArray(child) && child.length === 0 && key !== "failures") {
                 continue;
             }
             if (key === "extensions") {

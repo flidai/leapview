@@ -2,16 +2,16 @@ package http
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	stdhttp "net/http"
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
 )
 
-var errCommandAuditUnavailable = errors.New("managed-data command audit is unavailable")
+var errCommandAuditUnavailable = apigenfailure.New("unavailable", "managed-data command audit is unavailable")
 
 func (h *Handler) recordCommandAudit(
 	r *stdhttp.Request,
@@ -71,6 +71,16 @@ func (h *Handler) commandAuditActor(w stdhttp.ResponseWriter, r *stdhttp.Request
 	if h == nil || h.options.RecordCommandAudit == nil {
 		if h != nil {
 			h.writeUnavailable(w, r)
+		}
+		return "", false
+	}
+	return h.actor(w, r)
+}
+
+func (h *Handler) commandAuditActorForOperation(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string) (string, bool) {
+	if h == nil || h.options.RecordCommandAudit == nil {
+		if h != nil {
+			h.writeCommandUnavailable(w, r, operationID)
 		}
 		return "", false
 	}
