@@ -24,7 +24,6 @@ export const pageHeaderStyles = css`
     text-overflow: ellipsis;
     white-space: nowrap;
     font: var(--lv-type-page-title);
-    font-weight: var(--base-text-weight-semibold);
     line-height: var(--base-text-lineHeight-tight);
   }
 
@@ -32,7 +31,6 @@ export const pageHeaderStyles = css`
     margin-bottom: var(--base-size-4);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
     line-height: var(--base-text-lineHeight-tight);
     text-transform: uppercase;
   }

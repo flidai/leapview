@@ -37,7 +37,6 @@ class AgentPromptEditor extends LitElement {
     .prompt-status {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-tight);
     }
 
@@ -78,7 +77,7 @@ class AgentPromptEditor extends LitElement {
       border: 0;
       border-radius: calc(var(--lv-radius-default) - 2px);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-tight);
       cursor: pointer;
     }

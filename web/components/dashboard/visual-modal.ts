@@ -95,7 +95,6 @@ export class VisualModal extends LitElement {
       margin: 0 0 var(--borderRadius-small);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
       line-height: 1;
       text-transform: uppercase;
     }
@@ -203,7 +202,6 @@ export class VisualModal extends LitElement {
       color: var(--lv-fg-muted);
       padding: var(--lv-space-md) var(--lv-space-lg);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .data-scroll {
@@ -216,7 +214,6 @@ export class VisualModal extends LitElement {
       height: 100%;
       place-items: center;
       color: var(--lv-fg-muted);
-      font-weight: var(--base-text-weight-semibold);
     }
 
     .notice {
@@ -231,7 +228,7 @@ export class VisualModal extends LitElement {
       color: var(--lv-fg-default);
       padding: var(--lv-space-md) var(--lv-space-lg);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
     }
   `
 

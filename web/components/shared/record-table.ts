@@ -893,7 +893,6 @@ const recordTableStyles = `
     background: var(--lv-bg-page);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
     letter-spacing: 0;
     text-transform: none;
   }
@@ -903,14 +902,12 @@ const recordTableStyles = `
     padding: var(--base-size-8) var(--base-size-12);
     background: var(--lv-bg-page);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-semibold);
   }
 
   lv-record-table .record-table td {
     color: var(--lv-fg-default);
     font: var(--lv-type-body);
     line-height: var(--base-text-lineHeight-normal);
-    font-weight: var(--base-text-weight-normal);
   }
 
   lv-record-table .variant-primary .record-table td {
@@ -1033,7 +1030,6 @@ const recordTableStyles = `
     text-overflow: ellipsis;
     white-space: nowrap;
     font: var(--lv-type-body);
-    font-weight: var(--base-text-weight-medium);
   }
 
   lv-record-table .variant-compact .record-code,
@@ -1048,7 +1044,6 @@ const recordTableStyles = `
     text-overflow: ellipsis;
     white-space: nowrap;
     font: var(--lv-type-body);
-    font-weight: var(--base-text-weight-normal);
   }
 
   lv-record-table .record-badge {
@@ -1161,7 +1156,6 @@ const recordTableStyles = `
     overflow: hidden;
     color: var(--lv-fg-link, var(--lv-fg-default));
     font: var(--lv-type-code-inline);
-    font-weight: var(--base-text-weight-medium);
     line-height: var(--base-text-lineHeight-tight);
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1270,7 +1264,6 @@ const recordTableStyles = `
   lv-record-table .record-link,
   lv-record-table .record-entity-link {
     color: var(--lv-fg-link);
-    font-weight: var(--base-text-weight-medium);
     text-decoration: none;
   }
 
@@ -1304,7 +1297,6 @@ const recordTableStyles = `
     color: var(--lv-fg-muted);
     padding: 0 var(--base-size-8);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
     text-transform: uppercase;
   }
 
@@ -1408,7 +1400,6 @@ const recordTableStyles = `
     overflow-wrap: anywhere;
     color: var(--lv-fg-muted);
     font: var(--lv-type-body);
-    font-weight: var(--base-text-weight-normal);
     line-height: var(--base-text-lineHeight-tight);
     white-space: normal;
   }
@@ -1470,7 +1461,6 @@ const recordTableStyles = `
   lv-record-table .record-table-empty {
     padding: var(--base-size-20) 0;
     font: var(--lv-type-body);
-    font-weight: var(--base-text-weight-normal);
   }
 `
 

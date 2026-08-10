@@ -619,7 +619,6 @@ const workspaceStyles = css`
     text-overflow: ellipsis;
     white-space: nowrap;
     font: var(--lv-type-section-title);
-    font-weight: var(--base-text-weight-semibold);
     line-height: var(--base-text-lineHeight-tight);
   }
 
@@ -633,7 +632,6 @@ const workspaceStyles = css`
     margin-bottom: var(--base-size-4);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
     line-height: var(--base-text-lineHeight-tight);
     text-transform: uppercase;
   }
@@ -690,7 +688,7 @@ const workspaceStyles = css`
     color: var(--lv-button-accent-fg-rest);
     padding: 0 var(--lv-button-padding-inline-sm);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-semibold);
+    font-weight: var(--base-text-weight-medium);
   }
 
   .icon-link,
@@ -843,14 +841,13 @@ const workspaceStyles = css`
     border-bottom: 2px solid transparent;
     color: var(--lv-fg-muted);
     font: var(--lv-type-body);
-    font-weight: var(--base-text-weight-medium);
     text-decoration: none;
   }
 
   .tabs a.active {
     border-bottom-color: var(--lv-accent);
     color: var(--lv-fg-default);
-    font-weight: var(--base-text-weight-semibold);
+    font-weight: var(--base-text-weight-medium);
   }
 
   .count {
@@ -974,7 +971,6 @@ const workspaceStyles = css`
     padding: 0;
     list-style: none;
     font: var(--lv-type-body);
-    font-weight: var(--base-text-weight-medium);
   }
 
   .breadcrumb-header li:not(:last-child)::after {
@@ -1099,7 +1095,6 @@ const workspaceStyles = css`
   .facts span:first-child {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
     text-transform: uppercase;
   }
 

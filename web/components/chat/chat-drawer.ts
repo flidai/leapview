@@ -150,7 +150,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
     .page-context {
       overflow: hidden;
       color: var(--lv-fg-default);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       text-overflow: ellipsis;
       white-space: nowrap;
     }

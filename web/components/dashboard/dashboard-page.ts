@@ -194,7 +194,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-section-title);
-      font-weight: var(--base-text-weight-semibold);
       line-height: var(--base-text-lineHeight-tight);
     }
 
@@ -403,7 +402,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       margin-bottom: var(--base-size-4);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-tight);
       text-transform: uppercase;
     }
@@ -411,7 +409,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .heading-visual h2 {
       color: var(--lv-fg-default);
       font: var(--lv-type-title-large);
-      font-weight: var(--base-text-weight-semibold);
       line-height: var(--base-text-lineHeight-tight);
     }
 
@@ -444,7 +441,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       padding: var(--base-size-16);
       text-align: center;
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
     }
 
     @media (max-width: 640px) {

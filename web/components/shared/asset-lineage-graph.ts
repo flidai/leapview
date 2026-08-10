@@ -191,7 +191,6 @@ const assetLineageGraphStyles = `
   lv-asset-lineage-graph .asset-lineage-panel-eyebrow {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-semibold);
     line-height: var(--base-text-lineHeight-tight);
     text-transform: uppercase;
   }
@@ -235,7 +234,6 @@ const assetLineageGraphStyles = `
   lv-asset-lineage-graph .asset-lineage-panel-stat span {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
   }
 
   lv-asset-lineage-graph .asset-lineage-panel-stat strong {
@@ -262,7 +260,7 @@ const assetLineageGraphStyles = `
     color: var(--lv-fg-on-emphasis);
     padding: 0 var(--base-size-12);
     font: var(--lv-type-body);
-    font-weight: var(--base-text-weight-semibold);
+    font-weight: var(--base-text-weight-medium);
     text-decoration: none;
   }
 
@@ -467,7 +465,6 @@ const assetLineageGraphStyles = `
   lv-asset-lineage-graph .asset-lineage-node-kind {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-semibold);
     text-transform: uppercase;
   }
 
@@ -498,7 +495,6 @@ const assetLineageGraphStyles = `
     text-overflow: ellipsis;
     white-space: nowrap;
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
   }
 
   @media (max-width: 860px) {

@@ -178,7 +178,6 @@ const entityListStyles = `
     height: var(--control-medium-size);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
     line-height: var(--base-text-lineHeight-tight);
   }
 
@@ -189,7 +188,6 @@ const entityListStyles = `
     color: var(--lv-fg-muted);
     padding-inline: var(--base-size-8);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
   }
 
   .entity-list-group-count {

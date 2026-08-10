@@ -62,7 +62,7 @@ export class VisualizationHost extends LitElement {
       overflow: hidden;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-tight);
       text-transform: uppercase;
       text-overflow: ellipsis;
@@ -82,7 +82,6 @@ export class VisualizationHost extends LitElement {
       overflow: hidden;
       color: var(--lv-fg-muted);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-tight);
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -203,7 +202,6 @@ export class VisualizationHost extends LitElement {
       background: var(--lv-chart-surface);
       color: var(--lv-fg-muted);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
     }
     .loading-spinner {
       width: var(--base-size-20);

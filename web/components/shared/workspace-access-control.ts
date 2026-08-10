@@ -124,7 +124,7 @@ class WorkspaceAccessControl extends LitElement {
       color: var(--lv-button-fg-rest);
       cursor: pointer;
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-tight);
       padding: 0 var(--lv-button-padding-inline);
       transition:
@@ -156,7 +156,6 @@ class WorkspaceAccessControl extends LitElement {
       margin: 0;
       color: var(--lv-fg-default);
       font: var(--lv-type-section-title);
-      font-weight: var(--base-text-weight-semibold);
       line-height: var(--base-text-lineHeight-snug);
     }
 
@@ -164,7 +163,6 @@ class WorkspaceAccessControl extends LitElement {
       margin: var(--base-size-4) 0 0;
       color: var(--lv-fg-muted);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-normal);
       line-height: var(--base-text-lineHeight-snug);
     }
 
@@ -190,7 +188,6 @@ class WorkspaceAccessControl extends LitElement {
     .label {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-tight);
     }
 
@@ -225,7 +222,6 @@ class WorkspaceAccessControl extends LitElement {
       background: var(--lv-bg-control);
       color: var(--lv-fg-default);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-snug);
       padding: 0 var(--base-size-8);
     }
@@ -338,7 +334,6 @@ class WorkspaceAccessControl extends LitElement {
       margin-top: var(--base-size-2);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-normal);
       line-height: var(--base-text-lineHeight-tight);
     }
 
@@ -348,7 +343,6 @@ class WorkspaceAccessControl extends LitElement {
       background: var(--lv-bg-panel);
       color: var(--lv-fg-muted);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
       padding: var(--base-size-16);
       text-align: center;
     }
@@ -396,7 +390,6 @@ class WorkspaceAccessControl extends LitElement {
     .status {
       border-radius: var(--lv-radius-default);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-snug);
       padding: var(--base-size-8) var(--base-size-12);
     }
@@ -448,7 +441,6 @@ class WorkspaceAccessControl extends LitElement {
       background: var(--lv-bg-panel);
       color: var(--lv-fg-muted);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
       padding: var(--base-size-20) var(--base-size-16);
       text-align: center;
     }

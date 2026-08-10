@@ -217,7 +217,6 @@ class LeapViewSidebar extends LitElement {
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-decoration: none;
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .brand-back:hover,
@@ -355,7 +354,6 @@ class LeapViewSidebar extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .search-empty {
@@ -373,7 +371,7 @@ class LeapViewSidebar extends LitElement {
       border-color: transparent;
       background: transparent;
       color: var(--lv-fg-default);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .primary-action .nav-item:hover,
@@ -418,7 +416,6 @@ class LeapViewSidebar extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
     }
 
@@ -438,7 +435,6 @@ class LeapViewSidebar extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .history-empty {
@@ -471,7 +467,6 @@ class LeapViewSidebar extends LitElement {
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-decoration: none;
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .nav-text {
@@ -486,7 +481,6 @@ class LeapViewSidebar extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .nav-item:hover,
@@ -564,7 +558,7 @@ class LeapViewSidebar extends LitElement {
       background: var(--bgColor-neutral-muted);
       color: var(--lv-fg-default);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       letter-spacing: 0;
     }
 
@@ -589,7 +583,6 @@ class LeapViewSidebar extends LitElement {
     .user-role {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .actions {

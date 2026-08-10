@@ -102,7 +102,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-section-title);
-      font-weight: var(--base-text-weight-semibold);
       line-height: var(--base-text-lineHeight-tight);
     }
 
@@ -147,7 +146,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     .metric .label {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
       text-transform: uppercase;
     }
 
@@ -157,14 +155,12 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-section-title);
-      font-weight: var(--base-text-weight-semibold);
     }
 
     .metric .meta,
     .empty {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .empty {
@@ -204,7 +200,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     .profile-label {
       color: var(--lv-fg-default);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
       line-height: var(--base-text-lineHeight-tight);
     }
 
@@ -271,7 +266,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       padding: var(--lv-space-control) var(--base-size-12);
       color: var(--lv-fg-default);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
     }
 
     lv-storage-explorer {
@@ -456,7 +450,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     .query-filter label {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
       text-transform: uppercase;
     }
 
@@ -481,7 +474,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       padding: var(--base-size-8) var(--base-size-12);
       color: var(--lv-fg-muted);
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .query-history-error {

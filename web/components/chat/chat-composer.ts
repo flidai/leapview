@@ -170,7 +170,6 @@ class ChatComposer extends LitElement {
 			padding: var(--lv-space-xs) var(--lv-space-sm) var(--lv-space-2xs);
 			color: var(--lv-fg-muted);
 			font: var(--lv-type-caption);
-			font-weight: var(--base-text-weight-semibold);
 		}
 
 		.mention-icon {
@@ -282,7 +281,7 @@ class ChatComposer extends LitElement {
       color: var(--lv-button-accent-fg-rest, var(--lv-accent-fg));
       cursor: pointer;
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       padding: 0;
       box-shadow: var(--lv-button-shadow-resting, var(--shadow-resting-small));
       transition:

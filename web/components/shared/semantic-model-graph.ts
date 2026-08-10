@@ -676,7 +676,6 @@ const semanticModelGraphStyles = `
     box-shadow: var(--shadow-resting-small, none);
     color: var(--lv-fg-default);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-semibold);
     line-height: 1;
     pointer-events: none;
   }
@@ -776,7 +775,6 @@ const semanticModelGraphStyles = `
     border-radius: var(--lv-radius-full);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-normal);
     line-height: 1;
     padding: 3px 6px;
   }
@@ -839,7 +837,6 @@ const semanticModelGraphStyles = `
   lv-semantic-model-graph .semantic-model-field-key {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-semibold);
     line-height: 1;
   }
 `
