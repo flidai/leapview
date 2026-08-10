@@ -29,7 +29,9 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 			switch route {
 			case routeLogin:
 				return next, true
-			case routeCatalog, routeDashboard, routeWorkspace, routeWorkspaceAsset, routeConnections, routeConnectionAsset, routeData:
+			case routeCatalog:
+				return routes.accessModule.ProtectAnyWorkspaceNamed("VIEW_ITEM", next), true
+			case routeDashboard, routeWorkspace, routeWorkspaceAsset, routeConnections, routeConnectionAsset, routeData:
 				return routes.accessModule.ProtectNamed("VIEW_ITEM", next), true
 			case routeChat:
 				return routes.accessModule.ProtectNamed("VIEW_AGENT", next), true

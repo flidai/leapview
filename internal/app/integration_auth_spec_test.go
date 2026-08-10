@@ -54,7 +54,7 @@ func TestAuthSpecWorkspaceViewerCanOpenDashboardCatalog(t *testing.T) {
 	ctx := context.Background()
 
 	viewer := authSpecPrincipal(t, ctx, repo, "workspace-viewer@example.com")
-	authSpecGrant(t, ctx, repo, access.WorkspaceObject("sales"), access.SubjectPrincipal, viewer.ID, access.PrivilegeViewItem)
+	authSpecGrant(t, ctx, repo, access.WorkspaceObject(h.workspaceID), access.SubjectPrincipal, viewer.ID, access.PrivilegeViewItem)
 	session, err := repo.CreateSession(ctx, viewer.ID, time.Hour)
 	if err != nil {
 		t.Fatalf("create viewer session: %v", err)
@@ -72,6 +72,36 @@ func TestAuthSpecWorkspaceViewerCanOpenDashboardCatalog(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("dashboard catalog status=%d want=200 body=%s", res.StatusCode, body)
+	}
+
+	updatesCtx, cancelUpdates := context.WithCancel(context.Background())
+	updatesReq, err := http.NewRequestWithContext(updatesCtx, http.MethodGet, h.serverURL(t)+"/updates?route=catalog", nil)
+	if err != nil {
+		t.Fatalf("create dashboard catalog updates request: %v", err)
+	}
+	updatesReq.AddCookie(&http.Cookie{Name: "lv_session", Value: session})
+	updatesRes, err := http.DefaultClient.Do(updatesReq)
+	if err != nil {
+		cancelUpdates()
+		t.Fatalf("get dashboard catalog updates: %v", err)
+	}
+	if updatesRes.StatusCode != http.StatusOK {
+		defer updatesRes.Body.Close()
+		updatesBody, _ := io.ReadAll(updatesRes.Body)
+		cancelUpdates()
+		t.Fatalf("dashboard catalog updates status=%d want=200 body=%s", updatesRes.StatusCode, updatesBody)
+	}
+	client := &streamClient{
+		cancel:  cancelUpdates,
+		body:    updatesRes.Body,
+		patches: make(chan map[string]any, 1),
+		errs:    make(chan error, 1),
+	}
+	go client.read()
+	t.Cleanup(client.close)
+	patch := patchString(client.nextPatch(t))
+	if !strings.Contains(patch, `"href":"/workspaces/sales/dashboards/executive-sales"`) {
+		t.Fatalf("dashboard catalog updates missing visible dashboard: %s", patch)
 	}
 }
 
