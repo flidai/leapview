@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	stdhttp "net/http"
 	"strconv"
 	"strings"
@@ -54,6 +55,8 @@ type Options struct {
 	EnqueueRun             func(context.Context, agent.Scope, *agent.StartedPrompt) error
 	EnqueueChatRun         func(context.Context, agent.Scope, *agent.StartedPrompt, string) error
 	CancelQueuedRun        func(context.Context, agent.Scope, string, string) (bool, error)
+	RecordCommandAudit     func(context.Context, CommandAuditInput) error
+	Logger                 *slog.Logger
 	APIGenToolContracts    map[string]agenttool.Contract
 }
 
@@ -86,6 +89,7 @@ func (h *Handler) CreateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
+	h.recordCommandAudit(r, createAgentConversationOperation, scope, "conversation", conversation.ID)
 	writeJSON(w, stdhttp.StatusCreated, agentConversationDTO(conversation))
 }
 
@@ -154,6 +158,7 @@ func (h *Handler) UpdateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		writeJSONError(w, err, statusForBadRequestOrNotFound(err))
 		return
 	}
+	h.recordCommandAudit(r, updateAgentConversationOperation, scope, "conversation", conversation.ID)
 	response := agentConversationDTO(conversation)
 	w.Header().Set("ETag", agentResourceETag(response))
 	writeJSON(w, stdhttp.StatusOK, response)
@@ -164,11 +169,12 @@ func (h *Handler) ArchiveConversation(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	if !ok {
 		return
 	}
-	_, err := service.ArchiveConversation(r.Context(), scope, chi.URLParam(r, "conversation"))
+	conversation, err := service.ArchiveConversation(r.Context(), scope, chi.URLParam(r, "conversation"))
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
+	h.recordCommandAudit(r, archiveAgentConversationOperation, scope, "conversation", conversation.ID)
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
@@ -340,6 +346,7 @@ func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, fmt.Errorf("durable agent queue is unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
+	h.recordCommandAudit(r, createAgentRunOperation, scope, "conversation", started.ConversationID)
 	writeJSON(w, stdhttp.StatusAccepted, agentRunDTO(run, scope))
 }
 
@@ -362,6 +369,7 @@ func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				writeJSONError(w, err, stdhttp.StatusInternalServerError)
 				return
 			}
+			h.recordCommandAudit(r, cancelAgentRunOperation, scope, "conversation", conversationID)
 			w.Header().Set("Location", "/api/v1/agent/conversations/"+conversationID+"/runs/"+runID)
 			writeJSON(w, stdhttp.StatusAccepted, agentRunDTO(run, scope))
 			return
@@ -380,6 +388,7 @@ func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
+	h.recordCommandAudit(r, cancelAgentRunOperation, scope, "conversation", conversationID)
 	w.Header().Set("Location", "/api/v1/agent/conversations/"+conversationID+"/runs/"+runID)
 	writeJSON(w, stdhttp.StatusAccepted, agentRunDTO(run, scope))
 }

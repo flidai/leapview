@@ -1,0 +1,17 @@
+targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+    cli_out:
+      dir: cmd/cli/gen
+  - name: signal-contracts
+    kind: contracts
+    typespec_dir: contracts/typespec
+    ir_out: contracts/gen/json-ir.json
+    go_models_out: internal/contracts/models.gen.go
+    go_models_package: contracts
+    ts_out: contracts/gen/contracts.ts
+    json_schema_out: contracts/gen/contracts.schema.json

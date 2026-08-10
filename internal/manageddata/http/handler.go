@@ -15,6 +15,7 @@ import (
 
 	"github.com/flidai/leapview/internal/manageddata"
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
+	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
 )
@@ -150,7 +151,7 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, err)
 		return
 	}
-	actor, ok := h.actor(w, r)
+	actor, ok := h.commandAuditActor(w, r)
 	if !ok {
 		return
 	}
@@ -170,6 +171,10 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	response, err := uploadResponse(result, project, connection, "")
 	if err != nil {
 		h.writeError(w, r, err)
+		return
+	}
+	if err := h.recordCommandAudit(r, manageddatagen.GenOperationCreateManagedDataUploadSession, actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
+		h.writeUnavailable(w, r)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusCreated, response)
@@ -239,6 +244,10 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
+	actor, ok := h.commandAuditActor(w, r)
+	if !ok {
+		return
+	}
 	abort := h.options.Uploads.AbortUpload
 	if h.options.AbortUpload != nil {
 		abort = h.options.AbortUpload
@@ -264,6 +273,10 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, err)
 		return
 	}
+	if err := h.recordCommandAudit(r, manageddatagen.GenOperationCancelManagedDataUploadSession, actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
+		h.writeUnavailable(w, r)
+		return
+	}
 	h.writeJSON(w, stdhttp.StatusOK, response)
 }
 
@@ -274,6 +287,10 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 	}
 	if !validUploadScope(project, connection, uploadSession) || !validIdempotencyKey(headers.IdempotencyKey) {
 		h.writeError(w, r, ErrInvalid)
+		return
+	}
+	actor, ok := h.commandAuditActor(w, r)
+	if !ok {
 		return
 	}
 	request := control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession}
@@ -301,6 +318,10 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 		err = h.options.EnqueueFinalize(r.Context(), request)
 	}
 	if err != nil {
+		h.writeUnavailable(w, r)
+		return
+	}
+	if err := h.recordCommandAudit(r, manageddatagen.GenOperationFinalizeManagedDataUploadSession, actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
 		h.writeUnavailable(w, r)
 		return
 	}
@@ -335,7 +356,8 @@ func (h *Handler) CreateManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r
 		h.writeError(w, r, ErrConflict)
 		return
 	}
-	if _, ok := h.actor(w, r); !ok {
+	actor, ok := h.commandAuditActor(w, r)
+	if !ok {
 		return
 	}
 	result, err := h.options.Multipart.Create(r.Context(), s3multipart.CreateRequest{
@@ -349,6 +371,10 @@ func (h *Handler) CreateManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r
 	response, err := multipartResponse(result, upload, "")
 	if err != nil {
 		h.writeError(w, r, err)
+		return
+	}
+	if err := h.recordCommandAudit(r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload, actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
+		h.writeUnavailable(w, r)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusCreated, response)
@@ -430,7 +456,8 @@ func (h *Handler) CompleteManagedDataS3MultipartUpload(w stdhttp.ResponseWriter,
 	if !ok {
 		return
 	}
-	if _, ok := h.actor(w, r); !ok {
+	actor, ok := h.commandAuditActor(w, r)
+	if !ok {
 		return
 	}
 	result, err := h.options.Multipart.Complete(r.Context(), s3multipart.CompleteRequest{
@@ -444,6 +471,10 @@ func (h *Handler) CompleteManagedDataS3MultipartUpload(w stdhttp.ResponseWriter,
 	response, err := multipartResponse(result, upload, multipartUpload)
 	if err != nil {
 		h.writeError(w, r, err)
+		return
+	}
+	if err := h.recordCommandAudit(r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload, actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
+		h.writeUnavailable(w, r)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusOK, response)
@@ -462,7 +493,8 @@ func (h *Handler) AbortManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	if _, ok := h.actor(w, r); !ok {
+	actor, ok := h.commandAuditActor(w, r)
+	if !ok {
 		return
 	}
 	result, err := h.options.Multipart.Abort(r.Context(), s3multipart.AbortRequest{
@@ -476,6 +508,10 @@ func (h *Handler) AbortManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r 
 	response, err := multipartResponse(result, upload, multipartUpload)
 	if err != nil {
 		h.writeError(w, r, err)
+		return
+	}
+	if err := h.recordCommandAudit(r, manageddatagen.GenOperationAbortManagedDataS3MultipartUpload, actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
+		h.writeUnavailable(w, r)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusOK, response)

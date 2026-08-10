@@ -101,6 +101,7 @@ type Config struct {
 	Jobs             JobStore
 	Workflow         jobs.WorkflowRecorder
 	ServingStates    ServingStateReader
+	RecordAudit      func(context.Context, CommandAuditEvent) error
 }
 
 type ProductConfig struct {
@@ -127,6 +128,14 @@ type ServingStateReader interface {
 }
 
 func Build(ctx context.Context, cfg Config) (*Module, error) {
+	var commandAudit func(context.Context, manageddatahttp.CommandAuditInput) error
+	if !cfg.Disabled {
+		var err error
+		commandAudit, err = buildManagedDataCommandAuditRecorder(cfg.RecordAudit)
+		if err != nil {
+			return nil, err
+		}
+	}
 	currentPrincipal := func(r *http.Request) (manageddatahttp.Principal, bool) {
 		if cfg.CurrentPrincipal == nil {
 			return manageddatahttp.Principal{}, false
@@ -138,7 +147,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		module := &Module{jobs: cfg.Jobs, maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker)}
 		module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 			CurrentPrincipal: currentPrincipal, MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
-			Environment: cfg.Environment,
+			Environment: cfg.Environment, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 		})
 		return module, nil
 	}
@@ -204,7 +213,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		Repository: apiRepository, Uploads: uploads, Multipart: multipart,
 		CurrentPrincipal: currentPrincipal, Environment: cfg.Environment,
 		BeginFinalize: module.beginFinalize, RecordUploadCreated: module.recordUploadCreated,
-		AbortUpload: module.abortUpload,
+		AbortUpload: module.abortUpload, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 	})
 	module.maintenanceWorker = newMaintenanceWorker(module.maintenance, cfg.Worker)
 	return module, nil

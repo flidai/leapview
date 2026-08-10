@@ -185,6 +185,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		durableWorkflow = workflow != nil
 	}
 	if service != nil {
+		if config.RecordAudit == nil {
+			return nil, fmt.Errorf("agent command audit recorder is required")
+		}
 		service.ConfigureDefaultModel(func(modelConfig agent.Config) agentcore.Model {
 			return agentopenai.NewModel(modelConfig, nil)
 		})
@@ -250,7 +253,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		ResolveTurnContext: resolveTurnContext, QueueMissingTitle: m.queueMissingChatTitle,
 		ExecuteStartedChatTurn: m.executeStartedChatTurn,
 		EnqueueRun:             m.EnqueueRun, EnqueueChatRun: m.EnqueueChatRun,
-		CancelQueuedRun:     m.CancelQueuedRun,
+		CancelQueuedRun: m.CancelQueuedRun, RecordCommandAudit: m.recordCommandAudit, Logger: config.Logger,
 		APIGenToolContracts: apiGenToolContracts(m.apiOperations),
 	})
 	m.configureTools()

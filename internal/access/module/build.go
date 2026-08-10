@@ -48,7 +48,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			surface.CurrentPrincipal = auth.Principal
 			surface.CurrentCredential = auth.APICredential
 		}
-		return newSurface(surface), nil
+		return newSurface(surface)
 	}
 	if err := accesssqlite.Initialize(ctx, config.Database); err != nil {
 		return nil, err
@@ -103,11 +103,13 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 		surface.CurrentCredential = auth.APICredential
 	}
-	module := newSurface(surface)
+	module, err := newSurface(surface)
+	if err != nil {
+		return nil, err
+	}
 	if auth == nil {
 		return module, nil
 	}
-	var err error
 	if issuer := strings.TrimSpace(config.MCPIssuerURL); issuer != "" {
 		module.oauthResource, err = mcpoauth.NewExternal(repository, mcpoauth.ExternalConfig{IssuerURL: issuer, ResourceURL: publicURL + "/mcp"})
 	} else {

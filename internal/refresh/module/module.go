@@ -144,7 +144,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return authorizePipeline(r, workspaceID, pipelineID, access.PrivilegeRefreshData, config.Authorization)
 	}
 	if m.events != nil {
-		m.handler.RunCreated = m.recordRunCreated
+		m.handler.RunCreated = m.recordRunCreatedBestEffort
 	}
 	if config.Database == nil {
 		return m, nil

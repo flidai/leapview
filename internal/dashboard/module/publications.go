@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"html"
+	"log/slog"
 	"net/http"
 	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 )
@@ -31,10 +34,36 @@ func (m *Module) PublicationByPublicID(ctx context.Context, publicID string) (pu
 }
 
 func (m *Module) MutatePublication(ctx context.Context, workspaceID, name, actorID string, action publication.Action) (publication.Publication, error) {
-	if m == nil || m.publicationService == nil {
+	if m == nil || m.publicationService == nil || m.recordPublicationCommandAudit == nil {
 		return publication.Publication{}, publication.ErrNotFound
 	}
-	return m.publicationService.Mutate(ctx, workspaceID, name, actorID, action)
+	row, err := m.publicationService.Mutate(ctx, workspaceID, name, actorID, action)
+	if err != nil {
+		return row, err
+	}
+	operationID, ok := publicationOperationID(action)
+	if !ok {
+		return row, publication.ErrConflict
+	}
+	executor, err := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, m.logger)
+	if err != nil {
+		return row, err
+	}
+	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
+			return m.recordPublicationCommandAudit(ctx, publicationCommandAuditInput{
+				operationID: operationID, workspaceID: strings.TrimSpace(workspaceID), principalID: strings.TrimSpace(actorID),
+				targetID: strings.TrimSpace(row.ID), surface: "ui",
+			})
+		},
+		LogMessage: "best-effort dashboard publication command audit failed",
+		LogAttributes: []slog.Attr{
+			slog.String("workspace_id", strings.TrimSpace(workspaceID)),
+			slog.String("principal_id", strings.TrimSpace(actorID)),
+			slog.String("target_id", strings.TrimSpace(row.ID)),
+		},
+	})
+	return row, err
 }
 
 func (m *Module) AllPublications(ctx context.Context) ([]publication.Publication, error) {
@@ -97,11 +126,46 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATION_NOT_FOUND", "Dashboard publication not found", nil)
 		return
 	}
+	// Publication commands require the generated success audit contract. Reject
+	// an incompletely constructed module before performing the state transition.
+	if m.recordPublicationCommandAudit == nil {
+		m.writePublicationMutation(w, r, publication.Publication{}, errPublicationCommandAuditUnavailable)
+		return
+	}
 	actor := ""
 	if m.currentActor != nil {
 		actor = m.currentActor(r)
 	}
 	row, err := m.publicationService.Mutate(r.Context(), workspaceID, name, actor, action)
+	if err == nil {
+		operationID, ok := publicationOperationID(action)
+		if !ok {
+			err = publication.ErrConflict
+		} else {
+			logger := m.logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			executor, executorErr := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, logger)
+			if executorErr != nil {
+				err = executorErr
+			} else {
+				err = executor.Execute(r.Context(), operationID, apigencommand.Execution{
+					BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
+						return m.recordPublicationCommandAudit(ctx, publicationAuditRequestInput(r, operationID, workspaceID, actor, row.ID))
+					},
+					LogMessage: "best-effort dashboard publication command audit failed",
+					LogAttributes: []slog.Attr{
+						slog.String("workspace_id", strings.TrimSpace(workspaceID)),
+						slog.String("principal_id", strings.TrimSpace(actor)),
+						slog.String("target_type", "dashboard_publication"),
+						slog.String("target_id", strings.TrimSpace(row.ID)),
+						slog.String("request_id", firstPublicationHeader(r, "X-Request-Id", "X-Request-ID")),
+					},
+				})
+			}
+		}
+	}
 	m.writePublicationMutation(w, r, row, err)
 }
 
@@ -132,6 +196,8 @@ func (m *Module) writePublicationMutation(w http.ResponseWriter, r *http.Request
 			status, code, detail = http.StatusNotFound, "PUBLICATION_NOT_FOUND", "Dashboard publication not found"
 		case errors.Is(err, publication.ErrConflict):
 			status, code, detail = http.StatusConflict, "PUBLICATION_NOT_CONFIGURED", "Dashboard publication is not present in the active configuration"
+		case errors.Is(err, errPublicationCommandAuditUnavailable):
+			status, code, detail = http.StatusServiceUnavailable, "AUDIT_UNAVAILABLE", "Dashboard publication audit could not be persisted"
 		}
 		apitransport.WriteProblem(w, r, status, code, detail, nil)
 		return

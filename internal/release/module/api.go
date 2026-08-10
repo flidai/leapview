@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	"github.com/flidai/leapview/internal/release"
 	releaseapi "github.com/flidai/leapview/internal/release/api"
+	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 	releasefilesystem "github.com/flidai/leapview/internal/release/filesystem"
 	releasehttp "github.com/flidai/leapview/internal/release/http"
 )
@@ -64,10 +66,10 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 		writeError(w, r, err)
 		return
 	}
-	if err := m.appendEvent(r.Context(), created.ID, "release.created", response(created)); err != nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_EVENT_STORE_UNAVAILABLE", "Release event history could not be persisted", nil)
-		return
-	}
+	m.recordBestEffortEvent(
+		r.Context(), string(releasegen.GenOperationCreateRelease), created.ID,
+		releaseCreatedAuditAction, response(created),
+	)
 	w.Header().Set("Location", location(project, created.ID))
 	apitransport.WriteJSON(w, http.StatusCreated, response(created))
 }
@@ -110,8 +112,13 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 		writeError(w, r, err)
 		return
 	}
+	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, WorkspaceID: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes}
+	m.recordBestEffortEvent(
+		r.Context(), string(releasegen.GenOperationUploadReleaseArtifact), releaseID,
+		releaseArtifactUploadedAuditAction, result,
+	)
 	w.Header().Set("Location", location(project, releaseID)+"/workspaces/"+workspaceID+"/artifact")
-	apitransport.WriteJSON(w, http.StatusCreated, releaseapi.ArtifactResponse{ReleaseID: releaseID, WorkspaceID: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes})
+	apitransport.WriteJSON(w, http.StatusCreated, result)
 }
 
 func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project, releaseID, _ string) {
@@ -129,17 +136,27 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE", "Release finalization could not be queued", nil)
 		return
 	}
-	row, err := m.service.BeginFinalization(r.Context(), project, releaseID, jobs.WorkflowIntent{
-		Event: jobs.EventInput{
-			Key: "release.validating", ResourceKind: "release", ResourceID: releaseID,
-			EventType: "release.validating", Data: event,
-		},
-		Job: jobs.EnqueueInput{
-			ID: "release:" + releaseID + ":finalize", Kind: FinalizeJobKind,
-			WorkloadClass: "control", WorkspaceID: "_node",
-			ResourceKind: "release", ResourceID: releaseID, Payload: payload,
-		},
-	})
+	var row release.Release
+	executor, err := apigencommand.NewExecutor(releasegen.GetAPIGenCommandRuntimeContract, m.logger)
+	if err == nil {
+		err = executor.Execute(r.Context(), string(releasegen.GenOperationFinalizeRelease), apigencommand.Execution{
+			Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
+				var mutationErr error
+				row, mutationErr = m.service.BeginFinalization(ctx, project, releaseID, jobs.WorkflowIntent{
+					Event: jobs.EventInput{
+						Key: contract.AuditAction, ResourceKind: "release", ResourceID: releaseID,
+						EventType: contract.AuditAction, Data: event,
+					},
+					Job: jobs.EnqueueInput{
+						ID: "release:" + releaseID + ":finalize", Kind: FinalizeJobKind,
+						WorkloadClass: "control", WorkspaceID: "_node",
+						ResourceKind: "release", ResourceID: releaseID, Payload: payload,
+					},
+				})
+				return mutationErr
+			},
+		})
+	}
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -181,6 +198,35 @@ func (m *Module) appendEvent(ctx context.Context, releaseID, eventType string, d
 	}
 	_, err = m.api.Jobs.AppendEvent(ctx, "release", releaseID, eventType, encoded)
 	return err
+}
+
+func (m *Module) recordBestEffortEvent(
+	ctx context.Context,
+	operationID, releaseID, eventType string,
+	data any,
+) {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(releasegen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		logger.ErrorContext(ctx, "release command executor is unavailable", "operation_id", operationID, "error", err)
+		return
+	}
+	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			if eventType != contract.AuditAction {
+				return fmt.Errorf("release audit action %q does not match generated action %q", eventType, contract.AuditAction)
+			}
+			return m.appendEvent(ctx, releaseID, contract.AuditAction, data)
+		},
+		LogMessage:    "release audit failed",
+		LogAttributes: []slog.Attr{slog.String("release_id", releaseID)},
+	})
+	if err != nil {
+		logger.ErrorContext(ctx, "release command contract execution failed", "operation_id", operationID, "error", err)
+	}
 }
 
 func response(row release.Release) releaseapi.Response {

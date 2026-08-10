@@ -255,6 +255,9 @@ func (transport capabilityAPITransport) DoAPIGen(ctx context.Context, request ap
 		Target: transport.target,
 		Token:  transport.token,
 		Client: transport.client,
+		PrepareRequest: func(request *http.Request) {
+			request.Header.Set("X-LeapView-Invocation-Surface", "cli")
+		},
 	}).DoAPIGen(ctx, request, out)
 }
 

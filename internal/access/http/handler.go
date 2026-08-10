@@ -15,8 +15,10 @@ import (
 	"strings"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accessapi "github.com/flidai/leapview/internal/access/api"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/go-chi/chi/v5"
@@ -55,11 +57,13 @@ type AuthoringAuthentication interface {
 }
 
 type Handler struct {
-	Repository        RepositoryProvider
-	CurrentPrincipal  PrincipalProvider
-	CurrentCredential CredentialProvider
-	WorkspaceID       WorkspaceIDNormalizer
-	AuthoringAuth     AuthoringAuthentication
+	Repository          RepositoryProvider
+	RoleBindingCommands access.RoleBindingCommander
+	GrantCommands       access.GrantCommander
+	CurrentPrincipal    PrincipalProvider
+	CurrentCredential   CredentialProvider
+	WorkspaceID         WorkspaceIDNormalizer
+	AuthoringAuth       AuthoringAuthentication
 }
 
 func (h Handler) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -402,15 +406,26 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, fmt.Errorf("principal kind %q is managed by its owning subsystem", existing.Kind), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	deleter, ok := repo.(interface {
+	if _, ok := repo.(interface {
 		DeletePrincipal(context.Context, string) error
-	})
-	if !ok {
+	}); !ok {
 		writeJSONError(w, fmt.Errorf("principal deletion is unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	if err := deleter.DeletePrincipal(r.Context(), id); err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		txDeleter, ok := txRepo.(interface {
+			DeletePrincipal(context.Context, string) error
+		})
+		if !ok {
+			return access.AuditEventInput{}, fmt.Errorf("principal deletion is unavailable")
+		}
+		mutationErr := txDeleter.DeletePrincipal(r.Context(), id)
+		return accessAuditInput(r, "principal.deleted", h.currentPrincipalID(r), "", "principal", id, access.PrivilegeManageGrants, "success", map[string]any{
+			"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName,
+		}), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -463,9 +478,16 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if strings.TrimSpace(input.DisplayName) != "" {
 		existing.DisplayName = input.DisplayName
 	}
-	principal, err := repo.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: existing.ID, Kind: existing.Kind, Email: existing.Email, DisplayName: existing.DisplayName})
+	var principal access.Principal
+	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		var mutationErr error
+		principal, mutationErr = txRepo.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: existing.ID, Kind: existing.Kind, Email: existing.Email, DisplayName: existing.DisplayName})
+		return accessAuditInput(r, "principal.updated", h.currentPrincipalID(r), "", "principal", principal.ID, access.PrivilegeManageGrants, "success", map[string]any{
+			"email": principal.Email, "kind": string(principal.Kind), "displayName": principal.DisplayName,
+		}), mutationErr
+	})
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(principal))
@@ -983,17 +1005,12 @@ func (h Handler) CreateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	if !ok {
 		return
 	}
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+	commands := h.RoleBindingCommands
+	if commands == nil {
+		writeJSONError(w, fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
-	var row access.RoleBinding
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		row, mutationErr = txRepo.CreateRoleBinding(r.Context(), input)
-		return accessAuditInput(r, "role_binding.created", h.currentPrincipalID(r), row.WorkspaceID, "role_binding", row.ID, access.PrivilegeManageGrants, "success", roleBindingAuditMetadata(row)), mutationErr
-	})
+	row, err := commands.CreateRoleBinding(r.Context(), h.roleBindingInvocation(r), input)
 	if err != nil {
 		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
 		return
@@ -1066,7 +1083,6 @@ func (h Handler) ListGrants(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h Handler) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
 	var input struct {
 		ObjectType  string `json:"objectType"`
 		ObjectID    string `json:"objectId"`
@@ -1095,16 +1111,13 @@ func (h Handler) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, fmt.Errorf("unsupported privilege %q", input.Privilege), stdhttp.StatusBadRequest)
 		return
 	}
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+	commands := h.GrantCommands
+	if commands == nil {
+		writeJSONError(w, fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
-	var grant access.Grant
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		grant, mutationErr = txRepo.CreateGrant(r.Context(), access.GrantInput{Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege})
-		return grantAuditInput(r, "grant.created", principal.ID, grant), mutationErr
+	grant, err := commands.CreateGrant(r.Context(), h.grantInvocation(r), access.GrantInput{
+		Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege,
 	})
 	if err != nil {
 		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
@@ -1133,7 +1146,6 @@ func (h Handler) GetGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -1172,24 +1184,13 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, fmt.Errorf("unsupported grant subject or privilege"), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	_, ok = repo.(interface {
-		UpdateGrant(context.Context, string, string, access.GrantInput) (access.Grant, error)
-	})
-	if !ok {
-		writeJSONError(w, fmt.Errorf("grant updates are unavailable"), stdhttp.StatusServiceUnavailable)
+	commands := h.GrantCommands
+	if commands == nil {
+		writeJSONError(w, fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
-	var updated access.Grant
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		txUpdater, ok := txRepo.(interface {
-			UpdateGrant(context.Context, string, string, access.GrantInput) (access.Grant, error)
-		})
-		if !ok {
-			return access.AuditEventInput{}, fmt.Errorf("grant updates are unavailable")
-		}
-		var mutationErr error
-		updated, mutationErr = txUpdater.UpdateGrant(r.Context(), workspaceID, id, access.GrantInput{Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege})
-		return grantAuditInput(r, "grant.updated", principal.ID, updated), mutationErr
+	updated, err := commands.UpdateGrant(r.Context(), h.grantInvocation(r), workspaceID, id, access.GrantInput{
+		Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege,
 	})
 	if err != nil {
 		writeAuditedMutationError(w, err, stdhttp.StatusUnprocessableEntity)
@@ -1201,7 +1202,6 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h Handler) DeleteGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -1216,10 +1216,12 @@ func (h Handler) DeleteGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromGrant(grant)) {
 		return
 	}
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.DeleteGrant(r.Context(), workspaceID, chi.URLParam(r, "grant"))
-		return grantAuditInput(r, "grant.deleted", principal.ID, grant), mutationErr
-	})
+	commands := h.GrantCommands
+	if commands == nil {
+		writeJSONError(w, fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
+		return
+	}
+	_, err = commands.DeleteGrant(r.Context(), h.grantInvocation(r), workspaceID, grant.ID)
 	if err != nil {
 		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
 		return
@@ -1531,12 +1533,12 @@ func (h Handler) UpdateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	if !ok {
 		return
 	}
-	var row access.RoleBinding
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		row, mutationErr = txRepo.UpdateRoleBinding(r.Context(), input.WorkspaceID, chi.URLParam(r, "binding"), input)
-		return accessAuditInput(r, "role_binding.updated", h.currentPrincipalID(r), row.WorkspaceID, "role_binding", row.ID, access.PrivilegeManageGrants, "success", roleBindingAuditMetadata(row)), mutationErr
-	})
+	commands := h.RoleBindingCommands
+	if commands == nil {
+		writeJSONError(w, fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
+		return
+	}
+	row, err := commands.UpdateRoleBinding(r.Context(), h.roleBindingInvocation(r), input.WorkspaceID, chi.URLParam(r, "binding"), input)
 	if err != nil {
 		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
 		return
@@ -1545,31 +1547,37 @@ func (h Handler) UpdateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request)
 }
 
 func (h Handler) DeleteRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	if repo == nil {
-		writeJSONError(w, errors.New("Workspace access store is not configured."), stdhttp.StatusInternalServerError)
-		return
-	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
 	bindingID := chi.URLParam(r, "binding")
-	row, err := repo.GetRoleBinding(r.Context(), workspaceID, bindingID)
-	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+	commands := h.RoleBindingCommands
+	if commands == nil {
+		writeJSONError(w, fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
 		return
 	}
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.DeleteRoleBinding(r.Context(), workspaceID, bindingID)
-		return accessAuditInput(r, "role_binding.deleted", h.currentPrincipalID(r), row.WorkspaceID, "role_binding", row.ID, access.PrivilegeManageGrants, "success", roleBindingAuditMetadata(row)), mutationErr
-	})
+	_, err := commands.DeleteRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, bindingID)
 	if err != nil {
-		writeAuditedMutationError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
+func (h Handler) roleBindingInvocation(r *stdhttp.Request) access.RoleBindingInvocation {
+	// The client surface is audit attribution only. Authorization is enforced
+	// from the generated operation contract before this handler is dispatched.
+	surface := access.OperationSurfaceAPI
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Invocation-Surface")), string(access.OperationSurfaceCLI)) ||
+		strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Client")), string(access.OperationSurfaceCLI)) {
+		surface = access.OperationSurfaceCLI
+	}
+	return access.RoleBindingInvocation{
+		PrincipalID: h.currentPrincipalID(r), Surface: surface,
+		RequestID: requestIDFromRequest(r), CorrelationID: correlationIDFromRequest(r),
+	}
+}
+
+func (h Handler) grantInvocation(r *stdhttp.Request) access.GrantInvocation {
+	return h.roleBindingInvocation(r)
 }
 
 func (h Handler) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -1687,10 +1695,6 @@ func groupAuditMetadata(row access.Group) map[string]any {
 	return map[string]any{"provider": row.Provider, "externalId": row.ExternalID, "displayName": row.Name}
 }
 
-func roleBindingAuditMetadata(row access.RoleBinding) map[string]any {
-	return map[string]any{"subjectType": string(row.SubjectType), "subjectId": row.SubjectID, "role": row.Role}
-}
-
 func grantDTO(row access.Grant) map[string]any {
 	return map[string]any{
 		"id":          row.ID,
@@ -1794,35 +1798,6 @@ func sessionDTO(row access.Session) map[string]any {
 	}
 }
 
-func grantAuditInput(r *stdhttp.Request, action, principalID string, grant access.Grant) access.AuditEventInput {
-	metadataValues := map[string]string{
-		"objectId":    grant.ObjectID,
-		"objectType":  string(grant.ObjectType),
-		"subjectType": string(grant.SubjectType),
-		"subjectId":   grant.SubjectID,
-		"privilege":   string(grant.Privilege),
-	}
-	workspaceID := grant.WorkspaceID
-	if grant.ObjectType == access.SecurableProjectEnvironment {
-		workspaceID = ""
-		metadataValues["projectId"] = grant.WorkspaceID
-		metadataValues["environment"] = grant.ObjectID
-	}
-	metadata, _ := json.Marshal(metadataValues)
-	return access.AuditEventInput{
-		WorkspaceID:   workspaceID,
-		PrincipalID:   principalID,
-		Action:        action,
-		TargetType:    "grant",
-		TargetID:      grant.ID,
-		Privilege:     grant.Privilege,
-		Status:        "success",
-		RequestID:     requestIDFromRequest(r),
-		CorrelationID: correlationIDFromRequest(r),
-		MetadataJSON:  string(metadata),
-	}
-}
-
 func accessAuditInput(r *stdhttp.Request, action, principalID, workspaceID, targetType, targetID string, privilege access.Privilege, status string, metadata map[string]any) access.AuditEventInput {
 	if metadata == nil {
 		metadata = map[string]any{}
@@ -1843,17 +1818,30 @@ func accessAuditInput(r *stdhttp.Request, action, principalID, workspaceID, targ
 }
 
 func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation func(access.Repository) (access.AuditEventInput, error)) error {
-	if transactional, ok := repo.(access.AuditedMutationRepository); ok {
+	transactional, ok := repo.(access.AuditedMutationRepository)
+	if !ok {
+		return fmt.Errorf("%w: access repository does not support transactional auditing", access.ErrAuditTransaction)
+	}
+	operationID, generatedCommand := apigencommand.OperationID(r.Context())
+	if !generatedCommand {
+		// Non-generated internal callers retain the same atomic repository path.
 		return transactional.RunAuditedMutation(r.Context(), mutation)
 	}
-	input, err := mutation(repo)
+	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
 	if err != nil {
 		return err
 	}
-	if err := access.PersistAuditEvent(r.Context(), repo, input); err != nil {
-		return fmt.Errorf("%w: %v", access.ErrAuditTransaction, err)
-	}
-	return nil
+	return executor.Execute(r.Context(), operationID, apigencommand.Execution{
+		Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
+			return transactional.RunAuditedMutation(ctx, func(txRepo access.Repository) (access.AuditEventInput, error) {
+				input, mutationErr := mutation(txRepo)
+				if mutationErr == nil && input.Action != contract.AuditAction {
+					return access.AuditEventInput{}, fmt.Errorf("generated audit action %q does not match mutation action %q", contract.AuditAction, input.Action)
+				}
+				return input, mutationErr
+			})
+		},
+	})
 }
 
 func writeAuditedMutationError(w stdhttp.ResponseWriter, err error, mutationStatus int) {

@@ -200,6 +200,12 @@ func (m *Module) NewConnectionAdministration(
 	if m == nil || m.connectionBindings == nil {
 		return nil, connectionbinding.ErrProviderUnavailable
 	}
+	if err := requireConnectionBindingAuditSinks(
+		config.Audit,
+		config.AdministrationAudit,
+	); err != nil {
+		return nil, err
+	}
 	if config.Pools == nil {
 		pools, err := m.ensureConnectionPools(
 			config.Now,
@@ -237,6 +243,9 @@ func (m *Module) NewRuntimeBindingLeaser(
 ) (*connectionbinding.RuntimeBindingLeaser, error) {
 	if m == nil || m.connectionBindings == nil {
 		return nil, connectionbinding.ErrProviderUnavailable
+	}
+	if err := requireConnectionRotationAuditSink(config.Audit); err != nil {
+		return nil, err
 	}
 	pools, err := m.ensureConnectionPools(
 		config.Now,

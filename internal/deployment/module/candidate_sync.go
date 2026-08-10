@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +14,10 @@ import (
 	"strings"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/digest"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/project"
@@ -75,10 +78,75 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 		writeCandidateAPIError(w, r, err)
 		return
 	}
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "AUDIT_UNAVAILABLE", "Candidate source blob audit is temporarily unavailable", nil)
+		return
+	}
+	if err := executor.Execute(r.Context(), string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob), apigencommand.Execution{
+		BestEffortAudit: func(context.Context, apigencommand.Contract) error {
+			return m.recordCandidateSourceBlobAudit(r, principalID, project, identity, counter.read)
+		},
+		LogMessage: "candidate source blob audit failed",
+		LogAttributes: []slog.Attr{
+			slog.String("project_id", strings.TrimSpace(project)),
+			slog.String("digest", identity),
+		},
+	}); err != nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "AUDIT_UNAVAILABLE", "Candidate source blob audit is temporarily unavailable", nil)
+		return
+	}
 	w.Header().Set("Location", "/api/v1/projects/"+url.PathEscape(strings.TrimSpace(project))+
 		"/candidate-sync/blobs/"+url.PathEscape(identity))
 	apitransport.WriteJSON(w, http.StatusCreated, deploymentapi.CandidateSourceBlobResponse{
 		Digest: identity, SizeBytes: counter.read,
+	})
+}
+
+func (m *Module) recordCandidateSourceBlobAudit(
+	r *http.Request,
+	principalID, projectID, identity string,
+	sizeBytes int64,
+) error {
+	contract, ok := deploymentgen.GetAPIGenOperationContract(
+		deploymentgen.GenOperationUploadProjectCandidateSourceBlob,
+	)
+	if !ok || contract.Command == nil || !contract.Command.Audit.Required {
+		return errors.New("required candidate source blob command audit contract is unavailable")
+	}
+	if m == nil || m.candidateSourceBlobAudit == nil {
+		return errors.New("required candidate source blob audit sink is unavailable")
+	}
+	// Caller surface headers affect audit attribution only. APIGen authorization
+	// has already enforced the generated privilege independently of this value.
+	surface := "api"
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Invocation-Surface")), "cli") ||
+		strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Client")), "cli") {
+		surface = "cli"
+	}
+	metadata, err := json.Marshal(map[string]any{
+		"operationId": contract.OperationID,
+		"surface":     surface,
+		"digest":      identity,
+		"sizeBytes":   sizeBytes,
+	})
+	if err != nil {
+		return fmt.Errorf("encode candidate source blob audit metadata: %w", err)
+	}
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+	if correlationID == "" {
+		correlationID = requestID
+	}
+	return m.candidateSourceBlobAudit(r.Context(), CandidateSourceBlobAuditEvent{
+		PrincipalID: principalID, ProjectID: strings.TrimSpace(projectID), Digest: identity,
+		Action: contract.Command.Audit.SuccessAction, Privilege: contract.Command.Privilege,
+		Status: "success", RequestID: requestID, CorrelationID: correlationID,
+		MetadataJSON: string(metadata),
 	})
 }
 

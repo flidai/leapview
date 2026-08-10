@@ -1173,13 +1173,23 @@ func TestWorkspaceRoleBindingAPIUpsertsPrincipalRole(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPrincipal(t, ctx, store, "owner@example.com", "Owner", "owner")
-	analyst, err := testAccessRepository(store).UpsertPrincipal(ctx, access.PrincipalInput{ID: access.PrincipalIDForEmail("analyst@example.com"), Email: "analyst@example.com", DisplayName: "Analyst"})
+	repo := testAccessRepository(store)
+	analyst, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{ID: access.PrincipalIDForEmail("analyst@example.com"), Email: "analyst@example.com", DisplayName: "Analyst"})
 	if err != nil {
 		t.Fatalf("seed analyst: %v", err)
 	}
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+
+	missingKeyReq := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/role-bindings", bytes.NewBufferString(`{"subjectType":"principal","subjectId":"`+analyst.ID+`","role":"viewer"}`))
+	missingKeyReq.Header.Set("Authorization", "Bearer "+token)
+	missingKeyReq.Header.Set("Content-Type", "application/json")
+	missingKeyRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(missingKeyRec, missingKeyReq)
+	if missingKeyRec.Code != http.StatusBadRequest {
+		t.Fatalf("missing idempotency key status = %d body=%s", missingKeyRec.Code, missingKeyRec.Body.String())
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/role-bindings", bytes.NewBufferString(`{"subjectType":"principal","subjectId":"`+analyst.ID+`","role":"viewer"}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -1190,6 +1200,13 @@ func TestWorkspaceRoleBindingAPIUpsertsPrincipalRole(t *testing.T) {
 	server.Routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	replayReq := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/role-bindings", bytes.NewBufferString(`{"subjectType":"principal","subjectId":"`+analyst.ID+`","role":"viewer"}`))
+	replayReq.Header = req.Header.Clone()
+	replayRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(replayRec, replayReq)
+	if replayRec.Code != http.StatusCreated || replayRec.Header().Get("Idempotency-Replayed") != "true" || replayRec.Body.String() != rec.Body.String() {
+		t.Fatalf("replay status = %d replayed=%q body=%s", replayRec.Code, replayRec.Header().Get("Idempotency-Replayed"), replayRec.Body.String())
 	}
 	var createdBinding struct {
 		ID string `json:"id"`
@@ -1203,6 +1220,15 @@ func TestWorkspaceRoleBindingAPIUpsertsPrincipalRole(t *testing.T) {
 	server.Routes().ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusOK || getRec.Header().Get("ETag") == "" {
 		t.Fatalf("get status = %d etag=%q body=%s", getRec.Code, getRec.Header().Get("ETag"), getRec.Body.String())
+	}
+	staleReq := httptest.NewRequest(http.MethodPatch, "/api/v1/workspaces/test/role-bindings/"+createdBinding.ID, bytes.NewBufferString(`{"subjectType":"principal","subjectId":"`+analyst.ID+`","role":"editor"}`))
+	staleReq.Header.Set("Authorization", "Bearer "+token)
+	staleReq.Header.Set("Content-Type", "application/json")
+	staleReq.Header.Set("If-Match", `"stale"`)
+	staleRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(staleRec, staleReq)
+	if staleRec.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale update status = %d body=%s", staleRec.Code, staleRec.Body.String())
 	}
 	updateReq := httptest.NewRequest(http.MethodPatch, "/api/v1/workspaces/test/role-bindings/"+createdBinding.ID, bytes.NewBufferString(`{"subjectType":"principal","subjectId":"`+analyst.ID+`","role":"editor"}`))
 	updateReq.Header.Set("Authorization", "Bearer "+token)
@@ -1229,6 +1255,58 @@ func TestWorkspaceRoleBindingAPIUpsertsPrincipalRole(t *testing.T) {
 	}
 	if strings.Contains(body, `"role":"viewer"`) {
 		t.Fatalf("role binding was duplicated instead of replaced:\n%s", body)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/test/role-bindings/"+createdBinding.ID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+token)
+	deleteRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+	for action, operationID := range map[string]string{
+		"role_binding.created": "createRoleBinding",
+		"role_binding.updated": "updateRoleBinding",
+		"role_binding.deleted": "deleteRoleBinding",
+	} {
+		events, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{WorkspaceID: "test", Action: action})
+		if err != nil || len(events) != 1 {
+			t.Fatalf("%s audit events = %#v, %v", action, events, err)
+		}
+		assertOperationAuditMetadata(t, events[0], operationID, "api")
+	}
+}
+
+func TestWorkspaceRoleBindingAPIRejectsViewerWithoutMutation(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	viewer := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer", "viewer")
+	repo := testAccessRepository(store)
+	analyst, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{ID: access.PrincipalIDForEmail("denied-analyst@example.com"), Email: "denied-analyst@example.com", DisplayName: "Denied Analyst"})
+	if err != nil {
+		t.Fatalf("seed analyst: %v", err)
+	}
+	token := testAPIToken(t, ctx, store, viewer.ID, "test")
+	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/role-bindings", bytes.NewBufferString(`{"subjectType":"principal","subjectId":"`+analyst.ID+`","role":"viewer"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "denied-role-binding")
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	bindings, err := repo.ListRoleBindings(ctx, "test")
+	if err != nil {
+		t.Fatalf("list role bindings: %v", err)
+	}
+	for _, binding := range bindings {
+		if binding.SubjectID == analyst.ID {
+			t.Fatalf("denied API request created binding %#v", binding)
+		}
 	}
 }
 
@@ -1322,6 +1400,7 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPrincipal(t, ctx, store, "owner@example.com", "Owner", "owner")
+	repo := testAccessRepository(store)
 	analyst := testPrincipal(t, ctx, store, "analyst@example.com", "Analyst", "")
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
@@ -1354,7 +1433,7 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 		t.Fatalf("role binding missing after command:\n%s", listRec.Body.String())
 	}
 
-	bindings, err := testAccessRepository(store).ListRoleBindings(ctx, "test")
+	bindings, err := repo.ListRoleBindings(ctx, "test")
 	if err != nil {
 		t.Fatalf("list role bindings: %v", err)
 	}
@@ -1367,6 +1446,14 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 	}
 	if bindingID == "" {
 		t.Fatalf("analyst role binding missing: %#v", bindings)
+	}
+	updateSignals := `{"workspaceAccess":{"command":{"bindingId":"` + bindingID + `","role":"editor","subjectType":"principal","subjectId":"` + analyst.ID + `"}}}`
+	updateReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(updateSignals))
+	updateReq.Header.Set("Authorization", "Bearer "+token)
+	updateRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK || !strings.Contains(updateRec.Body.String(), "Access updated.") {
+		t.Fatalf("update status = %d body=%s", updateRec.Code, updateRec.Body.String())
 	}
 	removeSignals := `{"workspaceAccess":{"command":{"bindingId":"` + bindingID + `"}}}`
 	removeReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/remove", bytes.NewBufferString(removeSignals))
@@ -1387,6 +1474,28 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 	server.Routes().ServeHTTP(removedListRec, removedListReq)
 	if strings.Contains(removedListRec.Body.String(), `"email":"analyst@example.com"`) {
 		t.Fatalf("role binding remained after remove command:\n%s", removedListRec.Body.String())
+	}
+	for action, operationID := range map[string]string{
+		"role_binding.created": "createRoleBinding",
+		"role_binding.updated": "updateRoleBinding",
+		"role_binding.deleted": "deleteRoleBinding",
+	} {
+		events, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{WorkspaceID: "test", Action: action})
+		if err != nil || len(events) != 1 {
+			t.Fatalf("%s audit events = %#v, %v", action, events, err)
+		}
+		assertOperationAuditMetadata(t, events[0], operationID, "ui")
+	}
+}
+
+func assertOperationAuditMetadata(t *testing.T, event access.AuditEvent, operationID, surface string) {
+	t.Helper()
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(event.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("decode %s audit metadata: %v", event.Action, err)
+	}
+	if metadata["operationId"] != operationID || metadata["surface"] != surface {
+		t.Fatalf("%s audit metadata = %#v", event.Action, metadata)
 	}
 }
 

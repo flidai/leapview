@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
@@ -308,7 +310,10 @@ func (m *Module) CancelDeployment(w http.ResponseWriter, r *http.Request, projec
 		writeAPIError(w, r, err)
 		return
 	}
-	_ = m.appendAPIEvent(r.Context(), deploymentID, "deployment.cancelled", map[string]any{"deploymentId": deploymentID, "status": "cancelled"})
+	m.recordBestEffortAPIEvent(
+		r.Context(), string(deploymentgen.GenOperationCancelDeployment), deploymentID,
+		deploymentCancelledAuditAction, map[string]any{"deploymentId": deploymentID, "status": "cancelled"},
+	)
 	w.Header().Set("Location", deploymentLocation(project, deploymentID))
 	apitransport.WriteJSON(w, http.StatusAccepted, deploymentResponse(row, targetRelease))
 }
@@ -407,6 +412,10 @@ func (m *Module) RequestDeploymentApproval(
 		writeAPIError(w, r, err)
 		return
 	}
+	m.recordBestEffortAPIEvent(r.Context(), string(deploymentgen.GenOperationRequestDeploymentApproval), deploymentID, deploymentApprovalRequestedAuditAction, map[string]any{
+		"deploymentId": deploymentID,
+		"approvalId":   approval.ID,
+	})
 	w.Header().Set("Location", approvalLocation(project, deploymentID, approval.ID))
 	apitransport.WriteJSON(w, http.StatusCreated, approvalResponse(approval))
 }
@@ -487,7 +496,7 @@ func (m *Module) ActivateDeployment(
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE", "Deployment activation could not be persisted", nil)
 		return
 	}
-	_ = m.appendAPIEvent(r.Context(), deploymentID, "deployment.activation_requested", map[string]any{
+	m.recordBestEffortAPIEvent(r.Context(), string(deploymentgen.GenOperationActivateDeployment), deploymentID, deploymentActivationRequestedAuditAction, map[string]any{
 		"deploymentId":     deploymentID,
 		"approvalId":       approval.ID,
 		"approvalRevision": approval.Revision,
@@ -686,14 +695,17 @@ func (m *Module) transitionApproval(
 		writeAPIError(w, r, err)
 		return
 	}
-	eventType := "deployment.approval_revoked"
+	eventType := deploymentApprovalRevokedAuditAction
+	operationID := string(deploymentgen.GenOperationRevokeDeploymentApproval)
 	switch decision {
 	case approvalDecisionApprove:
-		eventType = "deployment.approved"
+		eventType = deploymentApprovedAuditAction
+		operationID = string(deploymentgen.GenOperationApproveDeployment)
 	case approvalDecisionDeny:
-		eventType = "deployment.denied"
+		eventType = deploymentDeniedAuditAction
+		operationID = string(deploymentgen.GenOperationDenyDeploymentApproval)
 	}
-	_ = m.appendAPIEvent(r.Context(), deploymentID, eventType, map[string]any{
+	m.recordBestEffortAPIEvent(r.Context(), operationID, deploymentID, eventType, map[string]any{
 		"deploymentId":     deploymentID,
 		"approvalId":       approval.ID,
 		"approvalRevision": approval.Revision,
@@ -785,6 +797,37 @@ func (m *Module) appendAPIEvent(ctx context.Context, deploymentID, eventType str
 	}
 	_, err = m.api.Jobs.AppendEvent(ctx, "deployment", deploymentID, eventType, encoded)
 	return err
+}
+
+func (m *Module) recordBestEffortAPIEvent(
+	ctx context.Context,
+	operationID, deploymentID, eventType string,
+	data any,
+) {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		logger.ErrorContext(ctx, "deployment command executor is unavailable", "operation_id", operationID, "error", err)
+		return
+	}
+	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			if eventType != contract.AuditAction {
+				return fmt.Errorf("deployment audit action %q does not match generated action %q", eventType, contract.AuditAction)
+			}
+			return m.appendAPIEvent(ctx, deploymentID, contract.AuditAction, data)
+		},
+		LogMessage: "deployment audit failed",
+		LogAttributes: []slog.Attr{
+			slog.String("deployment_id", deploymentID),
+		},
+	})
+	if err != nil {
+		logger.ErrorContext(ctx, "deployment command contract execution failed", "operation_id", operationID, "error", err)
+	}
 }
 
 func deploymentResponse(

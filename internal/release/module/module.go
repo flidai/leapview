@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/release"
@@ -21,6 +22,7 @@ type Module struct {
 	servingProvenance  release.ServingStateProvenanceRepository
 	environment        string
 	api                APIConfig
+	logger             *slog.Logger
 }
 
 type Config struct {
@@ -32,6 +34,7 @@ type Config struct {
 	ArtifactDirectory string
 	Environment       servingstate.Environment
 	API               APIConfig
+	Logger            *slog.Logger
 }
 
 type ServingStateRepository interface {
@@ -76,6 +79,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Module{
 		service: service,
 		candidateArtifacts: &candidateArtifactService{
@@ -85,7 +92,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			pins:        config.ManagedDataPins,
 		},
 		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
-		environment: string(config.Environment), api: config.API,
+		environment: string(config.Environment), api: config.API, logger: logger,
 	}, nil
 }
 

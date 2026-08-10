@@ -228,6 +228,7 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
 	}
+	h.recordCommandAudit(r, createAgentConversationOperation, scope, "conversation", conversation.ID)
 	prompt := agent.PromptInput{
 		Scope:          scope,
 		ConversationID: conversation.ID,
@@ -250,9 +251,11 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 			nethttp.Error(w, "durable chat turn queue is unavailable", nethttp.StatusServiceUnavailable)
 			return
 		}
+		h.recordCommandAudit(r, createAgentRunOperation, scope, "conversation", conversation.ID)
 		_ = pagestream.Redirect(w, r, chatRoutePath(conversation.ID))
 		return
 	}
+	h.recordCommandAudit(r, createAgentRunOperation, scope, "conversation", conversation.ID)
 	if h.options.ExecuteStartedChatTurn == nil {
 		nethttp.Error(w, "chat turn executor is not configured", nethttp.StatusServiceUnavailable)
 		return
@@ -294,6 +297,7 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(err), false), embedded))
 		return
 	}
+	h.recordCommandAudit(r, createAgentRunOperation, scope, "conversation", conversationID)
 	if h.options.ExecuteStartedChatTurn == nil {
 		nethttp.Error(w, "chat turn executor is not configured", nethttp.StatusServiceUnavailable)
 		return

@@ -8,7 +8,7 @@ namespace LeapViewAPI.ManagedData;
 @maxLength(160)
 scalar ManagedDataTusUploadId extends string;
 
-@doc("Negotiated TUS transport. The endpoint implements the TUS protocol and remains separate from upload-session lifecycle commands.")
+@doc("Negotiated TUS transport. TUS protocol requests update transport progress but are not LeapView application operations; the durable command boundary remains the upload-session lifecycle.")
 model ManagedDataTusUploadNegotiation {
   endpoint: ManagedDataEndpoint;
   uploadId: ManagedDataTusUploadId;

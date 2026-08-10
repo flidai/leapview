@@ -1,7 +1,10 @@
 package module
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -32,11 +35,43 @@ var _ generatedRefreshAPI = (*Module)(nil)
 type refreshEventStore struct {
 	eventType string
 	data      []byte
+	err       error
 }
 
 func (s *refreshEventStore) AppendEvent(_ context.Context, _, _, eventType string, data []byte) (jobs.Event, error) {
 	s.eventType, s.data = eventType, data
-	return jobs.Event{EventType: eventType, Data: data}, nil
+	return jobs.Event{EventType: eventType, Data: data}, s.err
+}
+
+func TestRefreshCreateAuditFailureIsBestEffortAndObservable(t *testing.T) {
+	var logs bytes.Buffer
+	module, err := Build(t.Context(), Config{
+		Events: &refreshEventStore{err: errors.New("audit store unavailable")},
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := refreshrun.RunRecord{
+		ID: "run-audit-failure", WorkspaceID: "sales", Environment: "prod", ModelID: "orders",
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales.daily",
+		Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z",
+	}
+	if err := module.recordRunCreatedBestEffort(t.Context(), run); err != nil {
+		t.Fatalf("best-effort audit changed command result: %v", err)
+	}
+	output := logs.String()
+	for _, expected := range []string{
+		"refresh audit failed",
+		"operation_id=createRefreshRun",
+		"refresh_run_id=run-audit-failure",
+		"audit_action=refresh.queued",
+		"audit store unavailable",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("audit failure log = %q, missing %q", output, expected)
+		}
+	}
 }
 
 func (*refreshEventStore) ListEvents(context.Context, string, string, int64, int) ([]jobs.Event, error) {

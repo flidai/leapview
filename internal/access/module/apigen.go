@@ -28,7 +28,15 @@ type APIGenOperationContract struct {
 	Path        string
 	Protected   bool
 	AuthzMode   string
+	Command     *APIGenCommandContract
 	Extensions  map[string]any
+}
+
+// APIGenCommandContract is the authorization subset of APIGen's normalized
+// command descriptor.
+type APIGenCommandContract struct {
+	AuthzMode string
+	Privilege string
 }
 
 // AuthorizeReplay re-runs the generated operation's current authorization
@@ -166,6 +174,18 @@ func apiGenRequiresCSRF(operationID string) bool {
 }
 
 func apiGenOperationPrivilege(contract APIGenOperationContract) (Privilege, bool) {
+	if contract.Command != nil {
+		if contract.Command.AuthzMode != contract.AuthzMode {
+			return "", false
+		}
+		if contract.Command.AuthzMode == "authenticated" {
+			return "", true
+		}
+		if contract.Command.AuthzMode != "privilege" {
+			return "", false
+		}
+		return ParsePrivilege(contract.Command.Privilege)
+	}
 	if contract.AuthzMode == "authenticated" {
 		return "", true
 	}

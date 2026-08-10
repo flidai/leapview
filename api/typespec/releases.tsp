@@ -130,57 +130,64 @@ model ReleaseArtifactResponse {
   sizeBytes: int64;
 }
 
-@tag("Releases")
-@summary("List project releases")
 @route("/projects/{project}/releases")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
-@extension("x-leapview-object-scope", "project-environment")
-@operationId("listReleases")
-op listReleases(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ReleaseListResponse> | CommonErrors;
-
 @tag("Releases")
-@summary("Create a draft project release")
-@route("/projects/{project}/releases")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
-@extension("x-leapview-object-scope", "project-environment")
-@operationId("createRelease")
-op createRelease(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ReleaseCreateRequest): CreatedJson<ReleaseResponse> | CommonErrors;
+interface Releases {
+  @summary("List project releases")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @operationId("listReleases")
+  listReleases(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ReleaseListResponse> | CommonErrors;
 
-@tag("Releases")
-@summary("Get a project release")
-@route("/projects/{project}/releases/{release}")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
-@extension("x-leapview-object-scope", "project-environment")
-@operationId("getRelease")
-op getRelease(@path project: string, @path release: string): OkJson<ReleaseResponse> | CommonErrors;
+  @summary("Create a draft project release")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "release.created", guarantee: "best-effort" },
+  })
+  @operationId("createRelease")
+  createRelease(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ReleaseCreateRequest): CreatedJson<ReleaseResponse> | CommonErrors;
 
-@tag("Releases")
-@summary("Upload an immutable workspace artifact")
-@route("/projects/{project}/releases/{release}/workspaces/{workspace}/artifact")
-@put
-@apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
-@extension("x-leapview-object-scope", "project-environment")
-@apigen.manual
-@operationId("uploadReleaseArtifact")
-op uploadReleaseArtifact(@path project: string, @path release: string, @path workspace: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<ReleaseArtifactResponse> | CommonErrors;
+  @summary("Get a project release")
+  @route("/{release}")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @operationId("getRelease")
+  getRelease(@path project: string, @path release: string): OkJson<ReleaseResponse> | CommonErrors;
 
-@tag("Releases")
-@summary("Finalize and validate a release")
-@route("/projects/{project}/releases/{release}/finalize")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
-@extension("x-leapview-object-scope", "project-environment")
-@operationId("finalizeRelease")
-op finalizeRelease(@path project: string, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
+  @summary("Upload an immutable workspace artifact")
+  @route("/{release}/workspaces/{workspace}/artifact")
+  @put
+  @apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "release.artifact_uploaded", guarantee: "best-effort" },
+    targetParameter: "project",
+  })
+  @apigen.manual
+  @operationId("uploadReleaseArtifact")
+  uploadReleaseArtifact(@path project: string, @path release: string, @path workspace: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<ReleaseArtifactResponse> | CommonErrors;
 
-@tag("Releases")
-@summary("List or stream release events")
-@route("/projects/{project}/releases/{release}/events")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
-@extension("x-leapview-object-scope", "project-environment")
-@operationId("listReleaseEvents")
-op listReleaseEvents(@path project: string, @path release: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
+  @summary("Finalize and validate a release")
+  @route("/{release}/finalize")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "release.validating", guarantee: "transactional" },
+    targetParameter: "project",
+  })
+  @operationId("finalizeRelease")
+  finalizeRelease(@path project: string, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
+
+  @summary("List or stream release events")
+  @route("/{release}/events")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @operationId("listReleaseEvents")
+  listReleaseEvents(@path project: string, @path release: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
+}

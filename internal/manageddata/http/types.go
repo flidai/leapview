@@ -4,6 +4,7 @@ package http
 import (
 	"context"
 	"errors"
+	"log/slog"
 	stdhttp "net/http"
 
 	"github.com/flidai/leapview/internal/manageddata/control"
@@ -20,6 +21,22 @@ var (
 
 type Principal struct {
 	ID string
+}
+
+// CommandAuditInput is the transport-neutral fact set needed to persist the
+// generated command's required success audit. Policy (action and privilege)
+// is deliberately resolved by the managed-data module from generated APIGen
+// contracts instead of being repeated in this HTTP adapter.
+type CommandAuditInput struct {
+	OperationID   string
+	PrincipalID   string
+	ProjectID     string
+	ConnectionID  string
+	TargetType    string
+	TargetID      string
+	RequestID     string
+	CorrelationID string
+	Surface       string
 }
 
 type RevisionMetadata = control.RevisionMetadata
@@ -46,6 +63,8 @@ type Options struct {
 	RecordUploadCreated   func(context.Context, control.UploadResult) error
 	RecordUploadCancelled func(context.Context, control.UploadResult) error
 	AbortUpload           func(context.Context, control.UploadRequest) (control.UploadResult, error)
+	RecordCommandAudit    func(context.Context, CommandAuditInput) error
+	Logger                *slog.Logger
 }
 
 type Handler struct {

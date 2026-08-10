@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -64,6 +65,7 @@ type AdministrationConfig struct {
 	Dependencies DependencyInspector
 	Pools        AdministrationPoolDirectory
 	Audit        AdministrationAuditRecorder
+	Logger       *slog.Logger
 	Now          func() time.Time
 }
 
@@ -74,6 +76,7 @@ type Administration struct {
 	dependencies DependencyInspector
 	pools        AdministrationPoolDirectory
 	audit        AdministrationAuditRecorder
+	logger       *slog.Logger
 	now          func() time.Time
 }
 
@@ -81,10 +84,17 @@ func NewAdministration(config AdministrationConfig) (*Administration, error) {
 	if config.Repository == nil || config.Authorize == nil || config.Dependencies == nil || config.Now == nil {
 		return nil, fmt.Errorf("%w: binding repository, authorizer, dependency inspector, and clock are required", ErrInvalidBinding)
 	}
+	if config.Audit == nil {
+		return nil, fmt.Errorf("%w: recorder is required", ErrAdministrationAuditUnavailable)
+	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Administration{
 		repository: config.Repository, authorize: config.Authorize,
 		ensureScope:  config.EnsureScope,
-		dependencies: config.Dependencies, pools: config.Pools, audit: config.Audit, now: config.Now,
+		dependencies: config.Dependencies, pools: config.Pools, audit: config.Audit, logger: logger, now: config.Now,
 	}, nil
 }
 

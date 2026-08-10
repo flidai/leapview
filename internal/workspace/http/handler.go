@@ -29,15 +29,17 @@ import (
 )
 
 type Handler struct {
-	WorkspaceID      func(string) string
-	Environment      func(*nethttp.Request) string
-	ReadModel        ReadModel
-	RefreshState     RefreshStateProvider
-	RefreshRunner    AssetRefreshRunner
-	Broker           *pagestream.Broker
-	CSRFToken        func(*nethttp.Request) string
-	CurrentRoleLabel func(*nethttp.Request) string
-	Layout           func(*nethttp.Request) webpage.Provider
+	WorkspaceID         func(string) string
+	Environment         func(*nethttp.Request) string
+	ReadModel           ReadModel
+	RefreshState        RefreshStateProvider
+	RefreshRunner       AssetRefreshRunner
+	Broker              *pagestream.Broker
+	CSRFToken           func(*nethttp.Request) string
+	CurrentRoleLabel    func(*nethttp.Request) string
+	RoleBindingCommands access.RoleBindingCommander
+	GrantCommands       access.GrantOperations
+	Layout              func(*nethttp.Request) webpage.Provider
 }
 
 type workspaceAccessSignalPayload struct {
@@ -568,56 +570,6 @@ func (h Handler) RoleBindings(w nethttp.ResponseWriter, r *nethttp.Request) {
 	_ = writePagedJSON(w, r, out)
 }
 
-func (h Handler) UpsertRoleBinding(w nethttp.ResponseWriter, r *nethttp.Request) {
-	var input struct {
-		Email       string `json:"email"`
-		DisplayName string `json:"displayName"`
-		Role        string `json:"role"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeJSONError(w, err, nethttp.StatusBadRequest)
-		return
-	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	repo, err := h.accessRepository()
-	if err != nil {
-		writeJSONError(w, err, nethttp.StatusInternalServerError)
-		return
-	}
-	if repo == nil {
-		writeJSONError(w, errWorkspaceAccessNotConfigured, nethttp.StatusInternalServerError)
-		return
-	}
-	principal, err := repo.SetPrincipalRole(r.Context(), access.PrincipalRoleInput{WorkspaceID: workspaceID, Email: input.Email, DisplayName: input.DisplayName, Role: input.Role})
-	if err != nil {
-		writeJSONError(w, err, nethttp.StatusBadRequest)
-		return
-	}
-	writeJSON(w, nethttp.StatusOK, map[string]string{"principalId": principal.ID})
-}
-
-func (h Handler) DeleteRoleBinding(w nethttp.ResponseWriter, r *nethttp.Request) {
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	repo, err := h.accessRepository()
-	if err != nil {
-		writeJSONError(w, err, nethttp.StatusInternalServerError)
-		return
-	}
-	if repo == nil {
-		writeJSONError(w, errWorkspaceAccessNotConfigured, nethttp.StatusInternalServerError)
-		return
-	}
-	bindingID := chi.URLParam(r, "binding")
-	if bindingID == "" {
-		bindingID = chi.URLParam(r, "principal")
-	}
-	if err := repo.DeleteRoleBinding(r.Context(), workspaceID, bindingID); err != nil {
-		writeJSONError(w, err, nethttp.StatusBadRequest)
-		return
-	}
-	writeJSON(w, nethttp.StatusOK, map[string]string{"status": "removed"})
-}
-
 func (h Handler) AccessUpsert(w nethttp.ResponseWriter, r *nethttp.Request) {
 	signals := workspaceAccessSignalPayload{}
 	if err := pagestream.ReadSignals(r, &signals); err != nil {
@@ -636,7 +588,9 @@ func (h Handler) AccessUpsert(w nethttp.ResponseWriter, r *nethttp.Request) {
 		subjectType, subjectID, err := h.resolveAccessSubject(r, repo, command)
 		if err != nil {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
-		} else if _, err := repo.CreateGrant(r.Context(), access.GrantInput{
+		} else if h.GrantCommands == nil {
+			status = ui.WorkspaceAccessStatus{Error: "grant commands are unavailable"}
+		} else if _, err := h.GrantCommands.CreateGrant(r.Context(), h.grantInvocation(r), access.GrantInput{
 			Object:      object,
 			SubjectType: subjectType,
 			SubjectID:   subjectID,
@@ -650,10 +604,12 @@ func (h Handler) AccessUpsert(w nethttp.ResponseWriter, r *nethttp.Request) {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
 		} else {
 			input := access.RoleBindingInput{WorkspaceID: workspaceID, SubjectType: subjectType, SubjectID: subjectID, Role: command.Role}
-			if strings.TrimSpace(command.BindingID) != "" {
-				_, err = repo.UpdateRoleBinding(r.Context(), workspaceID, command.BindingID, input)
+			if h.RoleBindingCommands == nil {
+				err = fmt.Errorf("role binding commands are unavailable")
+			} else if strings.TrimSpace(command.BindingID) != "" {
+				_, err = h.RoleBindingCommands.UpdateRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, command.BindingID, input)
 			} else {
-				_, err = repo.CreateRoleBinding(r.Context(), input)
+				_, err = h.RoleBindingCommands.CreateRoleBinding(r.Context(), h.roleBindingInvocation(r), input)
 			}
 			if err != nil {
 				status = ui.WorkspaceAccessStatus{Error: err.Error()}
@@ -711,17 +667,47 @@ func (h Handler) AccessRemove(w nethttp.ResponseWriter, r *nethttp.Request) {
 	} else if repo == nil {
 		status = ui.WorkspaceAccessStatus{Error: errWorkspaceAccessNotConfigured.Error()}
 	} else if _, ok := assetAccessObject(r, workspaceID); ok {
-		if err := repo.DeleteGrant(r.Context(), workspaceID, command.BindingID); err != nil {
+		if h.GrantCommands == nil {
+			status = ui.WorkspaceAccessStatus{Error: "grant commands are unavailable"}
+		} else if _, err := h.GrantCommands.DeleteGrant(r.Context(), h.grantInvocation(r), workspaceID, command.BindingID); err != nil {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
 		}
 	} else if bindingID := strings.TrimSpace(command.BindingID); bindingID != "" {
-		if err := repo.DeleteRoleBinding(r.Context(), workspaceID, bindingID); err != nil {
+		if h.RoleBindingCommands == nil {
+			status = ui.WorkspaceAccessStatus{Error: "role binding commands are unavailable"}
+		} else if _, err := h.RoleBindingCommands.DeleteRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, bindingID); err != nil {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
 		}
-	} else if err := repo.RemovePrincipalRoles(r.Context(), workspaceID, command.PrincipalID); err != nil {
+	} else if h.RoleBindingCommands == nil {
+		status = ui.WorkspaceAccessStatus{Error: "role binding commands are unavailable"}
+	} else if bindings, err := repo.ListRoleBindings(r.Context(), workspaceID); err != nil {
 		status = ui.WorkspaceAccessStatus{Error: err.Error()}
+	} else {
+		for _, binding := range bindings {
+			if binding.PrincipalID != command.PrincipalID && binding.SubjectID != command.PrincipalID {
+				continue
+			}
+			if _, err := h.RoleBindingCommands.DeleteRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, binding.ID); err != nil {
+				status = ui.WorkspaceAccessStatus{Error: err.Error()}
+				break
+			}
+		}
 	}
 	h.patchWorkspaceAccess(w, r, workspaceID, status)
+}
+
+func (h Handler) roleBindingInvocation(r *nethttp.Request) access.RoleBindingInvocation {
+	principal, _ := h.ReadModel.currentPrincipal(r)
+	requestID := firstNonEmpty(r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID"))
+	return access.RoleBindingInvocation{
+		PrincipalID: principal.ID, Surface: access.OperationSurfaceUI,
+		RequestID:     requestID,
+		CorrelationID: firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), requestID),
+	}
+}
+
+func (h Handler) grantInvocation(r *nethttp.Request) access.GrantInvocation {
+	return h.roleBindingInvocation(r)
 }
 
 func (h Handler) patchWorkspaceAccess(w nethttp.ResponseWriter, r *nethttp.Request, workspaceID string, status ui.WorkspaceAccessStatus) {

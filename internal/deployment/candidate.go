@@ -10,11 +10,12 @@ import (
 )
 
 var (
-	ErrCandidateNotFound    = errors.New("candidate not found")
-	ErrCandidateConflict    = errors.New("candidate conflict")
-	ErrCandidateQuota       = errors.New("candidate quota exceeded")
-	ErrCandidateInvalid     = errors.New("candidate invalid")
-	ErrCandidateUnavailable = errors.New("candidate service unavailable")
+	ErrCandidateNotFound         = errors.New("candidate not found")
+	ErrCandidateConflict         = errors.New("candidate conflict")
+	ErrCandidateQuota            = errors.New("candidate quota exceeded")
+	ErrCandidateInvalid          = errors.New("candidate invalid")
+	ErrCandidateUnavailable      = errors.New("candidate service unavailable")
+	ErrCandidateAuditUnavailable = errors.New("candidate audit unavailable")
 )
 
 type CandidateStatus string

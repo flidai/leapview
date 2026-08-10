@@ -41,7 +41,15 @@ paths:
     post:
       operationId: decideDeviceAuthorization
       summary: Approve or deny CLI device authorization
-      parameters: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
       responses:
         '200':
           description: The request has succeeded.
@@ -296,6 +304,15 @@ paths:
             example:
               approved: true
               userCode: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: authoring.device.decided
+        authz_mode: authenticated
+        idempotency: required
+        owner: LeapViewAPI.Access
   /api/v1/agent/conversations:
     get:
       operationId: listAgentConversations
@@ -577,6 +594,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -859,6 +877,18 @@ paths:
               $ref: '#/components/schemas/AgentConversationCreateRequest'
             example:
               title: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.conversation.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Agent
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -1112,6 +1142,18 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.conversation.archived
+        authz_mode: privilege
+        owner: LeapViewAPI.Agent
+        target:
+          parameter: conversation
+          type: conversation
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -1379,6 +1421,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -1660,6 +1703,19 @@ paths:
               $ref: '#/components/schemas/AgentConversationPatchRequest'
             example:
               title: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.conversation.updated
+        authz_mode: privilege
+        concurrency: if-match
+        owner: LeapViewAPI.Agent
+        target:
+          parameter: conversation
+          type: conversation
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -1951,6 +2007,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -2241,6 +2298,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -2530,6 +2588,21 @@ paths:
             example:
               correlationId: example
               input: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.run.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Agent
+        target:
+          parameter: conversation
+          type: conversation
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -2804,6 +2877,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -3091,6 +3165,19 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.run.cancelled
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Agent
+        target:
+          parameter: conversation
+          type: conversation
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -3408,6 +3495,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -3681,6 +3769,7 @@ paths:
                 type: example
       tags:
         - System
+      x-apigen-operation-kind: query
   /api/v1/instance:
     get:
       operationId: getInstance
@@ -3789,6 +3878,7 @@ paths:
                 type: example
       tags:
         - Instance
+      x-apigen-operation-kind: query
       x-authz:
         mode: none
   /api/v1/me:
@@ -4046,6 +4136,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -4330,6 +4421,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -4618,6 +4710,16 @@ paths:
               privileges:
                 - example
               workspaceId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: api_token.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -4872,6 +4974,18 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: api_token.revoked
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: token
+          type: token
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -5158,6 +5272,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -5417,6 +5532,18 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: authoring.session.revoked
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: session
+          type: session
+        privilege: USE_WORKSPACE
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -5679,6 +5806,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -5964,6 +6092,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -6218,6 +6347,18 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: session.revoked
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: session
+          type: session
+        privilege: USE_WORKSPACE
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -6513,6 +6654,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -6795,6 +6937,16 @@ paths:
             example:
               displayName: example
               email: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: principal.local_user.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -7049,6 +7201,18 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: principal.deleted
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -7313,6 +7477,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -7591,6 +7756,19 @@ paths:
               $ref: '#/components/schemas/PrincipalPatchRequest'
             example:
               displayName: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: principal.updated
+        authz_mode: privilege
+        concurrency: if-match
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -7866,6 +8044,19 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: principal.local_password.reset
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -8157,6 +8348,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -8417,6 +8609,18 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: session.revoked
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -8699,6 +8903,7 @@ paths:
                 type: example
       tags:
         - Projects
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -8964,6 +9169,7 @@ paths:
                 type: example
       tags:
         - Projects
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -9246,6 +9452,7 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: REVIEW_CANDIDATE
@@ -9536,6 +9743,19 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.cancelled
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
@@ -9830,6 +10050,18 @@ paths:
               type: string
               format: binary
             example: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.source_blob_uploaded
+        authz_mode: privilege
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
@@ -10135,6 +10367,19 @@ paths:
                 ref: example
                 repository: example
                 revision: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.ready
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
@@ -10143,6 +10388,7 @@ paths:
     post:
       operationId: planProjectCandidateSynchronization
       summary: Plan content-addressed synchronization for the current author's private candidate
+      description: 'Query classification: reports missing immutable blobs without uploading or committing source state.'
       parameters:
         - name: project
           in: path
@@ -10425,6 +10671,7 @@ paths:
                 ref: example
                 repository: example
                 revision: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
@@ -10723,6 +10970,19 @@ paths:
             example:
               artifactDigest: example
               candidateKey: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.started
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
@@ -11005,6 +11265,7 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
@@ -11304,6 +11565,19 @@ paths:
             example:
               artifactDigest: example
               expectedArtifactDigest: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.artifact_replaced
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
@@ -11594,6 +11868,19 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.cancelled
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
@@ -11960,6 +12247,19 @@ paths:
               expectedRevision: 1
               provenanceDigest: example
               targetId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.queued
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: PUBLISH_RELEASE
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
@@ -12250,6 +12550,19 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.retried
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
@@ -12536,6 +12849,7 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
@@ -12806,6 +13120,7 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
@@ -13084,6 +13399,7 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
@@ -13381,6 +13697,7 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
@@ -13669,6 +13986,7 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
@@ -13993,6 +14311,7 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -14319,6 +14638,19 @@ paths:
                   - path: example
                     sha256: example
                     size: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.upload_session.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -14629,6 +14961,7 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -14947,6 +15280,19 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.upload_session.cancelled
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -15277,6 +15623,7 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -15600,6 +15947,19 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.upload_session.finalization_requested
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -15908,6 +16268,19 @@ paths:
               $ref: '#/components/schemas/ManagedDataS3MultipartCreateRequest'
             example:
               path: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.s3_multipart_upload.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -16211,6 +16584,19 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.s3_multipart_upload.aborted
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -16525,6 +16911,19 @@ paths:
                 - etag: example
                   partNumber: 1
                   sha256: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.s3_multipart_upload.completed
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -16533,6 +16932,7 @@ paths:
   : post:
       operationId: signManagedDataS3MultipartPart
       summary: Sign one S3 multipart upload part
+      description: 'Query: issues a short-lived signed part-upload request and does not change durable multipart state.'
       parameters:
         - name: project
           in: path
@@ -16842,6 +17242,7 @@ paths:
             example:
               sha256: example
               size: 1
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
@@ -17201,6 +17602,7 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -17558,6 +17960,19 @@ paths:
               $ref: '#/components/schemas/DeploymentCreateRequest'
             example:
               releaseId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.queued
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: REQUEST_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: REQUEST_DEPLOYMENT
@@ -17901,6 +18316,7 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -18257,6 +18673,19 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.activation_requested
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: ACTIVATE_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: ACTIVATE_DEPLOYMENT
@@ -18552,6 +18981,19 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.approval_requested
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: REQUEST_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: REQUEST_DEPLOYMENT
@@ -18856,6 +19298,19 @@ paths:
               $ref: '#/components/schemas/DeploymentApprovalDecisionRequest'
             example:
               expectedRevision: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.approved
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: APPROVE_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: APPROVE_DEPLOYMENT
@@ -19160,6 +19615,19 @@ paths:
               $ref: '#/components/schemas/DeploymentApprovalDecisionRequest'
             example:
               expectedRevision: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.denied
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: APPROVE_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: APPROVE_DEPLOYMENT
@@ -19464,6 +19932,19 @@ paths:
               $ref: '#/components/schemas/DeploymentApprovalDecisionRequest'
             example:
               expectedRevision: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.approval_revoked
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: APPROVE_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: APPROVE_DEPLOYMENT
@@ -19820,6 +20301,19 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.cancelled
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: REQUEST_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: REQUEST_DEPLOYMENT
@@ -20138,6 +20632,7 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -20494,6 +20989,19 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.queued
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: REQUEST_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: REQUEST_DEPLOYMENT
@@ -20850,6 +21358,19 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.queued
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: ROLLBACK_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: ROLLBACK_DEPLOYMENT
@@ -21190,6 +21711,7 @@ paths:
                 type: example
       tags:
         - Releases
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
@@ -21579,6 +22101,19 @@ paths:
                 - artifactDigest: example
                   servingStateId: example
                   workspace: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: release.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Release
+        target:
+          parameter: project
+          type: project
+        privilege: PUBLISH_RELEASE
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
@@ -21903,6 +22438,7 @@ paths:
                 type: example
       tags:
         - Releases
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
@@ -22221,6 +22757,7 @@ paths:
                 type: example
       tags:
         - Releases
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
@@ -22558,6 +23095,19 @@ paths:
                 type: example
       tags:
         - Releases
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: release.validating
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Release
+        target:
+          parameter: project
+          type: project
+        privilege: PUBLISH_RELEASE
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
@@ -22860,6 +23410,18 @@ paths:
               type: string
               format: binary
             example: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: release.artifact_uploaded
+        authz_mode: privilege
+        owner: LeapViewAPI.Release
+        target:
+          parameter: project
+          type: project
+        privilege: PUBLISH_RELEASE
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
@@ -23146,6 +23708,7 @@ paths:
                 type: example
       tags:
         - Projects
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -23488,6 +24051,7 @@ paths:
                 type: example
       tags:
         - Search
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -23768,6 +24332,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -24047,6 +24612,16 @@ paths:
             example:
               displayName: example
               id: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -24300,6 +24875,18 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal.deleted
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: servicePrincipal
+          type: servicePrincipal
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -24563,6 +25150,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -24840,6 +25428,19 @@ paths:
               $ref: '#/components/schemas/ServicePrincipalPatchRequest'
             example:
               displayName: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal.updated
+        authz_mode: privilege
+        concurrency: if-match
+        owner: LeapViewAPI.Access
+        target:
+          parameter: servicePrincipal
+          type: servicePrincipal
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -25127,6 +25728,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -25415,6 +26017,19 @@ paths:
             example:
               expiresAt: "2026-01-02T15:04:05Z"
               name: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal_secret.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: servicePrincipal
+          type: servicePrincipal
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -25674,6 +26289,18 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal_secret.revoked
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: servicePrincipal
+          type: servicePrincipal
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -25944,6 +26571,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -26224,6 +26852,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -26488,6 +27117,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -26768,6 +27398,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -27054,6 +27685,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -27361,6 +27993,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -27639,6 +28272,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -27909,6 +28543,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -28247,6 +28882,7 @@ paths:
                 type: example
       tags:
         - Audit
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AUDIT
@@ -28529,6 +29165,7 @@ paths:
                 - objectId: example
                   objectType: example
                   privilege: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -28808,6 +29445,7 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -29092,6 +29730,7 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -29384,6 +30023,19 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: dashboard_publication.resumed
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Dashboard
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_PUBLICATIONS
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -29676,6 +30328,19 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: dashboard_publication.public_id_rotated
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Dashboard
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_PUBLICATIONS
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -29968,6 +30633,19 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: dashboard_publication.suspended
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Dashboard
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_PUBLICATIONS
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -30255,6 +30933,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -30541,6 +31220,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -30816,6 +31496,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -31149,6 +31830,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -31482,6 +32164,7 @@ paths:
                   interactionID: example
                   order: 1
                   visualID: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: QUERY_DATA
@@ -31832,6 +32515,7 @@ paths:
                   interactionID: example
                   order: 1
                   visualID: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: QUERY_DATA
@@ -32122,6 +32806,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -32484,6 +33169,7 @@ paths:
                   interactionID: example
                   order: 1
                   visualID: example
+      x-apigen-operation-kind: query
       x-apigen-tool:
         confirmation: never
         effect: read
@@ -32826,6 +33512,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -33120,6 +33807,19 @@ paths:
               policyType: example
               subjectId: example
               subjectType: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: data_policy.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -33379,6 +34079,18 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: data_policy.deleted
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -33652,6 +34364,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -33945,6 +34658,19 @@ paths:
               policyType: example
               subjectId: example
               subjectType: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: data_policy.updated
+        authz_mode: privilege
+        concurrency: if-match
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -34235,6 +34961,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -34548,6 +35275,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -34842,6 +35570,21 @@ paths:
               subjectId: example
               subjectType: example
               privilege: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: grant.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -35101,6 +35844,20 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: grant.deleted
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -35376,6 +36133,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -35669,6 +36427,19 @@ paths:
               subjectId: example
               subjectType: example
               privilege: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: grant.updated
+        authz_mode: privilege
+        concurrency: if-match
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -35954,6 +36725,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -36238,6 +37010,19 @@ paths:
             example:
               displayName: example
               name: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -36497,6 +37282,18 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.deleted
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -36765,6 +37562,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -37047,6 +37845,19 @@ paths:
               $ref: '#/components/schemas/GroupPatchRequest'
             example:
               displayName: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.updated
+        authz_mode: privilege
+        concurrency: if-match
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -37339,6 +38150,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -37604,6 +38416,18 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.member_removed
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -37874,6 +38698,18 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.member_added
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -38158,6 +38994,19 @@ paths:
               objectId: example
               objectType: example
               ownerPrincipalId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: ownership.transferred
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_ITEM
       x-authz:
         mode: privilege
         privilege: MANAGE_ITEM
@@ -38532,6 +39381,7 @@ paths:
                 type: example
       tags:
         - Audit
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AUDIT
@@ -38825,6 +39675,7 @@ paths:
                 type: example
       tags:
         - Refresh Runs
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -39117,6 +39968,19 @@ paths:
             example:
               pipelineId: example
               retryOf: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: refresh.queued
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Refresh
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: USE_WORKSPACE
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -39394,6 +40258,7 @@ paths:
                 type: example
       tags:
         - Refresh Runs
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -39684,6 +40549,19 @@ paths:
                 type: example
       tags:
         - Refresh Runs
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: refresh.cancelled
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Refresh
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: USE_WORKSPACE
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -40001,6 +40879,7 @@ paths:
                 type: example
       tags:
         - Refresh Runs
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -40310,6 +41189,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -40598,6 +41478,21 @@ paths:
               role: example
               subjectId: example
               subjectType: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: role_binding.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -40857,6 +41752,20 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: role_binding.deleted
+        authz_mode: privilege
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -41128,6 +42037,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -41415,6 +42325,21 @@ paths:
               role: example
               subjectId: example
               subjectType: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: role_binding.updated
+        authz_mode: privilege
+        concurrency: if-match
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -41698,6 +42623,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -41981,6 +42907,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -42269,6 +43196,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -42562,6 +43490,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -42843,6 +43772,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -43149,6 +44079,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -43484,6 +44415,7 @@ paths:
               sort:
                 - direction: asc
                   field: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PREVIEW_DATA
@@ -43802,6 +44734,7 @@ paths:
               sort:
                 - direction: asc
                   field: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PREVIEW_DATA
@@ -44102,6 +45035,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -44436,6 +45370,7 @@ paths:
                 alias: example
                 field: example
                 grain: day
+      x-apigen-operation-kind: query
       x-apigen-tool:
         confirmation: never
         effect: read
@@ -44802,6 +45737,7 @@ paths:
                 alias: example
                 field: example
                 grain: day
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: QUERY_DATA
@@ -45096,6 +46032,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -45389,6 +46326,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -45693,6 +46631,7 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -46034,6 +46973,19 @@ paths:
               enabled: true
               id: example
               logicalConnection: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: connection.binding.created
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -46344,6 +47296,7 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -46679,6 +47632,18 @@ paths:
                   tlsMode: example
               confirmationToken: example
               expectedRevision: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: connection.binding.updated
+        authz_mode: privilege
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -46997,6 +47962,19 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: connection.binding.disabled
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -47315,6 +48293,19 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: connection.binding.enabled
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -47611,6 +48602,7 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_CONNECTION_HEALTH
@@ -47618,6 +48610,7 @@ paths:
     post:
       operationId: planTargetConnectionBindingChange
       summary: Plan a dependency-aware target connection change
+      description: 'Query classification: computes dependencies and a confirmation token without mutating durable binding or runtime state.'
       parameters:
         - name: workspace
           in: path
@@ -47925,6 +48918,7 @@ paths:
                   port: 1
                   sourceIdentity: example
                   tlsMode: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -48229,6 +49223,19 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: credential.refresh.requested
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: TEST_CONNECTION
       x-authz:
         mode: privilege
         privilege: TEST_CONNECTION
@@ -48236,6 +49243,7 @@ paths:
     post:
       operationId: testTargetConnectionBinding
       summary: Test a target connection through the candidate runtime path
+      description: 'Command classification: testing can persist validated health/version state and promote the replacement runtime pool.'
       parameters:
         - name: workspace
           in: path
@@ -48533,6 +49541,19 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: credential.test.requested
+        authz_mode: privilege
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: TEST_CONNECTION
       x-authz:
         mode: privilege
         privilege: TEST_CONNECTION
@@ -54520,7 +55541,7 @@ components:
           type: string
           format: date-time
           example: "2026-01-02T15:04:05Z"
-      description: Negotiated TUS transport. The endpoint implements the TUS protocol and remains separate from upload-session lifecycle commands.
+      description: Negotiated TUS transport. TUS protocol requests update transport progress but are not LeapView application operations; the durable command boundary remains the upload-session lifecycle.
       example:
         endpoint: example
         expiresAt: "2026-01-02T15:04:05Z"

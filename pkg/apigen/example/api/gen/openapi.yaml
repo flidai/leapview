@@ -1,0 +1,388 @@
+openapi: 3.0.0
+info:
+  title: APIGen Todo Example
+  version: 0.1.0
+  description: Small in-memory todo API authored in TypeSpec to showcase APIGen generation and strict server wiring.
+tags:
+  - name: Todos
+    description: Todo lifecycle endpoints for the APIGen example.
+paths:
+  /todos:
+    get:
+      operationId: listTodos
+      summary: List todos
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Optional status filter.
+          schema:
+            type: string
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListTodosResponse'
+              example:
+                data:
+                  - id: example
+                    status: example
+                    title: example
+        '400':
+          description: The request is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+      tags:
+        - Todos
+      x-apigen-tool:
+        confirmation: never
+        effect: read
+        name: list_todos
+        output:
+          mode: project
+          select:
+            - count_as: count
+              select:
+                - source: /id
+                - source: /title
+                - source: /status
+              source: /data
+        tags:
+          - todos
+          - read
+    post:
+      operationId: createTodo
+      summary: Create todo
+      parameters: []
+      responses:
+        '201':
+          description: A todo has been created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Todo'
+              example:
+                id: example
+                status: example
+                title: example
+        '400':
+          description: The request is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+      tags:
+        - Todos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTodoRequest'
+            example:
+              title: example
+  /todos/{todo_id}:
+    delete:
+      operationId: deleteTodo
+      summary: Delete todo
+      parameters:
+        - name: todo_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '204':
+          description: The todo has been deleted.
+        '404':
+          description: The todo was not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '400':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+      tags:
+        - Todos
+      x-apigen-tool:
+        confirmation: always
+        effect: destructive
+        name: delete_todo
+        output:
+          mode: empty
+    get:
+      operationId: getTodo
+      summary: Get todo
+      parameters:
+        - name: todo_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Todo'
+              example:
+                id: example
+                status: example
+                title: example
+        '404':
+          description: The todo was not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '400':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+      tags:
+        - Todos
+  /todos/{todo_id}/complete:
+    post:
+      operationId: completeTodo
+      summary: Complete todo
+      parameters:
+        - name: todo_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The todo has been completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Todo'
+              example:
+                id: example
+                status: example
+                title: example
+        '404':
+          description: The todo was not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '400':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+      tags:
+        - Todos
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+components:
+  schemas:
+    CreateTodoRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          example: example
+      example:
+        title: example
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          example: example
+        message:
+          type: string
+          example: example
+      example:
+        code: example
+        message: example
+    ListTodosResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Todo'
+          example:
+            - id: example
+              status: example
+              title: example
+      example:
+        data:
+          - id: example
+            status: example
+            title: example
+    Todo:
+      type: object
+      required:
+        - id
+        - title
+        - status
+      properties:
+        id:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+        status:
+          type: string
+          example: example
+      example:
+        id: example
+        status: example
+        title: example
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: Bearer
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+servers:
+  - url: http://127.0.0.1:8081/
+    description: Example development server
+    variables: {}

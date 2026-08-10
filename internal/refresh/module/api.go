@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"net/http"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 )
@@ -24,7 +26,28 @@ func (m *Module) recordRunCreated(ctx context.Context, run refreshrun.RunRecord)
 	if !ok {
 		return fmt.Errorf("refresh service returned a non-pipeline run")
 	}
-	return jobs.AppendJSONEvent(ctx, m.events, "refresh", run.ID, "refresh.queued", response)
+	return jobs.AppendJSONEvent(ctx, m.events, "refresh", run.ID, refreshQueuedAuditAction, response)
+}
+
+func (m *Module) recordRunCreatedBestEffort(ctx context.Context, run refreshrun.RunRecord) error {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(refreshgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(ctx, string(refreshgen.GenOperationCreateRefreshRun), apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			if contract.AuditAction != refreshQueuedAuditAction {
+				return fmt.Errorf("refresh audit action %q does not match %q", contract.AuditAction, refreshQueuedAuditAction)
+			}
+			return m.recordRunCreated(ctx, run)
+		},
+		LogMessage:    "refresh audit failed",
+		LogAttributes: []slog.Attr{slog.String("refresh_run_id", run.ID)},
+	})
 }
 
 func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) func(context.Context, refreshrun.JobRecord) {
@@ -95,8 +118,23 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, worksp
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "REFRESH_RESPONSE_INVALID", "Refresh response is invalid", nil)
 		return
 	}
-	if err := jobs.AppendJSONEvent(r.Context(), m.events, "refresh", runID, "refresh.cancelled", response); err != nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_EVENT_STORE_UNAVAILABLE", "Refresh cancellation could not be recorded", nil)
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(refreshgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INVALID_COMMAND_CONTRACT", "Refresh command contract is unavailable", nil)
+		return
+	}
+	if err := executor.Execute(r.Context(), string(refreshgen.GenOperationCancelRefreshRun), apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			return jobs.AppendJSONEvent(ctx, m.events, "refresh", runID, contract.AuditAction, response)
+		},
+		LogMessage:    "refresh audit failed",
+		LogAttributes: []slog.Attr{slog.String("refresh_run_id", runID)},
+	}); err != nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INVALID_COMMAND_CONTRACT", "Refresh command contract is unavailable", nil)
 		return
 	}
 	w.Header().Set("Location", "/api/v1/workspaces/"+workspaceID+"/refresh-runs/"+runID)

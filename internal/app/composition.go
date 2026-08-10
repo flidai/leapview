@@ -182,6 +182,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			return manageddatamodule.Principal{ID: principal.ID}, ok
 		},
 		Jobs: jobModule, Workflow: jobModule,
+		RecordAudit: managedDataCommandAuditRecorder(accessModule, config.DefaultWorkspaceID),
 		Worker: manageddatamodule.MaintenanceWorkerConfig{
 			Interval: cfg.ManagedDataGCInterval,
 			Acquire: func(ctx context.Context) (manageddatamodule.MaintenanceLease, error) {
@@ -386,7 +387,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		),
 		CandidateSources:   candidateSources,
 		CandidateArtifacts: releaseModule,
-		RuntimeVersion:     identity.Version + ":" + identity.Revision,
+		CandidateSourceBlobAudit: candidateSourceBlobAuditRecorder(
+			accessModule,
+			config.DefaultWorkspaceID,
+		),
+		RuntimeVersion: identity.Version + ":" + identity.Revision,
 		ActivationHooks: deploymentmodule.ActivationHooks{
 			ApplyAccessSnapshot: accessmodule.ApplySnapshot,
 			ReconcilePublications: func(ctx context.Context, tx transaction.Transaction, input deploymentmodule.PublicationActivationInput) error {

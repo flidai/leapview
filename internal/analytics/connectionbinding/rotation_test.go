@@ -1,9 +1,11 @@
 package connectionbinding
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -22,7 +24,8 @@ func TestPoolManagerActivatesValidatedReplacementAndDrainsPreviousLeases(t *test
 	store := &recordingBindingStore{}
 	manager, err := NewPoolManager(PoolManagerConfig{
 		Binding: validTargetBinding(t), Resolver: resolver, Factory: factory, Store: store,
-		Now: func() time.Time { return now }, StaleAfter: time.Hour,
+		Audit: noOpRotationAudit{},
+		Now:   func() time.Time { return now }, StaleAfter: time.Hour,
 	})
 	require.NoError(t, err)
 	if err := manager.RefreshNow(context.Background()); err != nil {
@@ -55,6 +58,40 @@ func TestPoolManagerActivatesValidatedReplacementAndDrainsPreviousLeases(t *test
 	}
 }
 
+func TestPoolManagerRequiresAuditRecorder(t *testing.T) {
+	binding := validTargetBinding(t)
+	_, err := NewPoolManager(PoolManagerConfig{
+		Binding: binding, Resolver: &sequenceResolver{}, Factory: &recordingPoolFactory{},
+		Store: &recordingBindingStore{}, Now: time.Now, StaleAfter: time.Hour,
+	})
+	if !errors.Is(err, ErrRotationAuditUnavailable) {
+		t.Fatalf("NewPoolManager() error = %v, want ErrRotationAuditUnavailable", err)
+	}
+}
+
+func TestPoolManagerPreservesSuccessfulRotationAndObservesBestEffortAuditFailure(t *testing.T) {
+	now := time.Date(2026, 7, 29, 17, 0, 0, 0, time.UTC)
+	var logs bytes.Buffer
+	manager, err := NewPoolManager(PoolManagerConfig{
+		Binding:  validTargetBinding(t),
+		Resolver: &sequenceResolver{snapshots: []CredentialSnapshot{testSnapshot(t, "version-1", now)}},
+		Factory:  &recordingPoolFactory{}, Store: &recordingBindingStore{},
+		Audit: failingRotationAudit{}, Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+		Now: func() time.Time { return now }, StaleAfter: time.Hour,
+	})
+	require.NoError(t, err)
+	if err := manager.RefreshNow(context.Background()); err != nil {
+		t.Fatalf("RefreshNow() changed successful rotation result after audit failure: %v", err)
+	}
+	if evidence := manager.Evidence(); evidence.ValidatedVersion != "version-1" || evidence.Health != HealthHealthy {
+		t.Fatalf("rotation evidence = %#v", evidence)
+	}
+	if output := logs.String(); !strings.Contains(output, "best-effort credential rotation audit failed") ||
+		!strings.Contains(output, string(RefreshRequested)) || !strings.Contains(output, manager.Evidence().BindingID) {
+		t.Fatalf("audit failure log = %s", output)
+	}
+}
+
 func TestPoolManagerKeepsHealthyPoolWhenNewVersionFailsValidation(t *testing.T) {
 	now := time.Date(2026, 7, 29, 17, 0, 0, 0, time.UTC)
 	resolver := &sequenceResolver{snapshots: []CredentialSnapshot{
@@ -65,7 +102,8 @@ func TestPoolManagerKeepsHealthyPoolWhenNewVersionFailsValidation(t *testing.T) 
 	store := &recordingBindingStore{}
 	manager, err := NewPoolManager(PoolManagerConfig{
 		Binding: validTargetBinding(t), Resolver: resolver, Factory: factory, Store: store,
-		Now: func() time.Time { return now }, StaleAfter: time.Hour,
+		Audit: noOpRotationAudit{},
+		Now:   func() time.Time { return now }, StaleAfter: time.Hour,
 	})
 	require.NoError(t, err)
 	if err := manager.RefreshNow(context.Background()); err != nil {
@@ -100,7 +138,8 @@ func TestPoolManagerCoalescesConcurrentRefreshAndDisableFailsClosed(t *testing.T
 	factory := &recordingPoolFactory{}
 	manager, err := NewPoolManager(PoolManagerConfig{
 		Binding: validTargetBinding(t), Resolver: resolver, Factory: factory, Store: &recordingBindingStore{},
-		Now: func() time.Time { return now }, StaleAfter: time.Hour,
+		Audit: noOpRotationAudit{},
+		Now:   func() time.Time { return now }, StaleAfter: time.Hour,
 	})
 	require.NoError(t, err)
 	var wait sync.WaitGroup
@@ -146,7 +185,8 @@ func TestPoolManagerRetainsValidatedPoolOnlyWithinStalePolicyDuringProviderOutag
 	}
 	manager, err := NewPoolManager(PoolManagerConfig{
 		Binding: validTargetBinding(t), Resolver: resolver, Factory: &recordingPoolFactory{}, Store: &recordingBindingStore{},
-		Now: func() time.Time { return now }, StaleAfter: 5 * time.Minute,
+		Audit: noOpRotationAudit{},
+		Now:   func() time.Time { return now }, StaleAfter: 5 * time.Minute,
 	})
 	require.NoError(t, err)
 	if err := manager.RefreshNow(context.Background()); err != nil {
@@ -180,6 +220,7 @@ func TestPoolManagerRunUsesIntervalThenExponentialBackoffAndStopsOnCancellation(
 	manager, err := NewPoolManager(PoolManagerConfig{
 		Binding: validTargetBinding(t), Resolver: resolver, Factory: &recordingPoolFactory{},
 		Store: &recordingBindingStore{}, Now: func() time.Time { return now }, StaleAfter: time.Hour,
+		Audit: noOpRotationAudit{},
 		Schedule: RefreshSchedule{
 			Interval: 10 * time.Minute, BackoffInitial: time.Second, BackoffMax: time.Minute,
 			JitterRatio: 0.1, Random: func() float64 { return 1 }, Wait: waiter.Wait,
@@ -252,6 +293,7 @@ func TestPoolManagerCancellationDoesNotDegradeOrPersist(t *testing.T) {
 	manager, err := NewPoolManager(PoolManagerConfig{
 		Binding: validTargetBinding(t), Resolver: canceledResolver{}, Factory: &recordingPoolFactory{},
 		Store: &recordingBindingStore{}, Now: func() time.Time { return now }, StaleAfter: time.Hour,
+		Audit: noOpRotationAudit{},
 	})
 	require.NoError(t, err)
 	if err := manager.RefreshNow(context.Background()); !errors.Is(err, context.Canceled) {
@@ -275,7 +317,8 @@ func TestPoolManagerRestartRevalidatesPersistedVersionAndRepeatedOutageIsIdempot
 	store := &recordingBindingStore{}
 	manager, err := NewPoolManager(PoolManagerConfig{
 		Binding: binding, Resolver: resolver, Factory: factory, Store: store,
-		Now: func() time.Time { return now }, StaleAfter: time.Hour,
+		Audit: noOpRotationAudit{},
+		Now:   func() time.Time { return now }, StaleAfter: time.Hour,
 	})
 	require.NoError(t, err)
 	if err := manager.RefreshNow(context.Background()); err != nil {
@@ -308,6 +351,7 @@ func TestPoolManagerHealthStatusIsCompleteAndRedacted(t *testing.T) {
 	manager, err := NewPoolManager(PoolManagerConfig{
 		Binding: validTargetBinding(t), Resolver: resolver, Factory: &recordingPoolFactory{},
 		Store: &recordingBindingStore{}, Now: func() time.Time { return now }, StaleAfter: 10 * time.Minute,
+		Audit: noOpRotationAudit{},
 	})
 	require.NoError(t, err)
 	if err := manager.RefreshNow(context.Background()); err != nil {
@@ -422,6 +466,12 @@ func (waiter *recordingWaiter) Wait(_ context.Context, delay time.Duration) erro
 
 type recordingRotationAudit struct {
 	events []RotationAuditEvent
+}
+
+type failingRotationAudit struct{}
+
+func (failingRotationAudit) RecordCredentialRotation(context.Context, RotationAuditEvent) error {
+	return errors.New("audit unavailable")
 }
 
 func (audit *recordingRotationAudit) RecordCredentialRotation(_ context.Context, event RotationAuditEvent) error {

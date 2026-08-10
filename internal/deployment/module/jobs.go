@@ -150,9 +150,9 @@ func activationWorkflow(
 	})
 	return jobs.WorkflowIntent{
 		Event: jobs.EventInput{
-			Key:          "deployment.queued",
+			Key:          deploymentQueuedAuditAction,
 			ResourceKind: "deployment", ResourceID: deploymentID,
-			EventType: "deployment.queued", Data: event,
+			EventType: deploymentQueuedAuditAction, Data: event,
 		},
 		Job: jobs.EnqueueInput{
 			ID:            "deployment:" + deploymentID + ":activate",
