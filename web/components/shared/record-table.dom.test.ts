@@ -193,6 +193,7 @@ test('compact record table keeps metadata dense and scalar placeholders muted', 
       const wrap = element.querySelector('.record-table-wrap') as HTMLElement
       const firstHeader = element.querySelector('thead th') as HTMLElement
       const firstCell = element.querySelector('tbody td') as HTMLElement
+      const firstCode = element.querySelector('tbody tr:first-child .record-code') as HTMLElement
       const numberHeader = element.querySelector('thead th:nth-child(3)') as HTMLElement
       const numberCell = element.querySelector('tbody tr:first-child td:nth-child(3)') as HTMLElement
       const unsortedIndicator = element.querySelector('thead th:first-child .record-table-sort-indicator') as HTMLElement
@@ -201,7 +202,12 @@ test('compact record table keeps metadata dense and scalar placeholders muted', 
         hasCompactClass: wrap.classList.contains('variant-compact'),
         headerPaddingTop: getComputedStyle(firstHeader).paddingTop,
         cellPaddingTop: getComputedStyle(firstCell).paddingTop,
+        cellFontSize: getComputedStyle(firstCell).fontSize,
+        codeFontSize: getComputedStyle(firstCode).fontSize,
         headerBackground: getComputedStyle(firstHeader).backgroundColor,
+        headerTextTransform: getComputedStyle(firstHeader).textTransform,
+        wrapBorderTopWidth: getComputedStyle(wrap).borderTopWidth,
+        cellBorderBottomWidth: getComputedStyle(firstCell).borderBottomWidth,
         numberHeaderAlign: getComputedStyle(numberHeader).textAlign,
         numberCellAlign: getComputedStyle(numberCell).textAlign,
         mutedCount: element.querySelectorAll('.record-muted').length,
@@ -212,7 +218,12 @@ test('compact record table keeps metadata dense and scalar placeholders muted', 
     expect(initial.hasCompactClass).toBe(true)
     expect(initial.headerPaddingTop).toBe('8px')
     expect(initial.cellPaddingTop).toBe('8px')
-    expect(initial.headerBackground).toBe('rgb(246, 248, 250)')
+    expect(initial.cellFontSize).toBe('14px')
+    expect(initial.codeFontSize).toBe('14px')
+    expect(initial.headerBackground).toBe('rgb(238, 242, 246)')
+    expect(initial.headerTextTransform).toBe('none')
+    expect(initial.wrapBorderTopWidth).toBe('0px')
+    expect(initial.cellBorderBottomWidth).toBe('0px')
     expect(initial.numberHeaderAlign).toBe('right')
     expect(initial.numberCellAlign).toBe('right')
     expect(initial.mutedCount).toBe(4)
@@ -547,7 +558,7 @@ function testDocument(): string {
     <html>
       <head>
         <style>
-          body { --fontStack-system: system-ui; --fontStack-monospace: monospace; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-full: 999px; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --control-medium-size: 32px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 14px; --lv-font-size-body-md: 14px; --lv-font-weight-medium: 500; --lv-font-weight-strong: 600; --lv-font-weight-regular: 400; --lv-line-height-normal: 1.5; --lv-line-height-compact: 1.3; }
+          body { --fontStack-system: system-ui; --fontStack-monospace: monospace; --lv-bg-page: #eef2f6; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-full: 999px; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --control-medium-size: 32px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 14px; --lv-font-size-body-md: 16px; --lv-font-weight-medium: 500; --lv-font-weight-strong: 600; --lv-font-weight-regular: 400; --lv-line-height-normal: 1.5; --lv-line-height-compact: 1.3; }
         </style>
       </head>
       <body>

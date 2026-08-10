@@ -71,6 +71,7 @@ for (const viewport of [
         const workspacePage = workspace.shadowRoot.querySelector('.page') as HTMLElement
         const workspaceToolbar = workspace.shadowRoot.querySelector('.toolbar') as HTMLElement
         const workspaceRecordTable = workspace.shadowRoot.querySelector('lv-record-table') as HTMLElement
+        const workspaceTablePanel = workspaceRecordTable.parentElement as HTMLElement
         const workspaceGlyph = workspace.shadowRoot.querySelector('.record-entity-icon') as HTMLElement | null
         const workspaceDashboardGlyph = workspace.shadowRoot.querySelector('.record-icon-dashboard') as HTMLElement | null
         const workspaceRowActionIcon = workspace.shadowRoot.querySelector('.record-actions svg') as SVGElement
@@ -81,6 +82,7 @@ for (const viewport of [
         const workspaceFirstRow = workspace.shadowRoot.querySelector('tbody tr:first-child') as HTMLElement
         const workspaceSearch = workspace.shadowRoot.querySelector('.search input[type="search"]') as HTMLInputElement
         const workspaceSearchForm = workspace.shadowRoot.querySelector('.search') as HTMLElement
+        const workspaceAccessButton = workspace.shadowRoot.querySelector('lv-workspace-access-control')?.shadowRoot?.querySelector('.trigger') as HTMLElement | null
         const workspaceAssetTitle = workspace.shadowRoot.querySelector('tbody tr:first-child .record-entity-label') as HTMLElement
         const workspaceAssetEntity = workspace.shadowRoot.querySelector('tbody tr:first-child .record-entity') as HTMLElement
         const nameCellRight = workspaceNameCell.getBoundingClientRect().right
@@ -92,9 +94,15 @@ for (const viewport of [
           workspaceTableVariant: workspaceRecordTable.getAttribute('variant'),
           workspaceTableHeaders: Array.from(workspaceRecordTable.querySelectorAll('thead th button span:first-child')).map((header) => header.textContent?.trim()),
           workspaceTableMinWidth: getComputedStyle(workspaceRecordTable.querySelector('table') as HTMLElement).minWidth,
+          workspaceTableBackground: getComputedStyle(workspaceRecordTable.querySelector('.record-table-wrap') as HTMLElement).backgroundColor,
           workspaceRowActionCounts: Array.from(workspaceRecordTable.querySelectorAll('tbody tr')).map((row) => row.querySelectorAll('.record-icon-action').length),
           workspaceTableHeaderBackground: getComputedStyle(workspaceRecordTable.querySelector('thead th') as HTMLElement).backgroundColor,
+          workspaceTablePanelBorder: getComputedStyle(workspaceTablePanel).borderTopWidth,
           workspaceHasAccess: Boolean(workspace.shadowRoot.querySelector('lv-workspace-access-control')),
+          workspaceHasAccessAction: workspaceAccessButton?.textContent?.trim(),
+          workspaceHasAssetFilter: Boolean(workspace.shadowRoot.querySelector('.asset-filter select')),
+          workspaceFilterOptions: Array.from(workspace.shadowRoot.querySelectorAll('.asset-filter option')).map((option) => option.textContent?.trim()),
+          workspaceHasHeaderDetail: Boolean(workspace.shadowRoot.querySelector('.page-header .page-detail')),
           workspaceIsStyled: getComputedStyle(workspacePage).paddingTop !== '0px',
           workspacePageCentered: isMobile || Math.abs((workspacePageRect.left + workspacePageRect.width / 2) - window.innerWidth / 2) <= 1,
           workspacePageConstrained: isMobile || Math.round(workspacePageRect.width) < window.innerWidth,
@@ -126,13 +134,15 @@ for (const viewport of [
         workspaceTableVariant: 'primary',
         workspaceTableHeaders: ['Name', 'Type', 'Actions'],
         workspaceTableMinWidth: '640px',
+        workspaceTableBackground: 'rgb(238, 242, 246)',
         workspaceRowActionCounts: [1, 2],
-        workspaceTableHeaderBackground: 'rgb(246, 248, 250)',
+        workspaceTableHeaderBackground: 'rgb(238, 242, 246)',
+        workspaceTablePanelBorder: '0px',
         workspaceHasAccess: true,
         workspaceIsStyled: true,
         workspacePageCentered: true,
         workspacePageConstrained: true,
-        workspaceToolbarDisplay: 'grid',
+          workspaceToolbarDisplay: 'flex',
         workspaceHasGlyphs: true,
         workspaceHasDescriptions: false,
         workspaceNamesUseIconTrack: true,
@@ -141,15 +151,19 @@ for (const viewport of [
         workspaceDashboardGlyphBorderColor: 'rgb(210, 191, 255)',
         workspaceRowActionIconWidth: '16px',
         workspaceRowActionBorderColor: 'rgba(0, 0, 0, 0)',
-        workspaceSearchFontSize: '14px',
-        workspaceSearchHeight: 32,
-        workspaceSearchSpansToolbar: true,
+          workspaceSearchFontSize: '12px',
+          workspaceSearchHeight: 32,
+          workspaceSearchSpansToolbar: false,
+          workspaceHasAccessAction: 'Manage access',
+          workspaceHasAssetFilter: true,
+          workspaceFilterOptions: ['All', 'Dashboard'],
+          workspaceHasHeaderDetail: false,
         workspaceHeaderFontSize: '12px',
         workspaceCellFontSize: '12px',
         workspaceTitleFontSize: '12px',
         workspaceTitleFontWeight: '600',
         workspaceAssetVerticalAlignment: 'center',
-        workspaceRowHeight: 47,
+        workspaceRowHeight: 46,
         workspaceTitleFitsNameColumn: true,
       })
 
@@ -164,6 +178,9 @@ for (const viewport of [
         return {
           connectionsTitle: connections.shadowRoot.querySelector('h1')?.textContent?.trim(),
           connectionsHasSource: connections.shadowRoot.textContent?.includes('Orders source') ?? false,
+          connectionsHasEntityList: Boolean(connections.shadowRoot.querySelector('.entity-list-items')),
+          connectionsHasRecordTable: Boolean(connections.shadowRoot.querySelector('lv-record-table')),
+          connectionsFilterOptions: Array.from(connections.shadowRoot.querySelectorAll('.entity-filter option')).map((option) => option.textContent?.trim()),
           connectionsIsStyled: getComputedStyle(connectionsPage).paddingTop !== '0px',
           connectionsPageCentered: isMobile || Math.abs((connectionsPageRect.left + connectionsPageRect.width / 2) - window.innerWidth / 2) <= 1,
           connectionsPageConstrained: isMobile || Math.round(connectionsPageRect.width) < window.innerWidth,
@@ -172,6 +189,9 @@ for (const viewport of [
       expect(connectionsState).toEqual({
         connectionsTitle: 'Connections',
         connectionsHasSource: true,
+        connectionsHasEntityList: true,
+        connectionsHasRecordTable: false,
+        connectionsFilterOptions: ['All', 'Connection', 'Source'],
         connectionsIsStyled: true,
         connectionsPageCentered: true,
         connectionsPageConstrained: true,
@@ -233,7 +253,7 @@ for (const viewport of [
     const page = await browser.newPage({ viewport })
     try {
       await page.goto(baseURL)
-      await page.waitForFunction(() => customElements.get('lv-workspace-page'))
+      await page.waitForFunction(() => customElements.get('lv-workspace-page') && customElements.get('lv-entity-list'))
       await page.evaluate(async () => {
         const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
         mergePatch({ page: {
@@ -250,17 +270,20 @@ for (const viewport of [
       await page.locator('lv-workspace-page').evaluate((element: any) => element.updateComplete)
 
       const state = await page.locator('lv-workspace-page').evaluate((element: any) => {
-        const list = element.shadowRoot.querySelector('.workspace-list') as HTMLElement
-        const rows = Array.from(element.shadowRoot.querySelectorAll('a.workspace-row')) as HTMLAnchorElement[]
+        const list = element.shadowRoot.querySelector('.entity-list-items') as HTMLElement
+        const table = element.shadowRoot.querySelector('.entity-list-table') as HTMLElement
+        const rows = Array.from(element.shadowRoot.querySelectorAll('tbody tr.entity-list-table-row')) as HTMLTableRowElement[]
         const listRect = list.getBoundingClientRect()
+        const tableRect = table.getBoundingClientRect()
         return {
           rowCount: rows.length,
-          hrefs: rows.map((row) => row.getAttribute('href')),
-          titles: rows.map((row) => row.querySelector('.workspace-title')?.textContent?.trim()),
+          hrefs: rows.map((row) => row.querySelector('.entity-list-identity')?.getAttribute('href')),
+          titles: rows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim()),
+          listBackground: getComputedStyle(list).backgroundColor,
           hasStatuses: rows.some((row) => Boolean(row.querySelector('.workspace-status'))),
-          hasIcons: rows.every((row) => Boolean(row.querySelector('.workspace-icon svg'))),
-          hasChevrons: rows.every((row) => Boolean(row.querySelector('.workspace-chevron svg'))),
-          fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - listRect.width) <= 1),
+          hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
+          hasChevrons: rows.every((row) => Boolean(row.querySelector('.entity-list-chevron svg'))),
+          fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - tableRect.width) <= 1),
           maxRowHeight: Math.max(...rows.map((row) => Math.round(row.getBoundingClientRect().height))),
           totalListHeight: Math.round(listRect.height),
           hasOpenButton: Boolean(element.shadowRoot.querySelector('.primary-link')),
@@ -271,12 +294,13 @@ for (const viewport of [
         rowCount: 3,
         hrefs: ['/workspaces/operations', '/workspaces/sales', '/workspaces/visuals'],
         titles: ['Operations Workspace', 'Sales Workspace', 'Visuals Workspace'],
+        listBackground: 'rgb(238, 242, 246)',
         hasStatuses: false,
         hasIcons: true,
-        hasChevrons: true,
+        hasChevrons: false,
         fullWidth: true,
-        maxRowHeight: 72,
-        totalListHeight: 216,
+        maxRowHeight: 52,
+        totalListHeight: 188,
         hasOpenButton: false,
       })
     } finally {
@@ -285,7 +309,46 @@ for (const viewport of [
   })
 }
 
-test('workspace asset search filters the current asset rows', async () => {
+test('empty workspace search results preserve the catalog search input', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-workspace-page') && customElements.get('lv-entity-list'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        kind: 'workspace',
+        title: 'Workspaces',
+        workspaces: [{ id: 'operations', title: 'Operations Workspace', description: 'Operations', href: '/workspaces/operations' }],
+      } })
+      const workspace = document.querySelector('lv-workspace-page') as any
+      await workspace.updateComplete
+      const input = workspace.shadowRoot.querySelector('.entity-search input') as HTMLInputElement
+      input.value = 'missing workspace'
+      input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await workspace.updateComplete
+      mergePatch({ page: { workspaces: [] } })
+      await workspace.updateComplete
+      const list = workspace.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      return {
+        input: (workspace.shadowRoot.querySelector('.entity-search input') as HTMLInputElement | null)?.value,
+        empty: workspace.shadowRoot.querySelector('.entity-list-empty')?.textContent?.trim(),
+        hasAssetToolbar: Boolean(workspace.shadowRoot.querySelector('.toolbar-filters')),
+      }
+    })
+
+    expect(state).toEqual({
+      input: 'missing workspace',
+      empty: 'No results match your search.',
+      hasAssetToolbar: false,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('workspace asset search delegates filtering to the page stream', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -322,13 +385,50 @@ test('workspace asset search filters the current asset rows', async () => {
     })
 
     expect(state.before).toEqual(['Executive Sales Dashboard', 'Customer Segments'])
-    expect(state.after).toEqual(['Customer Segments'])
-    expect(state.afterKeySearch).toEqual(['Executive Sales Dashboard'])
-    expect(state.focusedBorderColor).toBe('rgb(9, 105, 218)')
+    // The component emits the query but does not filter stale rows locally.
+    // The page stream replaces these rows when its debounced response arrives.
+    expect(state.after).toEqual(state.before)
+    expect(state.afterKeySearch).toEqual(state.before)
+    expect(state.focusedBorderColor).toBe('rgb(216, 222, 228)')
     expect(state.focusedOutlineStyle).toBe('solid')
     expect(state.hasSubmitButton).toBe(false)
     expect(state.formAction).toBeNull()
     expect(state.inputAutocomplete).toBe('off')
+  } finally {
+    await page.close()
+  }
+})
+
+test('workspace asset filter emits an update event without navigating', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-workspace-page'))
+    await page.locator('lv-workspace-page').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.evaluate(async () => {
+      const workspace = document.querySelector('lv-workspace-page') as any
+      const select = workspace.shadowRoot.querySelector('.asset-filter select') as HTMLSelectElement
+      let detail: unknown = null
+      workspace.addEventListener('lv-workspace-asset-filter', (event: CustomEvent) => { detail = event.detail })
+      select.value = 'dashboard'
+      select.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await workspace.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { assetList: { assets: workspace.page.assetList.assets.slice(0, 1) } } })
+      await workspace.updateComplete
+      return {
+        detail,
+        url: window.location.href,
+        selectedType: (workspace.shadowRoot.querySelector('.asset-filter select') as HTMLSelectElement).value,
+        assetTitles: Array.from(workspace.shadowRoot.querySelectorAll('.record-entity-label')).map((link) => link.textContent?.trim()),
+      }
+    })
+
+    expect(state.detail).toEqual({ type: 'dashboard', query: '' })
+    expect(state.url).toBe(`${baseURL}/`)
+    expect(state.selectedType).toBe('dashboard')
+    expect(state.assetTitles).toEqual(['Executive Sales Dashboard'])
   } finally {
     await page.close()
   }
@@ -636,6 +736,11 @@ function testDocument(root: 'workspace' | 'connections' | 'asset'): string {
     assetList: {
       ...assetList,
       searchHref: '/connections',
+      tabs: [
+        { id: '', label: 'All', href: '/connections', active: true },
+        { id: 'connection', label: 'Connection', href: '/connections?type=connection', active: false },
+        { id: 'source', label: 'Source', href: '/connections?type=source', active: false },
+      ],
       assets: [{ ...assetList.assets[0], title: 'Orders source', type: 'source', typeLabel: 'Source', detailHref: '/connections/connection:olist/sources/source:orders/details' }],
     },
   }
@@ -740,7 +845,8 @@ function testDocument(root: 'workspace' | 'connections' | 'asset'): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { --fontStack-system: system-ui; --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-accent: #0969da; --lv-accent-fg: #fff; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-tight: 4px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-workspace-detail-max-width: 72rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --lv-space-control: 10px; --control-medium-size: 32px; --control-xlarge-size: 40px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 12px; --lv-font-size-body-md: 14px; --lv-font-size-title-sm: 16px; --lv-font-weight-regular: 400; --lv-font-weight-medium: 500; --lv-font-weight-strong: 600; --lv-line-height-tight: 1.2; --lv-line-height-compact: 1.3; --lv-line-height-normal: 1.5; --lv-spinner-size-md: 16px; --lv-spinner-duration: 1800ms; --lv-asset-dashboard-bg: #fbefff; --lv-asset-dashboard-accent: #8250df; --lv-asset-dashboard-border: #d2bfff; --lv-asset-semantic-model-bg: #ddf4ff; --lv-asset-semantic-model-accent: #0969da; --lv-asset-semantic-model-border: #b6e3ff; --z-index-inspector: 1000; --lv-modal-backdrop: rgb(0 0 0 / .28); }
+          body { --fontStack-system: system-ui; --lv-bg-app: #f6f8fa; --lv-bg-page: #eef2f6; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-accent: #0969da; --lv-accent-fg: #fff; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-tight: 4px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-workspace-detail-max-width: 72rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --lv-space-control: 10px; --control-medium-size: 32px; --control-xlarge-size: 40px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 12px; --lv-font-size-body-md: 14px; --lv-font-size-title-sm: 16px; --lv-font-weight-regular: 400; --lv-font-weight-medium: 500; --lv-font-weight-strong: 600; --lv-line-height-tight: 1.2; --lv-line-height-compact: 1.3; --lv-line-height-normal: 1.5; --lv-spinner-size-md: 16px; --lv-spinner-duration: 1800ms; --lv-asset-dashboard-bg: #fbefff; --lv-asset-dashboard-accent: #8250df; --lv-asset-dashboard-border: #d2bfff; --lv-asset-semantic-model-bg: #ddf4ff; --lv-asset-semantic-model-accent: #0969da; --lv-asset-semantic-model-border: #b6e3ff; --z-index-inspector: 1000; --lv-modal-backdrop: rgb(0 0 0 / .28); }
+          body { --focus-outline: 2px solid var(--lv-line-accent); --focus-outline-offset: 2px; }
           lv-workspace-page, lv-connections-page, lv-workspace-asset-page { display: block; min-height: 720px; }
         </style>
       </head>

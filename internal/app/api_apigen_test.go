@@ -847,8 +847,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 83 {
-		t.Fatalf("UI signal IR contracts = %d, want 83", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 87 {
+		t.Fatalf("UI signal IR contracts = %d, want 87", len(irDoc.Contracts))
 	}
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false

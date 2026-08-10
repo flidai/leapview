@@ -470,7 +470,7 @@
     --lv-fg-warning: var(--fgColor-attention);
     --lv-fg-danger: var(--fgColor-danger);
     --lv-fg-on-emphasis: var(--fgColor-onEmphasis);
-    --lv-bg-app: var(--dashboard-bgColor, var(--bgColor-inset));
+    --lv-bg-app: var(--bgColor-default);
     --lv-bg-page: var(--bgColor-default);
     --lv-bg-panel: var(--card-bgColor, var(--bgColor-default));
     --lv-bg-panel-muted: var(--bgColor-muted);
@@ -487,7 +487,7 @@
     --lv-bg-attention-muted: var(--bgColor-attention-muted);
     --lv-bg-danger-muted: var(--bgColor-danger-muted);
     --lv-bg-hover: var(--control-transparent-bgColor-hover);
-    --lv-sidebar-bg: var(--bgColor-default);
+    --lv-sidebar-bg: var(--bgColor-inset);
     --lv-report-rail-bg: var(--bgColor-muted);
     --lv-scrollbar-thumb: var(--borderColor-muted);
     --lv-scrollbar-thumb-hover: var(--borderColor-default);

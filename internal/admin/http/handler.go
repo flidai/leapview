@@ -31,8 +31,17 @@ type publicationCommandSignals struct {
 	AdminPublicationCommand uisignals.AdminPublicationCommand `json:"adminPublicationCommand"`
 }
 
-func (h Handler) General(w nethttp.ResponseWriter, r *nethttp.Request) {
-	h.renderPage(w, r, "general")
+type entityListSignals struct {
+	Query  *string `json:"entityListQuery"`
+	Filter *string `json:"entityListFilter"`
+}
+
+func (h Handler) AdminRoot(w nethttp.ResponseWriter, r *nethttp.Request) {
+	nethttp.Redirect(w, r, "/admin/profile", nethttp.StatusSeeOther)
+}
+
+func (h Handler) Profile(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.renderPage(w, r, "profile")
 }
 
 func (h Handler) Principals(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -58,6 +67,45 @@ func (h Handler) PrincipalDetail(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h Handler) Groups(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "groups")
+}
+
+func (h Handler) PrincipalsSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.listSearch(w, r, "principals")
+}
+
+func (h Handler) GroupsSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.listSearch(w, r, "groups")
+}
+
+func (h Handler) listSearch(w nethttp.ResponseWriter, r *nethttp.Request, active string) {
+	var signals entityListSignals
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	query, filter := "", ""
+	if signals.Query != nil {
+		query = strings.TrimSpace(*signals.Query)
+	}
+	if signals.Filter != nil {
+		filter = strings.TrimSpace(*signals.Filter)
+	}
+	values := r.URL.Query()
+	if query != "" {
+		values.Set("q", query)
+	}
+	if filter != "" && filter != "all" {
+		values.Set("filter", filter)
+	}
+	r.URL.RawQuery = values.Encode()
+	data, err := h.adminDataForUpdates(r, active)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	data.ListQuery = query
+	data.ListFilter = filter
+	_ = pagestream.PatchResponse(w, r, ui.AdminListResultsPatch(active, data))
 }
 
 func (h Handler) GroupDetail(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -119,8 +167,35 @@ func (h Handler) PublicationCommand(w nethttp.ResponseWriter, r *nethttp.Request
 
 func (h Handler) BootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	active := strings.TrimSpace(r.URL.Query().Get("section"))
-	if active == "" {
-		active = "general"
+	if active == "" || active == "general" {
+		active = "profile"
+	}
+	var listState entityListSignals
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	filter := strings.TrimSpace(r.URL.Query().Get("filter"))
+	if active == "principals" || active == "groups" {
+		if err := pagestream.ReadSignals(r, &listState); err != nil {
+			nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+			return
+		}
+		if listState.Query != nil {
+			query = strings.TrimSpace(*listState.Query)
+		}
+		if listState.Filter != nil {
+			filter = strings.TrimSpace(*listState.Filter)
+		}
+		values := r.URL.Query()
+		if query == "" {
+			values.Del("q")
+		} else {
+			values.Set("q", query)
+		}
+		if filter == "" || filter == "all" {
+			values.Del("filter")
+		} else {
+			values.Set("filter", filter)
+		}
+		r.URL.RawQuery = values.Encode()
 	}
 	var data ui.AdminData
 	var err error
@@ -137,6 +212,8 @@ func (h Handler) BootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) 
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 		return
 	}
+	data.ListQuery = query
+	data.ListFilter = filter
 	h.patchAndWait(w, r, ui.AdminBootstrapSignals(active, data, h.layout(r)))
 }
 
@@ -195,7 +272,7 @@ func (h Handler) StorageTableSelect(w nethttp.ResponseWriter, r *nethttp.Request
 }
 
 func (h Handler) renderPage(w nethttp.ResponseWriter, r *nethttp.Request, active string) {
-	data, err := h.adminData(r)
+	data, err := h.adminDataForUpdates(r, active)
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 		return
@@ -216,6 +293,12 @@ func (h Handler) adminData(r *nethttp.Request) (ui.AdminData, error) {
 }
 
 func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.AdminData, error) {
+	switch active {
+	case "principals":
+		return h.readModel().PrincipalsListData(r)
+	case "groups":
+		return h.readModel().GroupsListData(r)
+	}
 	data, err := h.adminData(r)
 	if err != nil {
 		return data, err

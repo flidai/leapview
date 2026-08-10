@@ -14,6 +14,21 @@ type WorkspaceView struct {
 	UpdatedAt            string
 }
 
+func FilterWorkspaceViews(workspaces []WorkspaceView, query string) []WorkspaceView {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return workspaces
+	}
+	filtered := make([]WorkspaceView, 0, len(workspaces))
+	for _, workspace := range workspaces {
+		haystack := strings.ToLower(strings.Join([]string{workspace.ID, workspace.Title, workspace.Description}, " "))
+		if strings.Contains(haystack, query) {
+			filtered = append(filtered, workspace)
+		}
+	}
+	return filtered
+}
+
 type AssetView struct {
 	ID             string
 	SnapshotID     string
@@ -160,11 +175,30 @@ func FilterWorkspaceAssets(assets []AssetView, typ, query string) []AssetView {
 	if typ != "" || query != "" {
 		return FilterAssets(assets, typ, query)
 	}
+	return FilterWorkspaceLandingAssets(assets, "", "")
+}
+
+// FilterWorkspaceLandingAssets limits the workspace landing surface to assets
+// owned by the workspace. Connections and sources remain available in the full
+// workspace asset graph as project-scoped dependencies.
+func FilterWorkspaceLandingAssets(assets []AssetView, typ, query string) []AssetView {
+	typ = strings.TrimSpace(typ)
+	query = strings.ToLower(strings.TrimSpace(query))
 	out := make([]AssetView, 0, len(assets))
 	for _, asset := range assets {
-		if IsWorkspaceLandingAsset(asset.Type) {
-			out = append(out, asset)
+		if !IsWorkspaceLandingAsset(asset.Type) {
+			continue
 		}
+		if typ != "" && asset.Type != typ {
+			continue
+		}
+		if query != "" {
+			haystack := strings.ToLower(asset.Type + " " + asset.Key + " " + asset.Title + " " + asset.Description)
+			if !strings.Contains(haystack, query) {
+				continue
+			}
+		}
+		out = append(out, asset)
 	}
 	return out
 }

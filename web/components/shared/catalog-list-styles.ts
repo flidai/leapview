@@ -7,7 +7,7 @@ export const catalogListStyles = css`
     overflow: hidden;
     margin: 0;
     border-radius: var(--lv-radius-default);
-    background: var(--lv-bg-panel);
+    background: var(--lv-bg-page);
     box-shadow: inset 0 0 0 var(--borderWidth-default) var(--lv-line-muted);
     padding: 0;
     list-style: none;

@@ -1,13 +1,14 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { CheckCircle2, Clock3, Copy, XCircle } from 'lucide'
-import type { AdminPageSignal, AdminContentSectionSignal, AdminPublicationSignal, AdminQueryDetailSignal, AdminQueryHistoryFilters, AdminQueryHistorySignal, AdminStorageSignal, FilterMenuCommand, FilterMenuSignal, RecordTableSignal } from '../../generated/signals'
+import type { AdminPageSignal, AdminContentSectionSignal, AdminProfileSignal, AdminPublicationSignal, AdminQueryDetailSignal, AdminQueryHistoryFilters, AdminQueryHistorySignal, AdminStorageSignal, FilterMenuCommand, FilterMenuSignal, RecordTableSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { lucideIcon } from '../shared/lucide-icons'
+import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import { checkSignalContract } from '../shared/signal-contract'
-import '../navigation/sub-sidebar'
 import '../shared/code-block'
 import '../shared/drawer'
+import '../shared/entity-list'
 import '../shared/filter-menu'
 import '../shared/record-table'
 import './agent-tools'
@@ -44,7 +45,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   private queryFilterTimer: ReturnType<typeof setTimeout> | null = null
   private lastQueryHistoryKey = ''
 
-  static styles = css`
+  static styles = [pageHeaderStyles, css`
     :host {
       display: block;
       min-width: 0;
@@ -57,16 +58,9 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     .route {
       display: grid;
       min-height: 100svh;
-      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       align-items: start;
       background: var(--lv-bg-app);
-    }
-
-    lv-sub-sidebar {
-      position: sticky;
-      top: 0;
-      align-self: start;
-      height: 100svh;
     }
 
     .main {
@@ -102,14 +96,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       margin: 0;
     }
 
-    .eyebrow {
-      color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-tight);
-      text-transform: uppercase;
-    }
-
     h1 {
       overflow: hidden;
       color: var(--lv-fg-default);
@@ -120,13 +106,13 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       line-height: var(--lv-line-height-compact);
     }
 
-    .detail {
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+    .main-directory {
+      gap: var(--base-size-16);
+      padding: var(--base-size-24);
+    }
+
+    .main-directory h1 {
+      font-size: var(--lv-font-size-title-md);
     }
 
     .metrics {
@@ -143,6 +129,12 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-panel);
+    }
+
+    .panel.table-panel {
+      border: 0;
+      border-radius: 0;
+      background: var(--lv-bg-page);
     }
 
     .metric {
@@ -177,6 +169,93 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .empty {
       padding: var(--base-size-12);
+    }
+
+    .profile-card {
+      display: grid;
+      max-width: 42rem;
+      overflow: hidden;
+      border: 0;
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+    }
+
+    .profile-row {
+      display: grid;
+      min-width: 0;
+      min-height: 4rem;
+      grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+      align-items: center;
+      gap: var(--base-size-16);
+      margin: 0 var(--base-size-16);
+      border-bottom: var(--lv-border-muted);
+    }
+
+    .profile-row:last-child {
+      border-bottom: 0;
+    }
+
+    .profile-label-group {
+      display: grid;
+      min-width: 0;
+      gap: var(--base-size-2);
+    }
+
+    .profile-label {
+      color: var(--lv-fg-default);
+      font-size: var(--lv-font-size-body-sm);
+      font-weight: var(--lv-font-weight-medium);
+      line-height: var(--lv-line-height-compact);
+    }
+
+    .profile-help {
+      color: var(--lv-fg-muted);
+      font-size: var(--lv-font-size-caption);
+      line-height: var(--lv-line-height-compact);
+    }
+
+    .profile-value {
+      box-sizing: border-box;
+      min-width: 0;
+      max-width: min(24rem, 58vw);
+      overflow: hidden;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-control);
+      color: var(--lv-fg-default);
+      padding: var(--base-size-6) var(--base-size-12);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: var(--lv-font-size-body-sm);
+      line-height: var(--lv-line-height-compact);
+    }
+
+    .profile-value-muted {
+      color: var(--lv-fg-muted);
+    }
+
+    .profile-picture {
+      min-height: 4.25rem;
+    }
+
+    .profile-avatar {
+      display: grid;
+      width: var(--control-large-size);
+      height: var(--control-large-size);
+      place-items: center;
+      overflow: hidden;
+      border: var(--lv-border-muted);
+      border-radius: 50%;
+      background: var(--lv-bg-selected);
+      color: var(--lv-fg-default);
+      font-size: var(--lv-font-size-body-sm);
+      font-weight: var(--lv-font-weight-strong);
+    }
+
+    .profile-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
 
     .warnings {
@@ -313,34 +392,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-panel);
       padding: var(--base-size-12);
-    }
-
-    .local-user-form {
-      display: grid;
-      grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 1fr) auto;
-      gap: var(--base-size-8);
-      align-items: end;
-    }
-
-    .local-user-form label {
-      display: grid;
-      gap: var(--base-size-4);
-      color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
-      text-transform: uppercase;
-    }
-
-    .local-user-form input {
-      min-width: 0;
-      min-height: var(--control-medium-size);
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-small);
-      background: var(--lv-bg-input);
-      color: var(--lv-fg-default);
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
-      padding: 0 var(--base-size-8);
     }
 
     .local-user-action {
@@ -611,25 +662,15 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
         grid-template-columns: 1fr;
       }
 
-      lv-sub-sidebar {
-        position: relative;
-        width: 100%;
-        height: auto;
-      }
-
       .main {
         padding: var(--base-size-12);
-      }
-
-      .local-user-form {
-        grid-template-columns: minmax(0, 1fr);
       }
 
       .local-user-action {
         width: 100%;
       }
     }
-  `
+  `]
 
   disconnectedCallback(): void {
     if (this.queryFilterTimer) clearTimeout(this.queryFilterTimer)
@@ -637,7 +678,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   }
 
   updated(): void {
-    checkSignalContract('admin page', this.page, { kind: 'required', title: 'required', sidebar: 'required' })
+    checkSignalContract('admin page', this.page, { kind: 'required', title: 'required' })
     const historyKey = JSON.stringify(this.currentQueryHistory().filters)
     if (historyKey !== this.lastQueryHistoryKey) {
       this.lastQueryHistoryKey = historyKey
@@ -672,17 +713,15 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
+    const mainClass = [
+      'main',
+      page.active === 'storage' ? 'main-storage' : '',
+      page.active === 'principals' || page.active === 'groups' ? 'main-directory' : '',
+    ].filter(Boolean).join(' ')
     return html`
       <div class="route">
-        <lv-sub-sidebar .config=${page.sidebar}></lv-sub-sidebar>
-        <section class=${page.active === 'storage' ? 'main main-storage' : 'main'} aria-label="Admin">
-          ${page.active === 'storage' ? nothing : html`
-            <header>
-              <p class="eyebrow">Admin</p>
-              <h1>${page.headerTitle || page.title}</h1>
-              ${page.headerDetail ? html`<p class="detail">${page.headerDetail}</p>` : nothing}
-            </header>
-          `}
+        <section class=${mainClass} aria-label="Admin">
+          ${page.active === 'storage' ? nothing : renderPageHeader(page.headerTitle || page.title)}
           ${page.empty && page.active !== 'storage' ? html`<div class="panel"><div class="empty">${page.empty}</div></div>` : nothing}
           ${page.metrics?.length && page.active !== 'storage' && page.active !== 'queries' ? html`
             <div class="metrics">
@@ -696,31 +735,28 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
             </div>
           ` : nothing}
           ${this.renderLocalUserAdmin(page)}
-          ${page.active === 'storage' ? this.renderStorage(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.sections?.map(renderSection)}
+          ${page.active === 'principals' && page.directoryList
+            ? html`<lv-entity-list
+                .items=${adminPrincipalListItems(page)}
+                .columns=${adminPrincipalListColumns()}
+                .filters=${adminPrincipalListFilters()}
+                .groups=${adminPrincipalListGroups(page)}
+                initial-query=${page.listQuery ?? ''}
+                active-filter=${page.listFilter ?? 'all'}
+                search-placeholder=${page.directoryList.searchPlaceholder}
+                list-label="Members"
+                empty-text="No members match the current filters."
+                export-filename="members.csv"
+              ></lv-entity-list>`
+            : page.active === 'groups'
+              ? html`<lv-entity-list .items=${adminGroupListItems(page)} .columns=${adminGroupListColumns()} .filters=${adminGroupListFilters(page)} initial-query=${page.listQuery ?? ''} active-filter=${page.listFilter ?? 'all'} search-placeholder="Search groups by name or ID" empty-text="No groups found."></lv-entity-list>`
+            : page.active === 'profile' ? this.renderProfile(page.profile) : page.active === 'storage' ? this.renderStorage(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.sections?.map(renderSection)}
         </section>
       </div>
     `
   }
 
   private renderLocalUserAdmin(page: AdminPageSignal) {
-    if (page.active === 'principals') {
-      return html`
-        <section class="local-user-panel" aria-label="Create local user">
-          <form class="local-user-form" method="post" action="/api/v1/principals">
-            <input type="hidden" name="gorilla.csrf.Token" value=${csrfToken()}>
-            <label>
-              Email
-              <input name="email" type="email" autocomplete="off" required>
-            </label>
-            <label>
-              Display name
-              <input name="displayName" type="text" autocomplete="off">
-            </label>
-            <button class="local-user-action" type="submit">Create user</button>
-          </form>
-        </section>
-      `
-    }
     if (page.active === 'principal-detail') {
       const principalId = principalIDFromPage(page)
       if (!principalId) return nothing
@@ -734,6 +770,50 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       `
     }
     return nothing
+  }
+
+  private renderProfile(profile?: AdminProfileSignal) {
+    const current = profile ?? { id: '', email: '', displayName: '', title: '', username: '', profilePictureUrl: undefined }
+    const displayName = current.displayName || current.email || current.username || 'Not set'
+    const initials = profileInitials(displayName)
+    return html`
+      <section class="profile-card" aria-label="Profile details">
+        <div class="profile-row profile-picture">
+          <div class="profile-label-group">
+            <span class="profile-label">Profile picture</span>
+          </div>
+          <div class="profile-avatar" aria-label=${current.profilePictureUrl ? 'Profile picture' : `Profile initials: ${initials}`}>
+            ${current.profilePictureUrl ? html`<img src=${current.profilePictureUrl} alt="">` : initials}
+          </div>
+        </div>
+        <div class="profile-row">
+          <div class="profile-label-group">
+            <span class="profile-label">Email</span>
+          </div>
+          <span class="profile-value">${current.email || 'Not set'}</span>
+        </div>
+        <div class="profile-row">
+          <div class="profile-label-group">
+            <span class="profile-label">Full name</span>
+          </div>
+          <span class="profile-value">${displayName}</span>
+        </div>
+        <div class="profile-row">
+          <div class="profile-label-group">
+            <span class="profile-label">Title</span>
+            <span class="profile-help">Your job title or role</span>
+          </div>
+          <span class=${current.title ? 'profile-value' : 'profile-value profile-value-muted'}>${current.title || 'Not set'}</span>
+        </div>
+        <div class="profile-row">
+          <div class="profile-label-group">
+            <span class="profile-label">Username</span>
+            <span class="profile-help">One word, like a nickname or first name</span>
+          </div>
+          <span class=${current.username ? 'profile-value' : 'profile-value profile-value-muted'}>${current.username || 'Not set'}</span>
+        </div>
+      </section>
+    `
   }
 
   private renderAgent(page: AdminPageSignal) {
@@ -772,7 +852,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
           ${history.filterMenus?.map((menu) => this.renderFilterMenu(menu))}
           ${this.renderTextFilter('search', 'Statement / ID')}
         </div>
-        <div class="panel" @lv-record-table-action=${this.handleQueryTableAction}>
+        <div class="panel table-panel" @lv-record-table-action=${this.handleQueryTableAction}>
           <lv-record-table variant="compact" .table=${history.table}></lv-record-table>
           <div class="query-history-footer" aria-live="polite">
             <span class=${history.error ? 'query-history-error' : ''}>${history.error || history.loadedCountLabel || `${rows.length} queries loaded`}</span>
@@ -1072,6 +1152,110 @@ function tableRows(table: RecordTableSignal | undefined | null): Array<Record<st
   return Array.isArray(table?.rows) ? table.rows as Array<Record<string, unknown>> : []
 }
 
+function adminGroupTable(page: AdminPageSignal): RecordTableSignal | undefined {
+  return page.sections?.find((section) => section.title === 'Groups')?.table
+}
+
+function adminPrincipalListItems(page: AdminPageSignal) {
+  return (page.directoryList?.groups ?? []).flatMap((group) => group.items.map((item) => ({
+    id: item.id,
+    title: item.name,
+    description: item.username,
+    href: item.href,
+    icon: item.kind === 'application' ? 'application' : 'user',
+    group: group.id,
+    columns: {
+      email: item.email || '—',
+      status: item.role,
+      teams: `${item.groupCount} ${item.groupCount === 1 ? 'team' : 'teams'}`,
+      joined: formatAdminListDate(item.joinedAt),
+    },
+  })))
+}
+
+function adminPrincipalListColumns() {
+  return [
+    { id: 'name', label: 'Name', width: '31%' },
+    { id: 'email', label: 'Email', width: '24%' },
+    { id: 'status', label: 'Status', width: '17%' },
+    { id: 'teams', label: 'Teams', width: '14%' },
+    { id: 'joined', label: 'Joined', width: '14%' },
+  ]
+}
+
+function adminPrincipalListFilters() {
+  return [
+    { id: 'all', label: 'All' },
+    { id: 'people', label: 'People' },
+    { id: 'applications', label: 'Applications' },
+    { id: 'inactive', label: 'Inactive' },
+  ]
+}
+
+function adminPrincipalListGroups(page: AdminPageSignal) {
+  return (page.directoryList?.groups ?? []).map((group) => ({ id: group.id, label: group.label }))
+}
+
+function formatAdminListDate(value: string): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(date)
+}
+
+function adminGroupListItems(page: AdminPageSignal) {
+  return tableRows(adminGroupTable(page)).map((row) => {
+    const name = recordValueLabel(row.name) || recordValueLabel(row.id) || 'Unnamed group'
+    const provider = recordValueLabel(row.provider)
+    const externalID = recordValueLabel(row.external_id)
+    const memberCount = Number(row.member_count ?? 0)
+    const roles = Array.isArray(row.roles) ? row.roles.map(String).join(', ') : recordValueLabel(row.roles)
+    return {
+      id: name,
+      title: name,
+      href: recordValueHref(row.name) || recordValueLabel(row.name_href) || '#',
+      icon: 'group',
+      category: provider.toLowerCase(),
+      columns: {
+        provider: provider || '—',
+        externalID: externalID || '—',
+        roles: roles || '—',
+        members: String(memberCount),
+      },
+    }
+  })
+}
+
+function adminGroupListColumns() {
+  return [
+    { id: 'name', label: 'Name', width: '30%' },
+    { id: 'provider', label: 'Provider', width: '16%' },
+    { id: 'externalID', label: 'External ID', width: '23%' },
+    { id: 'roles', label: 'Roles', width: '21%' },
+    { id: 'members', label: 'Members', width: '10%', align: 'right' as const },
+  ]
+}
+
+function adminGroupListFilters(page: AdminPageSignal) {
+  const providers = page.listFilterOptions?.length
+    ? page.listFilterOptions
+    : Array.from(new Set(adminGroupListItems(page).map((item) => item.category).filter(Boolean))).sort()
+  return [{ id: 'all', label: 'All' }, ...providers.map((provider) => ({ id: provider, label: provider.charAt(0).toUpperCase() + provider.slice(1) }))]
+}
+
+function recordValueLabel(value: unknown): string {
+  if (value && typeof value === 'object') {
+    const cell = value as { label?: unknown; value?: unknown }
+    return String(cell.label ?? cell.value ?? '')
+  }
+  return String(value ?? '')
+}
+
+function recordValueHref(value: unknown): string {
+  if (!value || typeof value !== 'object') return ''
+  return String((value as { href?: unknown }).href ?? '')
+}
+
 function queryDetailObjectLabel(event: AdminQueryDetailSignal): string {
   const object = [event.objectType, event.objectId].filter(Boolean).join(':')
   if (object) return object
@@ -1159,12 +1343,18 @@ function principalIDFromPage(page: AdminPageSignal): string {
   return metric?.value ?? ''
 }
 
+function profileInitials(value: string): string {
+  const parts = value.trim().split(/\s+/).filter(Boolean)
+  if (parts.length > 1) return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+  return (parts[0]?.slice(0, 2) || '?').toUpperCase()
+}
+
 function renderSection(section: AdminContentSectionSignal) {
   return html`
     <section class="section" aria-label=${section.title}>
       <h2>${section.title}</h2>
       ${section.table?.columns?.length
-        ? html`<div class="panel"><lv-record-table variant="compact" .table=${section.table}></lv-record-table></div>`
+        ? html`<div class="panel table-panel"><lv-record-table variant="compact" .table=${section.table}></lv-record-table></div>`
         : html`<div class="facts">${section.facts?.map((fact) => html`
           <div class="metric">
             <span class="label">${fact.label}</span>

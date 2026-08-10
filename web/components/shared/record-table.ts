@@ -800,8 +800,6 @@ const recordTableStyles = `
     min-width: 0;
     max-width: 100%;
     overflow-x: auto;
-    border-top: var(--lv-border-muted);
-    border-bottom: var(--lv-border-muted);
   }
 
   lv-record-table .record-table-column-selector {
@@ -871,9 +869,7 @@ const recordTableStyles = `
 
   lv-record-table .record-table-wrap.variant-primary,
   lv-record-table .record-table-wrap.variant-compact {
-    border: var(--lv-border-muted);
-    border-radius: var(--lv-radius-default);
-    background: var(--lv-bg-panel);
+    background: var(--lv-bg-page);
   }
 
   lv-record-table .record-table {
@@ -884,7 +880,7 @@ const recordTableStyles = `
 
   lv-record-table .record-table th,
   lv-record-table .record-table td {
-    border-bottom: var(--lv-border-muted);
+    border-bottom: 0;
     padding: var(--base-size-8);
     text-align: left;
     vertical-align: top;
@@ -894,18 +890,18 @@ const recordTableStyles = `
     position: sticky;
     top: 0;
     z-index: 1;
-    background: var(--lv-bg-panel);
+    background: var(--lv-bg-page);
     color: var(--lv-fg-muted);
     font-size: var(--lv-font-size-caption);
     font-weight: var(--lv-font-weight-medium);
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   lv-record-table .variant-primary .record-table th,
   lv-record-table .variant-compact .record-table th {
     padding: var(--base-size-8) var(--base-size-12);
-    background: var(--lv-bg-panel-muted);
+    background: var(--lv-bg-page);
     font-size: var(--lv-font-size-body-sm);
     font-weight: var(--lv-font-weight-strong);
   }
@@ -1043,6 +1039,11 @@ const recordTableStyles = `
     white-space: nowrap;
     font-size: var(--lv-font-size-body-md);
     font-weight: var(--lv-font-weight-medium);
+  }
+
+  lv-record-table .variant-compact .record-code,
+  lv-record-table .variant-compact .record-expression {
+    font-size: var(--lv-font-size-body-sm);
   }
 
   lv-record-table .record-expression {
@@ -1475,8 +1476,6 @@ const recordTableStyles = `
   }
 
   lv-record-table .record-table-empty {
-    border-top: var(--lv-border-muted);
-    border-bottom: var(--lv-border-muted);
     padding: var(--base-size-20) 0;
     font-size: var(--lv-font-size-body-md);
     font-weight: var(--lv-font-weight-regular);

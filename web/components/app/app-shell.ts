@@ -31,6 +31,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
     lv-sidebar {
       border-right: var(--lv-border-default);
+      min-width: var(--lv-sidebar-width);
     }
 
     main {
@@ -52,6 +53,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
       lv-sidebar {
         border-right: 0;
         border-bottom: var(--lv-border-default);
+        min-width: 0;
       }
     }
   `

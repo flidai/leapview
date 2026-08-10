@@ -7,7 +7,6 @@ import {
   Boxes,
   Cable,
   ChartColumn,
-  ChevronRight,
   Component,
   ExternalLink,
   FileText,
@@ -38,9 +37,10 @@ import type {
   WorkspaceTabSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
-import { catalogListStyles } from '../shared/catalog-list-styles'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
+import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
+import '../shared/entity-list'
 import '../shared/loading-spinner'
 import '../shared/record-table'
 import '../shared/code-block'
@@ -60,10 +60,11 @@ const emptyWorkspaceAccess: WorkspaceAccessSignal = {
 
 class LeapViewWorkspacePage extends DatastarLit(LitElement) {
   @state() private assetQuery: string | null = null
+  @state() private assetType: string | null = null
   private lastPageKey = ''
 
   static get styles() {
-    return [catalogListStyles, workspaceStyles]
+    return [pageHeaderStyles, workspaceStyles]
   }
 
   updated(): void {
@@ -71,6 +72,7 @@ class LeapViewWorkspacePage extends DatastarLit(LitElement) {
     if (key !== this.lastPageKey) {
       this.lastPageKey = key
       this.assetQuery = null
+      this.assetType = null
     }
     checkSignalContract('workspace page', this.page, { kind: 'required', title: 'required' })
   }
@@ -91,43 +93,57 @@ class LeapViewWorkspacePage extends DatastarLit(LitElement) {
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
-    if (page.workspaces?.length) return this.renderCatalog(page)
+    if (Array.isArray(page.workspaces)) return this.renderCatalog(page)
     if (!page.assetList?.searchHref && this.workspaceAccess?.canManage) return this.renderAccessPage(page)
-    return this.renderAssetList(page, 'Workspace', 'Workspace assets')
+    return this.renderAssetList(page, 'Workspace assets')
   }
 
   private renderCatalog(page: WorkspacePageSignal) {
     return html`
       <section class="page catalog" aria-label="LeapView workspaces">
-        ${this.renderHeader('', page.title, page.description)}
-        <ul class="catalog-list workspace-list" aria-label="Published workspaces">
-          ${page.workspaces?.map((workspace) => html`
-            <li>
-              <a class="catalog-row workspace-row" href=${workspace.href}>
-                <span class="catalog-icon workspace-icon">${lucideIcon(Boxes)}</span>
-                <span class="catalog-copy workspace-copy">
-                  <span class="catalog-title workspace-title">${workspace.title}</span>
-                  <span class="catalog-description workspace-description">${workspace.description}</span>
-                </span>
-                <span class="catalog-trailing">
-                  <span class="catalog-chevron workspace-chevron">${lucideIcon(ChevronRight)}</span>
-                </span>
-              </a>
-            </li>
-          `)}
-        </ul>
+        ${this.renderHeader('', page.title)}
+        <lv-entity-list
+          .items=${(page.workspaces ?? []).map((workspace) => ({
+            id: workspace.id,
+            title: workspace.title,
+            href: workspace.href,
+            icon: 'workspace',
+            columns: { description: workspace.description },
+          }))}
+          .columns=${[
+            { id: 'name', label: 'Name', width: '48%' },
+            { id: 'description', label: 'Description', width: '52%' },
+          ]}
+          .filters=${[{ id: 'all', label: 'All' }]}
+          initial-query=${page.listQuery ?? ''}
+          active-filter=${page.listFilter ?? 'all'}
+          search-placeholder="Search workspaces"
+          empty-text="No workspaces are available."
+        ></lv-entity-list>
       </section>
     `
   }
 
-  private renderAssetList(page: WorkspacePageSignal, eyebrow: string, label: string) {
+  private renderAssetList(page: WorkspacePageSignal, label: string) {
     const assetList = page.assetList
     const query = this.assetQuery ?? assetList?.query ?? ''
-    const assets = filterAssetSummaries(assetList?.assets ?? [], query)
+    // The page stream owns filtering. Keep the last server payload visible
+    // until the debounced response replaces it.
+    const assets = assetList?.assets ?? []
+    const activeType = this.assetType ?? assetList?.activeType ?? ''
     return html`
       <section class="page" aria-label=${label}>
-        ${this.renderHeader(eyebrow, page.title, page.description, this.renderAccessControl())}
-        ${renderAssetToolbar(query, assetList?.activeType ?? '', assetList?.tabs ?? [], 'Search workspace assets...', (event: Event) => this.assetQuery = (event.currentTarget as HTMLInputElement).value)}
+        ${renderPageHeader(page.title)}
+        ${renderAssetToolbar(query, activeType, assetList?.tabs ?? [], 'Search workspace assets...', (event: Event) => {
+          const value = (event.currentTarget as HTMLInputElement).value
+          this.assetQuery = value
+          dispatchWorkspaceAssetFilter(event.currentTarget as EventTarget, activeType, value)
+        }, (event: Event) => {
+          const value = (event.currentTarget as HTMLSelectElement).value
+          if (!(assetList?.tabs ?? []).some((tab) => (tab.id || 'all') === value)) return
+          this.assetType = value === 'all' ? '' : value
+          dispatchWorkspaceAssetFilter(event.currentTarget as EventTarget, this.assetType, query)
+        }, this.renderAccessControl())}
         ${renderAssetTable(assets, query ? 'No assets match this search.' : assetList?.empty ?? 'No assets match this view.')}
       </section>
     `
@@ -152,33 +168,16 @@ class LeapViewWorkspacePage extends DatastarLit(LitElement) {
   }
 
   private renderHeader(eyebrow: string, title: string, detail = '', actions: unknown = nothing) {
-    return html`
-      <header class="header">
-        <div class="title-block">
-          ${eyebrow ? html`<p class="eyebrow">${eyebrow}</p>` : nothing}
-          <h1>${title}</h1>
-          ${detail ? html`<p class="detail">${detail}</p>` : nothing}
-        </div>
-        <div class="actions">${actions}</div>
-      </header>
-    `
+    return renderPageHeader(title, detail, eyebrow, actions)
   }
 }
 
 class LeapViewConnectionsPage extends DatastarLit(LitElement) {
-  @state() private assetQuery: string | null = null
-  private lastPageKey = ''
-
   static get styles() {
-    return workspaceStyles
+    return [pageHeaderStyles, workspaceStyles]
   }
 
   updated(): void {
-    const key = this.pageKey
-    if (key !== this.lastPageKey) {
-      this.lastPageKey = key
-      this.assetQuery = null
-    }
     checkSignalContract('connections page', this.page, { kind: 'required', title: 'required', assetList: 'required' })
   }
 
@@ -186,28 +185,36 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
     return this.signal<ConnectionsPageSignal | null>('page', null)
   }
 
-  private get pageKey(): string {
-    const page = this.page
-    return [page?.workspaceId ?? '', page?.assetList?.activeType ?? '', page?.assetList?.query ?? ''].join(':')
-  }
-
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
     const assetList = page.assetList
-    const query = this.assetQuery ?? assetList?.query ?? ''
-    const assets = filterAssetSummaries(assetList?.assets ?? [], query)
     return html`
       <section class="page" aria-label="Connections and sources">
-        <header class="header">
-          <div class="title-block">
-            <p class="eyebrow">Data access</p>
-            <h1>${page.title}</h1>
-            ${page.description ? html`<p class="detail">${page.description}</p>` : nothing}
-          </div>
-        </header>
-        ${renderAssetToolbar(query, assetList?.activeType ?? '', assetList?.tabs ?? [], 'Search connections and sources...', (event: Event) => this.assetQuery = (event.currentTarget as HTMLInputElement).value)}
-        ${renderAssetTable(assets, query ? 'No connection assets match this search.' : assetList?.empty ?? 'No connection assets match this view.')}
+        ${renderPageHeader(page.title)}
+        <lv-entity-list
+          .items=${(assetList?.assets ?? []).map((asset) => ({
+            id: asset.id,
+            title: asset.title,
+            href: asset.detailHref,
+            icon: asset.type,
+            category: asset.type,
+            columns: {
+              type: asset.typeLabel,
+              key: asset.key,
+            },
+          }))}
+          .columns=${[
+            { id: 'name', label: 'Name', width: '54%' },
+            { id: 'type', label: 'Type', width: '20%' },
+            { id: 'key', label: 'Key', width: '26%' },
+          ]}
+          .filters=${(assetList?.tabs ?? []).map((tab) => ({ id: tab.id || 'all', label: tab.label, href: tab.href }))}
+          active-filter=${assetList?.activeType || 'all'}
+          initial-query=${assetList?.query ?? ''}
+          search-placeholder="Search connections and sources"
+          empty-text=${assetList?.empty ?? 'No connection assets match this view.'}
+        ></lv-entity-list>
       </section>
     `
   }
@@ -317,41 +324,46 @@ class LeapViewWorkspaceAssetPage extends DatastarLit(LitElement) {
   }
 }
 
-function renderAssetToolbar(query: string, activeType: string, tabs: WorkspaceTabSignal[], placeholder: string, onSearch: (event: Event) => void) {
+function renderAssetToolbar(query: string, activeType: string, tabs: WorkspaceTabSignal[], placeholder: string, onSearch: (event: Event) => void, onFilter: (event: Event) => void, actions: unknown = nothing) {
   return html`
     <div class="toolbar">
-      <form class="search" @submit=${preventSubmit}>
-        <input
-          type="search"
-          name="q"
-          .value=${query}
-          placeholder=${placeholder}
-          autocomplete="off"
-          @input=${onSearch}
-        />
-        ${activeType ? html`<input type="hidden" name="type" value=${activeType} />` : nothing}
-        <span class="search-icon" aria-hidden="true">${lucideIcon(Search)}</span>
-      </form>
-      ${renderTabs(tabs)}
+      <div class="toolbar-filters">
+        <form class="search" @submit=${preventSubmit}>
+          <input
+            type="search"
+            name="q"
+            .value=${query}
+            placeholder=${placeholder}
+            autocomplete="off"
+            @input=${onSearch}
+          />
+          ${activeType ? html`<input type="hidden" name="type" value=${activeType} />` : nothing}
+          <span class="search-icon" aria-hidden="true">${lucideIcon(Search)}</span>
+        </form>
+        ${tabs.length ? html`
+          <label class="asset-filter">
+            <span class="visually-hidden">Filter workspace assets</span>
+            <select aria-label="Filter workspace assets" .value=${activeType || 'all'} @change=${onFilter}>
+              ${tabs.map((tab) => html`<option value=${tab.id || 'all'}>${tab.label}</option>`)}
+            </select>
+          </label>
+        ` : nothing}
+      </div>
+      <div class="toolbar-actions">${actions}</div>
     </div>
   `
 }
 
-function preventSubmit(event: Event) {
-  event.preventDefault()
+function dispatchWorkspaceAssetFilter(target: EventTarget, type: string, query: string) {
+  target.dispatchEvent(new CustomEvent('lv-workspace-asset-filter', {
+    bubbles: true,
+    composed: true,
+    detail: { type, query },
+  }))
 }
 
-function filterAssetSummaries(assets: WorkspaceAssetSummarySignal[], query: string) {
-  const normalized = query.trim().toLowerCase()
-  if (!normalized) return assets
-  return assets.filter((asset) => [
-    asset.title,
-    asset.description,
-    asset.typeLabel,
-    asset.type,
-    asset.key,
-    asset.parentTitle,
-  ].some((value) => String(value ?? '').toLowerCase().includes(normalized)))
+function preventSubmit(event: Event) {
+  event.preventDefault()
 }
 
 function renderAssetTable(assets: WorkspaceAssetSummarySignal[], empty: string) {
@@ -381,7 +393,7 @@ function renderAssetTable(assets: WorkspaceAssetSummarySignal[], empty: string) 
     minWidth: '640px',
   }
   return html`
-    <div class="panel">
+    <div class="panel table-panel">
       <lv-record-table variant="primary" .table=${table}></lv-record-table>
     </div>
   `
@@ -556,11 +568,11 @@ const workspaceStyles = css`
     min-width: 0;
     min-height: 100svh;
     align-content: start;
-    gap: var(--base-size-12);
+    gap: var(--base-size-16);
     box-sizing: border-box;
     margin-inline: auto;
     background: var(--lv-bg-app);
-    padding: var(--base-size-16);
+    padding: var(--base-size-24);
   }
 
   .asset-page {
@@ -654,6 +666,12 @@ const workspaceStyles = css`
     background: var(--lv-bg-panel);
   }
 
+  .panel.table-panel {
+    border: 0;
+    border-radius: 0;
+    background: var(--lv-bg-page);
+  }
+
   .primary-link,
   .icon-link,
   .icon-button {
@@ -714,45 +732,93 @@ const workspaceStyles = css`
   }
 
   .toolbar {
-    display: grid;
+    display: flex;
     min-width: 0;
-    gap: var(--base-size-12);
-    border-bottom: var(--lv-border-default);
-    padding-top: var(--base-size-12);
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--base-size-8);
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    clip-path: inset(50%);
+  }
+
+  .toolbar-filters,
+  .toolbar-actions {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--base-size-8);
+  }
+
+  .toolbar-filters {
+    flex: 1 1 auto;
+  }
+
+  .toolbar-actions {
+    flex: 0 0 auto;
   }
 
   .search {
     position: relative;
-    display: block;
-    min-width: 0;
-    width: 100%;
+    display: flex;
+    min-width: 12rem;
+    width: min(100%, 19rem);
+    flex: 0 1 19rem;
+    align-items: center;
   }
 
-  input[type='search'] {
-    min-width: 0;
-    min-height: var(--control-medium-size);
-    width: 100%;
-    border: var(--lv-border-default);
-    border-radius: var(--lv-radius-tight);
-    background: var(--lv-bg-control);
+  .search input[type='search'],
+  .asset-filter select {
+    box-sizing: border-box;
+    height: var(--control-medium-size);
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel);
     color: var(--lv-fg-default);
-    padding: 0 calc(var(--base-size-24) + var(--base-size-12)) 0 var(--base-size-12);
-    font-size: var(--lv-font-size-body-md);
+    font: inherit;
+    font-size: var(--lv-font-size-body-sm);
+  }
+
+  .search input[type='search'] {
+    width: 100%;
+    min-width: 0;
+    padding: 0 var(--base-size-12) 0 var(--base-size-36);
+    outline: 0;
     line-height: var(--lv-line-height-compact);
   }
 
-  input[type='search']:focus {
-    border-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
-    background: var(--lv-bg-panel);
-    outline: var(--focus-outline, var(--lv-border-default));
-    outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
+  .search input[type='search']::placeholder {
+    color: var(--lv-fg-muted);
+    opacity: 1;
+  }
+
+  .search input[type='search']:focus-visible,
+  .asset-filter select:focus-visible {
+    outline: var(--focus-outline);
     outline-offset: var(--focus-outline-offset, var(--base-size-2));
+  }
+
+  .asset-filter {
+    display: flex;
+    min-width: 0;
+  }
+
+  .asset-filter select {
+    min-width: 4.75rem;
+    padding: 0 var(--base-size-8);
   }
 
   .search-icon {
     position: absolute;
     top: 50%;
-    right: var(--lv-space-control);
+    left: var(--base-size-12);
     display: grid;
     width: var(--base-size-16);
     height: var(--base-size-16);
@@ -768,10 +834,6 @@ const workspaceStyles = css`
     flex-wrap: wrap;
     gap: var(--base-size-24);
     border-bottom: var(--lv-border-default);
-  }
-
-  .toolbar .tabs {
-    border-bottom: 0;
   }
 
   .tabs a {
@@ -1060,6 +1122,25 @@ const workspaceStyles = css`
   @media (max-width: 720px) {
     .page {
       padding: var(--base-size-12);
+    }
+
+    .toolbar {
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-filters {
+      width: 100%;
+      flex: 1 1 100%;
+    }
+
+    .search {
+      flex: 1 1 auto;
+      width: 100%;
+    }
+
+    .toolbar-actions {
+      margin-left: auto;
     }
 
     .header,

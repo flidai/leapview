@@ -29,6 +29,7 @@ type Chrome struct {
 
 type Sidebar struct {
 	Active         string   `json:"active"`
+	Admin          bool     `json:"admin,omitempty"`
 	Compact        bool     `json:"compact"`
 	DashboardID    *string  `json:"dashboardId,omitempty"`
 	DashboardTitle string   `json:"dashboardTitle"`
@@ -78,18 +79,31 @@ type HistoryItem struct {
 
 func Provider(config Config) webpage.Provider {
 	return func(context webpage.Context) webpage.Layout {
+		isAdmin := context.Active == "admin" || context.Active == "connections"
+		navigation := []Group{{Label: "Navigation", Items: globalNavigation()}}
+		if isAdmin {
+			navigation = adminNavigation()
+		}
+		sidebarActive := context.Active
+		if isAdmin {
+			sidebarActive = firstNonEmpty(context.PageID, context.Active)
+		}
 		sidebar := Sidebar{
-			Active: context.Active, Compact: context.Compact,
+			Active: sidebarActive, Admin: isAdmin, Compact: context.Compact,
 			DashboardID: optional(context.SectionID), DashboardTitle: context.SectionTitle,
 			ModelID: optional(context.RelatedID), ModelTitle: optional(context.RelatedTitle),
 			PageTitle: context.PageTitle, UserRole: optional(config.RoleLabel),
 			WorkspaceTitle: firstNonEmpty(context.ScopeTitle, context.ScopeID, config.Presentation.ProductName),
-			Groups:         []Group{{Label: "Navigation", Items: globalNavigation()}},
+			Groups:         navigation,
 		}
-		sidebar.PrimaryAction = &Action{Label: "New chat", Href: "/chats/new", Icon: "plus"}
-		sidebar.History = &History{
-			Label: "Chats", EmptyText: optional("No chats yet."),
-			Items: historyItems(config, firstNonEmpty(context.HistoryID, config.ActiveConversationID)),
+		if isAdmin {
+			sidebar.PrimaryAction = &Action{Label: "Back to app", Href: "/", Icon: "back"}
+		} else {
+			sidebar.PrimaryAction = &Action{Label: "New chat", Href: "/chats/new", Icon: "plus"}
+			sidebar.History = &History{
+				Label: "Chats", EmptyText: optional("No chats yet."),
+				Items: historyItems(config, firstNonEmpty(context.HistoryID, config.ActiveConversationID)),
+			}
 		}
 		return webpage.Layout{
 			Presentation: config.Presentation,
@@ -109,8 +123,40 @@ func globalNavigation() []Item {
 		{ID: "chat", Label: "Chats", Href: "/chats", Icon: "chat", Meta: optional("Agent interface")},
 		{ID: "workspaces", Label: "Workspaces", Href: "/workspaces", Icon: "catalog", Meta: optional("Published assets")},
 		{ID: "data", Label: "Data", Href: "/data", Icon: "cache", Meta: optional("Inspect rows")},
-		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data", Meta: optional("Data access")},
-		{ID: "admin", Label: "Admin", Href: "/admin", Icon: "settings", Meta: optional("Read-only administration")},
+		{ID: "admin", Label: "Admin", Href: "/admin/profile", Icon: "settings", Meta: optional("Read-only administration")},
+	}
+}
+
+func adminNavigation() []Group {
+	return []Group{
+		{
+			Label: "Personal",
+			Items: []Item{
+				{ID: "profile", Label: "Profile", Href: "/admin/profile", Icon: "user"},
+			},
+		},
+		{
+			Label: "Access",
+			Items: []Item{
+				{ID: "principals", Label: "Principals", Href: "/admin/principals", Icon: "users"},
+				{ID: "groups", Label: "Groups", Href: "/admin/groups", Icon: "users-round"},
+			},
+		},
+		{
+			Label: "Data",
+			Items: []Item{
+				{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"},
+				{ID: "storage", Label: "Storage", Href: "/admin/storage", Icon: "database"},
+				{ID: "publications", Label: "Publications", Href: "/admin/publications", Icon: "globe"},
+			},
+		},
+		{
+			Label: "Operations",
+			Items: []Item{
+				{ID: "agent", Label: "Agent", Href: "/admin/agent", Icon: "bot"},
+				{ID: "queries", Label: "Query History", Href: "/admin/queries", Icon: "history"},
+			},
+		},
 	}
 }
 

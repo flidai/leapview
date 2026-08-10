@@ -48,6 +48,16 @@ type workspaceAccessSignalPayload struct {
 	WorkspaceAccessCommand ui.WorkspaceAccessCommand `json:"workspaceAccessCommand"`
 }
 
+type workspaceAssetFilterSignalPayload struct {
+	WorkspaceAssetType  *string `json:"workspaceAssetType"`
+	WorkspaceAssetQuery *string `json:"workspaceAssetQuery"`
+}
+
+type entityListSignalPayload struct {
+	Query  *string `json:"entityListQuery"`
+	Filter *string `json:"entityListFilter"`
+}
+
 func (h Handler) AccessSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
 	signals := workspaceAccessSignalPayload{}
 	if err := pagestream.ReadSignals(r, &signals); err != nil {
@@ -81,11 +91,77 @@ func (h Handler) WorkspaceCatalog(w nethttp.ResponseWriter, r *nethttp.Request) 
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 		return
 	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	workspaces = workspace.FilterWorkspaceViews(workspaces, query)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.WorkspacesPage(h.catalogForWorkspacesPage(r, workspaces), workspaces, h.currentRoleLabel(r), h.chromeOptions(r)...).Render(w); err != nil {
+	if err := ui.WorkspacesPageForEnvironmentQuery(h.catalogForWorkspacesPage(r, workspaces), workspaces, h.environment(r), query, h.currentRoleLabel(r), h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
+}
+
+func (h Handler) WorkspaceListSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var signals entityListSignalPayload
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	query := ""
+	if signals.Query != nil {
+		query = strings.TrimSpace(*signals.Query)
+	}
+	workspaces, err := h.workspaceList(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	workspaces = workspace.FilterWorkspaceViews(workspaces, query)
+	_ = pagestream.PatchResponse(w, r, ui.WorkspacesListResultsPatch(workspaces))
+}
+
+func (h Handler) WorkspaceAssetSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var signals workspaceAssetFilterSignalPayload
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
+	assets, edges, err := h.assetsAndEdges(r, workspaceID)
+	if err != nil {
+		nethttp.Error(w, err.Error(), statusForNotFound(err))
+		return
+	}
+	activeType, query := "", ""
+	if signals.WorkspaceAssetType != nil {
+		activeType = strings.TrimSpace(*signals.WorkspaceAssetType)
+	}
+	if signals.WorkspaceAssetQuery != nil {
+		query = strings.TrimSpace(*signals.WorkspaceAssetQuery)
+	}
+	filtered := workspace.FilterWorkspaceLandingAssets(assets, activeType, query)
+	_ = pagestream.PatchResponse(w, r, ui.WorkspaceAssetListResultsPatch(workspaceID, filtered, edges))
+}
+
+func (h Handler) ConnectionsSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var signals entityListSignalPayload
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	assets, edges, err := h.platformAssetsAndEdges(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), statusForNotFound(err))
+		return
+	}
+	activeType, query := "", ""
+	if signals.Filter != nil {
+		activeType = workspace.NormalizeConnectionAssetType(*signals.Filter)
+	}
+	if signals.Query != nil {
+		query = strings.TrimSpace(*signals.Query)
+	}
+	filtered := workspace.FilterConnectionAssets(assets, activeType, query)
+	_ = pagestream.PatchResponse(w, r, ui.ConnectionsListResultsPatch("platform", filtered, edges))
 }
 
 func (h Handler) WorkspaceAssets(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -103,7 +179,7 @@ func (h Handler) WorkspaceAssets(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, err.Error(), statusForNotFound(err))
 		return
 	}
-	filtered := workspace.FilterWorkspaceAssets(assets, r.URL.Query().Get("type"), r.URL.Query().Get("q"))
+	filtered := workspace.FilterWorkspaceLandingAssets(assets, r.URL.Query().Get("type"), r.URL.Query().Get("q"))
 	workspaceView := h.workspaceResponse(r, workspaceID)
 	access := h.workspaceAccess(r, workspaceView, h.canManageAccess(r, workspaceID), ui.WorkspaceAccessStatus{})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -215,7 +291,7 @@ func (h Handler) Connections(w nethttp.ResponseWriter, r *nethttp.Request) {
 	filtered := workspace.FilterConnectionAssets(assets, activeType, r.URL.Query().Get("q"))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.ConnectionsPageForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, activeType, r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), h.chromeOptions(r)...).Render(w); err != nil {
+	if err := ui.ConnectionsPageForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, activeType, r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }
@@ -223,12 +299,25 @@ func (h Handler) Connections(w nethttp.ResponseWriter, r *nethttp.Request) {
 func (h Handler) WorkspaceBootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	workspaceID := h.workspaceID(r.URL.Query().Get("workspace"))
 	if strings.TrimSpace(workspaceID) == "" {
+		var signals struct {
+			Query  *string `json:"entityListQuery"`
+			Filter *string `json:"entityListFilter"`
+		}
+		if err := pagestream.ReadSignals(r, &signals); err != nil {
+			nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+			return
+		}
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		if signals.Query != nil {
+			query = strings.TrimSpace(*signals.Query)
+		}
 		workspaces, err := h.workspaceList(r)
 		if err != nil {
 			nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 			return
 		}
-		h.patchAndWait(w, r, ui.WorkspacesBootstrapSignalsForEnvironment(h.catalogForWorkspacesPage(r, workspaces), workspaces, h.environment(r), h.currentRoleLabel(r), h.chromeOptions(r)...))
+		workspaces = workspace.FilterWorkspaceViews(workspaces, query)
+		h.patchAndWait(w, r, ui.WorkspacesBootstrapSignalsForEnvironmentQuery(h.catalogForWorkspacesPage(r, workspaces), workspaces, h.environment(r), query, h.currentRoleLabel(r), h.chromeOptions(r)...))
 		return
 	}
 	assets, _, err := h.assetsAndEdges(r, workspaceID)
@@ -238,7 +327,18 @@ func (h Handler) WorkspaceBootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.
 	}
 	activeType := r.URL.Query().Get("type")
 	query := r.URL.Query().Get("q")
-	filtered := workspace.FilterWorkspaceAssets(assets, activeType, query)
+	var filterSignals workspaceAssetFilterSignalPayload
+	if err := pagestream.ReadSignals(r, &filterSignals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	if filterSignals.WorkspaceAssetType != nil {
+		activeType = strings.TrimSpace(*filterSignals.WorkspaceAssetType)
+	}
+	if filterSignals.WorkspaceAssetQuery != nil {
+		query = strings.TrimSpace(*filterSignals.WorkspaceAssetQuery)
+	}
+	filtered := workspace.FilterWorkspaceLandingAssets(assets, activeType, query)
 	workspaceView := h.workspaceResponse(r, workspaceID)
 	access := h.workspaceAccess(r, workspaceView, h.canManageAccess(r, workspaceID), ui.WorkspaceAccessStatus{})
 	h.patchAndWait(w, r, ui.WorkspaceBootstrapSignalsForEnvironment(h.catalogForWorkspace(workspaceID), workspaceView, filtered, activeType, query, h.environment(r), h.currentRoleLabel(r), access, h.chromeOptions(r)...))
@@ -252,6 +352,20 @@ func (h Handler) ConnectionsBootstrapUpdates(w nethttp.ResponseWriter, r *nethtt
 	}
 	activeType := workspace.NormalizeConnectionAssetType(r.URL.Query().Get("type"))
 	query := r.URL.Query().Get("q")
+	var listSignals struct {
+		Query  *string `json:"entityListQuery"`
+		Filter *string `json:"entityListFilter"`
+	}
+	if err := pagestream.ReadSignals(r, &listSignals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	if listSignals.Query != nil {
+		query = strings.TrimSpace(*listSignals.Query)
+	}
+	if listSignals.Filter != nil {
+		activeType = workspace.NormalizeConnectionAssetType(*listSignals.Filter)
+	}
 	filtered := workspace.FilterConnectionAssets(assets, activeType, query)
 	h.patchAndWait(w, r, ui.ConnectionsBootstrapSignalsForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, activeType, query, h.environment(r), h.currentRoleLabel(r), h.chromeOptions(r)...))
 }
