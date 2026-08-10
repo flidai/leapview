@@ -108,7 +108,7 @@ class LeapViewFilterDock extends LitElement {
       cursor: pointer;
       padding: var(--base-size-16) 0;
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       text-transform: uppercase;
     }
 
@@ -198,7 +198,6 @@ class LeapViewFilterDock extends LitElement {
 
     .panel-heading strong {
       font: var(--lv-type-section-title);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .panel-summary {
@@ -255,7 +254,6 @@ class LeapViewFilterDock extends LitElement {
     .group-title {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
       letter-spacing: .02em;
       text-transform: uppercase;
     }

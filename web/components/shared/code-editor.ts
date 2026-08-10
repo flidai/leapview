@@ -70,7 +70,6 @@ class CodeEditor extends LitElement {
       padding: var(--base-size-4) var(--base-size-8);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
       pointer-events: none;
     }
 
@@ -101,7 +100,6 @@ class CodeEditor extends LitElement {
       padding: var(--base-size-8) var(--base-size-16);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
 
   `

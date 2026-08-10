@@ -494,7 +494,7 @@ class ReportZoom extends LitElement {
       color: var(--lv-fg-muted);
       text-align: center;
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       white-space: nowrap;
     }
 
@@ -503,7 +503,6 @@ class ReportZoom extends LitElement {
       min-width: 32px;
       padding-inline: 7px;
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
     }
 
     @media (max-width: 700px) {

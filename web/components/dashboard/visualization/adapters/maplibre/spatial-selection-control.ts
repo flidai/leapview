@@ -123,7 +123,7 @@ export class MapSpatialSelectionControl {
   }
 
   private buttonStyle(active: boolean): string {
-    return `border:0;border-radius:4px;padding:4px 7px;background:${active ? 'var(--lv-accent-emphasis,#0969da)' : 'transparent'};color:${active ? '#fff' : 'var(--lv-fg-default,#1f2328)'};font:var(--lv-type-caption);font-weight:var(--base-text-weight-semibold);cursor:pointer`
+    return `border:0;border-radius:4px;padding:4px 7px;background:${active ? 'var(--lv-accent-emphasis,#0969da)' : 'transparent'};color:${active ? '#fff' : 'var(--lv-fg-default,#1f2328)'};font:var(--lv-type-caption);font-weight:var(--base-text-weight-medium);cursor:pointer`
   }
 
   private setActive(gesture?: VisualizationSpatialSelectionGesture): void {

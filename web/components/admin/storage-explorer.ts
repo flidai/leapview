@@ -923,8 +923,6 @@ const storageExplorerStyles = `
   h2 {
     color: var(--lv-fg-default);
     font: var(--lv-type-section-title);
-    line-height: var(--base-text-lineHeight-tight);
-    font-weight: var(--base-text-weight-semibold);
   }
 
   .storage-heading p {
@@ -933,14 +931,11 @@ const storageExplorerStyles = `
     text-overflow: ellipsis;
     white-space: nowrap;
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   .storage-heading p span {
     color: var(--lv-fg-default);
     font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-    font-weight: var(--base-text-weight-medium);
   }
 
   .storage-summary {
@@ -961,8 +956,6 @@ const storageExplorerStyles = `
   .storage-summary span {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: 650;
-    line-height: 1.2;
     text-transform: uppercase;
   }
 
@@ -971,15 +964,13 @@ const storageExplorerStyles = `
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font: var(--lv-type-body);
-    line-height: 1.2;
+    font: var(--lv-type-body-compact);
   }
 
   h3 {
     color: var(--lv-fg-default);
-    font: var(--lv-type-body);
-    line-height: 1.3;
-    font-weight: 700;
+    font: var(--lv-type-body-compact);
+    font-weight: var(--base-text-weight-semibold);
   }
 
   .storage-logo {
@@ -1081,7 +1072,7 @@ const storageExplorerStyles = `
     cursor: pointer;
     color: var(--lv-fg-default);
     font: var(--lv-type-body);
-    font-weight: 750;
+    font-weight: var(--base-text-weight-medium);
     list-style: none;
   }
 
@@ -1104,7 +1095,7 @@ const storageExplorerStyles = `
     grid-template-columns: 0.875rem 1rem minmax(0, 1fr) auto;
     min-height: 1.75rem;
     font: var(--lv-type-body);
-    font-weight: 700;
+    font-weight: var(--base-text-weight-medium);
   }
 
   .storage-schema > summary.is-selected-schema {
@@ -1125,7 +1116,7 @@ const storageExplorerStyles = `
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
     font-style: normal;
-    font-weight: 750;
+    font-weight: var(--base-text-weight-medium);
     line-height: 1;
   }
 
@@ -1209,9 +1200,8 @@ const storageExplorerStyles = `
   }
 
   .storage-table-button strong {
-    font: var(--lv-type-body);
-    line-height: 1.25;
-    font-weight: 550;
+    font: var(--lv-type-body-compact);
+    font-weight: var(--base-text-weight-medium);
   }
 
   .storage-table-button small {
@@ -1224,7 +1214,6 @@ const storageExplorerStyles = `
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
     font-variant-numeric: tabular-nums;
-    font-weight: var(--base-text-weight-medium);
     text-align: right;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1252,7 +1241,6 @@ const storageExplorerStyles = `
     gap: 0.375rem;
     color: var(--lv-fg-default);
     font: var(--lv-type-section-title);
-    font-weight: 750;
   }
 
   .storage-detail-header nav > span {
@@ -1360,7 +1348,7 @@ const storageExplorerStyles = `
     padding: 0 0.5rem;
     color: var(--lv-fg-muted);
     font: var(--lv-type-body);
-    font-weight: 700;
+    font-weight: var(--base-text-weight-medium);
     cursor: pointer;
   }
 
@@ -1382,8 +1370,7 @@ const storageExplorerStyles = `
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
     font-style: normal;
-    font-weight: 750;
-    line-height: 1.2;
+    font-weight: var(--base-text-weight-medium);
   }
 
   .storage-tab-panel {
@@ -1395,7 +1382,6 @@ const storageExplorerStyles = `
   dt {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: 750;
     text-transform: uppercase;
   }
 
@@ -1404,7 +1390,6 @@ const storageExplorerStyles = `
     overflow: hidden;
     color: var(--lv-fg-default);
     font: var(--lv-type-body);
-    font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1453,7 +1438,6 @@ const storageExplorerStyles = `
     background: var(--lv-bg-panel);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: 700;
     text-transform: uppercase;
   }
 
@@ -1489,7 +1473,7 @@ const storageExplorerStyles = `
     padding: 0;
     color: var(--lv-fg-default);
     font: inherit;
-    font-weight: 650;
+    font-weight: var(--base-text-weight-medium);
     text-align: left;
     cursor: pointer;
   }

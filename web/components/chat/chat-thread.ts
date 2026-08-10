@@ -122,7 +122,6 @@ class ChatThread extends LitElement {
     .label {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
     }
 
     .bubble {

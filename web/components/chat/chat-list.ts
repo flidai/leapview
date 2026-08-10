@@ -40,8 +40,6 @@ class LeapViewChatList extends LitElement {
       margin: 0;
       color: var(--lv-fg-default);
       font: var(--lv-type-page-title);
-      font-weight: var(--base-text-weight-semibold);
-      line-height: var(--base-text-lineHeight-tight);
       letter-spacing: 0;
     }
 
@@ -101,7 +99,7 @@ class LeapViewChatList extends LitElement {
       padding: 0 var(--lv-button-padding-inline-spacious, var(--control-medium-paddingInline-spacious, var(--base-size-16)));
       text-decoration: none;
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       box-shadow: var(--lv-button-shadow-resting, none);
     }
 

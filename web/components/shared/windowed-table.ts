@@ -214,7 +214,6 @@ class WindowedTable extends LitElement {
       padding: var(--base-size-8) var(--base-size-16);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .footer {
@@ -225,7 +224,7 @@ class WindowedTable extends LitElement {
     .toolbar strong,
     .footer strong {
       color: var(--lv-fg-default);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .options {
@@ -345,7 +344,7 @@ class WindowedTable extends LitElement {
       padding: 0 var(--base-size-8);
       cursor: pointer;
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       text-align: left;
       text-transform: uppercase;
     }

@@ -65,7 +65,6 @@ export class DashboardFilterLeaf extends LitElement {
       justify-content: space-between;
       gap: var(--base-size-6);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
     }
     .field-heading[data-title='false'] { justify-content: flex-end; }
     .field-title {
@@ -73,12 +72,11 @@ export class DashboardFilterLeaf extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
     }
     input, select, button {
       min-height: var(--control-medium-size);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
     }
     input, select {
       width: 100%; min-width: 0; border: var(--lv-border-default);
@@ -97,13 +95,11 @@ export class DashboardFilterLeaf extends LitElement {
     .field-label {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
     .input-control { display: grid; gap: var(--base-size-4); }
     .operator {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
     .relative { display: grid; grid-template-columns: 1fr 72px 1fr; gap: 6px; }
     :host([data-layout-variant='stacked']) .relative { grid-template-columns: minmax(0, 1fr); }
@@ -113,7 +109,6 @@ export class DashboardFilterLeaf extends LitElement {
       overflow: hidden;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -515,7 +510,6 @@ export class DashboardFilterPaneCard extends FilterShell {
       margin-left: var(--base-size-4);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
     .actions { display: flex; flex: 0 0 auto; gap: var(--base-size-4); }
     button {

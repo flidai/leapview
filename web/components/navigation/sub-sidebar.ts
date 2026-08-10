@@ -136,7 +136,6 @@ class SubSidebar extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
       text-transform: uppercase;
     }
@@ -229,7 +228,6 @@ class SubSidebar extends LitElement {
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-align: left;
       font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
     }
 
     .item-link.unnumbered {
@@ -273,7 +271,6 @@ class SubSidebar extends LitElement {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
       font-variant-numeric: tabular-nums;
-      font-weight: var(--base-text-weight-semibold);
       line-height: 1;
     }
 
@@ -305,9 +302,7 @@ class SubSidebar extends LitElement {
     }
 
     .item-title {
-      font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
     }
 
     .pending-spinner {
@@ -318,7 +313,7 @@ class SubSidebar extends LitElement {
     .item-link:hover .item-title,
     .item-link:focus-visible .item-title,
     .item-link[aria-current='page'] .item-title {
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .item-meta {
@@ -398,7 +393,7 @@ class SubSidebar extends LitElement {
       background: var(--lv-sidebar-bg);
       color: var(--lv-fg-default);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
       line-height: 1;
       pointer-events: none;
       transform: translateY(-50%);
@@ -423,7 +418,7 @@ class SubSidebar extends LitElement {
       place-items: center;
       color: var(--lv-fg-default);
       font-variant-numeric: tabular-nums;
-      font-weight: var(--base-text-weight-semibold);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .hover-title-name {
@@ -442,7 +437,6 @@ class SubSidebar extends LitElement {
       margin: var(--base-size-8) auto;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
       line-height: 1;
       text-orientation: mixed;

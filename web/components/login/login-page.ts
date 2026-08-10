@@ -110,8 +110,6 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       margin: 0;
       color: var(--lv-fg-default);
       font: var(--lv-type-page-title);
-      font-weight: var(--base-text-weight-semibold);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .brand-lockup {
@@ -179,7 +177,6 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       text-align: left;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
     }
 
     input {

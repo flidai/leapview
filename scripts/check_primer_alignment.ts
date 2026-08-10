@@ -7,6 +7,7 @@ export type PrimerAlignmentViolation = {
   kind:
     | "raw-color"
     | "raw-font-size"
+    | "raw-font-weight"
     | "raw-var-fallback"
     | "undefined-token"
     | "runtime-undefined-token"
@@ -15,6 +16,8 @@ export type PrimerAlignmentViolation = {
     | "asset-token"
     | "primer-primary-button-token"
     | "primitive-typography-alias"
+    | "redundant-type-line-height"
+    | "redundant-type-weight"
     | "button-contract";
   message: string;
 };
@@ -176,6 +179,45 @@ function scanCssForValueViolations(file: string, css: string, violations: Primer
     );
   }
 
+  for (const match of uncommented.matchAll(/([^{}]+)\{([^{}]+)\}/g)) {
+    const body = match[2] ?? "";
+    if (!/font\s*:\s*var\(--lv-type-(?:page-title|section-title|title-large)\)/.test(body)) continue;
+    if (!/font-weight\s*:/.test(body)) continue;
+    addViolation(
+      violations,
+      file,
+      uncommented,
+      match.index ?? 0,
+      "redundant-type-weight",
+      "Title recipes already include Primer's semibold weight; remove the redundant font-weight override.",
+    );
+  }
+
+  for (const match of uncommented.matchAll(/([^{}]+)\{([^{}]+)\}/g)) {
+    const body = match[2] ?? "";
+    const hasCompleteTitleRecipe = /font\s*:\s*var\(--lv-type-(?:page-title|section-title|title-large)\)/.test(body);
+    const hasRedundantRecipeLineHeight =
+      (/font\s*:\s*var\(--lv-type-caption\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-tight\)/.test(body)) ||
+      (/font\s*:\s*var\(--lv-type-body\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-normal\)/.test(body)) ||
+      (/font\s*:\s*var\(--lv-type-body-compact\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-tight\)/.test(body)) ||
+      (/font\s*:\s*var\(--lv-type-body-snug\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-snug\)/.test(body)) ||
+      (/font\s*:\s*var\(--lv-type-code-block\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-normal\)/.test(body));
+    if (!/line-height\s*:/.test(body) || (!hasCompleteTitleRecipe && !hasRedundantRecipeLineHeight)) continue;
+    addViolation(
+      violations,
+      file,
+      uncommented,
+      match.index ?? 0,
+      "redundant-type-line-height",
+      "Complete semantic type recipes own line-height; remove the redundant override or choose the matching --lv-type-* recipe.",
+    );
+  }
+
   for (const match of uncommented.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)\s*,\s*(#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(|[0-9.]+(?:px|rem|em|ms|s)\b|white\b|black\b|transparent\b)/g)) {
     const tokenName = match[1];
     if (runtimeTokenNames.has(tokenName)) continue;
@@ -213,6 +255,20 @@ function scanCssForValueViolations(file: string, css: string, violations: Primer
     if (body.includes("--lv-button-")) continue;
     if (!directButtonStylingPattern.test(body)) continue;
     addViolation(violations, file, uncommented, match.index ?? 0, "button-contract", "Standard button selectors must use LeapView --lv-button-* aliases instead of direct control sizing, transparent backgrounds, or outline resets.");
+  }
+}
+
+function scanSourceForRawFontWeights(file: string, content: string, violations: PrimerAlignmentViolation[]): void {
+  const uncommented = stripCssComments(content);
+  for (const match of uncommented.matchAll(/\bfont-weight\s*:\s*(?:[0-9]{1,4}|normal|bold|bolder|lighter)\b/g)) {
+    addViolation(
+      violations,
+      file,
+      uncommented,
+      match.index ?? 0,
+      "raw-font-weight",
+      "Use Primer's base text-weight tokens instead of a raw font weight.",
+    );
   }
 }
 
@@ -269,10 +325,12 @@ export async function checkPrimerAlignment(options: CheckPrimerAlignmentOptions 
   const sourceFiles = options.sourceFiles ?? (await defaultSourceFiles(root));
   const primerDefinitions = await referenceTokenDefinitions(referenceRoot);
   const cssByFile = new Map<string, string[]>();
+  const sourceContentByFile = new Map<string, string>();
   const allDefinitions = new Set<string>([...primerDefinitions, ...runtimeTokenNames]);
 
   for (const file of sourceFiles) {
     const content = await readFile(path.join(root, file), "utf8");
+    sourceContentByFile.set(file, content);
     const blocks = cssBlocksForFile(file, content);
     cssByFile.set(file, blocks);
     for (const block of blocks) {
@@ -283,6 +341,10 @@ export async function checkPrimerAlignment(options: CheckPrimerAlignmentOptions 
   }
 
   const violations: PrimerAlignmentViolation[] = [];
+
+  for (const [file, content] of sourceContentByFile) {
+    scanSourceForRawFontWeights(file, content, violations);
+  }
 
   for (const [file, blocks] of cssByFile) {
     for (const block of blocks) {

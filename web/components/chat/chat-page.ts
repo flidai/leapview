@@ -76,8 +76,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-section-title);
-      font-weight: var(--base-text-weight-semibold);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .body {

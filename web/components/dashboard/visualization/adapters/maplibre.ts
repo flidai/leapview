@@ -371,7 +371,7 @@ class MapLibreHandle implements RendererHandle {
     for (const entry of entries) {
       const row = document.createElement('div'); row.style.cssText = 'display:grid;grid-template-columns:minmax(64px,auto) minmax(0,1fr);gap:10px'
       const label = document.createElement('span'); label.style.color = 'var(--lv-fg-muted,#57606a)'; label.textContent = entry.label
-      const value = document.createElement('strong'); value.style.cssText = 'font-weight:600;text-align:right;overflow-wrap:anywhere'; value.textContent = entry.value
+      const value = document.createElement('strong'); value.style.cssText = 'font-weight:var(--base-text-weight-semibold);text-align:right;overflow-wrap:anywhere'; value.textContent = entry.value
       row.append(label, value); fragment.append(row)
     }
     this.tooltip.replaceChildren(fragment)
@@ -390,7 +390,7 @@ class MapLibreHandle implements RendererHandle {
     if (controls.reset) {
       const button = document.createElement('button')
       button.type = 'button'; button.className = 'lv-map-reset'; button.textContent = 'Reset view'; button.setAttribute('aria-label', 'Reset map view')
-      button.style.cssText = 'position:absolute;z-index:3;top:10px;right:50px;padding:5px 8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:4px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-caption);font-weight:var(--base-text-weight-semibold);cursor:pointer;box-shadow:0 1px 2px rgba(31,35,40,.08)'
+      button.style.cssText = 'position:absolute;z-index:3;top:10px;right:50px;padding:5px 8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:4px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-caption);font-weight:var(--base-text-weight-medium);cursor:pointer;box-shadow:0 1px 2px rgba(31,35,40,.08)'
       button.addEventListener('click', () => { if (this.homeCamera) resetMapToHome(this.map, this.homeCamera) })
       this.frame.append(button); this.resetButton = button
     }
@@ -429,7 +429,7 @@ class MapLibreHandle implements RendererHandle {
     const data = mapAccessibleData(envelope, 100, this.context)
     const summary = document.createElement('summary')
     summary.textContent = `View map data (${data.rows.length}${data.totalRows > data.rows.length ? ` of ${data.totalRows}` : ''} rows)`
-    summary.style.cssText = 'padding:6px 8px;cursor:pointer;font-weight:600;white-space:nowrap'
+    summary.style.cssText = 'padding:6px 8px;cursor:pointer;font-weight:var(--base-text-weight-medium);white-space:nowrap'
     const table = document.createElement('table')
     table.style.cssText = 'border-collapse:collapse;min-width:100%;background:var(--lv-bg-panel,#fff)'
     const caption = document.createElement('caption')

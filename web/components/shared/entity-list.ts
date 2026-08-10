@@ -178,8 +178,6 @@ const entityListStyles = `
     height: var(--control-medium-size);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   .entity-list-group-row th {
@@ -189,7 +187,6 @@ const entityListStyles = `
     color: var(--lv-fg-muted);
     padding-inline: var(--base-size-8);
     font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
   }
 
   .entity-list-group-count {
@@ -320,16 +317,14 @@ const entityListStyles = `
   }
 
   .entity-list-title {
-    font: var(--lv-type-body);
+    font: var(--lv-type-body-compact);
     font-weight: var(--base-text-weight-semibold);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   .entity-list-description,
   .entity-list-meta {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   .entity-list-cell {
