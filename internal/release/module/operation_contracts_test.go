@@ -43,6 +43,18 @@ func TestReleaseLifecycleOperationContracts(t *testing.T) {
 			t.Errorf("query contract %q = %#v", operationID, contract)
 		}
 	}
+	finalize := contracts["finalizeRelease"].Command.Execution
+	if finalize == nil ||
+		finalize.Mode != "async" ||
+		finalize.JobKind != "release.finalize" ||
+		finalize.ResourceKind != "release" ||
+		finalize.InitialEvent != releaseValidatingAuditAction ||
+		finalize.InitialState != "validating" ||
+		finalize.StatusOperation != "getRelease" ||
+		finalize.EventsOperation != "listReleaseEvents" ||
+		finalize.Cancellation != "unsupported" {
+		t.Fatalf("finalize release execution contract = %#v", finalize)
+	}
 }
 
 func releaseGeneratedOperationKind(contract releasegen.GenOperationContract) string {

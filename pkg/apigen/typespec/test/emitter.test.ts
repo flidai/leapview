@@ -167,6 +167,69 @@ describe("APIGen TypeSpec emitter", () => {
     });
   });
 
+  it("emits a typed async execution contract", async () => {
+    const doc = await compileSource(`
+      using Http;
+      using OpenAPI;
+
+      @service(#{ title: "Release API" })
+      namespace ReleaseAPI;
+
+      model Accepted {
+        @statusCode statusCode: 202;
+        @body body: string;
+      }
+
+      @route("/releases/{release}")
+      @get
+      @operationId("getRelease")
+      op getRelease(@path release: string): string;
+
+      @route("/releases/{release}/events")
+      @get
+      @operationId("listReleaseEvents")
+      op listReleaseEvents(@path release: string): string;
+
+      @route("/releases/{release}/finalize")
+      @post
+      @operationId("finalizeRelease")
+      @apigen.command(#{
+        audit: #{ required: true, successAction: "release.validating", guarantee: "transactional" },
+        execution: #{
+          mode: "async",
+          jobKind: "release.finalize",
+          resourceKind: "release",
+          initialEvent: "release.validating",
+          initialState: "validating",
+          statusOperation: "getRelease",
+          eventsOperation: "listReleaseEvents",
+          cancellation: "unsupported",
+        },
+      })
+      op finalizeRelease(
+        @path release: string,
+        @header("Idempotency-Key") idempotencyKey: string,
+      ): Accepted;
+    `);
+
+    expect(doc.endpoints.find((endpoint) => endpoint.operation_id === "finalizeRelease")).toMatchObject({
+      kind: "command",
+      responses: [{ status_code: 202 }],
+      command: {
+        execution: {
+          mode: "async",
+          job_kind: "release.finalize",
+          resource_kind: "release",
+          initial_event: "release.validating",
+          initial_state: "validating",
+          status_operation: "getRelease",
+          events_operation: "listReleaseEvents",
+          cancellation: "unsupported",
+        },
+      },
+    });
+  });
+
   it("requires explicit command/query classification for non-read operations in strict mode", async () => {
     const doc = await compileSource(`
       using Http;
@@ -243,6 +306,27 @@ describe("APIGen TypeSpec emitter", () => {
           @operationId("deleteWidget")
           @apigen.command(#{ audit: #{ required: true, successAction: "Widget Deleted" } })
           op delete(): string;
+        `,
+      },
+      {
+        message: "async execution requires audit.guarantee transactional",
+        operation: `
+          @post
+          @operationId("finalizeWidget")
+          @apigen.command(#{
+            audit: #{ required: true, successAction: "widget.validating", guarantee: "best-effort" },
+            execution: #{
+              mode: "async",
+              jobKind: "widget.finalize",
+              resourceKind: "widget",
+              initialEvent: "widget.validating",
+              initialState: "validating",
+              statusOperation: "getWidget",
+              eventsOperation: "listWidgetEvents",
+              cancellation: "unsupported",
+            },
+          })
+          op finalize(@header("Idempotency-Key") key: string): string;
         `,
       },
     ];

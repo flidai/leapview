@@ -23102,6 +23102,15 @@ paths:
           required: true
           success_action: release.validating
         authz_mode: privilege
+        execution:
+          cancellation: unsupported
+          events_operation: listReleaseEvents
+          initial_event: release.validating
+          initial_state: validating
+          job_kind: release.finalize
+          mode: async
+          resource_kind: release
+          status_operation: getRelease
         idempotency: required
         owner: LeapViewAPI.Release
         target:

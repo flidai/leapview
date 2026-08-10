@@ -160,6 +160,28 @@ and reject successful responses whose command never completed through the
 executor. This makes a newly declared command fail closed until its runtime
 capability is wired.
 
+Commands that start durable work can add a typed execution lifecycle:
+
+```typespec
+execution: #{
+  mode: "async",
+  jobKind: "release.finalize",
+  resourceKind: "release",
+  initialEvent: "release.validating",
+  initialState: "validating",
+  statusOperation: "getRelease",
+  eventsOperation: "listReleaseEvents",
+  cancellation: "unsupported",
+}
+```
+
+APIGen requires transactional auditing, a `202` response, an initial event
+equal to the audit success action, and existing GET query operations for status
+and event history. The normalized lifecycle is emitted in JSON IR, OpenAPI, and
+generated Go registries, including `runtime/command.Contract.Execution`.
+Applications should derive durable event, resource, and job identities from
+that runtime contract and validate registered job handlers at startup.
+
 Set `strict_operation_kinds: true` on an HTTP manifest target to make the
 operation catalog exhaustive. GET and HEAD operations are queries by default;
 every POST, PUT, PATCH, or DELETE must then declare `@apigen.command` or an

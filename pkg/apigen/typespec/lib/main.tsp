@@ -38,8 +38,20 @@ model AuditOptions {
   guarantee?: "transactional" | "best-effort";
 }
 
+model AsyncExecutionOptions {
+  mode: "async";
+  jobKind: string;
+  resourceKind: string;
+  initialEvent: string;
+  initialState: string;
+  statusOperation: string;
+  eventsOperation: string;
+  cancellation: "supported" | "unsupported";
+}
+
 model CommandOptions {
   audit: AuditOptions;
+  execution?: AsyncExecutionOptions;
   additionalExposures?: ("ui" | "agent" | "automation")[];
   targetParameter?: string;
 }

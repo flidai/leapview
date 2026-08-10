@@ -89,3 +89,22 @@ func TestExecutorRejectsMissingGuaranteeCapability(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestContractValidatesAsyncExecution(t *testing.T) {
+	contract := Contract{
+		OperationID: "finalizeRelease", Owner: "ReleaseAPI", AuditAction: "release.validating", Guarantee: GuaranteeTransactional,
+		Execution: &AsyncExecutionContract{Mode: "async", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
+	}
+	if err := contract.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	contract.Execution.InitialEvent = "release.started"
+	if err := contract.Validate(); !errors.Is(err, ErrInvalidContract) {
+		t.Fatalf("error = %v", err)
+	}
+	contract.Execution.InitialEvent = contract.AuditAction
+	contract.Guarantee = GuaranteeBestEffort
+	if err := contract.Validate(); !errors.Is(err, ErrInvalidContract) {
+		t.Fatalf("error = %v", err)
+	}
+}

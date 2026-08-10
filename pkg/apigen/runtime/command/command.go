@@ -29,6 +29,18 @@ type Contract struct {
 	Owner       string
 	AuditAction string
 	Guarantee   Guarantee
+	Execution   *AsyncExecutionContract
+}
+
+type AsyncExecutionContract struct {
+	Mode            string
+	JobKind         string
+	ResourceKind    string
+	InitialEvent    string
+	InitialState    string
+	StatusOperation string
+	EventsOperation string
+	Cancellation    string
 }
 
 func (c Contract) Validate() error {
@@ -37,10 +49,23 @@ func (c Contract) Validate() error {
 	}
 	switch c.Guarantee {
 	case GuaranteeTransactional, GuaranteeBestEffort:
-		return nil
 	default:
 		return fmt.Errorf("%w: operation %q has unsupported audit guarantee %q", ErrInvalidContract, c.OperationID, c.Guarantee)
 	}
+	if execution := c.Execution; execution != nil {
+		if c.Guarantee != GuaranteeTransactional {
+			return fmt.Errorf("%w: operation %q async execution requires transactional auditing", ErrInvalidContract, c.OperationID)
+		}
+		if execution.Mode != "async" || strings.TrimSpace(execution.JobKind) == "" || strings.TrimSpace(execution.ResourceKind) == "" ||
+			strings.TrimSpace(execution.InitialEvent) == "" || strings.TrimSpace(execution.InitialState) == "" || strings.TrimSpace(execution.StatusOperation) == "" ||
+			strings.TrimSpace(execution.EventsOperation) == "" || (execution.Cancellation != "supported" && execution.Cancellation != "unsupported") {
+			return fmt.Errorf("%w: operation %q has an incomplete async execution contract", ErrInvalidContract, c.OperationID)
+		}
+		if execution.InitialEvent != c.AuditAction {
+			return fmt.Errorf("%w: operation %q initial event differs from its audit action", ErrInvalidContract, c.OperationID)
+		}
+	}
+	return nil
 }
 
 type Lookup func(operationID string) (Contract, bool)

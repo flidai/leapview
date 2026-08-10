@@ -245,7 +245,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 	content := string(b)
 	require.Contains(t, content, "Extensions map[string]any")
 	require.Contains(t, content, `Namespace: "WidgetAPI"`)
-	require.Contains(t, content, `Command: &GenCommandContract{Owner: "WidgetAPI", Audit: GenAuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort"}, AdditionalExposures: []GenOperationSurface{"ui"}, Target: &GenOperationTarget{Parameter: "workspace", Type: "workspace"}`)
+	require.Contains(t, content, `Command: &GenCommandContract{Owner: "WidgetAPI", Audit: GenAuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort"}, Execution: nil, AdditionalExposures: []GenOperationSurface{"ui"}, Target: &GenOperationTarget{Parameter: "workspace", Type: "workspace"}`)
 	require.Contains(t, content, `func GetAPIGenCommandRuntimeContract(operationID string) (apigencommand.Contract, bool)`)
 	require.Contains(t, content, `Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee)`)
 	require.Contains(t, content, `Extensions: map[string]any{"x-downstream": map[string]any{`)

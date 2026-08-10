@@ -26,8 +26,19 @@ export interface AuditOptions {
     successAction?: string;
     guarantee?: "transactional" | "best-effort";
 }
+export interface AsyncExecutionOptions {
+    mode: "async";
+    jobKind: string;
+    resourceKind: string;
+    initialEvent: string;
+    initialState: string;
+    statusOperation: string;
+    eventsOperation: string;
+    cancellation: "supported" | "unsupported";
+}
 export interface CommandOptions {
     audit: AuditOptions;
+    execution?: AsyncExecutionOptions;
     additionalExposures?: Array<"ui" | "agent" | "automation">;
     targetParameter?: string;
 }

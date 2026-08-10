@@ -65,6 +65,10 @@ func cloneDocumentForEmit(doc ir.Document) ir.Document {
 		}
 		if endpoint.Command != nil {
 			command := *endpoint.Command
+			if endpoint.Command.Execution != nil {
+				execution := *endpoint.Command.Execution
+				command.Execution = &execution
+			}
 			command.AdditionalExposures = append([]string(nil), endpoint.Command.AdditionalExposures...)
 			if endpoint.Command.Target != nil {
 				target := *endpoint.Command.Target
@@ -242,9 +246,10 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("type GenOperationSurface string\n\n")
 	b.WriteString("const (\n\tGenOperationSurfaceUI GenOperationSurface = \"ui\"\n\tGenOperationSurfaceAgent GenOperationSurface = \"agent\"\n\tGenOperationSurfaceAutomation GenOperationSurface = \"automation\"\n)\n\n")
 	b.WriteString("type GenAuditPolicy struct {\n\tRequired bool\n\tSuccessAction string\n\tGuarantee string\n}\n\n")
+	b.WriteString("type GenAsyncExecutionContract struct {\n\tMode string\n\tJobKind string\n\tResourceKind string\n\tInitialEvent string\n\tInitialState string\n\tStatusOperation string\n\tEventsOperation string\n\tCancellation string\n}\n\n")
 	b.WriteString("type GenOperationTarget struct {\n\tParameter string\n\tType string\n}\n\n")
 	b.WriteString("type GenCommandContract struct {\n")
-	b.WriteString("\tOwner string\n\tAudit GenAuditPolicy\n\tAdditionalExposures []GenOperationSurface\n\tTarget *GenOperationTarget\n")
+	b.WriteString("\tOwner string\n\tAudit GenAuditPolicy\n\tExecution *GenAsyncExecutionContract\n\tAdditionalExposures []GenOperationSurface\n\tTarget *GenOperationTarget\n")
 	b.WriteString("\tIdempotency string\n\tConcurrency string\n\tAuthzMode string\n\tPrivilege string\n")
 	b.WriteString("}\n\n")
 	b.WriteString("type GenOperationContract struct {\n")
@@ -307,7 +312,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("func GetAPIGenCommandRuntimeContract(operationID string) (apigencommand.Contract, bool) {\n")
 	b.WriteString("\tcontract, ok := genOperationContracts[operationID]\n")
 	b.WriteString("\tif !ok || contract.Command == nil || !contract.Command.Audit.Required { return apigencommand.Contract{}, false }\n")
-	b.WriteString("\treturn apigencommand.Contract{OperationID: contract.OperationID, Owner: contract.Command.Owner, AuditAction: contract.Command.Audit.SuccessAction, Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee)}, true\n")
+	b.WriteString("\tvar execution *apigencommand.AsyncExecutionContract\n")
+	b.WriteString("\tif contract.Command.Execution != nil { source := contract.Command.Execution; execution = &apigencommand.AsyncExecutionContract{Mode: source.Mode, JobKind: source.JobKind, ResourceKind: source.ResourceKind, InitialEvent: source.InitialEvent, InitialState: source.InitialState, StatusOperation: source.StatusOperation, EventsOperation: source.EventsOperation, Cancellation: source.Cancellation} }\n")
+	b.WriteString("\treturn apigencommand.Contract{OperationID: contract.OperationID, Owner: contract.Command.Owner, AuditAction: contract.Command.Audit.SuccessAction, Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee), Execution: execution}, true\n")
 	b.WriteString("}\n\n")
 	b.WriteString("// APIGenOperationAllowsStatus reports whether a status code is documented for an operation.\n")
 	b.WriteString("//nolint:revive // exported generated helper name matches the APIGen contract registry namespace.\n")
@@ -326,7 +333,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("func cloneAPIGenOperationContract(contract GenOperationContract) GenOperationContract {\n")
 	b.WriteString("\tcontract.Tags = append([]string(nil), contract.Tags...)\n")
 	b.WriteString("\tcontract.DocumentedStatusCodes = append([]int(nil), contract.DocumentedStatusCodes...)\n")
-	b.WriteString("\tif contract.Command != nil { command := *contract.Command; command.AdditionalExposures = append([]GenOperationSurface(nil), contract.Command.AdditionalExposures...); if contract.Command.Target != nil { target := *contract.Command.Target; command.Target = &target }; contract.Command = &command }\n")
+	b.WriteString("\tif contract.Command != nil { command := *contract.Command; command.AdditionalExposures = append([]GenOperationSurface(nil), contract.Command.AdditionalExposures...); if contract.Command.Target != nil { target := *contract.Command.Target; command.Target = &target }; if contract.Command.Execution != nil { execution := *contract.Command.Execution; command.Execution = &execution }; contract.Command = &command }\n")
 	b.WriteString("\tcontract.Extensions = cloneAPIGenAnyMap(contract.Extensions)\n")
 	b.WriteString("\treturn contract\n")
 	b.WriteString("}\n\n")
@@ -1419,12 +1426,19 @@ func renderGenCommandContract(command *ir.Command) string {
 	if command.Target != nil {
 		target = fmt.Sprintf("&GenOperationTarget{Parameter: %q, Type: %q}", command.Target.Parameter, command.Target.Type)
 	}
+	execution := "nil"
+	if command.Execution != nil {
+		execution = fmt.Sprintf("&GenAsyncExecutionContract{Mode: %q, JobKind: %q, ResourceKind: %q, InitialEvent: %q, InitialState: %q, StatusOperation: %q, EventsOperation: %q, Cancellation: %q}",
+			command.Execution.Mode, command.Execution.JobKind, command.Execution.ResourceKind, command.Execution.InitialEvent,
+			command.Execution.InitialState, command.Execution.StatusOperation, command.Execution.EventsOperation, command.Execution.Cancellation)
+	}
 	return fmt.Sprintf(
-		"&GenCommandContract{Owner: %q, Audit: GenAuditPolicy{Required: %t, SuccessAction: %q, Guarantee: %q}, AdditionalExposures: %s, Target: %s, Idempotency: %q, Concurrency: %q, AuthzMode: %q, Privilege: %q}",
+		"&GenCommandContract{Owner: %q, Audit: GenAuditPolicy{Required: %t, SuccessAction: %q, Guarantee: %q}, Execution: %s, AdditionalExposures: %s, Target: %s, Idempotency: %q, Concurrency: %q, AuthzMode: %q, Privilege: %q}",
 		command.Owner,
 		command.Audit.Required,
 		command.Audit.SuccessAction,
 		command.Audit.Guarantee,
+		execution,
 		exposures.String(),
 		target,
 		command.Idempotency,

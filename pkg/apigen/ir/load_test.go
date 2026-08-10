@@ -135,6 +135,52 @@ func TestValidate_RejectsInvalidTypedCommands(t *testing.T) {
 	}
 }
 
+func TestValidateAsyncExecutionContract(t *testing.T) {
+	validDocument := func() Document {
+		return Document{
+			SchemaVersion: CurrentSchemaVersion,
+			API:           API{BasePath: "/"},
+			Info:          Info{Title: "Releases", Version: "1"},
+			Endpoints: []Endpoint{
+				{Method: "get", Path: "/releases/{release}", OperationID: "getRelease", Kind: "query", Responses: []Response{{StatusCode: 200, Description: "ok"}}},
+				{Method: "get", Path: "/releases/{release}/events", OperationID: "listReleaseEvents", Kind: "query", Responses: []Response{{StatusCode: 200, Description: "ok"}}},
+				{
+					Method: "post", Path: "/releases/{release}/finalize", OperationID: "finalizeRelease", Kind: "command",
+					Parameters: []Parameter{{Name: "Idempotency-Key", In: "header", Required: true, Schema: SchemaRef{Type: "string"}}},
+					Responses:  []Response{{StatusCode: 202, Description: "accepted"}},
+					Command: &Command{
+						Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional"}, Idempotency: "required",
+						Execution: &AsyncExecution{Mode: "async", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
+					},
+				},
+			},
+		}
+	}
+	require.NoError(t, Validate(validDocument()))
+
+	tests := []struct {
+		name    string
+		mutate  func(*Document)
+		wantErr string
+	}{
+		{name: "accepted response", mutate: func(doc *Document) { doc.Endpoints[2].Responses[0].StatusCode = 200 }, wantErr: "requires a 202 response"},
+		{name: "transactional guarantee", mutate: func(doc *Document) { doc.Endpoints[2].Command.Audit.Guarantee = "best-effort" }, wantErr: "requires transactional audit guarantee"},
+		{name: "initial event", mutate: func(doc *Document) { doc.Endpoints[2].Command.Execution.InitialEvent = "release.started" }, wantErr: "must equal audit.success_action"},
+		{name: "unknown status operation", mutate: func(doc *Document) { doc.Endpoints[2].Command.Execution.StatusOperation = "missingRelease" }, wantErr: "references unknown operation"},
+		{name: "status command", mutate: func(doc *Document) {
+			doc.Endpoints[0].Kind = "command"
+			doc.Endpoints[0].Command = &Command{Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.read", Guarantee: "transactional"}}
+		}, wantErr: "must reference a GET query"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			doc := validDocument()
+			test.mutate(&doc)
+			require.ErrorContains(t, Validate(doc), test.wantErr)
+		})
+	}
+}
+
 func TestValidate_RejectsCommandKindWithoutContract(t *testing.T) {
 	endpoint := Endpoint{
 		Method: "post", Path: "/widgets/search", OperationID: "searchWidgets", Kind: "command",

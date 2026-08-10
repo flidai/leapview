@@ -117,12 +117,25 @@ type Endpoint struct {
 type Command struct {
 	Owner               string           `json:"owner"`
 	Audit               AuditPolicy      `json:"audit"`
+	Execution           *AsyncExecution  `json:"execution,omitempty"`
 	AdditionalExposures []string         `json:"additional_exposures,omitempty"`
 	Target              *OperationTarget `json:"target,omitempty"`
 	Idempotency         string           `json:"idempotency,omitempty"`
 	Concurrency         string           `json:"concurrency,omitempty"`
 	AuthzMode           string           `json:"authz_mode,omitempty"`
 	Privilege           string           `json:"privilege,omitempty"`
+}
+
+// AsyncExecution describes the durable workflow started by a command.
+type AsyncExecution struct {
+	Mode            string `json:"mode"`
+	JobKind         string `json:"job_kind"`
+	ResourceKind    string `json:"resource_kind"`
+	InitialEvent    string `json:"initial_event"`
+	InitialState    string `json:"initial_state"`
+	StatusOperation string `json:"status_operation"`
+	EventsOperation string `json:"events_operation"`
+	Cancellation    string `json:"cancellation"`
 }
 
 // AuditPolicy describes the audit record required for a successful command.

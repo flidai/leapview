@@ -178,6 +178,16 @@ interface Releases {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "release.validating", guarantee: "transactional" },
+    execution: #{
+      mode: "async",
+      jobKind: "release.finalize",
+      resourceKind: "release",
+      initialEvent: "release.validating",
+      initialState: "validating",
+      statusOperation: "getRelease",
+      eventsOperation: "listReleaseEvents",
+      cancellation: "unsupported",
+    },
     targetParameter: "project",
   })
   @operationId("finalizeRelease")

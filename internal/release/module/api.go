@@ -127,7 +127,7 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Release finalization could not be queued", nil)
 		return
 	}
-	event, err := json.Marshal(map[string]any{"releaseId": releaseID, "projectId": project, "status": release.StatusValidating})
+	event, err := json.Marshal(map[string]any{"releaseId": releaseID, "projectId": project, "status": m.finalizeExecution.InitialState})
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Release finalization could not be queued", nil)
 		return
@@ -141,16 +141,20 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 	if err == nil {
 		err = executor.Execute(r.Context(), string(releasegen.GenOperationFinalizeRelease), apigencommand.Execution{
 			Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
+				if contract.Execution == nil {
+					return fmt.Errorf("finalize release async execution contract is unavailable")
+				}
+				execution := contract.Execution
 				var mutationErr error
 				row, mutationErr = m.service.BeginFinalization(ctx, project, releaseID, jobs.WorkflowIntent{
 					Event: jobs.EventInput{
-						Key: contract.AuditAction, ResourceKind: "release", ResourceID: releaseID,
-						EventType: contract.AuditAction, Data: event,
+						Key: execution.InitialEvent, ResourceKind: execution.ResourceKind, ResourceID: releaseID,
+						EventType: execution.InitialEvent, Data: event,
 					},
 					Job: jobs.EnqueueInput{
-						ID: "release:" + releaseID + ":finalize", Kind: FinalizeJobKind,
+						ID: "release:" + releaseID + ":finalize", Kind: execution.JobKind,
 						WorkloadClass: "control", WorkspaceID: "_node",
-						ResourceKind: "release", ResourceID: releaseID, Payload: payload,
+						ResourceKind: execution.ResourceKind, ResourceID: releaseID, Payload: payload,
 					},
 				})
 				return mutationErr
@@ -174,7 +178,7 @@ func (m *Module) ListReleaseEvents(w http.ResponseWriter, r *http.Request, proje
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_EVENT_STORE_UNAVAILABLE", "Release events are unavailable", nil)
 		return
 	}
-	jobhttp.WriteEventPage(w, r, m.api.Jobs, "release", releaseID, limit, pageToken, "release:"+project+":"+releaseID)
+	jobhttp.WriteEventPage(w, r, m.api.Jobs, m.finalizeExecution.ResourceKind, releaseID, limit, pageToken, "release:"+project+":"+releaseID)
 }
 
 func (m *Module) DispatchAPIGenOperation(operationID string, logger *slog.Logger, w http.ResponseWriter, r *http.Request) bool {

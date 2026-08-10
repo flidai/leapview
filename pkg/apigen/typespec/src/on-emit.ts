@@ -121,6 +121,16 @@ interface Endpoint {
 interface Command {
   owner: string;
   audit: { required: boolean; success_action?: string; guarantee?: "transactional" | "best-effort" };
+  execution?: {
+    mode: "async";
+    job_kind: string;
+    resource_kind: string;
+    initial_event: string;
+    initial_state: string;
+    status_operation: string;
+    events_operation: string;
+    cancellation: "supported" | "unsupported";
+  };
   additional_exposures?: string[];
   target?: { parameter: string; type: string };
   idempotency?: "required";
@@ -1010,6 +1020,7 @@ function operationKind(
 }
 
 const auditActionPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
+const stableNamePattern = /^[a-z][a-z0-9_]*$/;
 
 function commandMetadata(
   program: Program,
@@ -1035,6 +1046,44 @@ function commandMetadata(
       `audit.successAction ${JSON.stringify(successAction)} must be a stable dotted lower_snake_case name`,
       operation.operation,
     );
+  }
+
+  let execution: Command["execution"];
+  if (options.execution) {
+    if (guarantee !== "transactional") {
+      builder.invalidCommand("async execution requires audit.guarantee transactional", operation.operation);
+    }
+    const jobKind = options.execution.jobKind.trim();
+    const resourceKind = options.execution.resourceKind.trim();
+    const initialEvent = options.execution.initialEvent.trim();
+    const initialState = options.execution.initialState.trim();
+    const statusOperation = options.execution.statusOperation.trim();
+    const eventsOperation = options.execution.eventsOperation.trim();
+    if (!auditActionPattern.test(jobKind)) {
+      builder.invalidCommand("execution.jobKind must be a stable dotted lower_snake_case name", operation.operation);
+    }
+    if (!stableNamePattern.test(resourceKind) || !stableNamePattern.test(initialState)) {
+      builder.invalidCommand("execution resourceKind and initialState must be stable lower_snake_case names", operation.operation);
+    }
+    if (!auditActionPattern.test(initialEvent)) {
+      builder.invalidCommand("execution.initialEvent must be a stable dotted lower_snake_case name", operation.operation);
+    }
+    if (initialEvent !== successAction) {
+      builder.invalidCommand("execution.initialEvent must equal audit.successAction", operation.operation);
+    }
+    if (!statusOperation || !eventsOperation || statusOperation === eventsOperation) {
+      builder.invalidCommand("execution statusOperation and eventsOperation must be distinct operation IDs", operation.operation);
+    }
+    execution = {
+      mode: options.execution.mode,
+      job_kind: jobKind,
+      resource_kind: resourceKind,
+      initial_event: initialEvent,
+      initial_state: initialState,
+      status_operation: statusOperation,
+      events_operation: eventsOperation,
+      cancellation: options.execution.cancellation,
+    };
   }
 
   const additionalExposures = [...(options.additionalExposures ?? [])];
@@ -1084,6 +1133,7 @@ function commandMetadata(
   return prune({
     owner: namespaceName(operation.operation.namespace) ?? "",
     audit: prune({ required: options.audit.required, success_action: successAction, guarantee }),
+    execution,
     additional_exposures: additionalExposures.length > 0 ? additionalExposures : undefined,
     target,
     idempotency,

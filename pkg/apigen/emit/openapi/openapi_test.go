@@ -159,6 +159,38 @@ func TestEmitYAMLIncludesTypedCommandMetadata(t *testing.T) {
 	}, operation["x-apigen-command"])
 }
 
+func TestEmitYAMLIncludesAsyncExecutionMetadata(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Releases", Version: "1"},
+		Endpoints: []ir.Endpoint{
+			{Method: "get", Path: "/releases/{release}", OperationID: "getRelease", Kind: "query", Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}},
+			{Method: "get", Path: "/releases/{release}/events", OperationID: "listReleaseEvents", Kind: "query", Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}},
+			{
+				Method: "post", Path: "/releases/{release}/finalize", OperationID: "finalizeRelease", Kind: "command",
+				Parameters: []ir.Parameter{{Name: "Idempotency-Key", In: "header", Required: true, Schema: ir.SchemaRef{Type: "string"}}},
+				Responses:  []ir.Response{{StatusCode: 202, Description: "accepted"}},
+				Command: &ir.Command{
+					Owner: "ReleaseAPI", Audit: ir.AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional"}, Idempotency: "required",
+					Execution: &ir.AsyncExecution{Mode: "async", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
+				},
+			},
+		},
+	}
+
+	content, err := EmitYAML(doc, Options{})
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(content, &raw))
+	operation := raw["paths"].(map[string]any)["/releases/{release}/finalize"].(map[string]any)["post"].(map[string]any)
+	command := operation["x-apigen-command"].(map[string]any)
+	require.Equal(t, map[string]any{
+		"mode": "async", "job_kind": "release.finalize", "resource_kind": "release", "initial_event": "release.validating", "initial_state": "validating",
+		"status_operation": "getRelease", "events_operation": "listReleaseEvents", "cancellation": "unsupported",
+	}, command["execution"])
+}
+
 func TestEmitYAML_EmitsMultipleContentKinds(t *testing.T) {
 	t.Helper()
 

@@ -17,6 +17,7 @@ const CurrentSchemaVersion = "v4"
 
 var toolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var auditActionPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
+var stableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // Load parses and validates an IR document from disk.
 func Load(path string) (Document, error) {
@@ -225,6 +226,9 @@ func Validate(doc Document) error {
 		}
 		seenRoute[routeKey] = struct{}{}
 	}
+	if err := validateExecutionReferences(doc); err != nil {
+		return err
+	}
 
 	for name, schema := range doc.Schemas {
 		if err := validateSchemaDefinition(doc, name, schema); err != nil {
@@ -263,6 +267,41 @@ func validateCommand(endpoint Endpoint) error {
 	}
 	if guarantee := strings.TrimSpace(command.Audit.Guarantee); guarantee != "" && guarantee != "transactional" && guarantee != "best-effort" {
 		return fmt.Errorf("%s audit has unsupported guarantee %q", context, guarantee)
+	}
+	if execution := command.Execution; execution != nil {
+		if command.Audit.Guarantee != "transactional" {
+			return fmt.Errorf("%s async execution requires transactional audit guarantee", context)
+		}
+		if execution.Mode != "async" {
+			return fmt.Errorf("%s execution has unsupported mode %q", context, execution.Mode)
+		}
+		if !auditActionPattern.MatchString(execution.JobKind) || !auditActionPattern.MatchString(execution.InitialEvent) {
+			return fmt.Errorf("%s execution job_kind and initial_event must be stable dotted lower_snake_case names", context)
+		}
+		if !stableNamePattern.MatchString(execution.ResourceKind) || !stableNamePattern.MatchString(execution.InitialState) {
+			return fmt.Errorf("%s execution resource_kind and initial_state must be stable lower_snake_case names", context)
+		}
+		if execution.InitialEvent != action {
+			return fmt.Errorf("%s execution initial_event %q must equal audit.success_action %q", context, execution.InitialEvent, action)
+		}
+		if strings.TrimSpace(execution.StatusOperation) == "" || strings.TrimSpace(execution.EventsOperation) == "" || execution.StatusOperation == execution.EventsOperation {
+			return fmt.Errorf("%s execution status_operation and events_operation must be distinct operation IDs", context)
+		}
+		switch execution.Cancellation {
+		case "supported", "unsupported":
+		default:
+			return fmt.Errorf("%s execution has unsupported cancellation policy %q", context, execution.Cancellation)
+		}
+		hasAccepted := false
+		for _, response := range endpoint.Responses {
+			if response.StatusCode == 202 {
+				hasAccepted = true
+				break
+			}
+		}
+		if !hasAccepted {
+			return fmt.Errorf("%s async execution requires a 202 response", context)
+		}
 	}
 	seenExposures := make(map[string]struct{}, len(command.AdditionalExposures))
 	for _, exposure := range command.AdditionalExposures {
@@ -330,6 +369,32 @@ func validateCommand(endpoint Endpoint) error {
 		}
 		if privilege, _ := authz["privilege"].(string); command.Privilege != privilege {
 			return fmt.Errorf("%s privilege %q does not match x-authz privilege %q", context, command.Privilege, privilege)
+		}
+	}
+	return nil
+}
+
+func validateExecutionReferences(doc Document) error {
+	operations := make(map[string]Endpoint, len(doc.Endpoints))
+	for _, endpoint := range doc.Endpoints {
+		operations[endpoint.OperationID] = endpoint
+	}
+	for _, endpoint := range doc.Endpoints {
+		if endpoint.Command == nil || endpoint.Command.Execution == nil {
+			continue
+		}
+		execution := endpoint.Command.Execution
+		for label, operationID := range map[string]string{
+			"status_operation": execution.StatusOperation,
+			"events_operation": execution.EventsOperation,
+		} {
+			referenced, ok := operations[operationID]
+			if !ok {
+				return fmt.Errorf("endpoint %q command execution %s references unknown operation %q", endpoint.OperationID, label, operationID)
+			}
+			if referenced.Kind != "query" || referenced.Command != nil || !strings.EqualFold(referenced.Method, "get") {
+				return fmt.Errorf("endpoint %q command execution %s must reference a GET query", endpoint.OperationID, label)
+			}
 		}
 	}
 	return nil
