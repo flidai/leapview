@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
@@ -28,6 +29,7 @@ type Module struct {
 	jobs                      JobConfig
 	api                       APIConfig
 	instanceID                string
+	executions                map[string]apigencommand.AsyncExecutionContract
 	protected                 bool
 	currentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
 	authorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
@@ -146,6 +148,10 @@ type Config struct {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	executions, err := loadDeploymentExecutionContracts()
+	if err != nil {
+		return nil, err
+	}
 	options := deploymenthttp.Options{MaxJSONBodyBytes: config.MaxJSONBodyBytes}
 	options.CurrentPrincipal = func(r *http.Request) (deploymenthttp.Principal, bool) {
 		if config.CurrentPrincipal == nil {
@@ -232,7 +238,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		candidateSourceBlobAudit: config.CandidateSourceBlobAudit,
 		logger:                   config.Logger,
 		jobs:                     jobs, api: config.API, protected: config.Protected,
-		instanceID:           config.InstanceID,
+		instanceID: config.InstanceID, executions: executions,
 		currentApprovalActor: config.CurrentApprovalActor,
 		authorizeApproval:    config.AuthorizeApproval,
 		authorizeActivation:  config.AuthorizeActivation,
@@ -242,6 +248,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	if m.jobs.Authorize == nil {
 		m.jobs.Authorize = m.publicationAuthorizer(config.PublicationAuthorization)
+	}
+	if err := validateDeploymentJobHandlers(executions, m.JobHandlers()); err != nil {
+		return nil, err
 	}
 	return m, nil
 }

@@ -3,7 +3,6 @@ package module
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -21,15 +20,7 @@ type EventStore interface {
 	jobhttp.EventReader
 }
 
-func (m *Module) recordRunCreated(ctx context.Context, run refreshrun.RunRecord) error {
-	response, ok := materializehttp.PipelineRunResponseFor(run)
-	if !ok {
-		return fmt.Errorf("refresh service returned a non-pipeline run")
-	}
-	return jobs.AppendJSONEvent(ctx, m.events, "refresh", run.ID, refreshQueuedAuditAction, response)
-}
-
-func (m *Module) recordRunCreatedBestEffort(ctx context.Context, run refreshrun.RunRecord) error {
+func (m *Module) verifyRunCreated(ctx context.Context, run refreshrun.RunRecord) error {
 	logger := m.logger
 	if logger == nil {
 		logger = slog.Default()
@@ -40,12 +31,24 @@ func (m *Module) recordRunCreatedBestEffort(ctx context.Context, run refreshrun.
 	}
 	return executor.Execute(ctx, string(refreshgen.GenOperationCreateRefreshRun), apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
-			if contract.AuditAction != refreshQueuedAuditAction {
-				return fmt.Errorf("refresh audit action %q does not match %q", contract.AuditAction, refreshQueuedAuditAction)
+			if contract.Execution == nil || contract.Execution.InitialEvent != contract.AuditAction {
+				return errors.New("refresh audit and initial lifecycle event disagree")
 			}
-			return m.recordRunCreated(ctx, run)
+			if m.events == nil {
+				return errors.New("refresh event store is unavailable")
+			}
+			events, err := m.events.ListEvents(ctx, contract.Execution.ResourceKind, run.ID, 0, 200)
+			if err != nil {
+				return err
+			}
+			for _, event := range events {
+				if event.EventType == contract.Execution.InitialEvent {
+					return nil
+				}
+			}
+			return errors.New("refresh initial lifecycle event is unavailable")
 		},
-		LogMessage:    "refresh audit failed",
+		LogMessage:    "refresh persisted audit verification failed",
 		LogAttributes: []slog.Attr{slog.String("refresh_run_id", run.ID)},
 	})
 }
@@ -63,7 +66,7 @@ func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) 
 		if !ok || m.events == nil {
 			return
 		}
-		_ = jobs.AppendJSONEvent(ctx, m.events, "refresh", run.ID, "refresh."+run.Status, response)
+		_ = jobs.AppendJSONEvent(ctx, m.events, m.refreshExecution.ResourceKind, run.ID, "refresh."+run.Status, response)
 	}
 }
 
@@ -129,7 +132,7 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, worksp
 	}
 	if err := executor.Execute(r.Context(), string(refreshgen.GenOperationCancelRefreshRun), apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
-			return jobs.AppendJSONEvent(ctx, m.events, "refresh", runID, contract.AuditAction, response)
+			return jobs.AppendJSONEvent(ctx, m.events, m.refreshExecution.ResourceKind, runID, contract.AuditAction, response)
 		},
 		LogMessage:    "refresh audit failed",
 		LogAttributes: []slog.Attr{slog.String("refresh_run_id", runID)},
@@ -170,7 +173,7 @@ func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, wo
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_EVENT_STORE_UNAVAILABLE", "Refresh events are unavailable", nil)
 		return
 	}
-	jobhttp.WriteEventPage(w, r, m.events, "refresh", runID, limit, pageToken, "refresh:"+workspaceID+":"+runID)
+	jobhttp.WriteEventPage(w, r, m.events, m.refreshExecution.ResourceKind, runID, limit, pageToken, m.refreshExecution.ResourceKind+":"+workspaceID+":"+runID)
 }
 
 func (m *Module) DispatchAPIGenOperation(operationID string, logger *slog.Logger, w http.ResponseWriter, r *http.Request) bool {

@@ -13,13 +13,14 @@ func TestGeneratedAgentOperationClassifications(t *testing.T) {
 		target      string
 		idempotency string
 		concurrency string
+		guarantee   string
 		ui          bool
 	}{
-		"createAgentConversation":  {audit: "agent.conversation.created", idempotency: "required", ui: true},
-		"archiveAgentConversation": {audit: "agent.conversation.archived", target: "conversation"},
-		"updateAgentConversation":  {audit: "agent.conversation.updated", target: "conversation", concurrency: "if-match"},
-		"createAgentRun":           {audit: "agent.run.created", target: "conversation", idempotency: "required", ui: true},
-		"cancelAgentRun":           {audit: "agent.run.cancelled", target: "conversation", idempotency: "required"},
+		"createAgentConversation":  {audit: "agent.conversation.created", idempotency: "required", guarantee: "best-effort", ui: true},
+		"archiveAgentConversation": {audit: "agent.conversation.archived", target: "conversation", guarantee: "best-effort"},
+		"updateAgentConversation":  {audit: "agent.conversation.updated", target: "conversation", concurrency: "if-match", guarantee: "best-effort"},
+		"createAgentRun":           {audit: "agent.run.created", target: "conversation", idempotency: "required", guarantee: "best-effort", ui: true},
+		"cancelAgentRun":           {audit: "agent.run.cancelled", target: "conversation", idempotency: "required", guarantee: "best-effort"},
 	}
 	for operationID, want := range commands {
 		contract, ok := contracts[operationID]
@@ -30,7 +31,7 @@ func TestGeneratedAgentOperationClassifications(t *testing.T) {
 		if contract.Namespace != "LeapViewAPI.Agent" || command.Owner != contract.Namespace || command.AuthzMode != "privilege" || command.Privilege != "USE_AGENT" {
 			t.Errorf("%s ownership/authz = %#v", operationID, command)
 		}
-		if !command.Audit.Required || command.Audit.SuccessAction != want.audit || command.Audit.Guarantee != "best-effort" {
+		if !command.Audit.Required || command.Audit.SuccessAction != want.audit || command.Audit.Guarantee != want.guarantee {
 			t.Errorf("%s audit = %#v", operationID, command.Audit)
 		}
 		if command.Idempotency != want.idempotency || command.Concurrency != want.concurrency {
@@ -45,6 +46,17 @@ func TestGeneratedAgentOperationClassifications(t *testing.T) {
 		}
 		if got := len(command.AdditionalExposures) == 1 && command.AdditionalExposures[0] == agentgen.GenOperationSurfaceUI; got != want.ui {
 			t.Errorf("%s UI exposure = %v, want %t", operationID, command.AdditionalExposures, want.ui)
+		}
+		if operationID == "createAgentRun" {
+			if command.Execution == nil {
+				t.Fatalf("%s execution contract is missing", operationID)
+			}
+			execution := command.Execution
+			if execution.Mode != "async" || execution.Guarantee != "transactional" || execution.JobKind != "agent.run" || execution.ResourceKind != "agent_run" || execution.InitialEvent != "agent_run.queued" || execution.InitialState != "running" || execution.StatusOperation != "getAgentRun" || execution.EventsOperation != "listAgentEvents" || execution.Cancellation != "supported" {
+				t.Errorf("%s execution = %#v", operationID, execution)
+			}
+		} else if command.Execution != nil {
+			t.Errorf("synchronous command %s has execution contract %#v", operationID, command.Execution)
 		}
 	}
 

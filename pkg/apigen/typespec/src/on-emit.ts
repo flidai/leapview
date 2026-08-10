@@ -123,6 +123,7 @@ interface Command {
   audit: { required: boolean; success_action?: string; guarantee?: "transactional" | "best-effort" };
   execution?: {
     mode: "async";
+    guarantee: "transactional";
     job_kind: string;
     resource_kind: string;
     initial_event: string;
@@ -1021,6 +1022,7 @@ function operationKind(
 
 const auditActionPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 const stableNamePattern = /^[a-z][a-z0-9_]*$/;
+const jobKindPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/;
 
 function commandMetadata(
   program: Program,
@@ -1050,17 +1052,14 @@ function commandMetadata(
 
   let execution: Command["execution"];
   if (options.execution) {
-    if (guarantee !== "transactional") {
-      builder.invalidCommand("async execution requires audit.guarantee transactional", operation.operation);
-    }
     const jobKind = options.execution.jobKind.trim();
     const resourceKind = options.execution.resourceKind.trim();
     const initialEvent = options.execution.initialEvent.trim();
     const initialState = options.execution.initialState.trim();
     const statusOperation = options.execution.statusOperation.trim();
     const eventsOperation = options.execution.eventsOperation.trim();
-    if (!auditActionPattern.test(jobKind)) {
-      builder.invalidCommand("execution.jobKind must be a stable dotted lower_snake_case name", operation.operation);
+    if (!jobKindPattern.test(jobKind)) {
+      builder.invalidCommand("execution.jobKind must be a stable lower_snake_case identifier", operation.operation);
     }
     if (!stableNamePattern.test(resourceKind) || !stableNamePattern.test(initialState)) {
       builder.invalidCommand("execution resourceKind and initialState must be stable lower_snake_case names", operation.operation);
@@ -1068,14 +1067,12 @@ function commandMetadata(
     if (!auditActionPattern.test(initialEvent)) {
       builder.invalidCommand("execution.initialEvent must be a stable dotted lower_snake_case name", operation.operation);
     }
-    if (initialEvent !== successAction) {
-      builder.invalidCommand("execution.initialEvent must equal audit.successAction", operation.operation);
-    }
     if (!statusOperation || !eventsOperation || statusOperation === eventsOperation) {
       builder.invalidCommand("execution statusOperation and eventsOperation must be distinct operation IDs", operation.operation);
     }
     execution = {
       mode: options.execution.mode,
+      guarantee: options.execution.guarantee,
       job_kind: jobKind,
       resource_kind: resourceKind,
       initial_event: initialEvent,

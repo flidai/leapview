@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	deploymentui "github.com/flidai/leapview/internal/deployment/ui"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -265,6 +266,7 @@ func (m *Module) PublishProjectCandidate(
 	m.createDeployment(
 		w,
 		r,
+		string(deploymentgen.GenOperationPublishProjectCandidate),
 		project,
 		published.ID,
 		idempotencyKey,

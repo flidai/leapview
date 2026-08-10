@@ -159,11 +159,23 @@ interface AgentConversations {
   @apigen.command(#{
     audit: #{ required: true, successAction: "agent.run.created", guarantee: "best-effort" },
     additionalExposures: #["ui"],
+    execution: #{
+      mode: "async",
+      guarantee: "transactional",
+      jobKind: "agent.run",
+      resourceKind: "agent_run",
+      initialEvent: "agent_run.queued",
+      initialState: "running",
+      statusOperation: "getAgentRun",
+      eventsOperation: "listAgentEvents",
+      cancellation: "supported",
+    },
   })
   @operationId("createAgentRun")
   createAgentRun(@path conversation: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AgentRunCreateRequest): AcceptedJson<AgentRunResponse> | CommonErrors;
 
   @summary("Cancel an agent run")
+  @doc("Cancels an existing run and its queued work synchronously. The 202 response reports the resulting run state; this operation does not create a new asynchronous execution.")
   @route("/{conversation}/runs/{run}/cancel")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })

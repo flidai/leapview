@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
@@ -57,6 +58,7 @@ type Module struct {
 	productName              string
 	buildVersion             string
 	apiOperations            []agenttools.APIGenOperation
+	runExecution             apigencommand.AsyncExecutionContract
 }
 
 type Service = agent.Service
@@ -158,6 +160,10 @@ type HTTPConfig struct {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	runExecution, err := loadRunExecutionContract()
+	if err != nil {
+		return nil, err
+	}
 	if config.RunWorkloadClass == "" {
 		config.RunWorkloadClass = "background"
 	}
@@ -165,10 +171,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		config.GlobalWorkspaceID = "_global"
 	}
 	service := config.Service
-	ownedService := false
-	durableWorkflow := false
+	workflow, durableWorkflow := config.Jobs.(jobs.WorkflowRecorder)
 	if service == nil && config.Database != nil {
-		workflow, _ := config.Jobs.(jobs.WorkflowRecorder)
 		repository := newRepository(config.Database, workflow)
 		service = agent.NewService(repository, agent.Config{
 			APIKey: config.Model.APIKey, BaseURL: config.Model.BaseURL, Model: config.Model.Model,
@@ -181,8 +185,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				return nil, fmt.Errorf("reconcile preparing agent runs: %w", reconcileErr)
 			}
 		}
-		ownedService = true
-		durableWorkflow = workflow != nil
 	}
 	if service != nil {
 		if config.RecordAudit == nil {
@@ -191,6 +193,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		service.ConfigureDefaultModel(func(modelConfig agent.Config) agentcore.Model {
 			return agentopenai.NewModel(modelConfig, nil)
 		})
+		if durableWorkflow {
+			if err := service.ConfigureRunWorkflow(workflow); err != nil {
+				return nil, fmt.Errorf("configure transactional agent run workflow: %w", err)
+			}
+		}
 	}
 	var dispatchAPIGen func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
 	if config.DispatchAPIGen != nil {
@@ -225,8 +232,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		mcpScope:          mcpScope, mcpProtect: config.MCPProtect,
 		productName: config.ProductName, buildVersion: config.BuildVersion,
 		apiOperations: append([]agenttools.APIGenOperation(nil), config.APIGenOperations...),
+		runExecution:  runExecution,
 	}
-	if ownedService && durableWorkflow {
+	if err := validateRunJobHandlers(runExecution, m.JobHandlers(nil)); err != nil {
+		return nil, err
+	}
+	if service != nil && durableWorkflow {
 		service.SetPromptWorkflow(m.runWorkflow)
 	}
 	searchReferences := config.HTTP.SearchReferences

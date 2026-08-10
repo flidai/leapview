@@ -1,14 +1,76 @@
 package sqlite
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/jobs"
+	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
+	"github.com/flidai/leapview/internal/platform/transaction"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 )
+
+func TestSQLRunRepositoryRecordsInitialLifecycleInRunTransaction(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales');
+INSERT INTO serving_states (id, workspace_id, environment, status) VALUES ('state_1', 'sales', 'dev', 'validated');`); err != nil {
+		t.Fatal(err)
+	}
+	events := jobsqlite.NewRepository(store.SQLDB())
+	repository := NewSQLRunRepositoryWithWorkflow(store.SQLDB(), events, RunWorkflowConfig{
+		ResourceKind: "refresh", InitialEvent: "refresh.queued", InitialState: "queued",
+	})
+	run, err := repository.CreateRun(t.Context(), refreshrun.RunInput{
+		WorkspaceID: "sales", Environment: "dev", ModelID: "sales", ServingStateID: "state_1",
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales.daily",
+		TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := events.ListEvents(t.Context(), "refresh", run.ID, 0, 10)
+	if err != nil || len(recorded) != 1 || recorded[0].EventType != "refresh.queued" {
+		t.Fatalf("initial events = %#v, %v", recorded, err)
+	}
+}
+
+func TestSQLRunRepositoryRollsBackRunWhenInitialLifecycleFails(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales');
+INSERT INTO serving_states (id, workspace_id, environment, status) VALUES ('state_1', 'sales', 'dev', 'validated');`); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("initial lifecycle unavailable")
+	repository := NewSQLRunRepositoryWithWorkflow(store.SQLDB(), jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
+		return injected
+	}), RunWorkflowConfig{ResourceKind: "refresh", InitialEvent: "refresh.queued", InitialState: "queued"})
+	_, err = repository.CreateRun(t.Context(), refreshrun.RunInput{
+		WorkspaceID: "sales", Environment: "dev", ModelID: "sales", ServingStateID: "state_1",
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales.daily",
+		TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("CreateRun() error = %v, want injected failure", err)
+	}
+	var count int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM refresh_job_runs`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("refresh run count = %d, %v", count, err)
+	}
+}
 
 func TestSQLRunRepositoryAcceptsActiveLeaseFence(t *testing.T) {
 	store, repo, job := seedRefreshJob(t, refreshrun.RunStatusRunning, "+5 minutes")

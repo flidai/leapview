@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1095,26 +1097,73 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 
 func TestAPIGenAsyncExecutionContractsAreGeneratedEndToEnd(t *testing.T) {
 	contracts := apiaggregate.GetAPIGenOperationContracts()
-	asyncOperations := make([]string, 0)
+	starters := make([]string, 0)
+	controls := make([]string, 0)
 	for operationID, operation := range contracts {
-		if operation.Command == nil || operation.Command.Execution == nil {
+		accepted := slices.Contains(operation.DocumentedStatusCodes, http.StatusAccepted)
+		if operation.Command == nil {
+			if accepted {
+				t.Errorf("non-command operation %q documents 202 Accepted", operationID)
+			}
 			continue
 		}
-		asyncOperations = append(asyncOperations, operationID)
+		if operation.Command.Execution == nil {
+			if accepted {
+				controls = append(controls, operationID)
+			}
+			continue
+		}
+		starters = append(starters, operationID)
+		if !accepted {
+			t.Errorf("async starter %q does not document 202 Accepted", operationID)
+		}
 		runtimeContract, ok := apiaggregate.GetAPIGenCommandRuntimeContract(operationID)
 		if !ok || runtimeContract.Execution == nil {
 			t.Fatalf("async operation %q has no runtime execution contract", operationID)
 		}
 		generated, runtime := operation.Command.Execution, runtimeContract.Execution
-		if generated.Mode != runtime.Mode || generated.JobKind != runtime.JobKind || generated.ResourceKind != runtime.ResourceKind ||
+		if generated.Mode != runtime.Mode || generated.Guarantee != runtime.Guarantee || generated.JobKind != runtime.JobKind || generated.ResourceKind != runtime.ResourceKind ||
 			generated.InitialEvent != runtime.InitialEvent || generated.InitialState != runtime.InitialState ||
 			generated.StatusOperation != runtime.StatusOperation || generated.EventsOperation != runtime.EventsOperation ||
 			generated.Cancellation != runtime.Cancellation {
 			t.Errorf("async operation %q runtime contract %#v differs from generated metadata %#v", operationID, runtime, generated)
 		}
+		if generated.Guarantee != "transactional" {
+			t.Errorf("async operation %q execution guarantee = %q, want transactional", operationID, generated.Guarantee)
+		}
+		for role, referencedOperationID := range map[string]string{
+			"status": generated.StatusOperation,
+			"events": generated.EventsOperation,
+		} {
+			referenced, ok := contracts[referencedOperationID]
+			if !ok {
+				t.Errorf("async operation %q %s operation %q does not exist", operationID, role, referencedOperationID)
+				continue
+			}
+			if referenced.Kind != apiaggregate.GenOperationKindQuery || referenced.Method != http.MethodGet {
+				t.Errorf("async operation %q %s operation %q is %s %s, want GET query", operationID, role, referencedOperationID, referenced.Method, referenced.Kind)
+			}
+		}
 	}
-	if len(asyncOperations) != 1 || asyncOperations[0] != "finalizeRelease" {
-		t.Fatalf("async operations = %v, want [finalizeRelease]", asyncOperations)
+	sort.Strings(starters)
+	sort.Strings(controls)
+	wantStarters := []string{
+		"activateDeployment",
+		"createAgentRun",
+		"createDeployment",
+		"createRefreshRun",
+		"finalizeManagedDataUploadSession",
+		"finalizeRelease",
+		"publishProjectCandidate",
+		"retryDeployment",
+		"rollbackDeployment",
+	}
+	wantControls := []string{"cancelAgentRun", "cancelDeployment", "cancelRefreshRun"}
+	if !slices.Equal(starters, wantStarters) {
+		t.Errorf("async starters = %v, want %v", starters, wantStarters)
+	}
+	if !slices.Equal(controls, wantControls) {
+		t.Errorf("synchronous controls returning 202 = %v, want %v", controls, wantControls)
 	}
 }
 

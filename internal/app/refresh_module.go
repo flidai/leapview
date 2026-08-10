@@ -69,7 +69,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		Environment: string(defaultServingEnvironment(policy.defaultEnvironment)), Clock: workflow.refreshPipelineClock,
 		EnableDispatcher: database != nil && runtime.metrics != nil,
 		EnableScheduler:  database != nil && persistence.servingStateRepo != nil,
-		Logger:           platform.logger, Events: platform.asyncJobs,
+		Logger:           platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,
 		WorkloadStats: func() refreshmodule.WorkloadStats {
 			return workloadController(&runtime.workloads).Stats()
 		},

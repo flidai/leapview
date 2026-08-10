@@ -13,8 +13,6 @@ import (
 	"github.com/flidai/leapview/internal/platform/jobs"
 )
 
-const RunJobKind = "agent.run"
-
 type RunJob struct {
 	Scope                            agent.Scope
 	Conversation, Run, CorrelationID string
@@ -31,12 +29,13 @@ func boundedResumeError(err error) error {
 }
 
 func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
-	return []jobs.Handler{jobs.HandlerFunc{JobKind: RunJobKind, Run: func(ctx context.Context, job jobs.Job) error {
+	execution := m.runExecution
+	return []jobs.Handler{jobs.HandlerFunc{JobKind: execution.JobKind, Run: func(ctx context.Context, job jobs.Job) error {
 		var payload RunJob
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
 			return err
 		}
-		if job.Kind != RunJobKind || job.ResourceKind != "agent_run" ||
+		if job.Kind != execution.JobKind || job.ResourceKind != execution.ResourceKind ||
 			strings.TrimSpace(job.ResourceID) == "" || job.ResourceID != payload.Run ||
 			strings.TrimSpace(payload.Conversation) == "" || strings.TrimSpace(payload.Run) == "" {
 			return fmt.Errorf("agent run job payload does not match its resource binding")
@@ -86,7 +85,7 @@ func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
 				}
 			}
 			data, _ := json.Marshal(map[string]any{"runId": payload.Run, "conversationId": payload.Conversation})
-			workflow := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.failed:" + payload.Run, ResourceKind: "agent_run", ResourceID: payload.Run, EventType: "agent_run.failed", Data: data}}
+			workflow := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.failed:" + payload.Run, ResourceKind: execution.ResourceKind, ResourceID: payload.Run, EventType: "agent_run.failed", Data: data}}
 			transitioned, recoveryErr := m.service.FinalizePersistedRunFailureWithClaim(context.WithoutCancel(ctx), payload.Scope, payload.Conversation, payload.Run, boundedResumeError(err), workflow, job.ID, job.Fence())
 			_ = transitioned // publication is part of FinishRunWorkflow's transaction
 			if recoveryErr != nil {

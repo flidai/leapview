@@ -28,6 +28,7 @@ export interface AuditOptions {
 }
 export interface AsyncExecutionOptions {
     mode: "async";
+    guarantee: "transactional";
     jobKind: string;
     resourceKind: string;
     initialEvent: string;

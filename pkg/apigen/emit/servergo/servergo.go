@@ -246,7 +246,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("type GenOperationSurface string\n\n")
 	b.WriteString("const (\n\tGenOperationSurfaceUI GenOperationSurface = \"ui\"\n\tGenOperationSurfaceAgent GenOperationSurface = \"agent\"\n\tGenOperationSurfaceAutomation GenOperationSurface = \"automation\"\n)\n\n")
 	b.WriteString("type GenAuditPolicy struct {\n\tRequired bool\n\tSuccessAction string\n\tGuarantee string\n}\n\n")
-	b.WriteString("type GenAsyncExecutionContract struct {\n\tMode string\n\tJobKind string\n\tResourceKind string\n\tInitialEvent string\n\tInitialState string\n\tStatusOperation string\n\tEventsOperation string\n\tCancellation string\n}\n\n")
+	b.WriteString("type GenAsyncExecutionContract struct {\n\tMode string\n\tGuarantee string\n\tJobKind string\n\tResourceKind string\n\tInitialEvent string\n\tInitialState string\n\tStatusOperation string\n\tEventsOperation string\n\tCancellation string\n}\n\n")
 	b.WriteString("type GenOperationTarget struct {\n\tParameter string\n\tType string\n}\n\n")
 	b.WriteString("type GenCommandContract struct {\n")
 	b.WriteString("\tOwner string\n\tAudit GenAuditPolicy\n\tExecution *GenAsyncExecutionContract\n\tAdditionalExposures []GenOperationSurface\n\tTarget *GenOperationTarget\n")
@@ -313,7 +313,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("\tcontract, ok := genOperationContracts[operationID]\n")
 	b.WriteString("\tif !ok || contract.Command == nil || !contract.Command.Audit.Required { return apigencommand.Contract{}, false }\n")
 	b.WriteString("\tvar execution *apigencommand.AsyncExecutionContract\n")
-	b.WriteString("\tif contract.Command.Execution != nil { source := contract.Command.Execution; execution = &apigencommand.AsyncExecutionContract{Mode: source.Mode, JobKind: source.JobKind, ResourceKind: source.ResourceKind, InitialEvent: source.InitialEvent, InitialState: source.InitialState, StatusOperation: source.StatusOperation, EventsOperation: source.EventsOperation, Cancellation: source.Cancellation} }\n")
+	b.WriteString("\tif contract.Command.Execution != nil { source := contract.Command.Execution; execution = &apigencommand.AsyncExecutionContract{Mode: source.Mode, Guarantee: source.Guarantee, JobKind: source.JobKind, ResourceKind: source.ResourceKind, InitialEvent: source.InitialEvent, InitialState: source.InitialState, StatusOperation: source.StatusOperation, EventsOperation: source.EventsOperation, Cancellation: source.Cancellation} }\n")
 	b.WriteString("\treturn apigencommand.Contract{OperationID: contract.OperationID, Owner: contract.Command.Owner, AuditAction: contract.Command.Audit.SuccessAction, Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee), Execution: execution}, true\n")
 	b.WriteString("}\n\n")
 	b.WriteString("// APIGenOperationAllowsStatus reports whether a status code is documented for an operation.\n")
@@ -1428,8 +1428,8 @@ func renderGenCommandContract(command *ir.Command) string {
 	}
 	execution := "nil"
 	if command.Execution != nil {
-		execution = fmt.Sprintf("&GenAsyncExecutionContract{Mode: %q, JobKind: %q, ResourceKind: %q, InitialEvent: %q, InitialState: %q, StatusOperation: %q, EventsOperation: %q, Cancellation: %q}",
-			command.Execution.Mode, command.Execution.JobKind, command.Execution.ResourceKind, command.Execution.InitialEvent,
+		execution = fmt.Sprintf("&GenAsyncExecutionContract{Mode: %q, Guarantee: %q, JobKind: %q, ResourceKind: %q, InitialEvent: %q, InitialState: %q, StatusOperation: %q, EventsOperation: %q, Cancellation: %q}",
+			command.Execution.Mode, command.Execution.Guarantee, command.Execution.JobKind, command.Execution.ResourceKind, command.Execution.InitialEvent,
 			command.Execution.InitialState, command.Execution.StatusOperation, command.Execution.EventsOperation, command.Execution.Cancellation)
 	}
 	return fmt.Sprintf(

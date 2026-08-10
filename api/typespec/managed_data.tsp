@@ -360,6 +360,17 @@ interface ManagedDataLifecycle {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "managed_data.upload_session.finalization_requested", guarantee: "best-effort" },
+    execution: #{
+      mode: "async",
+      guarantee: "transactional",
+      jobKind: "upload.finalize",
+      resourceKind: "upload",
+      initialEvent: "upload_session.finalizing",
+      initialState: "finalizing",
+      statusOperation: "getManagedDataUploadSession",
+      eventsOperation: "listManagedDataUploadSessionEvents",
+      cancellation: "unsupported",
+    },
     targetParameter: "project",
   })
   finalizeManagedDataUploadSession(

@@ -55,6 +55,19 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
 	}
+	for _, operationID := range []string{"createDeployment", "retryDeployment", "rollbackDeployment", "activateDeployment", "publishProjectCandidate"} {
+		contract := contracts[operationID]
+		if contract.Command.Execution == nil ||
+			contract.Command.Execution.Guarantee != "transactional" ||
+			contract.Command.Execution.JobKind != "deployment.activate" ||
+			contract.Command.Execution.ResourceKind != "deployment" ||
+			contract.Command.Execution.InitialState != "queued" ||
+			contract.Command.Execution.StatusOperation != "getDeployment" ||
+			contract.Command.Execution.EventsOperation != "listDeploymentEvents" ||
+			contract.Command.Execution.Cancellation != "supported" {
+			t.Errorf("async command contract %q = %#v", operationID, contract.Command.Execution)
+		}
+	}
 	for _, operationID := range []string{
 		"listDeployments",
 		"getDeployment",

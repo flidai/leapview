@@ -230,6 +230,17 @@ interface Deployments {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "deployment.queued", guarantee: "best-effort" },
+    execution: #{
+      mode: "async",
+      guarantee: "transactional",
+      jobKind: "deployment.activate",
+      resourceKind: "deployment",
+      initialEvent: "deployment.queued",
+      initialState: "queued",
+      statusOperation: "getDeployment",
+      eventsOperation: "listDeploymentEvents",
+      cancellation: "supported",
+    },
   })
   @operationId("createDeployment")
   createDeployment(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentCreateRequest): AcceptedJson<DeploymentResponse> | CommonErrors;
@@ -269,6 +280,17 @@ interface Deployments {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "deployment.queued", guarantee: "best-effort" },
+    execution: #{
+      mode: "async",
+      guarantee: "transactional",
+      jobKind: "deployment.activate",
+      resourceKind: "deployment",
+      initialEvent: "deployment.queued",
+      initialState: "queued",
+      statusOperation: "getDeployment",
+      eventsOperation: "listDeploymentEvents",
+      cancellation: "supported",
+    },
     targetParameter: "project",
   })
   @operationId("retryDeployment")
@@ -281,6 +303,17 @@ interface Deployments {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "deployment.queued", guarantee: "best-effort" },
+    execution: #{
+      mode: "async",
+      guarantee: "transactional",
+      jobKind: "deployment.activate",
+      resourceKind: "deployment",
+      initialEvent: "deployment.queued",
+      initialState: "queued",
+      statusOperation: "getDeployment",
+      eventsOperation: "listDeploymentEvents",
+      cancellation: "supported",
+    },
     targetParameter: "project",
   })
   @operationId("rollbackDeployment")
@@ -341,6 +374,17 @@ interface Deployments {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "deployment.activation_requested", guarantee: "best-effort" },
+    execution: #{
+      mode: "async",
+      guarantee: "transactional",
+      jobKind: "deployment.activate",
+      resourceKind: "deployment",
+      initialEvent: "deployment.activation_requested",
+      initialState: "queued",
+      statusOperation: "getDeployment",
+      eventsOperation: "listDeploymentEvents",
+      cancellation: "supported",
+    },
     targetParameter: "project",
   })
   @operationId("activateDeployment")
@@ -411,6 +455,17 @@ interface ProjectCandidates {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.command(#{
     audit: #{ required: true, successAction: "deployment.queued", guarantee: "best-effort" },
+    execution: #{
+      mode: "async",
+      guarantee: "transactional",
+      jobKind: "deployment.activate",
+      resourceKind: "deployment",
+      initialEvent: "deployment.queued",
+      initialState: "queued",
+      statusOperation: "getDeployment",
+      eventsOperation: "listDeploymentEvents",
+      cancellation: "supported",
+    },
     targetParameter: "project",
   })
   @operationId("publishProjectCandidate")

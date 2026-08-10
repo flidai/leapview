@@ -46,6 +46,7 @@ func TestReleaseLifecycleOperationContracts(t *testing.T) {
 	finalize := contracts["finalizeRelease"].Command.Execution
 	if finalize == nil ||
 		finalize.Mode != "async" ||
+		finalize.Guarantee != "transactional" ||
 		finalize.JobKind != "release.finalize" ||
 		finalize.ResourceKind != "release" ||
 		finalize.InitialEvent != releaseValidatingAuditAction ||

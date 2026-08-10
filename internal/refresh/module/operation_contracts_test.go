@@ -32,6 +32,14 @@ func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
 	}
+	create := contracts["createRefreshRun"].Command
+	if create.Execution == nil || create.Execution.Guarantee != "transactional" ||
+		create.Execution.JobKind != "refresh_pipeline" || create.Execution.ResourceKind != "refresh" ||
+		create.Execution.InitialEvent != refreshQueuedAuditAction || create.Execution.InitialState != "queued" ||
+		create.Execution.StatusOperation != "getRefreshRun" || create.Execution.EventsOperation != "listRefreshRunEvents" ||
+		create.Execution.Cancellation != "supported" {
+		t.Errorf("create refresh execution contract = %#v", create.Execution)
+	}
 	for _, operationID := range []string{"listRefreshRuns", "getRefreshRun", "listRefreshRunEvents"} {
 		contract, ok := contracts[operationID]
 		if !ok || contract.Command != nil || refreshGeneratedOperationKind(contract) != "query" {

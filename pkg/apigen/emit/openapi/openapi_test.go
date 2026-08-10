@@ -173,7 +173,7 @@ func TestEmitYAMLIncludesAsyncExecutionMetadata(t *testing.T) {
 				Responses:  []ir.Response{{StatusCode: 202, Description: "accepted"}},
 				Command: &ir.Command{
 					Owner: "ReleaseAPI", Audit: ir.AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional"}, Idempotency: "required",
-					Execution: &ir.AsyncExecution{Mode: "async", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
+					Execution: &ir.AsyncExecution{Mode: "async", Guarantee: "transactional", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
 				},
 			},
 		},
@@ -186,7 +186,7 @@ func TestEmitYAMLIncludesAsyncExecutionMetadata(t *testing.T) {
 	operation := raw["paths"].(map[string]any)["/releases/{release}/finalize"].(map[string]any)["post"].(map[string]any)
 	command := operation["x-apigen-command"].(map[string]any)
 	require.Equal(t, map[string]any{
-		"mode": "async", "job_kind": "release.finalize", "resource_kind": "release", "initial_event": "release.validating", "initial_state": "validating",
+		"mode": "async", "guarantee": "transactional", "job_kind": "release.finalize", "resource_kind": "release", "initial_event": "release.validating", "initial_state": "validating",
 		"status_operation": "getRelease", "events_operation": "listReleaseEvents", "cancellation": "unsupported",
 	}, command["execution"])
 }

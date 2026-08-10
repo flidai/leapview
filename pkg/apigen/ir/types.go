@@ -129,6 +129,7 @@ type Command struct {
 // AsyncExecution describes the durable workflow started by a command.
 type AsyncExecution struct {
 	Mode            string `json:"mode"`
+	Guarantee       string `json:"guarantee"`
 	JobKind         string `json:"job_kind"`
 	ResourceKind    string `json:"resource_kind"`
 	InitialEvent    string `json:"initial_event"`

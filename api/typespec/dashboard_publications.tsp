@@ -37,7 +37,7 @@ model DashboardPublicationListResponse {
 }
 
 @tag("Publications")
-@doc("Dashboard publication discovery and lifecycle commands within a workspace.")
+@doc("Dashboard publication discovery and lifecycle commands within a workspace. Publication mutations complete synchronously and return the updated publication; they do not create durable asynchronous executions.")
 @route("/workspaces/{workspace}/dashboard-publications")
 interface DashboardPublications {
   @summary("List dashboard publications in a workspace")

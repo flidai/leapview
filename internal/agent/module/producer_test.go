@@ -26,7 +26,7 @@ func (s *runJobStore) AppendEvent(_ context.Context, kind, id, eventType string,
 
 func (s *runJobStore) Cancel(context.Context, string) error { return nil }
 
-func TestEnqueueRunOwnsWorkloadAndWorkspaceClassification(t *testing.T) {
+func TestEnqueueRunRejectsNonTransactionalFallback(t *testing.T) {
 	store := &runJobStore{}
 	module, err := Build(t.Context(), Config{Jobs: store, DefaultWorkspaceID: "default"})
 	if err != nil {
@@ -34,36 +34,23 @@ func TestEnqueueRunOwnsWorkloadAndWorkspaceClassification(t *testing.T) {
 	}
 	started := &agent.StartedPrompt{ConversationID: "conversation-1", RunID: "run-1", CorrelationID: "correlation-1"}
 	scope := agent.Scope{Credential: agent.CredentialScope{WorkspaceID: "credential-workspace"}}
-	if err := module.EnqueueRun(t.Context(), scope, started); err != nil {
-		t.Fatal(err)
+	if err := module.EnqueueRun(t.Context(), scope, started); err == nil {
+		t.Fatal("non-transactional enqueue fallback was accepted")
 	}
-	if store.input.WorkloadClass != "background" || store.input.WorkspaceID != "credential-workspace" {
-		t.Fatalf("workload = %q/%q", store.input.WorkloadClass, store.input.WorkspaceID)
-	}
-	if store.input.Kind != RunJobKind || store.input.ID != "agent:run-1:run" {
-		t.Fatalf("job = %#v", store.input)
-	}
-	if store.event.EventType != "agent_run.queued" {
-		t.Fatalf("event = %#v", store.event)
+	if store.input.ID != "" || store.event.ID != 0 {
+		t.Fatalf("non-transactional workflow wrote job %#v or event %#v", store.input, store.event)
 	}
 }
 
-func TestEnqueueChatRunPersistsBrowserDelivery(t *testing.T) {
+func TestEnqueueChatRunRejectsNonTransactionalFallback(t *testing.T) {
 	store := &runJobStore{}
 	module, err := Build(t.Context(), Config{Jobs: store})
 	if err != nil {
 		t.Fatal(err)
 	}
 	started := &agent.StartedPrompt{ConversationID: "conversation-1", RunID: "run-1"}
-	if err := module.EnqueueChatRun(t.Context(), agent.Scope{}, started, "browser-1"); err != nil {
-		t.Fatal(err)
-	}
-	var payload RunJob
-	if err := json.Unmarshal(store.input.Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.ChatClientID != "browser-1" {
-		t.Fatalf("chat client = %q, want browser-1", payload.ChatClientID)
+	if err := module.EnqueueChatRun(t.Context(), agent.Scope{}, started, "browser-1"); err == nil {
+		t.Fatal("non-transactional chat enqueue fallback was accepted")
 	}
 }
 
@@ -83,6 +70,9 @@ func TestRunWorkflowPersistsBrowserDeliveryAtomically(t *testing.T) {
 	}
 	if payload.ChatClientID != "browser-1" || payload.Conversation != "conversation-1" || payload.Run != "run-1" {
 		t.Fatalf("workflow payload = %#v", payload)
+	}
+	if intent.Job.Kind != module.runExecution.JobKind || intent.Job.ResourceKind != module.runExecution.ResourceKind || intent.Event.EventType != module.runExecution.InitialEvent {
+		t.Fatalf("workflow contract fields = job %#v event %#v", intent.Job, intent.Event)
 	}
 }
 

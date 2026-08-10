@@ -18,6 +18,7 @@ const CurrentSchemaVersion = "v4"
 var toolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var auditActionPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
 var stableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var jobKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 
 // Load parses and validates an IR document from disk.
 func Load(path string) (Document, error) {
@@ -269,20 +270,20 @@ func validateCommand(endpoint Endpoint) error {
 		return fmt.Errorf("%s audit has unsupported guarantee %q", context, guarantee)
 	}
 	if execution := command.Execution; execution != nil {
-		if command.Audit.Guarantee != "transactional" {
-			return fmt.Errorf("%s async execution requires transactional audit guarantee", context)
-		}
 		if execution.Mode != "async" {
 			return fmt.Errorf("%s execution has unsupported mode %q", context, execution.Mode)
 		}
-		if !auditActionPattern.MatchString(execution.JobKind) || !auditActionPattern.MatchString(execution.InitialEvent) {
-			return fmt.Errorf("%s execution job_kind and initial_event must be stable dotted lower_snake_case names", context)
+		if execution.Guarantee != "transactional" {
+			return fmt.Errorf("%s async execution requires transactional workflow guarantee", context)
+		}
+		if !jobKindPattern.MatchString(execution.JobKind) {
+			return fmt.Errorf("%s execution job_kind must be a stable lower_snake_case identifier", context)
+		}
+		if !auditActionPattern.MatchString(execution.InitialEvent) {
+			return fmt.Errorf("%s execution initial_event must be a stable dotted lower_snake_case name", context)
 		}
 		if !stableNamePattern.MatchString(execution.ResourceKind) || !stableNamePattern.MatchString(execution.InitialState) {
 			return fmt.Errorf("%s execution resource_kind and initial_state must be stable lower_snake_case names", context)
-		}
-		if execution.InitialEvent != action {
-			return fmt.Errorf("%s execution initial_event %q must equal audit.success_action %q", context, execution.InitialEvent, action)
 		}
 		if strings.TrimSpace(execution.StatusOperation) == "" || strings.TrimSpace(execution.EventsOperation) == "" || execution.StatusOperation == execution.EventsOperation {
 			return fmt.Errorf("%s execution status_operation and events_operation must be distinct operation IDs", context)

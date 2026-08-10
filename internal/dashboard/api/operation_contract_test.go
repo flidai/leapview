@@ -31,6 +31,9 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 		if command.Idempotency != "required" || command.Concurrency != "" || len(command.AdditionalExposures) != 0 {
 			t.Errorf("%s policies/exposures = %#v", operationID, command)
 		}
+		if command.Execution != nil {
+			t.Errorf("synchronous publication command %s has execution contract %#v", operationID, command.Execution)
+		}
 	}
 
 	for _, operationID := range []string{"listDashboardPublications", "getDashboardPublication"} {

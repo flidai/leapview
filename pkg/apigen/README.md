@@ -165,6 +165,7 @@ Commands that start durable work can add a typed execution lifecycle:
 ```typespec
 execution: #{
   mode: "async",
+  guarantee: "transactional",
   jobKind: "release.finalize",
   resourceKind: "release",
   initialEvent: "release.validating",
@@ -175,9 +176,11 @@ execution: #{
 }
 ```
 
-APIGen requires transactional auditing, a `202` response, an initial event
-equal to the audit success action, and existing GET query operations for status
-and event history. The normalized lifecycle is emitted in JSON IR, OpenAPI, and
+APIGen requires a transactional execution guarantee, a `202` response, and
+existing GET query operations for status and event history. Command audit and
+workflow guarantees are independent: a security audit may remain best-effort
+while the initial workflow state, event, and job commit transactionally. The
+normalized lifecycle is emitted in JSON IR, OpenAPI, and
 generated Go registries, including `runtime/command.Contract.Execution`.
 Applications should derive durable event, resource, and job identities from
 that runtime contract and validate registered job handlers at startup.

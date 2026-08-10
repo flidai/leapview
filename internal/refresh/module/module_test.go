@@ -13,9 +13,12 @@ import (
 	"testing"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/internal/platform/transaction"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	"github.com/flidai/leapview/internal/refresh/artifact"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -30,73 +33,68 @@ type generatedRefreshAPI interface {
 	ListRefreshRunEvents(http.ResponseWriter, *http.Request, string, string, *int32, *string)
 }
 
+var testRefreshWorkflow = jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return nil })
+
 var _ generatedRefreshAPI = (*Module)(nil)
 
 type refreshEventStore struct {
 	eventType string
 	data      []byte
+	events    []jobs.Event
 	err       error
+	appends   int
 }
 
 func (s *refreshEventStore) AppendEvent(_ context.Context, _, _, eventType string, data []byte) (jobs.Event, error) {
+	s.appends++
 	s.eventType, s.data = eventType, data
 	return jobs.Event{EventType: eventType, Data: data}, s.err
 }
 
-func TestRefreshCreateAuditFailureIsBestEffortAndObservable(t *testing.T) {
+func (s *refreshEventStore) ListEvents(context.Context, string, string, int64, int) ([]jobs.Event, error) {
+	return append([]jobs.Event(nil), s.events...), s.err
+}
+
+func TestRefreshCreateVerifiesPersistedLifecycleWithoutAppendingDuplicate(t *testing.T) {
+	contract, ok := refreshgen.GetAPIGenCommandRuntimeContract(string(refreshgen.GenOperationCreateRefreshRun))
+	if !ok || contract.Execution == nil {
+		t.Fatal("generated refresh execution contract is unavailable")
+	}
+	store := &refreshEventStore{events: []jobs.Event{{EventType: contract.Execution.InitialEvent}}}
+	module, err := Build(t.Context(), Config{Events: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, guard, err := apigencommand.Begin(t.Context(), contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := refreshrun.RunRecord{ID: "run-1", WorkspaceID: "sales", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales.daily", Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z"}
+	if err := module.verifyRunCreated(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if !guard.Completed() || store.appends != 0 {
+		t.Fatalf("guard completed=%t, duplicate appends=%d", guard.Completed(), store.appends)
+	}
+}
+
+func TestRefreshCreatePersistedAuditVerificationFailureIsBestEffort(t *testing.T) {
 	var logs bytes.Buffer
 	module, err := Build(t.Context(), Config{
-		Events: &refreshEventStore{err: errors.New("audit store unavailable")},
+		Events: &refreshEventStore{err: errors.New("event store unavailable")},
 		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := refreshrun.RunRecord{
-		ID: "run-audit-failure", WorkspaceID: "sales", Environment: "prod", ModelID: "orders",
-		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales.daily",
-		Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z",
+	run := refreshrun.RunRecord{ID: "run-audit-failure", WorkspaceID: "sales", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales.daily", Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z"}
+	if err := module.verifyRunCreated(t.Context(), run); err != nil {
+		t.Fatalf("best-effort verification changed command result: %v", err)
 	}
-	if err := module.recordRunCreatedBestEffort(t.Context(), run); err != nil {
-		t.Fatalf("best-effort audit changed command result: %v", err)
-	}
-	output := logs.String()
-	for _, expected := range []string{
-		"refresh audit failed",
-		"operation_id=createRefreshRun",
-		"refresh_run_id=run-audit-failure",
-		"audit_action=refresh.queued",
-		"audit store unavailable",
-	} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("audit failure log = %q, missing %q", output, expected)
+	for _, expected := range []string{"refresh persisted audit verification failed", "operation_id=createRefreshRun", "event store unavailable"} {
+		if !strings.Contains(logs.String(), expected) {
+			t.Fatalf("verification log = %q, missing %q", logs.String(), expected)
 		}
-	}
-}
-
-func (*refreshEventStore) ListEvents(context.Context, string, string, int64, int) ([]jobs.Event, error) {
-	return nil, nil
-}
-
-func TestModuleOwnsRefreshLifecycleEventShapes(t *testing.T) {
-	events := &refreshEventStore{}
-	module, err := Build(t.Context(), Config{Events: events})
-	if err != nil {
-		t.Fatal(err)
-	}
-	run := refreshrun.RunRecord{
-		ID: "run-1", WorkspaceID: "sales", Environment: "prod", ModelID: "orders",
-		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales.daily",
-		Status: refreshrun.RunStatusQueued, CreatedAt: "2026-07-23T12:00:00Z",
-	}
-	if err := module.recordRunCreated(t.Context(), run); err != nil {
-		t.Fatal(err)
-	}
-	if events.eventType != "refresh.queued" {
-		t.Fatalf("event type = %q", events.eventType)
-	}
-	if got := string(events.data); !strings.Contains(got, `"pipelineId":"daily"`) {
-		t.Fatalf("event data = %s", got)
 	}
 }
 
@@ -133,7 +131,7 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 	}
 	publisher := &versionPublisher{}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Environment: "prod",
+		Database: store.SQLDB(), Environment: "prod", Workflow: testRefreshWorkflow,
 		Service: refreshrun.Service{
 			ServingStates: states,
 			Artifacts: artifactLoaderFunc(func(context.Context, servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
@@ -234,7 +232,7 @@ func TestBuildConstructsCapabilityPrivatePersistence(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
 		t.Fatalf("insert workspace: %v", err)
 	}
-	module, err := Build(t.Context(), Config{Database: store.SQLDB()})
+	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Workflow: testRefreshWorkflow})
 	if err != nil {
 		t.Fatalf("build module: %v", err)
 	}

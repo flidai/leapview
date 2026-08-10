@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	"github.com/flidai/leapview/internal/platform/jobs"
 )
-
-const ActivateJobKind = "deployment.activate"
 
 type ActivateJob struct {
 	Project          string
@@ -42,7 +42,30 @@ type JobConfig struct {
 }
 
 func (m *Module) JobHandlers() []jobs.Handler {
-	return []jobs.Handler{jobs.HandlerFunc{JobKind: ActivateJobKind, Run: m.activate}}
+	return []jobs.Handler{jobs.HandlerFunc{JobKind: m.activationExecution().JobKind, Run: m.activate}}
+}
+
+func (m *Module) execution(operationID string) (apigencommand.AsyncExecutionContract, error) {
+	if m == nil {
+		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("deployment module is unavailable")
+	}
+	if m.executions == nil {
+		executions, err := loadDeploymentExecutionContracts()
+		if err != nil {
+			return apigencommand.AsyncExecutionContract{}, err
+		}
+		m.executions = executions
+	}
+	execution, ok := m.executions[operationID]
+	if !ok {
+		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("deployment execution contract %q is unavailable", operationID)
+	}
+	return execution, nil
+}
+
+func (m *Module) activationExecution() apigencommand.AsyncExecutionContract {
+	execution, _ := m.execution(string(deploymentgen.GenOperationActivateDeployment))
+	return execution
 }
 
 func (m *Module) activate(ctx context.Context, job jobs.Job) error {
@@ -128,6 +151,8 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 }
 
 func activationWorkflow(
+	execution apigencommand.AsyncExecutionContract,
+	enqueue bool,
 	project,
 	deploymentID,
 	releaseID string,
@@ -146,22 +171,25 @@ func activationWorkflow(
 		"deploymentId": deploymentID,
 		"projectId":    project,
 		"releaseId":    releaseID,
-		"status":       "queued",
+		"status":       execution.InitialState,
 	})
-	return jobs.WorkflowIntent{
+	workflow := jobs.WorkflowIntent{
 		Event: jobs.EventInput{
-			Key:          deploymentQueuedAuditAction,
-			ResourceKind: "deployment", ResourceID: deploymentID,
-			EventType: deploymentQueuedAuditAction, Data: event,
-		},
-		Job: jobs.EnqueueInput{
-			ID:            "deployment:" + deploymentID + ":activate",
-			Kind:          ActivateJobKind,
-			WorkloadClass: "control", WorkspaceID: "_node",
-			ResourceKind: "deployment", ResourceID: deploymentID,
-			Payload: payload,
+			Key:          execution.InitialEvent,
+			ResourceKind: execution.ResourceKind, ResourceID: deploymentID,
+			EventType: execution.InitialEvent, Data: event,
 		},
 	}
+	if enqueue {
+		workflow.Job = jobs.EnqueueInput{
+			ID:            execution.ResourceKind + ":" + deploymentID + ":activate",
+			Kind:          execution.JobKind,
+			WorkloadClass: "control", WorkspaceID: "_node",
+			ResourceKind: execution.ResourceKind, ResourceID: deploymentID,
+			Payload: payload,
+		}
+	}
+	return workflow
 }
 
 func (m *Module) appendEvent(ctx context.Context, deploymentID, event, status string) {
@@ -169,7 +197,7 @@ func (m *Module) appendEvent(ctx context.Context, deploymentID, event, status st
 		return
 	}
 	data, _ := json.Marshal(map[string]any{"deploymentId": deploymentID, "status": status})
-	_, _ = m.jobs.Events.AppendEvent(context.WithoutCancel(ctx), "deployment", deploymentID, event, data)
+	_, _ = m.jobs.Events.AppendEvent(context.WithoutCancel(ctx), m.activationExecution().ResourceKind, deploymentID, event, data)
 }
 
 func (m *Module) appendActivationEvent(
@@ -190,9 +218,60 @@ func (m *Module) appendActivationEvent(
 	})
 	_, _ = m.jobs.Events.AppendEvent(
 		context.WithoutCancel(ctx),
-		"deployment",
+		m.activationExecution().ResourceKind,
 		deploymentID,
 		event,
 		data,
 	)
+}
+
+func loadDeploymentExecutionContracts() (map[string]apigencommand.AsyncExecutionContract, error) {
+	operationIDs := []string{
+		string(deploymentgen.GenOperationCreateDeployment),
+		string(deploymentgen.GenOperationRetryDeployment),
+		string(deploymentgen.GenOperationRollbackDeployment),
+		string(deploymentgen.GenOperationActivateDeployment),
+		string(deploymentgen.GenOperationPublishProjectCandidate),
+	}
+	executions := make(map[string]apigencommand.AsyncExecutionContract, len(operationIDs))
+	for _, operationID := range operationIDs {
+		contract, ok := deploymentgen.GetAPIGenCommandRuntimeContract(operationID)
+		if !ok {
+			return nil, fmt.Errorf("deployment command contract %q is unavailable", operationID)
+		}
+		if err := contract.Validate(); err != nil {
+			return nil, fmt.Errorf("validate deployment command contract %q: %w", operationID, err)
+		}
+		if contract.Execution == nil {
+			return nil, fmt.Errorf("deployment command %q async execution contract is unavailable", operationID)
+		}
+		execution := *contract.Execution
+		if execution.Guarantee != "transactional" {
+			return nil, fmt.Errorf("deployment command %q requires transactional execution, got %q", operationID, execution.Guarantee)
+		}
+		if execution.ResourceKind != "deployment" || execution.InitialState != "queued" {
+			return nil, fmt.Errorf("deployment command %q has incompatible initial lifecycle %q/%q", operationID, execution.ResourceKind, execution.InitialState)
+		}
+		if execution.StatusOperation != string(deploymentgen.GenOperationGetDeployment) || execution.EventsOperation != string(deploymentgen.GenOperationListDeploymentEvents) {
+			return nil, fmt.Errorf("deployment command %q has incompatible lifecycle operations", operationID)
+		}
+		if execution.Cancellation != "supported" {
+			return nil, fmt.Errorf("deployment command %q cancellation policy %q is not implemented", operationID, execution.Cancellation)
+		}
+		executions[operationID] = execution
+	}
+	return executions, nil
+}
+
+func validateDeploymentJobHandlers(executions map[string]apigencommand.AsyncExecutionContract, handlers []jobs.Handler) error {
+	if len(handlers) != 1 {
+		return fmt.Errorf("deployment execution requires exactly one job handler, got %d", len(handlers))
+	}
+	kind := handlers[0].Kind()
+	for operationID, execution := range executions {
+		if execution.JobKind != kind {
+			return fmt.Errorf("deployment command %q job kind %q does not match registered handler %q", operationID, execution.JobKind, kind)
+		}
+	}
+	return nil
 }

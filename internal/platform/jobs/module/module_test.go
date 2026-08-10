@@ -304,6 +304,71 @@ func TestModuleRecordsTerminalEventWithoutRegisteredFollowupKind(t *testing.T) {
 	}
 }
 
+func TestModuleCommitsWorkflowAtomically(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	admission, err := workload.New(workload.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admission.Close()
+	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{JobKind: "deployment.activate", Run: func(context.Context, jobs.Job) error { return nil }}}); err != nil {
+		t.Fatal(err)
+	}
+	intent := jobs.WorkflowIntent{
+		Event: jobs.EventInput{Key: "deployment.queued", ResourceKind: "deployment", ResourceID: "deployment-1", EventType: "deployment.queued", Data: []byte(`{"status":"queued"}`)},
+		Job:   jobs.EnqueueInput{ID: "deployment:deployment-1:activate", Kind: "deployment.activate", WorkloadClass: "control", WorkspaceID: "_node", ResourceKind: "deployment", ResourceID: "deployment-1", Payload: []byte(`{}`)},
+	}
+	if err := module.CommitWorkflow(t.Context(), intent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := module.Get(t.Context(), intent.Job.ID); err != nil {
+		t.Fatalf("committed job: %v", err)
+	}
+	events, err := module.ListEvents(t.Context(), "deployment", "deployment-1", 0, 10)
+	if err != nil || len(events) != 1 || events[0].EventType != "deployment.queued" {
+		t.Fatalf("committed events = %#v, %v", events, err)
+	}
+}
+
+func TestModuleCommitWorkflowRejectsUnknownKindWithoutPersistingEvent(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	admission, err := workload.New(workload.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admission.Close()
+	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers(nil); err != nil {
+		t.Fatal(err)
+	}
+	err = module.CommitWorkflow(t.Context(), jobs.WorkflowIntent{
+		Event: jobs.EventInput{Key: "deployment.queued", ResourceKind: "deployment", ResourceID: "deployment-1", EventType: "deployment.queued", Data: []byte(`{"status":"queued"}`)},
+		Job:   jobs.EnqueueInput{ID: "deployment:deployment-1:activate", Kind: "unknown", WorkloadClass: "control", WorkspaceID: "_node", ResourceKind: "deployment", ResourceID: "deployment-1", Payload: []byte(`{}`)},
+	})
+	if !errors.Is(err, jobs.ErrUnknownKind) {
+		t.Fatalf("CommitWorkflow() error = %v, want unknown kind", err)
+	}
+	events, listErr := module.ListEvents(t.Context(), "deployment", "deployment-1", 0, 10)
+	if listErr != nil || len(events) != 0 {
+		t.Fatalf("rolled-back events = %#v, %v", events, listErr)
+	}
+}
+
 func TestModuleRejectsUnknownEnqueuedKind(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
 	if err != nil {

@@ -2597,6 +2597,16 @@ paths:
           required: true
           success_action: agent.run.created
         authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listAgentEvents
+          guarantee: transactional
+          initial_event: agent_run.queued
+          initial_state: running
+          job_kind: agent.run
+          mode: async
+          resource_kind: agent_run
+          status_operation: getAgentRun
         idempotency: required
         owner: LeapViewAPI.Agent
         target:
@@ -2885,6 +2895,7 @@ paths:
     post:
       operationId: cancelAgentRun
       summary: Cancel an agent run
+      description: Cancels an existing run and its queued work synchronously. The 202 response reports the resulting run state; this operation does not create a new asynchronous execution.
       parameters:
         - name: conversation
           in: path
@@ -12254,6 +12265,16 @@ paths:
           required: true
           success_action: deployment.queued
         authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.queued
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -15954,6 +15975,16 @@ paths:
           required: true
           success_action: managed_data.upload_session.finalization_requested
         authz_mode: privilege
+        execution:
+          cancellation: unsupported
+          events_operation: listManagedDataUploadSessionEvents
+          guarantee: transactional
+          initial_event: upload_session.finalizing
+          initial_state: finalizing
+          job_kind: upload.finalize
+          mode: async
+          resource_kind: upload
+          status_operation: getManagedDataUploadSession
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
@@ -17967,6 +17998,16 @@ paths:
           required: true
           success_action: deployment.queued
         authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.queued
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -18680,6 +18721,16 @@ paths:
           required: true
           success_action: deployment.activation_requested
         authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.activation_requested
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -20996,6 +21047,16 @@ paths:
           required: true
           success_action: deployment.queued
         authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.queued
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -21365,6 +21426,16 @@ paths:
           required: true
           success_action: deployment.queued
         authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.queued
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
         idempotency: required
         owner: LeapViewAPI.Deployment
         target:
@@ -23105,6 +23176,7 @@ paths:
         execution:
           cancellation: unsupported
           events_operation: listReleaseEvents
+          guarantee: transactional
           initial_event: release.validating
           initial_state: validating
           job_kind: release.finalize
@@ -39984,6 +40056,16 @@ paths:
           required: true
           success_action: refresh.queued
         authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listRefreshRunEvents
+          guarantee: transactional
+          initial_event: refresh.queued
+          initial_state: queued
+          job_kind: refresh_pipeline
+          mode: async
+          resource_kind: refresh
+          status_operation: getRefreshRun
         idempotency: required
         owner: LeapViewAPI.Refresh
         target:

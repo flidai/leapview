@@ -49,9 +49,10 @@ type JobStore interface {
 }
 
 type APIConfig struct {
-	Releases ReleasePort
-	Jobs     JobStore
-	Workflow jobs.WorkflowRecorder
+	Releases  ReleasePort
+	Jobs      JobStore
+	Workflow  jobs.WorkflowRecorder
+	Committer jobs.WorkflowCommitter
 }
 
 func (m *Module) CreateDeployment(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
@@ -60,10 +61,15 @@ func (m *Module) CreateDeployment(w http.ResponseWriter, r *http.Request, projec
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", err.Error(), nil)
 		return
 	}
-	m.createDeployment(w, r, project, body.ReleaseID, idempotencyKey, "")
+	m.createDeployment(w, r, string(deploymentgen.GenOperationCreateDeployment), project, body.ReleaseID, idempotencyKey, "")
 }
 
-func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, project, releaseID, idempotencyKey, rollbackOf string) {
+func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operationID, project, releaseID, idempotencyKey, rollbackOf string) {
+	execution, err := m.execution(operationID)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INVALID_COMMAND_CONTRACT", "Deployment execution contract is unavailable", nil)
+		return
+	}
 	principal, ok := m.principal(r)
 	if !ok {
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
@@ -121,17 +127,17 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, projec
 		Project: project, Environment: m.handlerEnvironment(), Targets: targets, Actor: principal.ID, IdempotencyKey: idempotencyKey,
 		ReleaseID: releaseID, Evidence: evidence, RollbackOf: rollbackOf,
 	}
-	if !m.protected {
-		createRequest.Workflow = func(deploymentID string) jobs.WorkflowIntent {
-			return activationWorkflow(
-				project,
-				deploymentID,
-				releaseID,
-				deployment.ApprovalActor{PrincipalID: principal.ID},
-				deployment.Approval{},
-				idempotencyKey+":cutover",
-			)
-		}
+	createRequest.Workflow = func(deploymentID string) jobs.WorkflowIntent {
+		return activationWorkflow(
+			execution,
+			!m.protected,
+			project,
+			deploymentID,
+			releaseID,
+			deployment.ApprovalActor{PrincipalID: principal.ID},
+			deployment.Approval{},
+			idempotencyKey+":cutover",
+		)
 	}
 	created, err := m.jobs.Coordinator.Create(r.Context(), createRequest)
 	if err != nil {
@@ -153,6 +159,7 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, projec
 		mapped := approvalResponse(approval)
 		response.Approval = &mapped
 	}
+	m.completePersistedExecution(r.Context(), operationID, created.ID)
 	w.Header().Set("Location", deploymentLocation(project, created.ID))
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
 }
@@ -370,7 +377,7 @@ func (m *Module) RetryDeployment(
 		)
 		return
 	}
-	m.createDeployment(w, r, project, releaseID, idempotencyKey, "")
+	m.createDeployment(w, r, string(deploymentgen.GenOperationRetryDeployment), project, releaseID, idempotencyKey, "")
 }
 
 func (m *Module) RollbackDeployment(w http.ResponseWriter, r *http.Request, project, deploymentID, idempotencyKey string) {
@@ -383,7 +390,7 @@ func (m *Module) RollbackDeployment(w http.ResponseWriter, r *http.Request, proj
 		writeAPIError(w, r, err)
 		return
 	}
-	m.createDeployment(w, r, project, releaseID, idempotencyKey, deploymentID)
+	m.createDeployment(w, r, string(deploymentgen.GenOperationRollbackDeployment), project, releaseID, idempotencyKey, deploymentID)
 }
 
 func (m *Module) RequestDeploymentApproval(
@@ -479,11 +486,14 @@ func (m *Module) ActivateDeployment(
 		writeAPIError(w, r, err)
 		return
 	}
-	if m.api.Jobs == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE", "Deployment activation queue is unavailable", nil)
+	execution, err := m.execution(string(deploymentgen.GenOperationActivateDeployment))
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INVALID_COMMAND_CONTRACT", "Deployment execution contract is unavailable", nil)
 		return
 	}
 	workflow := activationWorkflow(
+		execution,
+		true,
 		project,
 		deploymentID,
 		releaseID,
@@ -491,16 +501,14 @@ func (m *Module) ActivateDeployment(
 		approval,
 		idempotencyKey,
 	)
-	if _, err := m.api.Jobs.Enqueue(r.Context(), workflow.Job); err != nil &&
-		!errors.Is(err, jobs.ErrConflict) {
+	if m.api.Committer == nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE", "Deployment activation queue is unavailable", nil)
+		return
+	}
+	if err := m.api.Committer.CommitWorkflow(r.Context(), workflow); err != nil && !errors.Is(err, jobs.ErrConflict) {
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE", "Deployment activation could not be persisted", nil)
 		return
 	}
-	m.recordBestEffortAPIEvent(r.Context(), string(deploymentgen.GenOperationActivateDeployment), deploymentID, deploymentActivationRequestedAuditAction, map[string]any{
-		"deploymentId":     deploymentID,
-		"approvalId":       approval.ID,
-		"approvalRevision": approval.Revision,
-	})
 	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
 	if err != nil {
 		writeAPIError(w, r, err)
@@ -509,6 +517,7 @@ func (m *Module) ActivateDeployment(
 	response := deploymentResponse(row, targetRelease)
 	mapped := approvalResponse(approval)
 	response.Approval = &mapped
+	m.completePersistedExecution(r.Context(), string(deploymentgen.GenOperationActivateDeployment), deploymentID)
 	w.Header().Set("Location", deploymentLocation(project, deploymentID))
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
 }
@@ -824,6 +833,43 @@ func (m *Module) recordBestEffortAPIEvent(
 		LogAttributes: []slog.Attr{
 			slog.String("deployment_id", deploymentID),
 		},
+	})
+	if err != nil {
+		logger.ErrorContext(ctx, "deployment command contract execution failed", "operation_id", operationID, "error", err)
+	}
+}
+
+func (m *Module) completePersistedExecution(ctx context.Context, operationID, deploymentID string) {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		logger.ErrorContext(ctx, "deployment command executor is unavailable", "operation_id", operationID, "error", err)
+		return
+	}
+	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			if contract.Execution == nil || contract.Execution.InitialEvent != contract.AuditAction {
+				return fmt.Errorf("deployment command %q audit and initial lifecycle event disagree", operationID)
+			}
+			if m.api.Jobs == nil {
+				return errors.New("deployment event store is unavailable")
+			}
+			events, err := m.api.Jobs.ListEvents(ctx, contract.Execution.ResourceKind, deploymentID, 0, 200)
+			if err != nil {
+				return err
+			}
+			for _, event := range events {
+				if event.EventType == contract.Execution.InitialEvent {
+					return nil
+				}
+			}
+			return fmt.Errorf("deployment initial lifecycle event %q is unavailable", contract.Execution.InitialEvent)
+		},
+		LogMessage:    "deployment persisted audit verification failed",
+		LogAttributes: []slog.Attr{slog.String("deployment_id", deploymentID)},
 	})
 	if err != nil {
 		logger.ErrorContext(ctx, "deployment command contract execution failed", "operation_id", operationID, "error", err)

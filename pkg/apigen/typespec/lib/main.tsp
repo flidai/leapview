@@ -40,6 +40,7 @@ model AuditOptions {
 
 model AsyncExecutionOptions {
   mode: "async";
+  guarantee: "transactional";
   jobKind: string;
   resourceKind: string;
   initialEvent: string;

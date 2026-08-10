@@ -197,6 +197,7 @@ describe("APIGen TypeSpec emitter", () => {
         audit: #{ required: true, successAction: "release.validating", guarantee: "transactional" },
         execution: #{
           mode: "async",
+          guarantee: "transactional",
           jobKind: "release.finalize",
           resourceKind: "release",
           initialEvent: "release.validating",
@@ -218,6 +219,7 @@ describe("APIGen TypeSpec emitter", () => {
       command: {
         execution: {
           mode: "async",
+          guarantee: "transactional",
           job_kind: "release.finalize",
           resource_kind: "release",
           initial_event: "release.validating",
@@ -309,7 +311,7 @@ describe("APIGen TypeSpec emitter", () => {
         `,
       },
       {
-        message: "async execution requires audit.guarantee transactional",
+        message: "execution.initialEvent must be a stable dotted lower_snake_case name",
         operation: `
           @post
           @operationId("finalizeWidget")
@@ -317,9 +319,10 @@ describe("APIGen TypeSpec emitter", () => {
             audit: #{ required: true, successAction: "widget.validating", guarantee: "best-effort" },
             execution: #{
               mode: "async",
+              guarantee: "transactional",
               jobKind: "widget.finalize",
               resourceKind: "widget",
-              initialEvent: "widget.validating",
+              initialEvent: "Widget Validating",
               initialState: "validating",
               statusOperation: "getWidget",
               eventsOperation: "listWidgetEvents",

@@ -150,13 +150,20 @@ func TestValidateAsyncExecutionContract(t *testing.T) {
 					Responses:  []Response{{StatusCode: 202, Description: "accepted"}},
 					Command: &Command{
 						Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional"}, Idempotency: "required",
-						Execution: &AsyncExecution{Mode: "async", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
+						Execution: &AsyncExecution{Mode: "async", Guarantee: "transactional", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
 					},
 				},
 			},
 		}
 	}
 	require.NoError(t, Validate(validDocument()))
+	distinctAuditEvent := validDocument()
+	distinctAuditEvent.Endpoints[2].Command.Audit.SuccessAction = "release.finalization_requested"
+	distinctAuditEvent.Endpoints[2].Command.Audit.Guarantee = "best-effort"
+	require.NoError(t, Validate(distinctAuditEvent))
+	underscoreJobKind := validDocument()
+	underscoreJobKind.Endpoints[2].Command.Execution.JobKind = "refresh_pipeline"
+	require.NoError(t, Validate(underscoreJobKind))
 
 	tests := []struct {
 		name    string
@@ -164,8 +171,8 @@ func TestValidateAsyncExecutionContract(t *testing.T) {
 		wantErr string
 	}{
 		{name: "accepted response", mutate: func(doc *Document) { doc.Endpoints[2].Responses[0].StatusCode = 200 }, wantErr: "requires a 202 response"},
-		{name: "transactional guarantee", mutate: func(doc *Document) { doc.Endpoints[2].Command.Audit.Guarantee = "best-effort" }, wantErr: "requires transactional audit guarantee"},
-		{name: "initial event", mutate: func(doc *Document) { doc.Endpoints[2].Command.Execution.InitialEvent = "release.started" }, wantErr: "must equal audit.success_action"},
+		{name: "transactional guarantee", mutate: func(doc *Document) { doc.Endpoints[2].Command.Execution.Guarantee = "best-effort" }, wantErr: "requires transactional workflow guarantee"},
+		{name: "initial event", mutate: func(doc *Document) { doc.Endpoints[2].Command.Execution.InitialEvent = "Release Started" }, wantErr: "initial_event must be a stable dotted"},
 		{name: "unknown status operation", mutate: func(doc *Document) { doc.Endpoints[2].Command.Execution.StatusOperation = "missingRelease" }, wantErr: "references unknown operation"},
 		{name: "status command", mutate: func(doc *Document) {
 			doc.Endpoints[0].Kind = "command"

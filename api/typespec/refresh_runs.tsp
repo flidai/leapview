@@ -48,6 +48,17 @@ interface RefreshRuns {
   @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "refresh.queued", guarantee: "best-effort" },
+    execution: #{
+      mode: "async",
+      guarantee: "transactional",
+      jobKind: "refresh_pipeline",
+      resourceKind: "refresh",
+      initialEvent: "refresh.queued",
+      initialState: "queued",
+      statusOperation: "getRefreshRun",
+      eventsOperation: "listRefreshRunEvents",
+      cancellation: "supported",
+    },
   })
   @operationId("createRefreshRun")
   createRefreshRun(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RefreshRunCreateRequest): CreateRefreshRunAccepted | CommonErrors;

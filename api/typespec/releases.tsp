@@ -180,6 +180,7 @@ interface Releases {
     audit: #{ required: true, successAction: "release.validating", guarantee: "transactional" },
     execution: #{
       mode: "async",
+      guarantee: "transactional",
       jobKind: "release.finalize",
       resourceKind: "release",
       initialEvent: "release.validating",

@@ -65,6 +65,24 @@ func (s *Service) SetPromptWorkflow(factory func(PromptInput, string, PromptDisp
 	}
 }
 
+// ConfigureRunWorkflow connects an externally constructed service to the
+// application workflow recorder before prompt execution begins.
+func (s *Service) ConfigureRunWorkflow(recorder jobs.WorkflowRecorder) error {
+	if s == nil || s.repo == nil || recorder == nil {
+		return fmt.Errorf("agent run workflow recorder is required")
+	}
+	configurer, ok := s.repo.(interface{ ConfigureRunWorkflow(jobs.WorkflowRecorder) })
+	if ok {
+		configurer.ConfigureRunWorkflow(recorder)
+	} else if !s.runWorkflowAvailable() {
+		return fmt.Errorf("agent repository does not support durable workflow configuration")
+	}
+	if !s.runWorkflowAvailable() {
+		return fmt.Errorf("agent repository did not enable durable workflows")
+	}
+	return nil
+}
+
 func (s *Service) runWorkflowAvailable() bool {
 	if s == nil || s.repo == nil {
 		return false
