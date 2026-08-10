@@ -107,9 +107,8 @@ class ChatComposer extends LitElement {
       border-radius: calc(var(--lv-radius-default) - var(--lv-space-2xs));
       background: transparent;
       color: var(--lv-fg-default);
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-normal);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-normal);
       padding: var(--lv-space-xs) var(--lv-space-sm);
       outline: 0;
     }
@@ -170,8 +169,8 @@ class ChatComposer extends LitElement {
 			min-width: 0;
 			padding: var(--lv-space-xs) var(--lv-space-sm) var(--lv-space-2xs);
 			color: var(--lv-fg-muted);
-			font-size: var(--lv-font-size-caption);
-			font-weight: var(--lv-font-weight-strong);
+			font: var(--lv-type-caption);
+			font-weight: var(--base-text-weight-semibold);
 		}
 
 		.mention-icon {
@@ -207,7 +206,7 @@ class ChatComposer extends LitElement {
 		.mention-type {
 			min-width: 0;
 			color: var(--lv-fg-muted);
-			font-size: var(--lv-font-size-caption);
+			font: var(--lv-type-caption);
 		}
 
 		.mention-type {
@@ -221,7 +220,7 @@ class ChatComposer extends LitElement {
 			gap: var(--lv-space-sm);
 			padding: var(--lv-space-2xs) var(--lv-space-sm);
 			color: var(--lv-fg-muted);
-			font-size: var(--lv-font-size-caption);
+			font: var(--lv-type-caption);
 		}
 
 		.mention-status svg {
@@ -250,8 +249,7 @@ class ChatComposer extends LitElement {
 			background: var(--lv-bg-control);
 			color: var(--lv-fg-default);
 			padding: 0 var(--lv-space-sm);
-			font: inherit;
-			font-size: var(--lv-font-size-caption);
+			font: var(--lv-type-caption);
 			cursor: pointer;
 		}
 
@@ -283,9 +281,8 @@ class ChatComposer extends LitElement {
       background: var(--lv-button-accent-bg-rest, var(--lv-accent));
       color: var(--lv-button-accent-fg-rest, var(--lv-accent-fg));
       cursor: pointer;
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
       padding: 0;
       box-shadow: var(--lv-button-shadow-resting, var(--shadow-resting-small));
       transition:

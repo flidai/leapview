@@ -216,8 +216,8 @@ class LeapViewSidebar extends LitElement {
       color: var(--lv-fg-muted);
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-decoration: none;
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .brand-back:hover,
@@ -247,8 +247,8 @@ class LeapViewSidebar extends LitElement {
       color: var(--lv-fg-default);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-lg);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body-large);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
     }
 
@@ -315,8 +315,7 @@ class LeapViewSidebar extends LitElement {
       background: var(--lv-bg-control, var(--lv-bg-panel-muted));
       color: var(--lv-fg-default);
       padding: 0 var(--control-xsmall-paddingInline-normal) 0 calc(var(--control-xsmall-size) + var(--base-size-8));
-      font: inherit;
-      font-size: var(--lv-font-size-body-md);
+      font: var(--lv-type-body);
     }
 
     .sidebar-search input::placeholder {
@@ -355,14 +354,14 @@ class LeapViewSidebar extends LitElement {
       color: var(--fgColor-disabled);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .search-empty {
       margin: var(--base-size-8) var(--control-xsmall-paddingInline-normal);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     .primary-action {
@@ -374,7 +373,7 @@ class LeapViewSidebar extends LitElement {
       border-color: transparent;
       background: transparent;
       color: var(--lv-fg-default);
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .primary-action .nav-item:hover,
@@ -418,8 +417,8 @@ class LeapViewSidebar extends LitElement {
       color: var(--fgColor-disabled);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
     }
 
@@ -438,15 +437,15 @@ class LeapViewSidebar extends LitElement {
       min-width: 0;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .history-empty {
       padding: var(--base-size-4) var(--control-xsmall-paddingInline-normal);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .pending-spinner {
@@ -471,8 +470,8 @@ class LeapViewSidebar extends LitElement {
       color: var(--lv-fg-muted);
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-decoration: none;
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .nav-text {
@@ -486,8 +485,8 @@ class LeapViewSidebar extends LitElement {
       color: inherit;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .nav-item:hover,
@@ -564,8 +563,8 @@ class LeapViewSidebar extends LitElement {
       border-radius: 50%;
       background: var(--bgColor-neutral-muted);
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
     }
 
@@ -583,14 +582,14 @@ class LeapViewSidebar extends LitElement {
     }
 
     .user-name {
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .user-role {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .actions {
@@ -614,8 +613,8 @@ class LeapViewSidebar extends LitElement {
       color: var(--lv-button-fg-rest);
       cursor: pointer;
       padding: 0;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .theme-button:hover,
@@ -741,8 +740,8 @@ class LeapViewSidebar extends LitElement {
         min-width: 0;
         flex: 1 1 auto;
         color: var(--lv-fg-default);
-        font-size: var(--lv-font-size-body-lg);
-        font-weight: var(--lv-font-weight-strong);
+        font: var(--lv-type-body-large);
+        font-weight: var(--base-text-weight-semibold);
       }
 
       .mobile-sidebar-search {
@@ -838,8 +837,8 @@ class LeapViewSidebar extends LitElement {
       }
 
       .mobile-drawer-title {
-        font-size: var(--lv-font-size-body-lg);
-        font-weight: var(--lv-font-weight-strong);
+        font: var(--lv-type-body-large);
+        font-weight: var(--base-text-weight-semibold);
       }
 
       .history,

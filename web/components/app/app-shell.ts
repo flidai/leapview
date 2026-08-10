@@ -26,7 +26,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
       grid-template-columns: auto minmax(0, 1fr);
       background: var(--lv-bg-app);
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
     }
 
     lv-sidebar {

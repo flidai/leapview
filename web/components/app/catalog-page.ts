@@ -13,7 +13,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       min-height: 100svh;
       background: var(--lv-bg-app);
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
     }
 
     :host > section {

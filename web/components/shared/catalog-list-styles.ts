@@ -82,16 +82,16 @@ export const catalogListStyles = css`
   }
 
   .catalog-title {
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-semibold);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   .catalog-description,
   .catalog-meta {
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-caption);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   .catalog-trailing {

@@ -557,7 +557,7 @@ const workspaceStyles = css`
     min-width: 0;
     min-height: 100svh;
     color: var(--lv-fg-default);
-    font-family: var(--lv-font-family-ui, var(--fontStack-system));
+    font-family: var(--fontStack-system);
     background: var(--lv-bg-app);
   }
 
@@ -618,23 +618,23 @@ const workspaceStyles = css`
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-title-sm);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-compact);
+    font: var(--lv-type-section-title);
+    font-weight: var(--base-text-weight-semibold);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   h2 {
     color: var(--lv-fg-default);
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-strong);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-semibold);
   }
 
   .eyebrow {
     margin-bottom: var(--base-size-4);
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
+    line-height: var(--base-text-lineHeight-tight);
     text-transform: uppercase;
   }
 
@@ -645,8 +645,8 @@ const workspaceStyles = css`
     color: var(--lv-fg-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-body-sm);
-    line-height: var(--lv-line-height-compact);
+    font: var(--lv-type-body);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   .actions,
@@ -689,8 +689,8 @@ const workspaceStyles = css`
     background: var(--lv-button-accent-bg-rest);
     color: var(--lv-button-accent-fg-rest);
     padding: 0 var(--lv-button-padding-inline-sm);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-strong);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-semibold);
   }
 
   .icon-link,
@@ -782,8 +782,7 @@ const workspaceStyles = css`
     border-radius: var(--lv-radius-default);
     background: var(--lv-bg-panel);
     color: var(--lv-fg-default);
-    font: inherit;
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
   }
 
   .search input[type='search'] {
@@ -791,7 +790,7 @@ const workspaceStyles = css`
     min-width: 0;
     padding: 0 var(--base-size-12) 0 var(--base-size-36);
     outline: 0;
-    line-height: var(--lv-line-height-compact);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   .search input[type='search']::placeholder {
@@ -843,15 +842,15 @@ const workspaceStyles = css`
     gap: var(--base-size-8);
     border-bottom: 2px solid transparent;
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-medium);
     text-decoration: none;
   }
 
   .tabs a.active {
     border-bottom-color: var(--lv-accent);
     color: var(--lv-fg-default);
-    font-weight: var(--lv-font-weight-strong);
+    font-weight: var(--base-text-weight-semibold);
   }
 
   .count {
@@ -862,13 +861,12 @@ const workspaceStyles = css`
     background: var(--lv-bg-panel-muted);
     color: var(--lv-fg-muted);
     padding: 0 var(--base-size-6);
-    font-size: var(--lv-font-size-caption);
+    font: var(--lv-type-caption);
   }
 
   code {
     color: var(--lv-fg-muted);
-    font-family: var(--fontStack-monospace, ui-monospace, SFMono-Regular, Consolas, monospace);
-    font-size: var(--lv-font-size-caption);
+    font: var(--lv-type-code-inline);
   }
 
   .asset-glyph {
@@ -963,7 +961,7 @@ const workspaceStyles = css`
   .empty {
     color: var(--lv-fg-muted);
     padding: var(--base-size-12);
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
   }
 
   .breadcrumb-header ol {
@@ -975,8 +973,8 @@ const workspaceStyles = css`
     margin: 0;
     padding: 0;
     list-style: none;
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-medium);
   }
 
   .breadcrumb-header li:not(:last-child)::after {
@@ -1100,8 +1098,8 @@ const workspaceStyles = css`
 
   .facts span:first-child {
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
     text-transform: uppercase;
   }
 
@@ -1111,7 +1109,7 @@ const workspaceStyles = css`
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
   }
 
   .facts .wide p,

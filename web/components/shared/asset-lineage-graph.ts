@@ -190,9 +190,9 @@ const assetLineageGraphStyles = `
 
   lv-asset-lineage-graph .asset-lineage-panel-eyebrow {
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-semibold);
+    line-height: var(--base-text-lineHeight-tight);
     text-transform: uppercase;
   }
 
@@ -202,9 +202,9 @@ const assetLineageGraphStyles = `
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-body-md);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-semibold);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   lv-asset-lineage-graph .asset-lineage-panel-key {
@@ -213,8 +213,7 @@ const assetLineageGraphStyles = `
     color: var(--lv-fg-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: var(--lv-font-family-mono);
-    font-size: var(--lv-font-size-caption);
+    font: var(--lv-type-code-inline);
   }
 
   lv-asset-lineage-graph .asset-lineage-panel-stats {
@@ -235,21 +234,21 @@ const assetLineageGraphStyles = `
 
   lv-asset-lineage-graph .asset-lineage-panel-stat span {
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
   }
 
   lv-asset-lineage-graph .asset-lineage-panel-stat strong {
     color: var(--lv-fg-default);
-    font-size: var(--lv-font-size-body-md);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-body);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   lv-asset-lineage-graph .asset-lineage-panel-summary {
     min-width: 0;
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-body-sm);
-    line-height: var(--lv-line-height-default);
+    font: var(--lv-type-body);
+    line-height: var(--base-text-lineHeight-normal);
   }
 
   lv-asset-lineage-graph .asset-lineage-panel-action {
@@ -262,8 +261,8 @@ const assetLineageGraphStyles = `
     background: var(--lv-line-accent);
     color: var(--lv-fg-on-emphasis);
     padding: 0 var(--base-size-12);
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-strong);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-semibold);
     text-decoration: none;
   }
 
@@ -467,8 +466,8 @@ const assetLineageGraphStyles = `
 
   lv-asset-lineage-graph .asset-lineage-node-kind {
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-strong);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-semibold);
     text-transform: uppercase;
   }
 
@@ -479,9 +478,9 @@ const assetLineageGraphStyles = `
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-body-md);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-semibold);
+    line-height: var(--base-text-lineHeight-tight);
     text-decoration: none;
   }
 
@@ -498,8 +497,8 @@ const assetLineageGraphStyles = `
     color: var(--lv-fg-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
   }
 
   @media (max-width: 860px) {

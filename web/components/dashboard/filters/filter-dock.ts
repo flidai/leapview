@@ -55,7 +55,7 @@ class LeapViewFilterDock extends LitElement {
       min-width: 0;
       min-height: 0;
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
       transition: width var(--lv-duration-fast) var(--motion-easing-move);
     }
 
@@ -107,8 +107,8 @@ class LeapViewFilterDock extends LitElement {
       color: var(--lv-fg-muted);
       cursor: pointer;
       padding: var(--base-size-16) 0;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       text-transform: uppercase;
     }
 
@@ -130,7 +130,7 @@ class LeapViewFilterDock extends LitElement {
 
     .rail span {
       writing-mode: vertical-rl;
-      line-height: var(--lv-line-height-none, 1);
+      line-height: 1;
     }
 
     .rail-count {
@@ -141,7 +141,7 @@ class LeapViewFilterDock extends LitElement {
       border-radius: var(--lv-radius-full);
       background: var(--lv-line-accent);
       color: var(--lv-fg-on-emphasis);
-      font-size: 10px;
+      font: var(--lv-type-caption);
       line-height: 1;
     }
 
@@ -197,13 +197,13 @@ class LeapViewFilterDock extends LitElement {
     }
 
     .panel-heading strong {
-      font-size: var(--lv-font-size-title-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-section-title);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .panel-summary {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     .icon-button {
@@ -254,15 +254,15 @@ class LeapViewFilterDock extends LitElement {
 
     .group-title {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: .02em;
       text-transform: uppercase;
     }
 
     .group-count {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     .panel-footer {
@@ -290,8 +290,8 @@ class LeapViewFilterDock extends LitElement {
       color: var(--lv-fg-default);
       cursor: pointer;
       padding: 0 var(--lv-space-control);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .footer-button:hover:not(:disabled) {

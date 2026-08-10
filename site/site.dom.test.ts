@@ -1617,7 +1617,7 @@ test('documentation articles provide a readable, navigable reference experience'
     expect(typography.headingLineHeight / typography.headingFontSize).toBeCloseTo(1.2, 2)
     expect(typography.paragraphFontSize).toBe(16)
     expect(typography.paragraphLineHeight / typography.paragraphFontSize).toBeCloseTo(1.65, 2)
-    expect(typography.codeFontSize).toBe(14)
+    expect(typography.codeFontSize).toBe(13)
     expect(typography.navigationFontSize).toBe(13)
     expect(typography.paragraphColor).toBe(typography.articleColor)
     expect(typography.orderedListStyle).toBe('decimal')

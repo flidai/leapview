@@ -23,17 +23,17 @@ export const pageHeaderStyles = css`
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-title-md);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-compact);
+    font: var(--lv-type-page-title);
+    font-weight: var(--base-text-weight-semibold);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   .page-header .page-eyebrow {
     margin-bottom: var(--base-size-4);
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
+    line-height: var(--base-text-lineHeight-tight);
     text-transform: uppercase;
   }
 
@@ -43,8 +43,8 @@ export const pageHeaderStyles = css`
     color: var(--lv-fg-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-body-sm);
-    line-height: var(--lv-line-height-compact);
+    font: var(--lv-type-body);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   .page-actions {

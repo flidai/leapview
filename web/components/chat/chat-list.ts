@@ -15,7 +15,7 @@ class LeapViewChatList extends LitElement {
       display: block;
       min-width: 0;
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
     }
 
     .shell {
@@ -39,9 +39,9 @@ class LeapViewChatList extends LitElement {
     h2 {
       margin: 0;
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-title-md);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-page-title);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-tight);
       letter-spacing: 0;
     }
 
@@ -73,8 +73,7 @@ class LeapViewChatList extends LitElement {
       background: var(--lv-bg-panel);
       color: var(--lv-fg-default);
       padding: 0 var(--base-size-12) 0 var(--base-size-36);
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .search::placeholder {
@@ -101,8 +100,8 @@ class LeapViewChatList extends LitElement {
       color: var(--lv-button-fg-rest, var(--lv-fg-default));
       padding: 0 var(--lv-button-padding-inline-spacious, var(--control-medium-paddingInline-spacious, var(--base-size-16)));
       text-decoration: none;
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
       box-shadow: var(--lv-button-shadow-resting, none);
     }
 
@@ -214,14 +213,14 @@ class LeapViewChatList extends LitElement {
       color: var(--lv-fg-default);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium, 500);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .date {
       flex: 0 0 auto;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
       white-space: nowrap;
       transition: opacity var(--duration-fast) var(--ease-lv);
     }
@@ -284,7 +283,7 @@ class LeapViewChatList extends LitElement {
     .empty {
       padding: var(--base-size-16) 0;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     @media (max-width: 640px) {
@@ -298,7 +297,7 @@ class LeapViewChatList extends LitElement {
       }
 
       h2 {
-        font-size: var(--lv-font-size-title-md);
+        font: var(--lv-type-page-title);
       }
 
       .new-chat-link {

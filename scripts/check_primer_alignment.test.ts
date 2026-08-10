@@ -22,6 +22,10 @@ async function withWorkspace(run: (workspace: string) => Promise<void>): Promise
       ":root { --base-size-4: 0.25rem; --base-size-8: 0.5rem; --control-small-size: 1.75rem; --motion-duration-short: 200ms; }\n",
     );
     await writeFile(
+      path.join(workspace, "docs", "reference", "primer-primitives-css", "typography.css"),
+      ":root { --text-body-size-medium: 0.875rem; --text-body-shorthand-medium: 400 0.875rem/1.5 system-ui; }\n",
+    );
+    await writeFile(
       path.join(workspace, "docs", "reference", "primer-primitives-css", "theme-light.css"),
       [
         ":root {",
@@ -71,6 +75,22 @@ describe("checkPrimerAlignment", () => {
 
       const violations = await checkPrimerAlignment({root: workspace});
       expect(violations.map(violation => violation.kind)).toEqual(["raw-color", "raw-color", "raw-var-fallback"]);
+    });
+  });
+
+  test("rejects raw font sizes and mirrored typography aliases", async () => {
+    await withWorkspace(async workspace => {
+      await writeFile(
+        path.join(workspace, "static", "app.input.css"),
+        ":root { --lv-font-size-body: var(--text-body-size-medium); --lv-type-body: var(--text-body-shorthand-medium); }\n",
+      );
+      await writeFile(
+        path.join(workspace, "web", "components", "example", "bad.ts"),
+        "import {css} from 'lit';\nexport const styles = css`:host { font-size: 13px; } .good { font: var(--lv-type-body); }`;\n",
+      );
+
+      const violations = await checkPrimerAlignment({root: workspace});
+      expect(violations.map(violation => violation.kind)).toEqual(["primitive-typography-alias", "raw-font-size"]);
     });
   });
 

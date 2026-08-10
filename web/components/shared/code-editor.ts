@@ -29,10 +29,10 @@ class CodeEditor extends LitElement {
       display: block;
       min-width: 0;
       color: var(--lv-fg-default);
-      --lv-code-editor-font-family: var(--lv-font-family-mono);
-      --lv-code-editor-font-size: var(--lv-font-size-body-sm);
-      --lv-code-editor-line-height: var(--lv-line-height-snug);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      --lv-code-editor-font-family: var(--fontStack-monospace);
+      --lv-code-editor-font-size: var(--text-codeBlock-size);
+      --lv-code-editor-line-height: var(--base-text-lineHeight-snug);
+      font-family: var(--fontStack-system);
     }
 
     .editor-shell {
@@ -69,8 +69,8 @@ class CodeEditor extends LitElement {
       background: var(--lv-bg-panel);
       padding: var(--base-size-4) var(--base-size-8);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
       pointer-events: none;
     }
 
@@ -100,8 +100,8 @@ class CodeEditor extends LitElement {
       border-top: var(--lv-border-muted);
       padding: var(--base-size-8) var(--base-size-16);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
   `

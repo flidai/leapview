@@ -51,7 +51,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       min-width: 0;
       min-height: 100svh;
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
       background: var(--lv-bg-app);
     }
 
@@ -101,9 +101,9 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-title-sm);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-section-title);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .main-directory {
@@ -112,7 +112,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     }
 
     .main-directory h1 {
-      font-size: var(--lv-font-size-title-md);
+      font: var(--lv-type-page-title);
     }
 
     .metrics {
@@ -146,8 +146,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .metric .label {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
       text-transform: uppercase;
     }
 
@@ -156,15 +156,15 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-title-sm);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-section-title);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .metric .meta,
     .empty {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .empty {
@@ -203,15 +203,15 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .profile-label {
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .profile-help {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .profile-value {
@@ -226,8 +226,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       padding: var(--base-size-6) var(--base-size-12);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .profile-value-muted {
@@ -248,8 +248,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       border-radius: 50%;
       background: var(--lv-bg-selected);
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .profile-avatar img {
@@ -270,8 +270,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-attention-muted);
       padding: var(--lv-space-control) var(--base-size-12);
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     lv-storage-explorer {
@@ -321,7 +321,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-control);
       padding: var(--base-size-2) var(--base-size-8);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
       text-transform: capitalize;
     }
 
@@ -330,7 +330,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
       gap: var(--base-size-8);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .publication-details span {
@@ -352,8 +352,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       padding: 0 var(--base-size-12);
       color: var(--lv-fg-default);
       cursor: pointer;
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
       line-height: var(--control-medium-size);
       text-decoration: none;
     }
@@ -369,13 +368,13 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       margin: 0;
       padding-left: var(--base-size-20);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     h2 {
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .facts {
@@ -401,9 +400,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-control);
       color: var(--lv-fg-default);
       cursor: pointer;
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
       padding: 0 var(--base-size-12);
     }
 
@@ -424,8 +422,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .local-user-result {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .local-user-result code {
@@ -457,8 +455,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .query-filter label {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
       text-transform: uppercase;
     }
 
@@ -468,9 +466,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       border-radius: var(--lv-radius-small);
       background: var(--lv-bg-input);
       color: var(--lv-fg-default);
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-tight);
       padding: var(--base-size-8) var(--lv-space-control);
     }
 
@@ -483,8 +480,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       border-top: var(--lv-border-muted);
       padding: var(--base-size-8) var(--base-size-12);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .query-history-error {
@@ -526,7 +523,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       align-items: center;
       gap: var(--base-size-6);
       color: var(--lv-fg-default);
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .query-detail-status svg {
@@ -594,8 +591,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     .query-detail-section h2,
     .query-detail-section summary {
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .query-detail-facts {
@@ -609,8 +606,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       gap: var(--base-size-12);
       min-width: 0;
       align-items: start;
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .query-detail-fact span {
@@ -638,8 +635,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       margin: 0;
       padding: var(--base-size-12);
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-normal);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-normal);
       white-space: pre;
     }
 

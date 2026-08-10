@@ -859,8 +859,8 @@ const recordTableStyles = `
     gap: var(--base-size-8);
     align-items: center;
     color: var(--lv-fg-default);
-    font-size: var(--lv-font-size-body-sm);
-    line-height: var(--lv-line-height-compact);
+    font: var(--lv-type-body);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   lv-record-table .record-table-column-menu input {
@@ -892,8 +892,8 @@ const recordTableStyles = `
     z-index: 1;
     background: var(--lv-bg-page);
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
     letter-spacing: 0;
     text-transform: none;
   }
@@ -902,31 +902,26 @@ const recordTableStyles = `
   lv-record-table .variant-compact .record-table th {
     padding: var(--base-size-8) var(--base-size-12);
     background: var(--lv-bg-page);
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-strong);
-  }
-
-  lv-record-table .variant-compact .record-table th {
-    padding: var(--base-size-8) var(--base-size-12);
-    font-size: var(--lv-font-size-caption);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-semibold);
   }
 
   lv-record-table .record-table td {
     color: var(--lv-fg-default);
-    font-size: var(--lv-font-size-body-md);
-    line-height: var(--lv-line-height-normal);
-    font-weight: var(--lv-font-weight-regular);
+    font: var(--lv-type-body);
+    line-height: var(--base-text-lineHeight-normal);
+    font-weight: var(--base-text-weight-normal);
   }
 
   lv-record-table .variant-primary .record-table td {
     padding: var(--base-size-6) var(--base-size-12);
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
     vertical-align: middle;
   }
 
   lv-record-table .variant-compact .record-table td {
     padding: var(--base-size-8) var(--base-size-12);
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
     vertical-align: middle;
   }
 
@@ -1037,13 +1032,13 @@ const recordTableStyles = `
     padding: 0;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-body-md);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-medium);
   }
 
   lv-record-table .variant-compact .record-code,
   lv-record-table .variant-compact .record-expression {
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
   }
 
   lv-record-table .record-expression {
@@ -1052,8 +1047,8 @@ const recordTableStyles = `
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-body-md);
-    font-weight: var(--lv-font-weight-regular);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-normal);
   }
 
   lv-record-table .record-badge {
@@ -1063,8 +1058,8 @@ const recordTableStyles = `
     gap: var(--base-size-4);
     border-radius: var(--borderRadius-full, var(--lv-radius-full));
     padding: 0 var(--base-size-8);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
   }
 
   lv-record-table .record-badge-success {
@@ -1097,7 +1092,7 @@ const recordTableStyles = `
     align-items: center;
     gap: var(--base-size-6);
     color: var(--lv-fg-default);
-    font-weight: var(--lv-font-weight-medium);
+    font-weight: var(--base-text-weight-medium);
     white-space: nowrap;
   }
 
@@ -1165,10 +1160,9 @@ const recordTableStyles = `
     min-width: 0;
     overflow: hidden;
     color: var(--lv-fg-link, var(--lv-fg-default));
-    font-family: var(--fontStack-monospace);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
-    line-height: var(--lv-line-height-compact);
+    font: var(--lv-type-code-inline);
+    font-weight: var(--base-text-weight-medium);
+    line-height: var(--base-text-lineHeight-tight);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1202,9 +1196,8 @@ const recordTableStyles = `
   }
 
   lv-record-table .record-query-expanded > pre code {
-    font-family: var(--fontStack-monospace);
-    font-size: var(--lv-font-size-body-sm);
-    line-height: var(--lv-line-height-normal);
+    font: var(--lv-type-code-block);
+    line-height: var(--base-text-lineHeight-normal);
     white-space: pre;
   }
 
@@ -1220,8 +1213,7 @@ const recordTableStyles = `
     color: var(--lv-fg-default);
     cursor: pointer;
     padding: 0 var(--base-size-12);
-    font: inherit;
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
   }
 
   lv-record-table .record-query-copy:hover,
@@ -1278,7 +1270,7 @@ const recordTableStyles = `
   lv-record-table .record-link,
   lv-record-table .record-entity-link {
     color: var(--lv-fg-link);
-    font-weight: var(--lv-font-weight-medium);
+    font-weight: var(--base-text-weight-medium);
     text-decoration: none;
   }
 
@@ -1311,8 +1303,8 @@ const recordTableStyles = `
     background: var(--lv-bg-panel-muted);
     color: var(--lv-fg-muted);
     padding: 0 var(--base-size-8);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
     text-transform: uppercase;
   }
 
@@ -1388,16 +1380,16 @@ const recordTableStyles = `
     max-width: 100%;
     overflow-wrap: anywhere;
     color: var(--lv-fg-default);
-    font-weight: var(--lv-font-weight-strong);
+    font-weight: var(--base-text-weight-semibold);
     white-space: normal;
   }
 
   lv-record-table .variant-primary .record-entity-label {
     overflow: hidden;
     overflow-wrap: normal;
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-normal);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-semibold);
+    line-height: var(--base-text-lineHeight-normal);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1405,7 +1397,7 @@ const recordTableStyles = `
   lv-record-table .variant-primary .record-entity-description {
     overflow: hidden;
     overflow-wrap: normal;
-    line-height: var(--lv-line-height-tight);
+    line-height: var(--base-text-lineHeight-tight);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1415,9 +1407,9 @@ const recordTableStyles = `
     max-width: 100%;
     overflow-wrap: anywhere;
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-regular);
-    line-height: var(--lv-line-height-compact);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-normal);
+    line-height: var(--base-text-lineHeight-tight);
     white-space: normal;
   }
 
@@ -1477,8 +1469,8 @@ const recordTableStyles = `
 
   lv-record-table .record-table-empty {
     padding: var(--base-size-20) 0;
-    font-size: var(--lv-font-size-body-md);
-    font-weight: var(--lv-font-weight-regular);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-normal);
   }
 `
 

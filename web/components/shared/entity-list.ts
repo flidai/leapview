@@ -98,8 +98,7 @@ const entityListStyles = `
     border-radius: var(--lv-radius-default);
     background: var(--lv-bg-panel);
     color: var(--lv-fg-default);
-    font: inherit;
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
   }
 
   .entity-search input[type='search'] {
@@ -138,8 +137,7 @@ const entityListStyles = `
     color: var(--lv-button-fg-rest);
     padding: 0 var(--lv-button-padding-inline-sm);
     cursor: pointer;
-    font: inherit;
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
     white-space: nowrap;
   }
 
@@ -179,9 +177,9 @@ const entityListStyles = `
   .entity-list-table thead th {
     height: var(--control-medium-size);
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
-    line-height: var(--lv-line-height-compact);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   .entity-list-group-row th {
@@ -190,8 +188,8 @@ const entityListStyles = `
     background: var(--lv-bg-panel-muted);
     color: var(--lv-fg-muted);
     padding-inline: var(--base-size-8);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
   }
 
   .entity-list-group-count {
@@ -322,23 +320,22 @@ const entityListStyles = `
   }
 
   .entity-list-title {
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-semibold);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   .entity-list-description,
   .entity-list-meta {
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-caption);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   .entity-list-cell {
     overflow: hidden;
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    line-height: var(--lv-line-height-compact);
+    font: var(--lv-type-body);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -346,7 +343,7 @@ const entityListStyles = `
   .entity-list-empty {
     padding: var(--base-size-24) var(--base-size-16);
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-body-sm);
+    font: var(--lv-type-body);
     text-align: center;
   }
 

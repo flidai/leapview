@@ -189,7 +189,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { --fontStack-monospace: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; --lv-bg-panel-muted: #f6f8fa; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-border-muted: 1px solid #d8dee4; --borderRadius-medium: 6px; --base-size-4: 4px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 14px; --lv-line-height-snug: 1.35; }
+          body { --fontStack-monospace: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; --base-text-weight-medium: 500; --base-text-lineHeight-tight: 1.25; --base-text-lineHeight-normal: 1.5; --lv-type-caption: 400 12px/1.25 system-ui; --lv-type-body: 400 14px/1.5 system-ui; --lv-type-code-block: 400 13px/1.5 ui-monospace; --lv-bg-panel-muted: #f6f8fa; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-border-muted: 1px solid #d8dee4; --borderRadius-medium: 6px; --base-size-4: 4px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; }
           lv-code-block { display: block; width: 760px; margin: 24px; }
         </style>
       </head>
