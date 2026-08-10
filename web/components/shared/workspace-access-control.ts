@@ -123,9 +123,8 @@ class WorkspaceAccessControl extends LitElement {
       background: var(--lv-button-bg-rest);
       color: var(--lv-button-fg-rest);
       cursor: pointer;
-      font: var(--lv-type-body);
+      font: var(--lv-type-body-compact);
       font-weight: var(--base-text-weight-medium);
-      line-height: var(--base-text-lineHeight-tight);
       padding: 0 var(--lv-button-padding-inline);
       transition:
         color var(--lv-transition-fast),
@@ -156,14 +155,12 @@ class WorkspaceAccessControl extends LitElement {
       margin: 0;
       color: var(--lv-fg-default);
       font: var(--lv-type-section-title);
-      line-height: var(--base-text-lineHeight-snug);
     }
 
     .subtitle {
       margin: var(--base-size-4) 0 0;
       color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-snug);
+      font: var(--lv-type-body-snug);
     }
 
     .drawer-body {
@@ -180,15 +177,13 @@ class WorkspaceAccessControl extends LitElement {
     .section-title {
       margin: 0;
       color: var(--lv-fg-default);
-      font: var(--lv-type-body);
+      font: var(--lv-type-body-snug);
       font-weight: var(--base-text-weight-semibold);
-      line-height: var(--base-text-lineHeight-snug);
     }
 
     .label {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .field-shell {
@@ -221,8 +216,7 @@ class WorkspaceAccessControl extends LitElement {
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-control);
       color: var(--lv-fg-default);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-snug);
+      font: var(--lv-type-body-snug);
       padding: 0 var(--base-size-8);
     }
 
@@ -325,16 +319,14 @@ class WorkspaceAccessControl extends LitElement {
 
     .subject-label {
       color: var(--lv-fg-default);
-      font: var(--lv-type-body);
+      font: var(--lv-type-body-snug);
       font-weight: var(--base-text-weight-semibold);
-      line-height: var(--base-text-lineHeight-snug);
     }
 
     .subject-detail {
       margin-top: var(--base-size-2);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .search-state {
@@ -389,8 +381,7 @@ class WorkspaceAccessControl extends LitElement {
 
     .status {
       border-radius: var(--lv-radius-default);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-snug);
+      font: var(--lv-type-body-snug);
       padding: var(--base-size-8) var(--base-size-12);
     }
 

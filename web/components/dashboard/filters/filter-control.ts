@@ -65,7 +65,6 @@ export class DashboardFilterLeaf extends LitElement {
       justify-content: space-between;
       gap: var(--base-size-6);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
     }
     .field-heading[data-title='false'] { justify-content: flex-end; }
     .field-title {
@@ -77,8 +76,7 @@ export class DashboardFilterLeaf extends LitElement {
     }
     input, select, button {
       min-height: var(--control-medium-size);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
     }
     input, select {
       width: 100%; min-width: 0; border: var(--lv-border-default);
@@ -111,7 +109,6 @@ export class DashboardFilterLeaf extends LitElement {
       overflow: hidden;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
       text-overflow: ellipsis;
       white-space: nowrap;
     }

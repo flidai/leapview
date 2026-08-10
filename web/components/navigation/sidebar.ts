@@ -441,7 +441,6 @@ class LeapViewSidebar extends LitElement {
       padding: var(--base-size-4) var(--control-xsmall-paddingInline-normal);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .pending-spinner {

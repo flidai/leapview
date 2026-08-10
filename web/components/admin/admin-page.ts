@@ -102,7 +102,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-section-title);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .main-directory {
@@ -199,14 +198,12 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .profile-label {
       color: var(--lv-fg-default);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
     }
 
     .profile-help {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .profile-value {
@@ -221,8 +218,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       padding: var(--base-size-6) var(--base-size-12);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
     }
 
     .profile-value-muted {
@@ -416,8 +412,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .local-user-result {
       color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
     }
 
     .local-user-result code {
@@ -459,8 +454,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       border-radius: var(--lv-radius-small);
       background: var(--lv-bg-input);
       color: var(--lv-fg-default);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
       padding: var(--base-size-8) var(--lv-space-control);
     }
 
@@ -598,8 +592,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       gap: var(--base-size-12);
       min-width: 0;
       align-items: start;
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
     }
 
     .query-detail-fact span {
@@ -628,7 +621,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       margin: 0;
       padding: var(--base-size-12);
       font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-normal);
       white-space: pre;
     }
 

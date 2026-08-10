@@ -82,16 +82,14 @@ export const catalogListStyles = css`
   }
 
   .catalog-title {
-    font: var(--lv-type-body);
+    font: var(--lv-type-body-compact);
     font-weight: var(--base-text-weight-semibold);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   .catalog-description,
   .catalog-meta {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   .catalog-trailing {

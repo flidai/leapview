@@ -329,10 +329,9 @@ export class ReportTable extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font: var(--lv-type-body);
+      font: var(--lv-type-body-compact);
       font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .visual-options {
@@ -898,7 +897,6 @@ export class ReportTable extends LitElement {
       white-space: nowrap;
       font: var(--lv-type-caption);
       font-weight: var(--base-text-weight-medium);
-      line-height: 1.45;
     }
 
     .cell-badge.tone-success {

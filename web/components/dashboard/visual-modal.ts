@@ -104,9 +104,7 @@ export class VisualModal extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font: var(--lv-type-body-large);
-      font-weight: var(--base-text-weight-semibold);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-section-title);
     }
 
     .actions {

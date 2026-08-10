@@ -859,8 +859,7 @@ const recordTableStyles = `
     gap: var(--base-size-8);
     align-items: center;
     color: var(--lv-fg-default);
-    font: var(--lv-type-body);
-    line-height: var(--base-text-lineHeight-tight);
+    font: var(--lv-type-body-compact);
   }
 
   lv-record-table .record-table-column-menu input {
@@ -907,7 +906,6 @@ const recordTableStyles = `
   lv-record-table .record-table td {
     color: var(--lv-fg-default);
     font: var(--lv-type-body);
-    line-height: var(--base-text-lineHeight-normal);
   }
 
   lv-record-table .variant-primary .record-table td {
@@ -1191,7 +1189,6 @@ const recordTableStyles = `
 
   lv-record-table .record-query-expanded > pre code {
     font: var(--lv-type-code-block);
-    line-height: var(--base-text-lineHeight-normal);
     white-space: pre;
   }
 
@@ -1381,7 +1378,6 @@ const recordTableStyles = `
     overflow-wrap: normal;
     font: var(--lv-type-body);
     font-weight: var(--base-text-weight-semibold);
-    line-height: var(--base-text-lineHeight-normal);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1399,8 +1395,7 @@ const recordTableStyles = `
     max-width: 100%;
     overflow-wrap: anywhere;
     color: var(--lv-fg-muted);
-    font: var(--lv-type-body);
-    line-height: var(--base-text-lineHeight-tight);
+    font: var(--lv-type-body-compact);
     white-space: normal;
   }
 

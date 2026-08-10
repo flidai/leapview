@@ -923,7 +923,6 @@ const storageExplorerStyles = `
   h2 {
     color: var(--lv-fg-default);
     font: var(--lv-type-section-title);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   .storage-heading p {
@@ -932,7 +931,6 @@ const storageExplorerStyles = `
     text-overflow: ellipsis;
     white-space: nowrap;
     font: var(--lv-type-caption);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   .storage-heading p span {
@@ -958,7 +956,6 @@ const storageExplorerStyles = `
   .storage-summary span {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    line-height: 1.2;
     text-transform: uppercase;
   }
 
@@ -967,14 +964,12 @@ const storageExplorerStyles = `
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font: var(--lv-type-body);
-    line-height: 1.2;
+    font: var(--lv-type-body-compact);
   }
 
   h3 {
     color: var(--lv-fg-default);
-    font: var(--lv-type-body);
-    line-height: 1.3;
+    font: var(--lv-type-body-compact);
     font-weight: var(--base-text-weight-semibold);
   }
 
@@ -1205,8 +1200,7 @@ const storageExplorerStyles = `
   }
 
   .storage-table-button strong {
-    font: var(--lv-type-body);
-    line-height: 1.25;
+    font: var(--lv-type-body-compact);
     font-weight: var(--base-text-weight-medium);
   }
 
@@ -1377,7 +1371,6 @@ const storageExplorerStyles = `
     font: var(--lv-type-caption);
     font-style: normal;
     font-weight: var(--base-text-weight-medium);
-    line-height: 1.2;
   }
 
   .storage-tab-panel {

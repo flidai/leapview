@@ -37,7 +37,6 @@ class AgentPromptEditor extends LitElement {
     .prompt-status {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .prompt-control-row {
@@ -76,9 +75,8 @@ class AgentPromptEditor extends LitElement {
     .save-button {
       border: 0;
       border-radius: calc(var(--lv-radius-default) - 2px);
-      font: var(--lv-type-body);
+      font: var(--lv-type-body-compact);
       font-weight: var(--base-text-weight-medium);
-      line-height: var(--base-text-lineHeight-tight);
       cursor: pointer;
     }
 

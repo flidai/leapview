@@ -748,9 +748,8 @@ const semanticModelGraphStyles = `
     min-width: 0;
     align-items: center;
     gap: var(--base-size-6);
-    font: var(--lv-type-body);
+    font: var(--lv-type-body-compact);
     font-weight: var(--base-text-weight-semibold);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   lv-semantic-model-graph .semantic-model-node-title span {

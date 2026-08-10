@@ -48,8 +48,7 @@ class FilterMenu extends LitElement {
       background: var(--lv-bg-panel);
       color: var(--lv-fg-default);
       cursor: pointer;
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
       padding: 0 var(--lv-space-control);
       white-space: nowrap;
     }

@@ -16,6 +16,7 @@ export type PrimerAlignmentViolation = {
     | "asset-token"
     | "primer-primary-button-token"
     | "primitive-typography-alias"
+    | "redundant-type-line-height"
     | "redundant-type-weight"
     | "button-contract";
   message: string;
@@ -189,6 +190,31 @@ function scanCssForValueViolations(file: string, css: string, violations: Primer
       match.index ?? 0,
       "redundant-type-weight",
       "Title recipes already include Primer's semibold weight; remove the redundant font-weight override.",
+    );
+  }
+
+  for (const match of uncommented.matchAll(/([^{}]+)\{([^{}]+)\}/g)) {
+    const body = match[2] ?? "";
+    const hasCompleteTitleRecipe = /font\s*:\s*var\(--lv-type-(?:page-title|section-title|title-large)\)/.test(body);
+    const hasRedundantRecipeLineHeight =
+      (/font\s*:\s*var\(--lv-type-caption\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-tight\)/.test(body)) ||
+      (/font\s*:\s*var\(--lv-type-body\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-normal\)/.test(body)) ||
+      (/font\s*:\s*var\(--lv-type-body-compact\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-tight\)/.test(body)) ||
+      (/font\s*:\s*var\(--lv-type-body-snug\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-snug\)/.test(body)) ||
+      (/font\s*:\s*var\(--lv-type-code-block\)/.test(body) &&
+        /line-height\s*:\s*var\(--base-text-lineHeight-normal\)/.test(body));
+    if (!/line-height\s*:/.test(body) || (!hasCompleteTitleRecipe && !hasRedundantRecipeLineHeight)) continue;
+    addViolation(
+      violations,
+      file,
+      uncommented,
+      match.index ?? 0,
+      "redundant-type-line-height",
+      "Complete semantic type recipes own line-height; remove the redundant override or choose the matching --lv-type-* recipe.",
     );
   }
 

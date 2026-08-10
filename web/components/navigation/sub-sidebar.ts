@@ -302,8 +302,7 @@ class SubSidebar extends LitElement {
     }
 
     .item-title {
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
     }
 
     .pending-spinner {

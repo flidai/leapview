@@ -297,7 +297,6 @@ const codeBlockStyles = `
     border-radius: 0;
     padding: var(--base-size-16);
     font: var(--lv-type-code-block);
-    line-height: 1.65;
     tab-size: 2;
   }
 

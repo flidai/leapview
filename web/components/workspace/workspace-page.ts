@@ -619,7 +619,6 @@ const workspaceStyles = css`
     text-overflow: ellipsis;
     white-space: nowrap;
     font: var(--lv-type-section-title);
-    line-height: var(--base-text-lineHeight-tight);
   }
 
   h2 {
@@ -632,7 +631,6 @@ const workspaceStyles = css`
     margin-bottom: var(--base-size-4);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    line-height: var(--base-text-lineHeight-tight);
     text-transform: uppercase;
   }
 
@@ -643,8 +641,7 @@ const workspaceStyles = css`
     color: var(--lv-fg-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font: var(--lv-type-body);
-    line-height: var(--base-text-lineHeight-tight);
+    font: var(--lv-type-body-compact);
   }
 
   .actions,

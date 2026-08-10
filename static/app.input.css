@@ -339,6 +339,8 @@
     --lv-type-title-large: var(--text-title-shorthand-large);
     --lv-type-body-large: var(--text-body-shorthand-large);
     --lv-type-body: var(--text-body-shorthand-medium);
+    --lv-type-body-compact: var(--text-body-weight) var(--text-body-size-medium) / var(--base-text-lineHeight-tight) var(--fontStack-sansSerif);
+    --lv-type-body-snug: var(--text-body-weight) var(--text-body-size-medium) / var(--base-text-lineHeight-snug) var(--fontStack-sansSerif);
     --lv-type-secondary: var(--text-body-shorthand-small);
     --lv-type-caption: var(--text-caption-shorthand);
     --lv-type-code-block: var(--text-codeBlock-shorthand);

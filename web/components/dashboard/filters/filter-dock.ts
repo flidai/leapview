@@ -198,7 +198,6 @@ class LeapViewFilterDock extends LitElement {
 
     .panel-heading strong {
       font: var(--lv-type-section-title);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .panel-summary {

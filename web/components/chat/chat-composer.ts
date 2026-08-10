@@ -108,7 +108,6 @@ class ChatComposer extends LitElement {
       background: transparent;
       color: var(--lv-fg-default);
       font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-normal);
       padding: var(--lv-space-xs) var(--lv-space-sm);
       outline: 0;
     }

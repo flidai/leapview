@@ -78,8 +78,7 @@ class AgentTools extends LitElement {
       background: transparent;
       padding: var(--base-size-8) 0;
       color: var(--lv-fg-default);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
       outline: 0;
     }
 
@@ -118,7 +117,6 @@ class AgentTools extends LitElement {
       background: var(--lv-bg-panel-muted);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
       text-align: left;
       text-transform: uppercase;
     }
@@ -194,7 +192,6 @@ class AgentTools extends LitElement {
       padding: var(--base-size-2) var(--base-size-8);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
       white-space: nowrap;
     }
 
@@ -241,8 +238,7 @@ class AgentTools extends LitElement {
     .detail-description {
       margin: 0;
       color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-snug);
+      font: var(--lv-type-body-snug);
     }
 
     .detail-meta {
@@ -270,7 +266,6 @@ class AgentTools extends LitElement {
       cursor: pointer;
       font: var(--lv-type-caption);
       font-weight: var(--base-text-weight-medium);
-      line-height: var(--base-text-lineHeight-tight);
     }
 
     .tabs button.is-active {

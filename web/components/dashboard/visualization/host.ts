@@ -63,7 +63,6 @@ export class VisualizationHost extends LitElement {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
       font-weight: var(--base-text-weight-medium);
-      line-height: var(--base-text-lineHeight-tight);
       text-transform: uppercase;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -81,8 +80,7 @@ export class VisualizationHost extends LitElement {
     .lv-visualization-note {
       overflow: hidden;
       color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -92,8 +90,7 @@ export class VisualizationHost extends LitElement {
       align-items: center;
       gap: var(--base-size-4) var(--base-size-8);
       color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-      line-height: var(--base-text-lineHeight-tight);
+      font: var(--lv-type-body-compact);
     }
     .lv-kpi-delta {
       font-weight: var(--base-text-weight-semibold);
@@ -104,7 +101,6 @@ export class VisualizationHost extends LitElement {
     .lv-kpi-goal, .lv-kpi-status {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
     }
     .lv-kpi-status[data-tone='success'] { color: var(--lv-fg-success); }
     .lv-kpi-status[data-tone='warning'] { color: var(--lv-fg-warning); }
@@ -239,17 +235,15 @@ export class VisualizationHost extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font: var(--lv-type-body);
+      font: var(--lv-type-body-compact);
       font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
-      line-height: var(--base-text-lineHeight-tight);
     }
     .toolbar-subtitle {
       margin: var(--base-size-2) 0 0;
       overflow: hidden;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-tight);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
