@@ -28,7 +28,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       min-width: 0;
       min-height: 100svh;
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
       background: var(--lv-bg-app);
     }
 
@@ -75,9 +75,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-title-sm);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-section-title);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .body {
@@ -127,7 +127,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       width: min(100%, var(--lv-chat-stack-width));
       padding-inline: var(--lv-space-lg);
       text-align: center;
-      font-size: var(--lv-font-size-title-md);
+      font: var(--lv-type-page-title);
     }
 
     @keyframes new-chat-enter {

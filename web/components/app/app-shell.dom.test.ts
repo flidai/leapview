@@ -39,6 +39,11 @@ beforeAll(async () => {
       response.end(testDocument(true, false, false, true))
       return
     }
+    if (url.pathname === '/admin-sidebar') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument(true, true, false, false, true))
+      return
+    }
     if (url.pathname === '/signal-shell') {
       response.setHeader('content-type', 'text/html')
       response.end(signalShellDocument())
@@ -145,30 +150,30 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
   }
 })
 
-test('upgraded compact app shell does not keep the fallback route grid column', async () => {
+test('compact app shell keeps the primary sidebar collapsible', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/upgraded-compact-shell`)
+    await page.evaluate(() => localStorage.setItem('leapview-sidebar-collapsed', 'true'))
+    await page.reload()
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.chrome?.sidebar?.compact === true)
     await page.waitForFunction(() => ((document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar') as any)?.config?.compact === true)
-    await page.waitForFunction(() => {
-      const shell = document.querySelector('lv-app-shell') as HTMLElement | null
-      const sidebar = shell?.shadowRoot?.querySelector('lv-sidebar') as HTMLElement | null
-      return sidebar && Math.round(sidebar.getBoundingClientRect().width) === 48
-    })
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
 
     const state = await shellGeometry(page)
     const compactIdentity = await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
       const root = sidebar.shadowRoot!
-      const expand = root.querySelector('.collapse-button') as HTMLButtonElement
       return {
         name: root.querySelector('.brand .name')?.textContent?.trim() ?? null,
+        nameDisplay: getComputedStyle(root.querySelector('.brand .name') as HTMLElement).display,
         markCount: root.querySelectorAll('lv-brand-mark').length,
-        expandLabel: expand.getAttribute('aria-label'),
-        expandVisible: getComputedStyle(expand).display !== 'none',
+        collapseControl: (() => {
+          const button = root.querySelector('.collapse-button') as HTMLButtonElement | null
+          return button ? { label: button.getAttribute('aria-label'), disabled: button.disabled } : null
+        })(),
+        collapsedAttribute: sidebar.hasAttribute('data-collapsed'),
       }
     })
 
@@ -178,11 +183,32 @@ test('upgraded compact app shell does not keep the fallback route grid column', 
     expect(state.route.x).toBe(state.sidebar.right)
     expect(state.route.gridColumnStart).toBe('auto')
     expect(compactIdentity).toEqual({
-      name: null,
+      name: 'LeapView',
+      nameDisplay: 'none',
       markCount: 0,
-      expandLabel: 'Expand navigation',
-      expandVisible: true,
+      collapseControl: { label: 'Expand navigation', disabled: false },
+      collapsedAttribute: true,
     })
+
+    await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      const button = sidebar.shadowRoot.querySelector('.collapse-button') as HTMLButtonElement
+      button.click()
+      await sidebar.updateComplete
+    })
+    const expanded = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const root = sidebar.shadowRoot!
+      const button = root.querySelector('.collapse-button') as HTMLButtonElement
+      return {
+        width: Math.round(sidebar.getBoundingClientRect().width),
+        name: root.querySelector('.brand .name')?.textContent?.trim() ?? null,
+        label: button.getAttribute('aria-label'),
+        collapsedAttribute: sidebar.hasAttribute('data-collapsed'),
+      }
+    })
+    expect(expanded).toEqual({ width: expect.any(Number), name: 'LeapView', label: 'Collapse navigation', collapsedAttribute: false })
+    expect(expanded.width).toBeGreaterThan(48)
   } finally {
     await page.close()
   }
@@ -214,6 +240,11 @@ test('mobile navigation opens in an accessible drawer', async () => {
           display: getComputedStyle(menuButton).display,
           expanded: menuButton.getAttribute('aria-expanded'),
         },
+        mobileHeader: {
+          display: getComputedStyle(root.querySelector('.mobile-header')).display,
+          title: root.querySelector('.mobile-header-title')?.textContent?.trim(),
+          containsMenu: Boolean(root.querySelector('.mobile-header')?.contains(menuButton)),
+        },
         navVisibility: getComputedStyle(nav).visibility,
         navInert: nav.inert,
       }
@@ -224,6 +255,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
     expect(state.mainY).toBe(state.sidebarBottom)
     expect(state.menu.display).not.toBe('none')
     expect(state.menu.expanded).toBe('false')
+    expect(state.mobileHeader).toEqual({ display: 'flex', title: 'LeapView', containsMenu: true })
     expect(state.navVisibility).toBe('hidden')
     expect(state.navInert).toBe(true)
 
@@ -449,6 +481,135 @@ test('sidebar active nav item uses a full-row highlight without selector rail', 
   }
 })
 
+test('admin sidebar replaces global navigation and provides a back to app action', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/admin-sidebar`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const root = sidebar.shadowRoot!
+      return {
+        links: Array.from(root.querySelectorAll('a')).map((link: any) => ({
+          href: link.getAttribute('href'),
+          text: link.textContent.trim(),
+          current: link.getAttribute('aria-current'),
+        })),
+        groupLabels: Array.from(root.querySelectorAll('.nav-group:not(.primary-action)')).map((group) => group.getAttribute('aria-label')),
+        visibleGroupLabels: Array.from(root.querySelectorAll('.nav-group-label')).map((label) => label.textContent?.trim()),
+        brandAction: (() => {
+          const action = root.querySelector('.brand-back') as HTMLAnchorElement | null
+          return action ? { href: action.getAttribute('href'), text: action.textContent.trim() } : null
+        })(),
+        brandItemStyle: (() => {
+          const brand = root.querySelector('.brand-back') as HTMLElement
+          const navItem = root.querySelector('a[href="/admin/groups"]') as HTMLElement
+          const brandStyle = getComputedStyle(brand)
+          const navStyle = getComputedStyle(navItem)
+          return {
+            brand: {
+              color: brandStyle.color,
+              fontSize: brandStyle.fontSize,
+              fontWeight: brandStyle.fontWeight,
+              height: Math.round(brand.getBoundingClientRect().height),
+            },
+            nav: {
+              color: navStyle.color,
+              fontSize: navStyle.fontSize,
+              fontWeight: navStyle.fontWeight,
+              height: Math.round(navItem.getBoundingClientRect().height),
+            },
+          }
+        })(),
+        search: (() => {
+          const input = root.querySelector('.brand .sidebar-search input') as HTMLInputElement
+          const search = root.querySelector('.brand .sidebar-search') as HTMLElement
+          return {
+            display: getComputedStyle(search).display,
+            placeholder: input.getAttribute('placeholder'),
+            ariaLabel: input.getAttribute('aria-label'),
+          }
+        })(),
+        hasLeapViewName: Boolean(root.querySelector('.brand .name')),
+        collapseControlCount: root.querySelectorAll('.collapse-button').length,
+        hasNavPrimaryAction: Boolean(root.querySelector('.primary-action')),
+        hasHistory: Boolean(root.querySelector('.history')),
+      }
+    })
+
+    expect(state.groupLabels).toEqual(['Personal', 'Access', 'Data', 'Operations'])
+    expect(state.visibleGroupLabels).toEqual(['Personal', 'Access', 'Data', 'Operations'])
+    expect(state.links).toEqual(expect.arrayContaining([
+      { href: '/admin/profile', text: 'Profile', current: 'false' },
+      { href: '/admin/principals', text: 'Principals', current: 'page' },
+      { href: '/admin/groups', text: 'Groups', current: 'false' },
+      { href: '/admin/agent', text: 'Agent', current: 'false' },
+      { href: '/admin/storage', text: 'Storage', current: 'false' },
+      { href: '/admin/queries', text: 'Query History', current: 'false' },
+      { href: '/admin/publications', text: 'Publications', current: 'false' },
+    ]))
+    expect(state.brandAction).toEqual({ href: '/', text: 'Back to app' })
+    expect(state.brandItemStyle.brand).toEqual(state.brandItemStyle.nav)
+    expect(state.search).toEqual({ display: 'grid', placeholder: 'Search...', ariaLabel: 'Search admin navigation' })
+    expect(state.hasLeapViewName).toBe(false)
+    expect(state.collapseControlCount).toBe(0)
+    expect(state.hasNavPrimaryAction).toBe(false)
+    expect(state.hasHistory).toBe(false)
+
+    await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement & { updateComplete: Promise<unknown> }
+      const input = sidebar.shadowRoot!.querySelector('.brand .sidebar-search input') as HTMLInputElement
+      input.value = 'storage'
+      input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await sidebar.updateComplete
+    })
+    const filtered = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const root = sidebar.shadowRoot!
+      return {
+        groupLabels: Array.from(root.querySelectorAll('.nav-group:not(.primary-action)')).map((group) => group.getAttribute('aria-label')),
+        links: Array.from(root.querySelectorAll('a[href^="/admin/"]')).map((link) => link.getAttribute('href')),
+      }
+    })
+    expect(filtered).toEqual({ groupLabels: ['Data'], links: ['/admin/storage'] })
+  } finally {
+    await page.close()
+  }
+})
+
+test('mobile admin sidebar places the menu button beside the back to app title', async () => {
+  const page = await browser.newPage({ viewport: { width: 553, height: 793 } })
+  try {
+    await page.goto(`${baseURL}/admin-sidebar`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const root = sidebar.shadowRoot!
+      const header = root.querySelector('.mobile-header') as HTMLElement
+      const menu = root.querySelector('.mobile-menu-button') as HTMLButtonElement
+      return {
+        title: root.querySelector('.mobile-header-title')?.textContent?.trim(),
+        menuVisible: getComputedStyle(menu).display !== 'none',
+        menuInHeader: header.contains(menu),
+        collapseControlCount: root.querySelectorAll('.collapse-button').length,
+      }
+    })
+
+    expect(state).toEqual({
+      title: 'Back to app',
+      menuVisible: true,
+      menuInHeader: true,
+      collapseControlCount: 0,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('active chat nav item navigates to the chat list href', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
@@ -592,18 +753,19 @@ function signalShellDocument(): string {
   `
 }
 
-function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false): string {
-  const chromeConfig = compact || history || nav ? {
+function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false): string {
+  const chromeConfig = compact || history || nav || admin ? {
     sidebar: {
       workspaceTitle: 'LeapView Workspace',
-      active: history ? 'chat' : 'workspaces',
+      active: admin ? 'principals' : history ? 'chat' : 'workspaces',
+      admin,
       dashboardId: '',
       dashboardTitle: '',
       pageTitle: '',
       modelId: '',
       modelTitle: '',
       compact,
-      primaryAction: history ? { label: 'New chat', href: '/chats/new', icon: 'plus' } : undefined,
+      primaryAction: admin ? { label: 'Back to app', href: '/', icon: 'back' } : history ? { label: 'New chat', href: '/chats/new', icon: 'plus' } : undefined,
       history: history ? {
         label: 'Chats',
         emptyText: 'No conversations yet.',
@@ -612,7 +774,35 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
           { id: 'c2', title: 'Inventory status', href: '/chats/c2' },
         ],
       } : undefined,
-      groups: history || nav ? [{
+      groups: admin ? [
+        {
+          label: 'Personal',
+          items: [
+            { id: 'profile', label: 'Profile', href: '/admin/profile', icon: 'user' },
+          ],
+        },
+        {
+          label: 'Access',
+          items: [
+            { id: 'principals', label: 'Principals', href: '/admin/principals', icon: 'users' },
+            { id: 'groups', label: 'Groups', href: '/admin/groups', icon: 'users-round' },
+          ],
+        },
+        {
+          label: 'Data',
+          items: [
+            { id: 'storage', label: 'Storage', href: '/admin/storage', icon: 'database' },
+            { id: 'publications', label: 'Publications', href: '/admin/publications', icon: 'globe' },
+          ],
+        },
+        {
+          label: 'Operations',
+          items: [
+            { id: 'agent', label: 'Agent', href: '/admin/agent', icon: 'bot' },
+            { id: 'queries', label: 'Query History', href: '/admin/queries', icon: 'history' },
+          ],
+        },
+      ] : history || nav ? [{
         label: 'Navigation',
         items: [
           { id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' },

@@ -60,20 +60,23 @@ for (const viewport of [
       const state = await page.locator('lv-catalog-page').evaluate((element: any) => {
         const root = element.shadowRoot
         const section = root.querySelector('section') as HTMLElement
-        const list = root.querySelector('.dashboard-list') as HTMLElement
-        const rows = Array.from(root.querySelectorAll('a.dashboard-row')) as HTMLAnchorElement[]
+        const list = root.querySelector('.entity-list-items') as HTMLElement
+        const table = root.querySelector('.entity-list-table') as HTMLElement
+        const rows = Array.from(root.querySelectorAll('tbody tr.entity-list-table-row')) as HTMLTableRowElement[]
         const sectionRect = section.getBoundingClientRect()
         const listRect = list.getBoundingClientRect()
+        const tableRect = table.getBoundingClientRect()
         return {
           title: root.querySelector('h1')?.textContent?.trim(),
           rowCount: rows.length,
-          hrefs: rows.map((row) => row.getAttribute('href')),
-          titles: rows.map((row) => row.querySelector('.dashboard-title')?.textContent?.trim()),
-          descriptions: rows.map((row) => row.querySelector('.dashboard-description')?.textContent?.trim()),
-          pages: rows.map((row) => row.querySelector('.dashboard-pages')?.textContent?.trim()),
-          hasIcons: rows.every((row) => Boolean(row.querySelector('.dashboard-icon svg'))),
-          hasChevrons: rows.every((row) => Boolean(row.querySelector('.dashboard-chevron svg'))),
-          fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - listRect.width) <= 1),
+          hrefs: rows.map((row) => row.querySelector('.entity-list-identity')?.getAttribute('href')),
+          titles: rows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim()),
+          descriptions: rows.map((row) => row.querySelector('.entity-list-description')?.textContent?.trim()),
+          pages: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
+          listBackground: getComputedStyle(list).backgroundColor,
+          hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
+          hasChevrons: rows.every((row) => Boolean(row.querySelector('.entity-list-chevron svg'))),
+          fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - tableRect.width) <= 1),
           maxRowHeight: Math.max(...rows.map((row) => Math.round(row.getBoundingClientRect().height))),
           totalListHeight: Math.round(listRect.height),
           hasCardGrid: Boolean(root.querySelector('.grid, article')),
@@ -90,11 +93,12 @@ for (const viewport of [
         titles: ['Executive Sales Dashboard', 'Operations Health'],
         descriptions: ['Fixture report', 'Fulfillment and delivery performance.'],
         pages: ['1 page', '3 pages'],
+        listBackground: 'rgb(238, 242, 246)',
         hasIcons: true,
-        hasChevrons: true,
+        hasChevrons: false,
         fullWidth: true,
-        maxRowHeight: 72,
-        totalListHeight: 144,
+        maxRowHeight: 52,
+        totalListHeight: 136,
         hasCardGrid: false,
         hasOpenLabel: false,
         sectionWidth: Math.min(viewport.width, 1152),
@@ -106,11 +110,40 @@ for (const viewport of [
   })
 }
 
-test('catalog page explains an empty dashboard collection', async () => {
+test('shared entity list sorts rows from a column header', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const rows = () => Array.from(list.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.querySelector('.entity-list-title')?.textContent?.trim())
+      const pagesHeader = list.querySelector('button[aria-label="Sort by Pages"]') as HTMLButtonElement
+      const before = rows()
+      pagesHeader.click()
+      await list.updateComplete
+      const ascending = rows()
+      const ascendingSort = pagesHeader.closest('th')?.getAttribute('aria-sort')
+      pagesHeader.click()
+      await list.updateComplete
+      return { before, ascending, ascendingSort, descending: rows(), descendingSort: pagesHeader.closest('th')?.getAttribute('aria-sort') }
+    })
+
+    expect(state.before).toEqual(['Executive Sales Dashboard', 'Operations Health'])
+    expect(state.ascending).toEqual(['Executive Sales Dashboard', 'Operations Health'])
+    expect(state.ascendingSort).toBe('ascending')
+    expect(state.descending).toEqual(['Operations Health', 'Executive Sales Dashboard'])
+    expect(state.descendingSort).toBe('descending')
+  } finally {
+    await page.close()
+  }
+})
+
+test('catalog page explains an empty dashboard collection', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page') && customElements.get('lv-entity-list'))
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ page: { ...element.page, dashboards: [] } })
@@ -160,7 +193,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { --fontStack-system: system-ui; --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-asset-dashboard-bg: #fbefff; --lv-asset-dashboard-accent: #8250df; --lv-asset-dashboard-border: #d2bfff; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --borderWidth-default: 1px; --borderWidth-thick: 2px; --control-medium-size: 32px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 14px; --lv-font-size-body-md: 16px; --lv-font-size-title-sm: 20px; --lv-font-weight-medium: 500; --lv-font-weight-strong: 600; --lv-line-height-tight: 1.1; --lv-line-height-snug: 1.35; --lv-line-height-compact: 1.25; --motion-transition-stateChange: 160ms ease; }
+          body { --fontStack-system: system-ui; --fontStack-monospace: ui-monospace; --text-codeBlock-size: 13px; --base-text-weight-normal: 400; --base-text-weight-medium: 500; --base-text-weight-semibold: 600; --base-text-lineHeight-tight: 1.25; --base-text-lineHeight-snug: 1.375; --base-text-lineHeight-normal: 1.5; --base-text-lineHeight-relaxed: 1.625; --lv-type-caption: 400 12px/1.25 system-ui; --lv-type-secondary: 400 12px/1.625 system-ui; --lv-type-body: 400 14px/1.5 system-ui; --lv-type-body-large: 400 16px/1.5 system-ui; --lv-type-section-title: 600 16px/1.5 system-ui; --lv-type-page-title: 600 20px/1.625 system-ui; --lv-type-title-large: 600 32px/1.5 system-ui; --lv-type-code-block: 400 13px/1.5 ui-monospace; --lv-type-code-inline: 400 0.9285em ui-monospace; --lv-bg-app: #f6f8fa; --lv-bg-page: #eef2f6; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-asset-dashboard-bg: #fbefff; --lv-asset-dashboard-accent: #8250df; --lv-asset-dashboard-border: #d2bfff; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --borderWidth-default: 1px; --borderWidth-thick: 2px; --control-medium-size: 32px; --motion-transition-stateChange: 160ms ease; }
         </style>
       </head>
       <body>

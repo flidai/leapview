@@ -176,7 +176,7 @@ func installPolicy(ctx context.Context, repository *Repository, workspaceID stri
 		groupIDs[name] = id
 		for _, member := range group.Members {
 			principal, err := repository.UpsertPrincipal(ctx, access.PrincipalInput{
-				ID: member.PrincipalID, Kind: access.PrincipalKindUser, Email: member.Email,
+				ID: snapshotPrincipalID(member.PrincipalID, member.Email), Kind: access.PrincipalKindUser, Email: member.Email,
 				DisplayName: firstSnapshotValue(member.DisplayName, member.Email, member.PrincipalID),
 			})
 			if err != nil {
@@ -242,7 +242,7 @@ func snapshotSubject(ctx context.Context, repository *Repository, workspaceID st
 		return access.SubjectGroup, groupIDs[subject.Group], nil
 	case access.SubjectPrincipal:
 		principal, err := repository.UpsertPrincipal(ctx, access.PrincipalInput{
-			ID: subject.PrincipalID, Kind: access.PrincipalKindUser, Email: subject.Email,
+			ID: snapshotPrincipalID(subject.PrincipalID, subject.Email), Kind: access.PrincipalKindUser, Email: subject.Email,
 			DisplayName: firstSnapshotValue(subject.DisplayName, subject.Email, subject.PrincipalID),
 		})
 		return access.SubjectPrincipal, principal.ID, err
@@ -257,6 +257,16 @@ func snapshotSubject(ctx context.Context, repository *Repository, workspaceID st
 	default:
 		return "", "", fmt.Errorf("unsupported subject kind %q", subject.Kind)
 	}
+}
+
+func snapshotPrincipalID(principalID, email string) string {
+	if principalID = strings.TrimSpace(principalID); principalID != "" {
+		return principalID
+	}
+	if email = access.NormalizeEmail(email); email != "" {
+		return access.PrincipalIDForEmail(email)
+	}
+	return ""
 }
 
 func snapshotObject(workspaceID string, object accesssnapshot.ObjectRef) access.ObjectRef {

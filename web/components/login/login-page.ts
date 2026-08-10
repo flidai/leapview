@@ -40,7 +40,7 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       overflow: hidden;
       background: var(--lv-bg-app);
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
       padding: var(--base-size-24);
       box-sizing: border-box;
     }
@@ -109,9 +109,9 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
     h1 {
       margin: 0;
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-title-md);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-page-title);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .brand-lockup {
@@ -137,9 +137,8 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       color: var(--lv-button-fg-rest);
       cursor: pointer;
       padding: 0 var(--lv-button-padding-inline-spacious);
-      font: inherit;
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
       box-shadow: var(--lv-button-shadow-resting);
       text-decoration: none;
       box-sizing: border-box;
@@ -179,8 +178,8 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       gap: var(--base-size-6);
       text-align: left;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     input {
@@ -191,8 +190,7 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-control);
       color: var(--lv-fg-default);
       padding: 0 var(--base-size-12);
-      font: inherit;
-      font-size: var(--lv-font-size-body-md);
+      font: var(--lv-type-body);
       box-sizing: border-box;
     }
 
@@ -213,9 +211,8 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       color: var(--lv-button-accent-fg-rest);
       cursor: pointer;
       padding: 0 var(--lv-button-padding-inline-spacious);
-      font: inherit;
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
       box-shadow: var(--lv-button-shadow-resting);
     }
 

@@ -103,7 +103,7 @@ class WorkspaceAccessControl extends LitElement {
     :host {
       display: inline-block;
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui);
+      font-family: var(--fontStack-system);
     }
 
     button,
@@ -123,9 +123,9 @@ class WorkspaceAccessControl extends LitElement {
       background: var(--lv-button-bg-rest);
       color: var(--lv-button-fg-rest);
       cursor: pointer;
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-tight);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-tight);
       padding: 0 var(--lv-button-padding-inline);
       transition:
         color var(--lv-transition-fast),
@@ -155,17 +155,17 @@ class WorkspaceAccessControl extends LitElement {
     .title {
       margin: 0;
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-title-sm);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-section-title);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-snug);
     }
 
     .subtitle {
       margin: var(--base-size-4) 0 0;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-normal);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-normal);
+      line-height: var(--base-text-lineHeight-snug);
     }
 
     .drawer-body {
@@ -182,16 +182,16 @@ class WorkspaceAccessControl extends LitElement {
     .section-title {
       margin: 0;
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-snug);
     }
 
     .label {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-tight);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .field-shell {
@@ -224,9 +224,9 @@ class WorkspaceAccessControl extends LitElement {
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-control);
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
+      line-height: var(--base-text-lineHeight-snug);
       padding: 0 var(--base-size-8);
     }
 
@@ -329,17 +329,17 @@ class WorkspaceAccessControl extends LitElement {
 
     .subject-label {
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-snug);
     }
 
     .subject-detail {
       margin-top: var(--base-size-2);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-normal);
-      line-height: var(--lv-line-height-tight);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-normal);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .search-state {
@@ -347,8 +347,8 @@ class WorkspaceAccessControl extends LitElement {
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-panel);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
       padding: var(--base-size-16);
       text-align: center;
     }
@@ -395,9 +395,9 @@ class WorkspaceAccessControl extends LitElement {
 
     .status {
       border-radius: var(--lv-radius-default);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
+      line-height: var(--base-text-lineHeight-snug);
       padding: var(--base-size-8) var(--base-size-12);
     }
 
@@ -447,8 +447,8 @@ class WorkspaceAccessControl extends LitElement {
       border-radius: var(--lv-radius-tight);
       background: var(--lv-bg-panel);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
       padding: var(--base-size-20) var(--base-size-16);
       text-align: center;
     }

@@ -553,7 +553,7 @@ function testDocument(): string {
         <style>
           html, body { margin: 0; min-height: 100%; }
           body {
-            --fontStack-system: system-ui;
+            --fontStack-system: system-ui; --fontStack-monospace: ui-monospace; --text-codeBlock-size: 13px; --base-text-weight-normal: 400; --base-text-weight-medium: 500; --base-text-weight-semibold: 600; --base-text-lineHeight-tight: 1.25; --base-text-lineHeight-snug: 1.375; --base-text-lineHeight-normal: 1.5; --base-text-lineHeight-relaxed: 1.625; --lv-type-caption: 400 12px/1.25 system-ui; --lv-type-secondary: 400 12px/1.625 system-ui; --lv-type-body: 400 14px/1.5 system-ui; --lv-type-body-large: 400 16px/1.5 system-ui; --lv-type-section-title: 600 16px/1.5 system-ui; --lv-type-page-title: 600 20px/1.625 system-ui; --lv-type-title-large: 600 32px/1.5 system-ui; --lv-type-code-block: 400 13px/1.5 ui-monospace; --lv-type-code-inline: 400 0.9285em ui-monospace;
             --lv-bg-app: #f6f8fa;
             --lv-bg-panel: #fff;
             --lv-bg-control: #f6f8fa;
@@ -581,9 +581,9 @@ function testDocument(): string {
             --lv-control-medium: 32px;
             --lv-control-small: 28px;
             --lv-chat-stack-width: 760px;
-            --lv-font-size-body-sm: 14px;
-            --lv-font-weight-strong: 600;
-            --lv-line-height-normal: 1.5;
+
+
+
             --lv-transition-fast: 160ms ease;
             --lv-shadow-floating-sm: 0 8px 24px rgb(0 0 0 / .12);
             --lv-spinner-size-md: 16px;

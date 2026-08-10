@@ -94,7 +94,7 @@ class ChatThread extends LitElement {
       background: var(--lv-bg-panel);
       padding: var(--lv-chat-thread-padding);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
       text-align: center;
     }
 
@@ -121,8 +121,8 @@ class ChatThread extends LitElement {
 
     .label {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .bubble {
@@ -130,8 +130,8 @@ class ChatThread extends LitElement {
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-panel);
       padding: var(--lv-chat-bubble-padding-block) var(--lv-chat-bubble-padding-inline);
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-relaxed);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-relaxed);
       overflow-wrap: anywhere;
     }
 
@@ -250,10 +250,9 @@ class ChatThread extends LitElement {
       padding: var(--lv-space-2xs) 0;
       color: var(--lv-fg-muted);
       cursor: pointer;
-      font: inherit;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
+      line-height: var(--base-text-lineHeight-snug);
       text-align: left;
       transition: color var(--lv-transition-fast);
     }
@@ -352,7 +351,7 @@ class ChatThread extends LitElement {
       border-left: var(--lv-border-width-focus) solid var(--lv-line-muted);
       padding-left: var(--lv-space-lg);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-secondary);
       animation: tool-details-open var(--lv-transition-normal);
       transform-origin: top left;
     }
@@ -364,7 +363,7 @@ class ChatThread extends LitElement {
 
     .tool-detail-label {
       color: var(--lv-fg-muted);
-      font-weight: var(--lv-font-weight-medium);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .tool-detail-block pre {
@@ -377,9 +376,7 @@ class ChatThread extends LitElement {
       margin: 0;
       padding: var(--lv-chat-pre-padding-block) var(--lv-chat-pre-padding-inline);
       color: var(--lv-fg-default);
-      font-family: var(--fontStack-monospace);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-code-block);
       white-space: pre-wrap;
     }
 

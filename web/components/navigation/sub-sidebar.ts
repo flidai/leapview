@@ -135,8 +135,8 @@ class SubSidebar extends LitElement {
       color: var(--lv-fg-default);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
       text-transform: uppercase;
     }
@@ -228,9 +228,8 @@ class SubSidebar extends LitElement {
       cursor: pointer;
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-align: left;
-      font: inherit;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .item-link.unnumbered {
@@ -272,10 +271,10 @@ class SubSidebar extends LitElement {
       height: var(--control-xsmall-size);
       place-items: center;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
       font-variant-numeric: tabular-nums;
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-none);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: 1;
     }
 
     .item-link:hover .item-index,
@@ -306,9 +305,9 @@ class SubSidebar extends LitElement {
     }
 
     .item-title {
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-tight);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .pending-spinner {
@@ -319,20 +318,19 @@ class SubSidebar extends LitElement {
     .item-link:hover .item-title,
     .item-link:focus-visible .item-title,
     .item-link[aria-current='page'] .item-title {
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .item-meta {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-none);
+      font: var(--lv-type-caption);
+      line-height: 1;
     }
 
     .empty {
       padding: 8px 9px;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-relaxed);
+      font: var(--lv-type-secondary);
     }
 
     :host([data-collapsed]) header {
@@ -399,9 +397,9 @@ class SubSidebar extends LitElement {
       padding: 0 var(--control-xsmall-paddingInline-normal) 0 0;
       background: var(--lv-sidebar-bg);
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-none);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: 1;
       pointer-events: none;
       transform: translateY(-50%);
       animation: rail-title-fade-in var(--motion-duration-micro) var(--motion-easing-enter);
@@ -425,7 +423,7 @@ class SubSidebar extends LitElement {
       place-items: center;
       color: var(--lv-fg-default);
       font-variant-numeric: tabular-nums;
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .hover-title-name {
@@ -443,10 +441,10 @@ class SubSidebar extends LitElement {
       display: block;
       margin: var(--base-size-8) auto;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
-      line-height: var(--lv-line-height-none);
+      line-height: 1;
       text-orientation: mixed;
       text-transform: uppercase;
       transform: rotate(180deg);

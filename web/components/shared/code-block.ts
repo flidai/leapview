@@ -296,8 +296,7 @@ const codeBlockStyles = `
     border: 0;
     border-radius: 0;
     padding: var(--base-size-16);
-    font-family: var(--fontStack-monospace, ui-monospace, SFMono-Regular, SFMono-Regular, Consolas, Liberation Mono, monospace);
-    font-size: var(--lv-font-size-body-md, 0.875rem);
+    font: var(--lv-type-code-block);
     line-height: 1.65;
     tab-size: 2;
   }
@@ -306,8 +305,8 @@ const codeBlockStyles = `
   lv-code-block[compact] .code-block-fallback {
     max-height: var(--lv-chat-tool-max-height, 18rem);
     padding: var(--lv-chat-pre-padding-block, var(--base-size-8)) var(--lv-chat-pre-padding-inline, var(--base-size-12));
-    font-size: var(--lv-font-size-caption, 0.75rem);
-    line-height: var(--lv-line-height-snug, 1.35);
+    font: var(--lv-type-caption);
+    line-height: var(--base-text-lineHeight-snug);
     white-space: pre;
   }
 
@@ -315,8 +314,8 @@ const codeBlockStyles = `
   lv-code-block[dense] .code-block-fallback {
     max-height: min(22rem, 52vh);
     padding: var(--base-size-12);
-    font-size: var(--lv-font-size-caption, 0.75rem);
-    line-height: var(--lv-line-height-normal, 1.5);
+    font: var(--lv-type-caption);
+    line-height: var(--base-text-lineHeight-normal);
   }
 
   lv-code-block[copy]:not([toolbar]) .shiki,
@@ -345,9 +344,8 @@ const codeBlockStyles = `
     background: var(--lv-bg-panel);
     color: var(--lv-fg-muted);
     cursor: pointer;
-    font: inherit;
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium, 500);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
     padding: 0 var(--base-size-8);
   }
 
@@ -369,8 +367,8 @@ const codeBlockStyles = `
 
   lv-code-block .code-block-language {
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption, 0.75rem);
-    font-weight: var(--lv-font-weight-medium, 500);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
   }
 
   lv-code-block[toolbar] .code-block-copy {
@@ -438,7 +436,7 @@ const codeBlockStyles = `
     border-top: var(--lv-border-muted);
     padding: var(--base-size-8) var(--base-size-16);
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
+    font: var(--lv-type-caption);
   }
 `
 

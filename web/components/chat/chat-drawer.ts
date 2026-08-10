@@ -50,7 +50,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
       border-left: 0 solid var(--lv-line-muted);
       background: var(--lv-bg-app);
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
       --lv-chat-stack-width: 100%;
     }
 
@@ -86,8 +86,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
       flex: 1;
       align-items: center;
 			gap: var(--lv-space-sm);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .toolbar-actions {
@@ -137,7 +137,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
       border: 0;
 			padding: 0;
       background: var(--lv-bg-app);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     .context-line {
@@ -150,7 +150,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
     .page-context {
       overflow: hidden;
       color: var(--lv-fg-default);
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
       text-overflow: ellipsis;
       white-space: nowrap;
     }

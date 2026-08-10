@@ -23,6 +23,7 @@ import (
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 )
 
 type synchronizedResponseRecorder struct {
@@ -109,10 +110,12 @@ func TestAdminPagesRenderReadOnlyAccessData(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"}), DefaultWorkspaceID: "test"}))
 
 	cases := []struct {
-		path string
-		want []string
+		path   string
+		status int
+		want   []string
 	}{
-		{path: "/admin", want: []string{"<lv-admin-page", `section="general"`, `/updates?route=admin&amp;section=general`}},
+		{path: "/admin", status: http.StatusSeeOther, want: []string{"/admin/profile"}},
+		{path: "/admin/profile", want: []string{"<lv-admin-page", `section="profile"`, `/updates?route=admin&amp;section=profile`}},
 		{path: "/admin/principals", want: []string{"<lv-admin-page", `section="principals"`, `/updates?route=admin&amp;section=principals`}},
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`}},
@@ -127,14 +130,21 @@ func TestAdminPagesRenderReadOnlyAccessData(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
 		server.Routes().ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s status = %d body=%s", tc.path, rec.Code, rec.Body.String())
+		wantStatus := tc.status
+		if wantStatus == 0 {
+			wantStatus = http.StatusOK
+		}
+		if rec.Code != wantStatus {
+			t.Fatalf("%s status = %d want %d body=%s", tc.path, rec.Code, wantStatus, rec.Body.String())
 		}
 		body := rec.Body.String()
 		for _, want := range tc.want {
-			if !strings.Contains(body, want) {
+			if !strings.Contains(body, want) && !strings.Contains(rec.Header().Get("Location"), want) {
 				t.Fatalf("%s missing %q:\n%s", tc.path, want, body)
 			}
+		}
+		if tc.status != 0 {
+			continue
 		}
 		for _, notWant := range []string{"/admin/access", "Assign role", "Remove access", "<form", "data-on:lv-workspace-access-upsert", "refresh-materializations"} {
 			if strings.Contains(body, notWant) {
@@ -460,6 +470,38 @@ func TestAdminQueryHistoryCommandRequiresCSRF(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("POST without CSRF status = %d, want %d body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestAdminPrincipalSearchCommandPatchesOnlyDirectoryRows(t *testing.T) {
+	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
+	store := testStore(t)
+	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/principals/search", strings.NewReader(`{"entityListQuery":"analyst","entityListFilter":"all"}`))
+	req.Header.Set("Authorization", "Bearer dev")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	patches := ssetest.PatchSignals(t, rec.Body.String())
+	if len(patches) != 1 {
+		t.Fatalf("patch count = %d, want 1: %s", len(patches), rec.Body.String())
+	}
+	page, ok := patches[0]["page"].(map[string]any)
+	if !ok || len(patches[0]) != 1 || len(page) != 1 {
+		t.Fatalf("search command patched more than directory results: %#v", patches[0])
+	}
+	directory, ok := page["directoryList"].(map[string]any)
+	if !ok || len(directory) != 1 {
+		t.Fatalf("directory patch = %#v", page["directoryList"])
+	}
+	if _, ok := directory["groups"].([]any); !ok {
+		t.Fatalf("directory groups = %#v", directory["groups"])
 	}
 }
 
@@ -811,23 +853,17 @@ func TestAdminGroupDetailReturnsNotFoundForMissingGroup(t *testing.T) {
 	}
 }
 
-func TestAdminGeneralRendersWithoutStore(t *testing.T) {
+func TestAdminDefaultsToProfileWithoutStore(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, assemblyConfig{DefaultWorkspaceID: "test"})
 	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d want %d body=%s", rec.Code, http.StatusSeeOther, rec.Body.String())
 	}
-	body := rec.Body.String()
-	for _, want := range []string{"<lv-admin-page", `section="general"`, `/updates?route=admin&amp;section=general`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("admin general missing %q:\n%s", want, body)
-		}
-	}
-	if strings.Contains(body, "Access store is not configured") || strings.Contains(body, "data-signals=") {
-		t.Fatalf("admin general should stream read-model state instead of embedding it:\n%s", body)
+	if location := rec.Header().Get("Location"); location != "/admin/profile" {
+		t.Fatalf("location = %q, want /admin/profile", location)
 	}
 }
 

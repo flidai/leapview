@@ -1,21 +1,29 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import {
-  Activity,
-  Database,
-  Layers,
+	Activity,
+	ArrowLeft,
+	Bot,
+	Database,
+	Globe,
+	History,
+	Layers,
   LayoutDashboard,
   Menu,
   MessagesSquare,
-  Monitor,
-  Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Plus,
-  Plug,
-  Settings,
+	Monitor,
+	Moon,
+	PanelLeftClose,
+	PanelLeftOpen,
+	Plus,
+	Plug,
+	Search,
+	Settings,
   Sun,
   TableProperties,
+	Users,
+	UsersRound,
+	User,
   X,
   type IconNode,
 } from 'lucide'
@@ -39,6 +47,7 @@ type NavGroup = {
 
 type SidebarConfig = {
   active: string
+  admin?: boolean
   workspaceTitle?: string
   dashboardTitle?: string
   pageTitle?: string
@@ -82,8 +91,13 @@ type ThemeMode = 'system' | 'light' | 'dark'
 
 type IconName =
   | 'catalog'
+  | 'back'
+  | 'bot'
+  | 'database'
   | 'dashboard'
   | 'chat'
+  | 'globe'
+  | 'history'
   | 'model'
   | 'data'
   | 'cache'
@@ -92,6 +106,10 @@ type IconName =
   | 'sun'
   | 'moon'
   | 'activity'
+  | 'users'
+  | 'users-round'
+  | 'user'
+  | 'search'
   | 'collapse'
   | 'expand'
   | 'menu'
@@ -140,6 +158,8 @@ class LeapViewSidebar extends LitElement {
   @state() private mode: ThemeMode = storedThemeMode()
   @state() private collapsed = storedCollapsed()
   @state() private mobileOpen = false
+  @state() private searchQuery = ''
+  private collapseStateInitialized = false
   private mobileMediaQuery?: MediaQueryList
 
   static styles = css`
@@ -181,14 +201,54 @@ class LeapViewSidebar extends LitElement {
       gap: var(--base-size-12);
     }
 
+    .brand-back {
+      position: relative;
+      box-sizing: border-box;
+      display: grid;
+      min-width: 0;
+      flex: 1 1 auto;
+      grid-template-columns: calc(var(--control-xsmall-size) + var(--base-size-2)) minmax(0, 1fr);
+      min-height: var(--control-medium-size);
+      align-items: center;
+      gap: var(--base-size-8);
+      border: var(--lv-border-transparent);
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-muted);
+      padding: 0 var(--control-xsmall-paddingInline-normal);
+      text-decoration: none;
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
+    }
+
+    .brand-back:hover,
+    .brand-back:focus-visible {
+      background: var(--control-bgColor-hover);
+      color: var(--lv-fg-default);
+      outline: 0;
+    }
+
+    .brand-back-icon {
+      display: grid;
+      width: var(--control-xsmall-size);
+      height: var(--control-xsmall-size);
+      flex: 0 0 auto;
+      place-items: center;
+    }
+
+    .brand-back-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .name {
       overflow: hidden;
       min-width: 0;
       color: var(--lv-fg-default);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-lg);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body-large);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
     }
 
@@ -216,20 +276,60 @@ class LeapViewSidebar extends LitElement {
       outline-offset: var(--focus-outline-offset);
     }
 
-    .collapse-button:disabled {
-      cursor: default;
-      opacity: 0.7;
-    }
-
-    .collapse-button:disabled:hover {
-      border-color: var(--lv-button-invisible-border-rest);
-      color: var(--fgColor-disabled);
-    }
-
     .mobile-menu-button,
     .mobile-close-button,
     .mobile-backdrop,
     .mobile-drawer-header {
+      display: none;
+    }
+
+    .mobile-header {
+      display: none;
+    }
+
+    .sidebar-search {
+      position: relative;
+      display: grid;
+      min-width: 0;
+    }
+
+    .sidebar-search-icon {
+      position: absolute;
+      top: 50%;
+      left: var(--control-xsmall-paddingInline-normal);
+      display: grid;
+      width: var(--control-xsmall-size);
+      height: var(--control-xsmall-size);
+      place-items: center;
+      color: var(--lv-fg-muted);
+      pointer-events: none;
+      transform: translateY(-50%);
+    }
+
+    .sidebar-search input {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: var(--control-medium-size);
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-default);
+      padding: 0 var(--control-xsmall-paddingInline-normal) 0 calc(var(--control-xsmall-size) + var(--base-size-8));
+      font: var(--lv-type-body);
+    }
+
+    .sidebar-search input::placeholder {
+      color: var(--lv-fg-muted);
+      opacity: 1;
+    }
+
+    .sidebar-search input:focus {
+      border-color: var(--lv-fg-accent);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+    .mobile-sidebar-search {
       display: none;
     }
 
@@ -248,6 +348,22 @@ class LeapViewSidebar extends LitElement {
       gap: var(--base-size-2);
     }
 
+    .nav-group-label {
+      overflow: hidden;
+      margin: var(--base-size-4) var(--control-xsmall-paddingInline-normal) var(--base-size-2);
+      color: var(--fgColor-disabled);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
+    }
+
+    .search-empty {
+      margin: var(--base-size-8) var(--control-xsmall-paddingInline-normal);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
     .primary-action {
       margin-bottom: var(--base-size-4);
     }
@@ -257,7 +373,7 @@ class LeapViewSidebar extends LitElement {
       border-color: transparent;
       background: transparent;
       color: var(--lv-fg-default);
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .primary-action .nav-item:hover,
@@ -301,8 +417,8 @@ class LeapViewSidebar extends LitElement {
       color: var(--fgColor-disabled);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
     }
 
@@ -321,15 +437,15 @@ class LeapViewSidebar extends LitElement {
       min-width: 0;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .history-empty {
       padding: var(--base-size-4) var(--control-xsmall-paddingInline-normal);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .pending-spinner {
@@ -354,8 +470,8 @@ class LeapViewSidebar extends LitElement {
       color: var(--lv-fg-muted);
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-decoration: none;
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .nav-text {
@@ -369,8 +485,8 @@ class LeapViewSidebar extends LitElement {
       color: inherit;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .nav-item:hover,
@@ -447,8 +563,8 @@ class LeapViewSidebar extends LitElement {
       border-radius: 50%;
       background: var(--bgColor-neutral-muted);
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
     }
 
@@ -466,14 +582,14 @@ class LeapViewSidebar extends LitElement {
     }
 
     .user-name {
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .user-role {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .actions {
@@ -497,8 +613,8 @@ class LeapViewSidebar extends LitElement {
       color: var(--lv-button-fg-rest);
       cursor: pointer;
       padding: 0;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .theme-button:hover,
@@ -611,6 +727,28 @@ class LeapViewSidebar extends LitElement {
         display: none;
       }
 
+      .mobile-header {
+        display: flex;
+        min-width: 0;
+        min-height: var(--control-large-size);
+        align-items: center;
+        gap: var(--base-size-8);
+        padding: 0 var(--base-size-12);
+      }
+
+      .mobile-header-title {
+        min-width: 0;
+        flex: 1 1 auto;
+        color: var(--lv-fg-default);
+        font: var(--lv-type-body-large);
+        font-weight: var(--base-text-weight-semibold);
+      }
+
+      .mobile-sidebar-search {
+        display: grid;
+        margin-bottom: var(--base-size-8);
+      }
+
       .mobile-menu-button,
       .mobile-close-button {
         display: inline-grid;
@@ -623,10 +761,6 @@ class LeapViewSidebar extends LitElement {
         color: var(--lv-fg-muted);
         cursor: pointer;
         padding: 0;
-      }
-
-      .mobile-menu-button {
-        margin: var(--base-size-8);
       }
 
       .mobile-menu-button:hover,
@@ -703,8 +837,8 @@ class LeapViewSidebar extends LitElement {
       }
 
       .mobile-drawer-title {
-        font-size: var(--lv-font-size-body-lg);
-        font-weight: var(--lv-font-weight-strong);
+        font: var(--lv-type-body-large);
+        font-weight: var(--base-text-weight-semibold);
       }
 
       .history,
@@ -780,6 +914,16 @@ class LeapViewSidebar extends LitElement {
     }))
   }
 
+  protected willUpdate(changedProperties: PropertyValues<this>): void {
+    const previousConfig = changedProperties.get('config') as SidebarConfig | undefined
+    const enteringCompactMode = this.config.compact && !previousConfig?.compact
+    const adminModeChanged = this.config.admin !== previousConfig?.admin
+    if (changedProperties.has('config') && (!this.collapseStateInitialized || enteringCompactMode || adminModeChanged)) {
+      this.collapsed = this.config.admin ? false : storedCollapsed(this.config.compact)
+      this.collapseStateInitialized = true
+    }
+  }
+
   protected updated(): void {
     this.syncCollapsedState()
   }
@@ -787,15 +931,13 @@ class LeapViewSidebar extends LitElement {
   private syncCollapsedState(): void {
     if (this.effectiveCollapsed) {
       this.setAttribute('data-collapsed', '')
-      this.style.setProperty('--lv-sidebar-width', 'var(--lv-sidebar-width-collapsed)')
     } else {
       this.removeAttribute('data-collapsed')
-      this.style.setProperty('--lv-sidebar-width', 'var(--lv-sidebar-width-expanded)')
     }
   }
 
   private toggleCollapsed(): void {
-    if (this.config.compact) return
+    if (this.config.admin) return
     this.collapsed = !this.collapsed
     try {
       localStorage.setItem('leapview-sidebar-collapsed', String(this.collapsed))
@@ -841,50 +983,89 @@ class LeapViewSidebar extends LitElement {
   render() {
     const collapsed = this.effectiveCollapsed
     const mobileNavigationClosed = this.isMobileViewport && !this.mobileOpen
+    const groups = this.filteredGroups()
     return html`
       <aside aria-label="${leapViewBrandName} workspace" ?data-mobile-open=${this.mobileOpen}>
         <header class="brand">
           <div class="brand-row">
-            ${collapsed ? null : html`<span class="name">${leapViewBrandName}</span>`}
-            <button
-              class="collapse-button"
-              type="button"
-              aria-label=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
-              aria-pressed=${String(collapsed)}
-              title=${this.config.compact ? 'Workspace navigation is compact on report pages' : collapsed ? 'Expand navigation' : 'Collapse navigation'}
-              ?disabled=${this.config.compact}
-              @click=${this.toggleCollapsed}
-            >
-              ${icon(collapsed ? 'expand' : 'collapse')}
-            </button>
+            ${this.config.admin && this.config.primaryAction ? html`
+              <a
+                class="nav-item brand-back"
+                href=${this.config.primaryAction.href}
+                aria-label=${this.config.primaryAction.label}
+                title=${this.config.primaryAction.label}
+                @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.primaryAction!.href)}
+              >
+                <span class="brand-back-icon">${icon(this.config.primaryAction.icon)}</span>
+                <span class="brand-back-text">${this.config.primaryAction.label}</span>
+              </a>
+            ` : html`<span class="name">${leapViewBrandName}</span>`}
+            ${this.config.admin ? null : html`
+              <button
+                class="collapse-button"
+                type="button"
+                aria-label=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
+                aria-pressed=${String(collapsed)}
+                title=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
+                @click=${this.toggleCollapsed}
+              >
+                ${icon(collapsed ? 'expand' : 'collapse')}
+              </button>
+            `}
           </div>
+          ${this.config.admin ? this.renderSearch() : null}
         </header>
 
-        <button
-          class="mobile-menu-button"
-          type="button"
-          aria-label="Open navigation"
-          aria-hidden=${String(this.mobileOpen)}
-          aria-controls="mobile-navigation"
-          aria-expanded=${String(this.mobileOpen)}
-          title="Open navigation"
-          ?inert=${this.mobileOpen}
-          @click=${this.toggleMobileNavigation}
-        >
-          ${icon(this.mobileOpen ? 'close' : 'menu')}
-        </button>
+        <div class="mobile-header">
+          ${this.config.admin && this.config.primaryAction ? html`
+            <a
+              class="mobile-header-title brand-back"
+              href=${this.config.primaryAction.href}
+              aria-label=${this.config.primaryAction.label}
+              title=${this.config.primaryAction.label}
+              @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.primaryAction!.href)}
+            >
+              <span class="brand-back-icon">${icon(this.config.primaryAction.icon)}</span>
+              <span class="brand-back-text">${this.config.primaryAction.label}</span>
+            </a>
+          ` : html`<strong class="mobile-header-title">${leapViewBrandName}</strong>`}
+          <button
+            class="mobile-menu-button"
+            type="button"
+            aria-label="Open navigation"
+            aria-hidden=${String(this.mobileOpen)}
+            aria-controls="mobile-navigation"
+            aria-expanded=${String(this.mobileOpen)}
+            title="Open navigation"
+            ?inert=${this.mobileOpen}
+            @click=${this.toggleMobileNavigation}
+          >
+            ${icon('menu')}
+          </button>
+        </div>
 
         <div class="mobile-backdrop" aria-hidden="true" @click=${() => this.closeMobileNavigation(true)}></div>
 
         <nav id="mobile-navigation" aria-label="Primary" aria-hidden=${String(mobileNavigationClosed)} ?inert=${mobileNavigationClosed}>
           <div class="mobile-drawer-header">
-            <strong class="mobile-drawer-title">${leapViewBrandName}</strong>
+            ${this.config.admin && this.config.primaryAction ? html`
+              <a
+                class="mobile-drawer-title nav-item brand-back"
+                href=${this.config.primaryAction.href}
+                aria-label=${this.config.primaryAction.label}
+                @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.primaryAction!.href)}
+              >
+                <span class="brand-back-icon">${icon(this.config.primaryAction.icon)}</span>
+                <span class="brand-back-text">${this.config.primaryAction.label}</span>
+              </a>
+            ` : html`<strong class="mobile-drawer-title">${leapViewBrandName}</strong>`}
             <button class="mobile-close-button" type="button" aria-label="Close navigation" title="Close navigation" @click=${() => this.closeMobileNavigation(true)}>
               ${icon('close')}
             </button>
           </div>
-          ${this.config.primaryAction ? html`
-            <section class="nav-group primary-action" aria-label="Chat action">
+          ${this.config.admin ? this.renderSearch(true) : null}
+          ${this.config.primaryAction && !this.config.admin ? html`
+            <section class="nav-group primary-action" aria-label=${this.config.primaryAction.label}>
               ${this.renderLink({
                 id: 'primary-action',
                 label: this.config.primaryAction.label,
@@ -893,11 +1074,12 @@ class LeapViewSidebar extends LitElement {
               })}
             </section>
           ` : null}
-          ${this.config.groups.map((group) => html`
+          ${groups.length > 0 ? groups.map((group) => html`
             <section class="nav-group" aria-label=${group.label}>
+              <strong class="nav-group-label">${group.label}</strong>
               ${group.items.map((item) => item.disabled ? this.renderDisabledItem(item) : this.renderLink(item))}
             </section>
-          `)}
+          `) : this.config.admin ? html`<p class="search-empty">No matching pages</p>` : null}
           ${this.renderHistory()}
         </nav>
 
@@ -920,7 +1102,37 @@ class LeapViewSidebar extends LitElement {
   }
 
   private get effectiveCollapsed(): boolean {
-    return Boolean(this.config.compact || this.collapsed)
+    return !this.config.admin && this.collapsed
+  }
+
+  private renderSearch(mobile = false) {
+    return html`
+      <label class=${mobile ? 'sidebar-search mobile-sidebar-search' : 'sidebar-search'}>
+        <span class="sidebar-search-icon" aria-hidden="true">${icon('search')}</span>
+        <input
+          type="search"
+          aria-label="Search admin navigation"
+          placeholder="Search..."
+          autocomplete="off"
+          .value=${this.searchQuery}
+          @input=${this.updateSearchQuery}
+        />
+      </label>
+    `
+  }
+
+  private updateSearchQuery(event: Event): void {
+    this.searchQuery = (event.target as HTMLInputElement).value
+  }
+
+  private filteredGroups(): NavGroup[] {
+    if (!this.config.admin || !this.searchQuery.trim()) return this.config.groups
+    const query = this.searchQuery.trim().toLocaleLowerCase()
+    return this.config.groups.flatMap((group) => {
+      const groupMatches = group.label.toLocaleLowerCase().includes(query)
+      const items = groupMatches ? group.items : group.items.filter((item) => item.label.toLocaleLowerCase().includes(query))
+      return items.length > 0 ? [{ ...group, items }] : []
+    })
   }
 
   private nextTheme(): ThemeMode {
@@ -1010,6 +1222,10 @@ function icon(name: string) {
     catalog: Layers,
     dashboard: LayoutDashboard,
     chat: MessagesSquare,
+    bot: Bot,
+    database: Database,
+    globe: Globe,
+    history: History,
     model: Database,
     data: Plug,
     cache: TableProperties,
@@ -1018,6 +1234,11 @@ function icon(name: string) {
     sun: Sun,
     moon: Moon,
     activity: Activity,
+    back: ArrowLeft,
+    users: Users,
+    'users-round': UsersRound,
+    user: User,
+    search: Search,
     collapse: PanelLeftClose,
     expand: PanelLeftOpen,
     menu: Menu,
@@ -1028,12 +1249,15 @@ function icon(name: string) {
   return lucideIcon(icons[name as IconName] ?? Layers)
 }
 
-function storedCollapsed(): boolean {
+function storedCollapsed(fallback = false): boolean {
   try {
-    return localStorage.getItem('leapview-sidebar-collapsed') === 'true'
+    const stored = localStorage.getItem('leapview-sidebar-collapsed')
+    if (stored === 'true') return true
+    if (stored === 'false') return false
   } catch {
-    return false
+    // Ignore storage failures and use the route's default state.
   }
+  return fallback
 }
 
 function storedThemeMode(): ThemeMode {

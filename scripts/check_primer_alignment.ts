@@ -6,6 +6,7 @@ export type PrimerAlignmentViolation = {
   line: number;
   kind:
     | "raw-color"
+    | "raw-font-size"
     | "raw-var-fallback"
     | "undefined-token"
     | "runtime-undefined-token"
@@ -13,6 +14,7 @@ export type PrimerAlignmentViolation = {
     | "standard-state-color-mix"
     | "asset-token"
     | "primer-primary-button-token"
+    | "primitive-typography-alias"
     | "button-contract";
   message: string;
 };
@@ -157,6 +159,21 @@ function scanCssForValueViolations(file: string, css: string, violations: Primer
 
   for (const match of uncommented.matchAll(/#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(/g)) {
     addViolation(violations, file, uncommented, match.index ?? 0, "raw-color", "Use a Primer or LeapView semantic token instead of a raw color.");
+  }
+
+  for (const match of uncommented.matchAll(/\bfont-size\s*:[^;{}]*[0-9]*\.?[0-9]+(?:px|rem)\b/g)) {
+    addViolation(violations, file, uncommented, match.index ?? 0, "raw-font-size", "Use a Primer typography token or LeapView semantic type recipe instead of a raw font size.");
+  }
+
+  for (const match of uncommented.matchAll(/--lv-(?:font-(?:family|size|weight)|line-height)-[A-Za-z0-9_-]+\s*:\s*var\(/g)) {
+    addViolation(
+      violations,
+      file,
+      uncommented,
+      match.index ?? 0,
+      "primitive-typography-alias",
+      "Use Primer typography primitives directly or define a complete --lv-type-* semantic recipe.",
+    );
   }
 
   for (const match of uncommented.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)\s*,\s*(#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(|[0-9.]+(?:px|rem|em|ms|s)\b|white\b|black\b|transparent\b)/g)) {

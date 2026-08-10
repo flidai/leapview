@@ -46,7 +46,7 @@ class VisualArtifact extends LitElement {
       place-items: center;
       padding: var(--lv-space-lg);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
       text-align: center;
     }
   `

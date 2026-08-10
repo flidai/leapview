@@ -26,11 +26,12 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
       grid-template-columns: auto minmax(0, 1fr);
       background: var(--lv-bg-app);
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
     }
 
     lv-sidebar {
       border-right: var(--lv-border-default);
+      min-width: var(--lv-sidebar-width);
     }
 
     main {
@@ -52,6 +53,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
       lv-sidebar {
         border-right: 0;
         border-bottom: var(--lv-border-default);
+        min-width: 0;
       }
     }
   `

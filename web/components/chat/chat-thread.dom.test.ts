@@ -39,7 +39,7 @@ beforeAll(async () => {
             :root {
               --lv-chart-surface: rgb(1, 2, 3);
               --lv-border-default: 2px solid rgb(4, 5, 6);
-              --fontStack-system: system-ui;
+              --fontStack-system: system-ui; --fontStack-monospace: ui-monospace; --text-codeBlock-size: 13px; --base-text-weight-normal: 400; --base-text-weight-medium: 500; --base-text-weight-semibold: 600; --base-text-lineHeight-tight: 1.25; --base-text-lineHeight-snug: 1.375; --base-text-lineHeight-normal: 1.5; --base-text-lineHeight-relaxed: 1.625; --lv-type-caption: 400 12px/1.25 system-ui; --lv-type-secondary: 400 12px/1.625 system-ui; --lv-type-body: 400 14px/1.5 system-ui; --lv-type-body-large: 400 16px/1.5 system-ui; --lv-type-section-title: 600 16px/1.5 system-ui; --lv-type-page-title: 600 20px/1.625 system-ui; --lv-type-title-large: 600 32px/1.5 system-ui; --lv-type-code-block: 400 13px/1.5 ui-monospace; --lv-type-code-inline: 400 0.9285em ui-monospace;
               --fontStack-monospace: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	              --lv-bg-app: rgb(11, 12, 13);
               --lv-bg-page: #fff;
@@ -59,15 +59,15 @@ beforeAll(async () => {
               --base-size-16: 16px;
               --base-size-20: 20px;
               --lv-space-sm: 8px;
-              --lv-font-size-caption: 12px;
-              --lv-font-size-body-sm: 14px;
-              --lv-font-size-body-md: 16px;
-              --lv-font-size-title-sm: 18px;
-              --lv-font-size-title-md: 22px;
-              --lv-font-weight-strong: 600;
-              --lv-line-height-compact: 1.3;
-              --lv-line-height-normal: 1.5;
-              --lv-line-height-relaxed: 1.55;
+
+
+
+
+
+
+
+
+
               --lv-chat-thread-padding: 16px;
               --lv-chat-stack-width: 760px;
               --lv-chat-stack-gap: 16px;

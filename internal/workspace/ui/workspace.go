@@ -25,14 +25,19 @@ func WorkspacesPage(catalog catalog.Catalog, workspaces []workspaceview.Workspac
 }
 
 func WorkspacesPageForEnvironment(catalog catalog.Catalog, workspaces []workspaceview.WorkspaceView, environment, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
-	page := workspaceCatalogPageSignal(workspaces)
+	return WorkspacesPageForEnvironmentQuery(catalog, workspaces, environment, "", roleLabel, "", chromeOptions...)
+}
+
+func WorkspacesPageForEnvironmentQuery(catalog catalog.Catalog, workspaces []workspaceview.WorkspaceView, environment, query, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
+	page := workspaceCatalogPageSignal(workspaces, query, "")
 	page.Environment = uisignals.Optional(environment)
 	catalog = catalogWithoutWorkspaceContext(catalog)
 	return workspaceRouteDocument("Workspaces", catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspace,
 		g.El("lv-workspace-page",
 			g.Attr("slot", "page"),
+			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Post("/workspaces/search", "entityListQuery", "entityListFilter")),
 		),
-		workspaceDocumentExtras{},
+		workspaceDocumentExtras{CSRFToken: csrfToken},
 		chromeOptions,
 	)
 }
@@ -42,10 +47,20 @@ func WorkspacesBootstrapSignals(catalog catalog.Catalog, workspaces []workspacev
 }
 
 func WorkspacesBootstrapSignalsForEnvironment(catalog catalog.Catalog, workspaces []workspaceview.WorkspaceView, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
-	page := workspaceCatalogPageSignal(workspaces)
+	return WorkspacesBootstrapSignalsForEnvironmentQuery(catalog, workspaces, environment, "", roleLabel, chromeOptions...)
+}
+
+func WorkspacesBootstrapSignalsForEnvironmentQuery(catalog catalog.Catalog, workspaces []workspaceview.WorkspaceView, environment, query, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
+	page := workspaceCatalogPageSignal(workspaces, query, "")
 	page.Environment = uisignals.Optional(environment)
 	catalog = catalogWithoutWorkspaceContext(catalog)
 	return workspaceRouteBootstrapSignals(catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspace, nil, chromeOptions)
+}
+
+func WorkspacesListResultsPatch(workspaces []workspaceview.WorkspaceView) map[string]any {
+	return map[string]any{"page": map[string]any{
+		"workspaces": workspaceCatalogItemSignals(workspaces),
+	}}
 }
 
 func WorkspacePage(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, assets []workspaceview.AssetView, activeType, query, roleLabel string, access WorkspaceAccessResponse, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
@@ -58,7 +73,9 @@ func WorkspacePageForEnvironment(catalog catalog.Catalog, workspace workspacevie
 		g.Attr("slot", "page"),
 	}
 	accessAttrs, extras := workspaceAccessRouteBridge(workspace.ID, access, csrfToken)
+	extras.CSRFToken = csrfToken
 	attrs = append(attrs, accessAttrs...)
+	attrs = append(attrs, workspaceAssetFilterRouteBridge(workspace.ID, environment)...)
 	return workspaceRouteDocument(workspace.Title, catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspace,
 		g.El("lv-workspace-page", attrs...),
 		extras,
@@ -79,11 +96,18 @@ func WorkspaceBootstrapSignalsForEnvironment(catalog catalog.Catalog, workspace 
 	return workspaceRouteBootstrapSignals(catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspace, extra, chromeOptions)
 }
 
-func ConnectionsPage(catalog catalog.Catalog, workspaceID string, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView, activeType, query, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
-	return ConnectionsPageForEnvironment(catalog, workspaceID, assets, edges, activeType, query, "", roleLabel, chromeOptions...)
+func WorkspaceAssetListResultsPatch(workspaceID string, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView) map[string]any {
+	list := workspaceAssetListSignal(workspaceID, assets, edges, "", "", nil, "", "")
+	return map[string]any{"page": map[string]any{
+		"assetList": map[string]any{"assets": list.Assets},
+	}}
 }
 
-func ConnectionsPageForEnvironment(catalog catalog.Catalog, workspaceID string, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView, activeType, query, environment, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
+func ConnectionsPage(catalog catalog.Catalog, workspaceID string, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView, activeType, query, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
+	return ConnectionsPageForEnvironment(catalog, workspaceID, assets, edges, activeType, query, "", roleLabel, "", chromeOptions...)
+}
+
+func ConnectionsPageForEnvironment(catalog catalog.Catalog, workspaceID string, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView, activeType, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
 	page := connectionsPageSignal(workspaceID, assets, edges, activeType, query, environment)
 	if strings.TrimSpace(workspaceID) == "" {
 		catalog = catalogWithoutWorkspaceContext(catalog)
@@ -91,8 +115,9 @@ func ConnectionsPageForEnvironment(catalog catalog.Catalog, workspaceID string, 
 	return workspaceRouteDocument("Connections", catalog, "connections", roleLabel, page, uisignals.RouteConnections,
 		g.El("lv-connections-page",
 			g.Attr("slot", "page"),
+			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Post("/connections/search", "entityListQuery", "entityListFilter")),
 		),
-		workspaceDocumentExtras{},
+		workspaceDocumentExtras{CSRFToken: csrfToken},
 		chromeOptions,
 	)
 }
@@ -107,6 +132,13 @@ func ConnectionsBootstrapSignalsForEnvironment(catalog catalog.Catalog, workspac
 		catalog = catalogWithoutWorkspaceContext(catalog)
 	}
 	return workspaceRouteBootstrapSignals(catalog, "connections", roleLabel, page, uisignals.RouteConnections, nil, chromeOptions)
+}
+
+func ConnectionsListResultsPatch(workspaceID string, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView) map[string]any {
+	list := workspaceAssetListSignal(workspaceID, assets, edges, "", "", nil, "", "")
+	return map[string]any{"page": map[string]any{
+		"assetList": map[string]any{"assets": list.Assets},
+	}}
 }
 
 func catalogWithoutWorkspaceContext(value catalog.Catalog) catalog.Catalog {
@@ -150,11 +182,25 @@ func workspaceAccessRouteBridge(workspaceID string, access WorkspaceAccessRespon
 		}
 }
 
-func workspaceCatalogPageSignal(workspaces []workspaceview.WorkspaceView) uisignals.WorkspacePageSignal {
+func workspaceAssetFilterRouteBridge(workspaceID, environment string) []g.Node {
+	filter := "$workspaceAssetType = evt.detail.type; $workspaceAssetQuery = evt.detail.query; " + uiactions.Post("/workspaces/"+workspaceID+"/search", "workspaceAssetType", "workspaceAssetQuery")
+	return []g.Node{g.Attr("data-on:lv-workspace-asset-filter__debounce.200ms", filter)}
+}
+
+func workspaceCatalogPageSignal(workspaces []workspaceview.WorkspaceView, state ...string) uisignals.WorkspacePageSignal {
+	query, filter := "", ""
+	if len(state) > 0 {
+		query = state[0]
+	}
+	if len(state) > 1 {
+		filter = state[1]
+	}
 	return uisignals.WorkspacePageSignal{
 		Kind:        uisignals.RouteWorkspace,
 		Title:       "Workspaces",
 		Description: uisignals.Pointer("View published BI workspaces. Authoring lives in Git."),
+		ListFilter:  uisignals.Optional(filter),
+		ListQuery:   uisignals.Optional(query),
 		Workspaces:  uisignals.OptionalSlice(workspaceCatalogItemSignals(workspaces)),
 	}
 }
@@ -728,7 +774,7 @@ func workspaceRouteUpdatesURL(routeKind uisignals.RouteKind, catalog catalog.Cat
 	switch typed := page.(type) {
 	case uisignals.WorkspacePageSignal:
 		assetList := uisignals.ValueOrZero(typed.AssetList)
-		return updatesURL(routeKind, "workspace", firstNonEmpty(uisignals.ValueOrZero(typed.WorkspaceID), catalog.Workspace.ID), "environment", uisignals.ValueOrZero(typed.Environment), "type", uisignals.ValueOrZero(assetList.ActiveType), "q", uisignals.ValueOrZero(assetList.Query))
+		return updatesURL(routeKind, "workspace", firstNonEmpty(uisignals.ValueOrZero(typed.WorkspaceID), catalog.Workspace.ID), "environment", uisignals.ValueOrZero(typed.Environment), "type", firstNonEmpty(uisignals.ValueOrZero(assetList.ActiveType), uisignals.ValueOrZero(typed.ListFilter)), "q", firstNonEmpty(uisignals.ValueOrZero(assetList.Query), uisignals.ValueOrZero(typed.ListQuery)))
 	case uisignals.ConnectionsPageSignal:
 		assetList := uisignals.ValueOrZero(typed.AssetList)
 		return updatesURL(routeKind, "environment", uisignals.ValueOrZero(typed.Environment), "type", uisignals.ValueOrZero(assetList.ActiveType), "q", uisignals.ValueOrZero(assetList.Query))

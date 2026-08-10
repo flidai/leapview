@@ -133,7 +133,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       min-width: 0;
       min-height: 100svh;
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
       background: var(--lv-bg-app);
     }
 
@@ -193,9 +193,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-title-sm);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-section-title);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .detail {
@@ -204,8 +204,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-muted);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .actions {
@@ -249,8 +249,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 			border-color: var(--lv-line-muted);
 			background: var(--lv-bg-control, var(--lv-bg-panel-muted));
 			padding-inline: var(--base-size-12);
-			font-size: var(--lv-font-size-body-sm);
-			font-weight: var(--lv-font-weight-medium);
+			font: var(--lv-type-body);
+			font-weight: var(--base-text-weight-medium);
 		}
 
 		.agent-toggle[aria-expanded='true'] {
@@ -283,9 +283,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 			opacity: 0;
 			pointer-events: none;
 			padding: 0 var(--base-size-6);
-			font-size: var(--lv-font-size-caption);
-			font-weight: var(--lv-font-weight-medium);
-			line-height: var(--lv-line-height-none);
+			font: var(--lv-type-caption);
+			font-weight: var(--base-text-weight-medium);
+			line-height: 1;
 			transition: opacity var(--lv-transition-fast), background-color var(--lv-transition-fast), color var(--lv-transition-fast);
 		}
 
@@ -374,7 +374,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-danger);
       padding: var(--base-size-8) var(--base-size-12);
       box-shadow: var(--shadow-floating-small);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
       transform: translateX(-50%);
     }
 
@@ -402,17 +402,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .eyebrow {
       margin-bottom: var(--base-size-4);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-tight);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
+      line-height: var(--base-text-lineHeight-tight);
       text-transform: uppercase;
     }
 
     .heading-visual h2 {
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-title-lg);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-tight);
+      font: var(--lv-type-title-large);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .badges {
@@ -428,8 +428,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-panel-muted);
       color: var(--lv-fg-muted);
       padding: var(--base-size-2) var(--base-size-8);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
       text-transform: uppercase;
     }
 
@@ -443,8 +443,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-muted);
       padding: var(--base-size-16);
       text-align: center;
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     @media (max-width: 640px) {

@@ -64,8 +64,8 @@ export class DashboardFilterLeaf extends LitElement {
       align-items: baseline;
       justify-content: space-between;
       gap: var(--base-size-6);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
+      line-height: var(--base-text-lineHeight-tight);
     }
     .field-heading[data-title='false'] { justify-content: flex-end; }
     .field-title {
@@ -73,13 +73,12 @@ export class DashboardFilterLeaf extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
     input, select, button {
       min-height: var(--control-medium-size);
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-tight);
     }
     input, select {
       width: 100%; min-width: 0; border: var(--lv-border-default);
@@ -97,14 +96,14 @@ export class DashboardFilterLeaf extends LitElement {
     .range label { display: grid; min-width: 0; gap: var(--base-size-4); }
     .field-label {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
     .input-control { display: grid; gap: var(--base-size-4); }
     .operator {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
     .relative { display: grid; grid-template-columns: 1fr 72px 1fr; gap: 6px; }
     :host([data-layout-variant='stacked']) .relative { grid-template-columns: minmax(0, 1fr); }
@@ -113,8 +112,8 @@ export class DashboardFilterLeaf extends LitElement {
       min-width: 0;
       overflow: hidden;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
+      line-height: var(--base-text-lineHeight-tight);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -509,14 +508,14 @@ export class DashboardFilterPaneCard extends FilterShell {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
     }
     .pending-badge {
       margin-left: var(--base-size-4);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
     .actions { display: flex; flex: 0 0 auto; gap: var(--base-size-4); }
     button {
@@ -527,8 +526,7 @@ export class DashboardFilterPaneCard extends FilterShell {
       color: var(--lv-fg-muted);
       cursor: pointer;
       padding: 0 var(--base-size-6);
-      font: inherit;
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
     button:hover:not(:disabled) { background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
     button:focus-visible {

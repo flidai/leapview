@@ -199,6 +199,13 @@ function testDocument(): string {
         <style>
           body {
             margin: 0;
+            --base-text-weight-medium: 500;
+            --base-text-weight-semibold: 600;
+            --base-text-lineHeight-tight: 1.25;
+            --base-text-lineHeight-normal: 1.5;
+            --lv-type-caption: 400 12px/1.25 system-ui;
+            --lv-type-body: 400 14px/1.5 system-ui;
+            --lv-type-code-inline: 400 0.9285em ui-monospace;
             --lv-bg-app: #f6f8fa;
             --lv-bg-page: #f6f8fa;
             --lv-bg-panel: #fff;
@@ -210,11 +217,11 @@ function testDocument(): string {
             --lv-line-accent: #0969da;
             --lv-asset-model-table-bg: #ddf4ff;
             --lv-asset-model-table-border: #b6e3ff;
-            --lv-font-family-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
-            --lv-font-size-caption: 12px;
-            --lv-font-size-body-sm: 14px;
-            --lv-font-weight-strong: 600;
-            --lv-line-height-tight: 1.2;
+
+
+
+
+
             --base-size-4: 4px;
             --base-size-6: 6px;
             --base-size-8: 8px;

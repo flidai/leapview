@@ -20,7 +20,7 @@ export class MapSelectionControl {
     this.#dispatch = dispatch
     this.element = document.createElement('div')
     this.element.dataset.mapSelectionControl = ''
-    this.element.style.cssText = 'position:absolute;left:8px;top:8px;z-index:3;font:12px/1.4 var(--lv-font-family-ui,system-ui)'
+    this.element.style.cssText = 'position:absolute;left:8px;top:8px;z-index:3;font:var(--lv-type-caption)'
 
     const style = document.createElement('style')
     style.textContent = '.lv-map-selection-option:focus-visible{outline:2px solid var(--lv-line-accent,#0969da);outline-offset:-2px;background:var(--lv-accent-subtle,#ddf4ff)}'

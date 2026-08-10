@@ -21,7 +21,7 @@ export const visualActionStyles = css`
     cursor: pointer;
     padding: 0;
     font: inherit;
-    line-height: var(--lv-line-height-none);
+    line-height: 1;
   }
 
   .icon-action svg {

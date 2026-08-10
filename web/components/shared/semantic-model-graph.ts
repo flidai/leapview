@@ -675,8 +675,8 @@ const semanticModelGraphStyles = `
     background: var(--lv-bg-panel);
     box-shadow: var(--shadow-resting-small, none);
     color: var(--lv-fg-default);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-strong);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-semibold);
     line-height: 1;
     pointer-events: none;
   }
@@ -749,9 +749,9 @@ const semanticModelGraphStyles = `
     min-width: 0;
     align-items: center;
     gap: var(--base-size-6);
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-semibold);
+    line-height: var(--base-text-lineHeight-tight);
   }
 
   lv-semantic-model-graph .semantic-model-node-title span {
@@ -775,8 +775,8 @@ const semanticModelGraphStyles = `
     border: var(--lv-border-muted);
     border-radius: var(--lv-radius-full);
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-normal);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-normal);
     line-height: 1;
     padding: 3px 6px;
   }
@@ -815,12 +815,11 @@ const semanticModelGraphStyles = `
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: var(--lv-font-family-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
-    font-size: var(--lv-font-size-caption);
+    font: var(--lv-type-code-inline);
   }
 
   lv-semantic-model-graph .semantic-model-field-primary .semantic-model-field-name {
-    font-weight: var(--lv-font-weight-strong);
+    font-weight: var(--base-text-weight-semibold);
   }
 
   lv-semantic-model-graph .semantic-model-field-type-icon {
@@ -839,8 +838,8 @@ const semanticModelGraphStyles = `
 
   lv-semantic-model-graph .semantic-model-field-key {
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-strong);
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-semibold);
     line-height: 1;
   }
 `
