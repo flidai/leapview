@@ -4,20 +4,21 @@ using LeapViewAPI.Protocol;
 
 namespace LeapViewAPI.ManagedData;
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model ManagedDataCommandAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   operationId: string;
 
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   owner: string;
 
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   projectId: string;
 
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   connectionId: string;
 
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   surface: string;
 }
 
@@ -332,7 +333,7 @@ interface ManagedDataLifecycle {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(ManagedDataCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(ManagedDataCommandAuditPayload)
   createManagedDataUploadSession(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
@@ -387,7 +388,7 @@ interface ManagedDataLifecycle {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(ManagedDataCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(ManagedDataCommandAuditPayload)
   cancelManagedDataUploadSession(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
@@ -428,7 +429,7 @@ interface ManagedDataLifecycle {
     },
     targetParameter: "project",
   })
-  @apigen.auditPayload(ManagedDataCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(ManagedDataCommandAuditPayload)
   finalizeManagedDataUploadSession(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,

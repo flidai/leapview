@@ -214,69 +214,75 @@ model DeploymentListResponse {
   page: PageInfo;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model DeploymentQueuedAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   deploymentId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   projectId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   releaseId: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   status: string;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model DeploymentCancelledAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   deploymentId: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   status: string;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model DeploymentApprovalRequestedAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   deploymentId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   approvalId: string;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model DeploymentApprovalDecisionAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   deploymentId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   approvalId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   approvalRevision: int64;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model CandidateAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   operationId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   candidateId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   projectId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   targetId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   environment: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   baseGeneration: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   candidateKey: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   status: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   resumed: boolean;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model CandidateSourceBlobAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   operationId: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   surface: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   digest: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   sizeBytes: int64;
 }
 
@@ -323,7 +329,7 @@ interface Deployments {
       cancellation: "supported",
     },
   })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentQueuedAuditPayload)
   @operationId("createDeployment")
   createDeployment(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentCreateRequest): AcceptedJson<DeploymentResponse> | CommonErrors;
 
@@ -359,7 +365,7 @@ interface Deployments {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(DeploymentCancelledAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentCancelledAuditPayload)
   @operationId("cancelDeployment")
   cancelDeployment(@path project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
 
@@ -394,7 +400,7 @@ interface Deployments {
     },
     targetParameter: "project",
   })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentQueuedAuditPayload)
   @operationId("retryDeployment")
   retryDeployment(@path project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
 
@@ -429,7 +435,7 @@ interface Deployments {
     },
     targetParameter: "project",
   })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentQueuedAuditPayload)
   @operationId("rollbackDeployment")
   rollbackDeployment(@path project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
 
@@ -452,7 +458,7 @@ interface Deployments {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(DeploymentApprovalRequestedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentApprovalRequestedAuditPayload)
   @operationId("requestDeploymentApproval")
   requestDeploymentApproval(@path project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): CreatedJson<DeploymentApprovalResponse> | CommonErrors;
 
@@ -475,7 +481,7 @@ interface Deployments {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload)
   @operationId("approveDeployment")
   approveDeployment(@path project: string, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
 
@@ -498,7 +504,7 @@ interface Deployments {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload)
   @operationId("denyDeploymentApproval")
   denyDeploymentApproval(@path project: string, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
 
@@ -521,7 +527,7 @@ interface Deployments {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload)
   @operationId("revokeDeploymentApproval")
   revokeDeploymentApproval(@path project: string, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
 
@@ -559,7 +565,7 @@ interface Deployments {
     },
     targetParameter: "project",
   })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentQueuedAuditPayload)
   @operationId("activateDeployment")
   activateDeployment(@path project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
 }
@@ -581,7 +587,7 @@ interface ProjectCandidates {
       #{ kind: "candidate_invalid", statusCode: 422, code: "INVALID_CANDIDATE", publicDetail: "The candidate request is invalid." },
     ],
   })
-  @apigen.auditPayload(CandidateAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(CandidateAuditPayload)
   @operationId("startProjectCandidate")
   startProjectCandidate(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateStartRequest): CreatedJson<CandidateResponse> | CommonErrors;
 
@@ -608,7 +614,7 @@ interface ProjectCandidates {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(CandidateAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(CandidateAuditPayload)
   @operationId("replaceProjectCandidateArtifact")
   replaceProjectCandidateArtifact(@path project: string, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateArtifactRequest): OkJson<CandidateResponse> | CommonErrors;
 
@@ -627,7 +633,7 @@ interface ProjectCandidates {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(CandidateAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(CandidateAuditPayload)
   @operationId("retryProjectCandidate")
   retryProjectCandidate(@path project: string, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
 
@@ -646,7 +652,7 @@ interface ProjectCandidates {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(CandidateAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(CandidateAuditPayload)
   @operationId("cancelProjectCandidate")
   cancelProjectCandidate(@path project: string, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
 
@@ -685,7 +691,7 @@ interface ProjectCandidates {
     },
     targetParameter: "project",
   })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DeploymentQueuedAuditPayload)
   @operationId("publishProjectCandidate")
   publishProjectCandidate(@path project: string, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidatePublishRequest): AcceptedJson<DeploymentResponse> | CommonErrors;
 }
@@ -715,7 +721,7 @@ op reviewProjectCandidate(@path project: string, @path candidate: string): OkJso
   ],
   targetParameter: "project",
 })
-@apigen.auditPayload(CandidateAuditPayload, #{ schemaVersion: 1, retention: "security" })
+@apigen.auditPayload(CandidateAuditPayload)
 @operationId("cancelProjectCandidateByKey")
 op cancelProjectCandidateByKey(@path project: string, @path candidateKey: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
 
@@ -756,7 +762,7 @@ interface CandidateSynchronization {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(CandidateSourceBlobAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(CandidateSourceBlobAuditPayload)
   @apigen.manual
   @operationId("uploadProjectCandidateSourceBlob")
   uploadProjectCandidateSourceBlob(@path project: string, @path digest: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<CandidateSourceBlobResponse> | CommonErrors;
@@ -775,7 +781,7 @@ interface CandidateSynchronization {
       #{ kind: "candidate_invalid", statusCode: 422, code: "INVALID_CANDIDATE", publicDetail: "The candidate request is invalid." },
     ],
   })
-  @apigen.auditPayload(CandidateAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(CandidateAuditPayload)
   @operationId("commitProjectCandidateSynchronization")
   commitProjectCandidateSynchronization(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateSynchronizationRequest): OkJson<CandidateResponse> | CommonErrors;
 }

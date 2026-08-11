@@ -36,12 +36,13 @@ model DashboardPublicationListResponse {
   items: DashboardPublicationResponse[];
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model DashboardPublicationCommandAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   operationId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   owner: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   surface: string;
 }
 
@@ -75,7 +76,7 @@ interface DashboardPublications {
     ],
     targetParameter: "workspace",
   })
-  @apigen.auditPayload(DashboardPublicationCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
   @operationId("suspendDashboardPublication")
   suspendDashboardPublication(@path workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
@@ -92,7 +93,7 @@ interface DashboardPublications {
     ],
     targetParameter: "workspace",
   })
-  @apigen.auditPayload(DashboardPublicationCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
   @operationId("resumeDashboardPublication")
   resumeDashboardPublication(@path workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
@@ -109,7 +110,7 @@ interface DashboardPublications {
     ],
     targetParameter: "workspace",
   })
-  @apigen.auditPayload(DashboardPublicationCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
   @operationId("rotateDashboardPublication")
   rotateDashboardPublication(@path workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 }

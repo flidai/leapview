@@ -47,6 +47,7 @@ import { getExtensions, getOperationId, getTagsMetadata, resolveInfo, resolveOpe
 import {
   getAuthz,
   getAuditPayload,
+  getAuditSchema,
   getCLI,
   getCommand,
   getContracts,
@@ -1076,10 +1077,16 @@ function commandMetadata(
   if (authoredAuditPayload) {
     const authored = authoredAuditPayload;
     const schema = authored.schema;
+    const payloadOptions = authored.options ?? getAuditSchema({ program }, schema);
     if (!schema.name) {
       builder.invalidCommand("audit.payload.schema must be a named model", operation.operation);
     }
-    if (authored.schemaVersion < 1 || !Number.isInteger(authored.schemaVersion)) {
+    if (!payloadOptions) {
+      builder.invalidCommand(
+        "@apigen.auditPayload requires inline options or model-owned @apigen.auditSchema",
+        operation.operation,
+      );
+    } else if (payloadOptions.schemaVersion < 1 || !Number.isInteger(payloadOptions.schemaVersion)) {
       builder.invalidCommand("audit.payload.schemaVersion must be a positive integer", operation.operation);
     }
     if (schema.baseModel) {
@@ -1092,18 +1099,23 @@ function commandMetadata(
       }
       const sensitivity = getSensitivity({ program }, property);
       if (!sensitivity) {
-        builder.invalidCommand(`audit payload field ${JSON.stringify(property.name)} requires @apigen.sensitivity`, operation.operation);
+        builder.invalidCommand(
+          `audit payload field ${JSON.stringify(property.name)} requires an explicit audit sensitivity decorator`,
+          operation.operation,
+        );
         continue;
       }
       fields.push({ name: property.name, sensitivity });
     }
     fields.sort((left, right) => left.name.localeCompare(right.name));
-    auditPayload = {
-      schema: builder.namedSchemaRef(schema, `audit payload for ${operation.operation.name}`),
-      schema_version: authored.schemaVersion,
-      retention: authored.retention,
-      fields,
-    };
+    if (payloadOptions) {
+      auditPayload = {
+        schema: builder.namedSchemaRef(schema, `audit payload for ${operation.operation.name}`),
+        schema_version: payloadOptions.schemaVersion,
+        retention: payloadOptions.retention,
+        fields,
+      };
+    }
   }
 
   let execution: Command["execution"];
@@ -1233,10 +1245,11 @@ function auditPayloadIdentity(program: Program, operation: Operation): unknown {
   if (!payload) {
     return undefined;
   }
+  const options = payload.options ?? getAuditSchema({ program }, payload.schema);
   return {
     schema: `${namespaceName(payload.schema.namespace) ?? ""}.${payload.schema.name}`,
-    schemaVersion: payload.schemaVersion,
-    retention: payload.retention,
+    schemaVersion: options?.schemaVersion,
+    retention: options?.retention,
   };
 }
 

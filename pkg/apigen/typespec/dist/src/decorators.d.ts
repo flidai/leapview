@@ -30,9 +30,11 @@ export interface AuditPayloadOptions {
     schemaVersion: number;
     retention: "short" | "standard" | "security";
 }
-export interface AuditPayloadDefinition extends AuditPayloadOptions {
+export interface AuditPayloadDefinition {
     schema: Model;
+    options?: AuditPayloadOptions;
 }
+export type AuditSensitivity = "public" | "internal" | "pii" | "secret";
 export interface AsyncExecutionOptions {
     mode: "async";
     guarantee: "transactional";
@@ -121,8 +123,13 @@ export interface ToolOptions {
 }
 export declare function $cli(context: DecoratorContext, target: Operation, options: CLIOptions): void;
 export declare function $command(context: DecoratorContext, target: Operation, options: CommandOptions): void;
-export declare function $auditPayload(context: DecoratorContext, target: Operation, schema: Model, options: AuditPayloadOptions): void;
-export declare function $sensitivity(context: DecoratorContext, target: ModelProperty, classification: "public" | "internal" | "pii" | "secret"): void;
+export declare function $auditPayload(context: DecoratorContext, target: Operation, schema: Model, options?: AuditPayloadOptions): void;
+export declare function $auditSchema(context: DecoratorContext, target: Model, options: AuditPayloadOptions): void;
+export declare function $sensitivity(context: DecoratorContext, target: ModelProperty, classification: AuditSensitivity): void;
+export declare function $auditPublic(context: DecoratorContext, target: ModelProperty): void;
+export declare function $auditInternal(context: DecoratorContext, target: ModelProperty): void;
+export declare function $auditPii(context: DecoratorContext, target: ModelProperty): void;
+export declare function $auditSecret(context: DecoratorContext, target: ModelProperty): void;
 export declare function $query(context: DecoratorContext, target: Operation): void;
 export declare function $authz(context: DecoratorContext, target: Operation, value: unknown): void;
 export declare function $manual(context: DecoratorContext, target: Operation): void;
@@ -137,7 +144,12 @@ export declare const $decorators: {
         cli: typeof $cli;
         command: typeof $command;
         auditPayload: typeof $auditPayload;
+        auditSchema: typeof $auditSchema;
         sensitivity: typeof $sensitivity;
+        auditPublic: typeof $auditPublic;
+        auditInternal: typeof $auditInternal;
+        auditPii: typeof $auditPii;
+        auditSecret: typeof $auditSecret;
         query: typeof $query;
         authz: typeof $authz;
         manual: typeof $manual;
@@ -158,9 +170,12 @@ export declare function getCommand(context: {
 export declare function getAuditPayload(context: {
     program: DecoratorContext["program"];
 }, target: Operation): AuditPayloadDefinition | undefined;
+export declare function getAuditSchema(context: {
+    program: DecoratorContext["program"];
+}, target: Model): AuditPayloadOptions | undefined;
 export declare function getSensitivity(context: {
     program: DecoratorContext["program"];
-}, target: ModelProperty): "public" | "internal" | "pii" | "secret" | undefined;
+}, target: ModelProperty): AuditSensitivity | undefined;
 export declare function isQuery(context: {
     program: DecoratorContext["program"];
 }, target: Operation): boolean;

@@ -4,20 +4,21 @@ using LeapViewAPI.Protocol;
 
 namespace LeapViewAPI.ManagedData;
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model ManagedDataS3MultipartAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   operationId: string;
 
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   owner: string;
 
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   projectId: string;
 
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   connectionId: string;
 
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   surface: string;
 }
 
@@ -110,7 +111,7 @@ interface ManagedDataS3MultipartUploads {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(ManagedDataS3MultipartAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
   createManagedDataS3MultipartUpload(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
@@ -159,7 +160,7 @@ interface ManagedDataS3MultipartUploads {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(ManagedDataS3MultipartAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
   completeManagedDataS3MultipartUpload(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
@@ -190,7 +191,7 @@ interface ManagedDataS3MultipartUploads {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(ManagedDataS3MultipartAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
   abortManagedDataS3MultipartUpload(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,

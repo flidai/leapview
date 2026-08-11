@@ -2,6 +2,7 @@ import { reportDiagnostic } from "./lib.js";
 const cliKey = Symbol.for("@yacobolo/apigen.cli");
 const commandKey = Symbol.for("@yacobolo/apigen.command");
 const auditPayloadKey = Symbol.for("@yacobolo/apigen.auditPayload");
+const auditSchemaKey = Symbol.for("@yacobolo/apigen.auditSchema");
 const sensitivityKey = Symbol.for("@yacobolo/apigen.sensitivity");
 const queryKey = Symbol.for("@yacobolo/apigen.query");
 const authzKey = Symbol.for("@yacobolo/apigen.authz");
@@ -28,9 +29,36 @@ export function $auditPayload(context, target, schema, options) {
         });
         return;
     }
-    definitions.set(target, { schema, ...options });
+    definitions.set(target, { schema, options });
+}
+export function $auditSchema(context, target, options) {
+    const definitions = context.program.stateMap(auditSchemaKey);
+    if (definitions.has(target)) {
+        reportDiagnostic(context.program, {
+            code: "invalid-command",
+            format: { reason: "@apigen.auditSchema must not be applied more than once" },
+            target,
+        });
+        return;
+    }
+    definitions.set(target, options);
 }
 export function $sensitivity(context, target, classification) {
+    setSensitivity(context, target, classification);
+}
+export function $auditPublic(context, target) {
+    setSensitivity(context, target, "public");
+}
+export function $auditInternal(context, target) {
+    setSensitivity(context, target, "internal");
+}
+export function $auditPii(context, target) {
+    setSensitivity(context, target, "pii");
+}
+export function $auditSecret(context, target) {
+    setSensitivity(context, target, "secret");
+}
+function setSensitivity(context, target, classification) {
     const classifications = context.program.stateMap(sensitivityKey);
     if (classifications.has(target)) {
         reportDiagnostic(context.program, {
@@ -74,7 +102,12 @@ export const $decorators = {
         cli: $cli,
         command: $command,
         auditPayload: $auditPayload,
+        auditSchema: $auditSchema,
         sensitivity: $sensitivity,
+        auditPublic: $auditPublic,
+        auditInternal: $auditInternal,
+        auditPii: $auditPii,
+        auditSecret: $auditSecret,
         query: $query,
         authz: $authz,
         manual: $manual,
@@ -94,6 +127,9 @@ export function getCommand(context, target) {
 }
 export function getAuditPayload(context, target) {
     return context.program.stateMap(auditPayloadKey).get(target);
+}
+export function getAuditSchema(context, target) {
+    return context.program.stateMap(auditSchemaKey).get(target);
 }
 export function getSensitivity(context, target) {
     return context.program.stateMap(sensitivityKey).get(target);

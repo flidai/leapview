@@ -130,42 +130,45 @@ model ReleaseArtifactResponse {
   sizeBytes: int64;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model ReleaseCreatedAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   operationId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   releaseId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   projectId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   projectDigest: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   status: string;
-  @apigen.sensitivity("pii")
+  @apigen.auditPii
   createdBy: string;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model ReleaseArtifactUploadedAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   operationId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   releaseId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   workspaceId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   digest: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   sizeBytes: int64;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model ReleaseValidatingAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   operationId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   releaseId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   projectId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   status: string;
 }
 
@@ -190,7 +193,7 @@ interface Releases {
       #{ kind: "conflict", statusCode: 409, code: "RELEASE_CONFLICT", publicDetail: "The release conflicts with its current state." },
     ],
   })
-  @apigen.auditPayload(ReleaseCreatedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(ReleaseCreatedAuditPayload)
   @operationId("createRelease")
   createRelease(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ReleaseCreateRequest): CreatedJson<ReleaseResponse> | CommonErrors;
 
@@ -218,7 +221,7 @@ interface Releases {
     ],
     targetParameter: "project",
   })
-  @apigen.auditPayload(ReleaseArtifactUploadedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(ReleaseArtifactUploadedAuditPayload)
   @apigen.manual
   @operationId("uploadReleaseArtifact")
   uploadReleaseArtifact(@path project: string, @path release: string, @path workspace: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<ReleaseArtifactResponse> | CommonErrors;
@@ -250,7 +253,7 @@ interface Releases {
     },
     targetParameter: "project",
   })
-  @apigen.auditPayload(ReleaseValidatingAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(ReleaseValidatingAuditPayload)
   @operationId("finalizeRelease")
   finalizeRelease(@path project: string, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
 

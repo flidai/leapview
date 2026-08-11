@@ -216,6 +216,47 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.schemas.RoleBindingCreatedAuditPayload.required).toEqual(["operationId", "subjectId", "credential"]);
   });
 
+  it("supports concise model-owned audit payload contracts", async () => {
+    const doc = await compileSource(`
+      using Http;
+      using OpenAPI;
+
+      @service(#{ title: "Audit API" })
+      namespace AuditAPI;
+
+      @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+      model GroupAuditPayload {
+        @apigen.auditPublic provider: string;
+        @apigen.auditInternal externalId: string;
+        @apigen.auditPii displayName: string;
+        @apigen.auditSecret credential: string;
+      }
+
+      @route("/groups")
+      @post
+      @operationId("createGroup")
+      @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+      @apigen.auditPayload(GroupAuditPayload)
+      @apigen.command(#{
+        audit: #{ required: true, successAction: "group.created", guarantee: "transactional" },
+        failures: #[],
+      })
+      op createGroup(@header("Idempotency-Key") idempotencyKey: string): string;
+    `);
+
+    expect(doc.endpoints[0].command.audit.payload).toEqual({
+      schema: { ref: "GroupAuditPayload" },
+      schema_version: 1,
+      retention: "security",
+      fields: [
+        { name: "credential", sensitivity: "secret" },
+        { name: "displayName", sensitivity: "pii" },
+        { name: "externalId", sensitivity: "internal" },
+        { name: "provider", sensitivity: "public" },
+      ],
+    });
+  });
+
   it("emits a typed async execution contract", async () => {
     const doc = await compileSource(`
       using Http;
@@ -375,12 +416,23 @@ describe("APIGen TypeSpec emitter", () => {
         `,
       },
       {
-        message: "requires @apigen.sensitivity",
+        message: "requires an explicit audit sensitivity decorator",
         operation: `
           model WidgetAuditPayload { widgetId: string; }
           @post
           @operationId("createWidget")
           @apigen.auditPayload(WidgetAuditPayload, #{ schemaVersion: 1, retention: "security" })
+          @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" }, failures: #[] })
+          op create(@header("Idempotency-Key") key: string): string;
+        `,
+      },
+      {
+        message: "requires inline options or model-owned @apigen.auditSchema",
+        operation: `
+          model WidgetAuditPayload { @apigen.auditInternal widgetId: string; }
+          @post
+          @operationId("createWidget")
+          @apigen.auditPayload(WidgetAuditPayload)
           @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" }, failures: #[] })
           op create(@header("Idempotency-Key") key: string): string;
         `,

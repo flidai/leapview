@@ -30,33 +30,35 @@ model RefreshRunListResponse {
   page: PageInfo;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model RefreshQueuedAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   id: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   workspaceId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   pipelineId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   semanticModel: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   trigger: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   retryOf: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   status: string;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model RefreshCancelledAuditPayload {
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   id: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   workspaceId: string;
-  @apigen.sensitivity("internal")
+  @apigen.auditInternal
   pipelineId: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   status: string;
-  @apigen.sensitivity("public")
+  @apigen.auditPublic
   trigger: string;
 }
 
@@ -96,7 +98,7 @@ interface RefreshRuns {
       cancellation: "supported",
     },
   })
-  @apigen.auditPayload(RefreshQueuedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(RefreshQueuedAuditPayload)
   @operationId("createRefreshRun")
   createRefreshRun(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RefreshRunCreateRequest): CreateRefreshRunAccepted | CommonErrors;
 
@@ -128,7 +130,7 @@ interface RefreshRuns {
     ],
     targetParameter: "workspace",
   })
-  @apigen.auditPayload(RefreshCancelledAuditPayload, #{ schemaVersion: 1, retention: "security" })
+  @apigen.auditPayload(RefreshCancelledAuditPayload)
   @operationId("cancelRefreshRun")
   cancelRefreshRun(@path workspace: string, @path run: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<RefreshRunResponse> | CommonErrors;
 }

@@ -151,8 +151,13 @@ model ToolOptions {
 
 extern dec cli(target: Operation, options: valueof CLIOptions);
 extern dec command(target: Operation, options: valueof CommandOptions);
-extern dec auditPayload(target: Operation, schema: Model, options: valueof AuditPayloadOptions);
+extern dec auditPayload(target: Operation, schema: Model, options?: valueof AuditPayloadOptions);
+extern dec auditSchema(target: Model, options: valueof AuditPayloadOptions);
 extern dec sensitivity(target: ModelProperty, classification: valueof ("public" | "internal" | "pii" | "secret"));
+extern dec auditPublic(target: ModelProperty);
+extern dec auditInternal(target: ModelProperty);
+extern dec auditPii(target: ModelProperty);
+extern dec auditSecret(target: ModelProperty);
 extern dec query(target: Operation);
 extern dec authz(target: Operation, value: valueof unknown);
 extern dec manual(target: Operation);

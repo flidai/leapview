@@ -173,24 +173,25 @@ Audit metadata can be made a typed, versioned contract instead of an arbitrary
 JSON map:
 
 ```typespec
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model RoleBindingCreatedAuditPayload {
-  @apigen.sensitivity("internal") operationId: string;
-  @apigen.sensitivity("internal") role: string;
-  @apigen.sensitivity("pii") subjectId: string;
-  @apigen.sensitivity("public") surface: string;
+  @apigen.auditInternal operationId: string;
+  @apigen.auditInternal role: string;
+  @apigen.auditPii subjectId: string;
+  @apigen.auditPublic surface: string;
 }
 
-@apigen.auditPayload(
-  RoleBindingCreatedAuditPayload,
-  #{ schemaVersion: 1, retention: "security" },
-)
+@apigen.auditPayload(RoleBindingCreatedAuditPayload)
 ```
 
 Every required command audit must declare a payload. Payload models must be
-named objects with required fields, and every field must
-declare `public`, `internal`, `pii`, or `secret` sensitivity. APIGen emits the
-schema, version, retention, and classifications into IR, OpenAPI, per-package
-and aggregate Go registries. It also emits a typed
+named objects with required fields and model-owned `@apigen.auditSchema`
+metadata. Every field must explicitly declare `public`, `internal`, `pii`, or
+`secret` sensitivity using `auditPublic`, `auditInternal`, `auditPii`, or
+`auditSecret`. The longer `@apigen.sensitivity("...")` form and inline payload
+options remain supported for compatibility. APIGen emits the schema, version,
+retention, and classifications into IR, OpenAPI, per-package and aggregate Go
+registries. It also emits a typed
 `EncodeGen<Operation>AuditPayload` helper and a log-safe variant. Durable audit
 encoding always redacts `secret`; log-safe encoding preserves only `public` and
 redacts `internal`, `pii`, and `secret`. Both encoders reject missing or
