@@ -129,6 +129,12 @@ WHERE id = sqlc.arg(conversation_id)
   AND principal_id = sqlc.arg(principal_id) AND status = 'active'
 RETURNING id, principal_id, title, status, metadata_json, transcript_json, created_at, updated_at, archived_at;
 
+-- name: AcquireAgentConversationMutationLock :exec
+UPDATE agent_conversations
+SET updated_at = updated_at
+WHERE id = sqlc.arg(conversation_id)
+  AND principal_id = sqlc.arg(principal_id);
+
 -- name: GetAgentRunInConversation :one
 SELECT r.id, r.conversation_id, r.status, r.model, r.stop_reason, r.input_tokens, r.output_tokens,
        r.total_tokens, r.error, r.started_at, r.finished_at, r.metadata_json

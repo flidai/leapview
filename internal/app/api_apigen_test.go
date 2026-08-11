@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
@@ -1040,6 +1041,8 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 			rolesByPrivilege[privilege] = append(rolesByPrivilege[privilege], role.Name)
 		}
 	}
+	runtimeContracts := apiaggregate.GetAPIGenCommandRuntimeContracts()
+	commandCount := 0
 	for operationID, contract := range apiaggregate.GetAPIGenOperationContracts() {
 		switch contract.Kind {
 		case apiaggregate.GenOperationKindQuery:
@@ -1047,6 +1050,7 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 				t.Errorf("query %s has command metadata: %#v", operationID, contract.Command)
 			}
 		case apiaggregate.GenOperationKindCommand:
+			commandCount++
 			command := contract.Command
 			if command == nil {
 				t.Errorf("command %s has no command metadata", operationID)
@@ -1086,6 +1090,9 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 			} else if err := runtimeContract.Validate(); err != nil {
 				t.Errorf("command %s runtime contract is invalid: %v", operationID, err)
 			} else if runtimeContract.OperationID != operationID || runtimeContract.Owner != command.Owner ||
+				runtimeContract.Method != contract.Method || runtimeContract.Path != contract.Path ||
+				string(runtimeContract.Idempotency) != command.Idempotency || string(runtimeContract.Concurrency) != command.Concurrency ||
+				runtimeContract.AuthzMode != command.AuthzMode || runtimeContract.Privilege != command.Privilege ||
 				runtimeContract.AuditAction != command.Audit.SuccessAction || string(runtimeContract.Guarantee) != command.Audit.Guarantee {
 				t.Errorf("command %s runtime contract %#v differs from generated metadata %#v", operationID, runtimeContract, command)
 			} else if command.Audit.Payload == nil || runtimeContract.AuditPayload == nil {
@@ -1101,6 +1108,37 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 					if runtimeField.Name != field.Name || string(runtimeField.Sensitivity) != field.Sensitivity {
 						t.Errorf("command %s runtime audit field %#v differs from generated field %#v", operationID, runtimeField, field)
 					}
+				}
+			}
+			if ok {
+				if (command.Target == nil) != (runtimeContract.Target == nil) {
+					t.Errorf("command %s runtime target %#v differs from generated target %#v", operationID, runtimeContract.Target, command.Target)
+				} else if command.Target != nil && (runtimeContract.Target.Parameter != command.Target.Parameter || runtimeContract.Target.Type != command.Target.Type) {
+					t.Errorf("command %s runtime target %#v differs from generated target %#v", operationID, runtimeContract.Target, command.Target)
+				}
+				if len(runtimeContract.AdditionalExposures) != len(command.AdditionalExposures) {
+					t.Errorf("command %s runtime exposures %#v differ from generated exposures %#v", operationID, runtimeContract.AdditionalExposures, command.AdditionalExposures)
+				} else {
+					for index, exposure := range command.AdditionalExposures {
+						if string(runtimeContract.AdditionalExposures[index]) != string(exposure) {
+							t.Errorf("command %s runtime exposure %q differs from generated exposure %q", operationID, runtimeContract.AdditionalExposures[index], exposure)
+						}
+					}
+				}
+				dependencies := runtimeContract.Dependencies()
+				for dependency, required := range map[apigencommand.Dependency]bool{
+					apigencommand.DependencyAuthorization: command.AuthzMode != "none",
+					apigencommand.DependencyIdempotency:   command.Idempotency == "required",
+					apigencommand.DependencyConcurrency:   command.Concurrency == "if-match",
+					apigencommand.DependencyAudit:         true,
+					apigencommand.DependencyJobQueue:      command.Execution != nil,
+				} {
+					if slices.Contains(dependencies, dependency) != required {
+						t.Errorf("command %s dependency %q required=%v dependencies=%#v", operationID, dependency, required, dependencies)
+					}
+				}
+				if runtimeContract.SpanName() != "command."+operationID {
+					t.Errorf("command %s span name = %q", operationID, runtimeContract.SpanName())
 				}
 			}
 			if command.AuthzMode != contract.AuthzMode {
@@ -1128,6 +1166,9 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 		default:
 			t.Errorf("operation %s has no normalized command/query kind: %q", operationID, contract.Kind)
 		}
+	}
+	if len(runtimeContracts) != commandCount {
+		t.Errorf("runtime command registry has %d entries, want %d generated commands", len(runtimeContracts), commandCount)
 	}
 }
 

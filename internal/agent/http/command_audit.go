@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	stdhttp "net/http"
 	"strings"
@@ -47,8 +49,11 @@ func (h *Handler) recordCommandAudit(
 		correlationID = requestID
 	}
 	surface := "api"
-	if strings.EqualFold(firstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client"), "cli") {
+	switch strings.ToLower(firstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client")) {
+	case "cli":
 		surface = "cli"
+	case "ui":
+		surface = "ui"
 	}
 	logger := h.options.Logger
 	if logger == nil {
@@ -78,6 +83,61 @@ func (h *Handler) recordCommandAudit(
 	if err != nil {
 		logger.ErrorContext(r.Context(), "agent command contract execution failed", "operation_id", operationIDValue, "error", err)
 	}
+}
+
+// uiRequestIdentity returns a deterministic identity for a browser command
+// retry. Datastar requests normally carry the stable client cookie; an
+// explicit request ID takes precedence when the browser or a test supplies
+// one. The operation-specific idempotency key is derived from this identity
+// by beginUICommandInvocation.
+func uiRequestIdentity(r *stdhttp.Request, input string) string {
+	if value := firstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID"); value != "" {
+		return value
+	}
+	clientID := "default"
+	if r != nil {
+		clientID = chatClientID(r)
+	}
+	path := ""
+	if r != nil && r.URL != nil {
+		path = r.URL.Path
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{"ui", clientID, path, input}, "\x00")))
+	return "ui_" + hex.EncodeToString(sum[:16])
+}
+
+// beginUICommandInvocation applies the generated policy to direct browser
+// commands. The returned context must be used for the mutation and generated
+// audit execution so the Guard can prove command completion.
+func beginUICommandInvocation(r *stdhttp.Request, operationID agentgen.GenCommandOperationID, target, input, identity string) (context.Context, error) {
+	contract, ok := agentgen.GetAPIGenCommandRuntimeContract(operationID.APIGenOperationID())
+	if !ok {
+		return r.Context(), apigencommand.ErrContractNotFound
+	}
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		identity = uiRequestIdentity(r, input)
+	}
+	if r != nil {
+		if r.Header.Get("X-Request-ID") == "" {
+			r.Header.Set("X-Request-ID", identity)
+		}
+		r.Header.Set("X-LeapView-Invocation-Surface", string(apigencommand.SurfaceUI))
+	}
+	idempotencyKey := firstNonEmptyHeader(r, "Idempotency-Key")
+	if idempotencyKey == "" {
+		idempotencyKey = "ui:" + operationID.APIGenOperationID() + ":" + identity
+	}
+	ctx, _, err := apigencommand.BeginInvocation(r.Context(), contract, apigencommand.Invocation{
+		Surface: apigencommand.SurfaceUI,
+		TargetValues: map[string]string{
+			"conversation": strings.TrimSpace(target),
+		},
+		IdempotencyKey: idempotencyKey,
+		RequestID:      identity,
+		CorrelationID:  firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID"),
+	})
+	return ctx, err
 }
 
 func firstNonEmptyHeader(r *stdhttp.Request, names ...string) string {

@@ -39,34 +39,40 @@ func (c *RoleBindingCommands) DescribeOperation(operationID access.OperationID) 
 
 func (c *RoleBindingCommands) CreateRoleBinding(ctx context.Context, invocation access.RoleBindingInvocation, input access.RoleBindingInput) (access.RoleBinding, error) {
 	var row access.RoleBinding
-	err := c.execute(ctx, access.OperationCreateRoleBinding, invocation, func(repository access.Repository) error {
+	err := c.execute(ctx, access.OperationCreateRoleBinding, invocation, input.WorkspaceID, func(repository access.Repository) error {
 		var err error
 		row, err = repository.CreateRoleBinding(ctx, input)
 		return err
-	}, func() access.RoleBinding { return row })
+	}, nil, func() access.RoleBinding { return row })
 	return row, err
 }
 
 func (c *RoleBindingCommands) UpdateRoleBinding(ctx context.Context, invocation access.RoleBindingInvocation, workspaceID, bindingID string, input access.RoleBindingInput) (access.RoleBinding, error) {
 	var row access.RoleBinding
-	err := c.execute(ctx, access.OperationUpdateRoleBinding, invocation, func(repository access.Repository) error {
+	err := c.execute(ctx, access.OperationUpdateRoleBinding, invocation, workspaceID, func(repository access.Repository) error {
 		var err error
 		row, err = repository.UpdateRoleBinding(ctx, workspaceID, bindingID, input)
 		return err
+	}, func(repository access.Repository) (string, error) {
+		current, err := repository.GetRoleBinding(ctx, workspaceID, bindingID)
+		if err != nil {
+			return "", err
+		}
+		return access.RoleBindingRevision(current)
 	}, func() access.RoleBinding { return row })
 	return row, err
 }
 
 func (c *RoleBindingCommands) DeleteRoleBinding(ctx context.Context, invocation access.RoleBindingInvocation, workspaceID, bindingID string) (access.RoleBinding, error) {
 	var row access.RoleBinding
-	err := c.execute(ctx, access.OperationDeleteRoleBinding, invocation, func(repository access.Repository) error {
+	err := c.execute(ctx, access.OperationDeleteRoleBinding, invocation, workspaceID, func(repository access.Repository) error {
 		var err error
 		row, err = repository.GetRoleBinding(ctx, workspaceID, bindingID)
 		if err != nil {
 			return err
 		}
 		return repository.DeleteRoleBinding(ctx, workspaceID, bindingID)
-	}, func() access.RoleBinding { return row })
+	}, nil, func() access.RoleBinding { return row })
 	return row, err
 }
 
@@ -74,7 +80,9 @@ func (c *RoleBindingCommands) execute(
 	ctx context.Context,
 	operationID access.OperationID,
 	invocation access.RoleBindingInvocation,
+	targetValue string,
 	mutation func(access.Repository) error,
+	currentRevision func(access.Repository) (string, error),
 	result func() access.RoleBinding,
 ) error {
 	descriptor, ok := c.DescribeOperation(operationID)
@@ -108,9 +116,35 @@ func (c *RoleBindingCommands) execute(
 	if err != nil {
 		return err
 	}
+	if _, generated := apigencommand.OperationID(ctx); !generated {
+		contract, ok := accessgen.GetAPIGenCommandRuntimeContract(string(operationID))
+		if !ok {
+			return fmt.Errorf("generated command contract %q is unavailable", operationID)
+		}
+		ctx, _, err = apigencommand.BeginInvocation(ctx, contract, apigencommand.Invocation{
+			Surface: apigencommand.Surface(invocation.Surface), TargetValues: map[string]string{descriptor.Target.Parameter: targetValue},
+			IdempotencyKey: invocation.IdempotencyKey, ConcurrencyToken: invocation.ConcurrencyToken,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+		})
+		if err != nil {
+			return err
+		}
+	}
 	return executor.Execute(ctx, string(operationID), apigencommand.Execution{
 		Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
 			return transactional.RunAuditedMutation(ctx, func(repository access.Repository) (access.AuditEventInput, error) {
+				if contract.Concurrency == apigencommand.ConcurrencyIfMatch {
+					if currentRevision == nil {
+						return access.AuditEventInput{}, fmt.Errorf("operation %q concurrency revision source is unavailable", operationID)
+					}
+					current, revisionErr := currentRevision(repository)
+					if revisionErr != nil {
+						return access.AuditEventInput{}, revisionErr
+					}
+					if revisionErr := executor.CheckConcurrency(ctx, string(operationID), invocation.ConcurrencyToken, current); revisionErr != nil {
+						return access.AuditEventInput{}, revisionErr
+					}
+				}
 				input, mutationErr := audited(repository)
 				if mutationErr == nil && input.Action != contract.AuditAction {
 					return access.AuditEventInput{}, fmt.Errorf("generated audit action %q does not match mutation action %q", contract.AuditAction, input.Action)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	adminhttp "github.com/flidai/leapview/internal/admin/http"
@@ -23,7 +24,7 @@ type PublicationService interface {
 	AllPublications(context.Context) ([]publication.Publication, error)
 	PublicationEvents(context.Context, string) ([]publication.Event, error)
 	PublicationDTO(publication.Publication) dashboardapi.PublicationResponse
-	MutatePublication(context.Context, string, string, string, publication.Action) (publication.Publication, error)
+	MutatePublicationWithInvocation(context.Context, string, string, string, publication.Action, apigencommand.Invocation) (publication.Publication, error)
 }
 
 // Principal is the authenticated identity information needed by platform

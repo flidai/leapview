@@ -1502,6 +1502,27 @@ func (s *testAgentStore) UpdateConversation(_ context.Context, input Conversatio
 	return conversation, nil
 }
 
+func (s *testAgentStore) UpdateConversationAtomic(_ context.Context, input ConversationUpdate, check func(Conversation) error) (Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	conversation, err := s.conversationLocked(input.PrincipalID, input.ConversationID)
+	if err != nil {
+		return Conversation{}, err
+	}
+	if check != nil {
+		if err := check(conversation); err != nil {
+			return Conversation{}, err
+		}
+	}
+	if conversation.Status != ConversationStatusActive {
+		return Conversation{}, sql.ErrNoRows
+	}
+	conversation.Title = strings.TrimSpace(input.Title)
+	conversation.UpdatedAt = testNow()
+	s.conversations[conversation.ID] = conversation
+	return conversation, nil
+}
+
 func (s *testAgentStore) ArchiveConversation(_ context.Context, principalID, conversationID string) (Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

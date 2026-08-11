@@ -49,7 +49,19 @@ func testAPIGenContracts() map[string]APIGenOperationContract {
 	for operationID, contract := range generated {
 		var command *APIGenCommandContract
 		if contract.Command != nil {
-			command = &APIGenCommandContract{AuthzMode: contract.Command.AuthzMode, Privilege: contract.Command.Privilege}
+			command = &APIGenCommandContract{
+				Owner:       contract.Command.Owner,
+				AuthzMode:   contract.Command.AuthzMode,
+				Privilege:   contract.Command.Privilege,
+				Idempotency: contract.Command.Idempotency,
+				Concurrency: contract.Command.Concurrency,
+			}
+			if contract.Command.Target != nil {
+				command.Target = &APIGenCommandTarget{
+					Parameter: contract.Command.Target.Parameter,
+					Type:      contract.Command.Target.Type,
+				}
+			}
 		}
 		contracts[operationID] = APIGenOperationContract{
 			OperationID: contract.OperationID, Method: contract.Method, Path: contract.Path, Protected: contract.Protected,
@@ -57,6 +69,36 @@ func testAPIGenContracts() map[string]APIGenOperationContract {
 		}
 	}
 	return contracts
+}
+
+func TestAPIGenCommandTargetSelectsWorkspaceAuthorizationObject(t *testing.T) {
+	authorizer := testAPIGenAuthorizer(t)
+	contract := APIGenOperationContract{
+		Path: "/api/v1/commands/{workspace}/execute",
+		Command: &APIGenCommandContract{
+			Target: &APIGenCommandTarget{Parameter: "workspace", Type: "workspace"},
+		},
+		// Legacy query scope metadata must not override a typed command target.
+		Extensions: map[string]any{apiGenObjectScopeExtension: "platform"},
+	}
+	resolver, ok := authorizer.objectResolverForContract(contract)
+	require.True(t, ok)
+	require.NotNil(t, resolver)
+
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("workspace", "contract-workspace")
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/commands/contract-workspace/execute", nil)
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	require.Equal(t, []ObjectRef{WorkspaceObject("contract-workspace")}, resolver(request, "fallback-workspace"))
+}
+
+func TestAPIGenPrincipalTargetPreservesPlatformAndCredentialWorkspaceBoundaries(t *testing.T) {
+	authorizer := testAPIGenAuthorizer(t)
+	resolver, ok := authorizer.objectResolverForContract(APIGenOperationContract{
+		Command: &APIGenCommandContract{Target: &APIGenCommandTarget{Parameter: "principal", Type: "principal"}},
+	})
+	require.True(t, ok)
+	require.Equal(t, []ObjectRef{PlatformObject(), WorkspaceObject("sales")}, resolver(httptest.NewRequest(http.MethodPatch, "/api/v1/principals/p1", nil), "sales"))
 }
 
 func TestAPIGenOperationPrivilegeUsesTypedCommandAuthorization(t *testing.T) {
@@ -113,7 +155,7 @@ func TestAPIGenAuthorizationContractCoverage(t *testing.T) {
 		if contract.AuthzMode != "privilege" {
 			t.Fatalf("%s auth mode = %q, want privilege", operationID, contract.AuthzMode)
 		}
-		if isGlobalAgentOperation(operationID) {
+		if (contract.Command != nil && strings.HasSuffix(contract.Command.Owner, ".Agent")) || (contract.Command == nil && isGlobalAgentQuery(operationID)) {
 			if _, hasScope := contract.Extensions[apiGenObjectScopeExtension]; hasScope {
 				t.Fatalf("%s global operation retains object-scope metadata", operationID)
 			}

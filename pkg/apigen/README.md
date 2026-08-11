@@ -150,8 +150,23 @@ APIGen requires an explicit `@operationId`, stable dotted lower-snake-case
 audit actions, a required `Idempotency-Key` on POST commands, and a required
 `If-Match` on PATCH commands. It emits the normalized value in IR, generated Go
 operation registries, aggregate registries, and OpenAPI `x-apigen-command`.
-Idempotency and concurrency fields describe HTTP transport policy; executors
-must not assume they apply to direct UI, agent, or automation invocation.
+The generated runtime registry is the transport-neutral execution policy:
+API middleware selects commands by generated method/route metadata, while
+direct UI, CLI, agent, and automation adapters call `command.BeginInvocation`
+with the same command identity and invocation inputs. The runtime rejects an
+undeclared surface, missing authorization target, missing idempotency identity,
+or missing concurrency token before domain dispatch. Revisioned mutations call
+`Executor.CheckConcurrency` with the canonical revision from inside their
+mutation transaction; a successful generated transport response is rejected
+unless both concurrency and command execution completed.
+
+`Contract.Dependencies` derives authorization, idempotency, concurrency, audit,
+and job-queue requirements from the same descriptor so composition roots can
+fail closed at startup with `ValidateDependencies`. Executor observations also
+derive their stable span name and low-cardinality labels from the contract;
+request bodies, target values, idempotency keys, and concurrency tokens are not
+logged. Applications should not maintain parallel method/path allowlists or
+surface-specific command-policy tables.
 
 Every command must explicitly declare `failures`, using `#[]` when it has no
 operation-owned domain failures. Each failure binds a transport-neutral stable

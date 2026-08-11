@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -13,6 +14,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	"github.com/go-chi/chi/v5"
 )
 
 type Authorizer interface {
@@ -54,9 +56,22 @@ func (h *Handler) HandleAPIGen(operationID string, w http.ResponseWriter, r *htt
 		var guard *apigencommand.Guard
 		if h.commands != nil {
 			if contract, command := h.commands(operationID); command {
-				ctx, started, err := apigencommand.Begin(r.Context(), contract)
+				surface := apigencommand.SurfaceAPI
+				if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Invocation-Surface")), string(apigencommand.SurfaceCLI)) ||
+					strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Client")), string(apigencommand.SurfaceCLI)) {
+					surface = apigencommand.SurfaceCLI
+				}
+				targets := map[string]string{}
+				if contract.Target != nil {
+					targets[contract.Target.Parameter] = chi.URLParam(r, contract.Target.Parameter)
+				}
+				ctx, started, err := apigencommand.BeginInvocation(r.Context(), contract, apigencommand.Invocation{
+					Surface: surface, TargetValues: targets,
+					IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")), ConcurrencyToken: strings.TrimSpace(r.Header.Get("If-Match")),
+					RequestID: strings.TrimSpace(r.Header.Get("X-Request-ID")), CorrelationID: strings.TrimSpace(r.Header.Get("X-Correlation-ID")),
+				})
 				if err != nil {
-					apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INVALID_COMMAND_CONTRACT", "The command contract is invalid.", nil)
+					writeInvocationProblem(w, r, err)
 					return
 				}
 				r = r.WithContext(ctx)
@@ -79,6 +94,21 @@ func (h *Handler) HandleAPIGen(operationID string, w http.ResponseWriter, r *htt
 		return
 	}
 	protected.ServeHTTP(w, r)
+}
+
+func writeInvocationProblem(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, apigencommand.ErrIdempotencyRequired):
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required by the command contract.", nil)
+	case errors.Is(err, apigencommand.ErrPreconditionRequired):
+		apitransport.WriteProblem(w, r, http.StatusPreconditionFailed, "PRECONDITION_REQUIRED", "If-Match is required by the command contract.", nil)
+	case errors.Is(err, apigencommand.ErrSurfaceNotExposed):
+		apitransport.WriteProblem(w, r, http.StatusForbidden, "COMMAND_SURFACE_FORBIDDEN", "The command is not exposed through this invocation surface.", nil)
+	case errors.Is(err, apigencommand.ErrTargetRequired):
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "COMMAND_TARGET_REQUIRED", "The command authorization target is required.", nil)
+	default:
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INVALID_COMMAND_CONTRACT", "The command contract is invalid.", nil)
+	}
 }
 
 // validateBoundary owns the small set of transport constraints that must be

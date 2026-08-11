@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
@@ -1090,6 +1091,18 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	})
 	if err != nil {
 		return fmt.Errorf("build APIGen authorizer: %w", err)
+	}
+	if err := apigencommand.ValidateDependencies(apiaggregate.GetAPIGenCommandRuntimeContracts(), map[apigencommand.Dependency]bool{
+		apigencommand.DependencyAuthorization: apiGenAuthorizer != nil,
+		apigencommand.DependencyIdempotency:   platform.apiProtocol != nil,
+		apigencommand.DependencyConcurrency:   true,
+		apigencommand.DependencyAudit:         true,
+		// The persistence-free developer/test composition does not activate
+		// durable async commands. Once persistence is enabled, their generated
+		// dependency must be present and startup fails closed if it is not.
+		apigencommand.DependencyJobQueue: platform.asyncJobs != nil || !runtime.persistenceConfigured,
+	}); err != nil {
+		return fmt.Errorf("validate generated command dependencies: %w", err)
 	}
 	platform.apiProtocol.SetReplayAuthorize(apiGenAuthorizer.AuthorizeReplay)
 	appResponder := apiprotocol.TransportErrorResponder{Logger: platform.logger}
