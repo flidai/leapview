@@ -1293,7 +1293,7 @@ func startQualificationDeploymentActivation(
 		},
 	)
 	if err != nil {
-		return err
+		return mapQualificationApproveDeploymentFailure(err)
 	}
 	if approval.Body.Status != "approved" {
 		return fmt.Errorf(
@@ -1310,7 +1310,10 @@ func startQualificationDeploymentActivation(
 			},
 		},
 	)
-	return err
+	if err != nil {
+		return mapQualificationActivateDeploymentFailure(err)
+	}
+	return nil
 }
 
 func waitForQualificationEvents(

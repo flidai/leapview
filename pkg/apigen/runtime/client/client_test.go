@@ -1,12 +1,25 @@
 package client
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestProblemErrorPreservesStructuredProblem(t *testing.T) {
+	problem := ProblemDetails{Status: 404, Code: "WIDGET_NOT_FOUND", Detail: "Widget not found.", RequestID: "request-1"}
+	err := &ProblemError{OperationID: "deleteWidget", Response: Response{StatusCode: http.StatusNotFound}, Problem: problem}
+	if err.Error() != "Widget not found." {
+		t.Fatalf("error = %q", err.Error())
+	}
+	var matched *ProblemError
+	if !errors.As(err, &matched) || matched.Problem.Code != problem.Code || matched.Response.StatusCode != http.StatusNotFound {
+		t.Fatalf("problem error = %#v", matched)
+	}
+}
 
 func TestAddQueryHandlesOptionalAndCollectionValues(t *testing.T) {
 	t.Helper()

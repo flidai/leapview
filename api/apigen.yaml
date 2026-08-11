@@ -5,6 +5,7 @@ targets:
     typespec_entrypoint: typespec/main.tsp
     ir_out: gen/json-ir.json
     openapi_out: gen/openapi.yaml
+    failure_ts_out: ../web/generated/api/failures.ts
     go_out:
       unmatched: error
       aggregate:
