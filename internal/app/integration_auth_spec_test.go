@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
@@ -45,6 +46,62 @@ func TestAuthSpecItemSharingAndDataPrivileges(t *testing.T) {
 	status, body = h.authSpecDo(t, http.MethodPost, "/api/v1/workspaces/sales/semantic-models/sales/datasets/orders/preview", token, `{"dimensions":[{"field":"orders.status"}],"limit":1}`)
 	if status != http.StatusNotFound {
 		t.Fatalf("raw preview status=%d want=404 body=%s", status, body)
+	}
+}
+
+func TestAuthSpecWorkspaceViewerCanOpenDashboardCatalog(t *testing.T) {
+	h, repo := newAuthSpecHarnessWithAuthWorkspace(t, AuthConfig{}, "default")
+	ctx := context.Background()
+
+	viewer := authSpecPrincipal(t, ctx, repo, "workspace-viewer@example.com")
+	authSpecGrant(t, ctx, repo, access.WorkspaceObject(h.workspaceID), access.SubjectPrincipal, viewer.ID, access.PrivilegeViewItem)
+	session, err := repo.CreateSession(ctx, viewer.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("create viewer session: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodGet, h.serverURL(t)+"/", nil)
+	if err != nil {
+		t.Fatalf("create dashboard catalog request: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: "lv_session", Value: session})
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get dashboard catalog: %v", err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard catalog status=%d want=200 body=%s", res.StatusCode, body)
+	}
+
+	updatesCtx, cancelUpdates := context.WithCancel(context.Background())
+	updatesReq, err := http.NewRequestWithContext(updatesCtx, http.MethodGet, h.serverURL(t)+"/updates?route=catalog", nil)
+	if err != nil {
+		t.Fatalf("create dashboard catalog updates request: %v", err)
+	}
+	updatesReq.AddCookie(&http.Cookie{Name: "lv_session", Value: session})
+	updatesRes, err := http.DefaultClient.Do(updatesReq)
+	if err != nil {
+		cancelUpdates()
+		t.Fatalf("get dashboard catalog updates: %v", err)
+	}
+	if updatesRes.StatusCode != http.StatusOK {
+		defer updatesRes.Body.Close()
+		updatesBody, _ := io.ReadAll(updatesRes.Body)
+		cancelUpdates()
+		t.Fatalf("dashboard catalog updates status=%d want=200 body=%s", updatesRes.StatusCode, updatesBody)
+	}
+	client := &streamClient{
+		cancel:  cancelUpdates,
+		body:    updatesRes.Body,
+		patches: make(chan map[string]any, 1),
+		errs:    make(chan error, 1),
+	}
+	go client.read()
+	t.Cleanup(client.close)
+	patch := patchString(client.nextPatch(t))
+	if !strings.Contains(patch, `"href":"/workspaces/sales/dashboards/executive-sales"`) {
+		t.Fatalf("dashboard catalog updates missing visible dashboard: %s", patch)
 	}
 }
 
@@ -635,6 +692,10 @@ func TestAuthSpecAuditCoversLocalAccessMutations(t *testing.T) {
 }
 
 func newAuthSpecHarness(t *testing.T) (*harness, *accesssqlite.Repository) {
+	return newAuthSpecHarnessWithAuthWorkspace(t, AuthConfig{APITokenOnly: true}, "")
+}
+
+func newAuthSpecHarnessWithAuthWorkspace(t *testing.T, authConfig AuthConfig, authWorkspaceID string) (*harness, *accesssqlite.Repository) {
 	t.Helper()
 	h, metrics, catalogPath := newHarnessWithMetrics(t)
 	ctx := context.Background()
@@ -647,12 +708,21 @@ func newAuthSpecHarness(t *testing.T) (*harness, *accesssqlite.Repository) {
 	if workspaceID == "" {
 		workspaceID = config.DefaultWorkspaceID
 	}
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: metrics.Catalog().Workspace.Title, Description: metrics.Catalog().Workspace.Description}); err != nil {
+	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: metrics.Catalog().Workspace.Title, Description: metrics.Catalog().Workspace.Description}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
+	}
+	if authWorkspaceID != "" && authWorkspaceID != workspaceID {
+		if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(authWorkspaceID), Title: "Default Workspace"}); err != nil {
+			t.Fatalf("ensure auth workspace: %v", err)
+		}
 	}
 	seedIntegrationActiveDeployment(t, store, workspaceID, catalogPath)
 	repo := accesssqlite.NewRepository(store.SQLDB())
-	auth := NewAuth(repo, workspaceID, AuthConfig{APITokenOnly: true})
+	if authWorkspaceID == "" {
+		authWorkspaceID = workspaceID
+	}
+	auth := NewAuth(repo, authWorkspaceID, authConfig)
 	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: workspaceID}))
 	h.store = store
 	h.handler = server.Routes()

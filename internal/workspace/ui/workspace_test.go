@@ -10,6 +10,7 @@ import (
 	workspaceview "github.com/flidai/leapview/internal/workspace"
 	catalog "github.com/flidai/leapview/internal/workspace/navigation"
 	uisignals "github.com/flidai/leapview/internal/workspace/ui/signals"
+	g "maragu.dev/gomponents"
 )
 
 func TestWorkspaceCatalogSignalUsesWorkspaceItems(t *testing.T) {
@@ -32,6 +33,72 @@ func TestWorkspaceCatalogSignalUsesWorkspaceItems(t *testing.T) {
 		if strings.Contains(string(payload), stale) {
 			t.Fatalf("workspace catalog payload contains stale field %s: %s", stale, payload)
 		}
+	}
+}
+
+func TestListPagesUseDebouncedPostSearchCommands(t *testing.T) {
+	workspace, catalog, assets, edges := testWorkspaceAssetFixtures()
+	tests := []struct {
+		name string
+		page g.Node
+		path string
+	}{
+		{name: "catalog", page: CatalogPage(catalog), path: "/catalog/search"},
+		{name: "workspaces", page: WorkspacesPage(catalog, []workspaceview.WorkspaceView{workspace}, "Owner"), path: "/workspaces/search"},
+		{name: "workspace assets", page: WorkspacePage(catalog, workspace, assets, "", "", "Owner", WorkspaceAccessResponse{}, ""), path: "/workspaces/leapview/search"},
+		{name: "connections", page: ConnectionsPage(catalog, workspace.ID, assets, edges, "", "", "Owner"), path: "/connections/search"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var out strings.Builder
+			if err := test.page.Render(&out); err != nil {
+				t.Fatal(err)
+			}
+			rendered := html.UnescapeString(out.String())
+			if !strings.Contains(rendered, `data-on:lv-entity-list-query__debounce.200ms=`) && !strings.Contains(rendered, `data-on:lv-workspace-asset-filter__debounce.200ms=`) {
+				t.Fatalf("list page missing debounced search bridge:\n%s", rendered)
+			}
+			if !strings.Contains(rendered, "@post('"+test.path+"'") {
+				t.Fatalf("list page missing POST search command %q:\n%s", test.path, rendered)
+			}
+		})
+	}
+}
+
+func TestListResultPatchesOnlyReplaceServerOwnedRows(t *testing.T) {
+	workspace, workspaceCatalog, assets, edges := testWorkspaceAssetFixtures()
+	tests := []struct {
+		name   string
+		patch  map[string]any
+		field  string
+		nested string
+	}{
+		{name: "catalog", patch: CatalogListPatchForCatalogsQuery([]catalog.Catalog{workspaceCatalog}, "sales"), field: "dashboards"},
+		{name: "workspaces", patch: WorkspacesListResultsPatch([]workspaceview.WorkspaceView{workspace}), field: "workspaces"},
+		{name: "workspace assets", patch: WorkspaceAssetListResultsPatch(workspace.ID, assets, edges), field: "assetList", nested: "assets"},
+		{name: "connections", patch: ConnectionsListResultsPatch("platform", assets, edges), field: "assetList", nested: "assets"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			page, ok := test.patch["page"].(map[string]any)
+			if !ok || len(test.patch) != 1 || len(page) != 1 {
+				t.Fatalf("list patch must contain only one page result field: %#v", test.patch)
+			}
+			value, ok := page[test.field]
+			if !ok {
+				t.Fatalf("list patch missing page.%s: %#v", test.field, test.patch)
+			}
+			if test.nested == "" {
+				return
+			}
+			nested, ok := value.(map[string]any)
+			if !ok || len(nested) != 1 {
+				t.Fatalf("list patch must contain only page.%s.%s: %#v", test.field, test.nested, test.patch)
+			}
+			if _, ok := nested[test.nested]; !ok {
+				t.Fatalf("list patch missing page.%s.%s: %#v", test.field, test.nested, test.patch)
+			}
+		})
 	}
 }
 
@@ -785,6 +852,8 @@ func TestConnectionsPageUsesConnectionAssetTabs(t *testing.T) {
 
 	for _, want := range []string{
 		`<lv-connections-page`,
+		`data-on:lv-entity-list-query__debounce.200ms=`,
+		`@post('/connections/search'`,
 		`"searchHref":"/connections"`,
 		`"href":"/connections?type=connection"`,
 		`"active":true,"href":"/connections?type=source"`,
@@ -948,6 +1017,8 @@ func TestWorkspaceAccessControlRendersForManagers(t *testing.T) {
 
 	for _, want := range []string{
 		`<lv-workspace-page`,
+		`data-on:lv-workspace-asset-filter__debounce.200ms=`,
+		`@post('/workspaces/leapview/search'`,
 		`data-on:lv-workspace-access-search__debounce.200ms=`,
 		`/workspaces/leapview/access/search`,
 		`data-on:lv-workspace-access-upsert=`,

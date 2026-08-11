@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
 let browser: Browser
@@ -158,7 +159,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { --fontStack-system: system-ui; --fontStack-monospace: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --base-size-4: 4px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --lv-space-2xs: 2px; --lv-space-xs: 4px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 14px; --lv-font-size-body-md: 16px; --lv-font-size-title-sm: 18px; --lv-font-size-title-md: 22px; --lv-font-weight-strong: 600; --lv-line-height-compact: 1.3; --lv-line-height-snug: 1.35; --lv-line-height-normal: 1.5; --lv-line-height-relaxed: 1.55; --lv-chat-markdown-block-gap: 10px; --lv-chat-markdown-list-indent: 20px; --lv-chat-markdown-list-item-gap: 2px; --lv-chat-code-radius: 4px; --lv-chat-code-padding-block: 1px; --lv-chat-code-padding-inline: 4px; --lv-chat-code-font-scale: 0.92em; --lv-chat-pre-padding-block: 9px; --lv-chat-pre-padding-inline: 10px; --lv-chat-quote-border-width: 2px; --lv-chat-bubble-padding-block: 12px; --lv-chat-link-underline-thickness: 1px; --lv-chat-link-underline-offset: 2px; }
+          body { ${typographyTestTokens} --fontStack-monospace: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --base-size-4: 4px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --lv-space-2xs: 2px; --lv-space-xs: 4px; --lv-chat-markdown-block-gap: 10px; --lv-chat-markdown-list-indent: 20px; --lv-chat-markdown-list-item-gap: 2px; --lv-chat-code-radius: 4px; --lv-chat-code-padding-block: 1px; --lv-chat-code-padding-inline: 4px; --lv-chat-code-font-scale: 0.92em; --lv-chat-pre-padding-block: 9px; --lv-chat-pre-padding-inline: 10px; --lv-chat-quote-border-width: 2px; --lv-chat-bubble-padding-block: 12px; --lv-chat-link-underline-thickness: 1px; --lv-chat-link-underline-offset: 2px; }
           lv-markdown-view { display: block; width: 760px; margin: 24px; }
         </style>
       </head>

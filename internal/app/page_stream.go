@@ -29,7 +29,9 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 			switch route {
 			case routeLogin:
 				return next, true
-			case routeCatalog, routeDashboard, routeWorkspace, routeWorkspaceAsset, routeConnections, routeConnectionAsset, routeData:
+			case routeCatalog:
+				return routes.accessModule.ProtectAnyWorkspaceNamed("VIEW_ITEM", next), true
+			case routeDashboard, routeWorkspace, routeWorkspaceAsset, routeConnections, routeConnectionAsset, routeData:
 				return routes.accessModule.ProtectNamed("VIEW_ITEM", next), true
 			case routeChat:
 				return routes.accessModule.ProtectNamed("VIEW_AGENT", next), true
@@ -71,8 +73,12 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 				_ = uitransport.PatchOnce(runtime.pageStreamTrace, w, r, routes.accessModule.LoginBootstrapSignals(r))
 			}),
 			routeCatalog: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				uitransport.PatchAndWait(runtime.pageStreamTrace, w, r,
-					routes.workspaceModule.CatalogBootstrapSignals(r, applicationLayout(routes.accessModule, routes.agentModule, platform.assets, r)))
+				signals, err := routes.workspaceModule.CatalogBootstrapSignals(r, applicationLayout(routes.accessModule, routes.agentModule, platform.assets, r))
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				uitransport.PatchAndWait(runtime.pageStreamTrace, w, r, signals)
 			}),
 			routeWorkspace:   http.HandlerFunc(routes.workspaceModule.HTTP().WorkspaceBootstrapUpdates),
 			routeConnections: http.HandlerFunc(routes.workspaceModule.HTTP().ConnectionsBootstrapUpdates),

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,7 @@ import (
 	manageddatasqlite "github.com/flidai/leapview/internal/manageddata/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
+	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -720,6 +722,54 @@ func TestWorkspaceAssetSearchStaysWorkspaceFacing(t *testing.T) {
 	}
 }
 
+func TestWorkspaceAssetFilterUpdatesWorkspacePage(t *testing.T) {
+	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
+	store := testStore(t)
+	seedActiveDeployment(t, store, "test")
+	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/updates?route=workspace&workspace=test", nil)
+	query := req.URL.Query()
+	query.Set("datastar", `{"workspaceAssetType":"dashboard","workspaceAssetQuery":""}`)
+	req.URL.RawQuery = query.Encode()
+	req.Header.Set("Authorization", "Bearer dev")
+	rec := newSynchronizedRecorder()
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		server.Routes().ServeHTTP(rec, req)
+	}()
+
+	waitForRecorderBodyContains(t, rec, `"activeType":"dashboard"`)
+	cancel()
+	<-returned
+
+	ssetest.RequirePatchSignal(t, rec.BodyString(), func(patch map[string]any) bool {
+		page, ok := patch["page"].(map[string]any)
+		if !ok {
+			return false
+		}
+		assetList, ok := page["assetList"].(map[string]any)
+		if !ok || assetList["activeType"] != "dashboard" {
+			return false
+		}
+		assets, ok := assetList["assets"].([]any)
+		if !ok || len(assets) == 0 {
+			return false
+		}
+		for _, value := range assets {
+			asset, ok := value.(map[string]any)
+			if !ok || asset["type"] != "dashboard" {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 func TestWorkspaceConnectionFilterRedirectsToGlobalConnections(t *testing.T) {
 	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
 	store := testStore(t)
@@ -818,6 +868,46 @@ func TestConnectionsPageFiltersSources(t *testing.T) {
 	}
 	if strings.Contains(body, "Local CSV files for the Olist ecommerce demo dataset.") {
 		t.Fatalf("source-filtered connections page included connection row:\n%s", body)
+	}
+}
+
+func TestConnectionsSearchCommandPatchesOnlyResultRows(t *testing.T) {
+	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
+	store := testStore(t)
+	seedActiveDeployment(t, store, "test")
+	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+
+	req := httptest.NewRequest(http.MethodPost, "/connections/search", strings.NewReader(`{"entityListQuery":"orders","entityListFilter":"source"}`))
+	req.Header.Set("Authorization", "Bearer dev")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	patches := ssetest.PatchSignals(t, rec.Body.String())
+	if len(patches) != 1 {
+		t.Fatalf("patch count = %d, want 1: %s", len(patches), rec.Body.String())
+	}
+	page, ok := patches[0]["page"].(map[string]any)
+	if !ok || len(patches[0]) != 1 || len(page) != 1 {
+		t.Fatalf("search command patched more than result data: %#v", patches[0])
+	}
+	assetList, ok := page["assetList"].(map[string]any)
+	if !ok || len(assetList) != 1 {
+		t.Fatalf("search command asset list patch = %#v", page["assetList"])
+	}
+	assets, ok := assetList["assets"].([]any)
+	if !ok || len(assets) == 0 {
+		t.Fatalf("search command assets = %#v", assetList["assets"])
+	}
+	for _, value := range assets {
+		asset, ok := value.(map[string]any)
+		if !ok || asset["type"] != "source" || !strings.Contains(strings.ToLower(fmt.Sprint(asset["title"])), "orders") {
+			t.Fatalf("unexpected connection search result: %#v", value)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
 let baseURL = ''
@@ -80,6 +81,131 @@ test('publications admin renders lifecycle controls and emits typed commands', a
   }
 })
 
+test('profile admin renders the signed-in identity with read-only fields', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        kind: 'admin', title: 'Profile', active: 'profile', headerTitle: 'Profile', headerDetail: '',
+        profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', title: '', username: 'jacob', profilePictureUrl: undefined },
+      } })
+      const element = document.querySelector('lv-admin-page') as any
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return {
+        title: root.querySelector('h1')?.textContent?.trim(),
+        cardBorderWidth: getComputedStyle(root.querySelector('.profile-card') as HTMLElement).borderTopWidth,
+        rows: Array.from(root.querySelectorAll('.profile-row')).map((row) => row.textContent?.replace(/\s+/g, ' ').trim()),
+        initials: root.querySelector('.profile-avatar')?.textContent?.trim(),
+        editableFields: root.querySelectorAll('input, textarea, select, button').length,
+      }
+    })
+    expect(state.title).toBe('Profile')
+    expect(state.cardBorderWidth).toBe('0px')
+    expect(state.rows).toEqual(expect.arrayContaining([
+      'Profile picture JN',
+      'Email jacob@example.com',
+      'Full name Jacob Nielsen',
+      'Title Your job title or role Not set',
+      'Username One word, like a nickname or first name jacob',
+    ]))
+    expect(state.initials).toBe('JN')
+    expect(state.editableFields).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('members directory list delegates search and filtering to the page stream', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-entity-list'))
+      const state = await page.evaluate(async () => {
+        const admin = document.querySelector('lv-admin-page') as any
+        const root = admin.shadowRoot as ShadowRoot
+        const list = root.querySelector('lv-entity-list') as any
+      if (!list) throw new Error('members entity list was not rendered')
+      await list.updateComplete
+      const rows = () => Array.from(root.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.textContent?.replace(/\s+/g, ' ').trim())
+      const initial = {
+        title: root.querySelector('table')?.getAttribute('aria-label'),
+        groupLabels: Array.from(root.querySelectorAll('.entity-list-group-row')).map((row) => row.textContent?.replace(/\s+/g, ' ').trim()),
+        rows: rows(),
+        headers: Array.from(root.querySelectorAll('thead th .entity-list-sort-button > span:first-child')).map((header) => header.textContent?.trim()),
+      }
+      const input = root.querySelector('input[type="search"]') as HTMLInputElement
+      input.value = 'analyst'
+      input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await list.updateComplete
+      const filtered = rows()
+      const select = root.querySelector('select') as HTMLSelectElement
+      select.value = 'applications'
+      select.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await list.updateComplete
+      return { initial, filtered, applicationRows: rows() }
+    })
+
+    expect(state.initial.title).toBe('Members')
+    expect(state.initial.groupLabels).toEqual(['Active1'])
+    expect(state.initial.headers).toEqual(['Name', 'Email', 'Status', 'Teams', 'Joined'])
+    expect(state.initial.rows).toHaveLength(1)
+    // The list emits both changes but keeps the last server payload visible
+    // until the page stream sends the filtered groups back.
+    expect(state.filtered).toEqual(state.initial.rows)
+    expect(state.applicationRows).toEqual(state.initial.rows)
+  } finally {
+    await page.close()
+  }
+})
+
+test('groups admin uses the reusable entity list and delegates search to the page stream', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-entity-list'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        kind: 'admin', title: 'Groups', active: 'groups', headerTitle: 'Groups', headerDetail: '',
+        sections: [{ title: 'Groups', table: {
+          columns: [], empty: 'No groups found.', rows: [
+            { name: 'Operations Group', name_href: '/admin/groups/operations', provider: 'local', external_id: 'operations', member_count: 3, id: 'operations' },
+            { name: 'Finance Group', name_href: '/admin/groups/finance', provider: 'scim', external_id: 'finance', member_count: 1, id: 'finance' },
+          ],
+        } }],
+      } })
+      const admin = document.querySelector('lv-admin-page') as any
+      await admin.updateComplete
+      const root = admin.shadowRoot as ShadowRoot
+      const input = root.querySelector('.entity-search input') as HTMLInputElement
+      const rows = () => Array.from(root.querySelectorAll('.entity-list-table-row')).map((row) => row.textContent?.replace(/\s+/g, ' ').trim())
+      const before = rows()
+      input.value = 'operations'
+      input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await admin.updateComplete
+      return {
+        title: root.querySelector('h1')?.textContent?.trim(),
+        before,
+        after: rows(),
+        filterOptions: Array.from(root.querySelectorAll('.entity-filter option')).map((option) => option.textContent?.trim()),
+        href: root.querySelector('.entity-list-identity')?.getAttribute('href'),
+      }
+    })
+
+    expect(state.title).toBe('Groups')
+    expect(state.before).toHaveLength(2)
+    expect(state.after).toEqual(state.before)
+    expect(state.filterOptions).toEqual(['All', 'Local', 'Scim'])
+    expect(state.href).toBe('/admin/groups/operations')
+  } finally {
+    await page.close()
+  }
+})
+
 for (const viewport of [
   { name: 'desktop', width: 1440, height: 820 },
   { name: 'mobile', width: 390, height: 820 },
@@ -88,134 +214,56 @@ for (const viewport of [
     const page = await browser.newPage({ viewport })
     try {
       await page.goto(baseURL)
-      await page.waitForFunction(() => (
-        customElements.get('lv-admin-page')
-          && customElements.get('lv-sub-sidebar')
-          && customElements.get('lv-record-table')
-      ))
+      await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
       await page.locator('lv-admin-page').evaluate((element: any) => element.updateComplete)
 
-      const state = await page.locator('lv-admin-page').evaluate((element: any) => {
+      const state = await page.locator('lv-admin-page').evaluate(async (element: any) => {
         const root = element.shadowRoot
-        const subSidebar = root.querySelector('lv-sub-sidebar') as HTMLElement
-        const subSidebarAside = subSidebar?.shadowRoot?.querySelector('aside') as HTMLElement | null
+        const entityList = root.querySelector('lv-entity-list') as any
+        await entityList?.updateComplete
         const main = root.querySelector('.main') as HTMLElement
         const mainRect = main.getBoundingClientRect()
         const routeRect = root.querySelector('.route')!.getBoundingClientRect()
-        const sidebarRect = subSidebar.getBoundingClientRect()
-        const availableLeft = window.innerWidth <= 640 ? routeRect.left : sidebarRect.right
-        const availableRight = routeRect.right
-        const availableCenter = availableLeft + (availableRight - availableLeft) / 2
         const isMobile = window.innerWidth <= 640
         return {
           title: root.querySelector('h1')?.textContent?.trim(),
-          hasSidebar: Boolean(root.querySelector('lv-sub-sidebar')),
-          sidebarBorderRight: subSidebar ? getComputedStyle(subSidebar).borderRight : '',
-          sidebarBackground: subSidebarAside ? getComputedStyle(subSidebarAside).backgroundColor : '',
-          mainCentered: isMobile || Math.abs((mainRect.left + mainRect.width / 2) - availableCenter) <= 1,
-          mainConstrained: isMobile || Math.round(mainRect.width) < Math.round(availableRight - availableLeft),
+          headerText: root.querySelector('header')?.textContent?.replace(/\s+/g, ' ').trim(),
+          hasSubSidebar: Boolean(root.querySelector('lv-sub-sidebar')),
+          hasEntityList: Boolean(entityList),
+          mainCentered: isMobile || Math.abs((mainRect.left + mainRect.width / 2) - (routeRect.left + routeRect.width / 2)) <= 1,
+          mainConstrained: isMobile || Math.round(mainRect.width) < Math.round(routeRect.width),
           hasRecordTable: Boolean(root.querySelector('lv-record-table')),
           recordTableVariant: root.querySelector('lv-record-table')?.getAttribute('variant'),
           documentOverflow: document.documentElement.scrollWidth - window.innerWidth,
           mainRight: Math.round(mainRect.right),
-          sidebarRight: Math.round(sidebarRect.right),
-          formRight: Math.round((root.querySelector('.local-user-form') as HTMLElement).getBoundingClientRect().right),
+          routeRight: Math.round(routeRect.right),
+          hasCreateLocalUserPanel: Boolean(root.querySelector('[aria-label="Create local user"]')),
           text: root.textContent,
         }
       })
 
-      expect(state.title).toBe('Principals')
-      expect(state.hasSidebar).toBe(true)
+      expect(state.title).toBe('Members')
+      expect(state.headerText).toBe('Members')
+      expect(state.hasSubSidebar).toBe(false)
+      expect(state.hasEntityList).toBe(true)
       if (viewport.width > 640) {
-        expect(state.sidebarBorderRight).toContain('1px solid')
-        expect(state.sidebarBackground).toBe('rgb(241, 243, 245)')
         expect(state.mainCentered).toBe(true)
         expect(state.mainConstrained).toBe(true)
       }
-      expect(state.hasRecordTable).toBe(true)
-      expect(state.recordTableVariant).toBe('compact')
+      expect(state.hasRecordTable).toBe(false)
+      expect(state.recordTableVariant).toBeUndefined()
+      expect(state.hasCreateLocalUserPanel).toBe(false)
       expect(state.text ?? '').toMatch(/analyst@example\.com/)
       if (viewport.width <= 640) {
         expect(state.documentOverflow).toBe(0)
         expect(state.mainRight).toBeLessThanOrEqual(viewport.width)
-        expect(state.sidebarRight).toBeLessThanOrEqual(viewport.width)
-        expect(state.formRight).toBeLessThanOrEqual(viewport.width)
+        expect(state.routeRight).toBeLessThanOrEqual(viewport.width)
       }
     } finally {
       await page.close()
     }
   })
 }
-
-test('admin navigation remains pinned while content scrolls on desktop', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-sub-sidebar') && customElements.get('lv-record-table'))
-
-      const state = await page.evaluate(async () => {
-        const element = document.createElement('lv-admin-page') as any
-        element.style.minHeight = '1600px'
-      const pageSignal = {
-        kind: 'admin',
-        title: 'Principals',
-        active: 'principals',
-        sidebar: {
-          label: 'Admin',
-          railLabel: 'Admin',
-          ariaLabel: 'Admin navigation',
-          storageKey: 'leapview-admin-sidebar-collapsed',
-          activeId: 'principals',
-          collapsible: false,
-          numbered: false,
-          items: [
-            { id: 'general', title: 'General', href: '/admin', active: false },
-            { id: 'principals', title: 'Principals', href: '/admin/principals', active: true },
-            { id: 'groups', title: 'Groups', href: '/admin/groups', active: false },
-            { id: 'agent', title: 'Agent', href: '/admin/agent', active: false },
-            { id: 'storage', title: 'Storage', href: '/admin/storage', active: false },
-          ],
-        },
-        headerTitle: 'Principals',
-        headerDetail: 'Users and service principals known to LeapView.',
-        sections: Array.from({ length: 40 }, (_, index) => ({
-          title: `Section ${index + 1}`,
-          facts: [
-            { label: 'Principals', value: `${index + 1}` },
-            { label: 'Groups', value: `${index + 2}` },
-            { label: 'Roles', value: `${index + 3}` },
-          ],
-        })),
-      }
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: pageSignal })
-      const spacer = document.createElement('div')
-      spacer.style.height = '1600px'
-      document.body.replaceChildren(element, spacer)
-      document.documentElement.style.minHeight = '2400px'
-      document.body.style.minHeight = '2400px'
-      await element.updateComplete
-      const subSidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as HTMLElement
-      const before = subSidebar.getBoundingClientRect()
-      window.scrollTo(0, 420)
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-      const after = subSidebar.getBoundingClientRect()
-      return {
-        scrollY: window.scrollY,
-        beforeTop: Math.round(before.top),
-        afterTop: Math.round(after.top),
-        afterHeight: Math.round(after.height),
-      }
-    })
-
-    expect(state.scrollY).toBeGreaterThan(300)
-    expect(state.beforeTop).toBe(0)
-    expect(state.afterTop).toBe(0)
-    expect(state.afterHeight).toBe(720)
-  } finally {
-    await page.close()
-  }
-})
 
 function queryAuditFixturePage() {
   const queryEvents = [
@@ -1188,7 +1236,7 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
     expect(state.actionsInControlRow).toBe(true)
     expect(state.actionsBeforeBody).toBe(true)
     expect(state.actionsAfterBody).toBe(false)
-    expect(state.editorFontSize).toBe('12px')
+    expect(state.editorFontSize).toBe('13px')
     expect(state.seededEditorValue).toBe('Signal prompt')
     expect(state.editorValue).toBe('Updated prompt')
     expect(state.dirtyState).toEqual({ hasSaveButton: true, saveText: 'Save', status: 'Unsaved changes' })
@@ -1733,7 +1781,6 @@ function testDocument(): string {
       collapsible: false,
       numbered: false,
       items: [
-        { id: 'general', title: 'General', href: '/admin', active: false },
         { id: 'principals', title: 'Principals', href: '/admin/principals', active: true },
         { id: 'groups', title: 'Groups', href: '/admin/groups', active: false },
         { id: 'agent', title: 'Agent', href: '/admin/agent', active: false },
@@ -1741,23 +1788,17 @@ function testDocument(): string {
         { id: 'queries', title: 'Queries', href: '/admin/queries', active: false },
       ],
     },
-    headerTitle: 'Principals',
-    headerDetail: 'Users and service principals known to LeapView.',
-    sections: [{
-      title: 'Principals',
-      table: {
-        columns: [
-          { id: 'name', header: 'Name', kind: 'link', hrefKey: 'name_href' },
-          { id: 'email', header: 'Email' },
-          { id: 'roles', header: 'Direct roles', kind: 'tags' },
-          { id: 'kind', header: 'Kind' },
-          { id: 'status', header: 'Status' },
-          { id: 'created', header: 'Created' },
-        ],
-        rows: [{ name: 'Analyst', name_href: '/admin/principals/p1', email: 'analyst@example.com', roles: ['viewer'], kind: 'local user', status: 'active', created: '2026-07-20' }],
-        empty: 'No principals found.',
-      },
-    }],
+    headerTitle: 'Members',
+    headerDetail: '',
+    directoryList: {
+      searchPlaceholder: 'Search by name or email',
+      filterLabel: 'Filter members',
+      groups: [{
+        id: 'active',
+        label: 'Active',
+        items: [{ id: 'p1', name: 'Analyst', username: 'analyst', email: 'analyst@example.com', href: '/admin/principals/p1', kind: 'person', status: 'active', role: 'Viewer', groupCount: 1, joinedAt: '2026-07-20' }],
+      }],
+    },
   }
   const signals = escapeHTML(JSON.stringify({ page }))
   return `
@@ -1766,7 +1807,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { --fontStack-system: system-ui; --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-bg-accent: #0969da; --lv-bg-accent-muted: #ddf4ff; --lv-sidebar-bg: #f1f3f5; --lv-report-rail-bg: #ffffff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-fg-link: #0969da; --lv-fg-success: #1a7f37; --lv-fg-warning: #9a6700; --lv-fg-danger: #d1242f; --lv-fg-on-accent: #fff; --lv-icon-muted: #57606a; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-workspace-detail-max-width: 72rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 14px; --lv-font-size-body-md: 16px; --lv-font-size-title-sm: 18px; --lv-font-size-title-md: 22px; --lv-font-weight-medium: 500; --lv-font-weight-strong: 600; --lv-line-height-tight: 1.2; --lv-line-height-compact: 1.3; --lv-line-height-normal: 1.5; --lv-transition-fast: 160ms ease; }
+          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #fff; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-bg-accent: #0969da; --lv-bg-accent-muted: #ddf4ff; --lv-sidebar-bg: #f1f3f5; --lv-report-rail-bg: #ffffff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-fg-link: #0969da; --lv-fg-success: #1a7f37; --lv-fg-warning: #9a6700; --lv-fg-danger: #d1242f; --lv-fg-on-accent: #fff; --lv-icon-muted: #57606a; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-workspace-detail-max-width: 72rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --lv-transition-fast: 160ms ease; }
           lv-admin-page { min-height: 720px; }
         </style>
       </head>

@@ -9,9 +9,15 @@ func TestWorkspaceViewHelpersFilterAndNavigateAssets(t *testing.T) {
 		{ID: "connection:duckdb", Type: "connection", Key: "duckdb", Title: "DuckDB"},
 		{ID: "source:orders", Type: "source", Key: "orders", Title: "Orders"},
 	}
-	landing := FilterWorkspaceAssets(assets, "", "")
+	landing := FilterWorkspaceLandingAssets(assets, "", "")
 	if len(landing) != 2 {
 		t.Fatalf("landing assets = %#v", landing)
+	}
+	if filtered := FilterWorkspaceLandingAssets(assets, "", "ord"); len(filtered) != 0 {
+		t.Fatalf("workspace search leaked non-landing assets = %#v", filtered)
+	}
+	if filtered := FilterWorkspaceAssets(assets, "connection", "duck"); len(filtered) != 1 || filtered[0].ID != "connection:duckdb" {
+		t.Fatalf("workspace dependency filter = %#v", filtered)
 	}
 	if filtered := FilterConnectionAssets(assets, "source", "ord"); len(filtered) != 1 || filtered[0].ID != "source:orders" {
 		t.Fatalf("filtered connection assets = %#v", filtered)

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
@@ -33,6 +34,18 @@ type AdminData struct {
 	QueryHistory          AdminQueryHistoryData
 	Publications          []AdminPublication
 	CanManagePublications bool
+	Profile               AdminProfile
+	ListFilter            string
+	ListQuery             string
+}
+
+type AdminProfile struct {
+	ID                string
+	Email             string
+	DisplayName       string
+	Title             string
+	Username          string
+	ProfilePictureURL string
 }
 
 type AdminPublication struct {
@@ -64,8 +77,10 @@ type AdminAgentTool struct {
 
 type AdminPrincipal struct {
 	ID          string
+	Kind        string
 	Email       string
 	DisplayName string
+	DisabledAt  string
 	CreatedAt   string
 	UpdatedAt   string
 	DirectRoles []string
@@ -151,9 +166,13 @@ type adminRecordTable = uisignals.RecordTableSignal
 type adminRecordTableColumn = uisignals.RecordTableColumnSignal
 
 func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.Node {
+	active = normalizeAdminSection(active)
 	title := adminPageTitle(active)
 	layout := webpage.Resolve(firstProvider(providers), adminLayoutContext(active))
 	adminUpdatesURL := updatesURL(uisignals.RouteAdmin, "section", active)
+	if active == "principals" || active == "groups" {
+		adminUpdatesURL = updatesURL(uisignals.RouteAdmin, "section", active, "q", data.ListQuery, "filter", data.ListFilter)
+	}
 	if active == "principal-detail" && data.SelectedPrincipal != nil {
 		adminUpdatesURL = updatesURL(uisignals.RouteAdmin, "section", active, "principal", data.SelectedPrincipal.ID)
 	}
@@ -184,6 +203,11 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			g.Attr("data-on:lv-publication-command", "$adminPublicationCommand = evt.detail; "+uiactions.Post("/admin/publications/command", "adminPublicationCommand")),
 		)
 	}
+	if active == "principals" || active == "groups" {
+		adminAttrs = append(adminAttrs,
+			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Post("/admin/"+active+"/search", "entityListQuery", "entityListFilter")),
+		)
+	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: "Admin - " + title, CSRFToken: data.CSRFToken,
 		Stylesheets: []string{"/static/admin-page.css"}, Scripts: []string{"/static/admin-page.js"},
@@ -193,6 +217,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 }
 
 func AdminBootstrapSignals(active string, data AdminData, providers ...webpage.Provider) map[string]any {
+	active = normalizeAdminSection(active)
 	page := adminPageSignal(active, data)
 	signals := map[string]any{
 		"page":    page,
@@ -219,10 +244,28 @@ func AdminBootstrapSignals(active string, data AdminData, providers ...webpage.P
 	return webpage.WithSignal(layout, signals)
 }
 
+func AdminListResultsPatch(active string, data AdminData) map[string]any {
+	page := adminPageSignal(active, data)
+	switch normalizeAdminSection(active) {
+	case "principals":
+		groups := []uisignals.AdminDirectoryListGroupSignal{}
+		if page.DirectoryList != nil {
+			groups = page.DirectoryList.Groups
+		}
+		return map[string]any{"page": map[string]any{
+			"directoryList": map[string]any{"groups": groups},
+		}}
+	case "groups":
+		return map[string]any{"page": map[string]any{"sections": uisignals.ValueOrZero(page.Sections)}}
+	default:
+		return nil
+	}
+}
+
 func adminLayoutContext(active string) webpage.Context {
 	return webpage.Context{
 		Active: "admin", SectionTitle: "Workspace", PageTitle: "Published assets",
-		PageID: active,
+		PageID: active, Compact: true,
 	}
 }
 
@@ -245,17 +288,21 @@ func updatesURL(route uisignals.RouteKind, pairs ...string) string {
 }
 
 func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
+	active = normalizeAdminSection(active)
 	page := uisignals.AdminPageSignal{
-		Kind:    uisignals.RouteAdmin,
-		Title:   adminPageTitle(active),
-		Active:  active,
-		Sidebar: adminSidebarSignal(active, data.CanManagePublications),
+		Kind:       uisignals.RouteAdmin,
+		Title:      adminPageTitle(active),
+		Active:     active,
+		ListFilter: uisignals.Optional(data.ListFilter),
+		ListQuery:  uisignals.Optional(data.ListQuery),
 	}
 	switch active {
 	case "principals":
-		page.HeaderTitle = "Principals"
-		page.HeaderDetail = "Users and service principals known to LeapView."
-		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Principals", Table: uisignals.Pointer(adminPrincipalsGrid(data.Principals))}})
+		page.HeaderTitle = "Members"
+		page.DirectoryList = uisignals.Pointer(adminDirectoryList(data.Principals, data.ListFilter))
+	case "profile":
+		page.HeaderTitle = "Profile"
+		page.Profile = uisignals.Pointer(adminProfileSignal(data.Profile))
 	case "principal-detail":
 		page.HeaderTitle = "Principals"
 		page.HeaderDetail = "Read-only principal access."
@@ -279,7 +326,8 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 	case "groups":
 		page.HeaderTitle = "Groups"
 		page.HeaderDetail = "Workspace groups and their read-only membership summaries."
-		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Groups", Table: uisignals.Pointer(adminGroupsGrid(data.Groups))}})
+		page.ListFilterOptions = uisignals.OptionalSlice(adminGroupProviders(data.Groups))
+		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Groups", Table: uisignals.Pointer(adminGroupsGrid(filterAdminGroups(data.Groups, data.ListQuery, data.ListFilter)))}})
 	case "group-detail":
 		page.HeaderTitle = "Groups"
 		page.HeaderDetail = "Read-only group membership."
@@ -332,20 +380,8 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 			page.Empty = uisignals.Pointer("No dashboard publications have been configured.")
 		}
 	default:
-		page.HeaderTitle = "General"
-		page.HeaderDetail = "Read-only workspace administration."
-		if !data.AccessConfigured {
-			page.Empty = uisignals.Optional(data.AccessStatusLabel)
-		}
-		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{
-			{Label: "Workspace", Value: data.Workspace.Title, Detail: uisignals.Optional(data.Workspace.ID)},
-			{Label: "Auth", Value: configuredLabel(data.AuthConfigured)},
-			{Label: "Access", Value: data.AccessStatusLabel},
-			{Label: "Principals", Value: fmt.Sprint(data.PrincipalCount)},
-			{Label: "Groups", Value: fmt.Sprint(data.GroupCount)},
-			{Label: "Role bindings", Value: fmt.Sprint(data.BindingCount)},
-			{Label: "Roles", Value: fmt.Sprint(data.RoleCount)},
-		})
+		page.HeaderTitle = "Profile"
+		page.Profile = uisignals.Pointer(adminProfileSignal(data.Profile))
 	}
 	return page
 }
@@ -455,35 +491,6 @@ func adminQueryEventSignals(events []AdminQueryEvent) []uisignals.AdminQueryEven
 	return out
 }
 
-func adminSidebarSignal(active string, canManagePublications bool) uisignals.SubSidebarSignal {
-	principalsActive := active == "principals" || active == "principal-detail"
-	groupsActive := active == "groups" || active == "group-detail"
-	agentActive := active == "agent"
-	storageActive := active == "storage"
-	queriesActive := active == "queries"
-	items := []uisignals.SubSidebarItemSignal{
-		{ID: "general", Title: "General", Href: "/admin", Active: active == "general"},
-		{ID: "principals", Title: "Principals", Href: "/admin/principals", Active: principalsActive},
-		{ID: "groups", Title: "Groups", Href: "/admin/groups", Active: groupsActive},
-		{ID: "agent", Title: "Agent", Href: "/admin/agent", Active: agentActive},
-		{ID: "storage", Title: "Storage", Href: "/admin/storage", Active: storageActive},
-		{ID: "queries", Title: "Query History", Href: "/admin/queries", Active: queriesActive},
-	}
-	if canManagePublications {
-		items = append(items, uisignals.SubSidebarItemSignal{ID: "publications", Title: "Publications", Href: "/admin/publications", Active: active == "publications"})
-	}
-	return uisignals.SubSidebarSignal{
-		Label:       "Admin",
-		RailLabel:   "Admin",
-		AriaLabel:   "Admin navigation",
-		StorageKey:  "leapview-admin-sidebar-collapsed",
-		ActiveID:    active,
-		Numbered:    false,
-		Collapsible: false,
-		Items:       items,
-	}
-}
-
 func adminPublicationSignals(rows []AdminPublication) []uisignals.AdminPublicationSignal {
 	out := make([]uisignals.AdminPublicationSignal, 0, len(rows))
 	for _, row := range rows {
@@ -520,6 +527,17 @@ func adminAgentSignal(data AdminAgentData) uisignals.AdminAgentSignal {
 	}
 }
 
+func adminProfileSignal(data AdminProfile) uisignals.AdminProfileSignal {
+	return uisignals.AdminProfileSignal{
+		ID:                data.ID,
+		Email:             data.Email,
+		DisplayName:       data.DisplayName,
+		Title:             data.Title,
+		Username:          data.Username,
+		ProfilePictureURL: uisignals.Optional(data.ProfilePictureURL),
+	}
+}
+
 func adminPrincipalsGrid(principals []AdminPrincipal) adminRecordTable {
 	rows := make([]map[string]any, 0, len(principals))
 	for _, principal := range principals {
@@ -546,6 +564,133 @@ func adminPrincipalsGrid(principals []AdminPrincipal) adminRecordTable {
 		Empty:    "No principals found.",
 		MinWidth: uisignals.Pointer("935px"),
 	}
+}
+
+func adminDirectoryList(principals []AdminPrincipal, filter string) uisignals.AdminDirectoryListSignal {
+	groupOrder := []struct {
+		id    string
+		label string
+	}{
+		{id: "active", label: "Active"},
+		{id: "application", label: "Application"},
+		{id: "inactive", label: "Inactive"},
+	}
+	itemsByGroup := make(map[string][]uisignals.AdminDirectoryListItemSignal, len(groupOrder))
+	for _, principal := range principals {
+		groupID := "active"
+		kind := "person"
+		status := "active"
+		role := firstRoleLabel(principal.DirectRoles)
+		if strings.TrimSpace(principal.DisabledAt) != "" {
+			groupID = "inactive"
+			status = "inactive"
+			role = "Suspended"
+		} else if principal.Kind == "service_principal" || principal.Kind == "dashboard_publication" {
+			groupID = "application"
+			kind = "application"
+			role = "Application"
+		}
+		if role == "" {
+			role = "Member"
+		}
+		if !adminDirectoryFilterMatches(filter, groupID, kind) {
+			continue
+		}
+		itemsByGroup[groupID] = append(itemsByGroup[groupID], uisignals.AdminDirectoryListItemSignal{
+			ID:         principal.ID,
+			Name:       adminDisplayLabel(principal.DisplayName, principal.Email, principal.ID),
+			Username:   adminPrincipalUsername(principal),
+			Email:      principal.Email,
+			Href:       adminPrincipalHref(principal.ID),
+			Kind:       kind,
+			Status:     status,
+			Role:       role,
+			GroupCount: int64(len(principal.Groups)),
+			JoinedAt:   principal.CreatedAt,
+		})
+	}
+
+	groups := make([]uisignals.AdminDirectoryListGroupSignal, 0, len(groupOrder))
+	for _, group := range groupOrder {
+		items := itemsByGroup[group.id]
+		if len(items) == 0 {
+			continue
+		}
+		groups = append(groups, uisignals.AdminDirectoryListGroupSignal{ID: group.id, Label: group.label, Items: items})
+	}
+	return uisignals.AdminDirectoryListSignal{
+		SearchPlaceholder: "Search by name or email",
+		FilterLabel:       "Filter members",
+		Groups:            groups,
+	}
+}
+
+func adminDirectoryFilterMatches(filter, groupID, kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(filter)) {
+	case "people":
+		return groupID == "active" && kind == "person"
+	case "applications":
+		return groupID == "application"
+	case "inactive":
+		return groupID == "inactive"
+	default:
+		return true
+	}
+}
+
+func filterAdminGroups(groups []AdminGroup, query, filter string) []AdminGroup {
+	query = strings.ToLower(strings.TrimSpace(query))
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	filtered := make([]AdminGroup, 0, len(groups))
+	for _, group := range groups {
+		if filter != "" && filter != "all" && strings.ToLower(strings.TrimSpace(group.Provider)) != filter {
+			continue
+		}
+		haystack := strings.ToLower(strings.Join([]string{group.Name, group.ID, group.Provider, group.ExternalID, strings.Join(group.Roles, " ")}, " "))
+		if query != "" && !strings.Contains(haystack, query) {
+			continue
+		}
+		filtered = append(filtered, group)
+	}
+	return filtered
+}
+
+func adminGroupProviders(groups []AdminGroup) []string {
+	seen := make(map[string]struct{}, len(groups))
+	providers := make([]string, 0, len(groups))
+	for _, group := range groups {
+		provider := strings.ToLower(strings.TrimSpace(group.Provider))
+		if provider == "" {
+			continue
+		}
+		if _, ok := seen[provider]; ok {
+			continue
+		}
+		seen[provider] = struct{}{}
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	return providers
+}
+
+func firstRoleLabel(roles []string) string {
+	if len(roles) == 0 {
+		return ""
+	}
+	role := strings.TrimSpace(roles[0])
+	if role == "" {
+		return ""
+	}
+	return strings.ToUpper(role[:1]) + role[1:]
+}
+
+func adminPrincipalUsername(principal AdminPrincipal) string {
+	if email := strings.TrimSpace(principal.Email); email != "" {
+		if at := strings.IndexByte(email, '@'); at > 0 {
+			return email[:at]
+		}
+	}
+	return strings.TrimSpace(principal.ID)
 }
 
 func adminPrincipalGroupsGrid(principal AdminPrincipal, groups []AdminGroup) adminRecordTable {
@@ -811,6 +956,8 @@ func adminPageTitle(active string) string {
 	switch active {
 	case "principals":
 		return "Principals"
+	case "profile":
+		return "Profile"
 	case "principal-detail":
 		return "Principal"
 	case "groups":
@@ -826,7 +973,16 @@ func adminPageTitle(active string) string {
 	case "publications":
 		return "Publications"
 	default:
-		return "General"
+		return "Profile"
+	}
+}
+
+func normalizeAdminSection(active string) string {
+	switch strings.TrimSpace(active) {
+	case "profile", "principals", "principal-detail", "groups", "group-detail", "agent", "storage", "queries", "publications":
+		return strings.TrimSpace(active)
+	default:
+		return "profile"
 	}
 }
 

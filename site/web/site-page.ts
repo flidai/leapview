@@ -180,8 +180,8 @@ class SiteMobileMenu extends LitElement {
       align-items: center;
       padding: var(--base-size-12) var(--base-size-16);
       color: var(--lv-fg-default);
-      font-size: var(--lv-text-body-md-size);
-      font-weight: var(--lv-font-weight-medium);
+      font-size: var(--text-body-size-medium);
+      font-weight: var(--base-text-weight-medium);
       text-decoration: none;
     }
 
@@ -288,8 +288,8 @@ class SiteSearch extends DatastarLit(LitElement) {
       color: var(--lv-fg-muted);
       cursor: pointer;
       padding-inline: var(--base-size-12) var(--base-size-8);
-      font-size: var(--lv-text-body-sm-size);
-      font-weight: var(--lv-font-weight-medium);
+      font-size: var(--text-body-size-small);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .trigger:hover,
@@ -311,8 +311,8 @@ class SiteSearch extends DatastarLit(LitElement) {
       background: var(--lv-bg-panel);
       color: var(--lv-fg-muted);
       padding: var(--base-size-2) var(--base-size-4);
-      font-family: var(--lv-font-family-mono);
-      font-size: var(--lv-text-caption-size);
+      font-family: var(--fontStack-monospace);
+      font-size: var(--text-caption-size);
       line-height: 1;
     }
 
@@ -349,7 +349,7 @@ class SiteSearch extends DatastarLit(LitElement) {
 
     h2 {
       margin: 0;
-      font-size: var(--lv-text-title-md-size);
+      font-size: var(--text-title-size-medium);
     }
 
     .close {
@@ -398,7 +398,7 @@ class SiteSearch extends DatastarLit(LitElement) {
     .status {
       margin: 0;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-text-body-sm-size);
+      font-size: var(--text-body-size-small);
     }
 
     ul {
@@ -429,15 +429,15 @@ class SiteSearch extends DatastarLit(LitElement) {
     }
 
     a strong {
-      font-size: var(--lv-text-body-md-size);
+      font-size: var(--text-body-size-medium);
     }
 
     a span {
       display: -webkit-box;
       overflow: hidden;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-text-body-sm-size);
-      line-height: var(--lv-line-height-relaxed);
+      font-size: var(--text-body-size-small);
+      line-height: var(--base-text-lineHeight-relaxed);
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 2;
     }
@@ -847,7 +847,7 @@ class SiteMarkdownCopy extends LitElement {
       color: var(--lv-fg-muted);
       cursor: pointer;
       font: inherit;
-      font-size: var(--lv-text-body-sm-size);
+      font-size: var(--text-body-size-small);
       line-height: 1.3;
       padding: 0 var(--base-size-12);
       transition: border-color var(--motion-duration-medium);
@@ -984,8 +984,8 @@ class SiteMermaid extends LitElement {
     .error {
       margin: 0;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-text-body-sm-size);
-      line-height: var(--lv-line-height-relaxed);
+      font-size: var(--text-body-size-small);
+      line-height: var(--base-text-lineHeight-relaxed);
     }
 
     figcaption {
@@ -1052,7 +1052,7 @@ class SiteMermaid extends LitElement {
           securityLevel: 'strict',
           suppressErrorRendering: true,
           theme: 'base',
-          fontFamily: cssToken(this, '--lv-font-family-ui'),
+          fontFamily: cssToken(this, '--fontStack-system'),
           themeVariables: mermaidThemeVariables(this),
           flowchart: { htmlLabels: false, useMaxWidth: true },
         })
@@ -1363,8 +1363,8 @@ class SiteArticleToc extends LitElement {
     h2 {
       margin: 0 0 0 var(--base-size-12);
       color: var(--lv-fg-subtle);
-      font-size: var(--lv-text-body-sm-size);
-      font-weight: var(--lv-font-weight-normal);
+      font-size: var(--text-body-size-small);
+      font-weight: var(--base-text-weight-normal);
       letter-spacing: 0.03em;
       line-height: 1.2;
       text-transform: uppercase;
@@ -1390,8 +1390,8 @@ class SiteArticleToc extends LitElement {
     }
 
     li {
-      font-size: var(--lv-text-body-sm-size);
-      font-weight: var(--lv-font-weight-normal);
+      font-size: var(--text-body-size-small);
+      font-weight: var(--base-text-weight-normal);
       letter-spacing: 0.005em;
       line-height: 1;
       list-style: none;
@@ -1602,8 +1602,8 @@ class SiteVisualExample extends DatastarLit(LitElement) {
 
     figcaption {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font-size: var(--text-caption-size);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
   `
@@ -1749,9 +1749,9 @@ class SiteResponsiveWidgetReference extends DatastarLit(LitElement) {
 
     h2,
     h3 { color: var(--lv-fg-default); }
-    h2 { font-size: var(--lv-text-title-lg-size); line-height: var(--lv-line-height-tight); }
-    h3 { font-size: var(--lv-text-title-md-size); line-height: var(--lv-line-height-compact); }
-    p { color: var(--lv-fg-muted); line-height: var(--lv-line-height-relaxed); }
+    h2 { font-size: var(--text-title-size-large); line-height: var(--base-text-lineHeight-tight); }
+    h3 { font-size: var(--text-title-size-medium); line-height: var(--base-text-lineHeight-tight); }
+    p { color: var(--lv-fg-muted); line-height: var(--base-text-lineHeight-relaxed); }
 
     .scenario-grid {
       display: grid;
@@ -1787,8 +1787,8 @@ class SiteResponsiveWidgetReference extends DatastarLit(LitElement) {
       background: var(--lv-bg-panel-muted);
       color: var(--lv-fg-muted);
       padding: var(--base-size-2) var(--base-size-8);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font-size: var(--text-caption-size);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .frame-row {
@@ -1828,14 +1828,14 @@ class SiteResponsiveWidgetReference extends DatastarLit(LitElement) {
     figcaption,
     .diagnostic {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font-size: var(--text-caption-size);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     figcaption { overflow-wrap: anywhere; }
 
     figcaption strong,
-    .diagnostic strong { color: var(--lv-fg-default); font-weight: var(--lv-font-weight-strong); }
+    .diagnostic strong { color: var(--lv-fg-default); font-weight: var(--base-text-weight-semibold); }
 
     .playground {
       display: grid;
@@ -1850,7 +1850,7 @@ class SiteResponsiveWidgetReference extends DatastarLit(LitElement) {
 
     .playground-copy { gap: var(--base-size-16); }
     .control { display: grid; gap: var(--base-size-6); }
-    .control label { color: var(--lv-fg-default); font-size: var(--lv-font-size-body-sm); font-weight: var(--lv-font-weight-strong); }
+    .control label { color: var(--lv-fg-default); font-size: var(--text-body-size-medium); font-weight: var(--base-text-weight-semibold); }
     .control-output { color: var(--lv-fg-muted); font-variant-numeric: tabular-nums; }
     select { min-height: var(--control-medium-size); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); padding-inline: var(--base-size-8); font: inherit; }
     input[type='range'] { width: 100%; accent-color: var(--lv-line-accent); }
@@ -2114,15 +2114,15 @@ class SiteVisualShowcase extends DatastarLit(LitElement) {
 
     h2 {
       color: var(--lv-fg-default);
-      font-size: var(--lv-text-title-lg-size);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-tight);
+      font-size: var(--text-title-size-large);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     p {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-text-body-md-size);
-      line-height: var(--lv-line-height-relaxed);
+      font-size: var(--text-body-size-medium);
+      line-height: var(--base-text-lineHeight-relaxed);
     }
 
     .chart-grid,
@@ -2198,8 +2198,8 @@ class SiteVisualShowcase extends DatastarLit(LitElement) {
       min-width: 0;
       overflow: hidden;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-text-body-sm-size);
-      font-weight: var(--lv-font-weight-strong);
+      font-size: var(--text-body-size-small);
+      font-weight: var(--base-text-weight-semibold);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -2215,9 +2215,9 @@ class SiteVisualShowcase extends DatastarLit(LitElement) {
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-control);
       color: var(--lv-fg-default);
-      font-size: var(--lv-text-body-sm-size);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-default);
+      font-size: var(--text-body-size-small);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-normal);
       text-decoration: none;
     }
 

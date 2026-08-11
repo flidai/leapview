@@ -172,6 +172,15 @@ func TestAdversarialSCIMGlobalGroupRequiresSCIMParents(t *testing.T) {
 	}
 }
 
+func TestSnapshotPrincipalIDUsesStableEmailIdentity(t *testing.T) {
+	if got, want := snapshotPrincipalID("", " Analyst@Example.com "), access.PrincipalIDForEmail("analyst@example.com"); got != want {
+		t.Fatalf("snapshot principal id = %q, want %q", got, want)
+	}
+	if got := snapshotPrincipalID("explicit-principal", "analyst@example.com"); got != "explicit-principal" {
+		t.Fatalf("explicit snapshot principal id = %q, want explicit-principal", got)
+	}
+}
+
 func TestRepositoryRunAuditedMutationRollsBackMutationWhenAuditFails(t *testing.T) {
 	ctx := context.Background()
 	_, repo := openAccessRepo(t, ctx)

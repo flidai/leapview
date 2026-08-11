@@ -20,9 +20,8 @@ class MarkdownView extends LitElement {
       display: block;
       min-width: 0;
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-relaxed);
+      font: var(--lv-type-body);
+      line-height: var(--base-text-lineHeight-relaxed);
       overflow-wrap: anywhere;
       --lv-markdown-block-gap: var(--lv-chat-markdown-block-gap);
       --lv-markdown-list-indent: var(--lv-chat-markdown-list-indent);
@@ -40,8 +39,8 @@ class MarkdownView extends LitElement {
     }
 
     :host([compact]) {
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-caption);
+      line-height: var(--base-text-lineHeight-snug);
       --lv-markdown-block-gap: var(--base-size-12);
       --lv-markdown-list-indent: var(--base-size-16);
       --lv-markdown-list-item-gap: var(--base-size-4);
@@ -65,7 +64,7 @@ class MarkdownView extends LitElement {
     .empty {
       margin: 0;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .markdown > * {
@@ -79,8 +78,8 @@ class MarkdownView extends LitElement {
     .markdown :is(h1, h2, h3, h4, h5, h6) {
       margin-block: var(--base-size-16) var(--base-size-8);
       color: var(--lv-fg-default);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font-weight: var(--base-text-weight-semibold);
+      line-height: var(--base-text-lineHeight-tight);
     }
 
     .markdown > :is(h1, h2, h3, h4, h5, h6):first-child {
@@ -88,23 +87,23 @@ class MarkdownView extends LitElement {
     }
 
     .markdown h1 {
-      font-size: var(--lv-font-size-title-md);
+      font: var(--lv-type-page-title);
     }
 
     .markdown h2 {
-      font-size: var(--lv-font-size-title-sm);
+      font: var(--lv-type-section-title);
     }
 
     .markdown h3 {
-      font-size: var(--lv-font-size-body-md);
+      font: var(--lv-type-body);
     }
 
     .markdown :is(h4, h5, h6) {
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .markdown :is(p, li, blockquote, td, th) {
-      line-height: var(--lv-line-height-normal);
+      line-height: var(--base-text-lineHeight-normal);
     }
 
     .markdown ul,
@@ -125,7 +124,7 @@ class MarkdownView extends LitElement {
     }
 
     .markdown :is(strong, b) {
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .markdown :is(em, i) {
@@ -151,14 +150,14 @@ class MarkdownView extends LitElement {
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-control);
       padding: var(--lv-markdown-pre-padding-block) var(--lv-markdown-pre-padding-inline);
-      line-height: var(--lv-line-height-normal);
+      line-height: var(--base-text-lineHeight-normal);
     }
 
     .markdown pre code {
       border-radius: 0;
       background: transparent;
       padding: 0;
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     .markdown blockquote {
@@ -202,7 +201,7 @@ class MarkdownView extends LitElement {
 
     .markdown th {
       background: var(--lv-bg-panel-muted);
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .markdown img {

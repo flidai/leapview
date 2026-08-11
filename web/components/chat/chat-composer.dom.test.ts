@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
 let baseURL = ''
@@ -553,7 +554,7 @@ function testDocument(): string {
         <style>
           html, body { margin: 0; min-height: 100%; }
           body {
-            --fontStack-system: system-ui;
+            ${typographyTestTokens}
             --lv-bg-app: #f6f8fa;
             --lv-bg-panel: #fff;
             --lv-bg-control: #f6f8fa;
@@ -581,9 +582,9 @@ function testDocument(): string {
             --lv-control-medium: 32px;
             --lv-control-small: 28px;
             --lv-chat-stack-width: 760px;
-            --lv-font-size-body-sm: 14px;
-            --lv-font-weight-strong: 600;
-            --lv-line-height-normal: 1.5;
+
+
+
             --lv-transition-fast: 160ms ease;
             --lv-shadow-floating-sm: 0 8px 24px rgb(0 0 0 / .12);
             --lv-spinner-size-md: 16px;

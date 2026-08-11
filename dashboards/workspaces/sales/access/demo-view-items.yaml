@@ -1,0 +1,13 @@
+apiVersion: leapview.dev/v1
+kind: Grant
+metadata:
+  workspace: sales
+  name: demo-view-items
+spec:
+  object:
+    type: workspace
+  subject:
+    kind: principal
+    email: demo@leapview.dev
+    displayName: LeapView Demo
+  privilege: VIEW_ITEM

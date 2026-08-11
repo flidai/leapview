@@ -30,7 +30,7 @@ class AgentTools extends LitElement {
       display: block;
       min-width: 0;
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
     }
 
     .catalog {
@@ -78,9 +78,7 @@ class AgentTools extends LitElement {
       background: transparent;
       padding: var(--base-size-8) 0;
       color: var(--lv-fg-default);
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body-compact);
       outline: 0;
     }
 
@@ -91,8 +89,7 @@ class AgentTools extends LitElement {
     .count {
       margin-left: auto;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
     }
 
     .body {
@@ -113,15 +110,13 @@ class AgentTools extends LitElement {
       width: 100%;
       border-spacing: 0;
       border-collapse: collapse;
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .fields th {
       background: var(--lv-bg-panel-muted);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
       text-align: left;
       text-transform: uppercase;
     }
@@ -168,14 +163,13 @@ class AgentTools extends LitElement {
     }
 
     code {
-      font-family: var(--fontStack-monospace);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-code-block);
     }
 
     .tool-button code,
     .name code {
       color: var(--lv-fg-default);
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .description,
@@ -186,7 +180,7 @@ class AgentTools extends LitElement {
 
     .description,
     .summary {
-      line-height: var(--lv-line-height-snug);
+      line-height: var(--base-text-lineHeight-snug);
     }
 
     .required-count,
@@ -197,9 +191,7 @@ class AgentTools extends LitElement {
       background: var(--lv-bg-panel-muted);
       padding: var(--base-size-2) var(--base-size-8);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
       white-space: nowrap;
     }
 
@@ -240,14 +232,13 @@ class AgentTools extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .detail-description {
       margin: 0;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-snug);
+      font: var(--lv-type-body-snug);
     }
 
     .detail-meta {
@@ -273,10 +264,8 @@ class AgentTools extends LitElement {
       padding: var(--base-size-6) var(--lv-space-control);
       color: var(--lv-fg-muted);
       cursor: pointer;
-      font: inherit;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .tabs button.is-active {
@@ -299,8 +288,7 @@ class AgentTools extends LitElement {
     .empty {
       margin: 0;
       padding: var(--base-size-16);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
     }
 
     .json {
@@ -309,9 +297,7 @@ class AgentTools extends LitElement {
       background: var(--lv-bg-control);
       padding: var(--base-size-16);
       color: var(--lv-fg-default);
-      font-family: var(--fontStack-monospace);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-normal);
+      font: var(--lv-type-code-block);
       white-space: pre;
     }
 

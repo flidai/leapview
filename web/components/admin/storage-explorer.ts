@@ -922,9 +922,7 @@ const storageExplorerStyles = `
 
   h2 {
     color: var(--lv-fg-default);
-    font-size: var(--lv-font-size-title-sm);
-    line-height: var(--lv-line-height-tight, 1.2);
-    font-weight: var(--lv-font-weight-strong, 600);
+    font: var(--lv-type-section-title);
   }
 
   .storage-heading p {
@@ -932,15 +930,12 @@ const storageExplorerStyles = `
     color: var(--lv-fg-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--lv-font-size-caption);
-    font-weight: var(--lv-font-weight-medium, 500);
-    line-height: var(--lv-line-height-tight, 1.2);
+    font: var(--lv-type-caption);
   }
 
   .storage-heading p span {
     color: var(--lv-fg-default);
     font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-    font-weight: var(--lv-font-weight-medium, 500);
   }
 
   .storage-summary {
@@ -960,9 +955,7 @@ const storageExplorerStyles = `
 
   .storage-summary span {
     color: var(--lv-fg-muted);
-    font-size: 0.6875rem;
-    font-weight: 650;
-    line-height: 1.2;
+    font: var(--lv-type-caption);
     text-transform: uppercase;
   }
 
@@ -971,15 +964,13 @@ const storageExplorerStyles = `
     color: var(--lv-fg-default);
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.8125rem;
-    line-height: 1.2;
+    font: var(--lv-type-body-compact);
   }
 
   h3 {
     color: var(--lv-fg-default);
-    font-size: 0.8125rem;
-    line-height: 1.3;
-    font-weight: 700;
+    font: var(--lv-type-body-compact);
+    font-weight: var(--base-text-weight-semibold);
   }
 
   .storage-logo {
@@ -1025,8 +1016,7 @@ const storageExplorerStyles = `
     background: transparent;
     padding: 0 0.625rem 0 2rem;
     color: var(--lv-fg-default);
-    font: inherit;
-    font-size: 0.875rem;
+    font: var(--lv-type-body);
     outline: 0;
   }
 
@@ -1053,8 +1043,8 @@ const storageExplorerStyles = `
     background: var(--lv-bg-attention-muted, var(--lv-bg-panel-muted));
     padding: var(--base-size-8) var(--base-size-12);
     color: var(--lv-fg-default);
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-medium, 500);
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-medium);
   }
 
   .storage-tree {
@@ -1081,8 +1071,8 @@ const storageExplorerStyles = `
     padding: 0 0.5rem;
     cursor: pointer;
     color: var(--lv-fg-default);
-    font-size: 0.875rem;
-    font-weight: 750;
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-medium);
     list-style: none;
   }
 
@@ -1104,8 +1094,8 @@ const storageExplorerStyles = `
   .storage-schema > summary {
     grid-template-columns: 0.875rem 1rem minmax(0, 1fr) auto;
     min-height: 1.75rem;
-    font-size: 0.8125rem;
-    font-weight: 700;
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-medium);
   }
 
   .storage-schema > summary.is-selected-schema {
@@ -1124,9 +1114,9 @@ const storageExplorerStyles = `
     background: var(--lv-bg-panel-muted);
     padding: 0.125rem 0.375rem;
     color: var(--lv-fg-muted);
-    font-size: 0.6875rem;
+    font: var(--lv-type-caption);
     font-style: normal;
-    font-weight: 750;
+    font-weight: var(--base-text-weight-medium);
     line-height: 1;
   }
 
@@ -1210,9 +1200,8 @@ const storageExplorerStyles = `
   }
 
   .storage-table-button strong {
-    font-size: 0.8125rem;
-    line-height: 1.25;
-    font-weight: 550;
+    font: var(--lv-type-body-compact);
+    font-weight: var(--base-text-weight-medium);
   }
 
   .storage-table-button small {
@@ -1223,9 +1212,8 @@ const storageExplorerStyles = `
     overflow: hidden;
     max-width: 4.75rem;
     color: var(--lv-fg-muted);
-    font-size: 0.75rem;
+    font: var(--lv-type-caption);
     font-variant-numeric: tabular-nums;
-    font-weight: var(--lv-font-weight-medium, 500);
     text-align: right;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1252,8 +1240,7 @@ const storageExplorerStyles = `
     align-items: center;
     gap: 0.375rem;
     color: var(--lv-fg-default);
-    font-size: 1rem;
-    font-weight: 750;
+    font: var(--lv-type-section-title);
   }
 
   .storage-detail-header nav > span {
@@ -1360,9 +1347,8 @@ const storageExplorerStyles = `
     background: transparent;
     padding: 0 0.5rem;
     color: var(--lv-fg-muted);
-    font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 700;
+    font: var(--lv-type-body);
+    font-weight: var(--base-text-weight-medium);
     cursor: pointer;
   }
 
@@ -1382,10 +1368,9 @@ const storageExplorerStyles = `
     background: var(--lv-bg-panel-muted);
     padding: 0.0625rem 0.3125rem;
     color: var(--lv-fg-muted);
-    font-size: 0.6875rem;
+    font: var(--lv-type-caption);
     font-style: normal;
-    font-weight: 750;
-    line-height: 1.2;
+    font-weight: var(--base-text-weight-medium);
   }
 
   .storage-tab-panel {
@@ -1396,8 +1381,7 @@ const storageExplorerStyles = `
 
   dt {
     color: var(--lv-fg-muted);
-    font-size: 0.6875rem;
-    font-weight: 750;
+    font: var(--lv-type-caption);
     text-transform: uppercase;
   }
 
@@ -1405,8 +1389,7 @@ const storageExplorerStyles = `
     margin: 0;
     overflow: hidden;
     color: var(--lv-fg-default);
-    font-size: 0.8125rem;
-    font-weight: 700;
+    font: var(--lv-type-body);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1454,14 +1437,13 @@ const storageExplorerStyles = `
     z-index: 1;
     background: var(--lv-bg-panel);
     color: var(--lv-fg-muted);
-    font-size: 0.6875rem;
-    font-weight: 700;
+    font: var(--lv-type-caption);
     text-transform: uppercase;
   }
 
   td {
     color: var(--lv-fg-default);
-    font-size: 0.8125rem;
+    font: var(--lv-type-body);
   }
 
   th:first-child,
@@ -1491,7 +1473,7 @@ const storageExplorerStyles = `
     padding: 0;
     color: var(--lv-fg-default);
     font: inherit;
-    font-weight: 650;
+    font-weight: var(--base-text-weight-medium);
     text-align: left;
     cursor: pointer;
   }
@@ -1515,8 +1497,7 @@ const storageExplorerStyles = `
   code {
     overflow-wrap: anywhere;
     color: var(--lv-fg-default);
-    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-    font-size: 0.8125rem;
+    font: var(--lv-type-code-block);
   }
 
   .storage-muted,
@@ -1529,7 +1510,7 @@ const storageExplorerStyles = `
     border-radius: var(--lv-radius-small);
     background: var(--lv-bg-panel-muted);
     padding: 0.75rem;
-    font-size: 0.8125rem;
+    font: var(--lv-type-secondary);
   }
 
   @media (max-width: 820px) {

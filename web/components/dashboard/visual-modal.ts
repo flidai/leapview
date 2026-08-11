@@ -94,9 +94,8 @@ export class VisualModal extends LitElement {
     .eyebrow {
       margin: 0 0 var(--borderRadius-small);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-none);
+      font: var(--lv-type-caption);
+      line-height: 1;
       text-transform: uppercase;
     }
 
@@ -105,9 +104,7 @@ export class VisualModal extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-lg);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-section-title);
     }
 
     .actions {
@@ -125,9 +122,8 @@ export class VisualModal extends LitElement {
       color: var(--lv-fg-default);
       cursor: pointer;
       padding: 0 var(--lv-space-md);
-      font: inherit;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     button:hover,
@@ -203,8 +199,7 @@ export class VisualModal extends LitElement {
       border-bottom: var(--lv-border-default);
       color: var(--lv-fg-muted);
       padding: var(--lv-space-md) var(--lv-space-lg);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
     }
 
     .data-scroll {
@@ -217,7 +212,6 @@ export class VisualModal extends LitElement {
       height: 100%;
       place-items: center;
       color: var(--lv-fg-muted);
-      font-weight: var(--lv-font-weight-strong);
     }
 
     .notice {
@@ -231,8 +225,8 @@ export class VisualModal extends LitElement {
       box-shadow: var(--shadow-floating-small);
       color: var(--lv-fg-default);
       padding: var(--lv-space-md) var(--lv-space-lg);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
   `
 
