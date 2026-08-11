@@ -12,6 +12,7 @@ import (
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/agent/api"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/internal/workspace"
 )
 
@@ -37,16 +38,17 @@ type AccessReader interface {
 }
 
 type ReadModel struct {
-	Access             AccessReader
-	AgentDetails       AgentDetailsProvider
-	StorageService     storage.Service
-	QueryAuditReader   QueryAuditReaderProvider
-	CSRFToken          CSRFTokenProvider
-	CurrentPrincipal   CurrentPrincipalProvider
-	Publications       PublicationProvider
-	DefaultWorkspaceID string
-	AuthConfigured     bool
-	AccessConfigured   bool
+	Access              AccessReader
+	AgentDetails        AgentDetailsProvider
+	StorageService      storage.Service
+	QueryAuditReader    QueryAuditReaderProvider
+	CSRFToken           CSRFTokenProvider
+	CurrentPrincipal    CurrentPrincipalProvider
+	Publications        PublicationProvider
+	PublicationCommands map[string]uicommand.Binding
+	DefaultWorkspaceID  string
+	AuthConfigured      bool
+	AccessConfigured    bool
 }
 
 func (m ReadModel) Data(r *http.Request) (ui.AdminData, error) {
@@ -84,13 +86,14 @@ func (m ReadModel) GroupsListData(r *http.Request) (ui.AdminData, error) {
 
 func (m ReadModel) baseData(r *http.Request) ui.AdminData {
 	data := ui.AdminData{
-		Workspace:         workspace.WorkspaceView{ID: "platform", Title: "Platform"},
-		ListFilter:        strings.TrimSpace(r.URL.Query().Get("filter")),
-		ListQuery:         strings.TrimSpace(r.URL.Query().Get("q")),
-		CSRFToken:         m.csrfToken(r),
-		AuthConfigured:    m.AuthConfigured,
-		AccessConfigured:  m.AccessConfigured,
-		AccessStatusLabel: "Configured",
+		Workspace:           workspace.WorkspaceView{ID: "platform", Title: "Platform"},
+		ListFilter:          strings.TrimSpace(r.URL.Query().Get("filter")),
+		ListQuery:           strings.TrimSpace(r.URL.Query().Get("q")),
+		CSRFToken:           m.csrfToken(r),
+		AuthConfigured:      m.AuthConfigured,
+		AccessConfigured:    m.AccessConfigured,
+		AccessStatusLabel:   "Configured",
+		PublicationCommands: m.PublicationCommands,
 	}
 	if principal, ok := m.currentPrincipal(r); ok {
 		data.Profile = ui.AdminProfile{
@@ -152,7 +155,7 @@ func (m ReadModel) populateAccessDirectory(r *http.Request, data *ui.AdminData, 
 }
 
 func (m ReadModel) PublicationData(r *http.Request) (ui.AdminData, error) {
-	data := ui.AdminData{CSRFToken: m.csrfToken(r), CanManagePublications: true}
+	data := ui.AdminData{CSRFToken: m.csrfToken(r), CanManagePublications: true, PublicationCommands: m.PublicationCommands}
 	if m.Publications == nil {
 		return data, nil
 	}

@@ -8,6 +8,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 type RepositoryProvider func() (access.Repository, error)
@@ -92,6 +93,11 @@ func (c *RoleBindingCommands) execute(
 	if !descriptor.Exposes(invocation.Surface) {
 		return fmt.Errorf("operation %q is not exposed to surface %q", operationID, invocation.Surface)
 	}
+	if invocation.Surface == access.OperationSurfaceUI {
+		if err := uicommand.VerifyClaim(invocation.OperationClaims, string(operationID)); err != nil {
+			return err
+		}
+	}
 	if c == nil || c.repository == nil {
 		return fmt.Errorf("operation %q repository is required", operationID)
 	}
@@ -122,7 +128,8 @@ func (c *RoleBindingCommands) execute(
 			return fmt.Errorf("generated command contract %q is unavailable", operationID)
 		}
 		ctx, _, err = apigencommand.BeginInvocation(ctx, contract, apigencommand.Invocation{
-			Surface: apigencommand.Surface(invocation.Surface), TargetValues: map[string]string{descriptor.Target.Parameter: targetValue},
+			OperationID: string(operationID),
+			Surface:     apigencommand.Surface(invocation.Surface), TargetValues: map[string]string{descriptor.Target.Parameter: targetValue},
 			IdempotencyKey: invocation.IdempotencyKey, ConcurrencyToken: invocation.ConcurrencyToken,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})

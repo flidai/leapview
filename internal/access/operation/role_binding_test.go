@@ -158,6 +158,7 @@ func TestRoleBindingCommandsShareStableOperationContract(t *testing.T) {
 	invocation := access.RoleBindingInvocation{
 		PrincipalID: "principal-admin", Surface: access.OperationSurfaceUI,
 		RequestID: "request-1", CorrelationID: "correlation-1", IdempotencyKey: "role-binding-1",
+		OperationClaims: []string{string(access.OperationCreateRoleBinding)},
 	}
 
 	created, err := commands.CreateRoleBinding(t.Context(), invocation, access.RoleBindingInput{

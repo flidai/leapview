@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	accessuiaction "github.com/flidai/leapview/internal/access/uiaction"
 	workspaceview "github.com/flidai/leapview/internal/workspace"
 	catalog "github.com/flidai/leapview/internal/workspace/navigation"
 	uisignals "github.com/flidai/leapview/internal/workspace/ui/signals"
@@ -45,7 +46,7 @@ func TestListPagesUseDebouncedPostSearchCommands(t *testing.T) {
 	}{
 		{name: "catalog", page: CatalogPage(catalog), path: "/catalog/search"},
 		{name: "workspaces", page: WorkspacesPage(catalog, []workspaceview.WorkspaceView{workspace}, "Owner"), path: "/workspaces/search"},
-		{name: "workspace assets", page: WorkspacePage(catalog, workspace, assets, "", "", "Owner", WorkspaceAccessResponse{}, ""), path: "/workspaces/leapview/search"},
+		{name: "workspace assets", page: WorkspacePage(catalog, workspace, assets, "", "", "Owner", WorkspaceAccessResponse{}, "", testAccessCommandBindings()), path: "/workspaces/leapview/search"},
 		{name: "connections", page: ConnectionsPage(catalog, workspace.ID, assets, edges, "", "", "Owner"), path: "/connections/search"},
 	}
 	for _, test := range tests {
@@ -159,7 +160,7 @@ func TestWorkspacePagesLoadThemeBeforeDeferredRouteModules(t *testing.T) {
 	workspace, catalog, assets, _ := testWorkspaceAssetFixtures()
 
 	var out strings.Builder
-	err := WorkspacePage(catalog, workspace, assets, "", "", "Owner", WorkspaceAccessResponse{}, "").Render(&out)
+	err := WorkspacePage(catalog, workspace, assets, "", "", "Owner", WorkspaceAccessResponse{}, "", testAccessCommandBindings()).Render(&out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -913,7 +914,7 @@ func TestWorkspaceAssetTabsUseWorkspaceAssetTypes(t *testing.T) {
 	workspace, catalog, assets, _ := testWorkspaceAssetFixtures()
 
 	var out strings.Builder
-	err := WorkspacePage(catalog, workspace, assets, "", "", "Owner", testWorkspaceAccess(workspace, true), "csrf").Render(&out)
+	err := WorkspacePage(catalog, workspace, assets, "", "", "Owner", testWorkspaceAccess(workspace, true), "csrf", testAccessCommandBindings()).Render(&out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -972,7 +973,7 @@ func TestWorkspaceAssetRowsRenderTokenBackedIconColors(t *testing.T) {
 	}
 
 	var out strings.Builder
-	err := WorkspacePage(catalog, workspace, visibleAssets, "", "", "Owner", testWorkspaceAccess(workspace, true), "csrf").Render(&out)
+	err := WorkspacePage(catalog, workspace, visibleAssets, "", "", "Owner", testWorkspaceAccess(workspace, true), "csrf", testAccessCommandBindings()).Render(&out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1008,7 +1009,7 @@ func TestWorkspaceAccessControlRendersForManagers(t *testing.T) {
 	access := testWorkspaceAccess(workspace, true)
 
 	var out strings.Builder
-	err := WorkspacePage(catalog, workspace, []workspaceview.AssetView{assets[0]}, "", "", "Owner", access, "csrf").Render(&out)
+	err := WorkspacePage(catalog, workspace, []workspaceview.AssetView{assets[0]}, "", "", "Owner", access, "csrf", testAccessCommandBindings()).Render(&out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1056,7 +1057,7 @@ func TestWorkspaceAccessControlDoesNotRenderForViewers(t *testing.T) {
 	workspace, catalog, assets, _ := testWorkspaceAssetFixtures()
 
 	var out strings.Builder
-	err := WorkspacePage(catalog, workspace, []workspaceview.AssetView{assets[0]}, "", "", "Viewer", testWorkspaceAccess(workspace, false), "").Render(&out)
+	err := WorkspacePage(catalog, workspace, []workspaceview.AssetView{assets[0]}, "", "", "Viewer", testWorkspaceAccess(workspace, false), "", testAccessCommandBindings()).Render(&out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1084,6 +1085,16 @@ func testWorkspaceAccess(workspace workspaceview.WorkspaceView, canManage bool) 
 			{PrincipalID: "principal_1", WorkspaceID: workspace.ID, Email: "owner@example.com", DisplayName: "Owner", Role: "owner"},
 		},
 		CanManage: canManage,
+	}
+}
+
+func testAccessCommandBindings() AccessCommandBindings {
+	return AccessCommandBindings{
+		CreateRoleBinding: accessuiaction.CreateRoleBinding,
+		UpdateRoleBinding: accessuiaction.UpdateRoleBinding,
+		DeleteRoleBinding: accessuiaction.DeleteRoleBinding,
+		CreateGrant:       accessuiaction.CreateGrant,
+		DeleteGrant:       accessuiaction.DeleteGrant,
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/agent"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
+	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 var (
@@ -109,8 +111,9 @@ func uiRequestIdentity(r *stdhttp.Request, input string) string {
 // beginUICommandInvocation applies the generated policy to direct browser
 // commands. The returned context must be used for the mutation and generated
 // audit execution so the Guard can prove command completion.
-func beginUICommandInvocation(r *stdhttp.Request, operationID agentgen.GenCommandOperationID, target, input, identity string) (context.Context, error) {
-	contract, ok := agentgen.GetAPIGenCommandRuntimeContract(operationID.APIGenOperationID())
+func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, workflow []uicommand.Binding, target, input, identity string) (context.Context, error) {
+	operationID := binding.OperationID()
+	contract, ok := agentgen.GetAPIGenCommandRuntimeContract(operationID)
 	if !ok {
 		return r.Context(), apigencommand.ErrContractNotFound
 	}
@@ -126,18 +129,35 @@ func beginUICommandInvocation(r *stdhttp.Request, operationID agentgen.GenComman
 	}
 	idempotencyKey := firstNonEmptyHeader(r, "Idempotency-Key")
 	if idempotencyKey == "" {
-		idempotencyKey = "ui:" + operationID.APIGenOperationID() + ":" + identity
+		idempotencyKey = "ui:" + operationID + ":" + identity
 	}
-	ctx, _, err := apigencommand.BeginInvocation(r.Context(), contract, apigencommand.Invocation{
-		Surface: apigencommand.SurfaceUI,
+	invocation := apigencommand.Invocation{
 		TargetValues: map[string]string{
 			"conversation": strings.TrimSpace(target),
 		},
 		IdempotencyKey: idempotencyKey,
 		RequestID:      identity,
 		CorrelationID:  firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID"),
-	})
+	}
+	var ctx context.Context
+	var err error
+	if len(workflow) > 0 {
+		ctx, _, err = uicommand.BeginWorkflowInvocation(r, workflow, binding, contract, invocation)
+	} else {
+		ctx, _, err = uicommand.BeginInvocation(r, binding, contract, invocation)
+	}
 	return ctx, err
+}
+
+func agentUIBinding(operationID agentgen.GenCommandOperationID) uicommand.Binding {
+	switch operationID.APIGenOperationID() {
+	case createAgentConversationOperation.APIGenOperationID():
+		return agentuiaction.CreateConversation
+	case createAgentRunOperation.APIGenOperationID():
+		return agentuiaction.CreateRun
+	default:
+		return uicommand.Binding{}
+	}
 }
 
 func firstNonEmptyHeader(r *stdhttp.Request, names ...string) string {

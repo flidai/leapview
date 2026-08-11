@@ -14,6 +14,7 @@ import (
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 
 	"github.com/flidai/leapview/internal/dashboard"
 	g "maragu.dev/gomponents"
@@ -73,19 +74,34 @@ type RouteScope struct {
 	BasePath string
 }
 
+// AgentCommandBindings is supplied by the composition root so dashboard UI
+// can render the agent-owned chat workflow without depending on agent adapters.
+type AgentCommandBindings struct {
+	CreateConversation uicommand.Binding
+	CreateRun          uicommand.Binding
+}
+
+func (commands AgentCommandBindings) Workflow() []uicommand.Binding {
+	return []uicommand.Binding{commands.CreateConversation, commands.CreateRun}
+}
+
 func Page(clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, providers ...webpage.Provider) g.Node {
 	return PageWithPresentation(Presentation{ProductName: "Application", FaviconPath: "/static/favicon.svg"}, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, providers...)
 }
 
 func PageWithPresentation(presentation Presentation, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, providers ...webpage.Provider) g.Node {
-	return pageWithRouteScope(presentation, RouteScope{}, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, providers...)
+	return pageWithRouteScope(presentation, RouteScope{}, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, AgentCommandBindings{}, providers...)
 }
 
 func PageWithRouteScope(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, providers ...webpage.Provider) g.Node {
-	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, providers...)
+	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, AgentCommandBindings{}, providers...)
 }
 
-func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, providers ...webpage.Provider) g.Node {
+func PageWithRouteScopeAndAgentCommands(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, providers ...webpage.Provider) g.Node {
+	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, commands, providers...)
+}
+
+func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, providers ...webpage.Provider) g.Node {
 	if activePage.ID == "" {
 		activePage = defaultPage()
 	}
@@ -129,17 +145,17 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 		g.Attr("dashboard-id", report.ID),
 		g.Attr("page-id", activePage.ID),
 		g.Attr("data-indicator", "agentTurnPending"),
-		g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.Post(commandBase+"filter", "runtime", "filterCommand")),
-		g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.Post(commandBase+"filter-options", "runtime", "filterOptionRequest")),
-		g.Attr("data-on:lv-page-navigate", "$navigationCommand = evt.detail; "+uiactions.Post(commandBase+"navigate", "runtime", "navigationCommand")),
-		g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.Post(commandBase+"clear-selection", "runtime")),
-		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.Post(commandBase+"select", "runtime", "interactionCommand")),
-		g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.Post(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
-		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.Post(commandBase+"visual-window", "runtime", "visualWindowCommand")),
-		g.Attr("data-on:lv-visual-spatial-window-change", "$visualSpatialWindowCommand = evt.detail; "+uiactions.Post(commandBase+"visual-spatial-window", "runtime", "visualSpatialWindowCommand")),
+		g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.EventPost(commandBase+"filter", "runtime", "filterCommand")),
+		g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.EventPost(commandBase+"filter-options", "runtime", "filterOptionRequest")),
+		g.Attr("data-on:lv-page-navigate", "$navigationCommand = evt.detail; "+uiactions.EventPost(commandBase+"navigate", "runtime", "navigationCommand")),
+		g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.EventPost(commandBase+"clear-selection", "runtime")),
+		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost(commandBase+"select", "runtime", "interactionCommand")),
+		g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.EventPost(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
+		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
+		g.Attr("data-on:lv-visual-spatial-window-change", "$visualSpatialWindowCommand = evt.detail; "+uiactions.EventPost(commandBase+"visual-spatial-window", "runtime", "visualSpatialWindowCommand")),
 	}
 	if routes.BasePath == "" {
-		agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; $agentContext.filters = $filterState; $agentContext.generation = $status.generation; " + uiactions.Post("/chats/turns", "agent", "agentContext")
+		agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; $agentContext.filters = $filterState; $agentContext.generation = $status.generation; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
 		agentRestore := "$agent.activeConversationId = evt.detail.conversationId; " + uiactions.Get("/chats/restore", "agent")
 		componentAttrs = append(componentAttrs,
 			g.Attr("data-on:lv-chat-submit", agentTurn),
@@ -204,14 +220,14 @@ func PublicPage(options PublicPageOptions, catalog dashboard.Catalog, report das
 		UpdatesURL: base + "/updates?" + values.Encode(),
 		Content: g.El("lv-dashboard-page",
 			g.Attr("workspace-id", catalog.Workspace.ID), g.Attr("dashboard-id", report.ID), g.Attr("page-id", activePage.ID), g.Attr("presentation", presentation),
-			g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.Post(commandBase+"filter", "runtime", "filterCommand")),
-			g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.Post(commandBase+"filter-options", "runtime", "filterOptionRequest")),
-			g.Attr("data-on:lv-page-navigate", "$navigationCommand = evt.detail; "+uiactions.Post(commandBase+"navigate", "runtime", "navigationCommand")),
-			g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.Post(commandBase+"clear-selection", "runtime")),
-			g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.Post(commandBase+"select", "runtime", "interactionCommand")),
-			g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.Post(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
-			g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.Post(commandBase+"visual-window", "runtime", "visualWindowCommand")),
-			g.Attr("data-on:lv-visual-spatial-window-change", "$visualSpatialWindowCommand = evt.detail; "+uiactions.Post(commandBase+"visual-spatial-window", "runtime", "visualSpatialWindowCommand")),
+			g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.EventPost(commandBase+"filter", "runtime", "filterCommand")),
+			g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.EventPost(commandBase+"filter-options", "runtime", "filterOptionRequest")),
+			g.Attr("data-on:lv-page-navigate", "$navigationCommand = evt.detail; "+uiactions.EventPost(commandBase+"navigate", "runtime", "navigationCommand")),
+			g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.EventPost(commandBase+"clear-selection", "runtime")),
+			g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost(commandBase+"select", "runtime", "interactionCommand")),
+			g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.EventPost(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
+			g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
+			g.Attr("data-on:lv-visual-spatial-window-change", "$visualSpatialWindowCommand = evt.detail; "+uiactions.EventPost(commandBase+"visual-spatial-window", "runtime", "visualSpatialWindowCommand")),
 		),
 	})
 }

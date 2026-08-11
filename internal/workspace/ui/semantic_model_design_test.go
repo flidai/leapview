@@ -13,7 +13,7 @@ func TestSemanticModelDesignWorkspaceVocabulary(t *testing.T) {
 	workspace, catalog, assets, access := semanticDesignUIFixtures()
 
 	var out strings.Builder
-	err := WorkspacePage(catalog, workspace, assets, "", "", "Owner", access, "csrf").Render(&out)
+	err := WorkspacePage(catalog, workspace, assets, "", "", "Owner", access, "csrf", testAccessCommandBindings()).Render(&out)
 	if err != nil {
 		t.Fatal(err)
 	}

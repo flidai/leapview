@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	workspaceview "github.com/flidai/leapview/internal/workspace"
 	g "maragu.dev/gomponents"
 )
@@ -34,6 +35,7 @@ type AdminData struct {
 	QueryHistory          AdminQueryHistoryData
 	Publications          []AdminPublication
 	CanManagePublications bool
+	PublicationCommands   map[string]uicommand.Binding
 	Profile               AdminProfile
 	ListFilter            string
 	ListQuery             string
@@ -185,27 +187,27 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	}
 	if active == "storage" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-storage-table-select", "$adminStorageCommand = evt.detail; "+uiactions.Post("/admin/storage/select-table")),
+			g.Attr("data-on:lv-storage-table-select", "$adminStorageCommand = evt.detail; "+uiactions.EventPost("/admin/storage/select-table")),
 		)
 	}
 	if active == "agent" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.Patch("/admin/agent/config")),
+			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.UncontractedMutationPatch("/admin/agent/config")),
 		)
 	}
 	if active == "queries" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-query-history-command", "$adminQueryHistoryCommand = evt.detail; evt.detail.action == 'select_detail' ? ($adminQueryDetail = {eventId: evt.detail.eventId, loading: true, error: ''}) : evt.detail.action == 'close_detail' ? ($adminQueryDetail = {eventId: '', loading: false, error: ''}) : ($adminQueryHistory.loading = true, $adminQueryHistory.error = ''); "+uiactions.Post("/admin/queries/command")),
+			g.Attr("data-on:lv-query-history-command", "$adminQueryHistoryCommand = evt.detail; evt.detail.action == 'select_detail' ? ($adminQueryDetail = {eventId: evt.detail.eventId, loading: true, error: ''}) : evt.detail.action == 'close_detail' ? ($adminQueryDetail = {eventId: '', loading: false, error: ''}) : ($adminQueryHistory.loading = true, $adminQueryHistory.error = ''); "+uiactions.QueryPost("/admin/queries/command")),
 		)
 	}
 	if active == "publications" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-publication-command", "$adminPublicationCommand = evt.detail; "+uiactions.Post("/admin/publications/command", "adminPublicationCommand")),
+			g.Attr("data-on:lv-publication-command", "$adminPublicationCommand = evt.detail; "+uiactions.CommandPostSwitch("evt.detail.action", data.PublicationCommands, "/admin/publications/command", "adminPublicationCommand")),
 		)
 	}
 	if active == "principals" || active == "groups" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Post("/admin/"+active+"/search", "entityListQuery", "entityListFilter")),
+			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.QueryPost("/admin/"+active+"/search", "entityListQuery", "entityListFilter")),
 		)
 	}
 	return webpage.Render(layout, webpage.Spec{

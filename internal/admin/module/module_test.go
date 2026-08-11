@@ -10,7 +10,9 @@ import (
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	dashboarduiaction "github.com/flidai/leapview/internal/dashboard/uiaction"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
@@ -44,13 +46,15 @@ func TestRoleLabelDistinguishesLocalAndConfiguredAccess(t *testing.T) {
 func TestAdminPublicationMutationPassesUIInvocationIdentity(t *testing.T) {
 	service := &adminPublicationInvocationService{}
 	m := &Module{
-		publications: service,
+		publications:        service,
+		publicationCommands: dashboarduiaction.PublicationActions(),
 		currentPrincipal: func(*http.Request) (Principal, bool) {
 			return Principal{ID: "principal-ui", DevBypass: true}, true
 		},
 	}
 	r := httptest.NewRequest(http.MethodPost, "/admin/publications/command", nil)
 	r.Header.Set("X-Request-ID", "ui-request-1")
+	r.Header.Set(uicommand.HeaderOperationID, dashboarduiaction.SuspendPublication.OperationID())
 	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{WorkspaceID: "sales", Publication: "executive", Action: "suspend"})
 	if err != nil {
 		t.Fatal(err)

@@ -205,6 +205,7 @@ func TestBeginInvocationRejectsMissingGeneratedPolicyInputs(t *testing.T) {
 		want       error
 	}{
 		{name: "surface", invocation: Invocation{Surface: SurfaceAgent}, want: ErrSurfaceNotExposed},
+		{name: "operation", invocation: Invocation{OperationID: "deleteWidget", Surface: SurfaceUI}, want: ErrOperationMismatch},
 		{name: "target", invocation: Invocation{Surface: SurfaceUI, IdempotencyKey: "key"}, want: ErrTargetRequired},
 		{name: "idempotency", invocation: Invocation{Surface: SurfaceUI, TargetValues: map[string]string{"workspace": "sales"}}, want: ErrIdempotencyRequired},
 	} {

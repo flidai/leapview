@@ -83,6 +83,7 @@ func TestGrantCommandsEnforceGeneratedSurfaceAndAuditContract(t *testing.T) {
 	invocation := access.GrantInvocation{
 		PrincipalID: "principal-admin", Surface: access.OperationSurfaceUI,
 		RequestID: "request-1", CorrelationID: "correlation-1", IdempotencyKey: "grant-1",
+		OperationClaims: []string{string(access.OperationCreateGrant)},
 	}
 	input := access.GrantInput{
 		Object:      access.ObjectRef{Type: access.SecurableDashboard, WorkspaceID: "sales", ObjectID: "executive"},
@@ -118,6 +119,7 @@ func TestGrantCommandsEnforceGeneratedSurfaceAndAuditContract(t *testing.T) {
 	assertGrantAudit(t, repo.audits[1], access.OperationUpdateGrant, "grant.updated", access.OperationSurfaceAPI, "sales")
 
 	invocation.Surface = access.OperationSurfaceUI
+	invocation.OperationClaims = []string{string(access.OperationDeleteGrant)}
 	deleted, err := commands.DeleteGrant(t.Context(), invocation, "sales", created.ID)
 	if err != nil {
 		t.Fatalf("delete grant: %v", err)

@@ -31,6 +31,7 @@ var (
 	ErrIdempotencyRequired  = errors.New("command idempotency key is required")
 	ErrTargetRequired       = errors.New("command authorization target is required")
 	ErrSurfaceNotExposed    = errors.New("command surface is not exposed")
+	ErrOperationMismatch    = errors.New("command operation identity does not match")
 	ErrPreconditionRequired = errors.New("command precondition is required")
 	ErrPreconditionFailed   = errors.New("command precondition failed")
 )
@@ -75,6 +76,7 @@ type TargetContract struct {
 }
 
 type Invocation struct {
+	OperationID      string
 	Surface          Surface
 	TargetValues     map[string]string
 	IdempotencyKey   string
@@ -401,6 +403,9 @@ func BeginInvocation(ctx context.Context, contract Contract, invocation Invocati
 	}
 	if invocation.Surface == "" {
 		return ctx, nil, fmt.Errorf("%w: invocation surface is required", ErrInvocationRejected)
+	}
+	if claimed := strings.TrimSpace(invocation.OperationID); claimed != "" && claimed != contract.OperationID {
+		return ctx, nil, fmt.Errorf("%w: %w: claimed %q, dispatched %q", ErrInvocationRejected, ErrOperationMismatch, claimed, contract.OperationID)
 	}
 	if !contract.Exposes(invocation.Surface) {
 		return ctx, nil, fmt.Errorf("%w: %w: operation %q does not expose %q", ErrInvocationRejected, ErrSurfaceNotExposed, contract.OperationID, invocation.Surface)

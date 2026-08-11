@@ -18,6 +18,7 @@ import (
 	accessapi "github.com/flidai/leapview/internal/access/api"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/internal/workspace"
 	"github.com/flidai/leapview/internal/workspace/api"
 	"github.com/flidai/leapview/internal/workspace/assetnav"
@@ -39,6 +40,7 @@ type Handler struct {
 	CurrentRoleLabel    func(*nethttp.Request) string
 	RoleBindingCommands access.RoleBindingCommander
 	GrantCommands       access.GrantOperations
+	AccessCommands      ui.AccessCommandBindings
 	Layout              func(*nethttp.Request) webpage.Provider
 }
 
@@ -186,7 +188,7 @@ func (h Handler) WorkspaceAssets(w nethttp.ResponseWriter, r *nethttp.Request) {
 	access := h.workspaceAccess(r, workspaceView, h.canManageAccess(r, workspaceID), ui.WorkspaceAccessStatus{})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.WorkspacePageForEnvironment(h.catalogForWorkspace(workspaceID), workspaceView, filtered, r.URL.Query().Get("type"), r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), access, h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
+	if err := ui.WorkspacePageForEnvironment(h.catalogForWorkspace(workspaceID), workspaceView, filtered, r.URL.Query().Get("type"), r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), access, h.csrfToken(r), h.AccessCommands, h.chromeOptions(r)...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }
@@ -835,7 +837,8 @@ func (h Handler) roleBindingInvocation(r *nethttp.Request) access.RoleBindingInv
 	return access.RoleBindingInvocation{
 		PrincipalID: principal.ID, Surface: access.OperationSurfaceUI,
 		RequestID: requestID, IdempotencyKey: requestID,
-		CorrelationID: firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), requestID),
+		CorrelationID:   firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), requestID),
+		OperationClaims: uicommand.OperationClaims(r),
 	}
 }
 

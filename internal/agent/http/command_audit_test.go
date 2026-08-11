@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/go-chi/chi/v5"
 )
@@ -159,7 +160,8 @@ func TestAgentUICommandInvocationUsesStableGeneratedIdentity(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
 	r.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "client-fixed"})
 	identity := uiRequestIdentity(r, "hello")
-	ctx, err := beginUICommandInvocation(r, createAgentConversationOperation, "", "hello", identity)
+	r.Header.Set(uicommand.HeaderOperationID, createAgentConversationOperation.APIGenOperationID())
+	ctx, err := beginUICommandInvocation(r, agentUIBinding(createAgentConversationOperation), nil, "", "hello", identity)
 	if err != nil {
 		t.Fatalf("begin create UI invocation: %v", err)
 	}
@@ -173,7 +175,8 @@ func TestAgentUICommandInvocationUsesStableGeneratedIdentity(t *testing.T) {
 		t.Fatalf("surface = %q", got)
 	}
 
-	runCtx, err := beginUICommandInvocation(r, createAgentRunOperation, "conversation-1", "hello", identity)
+	r.Header.Set(uicommand.HeaderOperationID, createAgentRunOperation.APIGenOperationID())
+	runCtx, err := beginUICommandInvocation(r, agentUIBinding(createAgentRunOperation), nil, "conversation-1", "hello", identity)
 	if err != nil {
 		t.Fatalf("begin run UI invocation: %v", err)
 	}
@@ -224,6 +227,7 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 	})
 	scope := agent.Scope{PrincipalID: principalID}
 	draftRequest := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
+	draftRequest.Header.Set(uicommand.HeaderOperationID, strings.Join([]string{createAgentConversationOperation.APIGenOperationID(), createAgentRunOperation.APIGenOperationID()}, ","))
 	draftResponse := httptest.NewRecorder()
 	handler.startDraftChatTurn(draftResponse, draftRequest, service, scope, "client-1", "hello", nil, false)
 	if draftResponse.Code != http.StatusOK {
@@ -239,6 +243,7 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 	}
 	audits = nil
 	activeRequest := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
+	activeRequest.Header.Set(uicommand.HeaderOperationID, createAgentRunOperation.APIGenOperationID())
 	activeResponse := httptest.NewRecorder()
 	handler.runChatTurn(activeResponse, activeRequest, service, scope, "client-2", conversation.ID, "again", nil, true)
 	if len(audits) != 1 || audits[0].OperationID != createAgentRunOperation.APIGenOperationID() || audits[0].TargetID != conversation.ID {

@@ -11,6 +11,7 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/agent/ui"
+	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/go-chi/chi/v5"
 )
@@ -224,7 +225,8 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 	identity := uiRequestIdentity(r, input)
-	createCtx, err := beginUICommandInvocation(r, createAgentConversationOperation, "", input, identity)
+	workflow := agentuiaction.Bindings()
+	createCtx, err := beginUICommandInvocation(r, agentUIBinding(createAgentConversationOperation), workflow, "", input, identity)
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusForbidden)
 		return
@@ -242,7 +244,7 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 		Context:        turnContext,
 	}
 	var started *agent.StartedPrompt
-	runCtx, invocationErr := beginUICommandInvocation(r, createAgentRunOperation, conversation.ID, input, identity)
+	runCtx, invocationErr := beginUICommandInvocation(r, agentUIBinding(createAgentRunOperation), workflow, conversation.ID, input, identity)
 	if invocationErr != nil {
 		nethttp.Error(w, invocationErr.Error(), nethttp.StatusForbidden)
 		return
@@ -299,7 +301,7 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 	}
 	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(trace, streamID, "chat.turn"))
 	identity := uiRequestIdentity(r, input)
-	runCtx, invocationErr := beginUICommandInvocation(r, createAgentRunOperation, conversationID, input, identity)
+	runCtx, invocationErr := beginUICommandInvocation(r, agentUIBinding(createAgentRunOperation), nil, conversationID, input, identity)
 	if invocationErr != nil {
 		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(invocationErr), false), embedded))
 		return

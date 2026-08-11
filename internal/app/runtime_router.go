@@ -603,6 +603,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			persistenceConfigured: runtime.persistenceConfigured, defaultEnvironment: policy.defaultEnvironment,
 		}
 		refreshSupport := workspaceRefreshSupport(refreshDeps)
+		accessUICommands := routes.accessModule.UICommandBindings()
 		var err error
 		routes.workspaceModule, err = workspacemodule.Build(ctx, workspacemodule.Config{
 			Database:            database,
@@ -611,7 +612,14 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			AccessService:       routes.accessModule.WorkspaceAccessService(),
 			RoleBindingCommands: routes.accessModule.RoleBindingCommands(),
 			GrantCommands:       routes.accessModule.GrantCommands(),
-			AssetCatalog:        persistence.workspaceAssetCatalog,
+			AccessCommands: workspacemodule.AccessCommandBindings{
+				CreateRoleBinding: accessUICommands.CreateRoleBinding,
+				UpdateRoleBinding: accessUICommands.UpdateRoleBinding,
+				DeleteRoleBinding: accessUICommands.DeleteRoleBinding,
+				CreateGrant:       accessUICommands.CreateGrant,
+				DeleteGrant:       accessUICommands.DeleteGrant,
+			},
+			AssetCatalog: persistence.workspaceAssetCatalog,
 			WorkspaceID: func(value string) string {
 				return workspaceID(value)
 			},
@@ -697,6 +705,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 	}
 	if routes.dashboardModule == nil {
+		agentUICommands := routes.agentModule.UICommandBindings()
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
 			Database:    database,
@@ -757,6 +766,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				},
 				AgentBootstrap: func(r *http.Request, workspaceID string) dashboardmodule.AgentBootstrap {
 					return dashboardAgentBootstrap(routes.agentModule.DashboardBootstrap(r, workspaceID))
+				},
+				AgentCommands: dashboardmodule.AgentCommandBindings{
+					CreateConversation: agentUICommands.CreateConversation,
+					CreateRun:          agentUICommands.CreateRun,
 				},
 				Presentation: dashboardmodule.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
 				Assets:       platform.assets,
@@ -1025,6 +1038,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			AuthorizeAnyWorkspace: routes.accessModule.AuthorizeAnyWorkspace,
 			Publications:          routes.dashboardModule,
+			PublicationCommands:   routes.dashboardModule.PublicationCommandBindings(),
 			DefaultWorkspaceID:    policy.defaultWorkspaceID,
 			AuthConfigured:        platform.auth != nil,
 			AccessConfigured:      accessReader != nil,

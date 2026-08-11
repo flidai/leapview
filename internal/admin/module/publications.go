@@ -11,6 +11,7 @@ import (
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPublicationCommand) error {
@@ -35,6 +36,13 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 			}
 		}
 	}
+	binding, ok := m.publicationCommands[strings.TrimSpace(command.Action)]
+	if !ok {
+		return publication.ErrConflict
+	}
+	if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), binding.OperationID()); err != nil {
+		return err
+	}
 	requestID := firstAdminPublicationHeader(r, "X-Request-Id", "X-Request-ID")
 	if requestID == "" {
 		requestID = apitransport.NewRequestID()
@@ -51,6 +59,7 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 		idempotencyKey = requestID
 	}
 	invocation := apigencommand.Invocation{
+		OperationID:    binding.OperationID(),
 		Surface:        apigencommand.SurfaceUI,
 		TargetValues:   map[string]string{"workspace": strings.TrimSpace(command.WorkspaceID)},
 		IdempotencyKey: idempotencyKey,

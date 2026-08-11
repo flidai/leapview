@@ -111,6 +111,7 @@ type RoleBindingInvocation struct {
 	CorrelationID    string
 	IdempotencyKey   string
 	ConcurrencyToken string
+	OperationClaims  []string
 }
 
 // RoleBindingCommander is the transport-neutral execution port for role
