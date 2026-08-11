@@ -445,7 +445,10 @@ export class VisualizationHost extends LitElement {
         success: color('--lv-fg-success', defaultRendererContext.colors.success),
         attention: color('--lv-fg-warning', defaultRendererContext.colors.attention),
         danger: color('--lv-fg-danger', defaultRendererContext.colors.danger),
-        data: Array.from({ length: 8 }, (_, index) => color(`--lv-data-${index + 1}`, defaultRendererContext.colors.data[index]!)),
+        data: [
+          'blue', 'orange', 'green', 'pink', 'brown', 'plum', 'teal', 'yellow', 'red',
+          'gray', 'olive', 'pine', 'auburn', 'lemon', 'purple', 'coral', 'lime',
+        ].map((name, index) => color(`--data-${name}-color-emphasis`, defaultRendererContext.colors.data[index]!)),
       },
     }
   }

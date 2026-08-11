@@ -2,8 +2,10 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { Change, defaultRendererContext } from '../host-controller'
-import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, interactionCommandForRow, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
+import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
 import { echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
+import { CategoryColorRegistry } from './echarts/category-colors'
+import { proportionalCenterText } from './echarts/proportional'
 
 test('ECharts label policy truncates by grapheme and preserves selected and threshold labels', () => {
   const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
@@ -436,10 +438,11 @@ test('ECharts normalizes stacks and preserves series order and color identity ac
   expect(filteredOption.dataset[1].source.map((row: unknown[]) => row.at(-1))).toEqual(['__lv_percent_value', 100, 100])
 
   delete envelope.spec.presentation.seriesIntent
-  const automatic = echartsOption(envelope, defaultRendererContext) as any
+  const categoryColors = new CategoryColorRegistry()
+  const automatic = echartsOption(envelope, defaultRendererContext, categoryColors) as any
   const automaticProcessing = automatic.series.find((series: any) => series.name === 'processing').itemStyle.color
   delete filtered.spec.presentation.seriesIntent
-  const automaticFiltered = echartsOption(filtered, defaultRendererContext) as any
+  const automaticFiltered = echartsOption(filtered, defaultRendererContext, categoryColors) as any
   expect(automaticFiltered.series[0].itemStyle.color).toBe(automaticProcessing)
 })
 
@@ -557,7 +560,11 @@ test('ECharts uses stable IDs, contractual formatting, and resolved theme colors
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['month', 'revenue'], rows: [['Jan', 1234.5]], completeness: 'complete' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
-  const context = { ...defaultRendererContext, locale: 'pt-BR' as const, colors: { ...defaultRendererContext.colors, foreground: '#eee', grid: '#333', data: ['#123456'] } }
+  const context = {
+    ...defaultRendererContext,
+    locale: 'pt-BR' as const,
+    colors: { ...defaultRendererContext.colors, foreground: '#eee', grid: '#333', data: ['#123456'] },
+  }
   const option = echartsOption(envelope, context) as any
   expect(option.series[0].id).toBe('series:primary:revenue')
   expect(option.color).toEqual(['#123456'])
@@ -657,8 +664,8 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   } as any
 
   const data = echartsUpdatePlan(Change.Data, option)
-  expect(data.settings).toEqual({ notMerge: false, lazyUpdate: false, replaceMerge: ['dataset', 'series', 'visualMap'] })
-  expect(data.option).toEqual({ dataset: option.dataset, series: option.series, visualMap: [], xAxis: option.xAxis, yAxis: option.yAxis })
+  expect(data.settings).toEqual({ notMerge: false, lazyUpdate: false, replaceMerge: ['dataset', 'series', 'visualMap', 'graphic'] })
+  expect(data.option).toEqual({ dataset: option.dataset, series: option.series, visualMap: [], graphic: [], xAxis: option.xAxis, yAxis: option.yAxis })
 
   const selection = echartsUpdatePlan(Change.Selection, option)
   expect(selection.settings.replaceMerge).toEqual(['dataset', 'visualMap'])
@@ -767,7 +774,7 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
     max: 3,
     calculable: false,
     text: ['3', '1'],
-    inRange: { color: ['rgba(9, 105, 218, 0.18)', defaultRendererContext.colors.data[0]] },
+    inRange: { color: ['rgba(0, 110, 219, 0.18)', defaultRendererContext.colors.data[0]] },
   })
   expect(heatmap.visualMap.precision).toBeUndefined()
   expect(heatmap.visualMap.outOfRange).toBeUndefined()
@@ -803,6 +810,84 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
       })
     }
   }
+})
+
+test('ECharts gives donuts legible renderer defaults without changing their categories', () => {
+  const envelope = proportionalFixture('donut') as any
+  envelope.spec.presentation.centerLabel = undefined
+  envelope.spec.presentation.legend = 'bottom'
+  envelope.dataState.datasets[0].rows = Array.from({ length: 18 }, (_, index) => [`Category ${index + 1}`, index + 1])
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.dataset.source).toHaveLength(19)
+  expect(option.legend).toMatchObject({ type: 'scroll', orient: 'horizontal', bottom: 0 })
+  expect(option.series[0].itemStyle.borderColor).toBeUndefined()
+  expect(option.series[0].itemStyle.borderWidth).toBeUndefined()
+  expect(option.series[0].label).toMatchObject({
+    position: 'outside',
+    alignTo: 'edge',
+    edgeDistance: 8,
+    distanceToLabelLine: 4,
+  })
+  expect(option.series[0].label.formatter({ value: ['Category 1', 1] })).toBe('Category 1: 1')
+  expect(option.series[0].labelLine.show).toBe(true)
+  expect(option.series[0].minShowLabelAngle).toBe(3)
+  expect(option.graphic[0].style.text).toBe('Total\n171')
+  expect(option.aria).toMatchObject({ enabled: true, decal: { show: true } })
+  expect(option.aria.description).toContain('donut')
+  expect(proportionalCenterText(envelope, defaultRendererContext, ['Category 1', 1])).toBe('Category 1\n1')
+
+  envelope.dataState.datasets[0].rows = envelope.dataState.datasets[0].rows.slice(0, 2)
+  const filtered = echartsOption(envelope, defaultRendererContext) as any
+  const update = echartsUpdatePlan(Change.Data, filtered)
+  expect(update.option.graphic[0].style.text).toBe('Total\n3')
+  expect(update.option.aria.decal.show).toBe(false)
+})
+
+test('ECharts preserves proportional category colors when filtering changes row order', () => {
+  const envelope = proportionalFixture('donut') as any
+  envelope.spec.datasets[0].fields[0].sourceRef = 'orders.status'
+  envelope.dataState.datasets[0].rows = [['delivered', 90], ['shipped', 8], ['canceled', 2]]
+
+  const categoryColors = new CategoryColorRegistry()
+  const initial = echartsOption(envelope, defaultRendererContext, categoryColors) as any
+  const initialColor = initial.series[0].itemStyle.color
+  const delivered = initialColor({ value: ['delivered', 90] })
+  const shipped = initialColor({ value: ['shipped', 8] })
+  expect(delivered).not.toBe(shipped)
+
+  const filtered = structuredClone(envelope)
+  filtered.dataState.datasets[0].rows = [['shipped', 8], ['canceled', 2]]
+  const filteredColor = (echartsOption(filtered, defaultRendererContext, categoryColors) as any).series[0].itemStyle.color
+  expect(filteredColor({ value: ['shipped', 8] })).toBe(shipped)
+
+  const sibling = structuredClone(filtered)
+  sibling.visualID = 'orders-by-status-sibling'
+  const siblingColor = (echartsOption(sibling, defaultRendererContext, categoryColors) as any).series[0].itemStyle.color
+  expect(siblingColor({ value: ['shipped', 8] })).toBe(shipped)
+
+  const reordered = structuredClone(envelope)
+  reordered.dataState.datasets[0].rows.reverse()
+  const reorderedColor = (echartsOption(reordered, defaultRendererContext, categoryColors) as any).series[0].itemStyle.color
+  expect(reorderedColor({ value: ['delivered', 90] })).toBe(delivered)
+  expect(reorderedColor({ value: ['shipped', 8] })).toBe(shipped)
+  expect(new Set(defaultRendererContext.colors.data).size).toBe(17)
+})
+
+test('ECharts translates proportional legend categories into governed selections', () => {
+  const envelope = proportionalFixture('donut') as any
+  envelope.spec.datasets[0].fields[0].role = 'identity'
+  envelope.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetFactID: 'orders',
+    }],
+  }]
+
+  expect(legendSelectionCommand(envelope, 'A')).toEqual({
+    sourceKind: 'visual', sourceId: 'donut', interactionKind: 'point_selection', action: 'set', toggle: true,
+    mappings: [{ field: 'orders.status', fact: 'orders', value: 'A', label: 'A' }],
+  })
+  expect(legendSelectionCommand(envelope, 'missing')).toBeUndefined()
 })
 
 test('ECharts wraps a hierarchy forest so every tree root is rendered', () => {

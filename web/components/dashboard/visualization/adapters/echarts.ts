@@ -4,26 +4,28 @@ import { Change, defaultRendererContext, normalizeRendererLocale, type RendererA
 import { clearInteractionCommand, interactionCommandForRow } from '../interaction-command'
 import { projectVisualizationHighlights } from '../highlight'
 import { baseOption } from './echarts/common'
+import { CategoryColorRegistry, categoryColorRegistryFor } from './echarts/category-colors'
 import { cartesianOption } from './echarts/cartesian'
 import { hierarchyOption } from './echarts/hierarchy'
 import { polarOption } from './echarts/polar'
 import { pointOption } from './echarts/point'
-import { proportionalOption } from './echarts/proportional'
+import { proportionalCenterText, proportionalOption } from './echarts/proportional'
 
 export { interactionCommandForRow, normalizeRendererLocale }
 
-export function echartsOption(envelope: VisualizationEnvelope, context: RendererContext = defaultRendererContext): EChartsOption {
+export function echartsOption(envelope: VisualizationEnvelope, context: RendererContext = defaultRendererContext, categoryColors = new CategoryColorRegistry()): EChartsOption {
   const base = baseOption(envelope, context)
   let translated: Record<string, any>
   switch (envelope.spec.kind) {
-    case 'cartesian': translated = cartesianOption(envelope, context); break
-    case 'proportional': translated = proportionalOption(envelope, context); break
+    case 'cartesian': translated = cartesianOption(envelope, context, categoryColors); break
+    case 'proportional': translated = proportionalOption(envelope, context, categoryColors); break
     case 'hierarchy': translated = hierarchyOption(envelope, context); break
     case 'polar': translated = polarOption(envelope, context); break
-    case 'point': translated = pointOption(envelope, context); break
+    case 'point': translated = pointOption(envelope, context, categoryColors); break
     default: throw new Error(`ECharts cannot render visualization kind ${JSON.stringify(envelope.spec.kind)}`)
   }
   const option = { ...base, ...translated } as Record<string, any>
+  if (base.aria || translated.aria) option.aria = { ...(base.aria ?? {}), ...(translated.aria ?? {}) }
   if (base.graphic && translated.graphic) option.graphic = [...base.graphic, ...translated.graphic]
   applyCrossHighlight(option, envelope)
   return option as EChartsOption
@@ -68,7 +70,7 @@ export const adapter: RendererAdapter = {
     const echarts = await import('echarts')
     const frame = createEChartsRendererFrame(container)
     const chart = echarts.init(frame, undefined, { renderer: 'canvas', devicePixelRatio: context.devicePixelRatio })
-    const handle = new EChartsHandle(container, frame, chart)
+    const handle = new EChartsHandle(container, frame, chart, categoryColorRegistryFor(container))
     try {
       handle.mount(envelope, context)
       return handle
@@ -92,21 +94,26 @@ export function removeEChartsRendererFrame(container: ParentNode, frame: HTMLEle
 
 class EChartsHandle implements RendererHandle {
   private envelope?: VisualizationEnvelope
+  private context?: RendererContext
   private disposed = false
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
 
-  constructor(private readonly container: HTMLElement, private readonly frame: HTMLElement, private readonly chart: ECharts) {
+  constructor(private readonly container: HTMLElement, private readonly frame: HTMLElement, private readonly chart: ECharts, private readonly categoryColors: CategoryColorRegistry) {
     this.chart.on('click', this.handleClick)
     this.chart.on('brushSelected', this.handleBrushSelected)
+    this.chart.on('legendselectchanged', this.handleLegendSelect)
+    this.chart.on('mouseover', this.handleMouseOver)
+    this.chart.on('mouseout', this.handleMouseOut)
   }
 
   mount(envelope: VisualizationEnvelope, context: RendererContext): void {
     this.envelope = envelope
+    this.context = context
     this.readinessAbort?.abort()
     this.readinessAbort = new AbortController()
     this.readiness = waitForEChartsFrame(this.chart, 5_000, this.readinessAbort.signal)
-    this.chart.setOption(echartsOption(envelope, context), { notMerge: true, lazyUpdate: false })
+    this.chart.setOption(echartsOption(envelope, context, this.categoryColors), { notMerge: true, lazyUpdate: false })
   }
 
   whenReady(): Promise<void> { return this.readiness }
@@ -114,7 +121,8 @@ class EChartsHandle implements RendererHandle {
   update(envelope: VisualizationEnvelope, change: Change, context: RendererContext): void {
     if (this.disposed) return
     this.envelope = envelope
-    const option = echartsOption(envelope, context)
+    this.context = context
+    const option = echartsOption(envelope, context, this.categoryColors)
     const plan = echartsUpdatePlan(change, option)
     this.chart.setOption(plan.option, plan.settings)
   }
@@ -133,6 +141,9 @@ class EChartsHandle implements RendererHandle {
     this.readinessAbort = undefined
     this.chart.off('click', this.handleClick)
     this.chart.off('brushSelected', this.handleBrushSelected)
+    this.chart.off('legendselectchanged', this.handleLegendSelect)
+    this.chart.off('mouseover', this.handleMouseOver)
+    this.chart.off('mouseout', this.handleMouseOut)
     this.chart.dispose()
     removeEChartsRendererFrame(this.container, this.frame)
   }
@@ -166,6 +177,47 @@ class EChartsHandle implements RendererHandle {
     }
   }
 
+  private readonly handleLegendSelect = (params: unknown) => {
+    const envelope = this.envelope
+    const event = params as { name?: unknown }
+    if (!envelope || envelope.spec.kind !== 'proportional' || typeof event.name !== 'string') return
+    this.chart.dispatchAction({ type: 'legendSelect', name: event.name })
+    const command = legendSelectionCommand(envelope, event.name)
+    if (!command) return
+    this.container.dispatchEvent(new CustomEvent('lv-interaction-select', { bubbles: true, composed: true, detail: command }))
+  }
+
+  private readonly handleMouseOver = (params: unknown) => {
+    const envelope = this.envelope
+    const context = this.context
+    const event = params as { componentType?: unknown; value?: unknown }
+    if (!envelope || !context || event.componentType !== 'series' || !Array.isArray(event.value)) return
+    this.setProportionalCenter(proportionalCenterText(envelope, context, event.value))
+  }
+
+  private readonly handleMouseOut = (params: unknown) => {
+    const envelope = this.envelope
+    const context = this.context
+    const event = params as { componentType?: unknown }
+    if (!envelope || !context || event.componentType !== 'series') return
+    this.setProportionalCenter(proportionalCenterText(envelope, context))
+  }
+
+  private setProportionalCenter(text: string | undefined): void {
+    if (text === undefined) return
+    this.chart.setOption({ graphic: [{ id: 'graphic:proportional:center', style: { text } }] })
+  }
+
+}
+
+export function legendSelectionCommand(envelope: VisualizationEnvelope, categoryName: string) {
+  if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') return undefined
+  const ref = envelope.spec.category
+  const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === ref.dataset)
+  const categoryIndex = dataset?.columns.indexOf(ref.field) ?? -1
+  if (!dataset || categoryIndex < 0) return undefined
+  const row = dataset.rows.find((candidate) => String(candidate[categoryIndex]) === categoryName)
+  return row ? interactionCommandForRow(envelope, dataset.id, row) : undefined
 }
 
 export function brushSelectionCommands(envelope: VisualizationEnvelope, params: unknown) {
@@ -210,10 +262,12 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption): EChart
     patch.dataset = source.dataset
     patch.series = source.series
     patch.visualMap = source.visualMap ?? []
+    patch.graphic = source.graphic ?? []
+    if (source.aria !== undefined) patch.aria = source.aria
     for (const key of ['xAxis', 'yAxis', 'radar']) {
       if (source[key] !== undefined) patch[key] = source[key]
     }
-    replaceMerge.push('dataset', 'series', 'visualMap')
+    replaceMerge.push('dataset', 'series', 'visualMap', 'graphic')
   } else if ((change & Change.Selection) !== 0) {
     patch.dataset = source.dataset
     patch.visualMap = source.visualMap ?? []

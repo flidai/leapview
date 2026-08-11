@@ -4,15 +4,16 @@ import { conditionalIconGlyph, conditionalStyleColor, resolveConditionalFormat }
 import { resolveVisualizationMetadata } from '../../metadata'
 import { axis, escapeHTML, field, fieldLabel, formatDisplayField, formatField, inlineDataset, labelFormatter, legend, selectedDatasetSource, toneColor, type EChartsTranslation } from './common'
 import { echartsLabelPolicy } from './label-policy'
+import type { CategoryColorRegistry } from './category-colors'
 
 type CartesianSpec = Extract<VisualizationEnvelope['spec'], { kind: 'cartesian' }>
 type ReferenceValue = NonNullable<CartesianSpec['referenceLines']>[number]['value']
 
-export function cartesianOption(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation {
-  return applyDecisionContext(envelope, context, cartesianBaseOption(envelope, context))
+export function cartesianOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
+  return applyDecisionContext(envelope, context, cartesianBaseOption(envelope, context, categoryColors))
 }
 
-function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation {
+function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
   const spec = envelope.spec as CartesianSpec
   const horizontal = spec.presentation.orientation === 'horizontal' || spec.mark === 'bar'
   const xType = axisType(envelope, spec.x, horizontal ? 'value' : 'category')
@@ -115,7 +116,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       }],
     }
   }
-  const split = splitCartesianSeries(envelope, context)
+  const split = splitCartesianSeries(envelope, context, categoryColors)
   if (split) {
     const secondary = split.series.some((item) => item.yAxisIndex === 1)
     const primaryAxis = axis(envelope, spec.y[0]!, 'value', context, 'primary_y', spec.y)
@@ -368,13 +369,14 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
   return translated
 }
 
-function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext): { datasets: EChartsTranslation[]; series: EChartsTranslation[] } | undefined {
+function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): { datasets: EChartsTranslation[]; series: EChartsTranslation[] } | undefined {
   const spec = envelope.spec
   if (spec.kind !== 'cartesian' || !spec.series || spec.y.length !== 1 || envelope.dataState.kind !== 'inline') return undefined
   const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === spec.series?.dataset)
   const seriesIndex = dataset?.columns.indexOf(spec.series.field) ?? -1
   if (!dataset || seriesIndex < 0) return undefined
   const available = [...new Set(dataset.rows.map((row) => row[seriesIndex]).filter((value): value is string | number | boolean => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'))]
+  categoryColors.register(envelope, spec.series, available)
   const configured = new Map((spec.presentation.comboSeries ?? []).map((item) => [String(item.seriesValue), item]))
   const intents = new Map((spec.presentation.seriesIntent ?? []).map((item) => [String(item.value), item]))
   const authoredOrder = (spec.presentation.seriesIntent ?? [])
@@ -410,7 +412,7 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
       encode: { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none',
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
       itemStyle: {
-        color: fill ?? seriesColor(String(value), intent?.color, context),
+        color: fill ?? (intent?.color ? seriesColor(String(value), intent.color, context) : categoryColors.color(envelope, spec.series!, value, context)),
         borderColor: stroke,
         borderWidth: stroke ? 2 : undefined,
       },
