@@ -13,6 +13,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  apigen-validation:
+    name: APIGen tests (nightly)
+    if: github.repository == 'flidai/leapview'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Run APIGen validation
+        run: task ci:lane:go:apigen
+
   go-packages-validation:
     name: Go package tests (nightly)
     if: github.repository == 'flidai/leapview'
@@ -91,7 +111,7 @@ jobs:
   full-validation:
     name: Full nightly validation
     if: github.repository == 'flidai/leapview'
-    needs: [go-packages-validation, go-application-validation, frontend-validation]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -136,19 +156,20 @@ jobs:
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [go-packages-validation, go-application-validation, frontend-validation, full-validation, security-validation]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation, security-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require exhaustive nightly validation
         env:
+          APIGEN_RESULT: ${{ needs.apigen-validation.result }}
           GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}
           GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
           FULL_RESULT: ${{ needs.full-validation.result }}
           SECURITY_RESULT: ${{ needs.security-validation.result }}
         run: |
-          for result in "${GO_PACKAGES_RESULT}" "${GO_APPLICATION_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}"; do
+          for result in "${APIGEN_RESULT}" "${GO_PACKAGES_RESULT}" "${GO_APPLICATION_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}"; do
             test "${result}" = success || {
               printf 'Nightly validation result: %s\n' "${result}" >&2
               exit 1

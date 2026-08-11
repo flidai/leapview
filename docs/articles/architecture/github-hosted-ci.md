@@ -38,11 +38,12 @@ adds desktop tests, static and selected race analysis, route QA, and deployment 
 compatibility alias for the full current-machine contract.
 
 GitHub Actions distributes those same Taskfile units across clean runners. Pull requests run
-the non-application Go packages, sharded application tests, and frontend validation concurrently
-after each runner executes `task ci:prepare`. The merge queue adds `task ci:full:extras`, and the
-daily schedule also runs `task ci:nightly:extras`. Local composition remains available through
-the tier targets; the workflow does not duplicate individual test commands or introduce a
-runner-specific container wrapper.
+APIGen, the non-application Go packages, sharded application tests, and frontend validation
+concurrently. The three repository lanes execute `task ci:prepare`; the independent APIGen module
+does not need generated or embedded application assets and skips that preparation. The merge queue
+adds `task ci:full:extras`, and the daily schedule also runs `task ci:nightly:extras`. Local
+composition remains available through the tier targets; the workflow does not duplicate individual
+test commands or introduce a runner-specific container wrapper.
 
 ## Toolchain and caches
 
@@ -72,9 +73,9 @@ change validation behavior.
 
 ## Workflow tiers
 
-The pull-request workflow runs Go package, Go application, and frontend validation on independent
-four-vCPU runners and reports the stable required `CI gate` check. This prevents browser and Go
-test contention and shortens wall-clock feedback without increasing per-job machine size.
+The pull-request workflow runs APIGen, Go package, Go application, and frontend validation on
+independent four-vCPU runners and reports the stable required `CI gate` check. This prevents browser
+and Go test contention and shortens wall-clock feedback without increasing per-job machine size.
 
 For a native GitHub pull-request stack, only the top pull request runs those validation lanes.
 Lower layers report a successful `CI gate` with a summary that validation is deferred to the
