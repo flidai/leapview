@@ -1580,12 +1580,18 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 
 func assertOperationAuditMetadata(t *testing.T, event access.AuditEvent, operationID, surface string) {
 	t.Helper()
-	var metadata map[string]any
-	if err := json.Unmarshal([]byte(event.MetadataJSON), &metadata); err != nil {
+	var envelope struct {
+		SchemaVersion int            `json:"schemaVersion"`
+		Retention     string         `json:"retention"`
+		PayloadSchema string         `json:"payloadSchema"`
+		Payload       map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(event.MetadataJSON), &envelope); err != nil {
 		t.Fatalf("decode %s audit metadata: %v", event.Action, err)
 	}
-	if metadata["operationId"] != operationID || metadata["surface"] != surface {
-		t.Fatalf("%s audit metadata = %#v", event.Action, metadata)
+	if envelope.SchemaVersion != 1 || envelope.Retention != "security" || envelope.PayloadSchema == "" ||
+		envelope.Payload["operationId"] != operationID || envelope.Payload["surface"] != surface {
+		t.Fatalf("%s audit metadata = %#v", event.Action, envelope)
 	}
 }
 

@@ -1,7 +1,7 @@
 import { emitFile, getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxLength, getMaxValue, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
 import { getAllHttpServices, getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
-import { getAuthz, getCLI, getCommand, getContracts, getMetadata, getPackages, getResponseShape, getTool, getTransportErrors, isManual, isQuery, } from "./decorators.js";
+import { getAuthz, getAuditPayload, getAuditSchema, getCLI, getCommand, getContracts, getMetadata, getPackages, getResponseShape, getSensitivity, getTool, getTransportErrors, isManual, isQuery, } from "./decorators.js";
 import { reportDiagnostic } from "./lib.js";
 class IRBuilder {
     program;
@@ -601,6 +601,7 @@ function validateSharedRouteMetadata(program, builder, operations, canonical) {
     const canonicalNamespace = namespaceName(canonical.operation.namespace);
     const canonicalCLI = stableJSONString(cliMetadata(program, canonical));
     const canonicalCommand = stableJSONString(getCommand({ program }, canonical.operation));
+    const canonicalAuditPayload = stableJSONString(auditPayloadIdentity(program, canonical.operation));
     const canonicalQuery = isQuery({ program }, canonical.operation);
     const canonicalTool = stableJSONString(toolMetadata(program, canonical));
     const canonicalAuthz = stableJSONString(getAuthz({ program }, canonical.operation));
@@ -615,6 +616,9 @@ function validateSharedRouteMetadata(program, builder, operations, canonical) {
         }
         if (stableJSONString(getCommand({ program }, operation.operation)) !== canonicalCommand) {
             builder.unsupportedSharedRoute(operation.operation, "incompatible command metadata");
+        }
+        if (stableJSONString(auditPayloadIdentity(program, operation.operation)) !== canonicalAuditPayload) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible audit payload metadata");
         }
         if (isQuery({ program }, operation.operation) !== canonicalQuery) {
             builder.unsupportedSharedRoute(operation.operation, "incompatible query metadata");
@@ -683,6 +687,49 @@ function commandMetadata(program, builder, operation, parameters) {
     }
     if (successAction && !auditActionPattern.test(successAction)) {
         builder.invalidCommand(`audit.successAction ${JSON.stringify(successAction)} must be a stable dotted lower_snake_case name`, operation.operation);
+    }
+    let auditPayload;
+    const authoredAuditPayload = getAuditPayload({ program }, operation.operation);
+    if (options.audit.required && !authoredAuditPayload) {
+        builder.invalidCommand("required audit must declare @apigen.auditPayload", operation.operation);
+    }
+    if (authoredAuditPayload) {
+        const authored = authoredAuditPayload;
+        const schema = authored.schema;
+        const payloadOptions = authored.options ?? getAuditSchema({ program }, schema);
+        if (!schema.name) {
+            builder.invalidCommand("audit.payload.schema must be a named model", operation.operation);
+        }
+        if (!payloadOptions) {
+            builder.invalidCommand("@apigen.auditPayload requires inline options or model-owned @apigen.auditSchema", operation.operation);
+        }
+        else if (payloadOptions.schemaVersion < 1 || !Number.isInteger(payloadOptions.schemaVersion)) {
+            builder.invalidCommand("audit.payload.schemaVersion must be a positive integer", operation.operation);
+        }
+        if (schema.baseModel) {
+            builder.invalidCommand("audit.payload.schema must not inherit fields", operation.operation);
+        }
+        const fields = [];
+        for (const property of schema.properties.values()) {
+            if (property.optional) {
+                builder.invalidCommand(`audit payload field ${JSON.stringify(property.name)} must be required`, operation.operation);
+            }
+            const sensitivity = getSensitivity({ program }, property);
+            if (!sensitivity) {
+                builder.invalidCommand(`audit payload field ${JSON.stringify(property.name)} requires an explicit audit sensitivity decorator`, operation.operation);
+                continue;
+            }
+            fields.push({ name: property.name, sensitivity });
+        }
+        fields.sort((left, right) => left.name.localeCompare(right.name));
+        if (payloadOptions) {
+            auditPayload = {
+                schema: builder.namedSchemaRef(schema, `audit payload for ${operation.operation.name}`),
+                schema_version: payloadOptions.schemaVersion,
+                retention: payloadOptions.retention,
+                fields,
+            };
+        }
     }
     let execution;
     if (options.execution) {
@@ -785,7 +832,7 @@ function commandMetadata(program, builder, operation, parameters) {
     const privilege = typeof authz?.privilege === "string" ? authz.privilege : undefined;
     return prune({
         owner: namespaceName(operation.operation.namespace) ?? "",
-        audit: prune({ required: options.audit.required, success_action: successAction, guarantee }),
+        audit: prune({ required: options.audit.required, success_action: successAction, guarantee, payload: auditPayload }),
         execution,
         failures,
         additional_exposures: additionalExposures.length > 0 ? additionalExposures : undefined,
@@ -795,6 +842,18 @@ function commandMetadata(program, builder, operation, parameters) {
         authz_mode: authzMode,
         privilege,
     });
+}
+function auditPayloadIdentity(program, operation) {
+    const payload = getAuditPayload({ program }, operation);
+    if (!payload) {
+        return undefined;
+    }
+    const options = payload.options ?? getAuditSchema({ program }, payload.schema);
+    return {
+        schema: `${namespaceName(payload.schema.namespace) ?? ""}.${payload.schema.name}`,
+        schemaVersion: options?.schemaVersion,
+        retention: options?.retention,
+    };
 }
 function stableJSONString(value) {
     return JSON.stringify(sortJSONValue(value));

@@ -18,6 +18,9 @@ func TestEmit_GeneratesTypedClientOverGenericTransport(t *testing.T) {
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "Widgets", Version: "1.0.0"},
 		Schemas: map[string]ir.Schema{
+			"WidgetDeletedAuditPayload": {
+				Type: "object", Properties: map[string]ir.SchemaProperty{"widgetId": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"widgetId"},
+			},
 			"CreateWidgetRequest": {
 				Type: "object",
 				Properties: map[string]ir.SchemaProperty{
@@ -76,7 +79,7 @@ func TestEmit_GeneratesTypedClientOverGenericTransport(t *testing.T) {
 				},
 				Command: &ir.Command{
 					Owner: "WidgetAPI",
-					Audit: ir.AuditPolicy{Required: true, SuccessAction: "widget.deleted", Guarantee: "best-effort"},
+					Audit: ir.AuditPolicy{Required: true, SuccessAction: "widget.deleted", Guarantee: "best-effort", Payload: &ir.AuditPayload{Schema: ir.SchemaRef{Ref: "WidgetDeletedAuditPayload"}, SchemaVersion: 1, Retention: "security", Fields: []ir.AuditField{{Name: "widgetId", Sensitivity: "internal"}}}},
 					Failures: []ir.CommandFailure{
 						{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."},
 						{Kind: "not_found", StatusCode: 404, Code: "WIDGET_NOT_FOUND", PublicDetail: "Widget not found."},

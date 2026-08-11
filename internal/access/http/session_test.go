@@ -143,7 +143,8 @@ func TestAdministratorRevokesOnlyTheTargetPrincipalsSession(t *testing.T) {
 	if err := json.Unmarshal([]byte(repository.audit.MetadataJSON), &metadata); err != nil {
 		t.Fatalf("decode audit metadata: %v", err)
 	}
-	if got := metadata["targetPrincipalId"]; got != "principal_target" {
+	payload, _ := metadata["payload"].(map[string]any)
+	if got := payload["targetPrincipalId"]; got != "principal_target" {
 		t.Fatalf("audit target principal = %#v, want principal_target", got)
 	}
 }

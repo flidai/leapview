@@ -94,6 +94,7 @@ interface CurrentAPITokens {
       #{ kind: "invalid", statusCode: 400, code: "API_TOKEN_INVALID", publicDetail: "The API token request is invalid." },
     ],
   })
+  @apigen.auditPayload(APITokenAuditPayload)
   @operationId("createCurrentAPIToken")
   createCurrentAPIToken(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: APITokenCreateRequest): CreateCurrentAPITokenCreated | CommonErrors;
 
@@ -108,6 +109,7 @@ interface CurrentAPITokens {
       #{ kind: "not_found", statusCode: 404, code: "API_TOKEN_NOT_FOUND", publicDetail: "API token not found." },
     ],
   })
+  @apigen.auditPayload(APITokenAuditPayload)
   @operationId("revokeCurrentAPIToken")
   revokeCurrentAPIToken(@path token: string): EmptyResponse | CommonErrors;
 }
@@ -146,6 +148,7 @@ interface CurrentSessions {
       #{ kind: "not_found", statusCode: 404, code: "SESSION_NOT_FOUND", publicDetail: "Session not found." },
     ],
   })
+  @apigen.auditPayload(CurrentSessionRevokedAuditPayload)
   @operationId("revokeCurrentSession")
   revokeCurrentSession(@path session: string): EmptyResponse | CommonErrors;
 }

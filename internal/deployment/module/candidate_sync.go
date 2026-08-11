@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -127,11 +126,8 @@ func (m *Module) recordCandidateSourceBlobAudit(
 		strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Client")), "cli") {
 		surface = "cli"
 	}
-	metadata, err := json.Marshal(map[string]any{
-		"operationId": contract.OperationID,
-		"surface":     surface,
-		"digest":      identity,
-		"sizeBytes":   sizeBytes,
+	metadata, err := deploymentgen.EncodeGenUploadProjectCandidateSourceBlobAuditPayload(deploymentgen.GenSchemaCandidateSourceBlobAuditPayload{
+		OperationId: contract.OperationID, Surface: surface, Digest: identity, SizeBytes: sizeBytes,
 	})
 	if err != nil {
 		return fmt.Errorf("encode candidate source blob audit metadata: %w", err)
@@ -145,7 +141,7 @@ func (m *Module) recordCandidateSourceBlobAudit(
 		PrincipalID: principalID, ProjectID: strings.TrimSpace(projectID), Digest: identity,
 		Action: contract.Command.Audit.SuccessAction, Privilege: contract.Command.Privilege,
 		Status: "success", RequestID: requestID, CorrelationID: correlationID,
-		MetadataJSON: string(metadata),
+		MetadataJSON: metadata,
 	})
 }
 

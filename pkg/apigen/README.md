@@ -169,6 +169,35 @@ successful mutation and its audit record commit or roll back together.
 observable without changing an already-successful command result. APIGen
 validates these values; applications may require every command to select one.
 
+Audit metadata can be made a typed, versioned contract instead of an arbitrary
+JSON map:
+
+```typespec
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model RoleBindingCreatedAuditPayload {
+  @apigen.auditInternal operationId: string;
+  @apigen.auditInternal role: string;
+  @apigen.auditPii subjectId: string;
+  @apigen.auditPublic surface: string;
+}
+
+@apigen.auditPayload(RoleBindingCreatedAuditPayload)
+```
+
+Every required command audit must declare a payload. Payload models must be
+named objects with required fields and model-owned `@apigen.auditSchema`
+metadata. Every field must explicitly declare `public`, `internal`, `pii`, or
+`secret` sensitivity using `auditPublic`, `auditInternal`, `auditPii`, or
+`auditSecret`. The longer `@apigen.sensitivity("...")` form and inline payload
+options remain supported for compatibility. APIGen emits the schema, version,
+retention, and classifications into IR, OpenAPI, per-package and aggregate Go
+registries. It also emits a typed
+`EncodeGen<Operation>AuditPayload` helper and a log-safe variant. Durable audit
+encoding always redacts `secret`; log-safe encoding preserves only `public` and
+redacts `internal`, `pii`, and `secret`. Both encoders reject missing or
+undeclared fields, so schema drift fails the command lifecycle instead of
+silently changing persisted audit data.
+
 Generated Go servers also expose `GetAPIGenCommandRuntimeContract`, which
 normalizes every required audit into `runtime/command.Contract`. Construct a
 `runtime/command.Executor` with that lookup and supply both application

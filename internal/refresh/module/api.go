@@ -139,7 +139,15 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, worksp
 	}
 	if err := executor.Execute(r.Context(), string(refreshgen.GenOperationCancelRefreshRun), apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
-			return jobs.AppendJSONEvent(ctx, m.events, m.refreshExecution.ResourceKind, runID, contract.AuditAction, response)
+			encoded, err := refreshgen.EncodeGenCancelRefreshRunAuditPayload(refreshgen.GenSchemaRefreshCancelledAuditPayload{
+				Id: response.ID, WorkspaceId: response.WorkspaceID, PipelineId: response.PipelineID,
+				Status: response.Status, Trigger: response.Trigger,
+			})
+			if err != nil {
+				return err
+			}
+			_, err = m.events.AppendEvent(ctx, m.refreshExecution.ResourceKind, runID, contract.AuditAction, []byte(encoded))
+			return err
 		},
 		LogMessage:    "refresh audit failed",
 		LogAttributes: []slog.Attr{slog.String("refresh_run_id", runID)},

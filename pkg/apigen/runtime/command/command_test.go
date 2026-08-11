@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	apigenaudit "github.com/Yacobolo/toolbelt/apigen/runtime/audit"
 )
 
 func testLookup(guarantee Guarantee) Lookup {
@@ -14,7 +16,14 @@ func testLookup(guarantee Guarantee) Lookup {
 		if operationID != "createWidget" {
 			return Contract{}, false
 		}
-		return Contract{OperationID: operationID, Owner: "Widgets", AuditAction: "widget.created", Guarantee: guarantee}, true
+		return Contract{OperationID: operationID, Owner: "Widgets", AuditAction: "widget.created", Guarantee: guarantee, AuditPayload: testAuditPayload()}, true
+	}
+}
+
+func testAuditPayload() *apigenaudit.Contract {
+	return &apigenaudit.Contract{
+		Schema: "WidgetAuditPayload", SchemaVersion: 1, Retention: apigenaudit.RetentionSecurity,
+		Fields: []apigenaudit.FieldContract{{Name: "operationId", Sensitivity: apigenaudit.SensitivityInternal}},
 	}
 }
 
@@ -93,7 +102,8 @@ func TestExecutorRejectsMissingGuaranteeCapability(t *testing.T) {
 func TestContractValidatesAsyncExecution(t *testing.T) {
 	contract := Contract{
 		OperationID: "finalizeRelease", Owner: "ReleaseAPI", AuditAction: "release.validating", Guarantee: GuaranteeTransactional,
-		Execution: &AsyncExecutionContract{Mode: "async", Guarantee: "transactional", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
+		AuditPayload: testAuditPayload(),
+		Execution:    &AsyncExecutionContract{Mode: "async", Guarantee: "transactional", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
 	}
 	if err := contract.Validate(); err != nil {
 		t.Fatal(err)
@@ -104,6 +114,23 @@ func TestContractValidatesAsyncExecution(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 	contract.Execution.Guarantee = "best-effort"
+	if err := contract.Validate(); !errors.Is(err, ErrInvalidContract) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestContractValidatesAuditPayload(t *testing.T) {
+	contract := Contract{
+		OperationID: "createWidget", Owner: "Widgets", AuditAction: "widget.created", Guarantee: GuaranteeTransactional,
+		AuditPayload: &apigenaudit.Contract{
+			Schema: "WidgetCreatedAuditPayload", SchemaVersion: 1, Retention: apigenaudit.RetentionSecurity,
+			Fields: []apigenaudit.FieldContract{{Name: "widgetId", Sensitivity: apigenaudit.SensitivityInternal}},
+		},
+	}
+	if err := contract.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	contract.AuditPayload.Fields[0].Sensitivity = "unknown"
 	if err := contract.Validate(); !errors.Is(err, ErrInvalidContract) {
 		t.Fatalf("error = %v", err)
 	}

@@ -4,6 +4,24 @@ using LeapViewAPI.Protocol;
 
 namespace LeapViewAPI.ManagedData;
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model ManagedDataS3MultipartAuditPayload {
+  @apigen.auditInternal
+  operationId: string;
+
+  @apigen.auditInternal
+  owner: string;
+
+  @apigen.auditInternal
+  projectId: string;
+
+  @apigen.auditInternal
+  connectionId: string;
+
+  @apigen.auditPublic
+  surface: string;
+}
+
 @minLength(1)
 @maxLength(160)
 scalar ManagedDataMultipartUploadId extends string;
@@ -93,6 +111,7 @@ interface ManagedDataS3MultipartUploads {
     ],
     targetParameter: "project",
   })
+  @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
   createManagedDataS3MultipartUpload(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
@@ -141,6 +160,7 @@ interface ManagedDataS3MultipartUploads {
     ],
     targetParameter: "project",
   })
+  @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
   completeManagedDataS3MultipartUpload(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
@@ -171,6 +191,7 @@ interface ManagedDataS3MultipartUploads {
     ],
     targetParameter: "project",
   })
+  @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
   abortManagedDataS3MultipartUpload(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,

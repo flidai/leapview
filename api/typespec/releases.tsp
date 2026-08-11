@@ -130,6 +130,48 @@ model ReleaseArtifactResponse {
   sizeBytes: int64;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model ReleaseCreatedAuditPayload {
+  @apigen.auditInternal
+  operationId: string;
+  @apigen.auditInternal
+  releaseId: string;
+  @apigen.auditInternal
+  projectId: string;
+  @apigen.auditInternal
+  projectDigest: string;
+  @apigen.auditInternal
+  status: string;
+  @apigen.auditPii
+  createdBy: string;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model ReleaseArtifactUploadedAuditPayload {
+  @apigen.auditInternal
+  operationId: string;
+  @apigen.auditInternal
+  releaseId: string;
+  @apigen.auditInternal
+  workspaceId: string;
+  @apigen.auditInternal
+  digest: string;
+  @apigen.auditInternal
+  sizeBytes: int64;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model ReleaseValidatingAuditPayload {
+  @apigen.auditInternal
+  operationId: string;
+  @apigen.auditInternal
+  releaseId: string;
+  @apigen.auditInternal
+  projectId: string;
+  @apigen.auditInternal
+  status: string;
+}
+
 @route("/projects/{project}/releases")
 @tag("Releases")
 interface Releases {
@@ -151,6 +193,7 @@ interface Releases {
       #{ kind: "conflict", statusCode: 409, code: "RELEASE_CONFLICT", publicDetail: "The release conflicts with its current state." },
     ],
   })
+  @apigen.auditPayload(ReleaseCreatedAuditPayload)
   @operationId("createRelease")
   createRelease(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ReleaseCreateRequest): CreatedJson<ReleaseResponse> | CommonErrors;
 
@@ -178,6 +221,7 @@ interface Releases {
     ],
     targetParameter: "project",
   })
+  @apigen.auditPayload(ReleaseArtifactUploadedAuditPayload)
   @apigen.manual
   @operationId("uploadReleaseArtifact")
   uploadReleaseArtifact(@path project: string, @path release: string, @path workspace: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<ReleaseArtifactResponse> | CommonErrors;
@@ -209,6 +253,7 @@ interface Releases {
     },
     targetParameter: "project",
   })
+  @apigen.auditPayload(ReleaseValidatingAuditPayload)
   @operationId("finalizeRelease")
   finalizeRelease(@path project: string, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
 

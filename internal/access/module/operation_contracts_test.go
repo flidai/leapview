@@ -61,6 +61,9 @@ func TestGeneratedAccessMutationContractsAreComplete(t *testing.T) {
 		if !command.Audit.Required || command.Audit.SuccessAction != want.audit || command.Audit.Guarantee != "transactional" {
 			t.Errorf("%s audit = %#v, want required transactional action %q", operationID, command.Audit, want.audit)
 		}
+		if command.Audit.Payload == nil || command.Audit.Payload.Schema == "" || command.Audit.Payload.SchemaVersion != 1 || command.Audit.Payload.Retention != "security" {
+			t.Errorf("%s audit payload = %#v, want versioned security payload", operationID, command.Audit.Payload)
+		}
 		gotTarget := ""
 		if command.Target != nil {
 			gotTarget = command.Target.Parameter

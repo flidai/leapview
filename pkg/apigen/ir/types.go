@@ -150,9 +150,25 @@ type AsyncExecution struct {
 
 // AuditPolicy describes the audit record required for a successful command.
 type AuditPolicy struct {
-	Required      bool   `json:"required"`
-	SuccessAction string `json:"success_action,omitempty"`
-	Guarantee     string `json:"guarantee,omitempty"`
+	Required      bool          `json:"required"`
+	SuccessAction string        `json:"success_action,omitempty"`
+	Guarantee     string        `json:"guarantee,omitempty"`
+	Payload       *AuditPayload `json:"payload,omitempty"`
+}
+
+// AuditPayload describes the typed, versioned data persisted for a command
+// audit event.
+type AuditPayload struct {
+	Schema        SchemaRef    `json:"schema"`
+	SchemaVersion int          `json:"schema_version"`
+	Retention     string       `json:"retention"`
+	Fields        []AuditField `json:"fields"`
+}
+
+// AuditField classifies one payload field for durable audit and safe logging.
+type AuditField struct {
+	Name        string `json:"name"`
+	Sensitivity string `json:"sensitivity"`
 }
 
 // OperationTarget identifies the required path parameter targeted by a command.

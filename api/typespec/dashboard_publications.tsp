@@ -36,6 +36,16 @@ model DashboardPublicationListResponse {
   items: DashboardPublicationResponse[];
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model DashboardPublicationCommandAuditPayload {
+  @apigen.auditInternal
+  operationId: string;
+  @apigen.auditInternal
+  owner: string;
+  @apigen.auditPublic
+  surface: string;
+}
+
 @tag("Publications")
 @doc("Dashboard publication discovery and lifecycle commands within a workspace. Publication mutations complete synchronously and return the updated publication; they do not create durable asynchronous executions.")
 @route("/workspaces/{workspace}/dashboard-publications")
@@ -66,6 +76,7 @@ interface DashboardPublications {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
   @operationId("suspendDashboardPublication")
   suspendDashboardPublication(@path workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
@@ -82,6 +93,7 @@ interface DashboardPublications {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
   @operationId("resumeDashboardPublication")
   resumeDashboardPublication(@path workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
@@ -98,6 +110,7 @@ interface DashboardPublications {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
   @operationId("rotateDashboardPublication")
   rotateDashboardPublication(@path workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 }

@@ -6,12 +6,12 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/jobs"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	platformdb "github.com/flidai/leapview/internal/refresh/internal/db"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -116,12 +116,16 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		if strings.TrimSpace(r.execution.ResourceKind) == "" || strings.TrimSpace(r.execution.InitialEvent) == "" || strings.TrimSpace(r.execution.InitialState) == "" {
 			return refreshrun.RunRecord{}, fmt.Errorf("refresh workflow contract is required")
 		}
-		data, _ := json.Marshal(map[string]any{
-			"id": runID, "workspaceId": normalized.WorkspaceID,
-			"pipelineId":    strings.TrimPrefix(normalized.TargetID, normalized.WorkspaceID+"."),
-			"semanticModel": normalized.ModelID, "trigger": normalized.TriggerType,
-			"retryOf": normalized.RetryOf, "status": r.execution.InitialState,
+		dataString, encodeErr := refreshgen.EncodeGenCreateRefreshRunAuditPayload(refreshgen.GenSchemaRefreshQueuedAuditPayload{
+			Id: runID, WorkspaceId: normalized.WorkspaceID,
+			PipelineId:    strings.TrimPrefix(normalized.TargetID, normalized.WorkspaceID+"."),
+			SemanticModel: normalized.ModelID, Trigger: normalized.TriggerType,
+			RetryOf: normalized.RetryOf, Status: r.execution.InitialState,
 		})
+		if encodeErr != nil {
+			return refreshrun.RunRecord{}, encodeErr
+		}
+		data := []byte(dataString)
 		if err := r.workflow.RecordWorkflow(ctx, tx, jobs.WorkflowIntent{Event: jobs.EventInput{
 			Key: r.execution.InitialEvent, ResourceKind: r.execution.ResourceKind,
 			ResourceID: runID, EventType: r.execution.InitialEvent, Data: data,

@@ -158,19 +158,23 @@ func TestGrantCommandsRejectMissingTransactionBeforeMutation(t *testing.T) {
 
 func TestGrantAuditKeepsProjectEnvironmentAtPlatformScope(t *testing.T) {
 	descriptor, _ := grantTestCatalog(t).DescribeOperation(access.OperationCreateGrant)
-	input := grantAuditInput(descriptor, access.GrantInvocation{Surface: access.OperationSurfaceAPI}, access.Grant{
+	input, err := grantAuditInput(descriptor, access.GrantInvocation{Surface: access.OperationSurfaceAPI}, access.Grant{
 		ID: "grant-1", WorkspaceID: "finance", ObjectType: access.SecurableProjectEnvironment,
 		ObjectID: "production", SubjectType: access.SubjectPrincipal,
 		SubjectID: "reviewer", Privilege: access.PrivilegeApproveDeployment,
 	})
+	if err != nil {
+		t.Fatalf("encode grant audit: %v", err)
+	}
 	if input.WorkspaceID != "" {
 		t.Fatalf("audit workspace = %q, want platform scope", input.WorkspaceID)
 	}
-	var metadata map[string]string
+	var metadata map[string]any
 	if err := json.Unmarshal([]byte(input.MetadataJSON), &metadata); err != nil {
 		t.Fatalf("decode metadata: %v", err)
 	}
-	if metadata["projectId"] != "finance" || metadata["environment"] != "production" {
+	payload, ok := metadata["payload"].(map[string]any)
+	if !ok || payload["projectId"] != "finance" || payload["environment"] != "production" {
 		t.Fatalf("audit metadata = %#v", metadata)
 	}
 }
@@ -209,11 +213,12 @@ func assertGrantAudit(t *testing.T, input access.AuditEventInput, operation acce
 	if input.Action != action || input.WorkspaceID != workspaceID || input.PrincipalID != "principal-admin" || input.Privilege != access.PrivilegeManageGrants || input.RequestID != "request-1" || input.CorrelationID != "correlation-1" {
 		t.Fatalf("audit input = %#v", input)
 	}
-	var metadata map[string]string
+	var metadata map[string]any
 	if err := json.Unmarshal([]byte(input.MetadataJSON), &metadata); err != nil {
 		t.Fatalf("decode audit metadata: %v", err)
 	}
-	if metadata["operationId"] != string(operation) || metadata["surface"] != string(surface) || metadata["privilege"] == "" {
+	payload, ok := metadata["payload"].(map[string]any)
+	if !ok || payload["operationId"] != string(operation) || payload["surface"] != string(surface) || payload["privilege"] == "" {
 		t.Fatalf("audit metadata = %#v", metadata)
 	}
 }

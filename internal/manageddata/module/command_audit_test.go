@@ -40,11 +40,19 @@ func TestManagedDataCommandAuditsDerivePolicyFromGeneratedContracts(t *testing.T
 			event.Status != "success" || event.RequestID != "request-a" || event.CorrelationID != "correlation-a" {
 			t.Errorf("%s event = %#v", operationID, event)
 		}
-		var metadata map[string]string
-		if err := json.Unmarshal([]byte(event.MetadataJSON), &metadata); err != nil ||
-			metadata["operationId"] != operationID || metadata["owner"] != generated.Command.Owner ||
-			metadata["projectId"] != "project-a" || metadata["connectionId"] != "orders" || metadata["surface"] != "cli" {
-			t.Errorf("%s metadata = %#v, err = %v", operationID, metadata, err)
+		var envelope struct {
+			SchemaVersion int               `json:"schemaVersion"`
+			Retention     string            `json:"retention"`
+			PayloadSchema string            `json:"payloadSchema"`
+			Payload       map[string]string `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(event.MetadataJSON), &envelope); err != nil ||
+			envelope.SchemaVersion != 1 || envelope.Retention != "security" ||
+			envelope.PayloadSchema == "" || envelope.Payload["operationId"] != operationID ||
+			envelope.Payload["owner"] != generated.Command.Owner ||
+			envelope.Payload["projectId"] != "project-a" || envelope.Payload["connectionId"] != "orders" ||
+			envelope.Payload["surface"] != "cli" {
+			t.Errorf("%s metadata = %#v, err = %v", operationID, envelope, err)
 		}
 	}
 }

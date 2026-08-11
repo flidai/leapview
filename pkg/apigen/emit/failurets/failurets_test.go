@@ -12,12 +12,13 @@ func TestEmitGeneratesDiscriminatedFailureUnionAndRequiredMatcher(t *testing.T) 
 		SchemaVersion: ir.CurrentSchemaVersion,
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "Release", Version: "1.0.0"},
+		Schemas:       map[string]ir.Schema{"ReleaseAuditPayload": {Type: "object", Properties: map[string]ir.SchemaProperty{"releaseId": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"releaseId"}}},
 		Endpoints: []ir.Endpoint{{
 			Method: "delete", Path: "/releases/{release}", OperationID: "finalizeRelease", Kind: "command",
 			Parameters: []ir.Parameter{{Name: "release", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"}}},
 			Responses:  []ir.Response{{StatusCode: 204, Description: "ok"}, {StatusCode: 404, Description: "missing"}, {StatusCode: 409, Description: "conflict"}},
 			Command: &ir.Command{
-				Owner: "Release", Audit: ir.AuditPolicy{Required: true, SuccessAction: "release.finalized", Guarantee: "best-effort"},
+				Owner: "Release", Audit: ir.AuditPolicy{Required: true, SuccessAction: "release.finalized", Guarantee: "best-effort", Payload: &ir.AuditPayload{Schema: ir.SchemaRef{Ref: "ReleaseAuditPayload"}, SchemaVersion: 1, Retention: "security", Fields: []ir.AuditField{{Name: "releaseId", Sensitivity: "internal"}}}},
 				Failures: []ir.CommandFailure{
 					{Kind: "conflict", StatusCode: 409, Code: "RELEASE_CONFLICT", PublicDetail: "Conflict."},
 					{Kind: "not_found", StatusCode: 404, Code: "RELEASE_NOT_FOUND", PublicDetail: "Missing."},

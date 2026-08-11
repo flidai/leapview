@@ -1,5 +1,7 @@
 import type { DecoratorContext, Enum, Model, ModelProperty, Namespace, Operation } from "@typespec/compiler";
 
+import { reportDiagnostic } from "./lib.js";
+
 export interface CLIArg {
   source: "path" | "query" | "body";
   name: string;
@@ -31,6 +33,18 @@ export interface AuditOptions {
   successAction?: string;
   guarantee?: "transactional" | "best-effort";
 }
+
+export interface AuditPayloadOptions {
+  schemaVersion: number;
+  retention: "short" | "standard" | "security";
+}
+
+export interface AuditPayloadDefinition {
+  schema: Model;
+  options?: AuditPayloadOptions;
+}
+
+export type AuditSensitivity = "public" | "internal" | "pii" | "secret";
 
 export interface AsyncExecutionOptions {
   mode: "async";
@@ -121,6 +135,9 @@ export interface ToolOptions {
 
 const cliKey = Symbol.for("@yacobolo/apigen.cli");
 const commandKey = Symbol.for("@yacobolo/apigen.command");
+const auditPayloadKey = Symbol.for("@yacobolo/apigen.auditPayload");
+const auditSchemaKey = Symbol.for("@yacobolo/apigen.auditSchema");
+const sensitivityKey = Symbol.for("@yacobolo/apigen.sensitivity");
 const queryKey = Symbol.for("@yacobolo/apigen.query");
 const authzKey = Symbol.for("@yacobolo/apigen.authz");
 const manualKey = Symbol.for("@yacobolo/apigen.manual");
@@ -137,6 +154,82 @@ export function $cli(context: DecoratorContext, target: Operation, options: CLIO
 
 export function $command(context: DecoratorContext, target: Operation, options: CommandOptions) {
   context.program.stateMap(commandKey).set(target, options);
+}
+
+export function $auditPayload(
+  context: DecoratorContext,
+  target: Operation,
+  schema: Model,
+  options?: AuditPayloadOptions,
+) {
+  const definitions = context.program.stateMap(auditPayloadKey);
+  if (definitions.has(target)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-command",
+      format: { reason: "@apigen.auditPayload must not be applied more than once" },
+      target,
+    });
+    return;
+  }
+  definitions.set(target, { schema, options });
+}
+
+export function $auditSchema(
+  context: DecoratorContext,
+  target: Model,
+  options: AuditPayloadOptions,
+) {
+  const definitions = context.program.stateMap(auditSchemaKey);
+  if (definitions.has(target)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-command",
+      format: { reason: "@apigen.auditSchema must not be applied more than once" },
+      target,
+    });
+    return;
+  }
+  definitions.set(target, options);
+}
+
+export function $sensitivity(
+  context: DecoratorContext,
+  target: ModelProperty,
+  classification: AuditSensitivity,
+) {
+  setSensitivity(context, target, classification);
+}
+
+export function $auditPublic(context: DecoratorContext, target: ModelProperty) {
+  setSensitivity(context, target, "public");
+}
+
+export function $auditInternal(context: DecoratorContext, target: ModelProperty) {
+  setSensitivity(context, target, "internal");
+}
+
+export function $auditPii(context: DecoratorContext, target: ModelProperty) {
+  setSensitivity(context, target, "pii");
+}
+
+export function $auditSecret(context: DecoratorContext, target: ModelProperty) {
+  setSensitivity(context, target, "secret");
+}
+
+function setSensitivity(
+  context: DecoratorContext,
+  target: ModelProperty,
+  classification: AuditSensitivity,
+) {
+  const classifications = context.program.stateMap(sensitivityKey);
+  if (classifications.has(target)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-command",
+      format: { reason: "@apigen.sensitivity must not be applied more than once per field" },
+      target,
+    });
+    return;
+  }
+  classifications.set(target, classification);
 }
 
 export function $query(context: DecoratorContext, target: Operation) {
@@ -196,6 +289,13 @@ export const $decorators = {
   apigen: {
     cli: $cli,
     command: $command,
+    auditPayload: $auditPayload,
+    auditSchema: $auditSchema,
+    sensitivity: $sensitivity,
+    auditPublic: $auditPublic,
+    auditInternal: $auditInternal,
+    auditPii: $auditPii,
+    auditSecret: $auditSecret,
     query: $query,
     authz: $authz,
     manual: $manual,
@@ -214,6 +314,21 @@ export function getCLI(context: { program: DecoratorContext["program"] }, target
 
 export function getCommand(context: { program: DecoratorContext["program"] }, target: Operation) {
   return context.program.stateMap(commandKey).get(target) as CommandOptions | undefined;
+}
+
+export function getAuditPayload(context: { program: DecoratorContext["program"] }, target: Operation) {
+  return context.program.stateMap(auditPayloadKey).get(target) as AuditPayloadDefinition | undefined;
+}
+
+export function getAuditSchema(context: { program: DecoratorContext["program"] }, target: Model) {
+  return context.program.stateMap(auditSchemaKey).get(target) as AuditPayloadOptions | undefined;
+}
+
+export function getSensitivity(
+  context: { program: DecoratorContext["program"] },
+  target: ModelProperty,
+) {
+  return context.program.stateMap(sensitivityKey).get(target) as AuditSensitivity | undefined;
 }
 
 export function isQuery(context: { program: DecoratorContext["program"] }, target: Operation) {
