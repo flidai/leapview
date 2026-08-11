@@ -114,6 +114,171 @@ model RoleBindingRequest {
   role: string;
 }
 
+model RoleBindingCreatedAuditPayload {
+  @apigen.sensitivity("internal")
+  operationId: string;
+
+  @apigen.sensitivity("internal")
+  role: string;
+
+  @apigen.sensitivity("pii")
+  subjectId: string;
+
+  @apigen.sensitivity("internal")
+  subjectType: string;
+
+  @apigen.sensitivity("public")
+  surface: string;
+}
+
+// Durable, typed payloads for Access command audit records.  Every field is
+// required so the generated encoder can reject incomplete audit events before
+// they reach the repository.
+model DeviceAuthorizationDecidedAuditPayload {
+  @apigen.sensitivity("internal")
+  clientId: string;
+  @apigen.sensitivity("internal")
+  targetId: string;
+  @apigen.sensitivity("internal")
+  projectId: string;
+  @apigen.sensitivity("public")
+  privileges: string[];
+  @apigen.sensitivity("public")
+  decision: string;
+}
+
+model AuthoringSessionRevokedAuditPayload {
+  @apigen.sensitivity("internal")
+  kind: string;
+  @apigen.sensitivity("internal")
+  clientId: string;
+  @apigen.sensitivity("internal")
+  targetId: string;
+  @apigen.sensitivity("internal")
+  projectId: string;
+  @apigen.sensitivity("public")
+  privileges: string[];
+}
+
+model APITokenAuditPayload {
+  @apigen.sensitivity("internal")
+  name: string;
+  @apigen.sensitivity("public")
+  privileges: string[];
+}
+
+model CurrentSessionRevokedAuditPayload {
+  @apigen.sensitivity("internal")
+  sessionId: string;
+}
+
+model PrincipalCreatedAuditPayload {
+  @apigen.sensitivity("pii")
+  email: string;
+}
+
+model PrincipalDeletedAuditPayload {
+  @apigen.sensitivity("pii")
+  email: string;
+  @apigen.sensitivity("internal")
+  kind: string;
+  @apigen.sensitivity("pii")
+  displayName: string;
+}
+
+model PrincipalUpdatedAuditPayload {
+  @apigen.sensitivity("pii")
+  email: string;
+  @apigen.sensitivity("internal")
+  kind: string;
+  @apigen.sensitivity("pii")
+  displayName: string;
+}
+
+model PrincipalPasswordResetAuditPayload {
+  @apigen.sensitivity("pii")
+  email: string;
+}
+
+model PrincipalSessionRevokedAuditPayload {
+  @apigen.sensitivity("pii")
+  targetPrincipalId: string;
+}
+
+model ServicePrincipalAuditPayload {
+  @apigen.sensitivity("internal")
+  servicePrincipalId: string;
+}
+
+model ServicePrincipalSecretAuditPayload {
+  @apigen.sensitivity("internal")
+  secretId: string;
+}
+
+model GroupAuditPayload {
+  @apigen.sensitivity("public")
+  provider: string;
+  @apigen.sensitivity("internal")
+  externalId: string;
+  @apigen.sensitivity("pii")
+  displayName: string;
+}
+
+model GroupMemberAuditPayload {
+  @apigen.sensitivity("internal")
+  groupId: string;
+  @apigen.sensitivity("pii")
+  memberPrincipalId: string;
+}
+
+model RoleBindingAuditPayload {
+  @apigen.sensitivity("internal")
+  operationId: string;
+  @apigen.sensitivity("internal")
+  role: string;
+  @apigen.sensitivity("pii")
+  subjectId: string;
+  @apigen.sensitivity("internal")
+  subjectType: string;
+  @apigen.sensitivity("public")
+  surface: string;
+}
+
+model GrantAuditPayload {
+  @apigen.sensitivity("internal")
+  operationId: string;
+  @apigen.sensitivity("internal")
+  objectId: string;
+  @apigen.sensitivity("public")
+  objectType: string;
+  @apigen.sensitivity("internal")
+  projectId: string;
+  @apigen.sensitivity("public")
+  environment: string;
+  @apigen.sensitivity("pii")
+  subjectId: string;
+  @apigen.sensitivity("public")
+  subjectType: string;
+  @apigen.sensitivity("public")
+  privilege: string;
+  @apigen.sensitivity("public")
+  surface: string;
+}
+
+model OwnershipTransferAuditPayload {
+  @apigen.sensitivity("pii")
+  ownerPrincipalId: string;
+  @apigen.sensitivity("public")
+  objectType: string;
+}
+
+model DataPolicyAuditPayload {
+  @apigen.sensitivity("internal")
+  objectId: string;
+  @apigen.sensitivity("public")
+  policyType: string;
+}
+
 model RoleBindingResponse {
   id: string;
   workspaceId: string;
@@ -276,6 +441,7 @@ model AuthoringSessionListResponse {
     #{ kind: "not_found", statusCode: 404, code: "DEVICE_AUTHORIZATION_NOT_FOUND", publicDetail: "Device authorization was not found." },
   ],
 })
+@apigen.auditPayload(DeviceAuthorizationDecidedAuditPayload, #{ schemaVersion: 1, retention: "security" })
 @operationId("decideDeviceAuthorization")
 op decideDeviceAuthorization(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeviceAuthorizationApprovalRequest): OkJson<StatusResponse> | CommonErrors;
 
@@ -299,6 +465,7 @@ interface CurrentAuthoringSessions {
       #{ kind: "not_found", statusCode: 404, code: "AUTHORING_SESSION_NOT_FOUND", publicDetail: "Authoring session not found." },
     ],
   })
+  @apigen.auditPayload(AuthoringSessionRevokedAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("revokeCurrentAuthoringSession")
   revokeCurrentAuthoringSession(@path session: string): OkJson<StatusResponse> | CommonErrors;
 }
@@ -330,6 +497,7 @@ interface Principals {
       #{ kind: "conflict", statusCode: 409, code: "PRINCIPAL_ALREADY_EXISTS", publicDetail: "A principal with this email already exists." },
     ],
   })
+  @apigen.auditPayload(PrincipalCreatedAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createPrincipal")
   createPrincipal(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: PrincipalCreateRequest): CreatePrincipalCreated | CommonErrors;
 
@@ -353,6 +521,7 @@ interface Principals {
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be modified by this operation." },
     ],
   })
+  @apigen.auditPayload(PrincipalUpdatedAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("updatePrincipal")
   updatePrincipal(@path principal: string, @header("If-Match") ifMatch: string, @body body: PrincipalPatchRequest): UpdatePrincipalOK | CommonErrors;
 
@@ -368,6 +537,7 @@ interface Principals {
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be deleted by this operation." },
     ],
   })
+  @apigen.auditPayload(PrincipalDeletedAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("deletePrincipal")
   deletePrincipal(@path principal: string): EmptyResponse | CommonErrors;
 
@@ -382,6 +552,7 @@ interface Principals {
       #{ kind: "not_found", statusCode: 404, code: "PRINCIPAL_NOT_FOUND", publicDetail: "Principal not found." },
     ],
   })
+  @apigen.auditPayload(PrincipalPasswordResetAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("resetPrincipalPassword")
   resetPrincipalPassword(@path principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): ResetPrincipalPasswordOK | CommonErrors;
 
@@ -405,6 +576,7 @@ interface Principals {
     ],
     targetParameter: "principal",
   })
+  @apigen.auditPayload(PrincipalSessionRevokedAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("revokePrincipalSession")
   revokePrincipalSession(@path principal: string, @path session: string): EmptyResponse | CommonErrors;
 }
@@ -432,6 +604,7 @@ interface ServicePrincipals {
       #{ kind: "invalid", statusCode: 400, code: "SERVICE_PRINCIPAL_INVALID", publicDetail: "The service principal request is invalid." },
     ],
   })
+  @apigen.auditPayload(ServicePrincipalAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createServicePrincipal")
   createServicePrincipal(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalCreateRequest): CreateServicePrincipalCreated | CommonErrors;
 
@@ -452,6 +625,7 @@ interface ServicePrincipals {
       #{ kind: "not_found", statusCode: 404, code: "SERVICE_PRINCIPAL_NOT_FOUND", publicDetail: "Service principal not found." },
     ],
   })
+  @apigen.auditPayload(ServicePrincipalAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("updateServicePrincipal")
   updateServicePrincipal(@path servicePrincipal: string, @header("If-Match") ifMatch: string, @body body: ServicePrincipalPatchRequest): UpdateServicePrincipalOK | CommonErrors;
 
@@ -465,6 +639,7 @@ interface ServicePrincipals {
       #{ kind: "not_found", statusCode: 404, code: "SERVICE_PRINCIPAL_NOT_FOUND", publicDetail: "Service principal not found." },
     ],
   })
+  @apigen.auditPayload(ServicePrincipalAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("deleteServicePrincipal")
   deleteServicePrincipal(@path servicePrincipal: string): EmptyResponse | CommonErrors;
 
@@ -478,6 +653,7 @@ interface ServicePrincipals {
       #{ kind: "invalid", statusCode: 400, code: "SERVICE_PRINCIPAL_SECRET_INVALID", publicDetail: "The service principal secret request is invalid." },
     ],
   })
+  @apigen.auditPayload(ServicePrincipalSecretAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createServicePrincipalSecret")
   createServicePrincipalSecret(@path servicePrincipal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalSecretCreateRequest): CreateServicePrincipalSecretCreated | CommonErrors;
 
@@ -506,6 +682,7 @@ interface ServicePrincipals {
     ],
     targetParameter: "servicePrincipal",
   })
+  @apigen.auditPayload(ServicePrincipalSecretAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("revokeServicePrincipalSecret")
   revokeServicePrincipalSecret(@path servicePrincipal: string, @path secret: string): EmptyResponse | CommonErrors;
 }
@@ -535,6 +712,7 @@ interface Groups {
       #{ kind: "invalid", statusCode: 400, code: "GROUP_INVALID", publicDetail: "The group request is invalid." },
     ],
   })
+  @apigen.auditPayload(GroupAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createGroup")
   createGroup(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GroupCreateRequest): CreateGroupCreated | CommonErrors;
 
@@ -549,6 +727,7 @@ interface Groups {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(GroupAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("deleteGroup")
   deleteGroup(@path workspace: string, @path group: string): EmptyResponse | CommonErrors;
 
@@ -570,6 +749,7 @@ interface Groups {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(GroupAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("updateGroup")
   updateGroup(@path workspace: string, @path group: string, @header("If-Match") ifMatch: string, @body body: GroupPatchRequest): UpdateGroupOK | CommonErrors;
 
@@ -591,6 +771,7 @@ interface Groups {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(GroupMemberAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("removeGroupMember")
   removeGroupMember(@path workspace: string, @path group: string, @path principal: string): EmptyResponse | CommonErrors;
 
@@ -605,6 +786,7 @@ interface Groups {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(GroupMemberAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("addGroupMember")
   addGroupMember(@path workspace: string, @path group: string, @path principal: string): AddGroupMemberOK | CommonErrors;
 }
@@ -632,6 +814,7 @@ interface RoleBindings {
     ],
     additionalExposures: #["ui"],
   })
+  @apigen.auditPayload(RoleBindingCreatedAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createRoleBinding")
   createRoleBinding(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingRequest): CreateRoleBindingCreated | CommonErrors;
 
@@ -655,6 +838,7 @@ interface RoleBindings {
     additionalExposures: #["ui"],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(RoleBindingAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("deleteRoleBinding")
   deleteRoleBinding(@path workspace: string, @path binding: string): EmptyResponse | CommonErrors;
 
@@ -670,6 +854,7 @@ interface RoleBindings {
     additionalExposures: #["ui"],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(RoleBindingAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("updateRoleBinding")
   updateRoleBinding(@path workspace: string, @path binding: string, @header("If-Match") ifMatch: string, @body body: RoleBindingRequest): UpdateRoleBindingOK | CommonErrors;
 }
@@ -716,6 +901,7 @@ interface Grants {
     ],
     additionalExposures: #["ui"],
   })
+  @apigen.auditPayload(GrantAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createGrant")
   createGrant(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GrantRequest): CreateGrantCreated | CommonErrors;
 
@@ -738,6 +924,7 @@ interface Grants {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(GrantAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("updateGrant")
   updateGrant(@path workspace: string, @path grant: string, @header("If-Match") ifMatch: string, @body body: GrantRequest): OkJson<GrantResponse> | CommonErrors;
 
@@ -753,6 +940,7 @@ interface Grants {
     additionalExposures: #["ui"],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(GrantAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("deleteGrant")
   deleteGrant(@path workspace: string, @path grant: string): EmptyResponse | CommonErrors;
 }
@@ -770,6 +958,7 @@ alias TransferOwnershipOK = OkJson<SecurableObjectResponse>;
     #{ kind: "invalid", statusCode: 400, code: "OWNERSHIP_TRANSFER_INVALID", publicDetail: "The ownership transfer request is invalid." },
   ],
 })
+@apigen.auditPayload(OwnershipTransferAuditPayload, #{ schemaVersion: 1, retention: "security" })
 @operationId("transferOwnership")
 op transferOwnership(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: OwnershipTransferRequest): TransferOwnershipOK | CommonErrors;
 
@@ -794,6 +983,7 @@ interface DataPolicies {
       #{ kind: "invalid", statusCode: 400, code: "DATA_POLICY_INVALID", publicDetail: "The data policy request is invalid." },
     ],
   })
+  @apigen.auditPayload(DataPolicyAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createDataPolicy")
   createDataPolicy(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DataPolicyRequest): CreateDataPolicyCreated | CommonErrors;
 
@@ -816,6 +1006,7 @@ interface DataPolicies {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(DataPolicyAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("updateDataPolicy")
   updateDataPolicy(@path workspace: string, @path policy: string, @header("If-Match") ifMatch: string, @body body: DataPolicyRequest): OkJson<DataPolicyResponse> | CommonErrors;
 
@@ -830,6 +1021,7 @@ interface DataPolicies {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(DataPolicyAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("deleteDataPolicy")
   deleteDataPolicy(@path workspace: string, @path policy: string): EmptyResponse | CommonErrors;
 }

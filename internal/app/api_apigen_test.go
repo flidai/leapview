@@ -1055,6 +1055,9 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 			if !command.Audit.Required || command.Audit.SuccessAction == "" {
 				t.Errorf("command %s does not require a stable success audit: %#v", operationID, command.Audit)
 			}
+			if command.Audit.Payload == nil {
+				t.Errorf("command %s has no typed audit payload contract", operationID)
+			}
 			if command.Failures == nil {
 				t.Errorf("command %s did not explicitly declare its failure vocabulary", operationID)
 			}
@@ -1085,6 +1088,20 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 			} else if runtimeContract.OperationID != operationID || runtimeContract.Owner != command.Owner ||
 				runtimeContract.AuditAction != command.Audit.SuccessAction || string(runtimeContract.Guarantee) != command.Audit.Guarantee {
 				t.Errorf("command %s runtime contract %#v differs from generated metadata %#v", operationID, runtimeContract, command)
+			} else if command.Audit.Payload == nil || runtimeContract.AuditPayload == nil {
+				t.Errorf("command %s runtime audit payload is missing: generated=%#v runtime=%#v", operationID, command.Audit.Payload, runtimeContract.AuditPayload)
+			} else if runtimeContract.AuditPayload.Schema != command.Audit.Payload.Schema ||
+				runtimeContract.AuditPayload.SchemaVersion != command.Audit.Payload.SchemaVersion ||
+				string(runtimeContract.AuditPayload.Retention) != command.Audit.Payload.Retention ||
+				len(runtimeContract.AuditPayload.Fields) != len(command.Audit.Payload.Fields) {
+				t.Errorf("command %s runtime audit payload %#v differs from generated metadata %#v", operationID, runtimeContract.AuditPayload, command.Audit.Payload)
+			} else {
+				for index, field := range command.Audit.Payload.Fields {
+					runtimeField := runtimeContract.AuditPayload.Fields[index]
+					if runtimeField.Name != field.Name || string(runtimeField.Sensitivity) != field.Sensitivity {
+						t.Errorf("command %s runtime audit field %#v differs from generated field %#v", operationID, runtimeField, field)
+					}
+				}
 			}
 			if command.AuthzMode != contract.AuthzMode {
 				t.Errorf("command %s authz mode %q differs from operation mode %q", operationID, command.AuthzMode, contract.AuthzMode)

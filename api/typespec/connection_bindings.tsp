@@ -4,6 +4,34 @@ using LeapViewAPI.Protocol;
 
 namespace LeapViewAPI.Analytics;
 
+model TargetConnectionAdministrationAuditPayload {
+  @apigen.sensitivity("internal")
+  targetId: string;
+
+  @apigen.sensitivity("internal")
+  logicalConnection: string;
+
+  @apigen.sensitivity("internal")
+  revision: int64;
+}
+
+model TargetConnectionRotationAuditPayload {
+  @apigen.sensitivity("public")
+  operation: string;
+
+  @apigen.sensitivity("public")
+  outcome: string;
+
+  @apigen.sensitivity("internal")
+  providerVersion: string;
+
+  @apigen.sensitivity("internal")
+  diagnosticCode: string;
+
+  @apigen.sensitivity("internal")
+  targetId: string;
+}
+
 @minLength(1)
 @maxLength(128)
 @pattern("^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -157,6 +185,7 @@ interface TargetConnectionBindings {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(TargetConnectionAdministrationAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createTargetConnectionBinding")
   createTargetConnectionBinding(
     @path workspace: string,
@@ -211,6 +240,7 @@ interface TargetConnectionBindings {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(TargetConnectionAdministrationAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("updateTargetConnectionBinding")
   updateTargetConnectionBinding(
     @path workspace: string,
@@ -239,6 +269,7 @@ interface TargetConnectionBindings {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(TargetConnectionRotationAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("testTargetConnectionBinding")
   testTargetConnectionBinding(
     @path workspace: string,
@@ -266,6 +297,7 @@ interface TargetConnectionBindings {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(TargetConnectionRotationAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("refreshTargetConnectionBinding")
   refreshTargetConnectionBinding(
     @path workspace: string,
@@ -291,6 +323,7 @@ interface TargetConnectionBindings {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(TargetConnectionAdministrationAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("enableTargetConnectionBinding")
   enableTargetConnectionBinding(
     @path workspace: string,
@@ -317,6 +350,7 @@ interface TargetConnectionBindings {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(TargetConnectionAdministrationAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("disableTargetConnectionBinding")
   disableTargetConnectionBinding(
     @path workspace: string,

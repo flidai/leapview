@@ -51,7 +51,7 @@ type CreateRequest struct {
 	ReleaseID      string
 	Evidence       PublishEvidence
 	RollbackOf     string
-	Workflow       func(string) jobs.WorkflowIntent
+	Workflow       func(string) (jobs.WorkflowIntent, error)
 }
 
 // PublishEvidence is the redacted immutable identity of the release and target
@@ -207,7 +207,11 @@ func (a *Adapter) Create(ctx context.Context, request CreateRequest) (Deployment
 		Targets:       make([]deployment.TargetInput, 0, len(targets)),
 	}
 	if request.Workflow != nil {
-		input.Workflow = request.Workflow(input.ID)
+		workflow, err := request.Workflow(input.ID)
+		if err != nil {
+			return Deployment{}, err
+		}
+		input.Workflow = workflow
 	}
 	for _, target := range targets {
 		input.Targets = append(input.Targets, deployment.TargetInput{WorkspaceID: target.Workspace, ServingStateID: target.CandidateID})

@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -64,11 +63,21 @@ func buildPublicationCommandAuditRecorder(
 		if !ok {
 			return fmt.Errorf("dashboard publication operation %q has no command audit contract", input.operationID)
 		}
-		metadata, err := json.Marshal(map[string]string{
-			"operationId": input.operationID,
-			"owner":       contract.owner,
-			"surface":     input.surface,
-		})
+		payload := dashboardgen.GenSchemaDashboardPublicationCommandAuditPayload{
+			OperationId: input.operationID, Owner: contract.owner, Surface: input.surface,
+		}
+		var metadata string
+		var err error
+		switch input.operationID {
+		case string(dashboardgen.GenOperationSuspendDashboardPublication):
+			metadata, err = dashboardgen.EncodeGenSuspendDashboardPublicationAuditPayload(payload)
+		case string(dashboardgen.GenOperationResumeDashboardPublication):
+			metadata, err = dashboardgen.EncodeGenResumeDashboardPublicationAuditPayload(payload)
+		case string(dashboardgen.GenOperationRotateDashboardPublication):
+			metadata, err = dashboardgen.EncodeGenRotateDashboardPublicationAuditPayload(payload)
+		default:
+			return fmt.Errorf("dashboard publication operation %q has no audit payload encoder", input.operationID)
+		}
 		if err != nil {
 			return err
 		}
@@ -80,7 +89,7 @@ func buildPublicationCommandAuditRecorder(
 			Action: contract.action, TargetType: "dashboard_publication", TargetID: input.targetID,
 			Privilege: contract.privilege, Status: "success",
 			RequestID: input.requestID, CorrelationID: input.correlationID,
-			MetadataJSON: string(metadata),
+			MetadataJSON: metadata,
 		})
 	}, nil
 }

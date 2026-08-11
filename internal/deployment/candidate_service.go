@@ -374,7 +374,39 @@ func (service *CandidateService) record(ctx context.Context, action string, cand
 	metadata["baseGeneration"] = candidate.BaseGeneration
 	metadata["projectId"] = candidate.ProjectID
 	metadata["candidateKey"] = candidate.Key
-	encoded, err := json.Marshal(metadata)
+	operationID, command := apigencommand.OperationID(ctx)
+	if !command {
+		operationID, _ = candidateOperationID(action)
+	}
+	resumed, _ := metadata["resumed"].(bool)
+	payload := deploymentgen.GenSchemaCandidateAuditPayload{
+		OperationId: operationID, CandidateId: candidate.ID, ProjectId: candidate.ProjectID,
+		TargetId: candidate.TargetID, Environment: candidate.Environment,
+		BaseGeneration: candidate.BaseGeneration, CandidateKey: candidate.Key,
+		Status: string(candidate.Status), Resumed: resumed,
+	}
+	var encoded string
+	var err error
+	switch operationID {
+	case string(deploymentgen.GenOperationStartProjectCandidate):
+		encoded, err = deploymentgen.EncodeGenStartProjectCandidateAuditPayload(payload)
+	case string(deploymentgen.GenOperationReplaceProjectCandidateArtifact):
+		encoded, err = deploymentgen.EncodeGenReplaceProjectCandidateArtifactAuditPayload(payload)
+	case string(deploymentgen.GenOperationRetryProjectCandidate):
+		encoded, err = deploymentgen.EncodeGenRetryProjectCandidateAuditPayload(payload)
+	case string(deploymentgen.GenOperationCancelProjectCandidate):
+		encoded, err = deploymentgen.EncodeGenCancelProjectCandidateAuditPayload(payload)
+	case string(deploymentgen.GenOperationCancelProjectCandidateByKey):
+		encoded, err = deploymentgen.EncodeGenCancelProjectCandidateByKeyAuditPayload(payload)
+	case string(deploymentgen.GenOperationCommitProjectCandidateSynchronization):
+		encoded, err = deploymentgen.EncodeGenCommitProjectCandidateSynchronizationAuditPayload(payload)
+	default:
+		encodedBytes, marshalErr := json.Marshal(metadata)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		encoded = string(encodedBytes)
+	}
 	if err != nil {
 		return err
 	}

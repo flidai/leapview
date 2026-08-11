@@ -4,6 +4,23 @@ using LeapViewAPI.Protocol;
 
 namespace LeapViewAPI.ManagedData;
 
+model ManagedDataCommandAuditPayload {
+  @apigen.sensitivity("internal")
+  operationId: string;
+
+  @apigen.sensitivity("internal")
+  owner: string;
+
+  @apigen.sensitivity("internal")
+  projectId: string;
+
+  @apigen.sensitivity("internal")
+  connectionId: string;
+
+  @apigen.sensitivity("public")
+  surface: string;
+}
+
 model ManagedConnectionResponse {
   id: string;
   projectId: string;
@@ -315,6 +332,7 @@ interface ManagedDataLifecycle {
     ],
     targetParameter: "project",
   })
+  @apigen.auditPayload(ManagedDataCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
   createManagedDataUploadSession(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
@@ -369,6 +387,7 @@ interface ManagedDataLifecycle {
     ],
     targetParameter: "project",
   })
+  @apigen.auditPayload(ManagedDataCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
   cancelManagedDataUploadSession(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
@@ -409,6 +428,7 @@ interface ManagedDataLifecycle {
     },
     targetParameter: "project",
   })
+  @apigen.auditPayload(ManagedDataCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
   finalizeManagedDataUploadSession(
     @path project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,

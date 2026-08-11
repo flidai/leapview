@@ -2,7 +2,6 @@ package operation
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -99,7 +98,7 @@ func (c *RoleBindingCommands) execute(
 		if err := mutation(repository); err != nil {
 			return access.AuditEventInput{}, err
 		}
-		return roleBindingAuditInput(descriptor, invocation, result()), nil
+		return roleBindingAuditInput(descriptor, invocation, result())
 	}
 	transactional, ok := repository.(access.AuditedMutationRepository)
 	if !ok {
@@ -122,14 +121,29 @@ func (c *RoleBindingCommands) execute(
 	})
 }
 
-func roleBindingAuditInput(descriptor access.OperationDescriptor, invocation access.RoleBindingInvocation, row access.RoleBinding) access.AuditEventInput {
-	metadata, _ := json.Marshal(map[string]any{
-		"operationId": string(descriptor.ID),
-		"role":        row.Role,
-		"subjectId":   row.SubjectID,
-		"subjectType": string(row.SubjectType),
-		"surface":     string(invocation.Surface),
-	})
+func roleBindingAuditInput(descriptor access.OperationDescriptor, invocation access.RoleBindingInvocation, row access.RoleBinding) (access.AuditEventInput, error) {
+	var metadata string
+	payload := accessgen.GenSchemaRoleBindingAuditPayload{
+		OperationId: string(descriptor.ID), Role: row.Role, SubjectId: row.SubjectID,
+		SubjectType: string(row.SubjectType), Surface: string(invocation.Surface),
+	}
+	var err error
+	if descriptor.ID == access.OperationCreateRoleBinding {
+		metadata, err = accessgen.EncodeGenCreateRoleBindingAuditPayload(accessgen.GenSchemaRoleBindingCreatedAuditPayload{
+			OperationId: string(descriptor.ID),
+			Role:        row.Role,
+			SubjectId:   row.SubjectID,
+			SubjectType: string(row.SubjectType),
+			Surface:     string(invocation.Surface),
+		})
+	} else if descriptor.ID == access.OperationUpdateRoleBinding {
+		metadata, err = accessgen.EncodeGenUpdateRoleBindingAuditPayload(payload)
+	} else {
+		metadata, err = accessgen.EncodeGenDeleteRoleBindingAuditPayload(payload)
+	}
+	if err != nil {
+		return access.AuditEventInput{}, err
+	}
 	correlationID := strings.TrimSpace(invocation.CorrelationID)
 	if correlationID == "" {
 		correlationID = strings.TrimSpace(invocation.RequestID)
@@ -139,6 +153,6 @@ func roleBindingAuditInput(descriptor access.OperationDescriptor, invocation acc
 		Action: descriptor.AuditEvent, TargetType: "role_binding", TargetID: row.ID,
 		Privilege: descriptor.Privilege, Status: "success",
 		RequestID: strings.TrimSpace(invocation.RequestID), CorrelationID: correlationID,
-		MetadataJSON: string(metadata),
-	}
+		MetadataJSON: metadata,
+	}, nil
 }

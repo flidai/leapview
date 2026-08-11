@@ -26,6 +26,13 @@ export interface AuditOptions {
     successAction?: string;
     guarantee?: "transactional" | "best-effort";
 }
+export interface AuditPayloadOptions {
+    schemaVersion: number;
+    retention: "short" | "standard" | "security";
+}
+export interface AuditPayloadDefinition extends AuditPayloadOptions {
+    schema: Model;
+}
 export interface AsyncExecutionOptions {
     mode: "async";
     guarantee: "transactional";
@@ -114,6 +121,8 @@ export interface ToolOptions {
 }
 export declare function $cli(context: DecoratorContext, target: Operation, options: CLIOptions): void;
 export declare function $command(context: DecoratorContext, target: Operation, options: CommandOptions): void;
+export declare function $auditPayload(context: DecoratorContext, target: Operation, schema: Model, options: AuditPayloadOptions): void;
+export declare function $sensitivity(context: DecoratorContext, target: ModelProperty, classification: "public" | "internal" | "pii" | "secret"): void;
 export declare function $query(context: DecoratorContext, target: Operation): void;
 export declare function $authz(context: DecoratorContext, target: Operation, value: unknown): void;
 export declare function $manual(context: DecoratorContext, target: Operation): void;
@@ -127,6 +136,8 @@ export declare const $decorators: {
     apigen: {
         cli: typeof $cli;
         command: typeof $command;
+        auditPayload: typeof $auditPayload;
+        sensitivity: typeof $sensitivity;
         query: typeof $query;
         authz: typeof $authz;
         manual: typeof $manual;
@@ -144,6 +155,12 @@ export declare function getCLI(context: {
 export declare function getCommand(context: {
     program: DecoratorContext["program"];
 }, target: Operation): CommandOptions | undefined;
+export declare function getAuditPayload(context: {
+    program: DecoratorContext["program"];
+}, target: Operation): AuditPayloadDefinition | undefined;
+export declare function getSensitivity(context: {
+    program: DecoratorContext["program"];
+}, target: ModelProperty): "public" | "internal" | "pii" | "secret" | undefined;
 export declare function isQuery(context: {
     program: DecoratorContext["program"];
 }, target: Operation): boolean;

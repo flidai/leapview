@@ -69,7 +69,11 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 	}
 	m.recordBestEffortEvent(
 		r.Context(), string(releasegen.GenOperationCreateRelease), created.ID,
-		releaseCreatedAuditAction, response(created),
+		releaseCreatedAuditAction, releasegen.GenSchemaReleaseCreatedAuditPayload{
+			OperationId: string(releasegen.GenOperationCreateRelease), ReleaseId: created.ID,
+			ProjectId: created.ProjectID, ProjectDigest: created.ProjectDigest,
+			Status: string(created.Status), CreatedBy: created.CreatedBy,
+		},
 	)
 	w.Header().Set("Location", location(project, created.ID))
 	apitransport.WriteJSON(w, http.StatusCreated, response(created))
@@ -116,7 +120,10 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, WorkspaceID: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes}
 	m.recordBestEffortEvent(
 		r.Context(), string(releasegen.GenOperationUploadReleaseArtifact), releaseID,
-		releaseArtifactUploadedAuditAction, result,
+		releaseArtifactUploadedAuditAction, releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{
+			OperationId: string(releasegen.GenOperationUploadReleaseArtifact), ReleaseId: releaseID,
+			WorkspaceId: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes,
+		},
 	)
 	w.Header().Set("Location", location(project, releaseID)+"/workspaces/"+workspaceID+"/artifact")
 	apitransport.WriteJSON(w, http.StatusCreated, result)
@@ -128,7 +135,10 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), err)
 		return
 	}
-	event, err := json.Marshal(map[string]any{"releaseId": releaseID, "projectId": project, "status": m.finalizeExecution.InitialState})
+	event, err := releasegen.EncodeGenFinalizeReleaseAuditPayload(releasegen.GenSchemaReleaseValidatingAuditPayload{
+		OperationId: string(releasegen.GenOperationFinalizeRelease), ReleaseId: releaseID,
+		ProjectId: project, Status: m.finalizeExecution.InitialState,
+	})
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), err)
 		return
@@ -150,7 +160,7 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 				row, mutationErr = m.service.BeginFinalization(ctx, project, releaseID, jobs.WorkflowIntent{
 					Event: jobs.EventInput{
 						Key: execution.InitialEvent, ResourceKind: execution.ResourceKind, ResourceID: releaseID,
-						EventType: execution.InitialEvent, Data: event,
+						EventType: execution.InitialEvent, Data: []byte(event),
 					},
 					Job: jobs.EnqueueInput{
 						ID: "release:" + releaseID + ":finalize", Kind: execution.JobKind,
@@ -209,6 +219,14 @@ func (m *Module) appendEvent(ctx context.Context, releaseID, eventType string, d
 	return err
 }
 
+func (m *Module) appendEncodedEvent(ctx context.Context, releaseID, eventType, data string) error {
+	if m == nil || m.api.Jobs == nil {
+		return errors.New("release event store is unavailable")
+	}
+	_, err := m.api.Jobs.AppendEvent(ctx, "release", releaseID, eventType, []byte(data))
+	return err
+}
+
 func (m *Module) recordBestEffortEvent(
 	ctx context.Context,
 	operationID, releaseID, eventType string,
@@ -228,13 +246,65 @@ func (m *Module) recordBestEffortEvent(
 			if eventType != contract.AuditAction {
 				return fmt.Errorf("release audit action %q does not match generated action %q", eventType, contract.AuditAction)
 			}
-			return m.appendEvent(ctx, releaseID, contract.AuditAction, data)
+			encoded, err := encodeReleaseAuditPayload(operationID, data)
+			if err != nil {
+				return err
+			}
+			return m.appendEncodedEvent(ctx, releaseID, contract.AuditAction, encoded)
 		},
 		LogMessage:    "release audit failed",
 		LogAttributes: []slog.Attr{slog.String("release_id", releaseID)},
 	})
 	if err != nil {
 		logger.ErrorContext(ctx, "release command contract execution failed", "operation_id", operationID, "error", err)
+	}
+}
+
+func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
+	if values, ok := data.(map[string]any); ok {
+		str := func(key string) string { value, _ := values[key].(string); return value }
+		int64Value := func(key string) int64 {
+			switch value := values[key].(type) {
+			case int64:
+				return value
+			case int:
+				return int64(value)
+			case float64:
+				return int64(value)
+			default:
+				return 0
+			}
+		}
+		switch operationID {
+		case string(releasegen.GenOperationCreateRelease):
+			return releasegen.EncodeGenCreateReleaseAuditPayload(releasegen.GenSchemaReleaseCreatedAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), ProjectDigest: str("projectDigest"), Status: str("status"), CreatedBy: str("createdBy")})
+		case string(releasegen.GenOperationUploadReleaseArtifact):
+			return releasegen.EncodeGenUploadReleaseArtifactAuditPayload(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), WorkspaceId: str("workspaceId"), Digest: str("digest"), SizeBytes: int64Value("sizeBytes")})
+		case string(releasegen.GenOperationFinalizeRelease):
+			return releasegen.EncodeGenFinalizeReleaseAuditPayload(releasegen.GenSchemaReleaseValidatingAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), Status: str("status")})
+		}
+	}
+	switch operationID {
+	case string(releasegen.GenOperationCreateRelease):
+		payload, ok := data.(releasegen.GenSchemaReleaseCreatedAuditPayload)
+		if !ok {
+			return "", fmt.Errorf("release create audit payload has type %T", data)
+		}
+		return releasegen.EncodeGenCreateReleaseAuditPayload(payload)
+	case string(releasegen.GenOperationUploadReleaseArtifact):
+		payload, ok := data.(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload)
+		if !ok {
+			return "", fmt.Errorf("release artifact audit payload has type %T", data)
+		}
+		return releasegen.EncodeGenUploadReleaseArtifactAuditPayload(payload)
+	case string(releasegen.GenOperationFinalizeRelease):
+		payload, ok := data.(releasegen.GenSchemaReleaseValidatingAuditPayload)
+		if !ok {
+			return "", fmt.Errorf("release finalize audit payload has type %T", data)
+		}
+		return releasegen.EncodeGenFinalizeReleaseAuditPayload(payload)
+	default:
+		return "", fmt.Errorf("release operation %q has no audit payload encoder", operationID)
 	}
 }
 

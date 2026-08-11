@@ -39,6 +39,17 @@ func TestEmit_AliasesRequestRoots(t *testing.T) {
 	require.Contains(t, string(b), "type GenSchemaCreateWidgetRequest = CreateWidgetRequest")
 }
 
+func TestEmit_AliasesAuditPayloadRoots(t *testing.T) {
+	doc := ir.Document{
+		Schemas:   map[string]ir.Schema{"WidgetAuditPayload": {Type: "object"}},
+		Endpoints: []ir.Endpoint{{OperationID: "createWidget", Command: &ir.Command{Audit: ir.AuditPolicy{Payload: &ir.AuditPayload{Schema: ir.SchemaRef{Ref: "WidgetAuditPayload"}}}}}},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	require.Contains(t, string(b), "type GenSchemaWidgetAuditPayload = WidgetAuditPayload")
+}
+
 func TestEmit_ReferencesImportedResponseModelsWithoutRegeneratingThem(t *testing.T) {
 	doc := ir.Document{
 		Info: ir.Info{Namespace: "LeapViewAPI"},

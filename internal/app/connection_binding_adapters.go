@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
@@ -30,13 +29,10 @@ func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 	ctx context.Context,
 	event analyticsmodule.ConnectionRotationAuditEvent,
 ) error {
-	metadata, _ := json.Marshal(map[string]any{
-		"operation":       event.Operation,
-		"outcome":         event.Outcome,
-		"providerVersion": event.ProviderVersion,
-		"diagnosticCode":  event.Reason,
-		"targetId":        event.TargetID,
-	})
+	metadata, err := connectionRotationAuditMetadata(event)
+	if err != nil {
+		return err
+	}
 	principalID := strings.TrimPrefix(event.Actor, "principal:")
 	if strings.HasPrefix(event.Actor, "runtime:") {
 		principalID = ""
@@ -51,7 +47,7 @@ func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 		TargetID:     event.BindingID,
 		Privilege:    accessmodule.PrivilegeTestConnection,
 		Status:       string(event.Outcome),
-		MetadataJSON: string(metadata),
+		MetadataJSON: metadata,
 	})
 }
 
@@ -63,11 +59,10 @@ func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministra
 	ctx context.Context,
 	event analyticsmodule.ConnectionAdministrationAuditEvent,
 ) error {
-	metadata, _ := json.Marshal(map[string]any{
-		"targetId":          event.TargetID,
-		"logicalConnection": event.LogicalConnectionID,
-		"revision":          event.Revision,
-	})
+	metadata, err := connectionAdministrationAuditMetadata(event)
+	if err != nil {
+		return err
+	}
 	if recorder.record == nil {
 		return nil
 	}
@@ -75,6 +70,14 @@ func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministra
 		WorkspaceID: event.WorkspaceID, PrincipalID: event.Actor,
 		Action: string(event.Action), TargetType: "connection_binding", TargetID: event.BindingID,
 		Privilege: accessmodule.PrivilegeManageConnectionMetadata,
-		Status:    string(event.Outcome), MetadataJSON: string(metadata),
+		Status:    string(event.Outcome), MetadataJSON: metadata,
 	})
+}
+
+func connectionRotationAuditMetadata(event analyticsmodule.ConnectionRotationAuditEvent) (string, error) {
+	return analyticsmodule.EncodeConnectionRotationAuditMetadata(event)
+}
+
+func connectionAdministrationAuditMetadata(event analyticsmodule.ConnectionAdministrationAuditEvent) (string, error) {
+	return analyticsmodule.EncodeConnectionAdministrationAuditMetadata(event)
 }

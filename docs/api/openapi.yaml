@@ -308,6 +308,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: clientId
+                sensitivity: internal
+              - name: decision
+                sensitivity: public
+              - name: privileges
+                sensitivity: public
+              - name: projectId
+                sensitivity: internal
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: DeviceAuthorizationDecidedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: authoring.device.decided
         authz_mode: authenticated
@@ -900,6 +916,22 @@ paths:
           - ui
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+              - name: targetType
+                sensitivity: public
+              - name: workspaceId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: AgentCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: agent.conversation.created
         authz_mode: privilege
@@ -1168,6 +1200,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+              - name: targetType
+                sensitivity: public
+              - name: workspaceId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: AgentCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: agent.conversation.archived
         authz_mode: privilege
@@ -1734,6 +1782,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+              - name: targetType
+                sensitivity: public
+              - name: workspaceId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: AgentCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: agent.conversation.updated
         authz_mode: privilege
@@ -2630,6 +2694,22 @@ paths:
           - ui
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+              - name: targetType
+                sensitivity: public
+              - name: workspaceId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: AgentCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: agent.run.created
         authz_mode: privilege
@@ -3233,6 +3313,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+              - name: targetType
+                sensitivity: public
+              - name: workspaceId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: AgentCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: agent.run.cancelled
         authz_mode: privilege
@@ -4791,6 +4887,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: name
+                sensitivity: internal
+              - name: privileges
+                sensitivity: public
+            retention: security
+            schema:
+              ref: APITokenAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: api_token.created
         authz_mode: privilege
@@ -5060,6 +5166,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: name
+                sensitivity: internal
+              - name: privileges
+                sensitivity: public
+            retention: security
+            schema:
+              ref: APITokenAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: api_token.revoked
         authz_mode: privilege
@@ -5623,6 +5739,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: clientId
+                sensitivity: internal
+              - name: kind
+                sensitivity: internal
+              - name: privileges
+                sensitivity: public
+              - name: projectId
+                sensitivity: internal
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: AuthoringSessionRevokedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: authoring.session.revoked
         authz_mode: privilege
@@ -6447,6 +6579,14 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: sessionId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: CurrentSessionRevokedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: session.revoked
         authz_mode: privilege
@@ -7042,6 +7182,14 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: email
+                sensitivity: pii
+            retention: security
+            schema:
+              ref: PrincipalCreatedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: principal.local_user.created
         authz_mode: privilege
@@ -7311,6 +7459,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: displayName
+                sensitivity: pii
+              - name: email
+                sensitivity: pii
+              - name: kind
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: PrincipalDeletedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: principal.deleted
         authz_mode: privilege
@@ -7875,6 +8035,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: displayName
+                sensitivity: pii
+              - name: email
+                sensitivity: pii
+              - name: kind
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: PrincipalUpdatedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: principal.updated
         authz_mode: privilege
@@ -8172,6 +8344,14 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: email
+                sensitivity: pii
+            retention: security
+            schema:
+              ref: PrincipalPasswordResetAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: principal.local_password.reset
         authz_mode: privilege
@@ -8742,6 +8922,14 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: targetPrincipalId
+                sensitivity: pii
+            retention: security
+            schema:
+              ref: PrincipalSessionRevokedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: session.revoked
         authz_mode: privilege
@@ -9881,6 +10069,30 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: baseGeneration
+                sensitivity: internal
+              - name: candidateId
+                sensitivity: internal
+              - name: candidateKey
+                sensitivity: internal
+              - name: environment
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: resumed
+                sensitivity: public
+              - name: status
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: CandidateAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: candidate.cancelled
         authz_mode: privilege
@@ -10205,6 +10417,20 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: digest
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: sizeBytes
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: CandidateSourceBlobAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: candidate.source_blob_uploaded
         authz_mode: privilege
@@ -10543,6 +10769,30 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: baseGeneration
+                sensitivity: internal
+              - name: candidateId
+                sensitivity: internal
+              - name: candidateKey
+                sensitivity: internal
+              - name: environment
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: resumed
+                sensitivity: public
+              - name: status
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: CandidateAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: candidate.ready
         authz_mode: privilege
@@ -11163,6 +11413,30 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: baseGeneration
+                sensitivity: internal
+              - name: candidateId
+                sensitivity: internal
+              - name: candidateKey
+                sensitivity: internal
+              - name: environment
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: resumed
+                sensitivity: public
+              - name: status
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: CandidateAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: candidate.started
         authz_mode: privilege
@@ -11779,6 +12053,30 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: baseGeneration
+                sensitivity: internal
+              - name: candidateId
+                sensitivity: internal
+              - name: candidateKey
+                sensitivity: internal
+              - name: environment
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: resumed
+                sensitivity: public
+              - name: status
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: CandidateAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: candidate.artifact_replaced
         authz_mode: privilege
@@ -12099,6 +12397,30 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: baseGeneration
+                sensitivity: internal
+              - name: candidateId
+                sensitivity: internal
+              - name: candidateKey
+                sensitivity: internal
+              - name: environment
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: resumed
+                sensitivity: public
+              - name: status
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: CandidateAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: candidate.cancelled
         authz_mode: privilege
@@ -12495,6 +12817,20 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: deploymentId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: releaseId
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DeploymentQueuedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.queued
         authz_mode: privilege
@@ -12861,6 +13197,30 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: baseGeneration
+                sensitivity: internal
+              - name: candidateId
+                sensitivity: internal
+              - name: candidateKey
+                sensitivity: internal
+              - name: environment
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: resumed
+                sensitivity: public
+              - name: status
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: CandidateAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: candidate.retried
         authz_mode: privilege
@@ -14966,6 +15326,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: connectionId
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: owner
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: ManagedDataCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: managed_data.upload_session.created
         authz_mode: privilege
@@ -15649,6 +16025,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: connectionId
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: owner
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: ManagedDataCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: managed_data.upload_session.cancelled
         authz_mode: privilege
@@ -16357,6 +16749,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: connectionId
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: owner
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: ManagedDataCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: managed_data.upload_session.finalization_requested
         authz_mode: privilege
@@ -16729,6 +17137,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: connectionId
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: owner
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: ManagedDataS3MultipartAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: managed_data.s3_multipart_upload.created
         authz_mode: privilege
@@ -17082,6 +17506,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: connectionId
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: owner
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: ManagedDataS3MultipartAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: managed_data.s3_multipart_upload.aborted
         authz_mode: privilege
@@ -17446,6 +17886,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: connectionId
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: owner
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: ManagedDataS3MultipartAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: managed_data.s3_multipart_upload.completed
         authz_mode: privilege
@@ -18536,6 +18992,20 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: deploymentId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: releaseId
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DeploymentQueuedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.queued
         authz_mode: privilege
@@ -19312,6 +19782,20 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: deploymentId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: releaseId
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DeploymentQueuedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.activation_requested
         authz_mode: privilege
@@ -19679,6 +20163,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: approvalId
+                sensitivity: internal
+              - name: deploymentId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: DeploymentApprovalRequestedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.approval_requested
         authz_mode: privilege
@@ -20029,6 +20523,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: approvalId
+                sensitivity: internal
+              - name: approvalRevision
+                sensitivity: internal
+              - name: deploymentId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: DeploymentApprovalDecisionAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.approved
         authz_mode: privilege
@@ -20379,6 +20885,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: approvalId
+                sensitivity: internal
+              - name: approvalRevision
+                sensitivity: internal
+              - name: deploymentId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: DeploymentApprovalDecisionAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.denied
         authz_mode: privilege
@@ -20729,6 +21247,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: approvalId
+                sensitivity: internal
+              - name: approvalRevision
+                sensitivity: internal
+              - name: deploymentId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: DeploymentApprovalDecisionAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.approval_revoked
         authz_mode: privilege
@@ -21131,6 +21661,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: deploymentId
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DeploymentCancelledAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.cancelled
         authz_mode: privilege
@@ -21840,6 +22380,20 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: deploymentId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: releaseId
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DeploymentQueuedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.queued
         authz_mode: privilege
@@ -22256,6 +22810,20 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: deploymentId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: releaseId
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DeploymentQueuedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: deployment.queued
         authz_mode: privilege
@@ -23046,6 +23614,24 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: createdBy
+                sensitivity: pii
+              - name: operationId
+                sensitivity: internal
+              - name: projectDigest
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: releaseId
+                sensitivity: internal
+              - name: status
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ReleaseCreatedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: release.created
         authz_mode: privilege
@@ -24049,6 +24635,20 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: releaseId
+                sensitivity: internal
+              - name: status
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ReleaseValidatingAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: release.validating
         authz_mode: privilege
@@ -24395,6 +24995,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: digest
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: releaseId
+                sensitivity: internal
+              - name: sizeBytes
+                sensitivity: internal
+              - name: workspaceId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ReleaseArtifactUploadedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: release.artifact_uploaded
         authz_mode: privilege
@@ -25618,6 +26234,14 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: servicePrincipalId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ServicePrincipalAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: service_principal.created
         authz_mode: privilege
@@ -25886,6 +26510,14 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: servicePrincipalId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ServicePrincipalAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: service_principal.deleted
         authz_mode: privilege
@@ -26444,6 +27076,14 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: servicePrincipalId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ServicePrincipalAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: service_principal.updated
         authz_mode: privilege
@@ -27038,6 +27678,14 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: secretId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ServicePrincipalSecretAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: service_principal_secret.created
         authz_mode: privilege
@@ -27315,6 +27963,14 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: secretId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ServicePrincipalSecretAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: service_principal_secret.revoked
         authz_mode: privilege
@@ -31054,6 +31710,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: owner
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DashboardPublicationCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: dashboard_publication.resumed
         authz_mode: privilege
@@ -31372,6 +32040,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: owner
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DashboardPublicationCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: dashboard_publication.public_id_rotated
         authz_mode: privilege
@@ -31690,6 +32370,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: owner
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DashboardPublicationCommandAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: dashboard_publication.suspended
         authz_mode: privilege
@@ -34877,6 +35569,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: objectId
+                sensitivity: internal
+              - name: policyType
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DataPolicyAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: data_policy.created
         authz_mode: privilege
@@ -35154,6 +35856,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: objectId
+                sensitivity: internal
+              - name: policyType
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DataPolicyAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: data_policy.deleted
         authz_mode: privilege
@@ -35738,6 +36450,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: objectId
+                sensitivity: internal
+              - name: policyType
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DataPolicyAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: data_policy.updated
         authz_mode: privilege
@@ -36661,6 +37383,30 @@ paths:
           - ui
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: environment
+                sensitivity: public
+              - name: objectId
+                sensitivity: internal
+              - name: objectType
+                sensitivity: public
+              - name: operationId
+                sensitivity: internal
+              - name: privilege
+                sensitivity: public
+              - name: projectId
+                sensitivity: internal
+              - name: subjectId
+                sensitivity: pii
+              - name: subjectType
+                sensitivity: public
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: GrantAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: grant.created
         authz_mode: privilege
@@ -36940,6 +37686,30 @@ paths:
           - ui
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: environment
+                sensitivity: public
+              - name: objectId
+                sensitivity: internal
+              - name: objectType
+                sensitivity: public
+              - name: operationId
+                sensitivity: internal
+              - name: privilege
+                sensitivity: public
+              - name: projectId
+                sensitivity: internal
+              - name: subjectId
+                sensitivity: pii
+              - name: subjectType
+                sensitivity: public
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: GrantAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: grant.deleted
         authz_mode: privilege
@@ -37526,6 +38296,30 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: environment
+                sensitivity: public
+              - name: objectId
+                sensitivity: internal
+              - name: objectType
+                sensitivity: public
+              - name: operationId
+                sensitivity: internal
+              - name: privilege
+                sensitivity: public
+              - name: projectId
+                sensitivity: internal
+              - name: subjectId
+                sensitivity: pii
+              - name: subjectType
+                sensitivity: public
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: GrantAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: grant.updated
         authz_mode: privilege
@@ -38118,6 +38912,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: displayName
+                sensitivity: pii
+              - name: externalId
+                sensitivity: internal
+              - name: provider
+                sensitivity: public
+            retention: security
+            schema:
+              ref: GroupAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: group.created
         authz_mode: privilege
@@ -38395,6 +39201,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: displayName
+                sensitivity: pii
+              - name: externalId
+                sensitivity: internal
+              - name: provider
+                sensitivity: public
+            retention: security
+            schema:
+              ref: GroupAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: group.deleted
         authz_mode: privilege
@@ -38963,6 +39781,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: displayName
+                sensitivity: pii
+              - name: externalId
+                sensitivity: internal
+              - name: provider
+                sensitivity: public
+            retention: security
+            schema:
+              ref: GroupAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: group.updated
         authz_mode: privilege
@@ -39539,6 +40369,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: groupId
+                sensitivity: internal
+              - name: memberPrincipalId
+                sensitivity: pii
+            retention: security
+            schema:
+              ref: GroupMemberAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: group.member_removed
         authz_mode: privilege
@@ -39826,6 +40666,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: groupId
+                sensitivity: internal
+              - name: memberPrincipalId
+                sensitivity: pii
+            retention: security
+            schema:
+              ref: GroupMemberAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: group.member_added
         authz_mode: privilege
@@ -40127,6 +40977,16 @@ paths:
       x-apigen-command:
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: objectType
+                sensitivity: public
+              - name: ownerPrincipalId
+                sensitivity: pii
+            retention: security
+            schema:
+              ref: OwnershipTransferAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: ownership.transferred
         authz_mode: privilege
@@ -41106,6 +41966,26 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: id
+                sensitivity: internal
+              - name: pipelineId
+                sensitivity: internal
+              - name: retryOf
+                sensitivity: internal
+              - name: semanticModel
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+              - name: trigger
+                sensitivity: public
+              - name: workspaceId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: RefreshQueuedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: refresh.queued
         authz_mode: privilege
@@ -41714,6 +42594,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: id
+                sensitivity: internal
+              - name: pipelineId
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+              - name: trigger
+                sensitivity: public
+              - name: workspaceId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: RefreshCancelledAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: refresh.cancelled
         authz_mode: privilege
@@ -42662,6 +43558,22 @@ paths:
           - ui
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: role
+                sensitivity: internal
+              - name: subjectId
+                sensitivity: pii
+              - name: subjectType
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: RoleBindingCreatedAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: role_binding.created
         authz_mode: privilege
@@ -42941,6 +43853,22 @@ paths:
           - ui
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: role
+                sensitivity: internal
+              - name: subjectId
+                sensitivity: pii
+              - name: subjectType
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: RoleBindingAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: role_binding.deleted
         authz_mode: privilege
@@ -43523,6 +44451,22 @@ paths:
           - ui
         audit:
           guarantee: transactional
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: role
+                sensitivity: internal
+              - name: subjectId
+                sensitivity: pii
+              - name: subjectType
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: RoleBindingAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: role_binding.updated
         authz_mode: privilege
@@ -48174,6 +49118,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: logicalConnection
+                sensitivity: internal
+              - name: revision
+                sensitivity: internal
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: TargetConnectionAdministrationAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: connection.binding.created
         authz_mode: privilege
@@ -48862,6 +49818,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: logicalConnection
+                sensitivity: internal
+              - name: revision
+                sensitivity: internal
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: TargetConnectionAdministrationAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: connection.binding.updated
         authz_mode: privilege
@@ -49225,6 +50193,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: logicalConnection
+                sensitivity: internal
+              - name: revision
+                sensitivity: internal
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: TargetConnectionAdministrationAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: connection.binding.disabled
         authz_mode: privilege
@@ -49585,6 +50565,18 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: logicalConnection
+                sensitivity: internal
+              - name: revision
+                sensitivity: internal
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: TargetConnectionAdministrationAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: connection.binding.enabled
         authz_mode: privilege
@@ -50540,6 +51532,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: diagnosticCode
+                sensitivity: internal
+              - name: operation
+                sensitivity: public
+              - name: outcome
+                sensitivity: public
+              - name: providerVersion
+                sensitivity: internal
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: TargetConnectionRotationAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: credential.refresh.requested
         authz_mode: privilege
@@ -50891,6 +51899,22 @@ paths:
       x-apigen-command:
         audit:
           guarantee: best-effort
+          payload:
+            fields:
+              - name: diagnosticCode
+                sensitivity: internal
+              - name: operation
+                sensitivity: public
+              - name: outcome
+                sensitivity: public
+              - name: providerVersion
+                sensitivity: internal
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: TargetConnectionRotationAuditPayload
+            schema_version: !!float 1
           required: true
           success_action: credential.test.requested
         authz_mode: privilege
@@ -50940,6 +51964,25 @@ security:
   - BearerAuth: []
 components:
   schemas:
+    APITokenAuditPayload:
+      type: object
+      required:
+        - name
+        - privileges
+      properties:
+        name:
+          type: string
+          example: example
+        privileges:
+          type: array
+          items:
+            type: string
+          example:
+            - example
+      example:
+        name: example
+        privileges:
+          - example
     APITokenCreateRequest:
       type: object
       required:
@@ -51073,6 +52116,36 @@ components:
         privileges:
           - example
         revokedAt: "2026-01-02T15:04:05Z"
+        workspaceId: example
+    AgentCommandAuditPayload:
+      type: object
+      required:
+        - operationId
+        - workspaceId
+        - targetType
+        - targetId
+        - surface
+      properties:
+        operationId:
+          type: string
+          example: example
+        workspaceId:
+          type: string
+          example: example
+        targetType:
+          type: string
+          example: example
+        targetId:
+          type: string
+          example: example
+        surface:
+          type: string
+          example: example
+      example:
+        operationId: example
+        surface: example
+        targetId: example
+        targetType: example
         workspaceId: example
     AgentConversationCreateRequest:
       type: object
@@ -52070,6 +53143,40 @@ components:
         projectId: example
         revokedAt: "2026-01-02T15:04:05Z"
         targetId: example
+    AuthoringSessionRevokedAuditPayload:
+      type: object
+      required:
+        - kind
+        - clientId
+        - targetId
+        - projectId
+        - privileges
+      properties:
+        kind:
+          type: string
+          example: example
+        clientId:
+          type: string
+          example: example
+        targetId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          example: example
+        privileges:
+          type: array
+          items:
+            type: string
+          example:
+            - example
+      example:
+        clientId: example
+        kind: example
+        privileges:
+          - example
+        projectId: example
+        targetId: example
     AuthorizationBatchCheckRequest:
       type: object
       required:
@@ -52216,6 +53323,56 @@ components:
       example:
         artifactDigest: example
         expectedArtifactDigest: example
+    CandidateAuditPayload:
+      type: object
+      required:
+        - operationId
+        - candidateId
+        - projectId
+        - targetId
+        - environment
+        - baseGeneration
+        - candidateKey
+        - status
+        - resumed
+      properties:
+        operationId:
+          type: string
+          example: example
+        candidateId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          example: example
+        targetId:
+          type: string
+          example: example
+        environment:
+          type: string
+          example: example
+        baseGeneration:
+          type: string
+          example: example
+        candidateKey:
+          type: string
+          example: example
+        status:
+          type: string
+          example: example
+        resumed:
+          type: boolean
+          example: true
+      example:
+        baseGeneration: example
+        candidateId: example
+        candidateKey: example
+        environment: example
+        operationId: example
+        projectId: example
+        resumed: true
+        status: example
+        targetId: example
     CandidatePublishRequest:
       type: object
       required:
@@ -52342,6 +53499,32 @@ components:
       example:
         digest: example
         path: example
+    CandidateSourceBlobAuditPayload:
+      type: object
+      required:
+        - operationId
+        - surface
+        - digest
+        - sizeBytes
+      properties:
+        operationId:
+          type: string
+          example: example
+        surface:
+          type: string
+          example: example
+        digest:
+          type: string
+          example: example
+        sizeBytes:
+          type: integer
+          format: int64
+          example: 1
+      example:
+        digest: example
+        operationId: example
+        sizeBytes: 1
+        surface: example
     CandidateSourceBlobResponse:
       type: object
       required:
@@ -52814,6 +53997,16 @@ components:
         kind: example
         maximumFractionDigits: 1
         minimumFractionDigits: 1
+    CurrentSessionRevokedAuditPayload:
+      type: object
+      required:
+        - sessionId
+      properties:
+        sessionId:
+          type: string
+          example: example
+      example:
+        sessionId: example
     DashboardAppliedFilterInput:
       type: object
       required:
@@ -53949,6 +55142,26 @@ components:
         description: example
         id: example
         title: example
+    DashboardPublicationCommandAuditPayload:
+      type: object
+      required:
+        - operationId
+        - owner
+        - surface
+      properties:
+        operationId:
+          type: string
+          example: example
+        owner:
+          type: string
+          example: example
+        surface:
+          type: string
+          example: example
+      example:
+        operationId: example
+        owner: example
+        surface: example
     DashboardPublicationListResponse:
       type: object
       required:
@@ -54562,6 +55775,21 @@ components:
             interactionID: example
             order: 1
             visualID: example
+    DataPolicyAuditPayload:
+      type: object
+      required:
+        - objectId
+        - policyType
+      properties:
+        objectId:
+          type: string
+          example: example
+        policyType:
+          type: string
+          example: example
+      example:
+        objectId: example
+        policyType: example
     DataPolicyListResponse:
       type: object
       required:
@@ -54686,6 +55914,27 @@ components:
         subjectType: example
         updatedAt: "2026-01-02T15:04:05Z"
         workspaceId: example
+    DeploymentApprovalDecisionAuditPayload:
+      type: object
+      required:
+        - deploymentId
+        - approvalId
+        - approvalRevision
+      properties:
+        deploymentId:
+          type: string
+          example: example
+        approvalId:
+          type: string
+          example: example
+        approvalRevision:
+          type: integer
+          format: int64
+          example: 1
+      example:
+        approvalId: example
+        approvalRevision: 1
+        deploymentId: example
     DeploymentApprovalDecisionRequest:
       type: object
       required:
@@ -54697,6 +55946,21 @@ components:
           example: 1
       example:
         expectedRevision: 1
+    DeploymentApprovalRequestedAuditPayload:
+      type: object
+      required:
+        - deploymentId
+        - approvalId
+      properties:
+        deploymentId:
+          type: string
+          example: example
+        approvalId:
+          type: string
+          example: example
+      example:
+        approvalId: example
+        deploymentId: example
     DeploymentApprovalResponse:
       type: object
       required:
@@ -54831,6 +56095,21 @@ components:
         logicalConnection: example
         revision: 1
         validatedVersion: example
+    DeploymentCancelledAuditPayload:
+      type: object
+      required:
+        - deploymentId
+        - status
+      properties:
+        deploymentId:
+          type: string
+          example: example
+        status:
+          type: string
+          example: example
+      example:
+        deploymentId: example
+        status: example
     DeploymentConnectionResponse:
       type: object
       required:
@@ -55165,6 +56444,31 @@ components:
                 revisionId: example
             servingStateId: example
             workspaceId: example
+    DeploymentQueuedAuditPayload:
+      type: object
+      required:
+        - deploymentId
+        - projectId
+        - releaseId
+        - status
+      properties:
+        deploymentId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          example: example
+        releaseId:
+          type: string
+          example: example
+        status:
+          type: string
+          example: example
+      example:
+        deploymentId: example
+        projectId: example
+        releaseId: example
+        status: example
     DeploymentResponse:
       type: object
       required:
@@ -55451,6 +56755,40 @@ components:
       example:
         approved: true
         userCode: example
+    DeviceAuthorizationDecidedAuditPayload:
+      type: object
+      required:
+        - clientId
+        - targetId
+        - projectId
+        - privileges
+        - decision
+      properties:
+        clientId:
+          type: string
+          example: example
+        targetId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          example: example
+        privileges:
+          type: array
+          items:
+            type: string
+          example:
+            - example
+        decision:
+          type: string
+          example: example
+      example:
+        clientId: example
+        decision: example
+        privileges:
+          - example
+        projectId: example
+        targetId: example
     DurationVisualizationFormat:
       type: object
       allOf:
@@ -55816,6 +57154,56 @@ components:
         nullStyle:
           color: accent
           icon: circle
+    GrantAuditPayload:
+      type: object
+      required:
+        - operationId
+        - objectId
+        - objectType
+        - projectId
+        - environment
+        - subjectId
+        - subjectType
+        - privilege
+        - surface
+      properties:
+        operationId:
+          type: string
+          example: example
+        objectId:
+          type: string
+          example: example
+        objectType:
+          type: string
+          example: example
+        projectId:
+          type: string
+          example: example
+        environment:
+          type: string
+          example: example
+        subjectId:
+          type: string
+          example: example
+        subjectType:
+          type: string
+          example: example
+        privilege:
+          type: string
+          example: example
+        surface:
+          type: string
+          example: example
+      example:
+        environment: example
+        objectId: example
+        objectType: example
+        operationId: example
+        projectId: example
+        subjectId: example
+        subjectType: example
+        surface: example
+        privilege: example
     GrantListResponse:
       type: object
       required:
@@ -55968,6 +57356,26 @@ components:
         rowHeight: 1
         showHeader: true
         striped: true
+    GroupAuditPayload:
+      type: object
+      required:
+        - provider
+        - externalId
+        - displayName
+      properties:
+        provider:
+          type: string
+          example: example
+        externalId:
+          type: string
+          example: example
+        displayName:
+          type: string
+          example: example
+      example:
+        displayName: example
+        externalId: example
+        provider: example
     GroupCreateRequest:
       type: object
       required:
@@ -56009,6 +57417,21 @@ components:
             updatedAt: "2026-01-02T15:04:05Z"
         page:
           nextCursor: example
+    GroupMemberAuditPayload:
+      type: object
+      required:
+        - groupId
+        - memberPrincipalId
+      properties:
+        groupId:
+          type: string
+          example: example
+        memberPrincipalId:
+          type: string
+          example: example
+      example:
+        groupId: example
+        memberPrincipalId: example
     GroupMemberListResponse:
       type: object
       required:
@@ -56451,6 +57874,36 @@ components:
           size: 1
           status: available
           uploadSessionId: example
+    ManagedDataCommandAuditPayload:
+      type: object
+      required:
+        - operationId
+        - owner
+        - projectId
+        - connectionId
+        - surface
+      properties:
+        operationId:
+          type: string
+          example: example
+        owner:
+          type: string
+          example: example
+        projectId:
+          type: string
+          example: example
+        connectionId:
+          type: string
+          example: example
+        surface:
+          type: string
+          example: example
+      example:
+        connectionId: example
+        operationId: example
+        owner: example
+        projectId: example
+        surface: example
     ManagedDataFileMetadata:
       type: object
       required:
@@ -56720,6 +58173,36 @@ components:
         etag: example
         partNumber: 1
         sha256: example
+    ManagedDataS3MultipartAuditPayload:
+      type: object
+      required:
+        - operationId
+        - owner
+        - projectId
+        - connectionId
+        - surface
+      properties:
+        operationId:
+          type: string
+          example: example
+        owner:
+          type: string
+          example: example
+        projectId:
+          type: string
+          example: example
+        connectionId:
+          type: string
+          example: example
+        surface:
+          type: string
+          example: example
+      example:
+        connectionId: example
+        operationId: example
+        owner: example
+        projectId: example
+        surface: example
     ManagedDataS3MultipartCompleteRequest:
       type: object
       required:
@@ -57324,6 +58807,21 @@ components:
       example:
         kind: example
         value: !!float 1
+    OwnershipTransferAuditPayload:
+      type: object
+      required:
+        - ownerPrincipalId
+        - objectType
+      properties:
+        ownerPrincipalId:
+          type: string
+          example: example
+        objectType:
+          type: string
+          example: example
+      example:
+        objectType: example
+        ownerPrincipalId: example
     OwnershipTransferRequest:
       type: object
       required:
@@ -57791,6 +59289,36 @@ components:
       example:
         displayName: example
         email: example
+    PrincipalCreatedAuditPayload:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          example: example
+      example:
+        email: example
+    PrincipalDeletedAuditPayload:
+      type: object
+      required:
+        - email
+        - kind
+        - displayName
+      properties:
+        email:
+          type: string
+          example: example
+        kind:
+          type: string
+          example: example
+        displayName:
+          type: string
+          example: example
+      example:
+        displayName: example
+        email: example
+        kind: example
     PrincipalListResponse:
       type: object
       required:
@@ -57820,6 +59348,16 @@ components:
             updatedAt: "2026-01-02T15:04:05Z"
         page:
           nextCursor: example
+    PrincipalPasswordResetAuditPayload:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          example: example
+      example:
+        email: example
     PrincipalPatchRequest:
       type: object
       properties:
@@ -57865,6 +59403,36 @@ components:
         id: example
         kind: example
         updatedAt: "2026-01-02T15:04:05Z"
+    PrincipalSessionRevokedAuditPayload:
+      type: object
+      required:
+        - targetPrincipalId
+      properties:
+        targetPrincipalId:
+          type: string
+          example: example
+      example:
+        targetPrincipalId: example
+    PrincipalUpdatedAuditPayload:
+      type: object
+      required:
+        - email
+        - kind
+        - displayName
+      properties:
+        email:
+          type: string
+          example: example
+        kind:
+          type: string
+          example: example
+        displayName:
+          type: string
+          example: example
+      example:
+        displayName: example
+        email: example
+        kind: example
     ProblemDetails:
       type: object
       required:
@@ -58475,6 +60043,76 @@ components:
         snapshotId: example
         source: example
         status: example
+    RefreshCancelledAuditPayload:
+      type: object
+      required:
+        - id
+        - workspaceId
+        - pipelineId
+        - status
+        - trigger
+      properties:
+        id:
+          type: string
+          example: example
+        workspaceId:
+          type: string
+          example: example
+        pipelineId:
+          type: string
+          example: example
+        status:
+          type: string
+          example: example
+        trigger:
+          type: string
+          example: example
+      example:
+        id: example
+        pipelineId: example
+        status: example
+        trigger: example
+        workspaceId: example
+    RefreshQueuedAuditPayload:
+      type: object
+      required:
+        - id
+        - workspaceId
+        - pipelineId
+        - semanticModel
+        - trigger
+        - retryOf
+        - status
+      properties:
+        id:
+          type: string
+          example: example
+        workspaceId:
+          type: string
+          example: example
+        pipelineId:
+          type: string
+          example: example
+        semanticModel:
+          type: string
+          example: example
+        trigger:
+          type: string
+          example: example
+        retryOf:
+          type: string
+          example: example
+        status:
+          type: string
+          example: example
+      example:
+        id: example
+        pipelineId: example
+        retryOf: example
+        semanticModel: example
+        status: example
+        trigger: example
+        workspaceId: example
     RefreshRunCreateRequest:
       type: object
       required:
@@ -58622,6 +60260,37 @@ components:
           example: 1
       example:
         digest: example
+        releaseId: example
+        sizeBytes: 1
+        workspaceId: example
+    ReleaseArtifactUploadedAuditPayload:
+      type: object
+      required:
+        - operationId
+        - releaseId
+        - workspaceId
+        - digest
+        - sizeBytes
+      properties:
+        operationId:
+          type: string
+          example: example
+        releaseId:
+          type: string
+          example: example
+        workspaceId:
+          type: string
+          example: example
+        digest:
+          type: string
+          example: example
+        sizeBytes:
+          type: integer
+          format: int64
+          example: 1
+      example:
+        digest: example
+        operationId: example
         releaseId: example
         sizeBytes: 1
         workspaceId: example
@@ -58777,6 +60446,41 @@ components:
           - artifactDigest: example
             servingStateId: example
             workspace: example
+    ReleaseCreatedAuditPayload:
+      type: object
+      required:
+        - operationId
+        - releaseId
+        - projectId
+        - projectDigest
+        - status
+        - createdBy
+      properties:
+        operationId:
+          type: string
+          example: example
+        releaseId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          example: example
+        projectDigest:
+          type: string
+          example: example
+        status:
+          type: string
+          example: example
+        createdBy:
+          type: string
+          example: example
+      example:
+        createdBy: example
+        operationId: example
+        projectDigest: example
+        projectId: example
+        releaseId: example
+        status: example
     ReleaseListResponse:
       type: object
       required:
@@ -59331,6 +61035,31 @@ components:
             revisionId: example
         servingStateId: example
         workspaceId: example
+    ReleaseValidatingAuditPayload:
+      type: object
+      required:
+        - operationId
+        - releaseId
+        - projectId
+        - status
+      properties:
+        operationId:
+          type: string
+          example: example
+        releaseId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          example: example
+        status:
+          type: string
+          example: example
+      example:
+        operationId: example
+        projectId: example
+        releaseId: example
+        status: example
     ReleaseWorkspaceManifest:
       type: object
       required:
@@ -59350,6 +61079,66 @@ components:
         artifactDigest: example
         servingStateId: example
         workspace: example
+    RoleBindingAuditPayload:
+      type: object
+      required:
+        - operationId
+        - role
+        - subjectId
+        - subjectType
+        - surface
+      properties:
+        operationId:
+          type: string
+          example: example
+        role:
+          type: string
+          example: example
+        subjectId:
+          type: string
+          example: example
+        subjectType:
+          type: string
+          example: example
+        surface:
+          type: string
+          example: example
+      example:
+        operationId: example
+        role: example
+        subjectId: example
+        subjectType: example
+        surface: example
+    RoleBindingCreatedAuditPayload:
+      type: object
+      required:
+        - operationId
+        - role
+        - subjectId
+        - subjectType
+        - surface
+      properties:
+        operationId:
+          type: string
+          example: example
+        role:
+          type: string
+          example: example
+        subjectId:
+          type: string
+          example: example
+        subjectType:
+          type: string
+          example: example
+        surface:
+          type: string
+          example: example
+      example:
+        operationId: example
+        role: example
+        subjectId: example
+        subjectType: example
+        surface: example
     RoleBindingListResponse:
       type: object
       required:
@@ -60779,6 +62568,16 @@ components:
         alias: example
         field: example
         grain: day
+    ServicePrincipalAuditPayload:
+      type: object
+      required:
+        - servicePrincipalId
+      properties:
+        servicePrincipalId:
+          type: string
+          example: example
+      example:
+        servicePrincipalId: example
     ServicePrincipalCreateRequest:
       type: object
       required:
@@ -60830,6 +62629,16 @@ components:
           example: example
       example:
         displayName: example
+    ServicePrincipalSecretAuditPayload:
+      type: object
+      required:
+        - secretId
+      properties:
+        secretId:
+          type: string
+          example: example
+      example:
+        secretId: example
     ServicePrincipalSecretCreateRequest:
       type: object
       required:
@@ -61386,6 +63195,27 @@ components:
           rowHeight: 1
           showHeader: true
           striped: true
+    TargetConnectionAdministrationAuditPayload:
+      type: object
+      required:
+        - targetId
+        - logicalConnection
+        - revision
+      properties:
+        targetId:
+          type: string
+          example: example
+        logicalConnection:
+          type: string
+          example: example
+        revision:
+          type: integer
+          format: int64
+          example: 1
+      example:
+        logicalConnection: example
+        revision: 1
+        targetId: example
     TargetConnectionAuthenticationMode:
       type: string
       enum:
@@ -61914,6 +63744,36 @@ components:
         - degraded
         - disabled
       example: pending
+    TargetConnectionRotationAuditPayload:
+      type: object
+      required:
+        - operation
+        - outcome
+        - providerVersion
+        - diagnosticCode
+        - targetId
+      properties:
+        operation:
+          type: string
+          example: example
+        outcome:
+          type: string
+          example: example
+        providerVersion:
+          type: string
+          example: example
+        diagnosticCode:
+          type: string
+          example: example
+        targetId:
+          type: string
+          example: example
+      example:
+        diagnosticCode: example
+        operation: example
+        outcome: example
+        providerVersion: example
+        targetId: example
     TemporalVisualizationFormat:
       type: object
       allOf:

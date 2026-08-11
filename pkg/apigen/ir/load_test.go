@@ -60,6 +60,13 @@ func TestLoad_AcceptsAndNormalizesTypedCommand(t *testing.T) {
   "schema_version": "v4",
   "api": {"base_path": "/api/v1"},
   "info": {"title": "Commands", "version": "1.0.0"},
+  "schemas": {
+    "RoleBindingCreatedAuditPayload": {
+      "type": "object",
+      "properties": {"operationId": {"schema": {"type": "string"}}},
+      "required": ["operationId"]
+    }
+  },
   "endpoints": [{
     "method": "post",
     "path": "/workspaces/{workspace}/role-bindings",
@@ -72,7 +79,12 @@ func TestLoad_AcceptsAndNormalizesTypedCommand(t *testing.T) {
     "responses": [{"status_code": 201, "description": "created"}],
     "command": {
       "owner": "CommandAPI.Access",
-      "audit": {"required": true, "success_action": "role_binding.created"},
+      "audit": {"required": true, "success_action": "role_binding.created", "payload": {
+        "schema": {"ref": "RoleBindingCreatedAuditPayload"},
+        "schema_version": 1,
+        "retention": "security",
+        "fields": [{"name": "operationId", "sensitivity": "internal"}]
+      }},
       "failures": [],
       "additional_exposures": ["ui", "automation"],
       "target": {"parameter": "workspace", "type": "workspace"},
@@ -103,8 +115,11 @@ func TestValidate_RejectsInvalidTypedCommands(t *testing.T) {
 		},
 		Responses: []Response{{StatusCode: 204, Description: "deleted"}},
 		Command: &Command{
-			Owner:    "CommandAPI.Access",
-			Audit:    AuditPolicy{Required: true, SuccessAction: "role_binding.deleted", Guarantee: "transactional"},
+			Owner: "CommandAPI.Access",
+			Audit: AuditPolicy{Required: true, SuccessAction: "role_binding.deleted", Guarantee: "transactional", Payload: &AuditPayload{
+				Schema: SchemaRef{Ref: "RoleBindingDeletedAuditPayload"}, SchemaVersion: 1, Retention: "security",
+				Fields: []AuditField{{Name: "operationId", Sensitivity: "internal"}},
+			}},
 			Failures: []CommandFailure{},
 			Target:   &OperationTarget{Parameter: "binding", Type: "binding"},
 		},
@@ -116,6 +131,10 @@ func TestValidate_RejectsInvalidTypedCommands(t *testing.T) {
 	}{
 		{name: "audit", mutate: func(endpoint *Endpoint) { endpoint.Command.Audit.SuccessAction = "Role Binding Deleted" }, wantErr: "stable dotted lower_snake_case"},
 		{name: "audit guarantee", mutate: func(endpoint *Endpoint) { endpoint.Command.Audit.Guarantee = "eventually-maybe" }, wantErr: "unsupported guarantee"},
+		{name: "missing audit payload", mutate: func(endpoint *Endpoint) { endpoint.Command.Audit.Payload = nil }, wantErr: "required audit must declare a typed payload"},
+		{name: "audit payload version", mutate: func(endpoint *Endpoint) { endpoint.Command.Audit.Payload.SchemaVersion = 0 }, wantErr: "schema_version must be positive"},
+		{name: "audit payload retention", mutate: func(endpoint *Endpoint) { endpoint.Command.Audit.Payload.Retention = "forever" }, wantErr: "unsupported retention"},
+		{name: "audit payload sensitivity", mutate: func(endpoint *Endpoint) { endpoint.Command.Audit.Payload.Fields[0].Sensitivity = "private" }, wantErr: "unsupported sensitivity"},
 		{name: "exposure", mutate: func(endpoint *Endpoint) { endpoint.Command.AdditionalExposures = []string{"desktop"} }, wantErr: "unsupported additional exposure"},
 		{name: "target", mutate: func(endpoint *Endpoint) { endpoint.Command.Target.Parameter = "missing" }, wantErr: "must name a required path parameter"},
 		{name: "post policy", mutate: func(endpoint *Endpoint) { endpoint.Method = "post" }, wantErr: "POST commands require idempotency policy"},
@@ -127,11 +146,18 @@ func TestValidate_RejectsInvalidTypedCommands(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			endpoint := valid
 			command := *valid.Command
+			audit := valid.Command.Audit
+			payload := *valid.Command.Audit.Payload
+			payload.Fields = append([]AuditField(nil), valid.Command.Audit.Payload.Fields...)
+			audit.Payload = &payload
+			command.Audit = audit
 			target := *valid.Command.Target
 			command.Target = &target
 			endpoint.Command = &command
 			test.mutate(&endpoint)
-			err := Validate(Document{SchemaVersion: CurrentSchemaVersion, API: API{BasePath: "/"}, Info: Info{Title: "Commands", Version: "1"}, Endpoints: []Endpoint{endpoint}})
+			err := Validate(Document{SchemaVersion: CurrentSchemaVersion, API: API{BasePath: "/"}, Info: Info{Title: "Commands", Version: "1"}, Endpoints: []Endpoint{endpoint}, Schemas: map[string]Schema{
+				"RoleBindingDeletedAuditPayload": {Type: "object", Properties: map[string]SchemaProperty{"operationId": {Schema: SchemaRef{Type: "string"}}}, Required: []string{"operationId"}},
+			}})
 			require.ErrorContains(t, err, test.wantErr)
 		})
 	}
@@ -143,6 +169,9 @@ func TestValidateAsyncExecutionContract(t *testing.T) {
 			SchemaVersion: CurrentSchemaVersion,
 			API:           API{BasePath: "/"},
 			Info:          Info{Title: "Releases", Version: "1"},
+			Schemas: map[string]Schema{
+				"ReleaseAuditPayload": {Type: "object", Properties: map[string]SchemaProperty{"releaseId": {Schema: SchemaRef{Type: "string"}}}, Required: []string{"releaseId"}},
+			},
 			Endpoints: []Endpoint{
 				{Method: "get", Path: "/releases/{release}", OperationID: "getRelease", Kind: "query", Responses: []Response{{StatusCode: 200, Description: "ok"}}},
 				{Method: "get", Path: "/releases/{release}/events", OperationID: "listReleaseEvents", Kind: "query", Responses: []Response{{StatusCode: 200, Description: "ok"}}},
@@ -151,7 +180,7 @@ func TestValidateAsyncExecutionContract(t *testing.T) {
 					Parameters: []Parameter{{Name: "Idempotency-Key", In: "header", Required: true, Schema: SchemaRef{Type: "string"}}},
 					Responses:  []Response{{StatusCode: 202, Description: "accepted"}},
 					Command: &Command{
-						Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional"}, Failures: []CommandFailure{}, Idempotency: "required",
+						Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.validating", Guarantee: "transactional", Payload: &AuditPayload{Schema: SchemaRef{Ref: "ReleaseAuditPayload"}, SchemaVersion: 1, Retention: "security", Fields: []AuditField{{Name: "releaseId", Sensitivity: "internal"}}}}, Failures: []CommandFailure{}, Idempotency: "required",
 						Execution: &AsyncExecution{Mode: "async", Guarantee: "transactional", JobKind: "release.finalize", ResourceKind: "release", InitialEvent: "release.validating", InitialState: "validating", StatusOperation: "getRelease", EventsOperation: "listReleaseEvents", Cancellation: "unsupported"},
 					},
 				},
@@ -178,7 +207,7 @@ func TestValidateAsyncExecutionContract(t *testing.T) {
 		{name: "unknown status operation", mutate: func(doc *Document) { doc.Endpoints[2].Command.Execution.StatusOperation = "missingRelease" }, wantErr: "references unknown operation"},
 		{name: "status command", mutate: func(doc *Document) {
 			doc.Endpoints[0].Kind = "command"
-			doc.Endpoints[0].Command = &Command{Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.read", Guarantee: "transactional"}, Failures: []CommandFailure{}}
+			doc.Endpoints[0].Command = &Command{Owner: "ReleaseAPI", Audit: AuditPolicy{Required: true, SuccessAction: "release.read", Guarantee: "transactional", Payload: &AuditPayload{Schema: SchemaRef{Ref: "ReleaseAuditPayload"}, SchemaVersion: 1, Retention: "security", Fields: []AuditField{{Name: "releaseId", Sensitivity: "internal"}}}}, Failures: []CommandFailure{}}
 		}, wantErr: "must reference a GET query"},
 	}
 	for _, test := range tests {

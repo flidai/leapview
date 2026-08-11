@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"strings"
 	"sync/atomic"
+
+	apigenaudit "github.com/Yacobolo/toolbelt/apigen/runtime/audit"
 )
 
 type Guarantee string
@@ -25,11 +27,12 @@ var (
 
 // Contract is the runtime-normalized subset of a generated command contract.
 type Contract struct {
-	OperationID string
-	Owner       string
-	AuditAction string
-	Guarantee   Guarantee
-	Execution   *AsyncExecutionContract
+	OperationID  string
+	Owner        string
+	AuditAction  string
+	Guarantee    Guarantee
+	AuditPayload *apigenaudit.Contract
+	Execution    *AsyncExecutionContract
 }
 
 type AsyncExecutionContract struct {
@@ -52,6 +55,12 @@ func (c Contract) Validate() error {
 	case GuaranteeTransactional, GuaranteeBestEffort:
 	default:
 		return fmt.Errorf("%w: operation %q has unsupported audit guarantee %q", ErrInvalidContract, c.OperationID, c.Guarantee)
+	}
+	if c.AuditPayload == nil {
+		return fmt.Errorf("%w: operation %q requires a typed audit payload", ErrInvalidContract, c.OperationID)
+	}
+	if err := c.AuditPayload.Validate(); err != nil {
+		return fmt.Errorf("%w: operation %q audit payload: %v", ErrInvalidContract, c.OperationID, err)
 	}
 	if execution := c.Execution; execution != nil {
 		if execution.Mode != "async" || execution.Guarantee != "transactional" || strings.TrimSpace(execution.JobKind) == "" || strings.TrimSpace(execution.ResourceKind) == "" ||
