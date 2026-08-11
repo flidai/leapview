@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
+	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	apigenapi "github.com/flidai/leapview/internal/app/api/gen"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
@@ -76,9 +78,36 @@ func (client *deploymentCLIClient) uploadReleaseArtifact(ctx context.Context, pr
 }
 
 func (client *deploymentCLIClient) finalizeRelease(ctx context.Context, project, releaseID, key string) (releasegen.ReleaseResponse, error) {
-	var response releasegen.ReleaseResponse
-	err := client.json(ctx, http.MethodPost, "finalizeRelease", map[string]string{"project": project, "release": releaseID}, nil, key, nil, &response)
-	return response, err
+	generated := releasegen.NewGenClient(capabilityAPITransport{target: client.target, token: client.token, client: client.http})
+	response, err := generated.FinalizeRelease(ctx, releasegen.GenFinalizeReleaseClientRequest{
+		Project: project,
+		Release: releaseID,
+		Headers: releasegen.GenFinalizeReleaseClientHeaders{IdempotencyKey: key},
+	})
+	if err == nil {
+		return response.Body, nil
+	}
+	var failure releasegen.GenFinalizeReleaseFailure
+	if errors.As(err, &failure) {
+		return releasegen.ReleaseResponse{}, finalizeReleaseCLIError(failure)
+	}
+	return releasegen.ReleaseResponse{}, err
+}
+
+func finalizeReleaseCLIError(failure releasegen.GenFinalizeReleaseFailure) error {
+	problemError := func(label string) func(apigenclient.ProblemDetails) error {
+		return func(problem apigenclient.ProblemDetails) error {
+			return fmt.Errorf("%s: %s (%s)", label, problem.Detail, problem.Code)
+		}
+	}
+	return releasegen.MatchGenFinalizeReleaseFailure(
+		failure,
+		problemError("release finalization conflict"),
+		problemError("release is immutable"),
+		problemError("release artifacts are incomplete"),
+		problemError("release not found"),
+		problemError("release finalization queue unavailable"),
+	)
 }
 
 func (client *deploymentCLIClient) getRelease(ctx context.Context, project, releaseID string) (releasegen.ReleaseResponse, error) {

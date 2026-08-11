@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -122,6 +123,17 @@ func (transport Transport) DoAPIGen(
 		)
 	}
 	if httpResponse.StatusCode >= http.StatusMultipleChoices {
+		mediaType, _, _ := mime.ParseMediaType(metadata.ContentType)
+		if mediaType == "application/problem+json" {
+			var problem apigenclient.ProblemDetails
+			if err := json.Unmarshal(payload, &problem); err == nil && strings.TrimSpace(problem.Code) != "" {
+				return metadata, &apigenclient.ProblemError{
+					OperationID: request.OperationID,
+					Response:    metadata,
+					Problem:     problem,
+				}
+			}
+		}
 		return metadata, fmt.Errorf(
 			"%s %s: %s",
 			request.Method,

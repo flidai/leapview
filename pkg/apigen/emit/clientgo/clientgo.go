@@ -42,6 +42,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("package " + packageName(opts) + "\n\n")
 	b.WriteString("import (\n")
 	b.WriteString("\t\"context\"\n")
+	if hasGeneratedFailures(endpoints) {
+		b.WriteString("\t\"errors\"\n")
+	}
 	b.WriteString("\t\"net/http\"\n")
 	b.WriteString("\t\"net/url\"\n\n")
 	b.WriteString("\tapigenclient \"github.com/Yacobolo/toolbelt/apigen/runtime/client\"\n")
@@ -136,6 +139,9 @@ func emitOperation(b *strings.Builder, doc ir.Document, endpoint ir.Endpoint) er
 	b.WriteString("\tHeaders http.Header\n")
 	b.WriteString("\tContentType string\n")
 	b.WriteString("}\n\n")
+	if endpoint.Command != nil && len(endpoint.Command.Failures) > 0 {
+		emitOperationFailures(b, endpoint)
+	}
 
 	b.WriteString("// " + name + " executes the generated " + endpoint.OperationID + " operation.\n")
 	b.WriteString("func (client *GenClient) " + name + "(ctx context.Context, request Gen" + name + "ClientRequest) (" + responseType + ", error) {\n")
@@ -188,9 +194,75 @@ func emitOperation(b *strings.Builder, doc ir.Document, endpoint ir.Endpoint) er
 	b.WriteString("\t\tHeaders: metadata.Headers,\n")
 	b.WriteString("\t\tContentType: metadata.ContentType,\n")
 	b.WriteString("\t}\n")
+	if endpoint.Command != nil && len(endpoint.Command.Failures) > 0 {
+		b.WriteString("\tif err != nil { err = gen" + name + "FailureFromError(err) }\n")
+	}
 	b.WriteString("\treturn response, err\n")
 	b.WriteString("}\n\n")
 	return nil
+}
+
+func hasGeneratedFailures(endpoints []ir.Endpoint) bool {
+	for _, endpoint := range endpoints {
+		if endpoint.Command != nil && len(endpoint.Command.Failures) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func emitOperationFailures(b *strings.Builder, endpoint ir.Endpoint) {
+	name := exportedName(endpoint.OperationID)
+	failureType := "Gen" + name + "Failure"
+	implementationType := "gen" + name + "Failure"
+
+	b.WriteString("// " + failureType + " is a sealed operation-owned failure declared by " + endpoint.OperationID + ".\n")
+	b.WriteString("type " + failureType + " interface {\n")
+	b.WriteString("\terror\n")
+	b.WriteString("\tProblem() apigenclient.ProblemDetails\n")
+	b.WriteString("\tgen" + name + "Failure()\n")
+	b.WriteString("}\n\n")
+	b.WriteString("type " + implementationType + " struct {\n")
+	b.WriteString("\tkind string\n")
+	b.WriteString("\tproblem *apigenclient.ProblemError\n")
+	b.WriteString("}\n\n")
+	b.WriteString("func (failure *" + implementationType + ") Error() string { return failure.problem.Error() }\n")
+	b.WriteString("func (failure *" + implementationType + ") Unwrap() error { return failure.problem }\n")
+	b.WriteString("func (failure *" + implementationType + ") Problem() apigenclient.ProblemDetails { return failure.problem.Problem }\n")
+	b.WriteString("func (*" + implementationType + ") gen" + name + "Failure() {}\n\n")
+
+	b.WriteString("// Match" + failureType + " requires one handler for every declared failure variant.\n")
+	b.WriteString("func Match" + failureType + "[T any](failure " + failureType)
+	for _, contract := range endpoint.Command.Failures {
+		b.WriteString(", on" + exportedName(contract.Kind) + " func(apigenclient.ProblemDetails) T")
+	}
+	b.WriteString(") T {\n")
+	b.WriteString("\ttyped := failure.(*" + implementationType + ")\n")
+	b.WriteString("\tswitch typed.kind {\n")
+	for _, contract := range endpoint.Command.Failures {
+		b.WriteString("\tcase " + strconv.Quote(contract.Kind) + ":\n")
+		b.WriteString("\t\treturn on" + exportedName(contract.Kind) + "(typed.Problem())\n")
+	}
+	b.WriteString("\tdefault:\n")
+	b.WriteString("\t\tpanic(\"unreachable generated failure kind\")\n")
+	b.WriteString("\t}\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString("func gen" + name + "FailureFromError(err error) error {\n")
+	b.WriteString("\tvar problem *apigenclient.ProblemError\n")
+	b.WriteString("\tif !errors.As(err, &problem) { return err }\n")
+	b.WriteString("\tswitch problem.Problem.Code {\n")
+	for _, contract := range endpoint.Command.Failures {
+		b.WriteString("\tcase " + strconv.Quote(contract.Code) + ":\n")
+		b.WriteString("\t\tif problem.Response.StatusCode != " + strconv.Itoa(contract.StatusCode) + " || (problem.Problem.Status != 0 && problem.Problem.Status != " + strconv.Itoa(contract.StatusCode) + ") {\n")
+		b.WriteString("\t\t\treturn &apigenclient.UnexpectedProblemError{ProblemError: problem, Violation: \"declared failure status does not match its contract\"}\n")
+		b.WriteString("\t\t}\n")
+		b.WriteString("\t\treturn &" + implementationType + "{kind: " + strconv.Quote(contract.Kind) + ", problem: problem}\n")
+	}
+	b.WriteString("\tdefault:\n")
+	b.WriteString("\t\treturn &apigenclient.UnexpectedProblemError{ProblemError: problem, Violation: \"problem code is not declared by this operation\"}\n")
+	b.WriteString("\t}\n")
+	b.WriteString("}\n\n")
 }
 
 func emitParameterFields(b *strings.Builder, parameters []ir.Parameter) {

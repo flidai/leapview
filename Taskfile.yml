@@ -165,6 +165,7 @@ tasks:
   ci:prepare:frontend:
     desc: Generate only the contracts and assets required by frontend CI
     cmds:
+      - task: api:generate
       - task: ui-signals:generate
       - task: visualization-ir:generate
       - task: build
@@ -559,6 +560,7 @@ tasks:
       - internal/workspace/api/gen/request_models.gen.go
       - internal/workspace/api/gen/server.apigen.gen.go
       - internal/workspace/api/gen/client.apigen.gen.go
+      - web/generated/api/failures.ts
       - docs/api/catalog.json
       - docs/api/openapi.yaml
       - docs/api/operations.json
