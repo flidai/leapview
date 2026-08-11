@@ -26,6 +26,7 @@ type apiCallOptions struct {
 	bodyFile       string
 	contentType    string
 	idempotencyKey string
+	ifMatch        string
 }
 
 func apiCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
@@ -67,6 +68,7 @@ func apiCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 		"",
 		"stable retry key for mutating operations",
 	)
+	call.Flags().StringVar(&callOpts.ifMatch, "if-match", "", "strong resource revision for commands requiring concurrency control")
 	parent.AddCommand(list, describe, call)
 	return parent
 }
@@ -123,9 +125,9 @@ func runAPICall(ctx context.Context, opts *rootOptions, operationID string, call
 	if err != nil {
 		return err
 	}
-	idempotencyKey := strings.TrimSpace(callOpts.idempotencyKey)
-	if idempotencyKey == "" && contract.Method != http.MethodGet {
-		idempotencyKey = apitransport.NewRequestID()
+	idempotencyKey, ifMatch := generatedCommandHeaders(contract, callOpts)
+	if contract.Command != nil && contract.Command.Concurrency == "if-match" && ifMatch == "" {
+		return fmt.Errorf("operation %q requires --if-match", operationID)
 	}
 	return doRawAPI(
 		ctx,
@@ -134,9 +136,26 @@ func runAPICall(ctx context.Context, opts *rootOptions, operationID string, call
 		token,
 		contentType,
 		idempotencyKey,
+		ifMatch,
 		body,
 		os.Stdout,
 	)
+}
+
+func generatedCommandHeaders(contract apiaggregate.GenOperationContract, callOpts *apiCallOptions) (idempotencyKey, ifMatch string) {
+	if contract.Command == nil {
+		return "", ""
+	}
+	if contract.Command.Idempotency == "required" {
+		idempotencyKey = strings.TrimSpace(callOpts.idempotencyKey)
+		if idempotencyKey == "" {
+			idempotencyKey = apitransport.NewRequestID()
+		}
+	}
+	if contract.Command.Concurrency == "if-match" {
+		ifMatch = strings.TrimSpace(callOpts.ifMatch)
+	}
+	return idempotencyKey, ifMatch
 }
 
 func sortedAPIOperationContracts() []apiaggregate.GenOperationContract {
@@ -281,6 +300,7 @@ func doRawAPI(
 	token,
 	contentType,
 	idempotencyKey string,
+	ifMatch string,
 	body io.Reader,
 	out io.Writer,
 ) error {
@@ -295,6 +315,9 @@ func doRawAPI(
 	}
 	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)

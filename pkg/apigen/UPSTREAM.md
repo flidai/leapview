@@ -23,7 +23,10 @@ and describe them here as they are introduced. Relative to `apigen/v0.7.3`, this
 fork adds the typed `@apigen.command` decorator, normalized command metadata in
 IR v4, validation for stable operation IDs/audit actions/targets and HTTP
 idempotency or concurrency policies, generated Go command contracts, and the
-OpenAPI `x-apigen-command` projection. The published Go module omits the nested
+OpenAPI `x-apigen-command` projection. It also adds generated concrete-route
+policy lookup and full runtime registries plus the shared command invocation,
+dependency, optimistic-concurrency, completion-guard, and observation runtime.
+The published Go module omits the nested
 `example` module even though the root smoke tests require it, so `example/` was
 copied without modification from the same upstream commit recorded above.
 

@@ -3,11 +3,14 @@ package module
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 )
 
 func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPublicationCommand) error {
@@ -32,8 +35,42 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 			}
 		}
 	}
-	_, err := m.publications.MutatePublication(r.Context(), command.WorkspaceID, command.Publication, principal.ID, publication.Action(command.Action))
+	requestID := firstAdminPublicationHeader(r, "X-Request-Id", "X-Request-ID")
+	if requestID == "" {
+		requestID = apitransport.NewRequestID()
+		r.Header.Set("X-Request-ID", requestID)
+	}
+	correlationID := firstAdminPublicationHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	if correlationID == "" {
+		correlationID = requestID
+	}
+	idempotencyKey := firstAdminPublicationHeader(r, "Idempotency-Key")
+	if idempotencyKey == "" {
+		// Browser commands identify one mutation with the request ID. This keeps
+		// the UI retry identity stable without requiring a separate signal field.
+		idempotencyKey = requestID
+	}
+	invocation := apigencommand.Invocation{
+		Surface:        apigencommand.SurfaceUI,
+		TargetValues:   map[string]string{"workspace": strings.TrimSpace(command.WorkspaceID)},
+		IdempotencyKey: idempotencyKey,
+		RequestID:      requestID,
+		CorrelationID:  correlationID,
+	}
+	_, err := m.publications.MutatePublicationWithInvocation(r.Context(), command.WorkspaceID, command.Publication, principal.ID, publication.Action(command.Action), invocation)
 	return err
+}
+
+func firstAdminPublicationHeader(r *http.Request, names ...string) string {
+	if r == nil {
+		return ""
+	}
+	for _, name := range names {
+		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool, error) {

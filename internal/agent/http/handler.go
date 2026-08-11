@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
@@ -96,7 +96,11 @@ func (h *Handler) CreateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		return
 	}
 	h.recordCommandAudit(r, createAgentConversationOperation, scope, "conversation", conversation.ID)
-	writeJSON(w, stdhttp.StatusCreated, agentConversationDTO(conversation))
+	response := agentConversationDTO(conversation)
+	if etag, revisionErr := agent.ConversationRevision(conversation); revisionErr == nil {
+		w.Header().Set("ETag", etag)
+	}
+	writeJSON(w, stdhttp.StatusCreated, response)
 }
 
 func (h *Handler) ListConversations(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -136,7 +140,9 @@ func (h *Handler) GetConversation(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return
 	}
 	response := agentConversationDTO(conversation)
-	w.Header().Set("ETag", agentResourceETag(response))
+	if etag, revisionErr := agent.ConversationRevision(conversation); revisionErr == nil {
+		w.Header().Set("ETag", etag)
+	}
 	writeJSON(w, stdhttp.StatusOK, response)
 }
 
@@ -145,24 +151,24 @@ func (h *Handler) UpdateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 	if !ok {
 		return
 	}
-	existing, err := service.GetConversation(r.Context(), scope, chi.URLParam(r, "conversation"))
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, agent.ErrNotFound) {
-			err = apigenfailure.Wrap("not_found", err)
-		}
-		h.writeCommandFailure(w, r, updateAgentConversationOperation, err)
-		return
-	}
-	if !agentIfMatch(r.Header.Get("If-Match"), agentResourceETag(agentConversationDTO(existing))) {
-		writeJSONError(w, fmt.Errorf("If-Match does not match the current conversation"), stdhttp.StatusPreconditionFailed)
-		return
-	}
 	var input api.AgentConversationUpdateRequest
 	if err := decodeAgentJSON(r, &input); err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
-	conversation, err := service.UpdateConversation(r.Context(), scope, chi.URLParam(r, "conversation"), input.Title)
+	executor, err := apigencommand.NewExecutor(agentgen.GetAPIGenCommandRuntimeContract, h.options.Logger)
+	if err != nil {
+		h.writeCommandFailure(w, r, updateAgentConversationOperation, err)
+		return
+	}
+	conversationID := chi.URLParam(r, "conversation")
+	conversation, err := service.UpdateConversationWithRevision(r.Context(), scope, conversationID, input.Title, func(current agent.Conversation) error {
+		currentRevision, revisionErr := agent.ConversationRevision(current)
+		if revisionErr != nil {
+			return revisionErr
+		}
+		return executor.CheckConcurrency(r.Context(), updateAgentConversationOperation.APIGenOperationID(), r.Header.Get("If-Match"), currentRevision)
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, agent.ErrNotFound) {
 			err = apigenfailure.Wrap("not_found", err)
@@ -174,7 +180,9 @@ func (h *Handler) UpdateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 	}
 	h.recordCommandAudit(r, updateAgentConversationOperation, scope, "conversation", conversation.ID)
 	response := agentConversationDTO(conversation)
-	w.Header().Set("ETag", agentResourceETag(response))
+	if etag, revisionErr := agent.ConversationRevision(conversation); revisionErr == nil {
+		w.Header().Set("ETag", etag)
+	}
 	writeJSON(w, stdhttp.StatusOK, response)
 }
 
@@ -576,7 +584,7 @@ func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	if !agentIfMatch(r.Header.Get("If-Match"), agentResourceETag(current)) {
+	if !etagMatches(r.Header.Get("If-Match"), agentResourceETag(current)) {
 		writeJSONError(w, fmt.Errorf("If-Match does not match the current agent configuration"), stdhttp.StatusPreconditionFailed)
 		return
 	}
@@ -612,12 +620,14 @@ func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 }
 
 func agentResourceETag(value any) string {
-	payload, _ := json.Marshal(value)
-	digest := sha256.Sum256(payload)
-	return fmt.Sprintf("\"%x\"", digest[:])
+	token, err := apigencommand.RevisionToken(value)
+	if err != nil {
+		return ""
+	}
+	return token
 }
 
-func agentIfMatch(value, current string) bool {
+func etagMatches(value, current string) bool {
 	for _, candidate := range strings.Split(value, ",") {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "*" || candidate == current {
@@ -683,6 +693,10 @@ func (h *Handler) agentCommandRequest(w stdhttp.ResponseWriter, r *stdhttp.Reque
 // writeCommandFailure resolves classified domain failures through the
 // compiler-checked generated operation vocabulary.
 func (h *Handler) writeCommandFailure(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID agentgen.GenCommandOperationID, err error) {
+	if errors.Is(err, apigencommand.ErrPreconditionRequired) || errors.Is(err, apigencommand.ErrPreconditionFailed) {
+		apitransport.WriteProblem(w, r, stdhttp.StatusPreconditionFailed, "PRECONDITION_FAILED", "The command revision does not match the current resource.", nil)
+		return
+	}
 	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, h.options.Logger, operationID, agentgen.GetAPIGenCommandFailureContracts, err)
 }
 

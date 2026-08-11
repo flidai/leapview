@@ -31708,6 +31708,8 @@ paths:
         - Publications
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:
@@ -32038,6 +32040,8 @@ paths:
         - Publications
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:
@@ -32368,6 +32372,8 @@ paths:
         - Publications
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:

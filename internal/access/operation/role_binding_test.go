@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 )
@@ -156,7 +157,7 @@ func TestRoleBindingCommandsShareStableOperationContract(t *testing.T) {
 	}
 	invocation := access.RoleBindingInvocation{
 		PrincipalID: "principal-admin", Surface: access.OperationSurfaceUI,
-		RequestID: "request-1", CorrelationID: "correlation-1",
+		RequestID: "request-1", CorrelationID: "correlation-1", IdempotencyKey: "role-binding-1",
 	}
 
 	created, err := commands.CreateRoleBinding(t.Context(), invocation, access.RoleBindingInput{
@@ -172,6 +173,10 @@ func TestRoleBindingCommandsShareStableOperationContract(t *testing.T) {
 	assertRoleBindingAudit(t, repo.audits[0], access.OperationCreateRoleBinding, "role_binding.created", access.OperationSurfaceUI)
 
 	invocation.Surface = access.OperationSurfaceAPI
+	invocation.ConcurrencyToken, err = access.RoleBindingRevision(created)
+	if err != nil {
+		t.Fatalf("role binding revision: %v", err)
+	}
 	updated, err := commands.UpdateRoleBinding(t.Context(), invocation, "sales", created.ID, access.RoleBindingInput{
 		WorkspaceID: "sales", SubjectType: access.SubjectPrincipal,
 		SubjectID: "principal-viewer", Role: access.RoleEditor,
@@ -192,6 +197,28 @@ func TestRoleBindingCommandsShareStableOperationContract(t *testing.T) {
 		t.Fatalf("deleted binding = %#v remaining = %#v", deleted, repo.bindings)
 	}
 	assertRoleBindingAudit(t, repo.audits[2], access.OperationDeleteRoleBinding, "role_binding.deleted", access.OperationSurfaceAPI)
+}
+
+func TestRoleBindingUpdateRejectsStaleRevisionInsideAuditTransaction(t *testing.T) {
+	repo := &roleBindingRepository{bindings: map[string]access.RoleBinding{
+		"binding-1": {ID: "binding-1", WorkspaceID: "sales", SubjectType: access.SubjectPrincipal, SubjectID: "viewer", Role: access.RoleViewer},
+	}}
+	commands, err := NewRoleBindingCommands(func() (access.Repository, error) { return repo, nil }, roleBindingTestCatalog(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = commands.UpdateRoleBinding(t.Context(), access.RoleBindingInvocation{
+		Surface: access.OperationSurfaceAPI, ConcurrencyToken: `"stale"`,
+	}, "sales", "binding-1", access.RoleBindingInput{WorkspaceID: "sales", SubjectType: access.SubjectPrincipal, SubjectID: "viewer", Role: access.RoleEditor})
+	if !errors.Is(err, apigencommand.ErrPreconditionFailed) {
+		t.Fatalf("update error = %v", err)
+	}
+	if got := repo.bindings["binding-1"].Role; got != access.RoleViewer {
+		t.Fatalf("stale update committed role %q", got)
+	}
+	if len(repo.audits) != 0 {
+		t.Fatalf("stale update wrote audit: %#v", repo.audits)
+	}
 }
 
 func TestRoleBindingOperationDescriptorsAreTransportNeutral(t *testing.T) {

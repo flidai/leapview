@@ -385,6 +385,7 @@ func TestPublicProtocolRequiresIdempotencyKeyForMutationsOnly(t *testing.T) {
 	}{
 		{"/api/v1/principals", http.StatusBadRequest},
 		{"/api/v1/workspaces/sales/semantic-models/orders/query", http.StatusNoContent},
+		{"/api/v1/workspaces/sales/targets/demo/environments/dev/connection-bindings/warehouse/plan", http.StatusNoContent},
 	} {
 		req := httptest.NewRequest(http.MethodPost, tc.path, bytes.NewBufferString(`{}`))
 		req.Header.Set("Authorization", "Bearer token")
