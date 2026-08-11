@@ -3,10 +3,11 @@ import type { RendererContext } from '../../host-controller'
 import { axis, field, formatField, inlineDataset, labelFormatter, legend, type EChartsTranslation } from './common'
 import { applyDecisionContext } from './cartesian'
 import { echartsLabelPolicy } from './label-policy'
+import type { CategoryColorRegistry } from './category-colors'
 
 type PointSpec = Extract<VisualizationEnvelope['spec'], { kind: 'point' }>
 
-export function pointOption(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation {
+export function pointOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
   const spec = envelope.spec as PointSpec
   const dataset = inlineDataset(envelope, spec.x.dataset)
   const rows = dataset?.rows ?? []
@@ -35,7 +36,7 @@ export function pointOption(envelope: VisualizationEnvelope, context: RendererCo
       symbolSize: pointSymbolSize(envelope, spec),
       itemStyle: {
         opacity: spec.presentation.overplot === 'opacity' ? spec.presentation.opacity : 1,
-        ...(spec.colorScale?.kind === 'categorical' && spec.color ? { color: categoricalPointColor(envelope, spec.color, context) } : {}),
+        ...(spec.colorScale?.kind === 'categorical' && spec.color ? { color: categoricalPointColor(envelope, spec.color, context, categoryColors) } : {}),
       },
       ...labels,
       label: { ...labels.label, position: 'top' },
@@ -132,14 +133,13 @@ function pointColorDomain(
   return { min, max }
 }
 
-function categoricalPointColor(envelope: VisualizationEnvelope, ref: VisualizationFieldRef, context: RendererContext) {
+function categoricalPointColor(envelope: VisualizationEnvelope, ref: VisualizationFieldRef, context: RendererContext, categoryColors: CategoryColorRegistry) {
   const dataset = inlineDataset(envelope, ref.dataset)
   const index = dataset?.columns.indexOf(ref.field) ?? -1
-  const domain = [...new Set((dataset?.rows ?? []).map((row) => String(row[index])))].sort((left, right) => left.localeCompare(right, 'en'))
+  categoryColors.register(envelope, ref, index < 0 ? [] : (dataset?.rows ?? []).map((row) => row[index]))
   return (params: { value?: unknown[] }) => {
-    const value = Array.isArray(params.value) ? String(params.value[index]) : ''
-    const colorIndex = Math.max(0, domain.indexOf(value)) % context.colors.data.length
-    return context.colors.data[colorIndex]
+    const value = Array.isArray(params.value) ? params.value[index] : undefined
+    return categoryColors.color(envelope, ref, value, context)
   }
 }
 

@@ -39,7 +39,7 @@ export const defaultRendererContext: RendererContext = Object.freeze({
   colors: Object.freeze({
     foreground: '#24292f', muted: '#57606a', grid: '#d8dee4', surface: '#ffffff', accent: '#0969da',
     success: '#1a7f37', attention: '#9a6700', danger: '#cf222e',
-    data: Object.freeze(['#0969da', '#1a7f37', '#8250df', '#bc4c00', '#116329', '#bf3989', '#1b7c83', '#9a6700']),
+    data: Object.freeze(['#006edb', '#eb670f', '#30a147', '#ce2c85', '#856d4c', '#a830e8', '#179b9b', '#b88700', '#df0c24', '#808fa3', '#64762d', '#167e53', '#9d615c', '#866e04', '#894ceb', '#d43511', '#527a29']),
   }),
 })
 

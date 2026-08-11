@@ -175,10 +175,16 @@ export function axis(
   }
 }
 
-export function legend(position: string, context: RendererContext): EChartsTranslation | undefined {
+export function legend(position: string, context: RendererContext, scroll = false): EChartsTranslation | undefined {
   if (position === 'hidden') return undefined
   return {
     show: true,
+    ...(scroll ? {
+      type: 'scroll',
+      pageIconColor: context.colors.foreground,
+      pageIconInactiveColor: context.colors.grid,
+      pageTextStyle: { color: context.colors.muted, fontFamily: context.fontFamily },
+    } : {}),
     orient: position === 'left' || position === 'right' ? 'vertical' : 'horizontal',
     [position]: 0,
     textStyle: { color: context.colors.muted, fontFamily: context.fontFamily },
