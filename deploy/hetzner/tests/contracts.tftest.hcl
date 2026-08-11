@@ -48,12 +48,12 @@ run "reject_mutable_application_image" {
   expect_failures = [var.leapview_image]
 }
 
-run "reject_mutable_proxy_image" {
+run "reject_unsupported_base_image" {
   command = plan
 
   variables {
-    caddy_image = "caddy:2"
+    image = "ubuntu-22.04"
   }
 
-  expect_failures = [var.caddy_image]
+  expect_failures = [var.image]
 }

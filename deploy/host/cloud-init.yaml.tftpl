@@ -1,0 +1,20 @@
+#cloud-config
+write_files:
+  - path: /usr/local/sbin/leapview-bootstrap
+    owner: root:root
+    permissions: "0700"
+    encoding: b64
+    content: ${bootstrap_b64}
+  - path: /run/leapview/bootstrap.json
+    owner: root:root
+    permissions: "0600"
+    encoding: b64
+    content: ${config_b64}
+  - path: /run/leapview/image-reference
+    owner: root:root
+    permissions: "0600"
+    encoding: b64
+    content: ${image_b64}
+
+runcmd:
+  - [/usr/local/sbin/leapview-bootstrap]

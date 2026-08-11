@@ -149,13 +149,27 @@ WORKDIR /app
 
 COPY --from=build /out/leapview /usr/local/bin/leapview
 COPY --from=build /out/leapviewctl /usr/local/libexec/leapviewctl
+COPY --from=build /out/leapviewctl /usr/local/share/leapview/deployment/leapviewctl
+COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/deployment.env.example /usr/local/share/leapview/deployment/
+COPY deploy/host/files/ /usr/local/share/leapview/deployment/
 COPY --from=web /src/static ./static
 COPY --from=build /src/schemas ./schemas
 COPY --from=sourcegen /src/.data/map-assets ./.data/map-assets
 COPY dashboards ./dashboards
 COPY evaluation ./evaluation
 
-RUN mkdir -p /var/lib/leapview && \
+RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
+      /usr/local/share/leapview/deployment/leapviewctl-wrapper \
+      /usr/local/share/leapview/deployment/leapview-backup-hook && \
+    chmod 0400 /usr/local/share/leapview/deployment/compose.yaml \
+      /usr/local/share/leapview/deployment/compose.https.yaml \
+      /usr/local/share/leapview/deployment/Caddyfile \
+      /usr/local/share/leapview/deployment/deployment.env.example \
+      /usr/local/share/leapview/deployment/leapview-backup.service \
+      /usr/local/share/leapview/deployment/leapview-backup.timer \
+      /usr/local/share/leapview/deployment/leapview-backup-maintenance.service \
+      /usr/local/share/leapview/deployment/leapview-backup-maintenance.timer && \
+    mkdir -p /var/lib/leapview && \
     chown -R leapview:leapview /var/lib/leapview /app
 
 USER leapview

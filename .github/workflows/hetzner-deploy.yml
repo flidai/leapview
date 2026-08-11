@@ -11,6 +11,8 @@ on:
 permissions:
   contents: read
   id-token: write
+  attestations: read
+  packages: read
 
 concurrency:
   group: ephemeral-hetzner-deployment
@@ -32,6 +34,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Verify deployment image attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh attestation verify "oci://$TF_VAR_leapview_image" --repo "$GITHUB_REPOSITORY"
 
       - name: Fetch ephemeral infrastructure secrets
         uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
@@ -128,9 +135,25 @@ jobs:
         working-directory: deploy/hetzner
         run: |
           server_ip="$(terraform output -raw server_ipv4)"
-          archive="$(ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" 'leapviewctl backup')"
-          ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" "leapviewctl restore '$archive'"
-          ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" 'leapviewctl status'
+          ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" 'bash -se' <<'REMOTE'
+          install -m 0600 /dev/null /etc/leapview/restic.env
+          printf '%s\n' \
+            'RESTIC_REPOSITORY=/opt/leapview/qualification-restic' \
+            'RESTIC_PASSWORD=ephemeral-qualification-only' \
+            > /etc/leapview/restic.env
+          set -a
+          source /etc/leapview/restic.env
+          set +a
+          leapview-backup-hook --init
+          archive="$(leapviewctl backup)"
+          restore_root=/opt/leapview/qualification-restic-restore
+          restic restore latest --tag leapview --target "$restore_root"
+          cmp "$archive" "$restore_root$archive"
+          cmp "$archive.sha256" "$restore_root$archive.sha256"
+          leapviewctl restore "$archive"
+          leapview-backup-hook --maintain
+          leapviewctl status
+          REMOTE
 
       - name: Destroy ephemeral deployment
         if: always()

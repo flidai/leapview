@@ -28,6 +28,11 @@ variable "image" {
   description = "Base operating-system image."
   type        = string
   default     = "ubuntu-24.04"
+
+  validation {
+    condition     = var.image == "ubuntu-24.04"
+    error_message = "image must be ubuntu-24.04; the automated host contract supports Ubuntu 24.04 LTS only."
+  }
 }
 
 variable "ssh_allowed_cidrs" {
@@ -78,16 +83,5 @@ variable "leapview_image" {
   validation {
     condition     = can(regex("^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$", var.leapview_image))
     error_message = "leapview_image must be an immutable OCI reference ending in @sha256:<64 lowercase hex characters>."
-  }
-}
-
-variable "caddy_image" {
-  description = "Caddy OCI image pinned to an immutable sha256 digest."
-  type        = string
-  default     = "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d"
-
-  validation {
-    condition     = can(regex("^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$", var.caddy_image))
-    error_message = "caddy_image must be an immutable OCI reference ending in @sha256:<64 lowercase hex characters>."
   }
 }

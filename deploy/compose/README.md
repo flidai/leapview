@@ -26,6 +26,11 @@ production, `leapviewctl` provides the supported initialization, backup,
 restore, upgrade, and rollback workflow. Run `./leapviewctl help` for its
 commands.
 
+The same archive also carries the provider-neutral Ubuntu bootstrap and host
+operations assets. VPS adapters use the matching payload embedded in the
+immutable application image and delegate installation to `leapviewctl host
+install`; they do not maintain a provider-specific Compose lifecycle.
+
 ## v0.1.0 migration policy
 
 State created by v0.1.0 is **fresh-install-only** for LeapView v0.2.0-rc.1.

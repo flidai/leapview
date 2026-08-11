@@ -220,9 +220,9 @@ func classifyPath(changedPath string, jobs *Jobs, reasons map[string]struct{}) s
 			return ""
 		}
 		jobs.DeploymentContracts = true
-		if strings.HasPrefix(changedPath, "deploy/compose/") {
+		if strings.HasPrefix(changedPath, "deploy/compose/") || strings.HasPrefix(changedPath, "deploy/host/") {
 			jobs.ProductionImage = true
-			reasons["compose deployment"] = struct{}{}
+			reasons["production deployment"] = struct{}{}
 			return ""
 		}
 		reasons["deployment"] = struct{}{}

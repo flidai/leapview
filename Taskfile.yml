@@ -873,7 +873,7 @@ tasks:
     deps:
       - api:generate
     cmds:
-      - go test ./cmd/leapviewctl ./internal/app/cli/composectl ./deploy/compose
+      - go test ./cmd/leapviewctl ./internal/app/cli/composectl ./internal/app/cli/hostinstall ./deploy/compose ./deploy/host
       - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualificationContainerRuntimeLifecycle$'
       - go test ./deploy/hetzner
       - go test ./deploy/hetzner-site
