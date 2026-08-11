@@ -17,6 +17,13 @@ if [[ "${ID:-}" != ubuntu || "${VERSION_ID:-}" != 24.04 ]]; then
   printf 'LeapView host bootstrap requires Ubuntu 24.04 LTS\n' >&2
   exit 1
 fi
+case "$(dpkg --print-architecture)" in
+  amd64|arm64) ;;
+  *)
+    printf 'LeapView host bootstrap supports amd64 and arm64 hosts\n' >&2
+    exit 1
+    ;;
+esac
 
 IFS= read -r leapview_image <"$image_file"
 if [[ ! "$leapview_image" =~ ^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$ ]]; then
@@ -37,6 +44,7 @@ apt-get install -y --no-install-recommends \
   restic \
   unattended-upgrades
 systemctl enable --now docker
+docker version >/dev/null
 
 docker pull "$leapview_image"
 payload_container="$(docker create "$leapview_image")"

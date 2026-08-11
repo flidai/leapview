@@ -1,11 +1,11 @@
 [Unit]
-Description=Create a consistent LeapView backup
-Requires=docker.service
-After=docker.service
+Description=Apply LeapView backup retention and verify repository integrity
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/leapviewctl backup
+ExecStart=/usr/local/sbin/leapview-backup-hook --maintain
 Environment=RESTIC_CACHE_DIR=/opt/leapview/.restic-cache
 UMask=0077
 Nice=10
@@ -21,4 +21,4 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
-TimeoutStartSec=2h
+TimeoutStartSec=6h

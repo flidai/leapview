@@ -37,7 +37,7 @@ The controller is optional if an existing container platform already provides eq
 
 ## Generic VPS host contract
 
-LeapView's provider adapters share one Ubuntu 24.04 LTS host bootstrap. It installs Docker Compose and the host prerequisites, pulls the immutable application image, extracts the image's matching deployment payload, and delegates all installation behavior to `leapviewctl host install`. The typed Go installer validates configuration before mutation, installs the operational files atomically, initializes the instance once, starts it, and enables the common backup timer.
+LeapView's provider adapters share one Ubuntu 24.04 LTS host bootstrap. It installs Docker Compose and the host prerequisites, pulls the immutable application image, extracts the image's matching deployment payload, and delegates all installation behavior to `leapviewctl host install`. The typed Go installer validates configuration before mutation, stages immutable digest-named host generations, activates one generation atomically, initializes the instance once, starts it, and enables daily backup plus weekly retention and integrity-check timers.
 
 This boundary keeps server creation, IPs, firewalls, DNS, and optional provider snapshots in thin provider adapters. Compose configuration, proxy defaults, initialization, backup retention, upgrades, and rollback remain provider-neutral. After bootstrap, operators use the same `leapviewctl` commands on every supported VPS provider.
 

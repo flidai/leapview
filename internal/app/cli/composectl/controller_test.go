@@ -352,6 +352,7 @@ func TestRestoreOperationFaultsPreserveInitialServiceState(t *testing.T) {
 			if err := os.WriteFile(archive, []byte("archive"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			require.NoError(t, writeBackupChecksum(archive))
 			gotErr := c.Restore(context.Background(), archive)
 			if gotErr == nil && (test.backupErr != nil || test.archiveErr != nil || test.startErr != nil) {
 				if test.wasRunning || test.archiveErr != nil || test.backupErr != nil {
@@ -364,6 +365,36 @@ func TestRestoreOperationFaultsPreserveInitialServiceState(t *testing.T) {
 			if starts != test.wantStarts {
 				t.Fatalf("start calls=%d want %d error=%v", starts, test.wantStarts, gotErr)
 			}
+		})
+	}
+}
+
+func TestRestoreRejectsMissingOrMismatchedChecksumBeforeStopping(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		checksum string
+		want     string
+	}{
+		{name: "missing", want: "checksum"},
+		{name: "mismatched", checksum: strings.Repeat("0", 64) + "\n", want: "checksum mismatch"},
+		{name: "malformed", checksum: "not-a-checksum\n", want: "invalid backup checksum"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			archive := filepath.Join(root, "restore.tar.gz")
+			require.NoError(t, os.WriteFile(archive, []byte("archive"), 0o600))
+			if test.checksum != "" {
+				require.NoError(t, os.WriteFile(archive+".sha256", []byte(test.checksum), 0o600))
+			}
+			controller, err := New(Options{Root: root})
+			require.NoError(t, err)
+			stopped := false
+			controller.isRunningOverride = func(context.Context) (bool, error) { return true, nil }
+			controller.stopOverride = func(context.Context, int) error { stopped = true; return nil }
+
+			err = controller.Restore(t.Context(), archive)
+			require.ErrorContains(t, err, test.want)
+			require.False(t, stopped)
 		})
 	}
 }

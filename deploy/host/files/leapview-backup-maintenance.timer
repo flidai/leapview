@@ -1,0 +1,11 @@
+[Unit]
+Description=Maintain and verify LeapView backups weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00
+RandomizedDelaySec=2h
+Persistent=true
+Unit=leapview-backup-maintenance.service
+
+[Install]
+WantedBy=timers.target

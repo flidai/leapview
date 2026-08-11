@@ -181,8 +181,11 @@ func TestEphemeralDeploymentExercisesPublicAndBackupContracts(t *testing.T) {
 	for _, fragment := range []string{
 		"workflow_dispatch:", "environment: leapview-ephemeral-qualification", "terraform apply",
 		"public_ready=false", "--connect-timeout 5", "leapviewctl backup", "leapviewctl restore",
+		"leapview-backup-hook --init", "restic restore latest", "leapview-backup-hook --maintain",
 		`.publisherToken`, "if: always()", "terraform destroy",
 		"id-token: write",
+		"attestations: read",
+		`gh attestation verify "oci://$TF_VAR_leapview_image" --repo "$GITHUB_REPOSITORY"`,
 		"Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16",
 		`method: "oidc"`,
 		`identity-id: "6aac9c3e-4f33-45b5-aa4e-884839b950a7"`,

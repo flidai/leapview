@@ -145,10 +145,15 @@ func (i *Installer) Install(ctx context.Context) error {
 	if installed != nil && !configsEqual(*installed, config) {
 		return fmt.Errorf("bootstrap configuration does not match the installed instance; use leapviewctl lifecycle commands for changes")
 	}
-	for _, file := range requiredPayloadFiles {
-		if err := installFile(file.Target(i.paths), payload[file.Source], file.Mode, installed != nil); err != nil {
-			return fmt.Errorf("install %s: %w", file.Source, err)
-		}
+	generation, err := stageGeneration(i.paths, normalized.Image, payload)
+	if err != nil {
+		return fmt.Errorf("stage deployment generation: %w", err)
+	}
+	if err := ensurePayloadLinks(i.paths); err != nil {
+		return fmt.Errorf("install deployment links: %w", err)
+	}
+	if err := activateGeneration(i.paths, generation); err != nil {
+		return fmt.Errorf("activate deployment generation: %w", err)
 	}
 	deployment := filepath.Join(i.paths.Root, "deployment.env")
 	if err := installInitialFile(deployment, payload["deployment.env.example"], 0o600); err != nil {
@@ -183,6 +188,9 @@ func (i *Installer) Install(ctx context.Context) error {
 	}
 	if err := i.run(ctx, i.paths.Systemctl, "enable", "--now", "leapview-backup.timer"); err != nil {
 		return fmt.Errorf("enable LeapView backup timer: %w", err)
+	}
+	if err := i.run(ctx, i.paths.Systemctl, "enable", "--now", "leapview-backup-maintenance.timer"); err != nil {
+		return fmt.Errorf("enable LeapView backup maintenance timer: %w", err)
 	}
 	return nil
 }

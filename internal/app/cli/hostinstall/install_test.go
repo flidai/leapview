@@ -66,6 +66,7 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 	require.Equal(t, [][]string{
 		{paths.Systemctl, "daemon-reload"},
 		{paths.Systemctl, "enable", "--now", "leapview-backup.timer"},
+		{paths.Systemctl, "enable", "--now", "leapview-backup-maintenance.timer"},
 	}, commands)
 
 	for _, target := range []string{
@@ -85,8 +86,17 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 		require.NoError(t, statErr, target)
 		require.False(t, info.IsDir(), target)
 	}
+	current, err := os.Readlink(filepath.Join(paths.Root, "current"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("releases", "sha256-"+strings.Repeat("a", 64)), current)
+	for _, file := range requiredPayloadFiles {
+		target := file.Target(paths)
+		link, linkErr := os.Readlink(target)
+		require.NoError(t, linkErr, target)
+		require.Contains(t, link, filepath.Join("current", file.Source), target)
+	}
 
-	// A repeated bootstrap repairs/verifies the files but must never initialize
+	// A repeated bootstrap verifies the generation but must never initialize
 	// the instance or mint first-login credentials a second time.
 	require.NoError(t, installer.Install(t.Context()))
 	require.Len(t, lifecycle.initialize, 1)
@@ -221,7 +231,7 @@ func TestInstallRejectsSymlinkTargets(t *testing.T) {
 	require.NoError(t, err)
 
 	err = installer.Install(t.Context())
-	require.ErrorContains(t, err, "symbolic link")
+	require.ErrorContains(t, err, "unexpected symbolic link")
 	contents, readErr := os.ReadFile(outside)
 	require.NoError(t, readErr)
 	require.Equal(t, "preserve", string(contents))
@@ -278,6 +288,9 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, update.Close()) })
 
 	require.NoError(t, update.Apply())
+	active, err := os.Readlink(filepath.Join(paths.Root, "current"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("releases", "sha256-"+strings.Repeat("b", 64)), active)
 	contents, err := os.ReadFile(filepath.Join(paths.Root, "compose.yaml"))
 	require.NoError(t, err)
 	require.Equal(t, "next-compose.yaml\n", string(contents))
@@ -289,6 +302,9 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 	require.Equal(t, next, installed.Image)
 
 	require.NoError(t, update.Rollback())
+	active, err = os.Readlink(filepath.Join(paths.Root, "current"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("releases", "sha256-"+strings.Repeat("a", 64)), active)
 	contents, err = os.ReadFile(filepath.Join(paths.Root, "compose.yaml"))
 	require.NoError(t, err)
 	require.Equal(t, "compose.yaml\n", string(contents))
@@ -298,6 +314,29 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 	installed, err = readMarker(filepath.Join(paths.Root, installMarkerName))
 	require.NoError(t, err)
 	require.Equal(t, current, installed.Image)
+}
+
+func TestStagedGenerationDoesNotChangeActivePayload(t *testing.T) {
+	paths := testPaths(t)
+	require.NoError(t, os.MkdirAll(paths.Root, 0o700))
+	first := testPayload("first-")
+	second := testPayload("second-")
+	firstImage := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	secondImage := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+
+	firstGeneration, err := stageGeneration(paths, firstImage, first)
+	require.NoError(t, err)
+	require.NoError(t, ensurePayloadLinks(paths))
+	require.NoError(t, activateGeneration(paths, firstGeneration))
+	_, err = stageGeneration(paths, secondImage, second)
+	require.NoError(t, err)
+
+	contents, err := os.ReadFile(filepath.Join(paths.Root, "compose.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "first-compose.yaml\n", string(contents))
+	active, err := os.Readlink(filepath.Join(paths.Root, "current"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("releases", firstGeneration), active)
 }
 
 func testPaths(t *testing.T) Paths {
@@ -324,6 +363,14 @@ func writeTestPayload(t *testing.T, directory string) {
 		}
 		require.NoError(t, os.WriteFile(filepath.Join(directory, file.Source), []byte(file.Source+"\n"), mode))
 	}
+}
+
+func testPayload(prefix string) map[string][]byte {
+	payload := make(map[string][]byte, len(requiredPayloadFiles))
+	for _, file := range requiredPayloadFiles {
+		payload[file.Source] = []byte(prefix + file.Source + "\n")
+	}
+	return payload
 }
 
 func writeConfig(t *testing.T, path string, config Config) {

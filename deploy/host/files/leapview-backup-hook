@@ -1,19 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-archive="${1:?backup archive is required}"
-backup_dir="$(dirname -- "$archive")"
 restic_env=/etc/leapview/restic.env
 
-if [[ -s "$restic_env" ]]; then
+load_restic() {
+  if [[ ! -s "$restic_env" ]]; then
+    printf 'restic repository is not configured: %s\n' "$restic_env" >&2
+    exit 1
+  fi
   command -v restic >/dev/null 2>&1 || { printf 'restic.env is configured but restic is unavailable\n' >&2; exit 1; }
   set -a
   # shellcheck disable=SC1090
   source "$restic_env"
   set +a
-  restic snapshots >/dev/null 2>&1 || restic init
-  restic backup "$archive" "$archive.sha256" --tag leapview
-  restic forget --tag leapview --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
+}
+
+case "${1:-}" in
+  --init)
+    load_restic
+    exec restic init
+    ;;
+  --maintain)
+    [[ -s "$restic_env" ]] || exit 0
+    load_restic
+    restic forget --tag leapview --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
+    restic check
+    exit 0
+    ;;
+esac
+
+archive="${1:?backup archive is required}"
+backup_dir="$(dirname -- "$archive")"
+
+if [[ -s "$restic_env" ]]; then
+  load_restic
+  restic snapshots >/dev/null
+  restic backup "$archive" "$archive.sha256" --tag leapview >&2
 fi
 
 find "$backup_dir" -maxdepth 1 -type f -name 'leapview-*.tar.gz' -print \

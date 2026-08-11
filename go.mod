@@ -19,6 +19,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/creachadair/jrpc2 v1.3.5
 	github.com/cyphar/filepath-securejoin v0.7.0
+	github.com/distribution/reference v0.6.0
 	github.com/duckdb/duckdb-go/v2 v2.10504.0
 	github.com/eduardolat/gomponents-lucide v1.5.0
 	github.com/elimity-com/scim v0.0.0-20260506142751-830e1caafcc3
@@ -96,7 +97,6 @@ require (
 	github.com/dgraph-io/ristretto v1.0.0 // indirect
 	github.com/di-wu/parser v0.2.2 // indirect
 	github.com/di-wu/xsd-datetime v1.0.0 // indirect
-	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.7.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/duckdb/duckdb-go-bindings v0.10504.0 // indirect

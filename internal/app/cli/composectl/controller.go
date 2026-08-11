@@ -19,6 +19,8 @@ import (
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
+	"github.com/flidai/leapview/internal/platform/ociref"
+	platformsecret "github.com/flidai/leapview/internal/platform/security/secret"
 )
 
 const (
@@ -33,7 +35,6 @@ const (
 )
 
 var (
-	digestPattern      = regexp.MustCompile(`^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$`)
 	domainLabelPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 )
 
@@ -386,6 +387,9 @@ func (c *Controller) Backup(ctx context.Context, requestedName string) error {
 func (c *Controller) Restore(ctx context.Context, requestedArchive string) error {
 	archive, err := c.resolveArchive(requestedArchive)
 	if err != nil {
+		return err
+	}
+	if err := verifyBackupChecksum(archive); err != nil {
 		return err
 	}
 	return c.withLock(func() error {
@@ -978,8 +982,8 @@ func (c *Controller) path(name string) string {
 }
 
 func requireDigest(value string) error {
-	if !digestPattern.MatchString(value) {
-		return fmt.Errorf("image must be pinned by digest")
+	if err := ociref.ValidateImmutable(value); err != nil {
+		return fmt.Errorf("image must be pinned by digest: %w", err)
 	}
 	return nil
 }
@@ -1066,6 +1070,45 @@ func writeBackupChecksum(path string) error {
 		return closeErr
 	}
 	return securefs.WritePrivateFileAtomic(path+".sha256", []byte(hex.EncodeToString(hash.Sum(nil))+"\n"))
+}
+
+func verifyBackupChecksum(path string) error {
+	checksumPath := path + ".sha256"
+	exists, err := nonEmptyRegularFile(checksumPath)
+	if err != nil {
+		return fmt.Errorf("validate backup checksum %s: %w", checksumPath, err)
+	}
+	if !exists {
+		return fmt.Errorf("backup checksum is missing or empty: %s", checksumPath)
+	}
+	contents, err := os.ReadFile(checksumPath)
+	if err != nil {
+		return fmt.Errorf("read backup checksum %s: %w", checksumPath, err)
+	}
+	expectedText := strings.TrimSpace(string(contents))
+	if len(expectedText) != sha256.Size*2 || strings.ContainsAny(expectedText, " \t\r\n") {
+		return fmt.Errorf("invalid backup checksum in %s", checksumPath)
+	}
+	if _, err := hex.DecodeString(expectedText); err != nil {
+		return fmt.Errorf("invalid backup checksum in %s: %w", checksumPath, err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	hash := sha256.New()
+	_, copyErr := io.Copy(hash, file)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if !platformsecret.Equal(expectedText, hex.EncodeToString(hash.Sum(nil))) {
+		return fmt.Errorf("backup checksum mismatch for %s", path)
+	}
+	return nil
 }
 
 func requireNonEmptyFile(path string) error {

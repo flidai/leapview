@@ -323,7 +323,7 @@ jobs:
             mkdir -p "dist/$package"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="$build_ldflags" -o "dist/$package/leapviewctl" ./cmd/leapviewctl
             cp deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/README.md deploy/compose/QUALIFICATION.md "dist/$package/"
-            cp deploy/host/files/leapviewctl-wrapper deploy/host/files/leapview-backup-hook deploy/host/files/leapview-backup.service deploy/host/files/leapview-backup.timer "dist/$package/"
+            cp deploy/host/files/leapviewctl-wrapper deploy/host/files/leapview-backup-hook deploy/host/files/leapview-backup.service deploy/host/files/leapview-backup.timer deploy/host/files/leapview-backup-maintenance.service deploy/host/files/leapview-backup-maintenance.timer "dist/$package/"
             cp deploy/host/bootstrap-ubuntu.sh "dist/$package/"
             cp -R deploy/compose/qualification "dist/$package/qualification"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"

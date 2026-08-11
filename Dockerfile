@@ -166,7 +166,9 @@ RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
       /usr/local/share/leapview/deployment/Caddyfile \
       /usr/local/share/leapview/deployment/deployment.env.example \
       /usr/local/share/leapview/deployment/leapview-backup.service \
-      /usr/local/share/leapview/deployment/leapview-backup.timer && \
+      /usr/local/share/leapview/deployment/leapview-backup.timer \
+      /usr/local/share/leapview/deployment/leapview-backup-maintenance.service \
+      /usr/local/share/leapview/deployment/leapview-backup-maintenance.timer && \
     mkdir -p /var/lib/leapview && \
     chown -R leapview:leapview /var/lib/leapview /app
 

@@ -59,6 +59,8 @@ func TestProductionImageCarriesCanonicalDeploymentPayload(t *testing.T) {
 		"deploy/host/files/leapview-backup-hook",
 		"deploy/host/files/leapview-backup.service",
 		"deploy/host/files/leapview-backup.timer",
+		"deploy/host/files/leapview-backup-maintenance.service",
+		"deploy/host/files/leapview-backup-maintenance.timer",
 		"deploy/host/bootstrap-ubuntu.sh",
 	} {
 		requireContains(t, release, required)
@@ -74,6 +76,29 @@ func TestHostOperationalScriptsAreSyntacticallyValid(t *testing.T) {
 			t.Fatalf("bash -n %s: %v\n%s", path, err, output)
 		}
 	}
+	hook := read(t, filepath.Join("files", "leapview-backup-hook"))
+	for _, required := range []string{"--init", "--maintain", "restic check"} {
+		requireContains(t, hook, required)
+	}
+	if strings.Contains(hook, "snapshots >/dev/null 2>&1 || restic init") {
+		t.Fatal("backup failures must not implicitly initialize a restic repository")
+	}
+}
+
+func TestBackupSchedulingSeparatesCreationFromMaintenance(t *testing.T) {
+	backupService := read(t, filepath.Join("files", "leapview-backup.service"))
+	maintenanceService := read(t, filepath.Join("files", "leapview-backup-maintenance.service"))
+	maintenanceTimer := read(t, filepath.Join("files", "leapview-backup-maintenance.timer"))
+	for _, service := range []string{backupService, maintenanceService} {
+		for _, required := range []string{
+			"UMask=0077", "NoNewPrivileges=yes", "PrivateTmp=yes", "ProtectSystem=strict",
+			"ProtectHome=yes", "ReadWritePaths=/opt/leapview", "TimeoutStartSec=",
+		} {
+			requireContains(t, service, required)
+		}
+	}
+	requireContains(t, maintenanceService, "leapview-backup-hook --maintain")
+	requireContains(t, maintenanceTimer, "OnCalendar=Sun")
 }
 
 func read(t *testing.T, path string) string {

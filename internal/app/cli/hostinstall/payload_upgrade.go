@@ -15,6 +15,7 @@ import (
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/ociref"
 )
 
 const (
@@ -104,9 +105,20 @@ func (m *DeploymentPayloadManager) Prepare(
 	if err := validatePayloadContents(nextPayload); err != nil {
 		return nil, err
 	}
-	currentPayload, err := readInstalledPayload(m.paths)
+	currentGeneration, err := activeGeneration(m.paths)
 	if err != nil {
-		return nil, fmt.Errorf("snapshot installed deployment payload: %w", err)
+		return nil, fmt.Errorf("read active deployment generation: %w", err)
+	}
+	currentReference, err := ociref.ParseImmutable(current)
+	if err != nil {
+		return nil, err
+	}
+	if currentGeneration != currentReference.Generation {
+		return nil, fmt.Errorf("active host generation %q does not match image %q", currentGeneration, current)
+	}
+	nextGeneration, err := stageGeneration(m.paths, next, nextPayload)
+	if err != nil {
+		return nil, fmt.Errorf("stage target deployment generation: %w", err)
 	}
 	currentMarker, err := securefs.ReadPrivateFile(markerPath)
 	if err != nil {
@@ -136,7 +148,7 @@ func (m *DeploymentPayloadManager) Prepare(
 	nextMarker = append(nextMarker, '\n')
 	return &deploymentPayloadUpdate{
 		paths: m.paths, run: m.run, ctx: ctx,
-		currentPayload: currentPayload, nextPayload: nextPayload,
+		currentGeneration: currentGeneration, nextGeneration: nextGeneration,
 		currentMarker: currentMarker, nextMarker: nextMarker,
 		currentEnvironment: currentEnvironment, nextEnvironment: nextEnvironment,
 	}, nil
@@ -146,8 +158,8 @@ type deploymentPayloadUpdate struct {
 	paths              Paths
 	run                RunFunc
 	ctx                context.Context
-	currentPayload     map[string][]byte
-	nextPayload        map[string][]byte
+	currentGeneration  string
+	nextGeneration     string
 	currentMarker      []byte
 	nextMarker         []byte
 	currentEnvironment []byte
@@ -159,7 +171,7 @@ func (u *deploymentPayloadUpdate) Apply() error {
 	if u.rolledBack {
 		return fmt.Errorf("deployment payload update was already rolled back")
 	}
-	if err := u.write(u.ctx, u.nextPayload, u.nextEnvironment, u.nextMarker); err != nil {
+	if err := u.write(u.ctx, u.nextGeneration, u.nextEnvironment, u.nextMarker); err != nil {
 		rollbackErr := u.restoreCurrent()
 		return errors.Join(err, rollbackErr)
 	}
@@ -176,7 +188,7 @@ func (u *deploymentPayloadUpdate) Rollback() error {
 func (u *deploymentPayloadUpdate) restoreCurrent() error {
 	ctx, cancel := context.WithTimeout(context.Background(), payloadCleanupTimeout)
 	defer cancel()
-	err := u.write(ctx, u.currentPayload, u.currentEnvironment, u.currentMarker)
+	err := u.write(ctx, u.currentGeneration, u.currentEnvironment, u.currentMarker)
 	if err == nil {
 		u.rolledBack = true
 	}
@@ -185,20 +197,18 @@ func (u *deploymentPayloadUpdate) restoreCurrent() error {
 
 func (u *deploymentPayloadUpdate) write(
 	ctx context.Context,
-	payload map[string][]byte,
+	generation string,
 	environment []byte,
 	marker []byte,
 ) error {
-	for _, file := range requiredPayloadFiles {
-		if err := writeAtomic(file.Target(u.paths), payload[file.Source], file.Mode); err != nil {
-			return fmt.Errorf("write %s: %w", file.Source, err)
-		}
-	}
 	if err := writeAtomic(filepath.Join(u.paths.Root, "deployment.env"), environment, 0o600); err != nil {
 		return fmt.Errorf("write deployment environment: %w", err)
 	}
 	if err := securefs.WritePrivateFileAtomic(filepath.Join(u.paths.Root, installMarkerName), marker); err != nil {
 		return fmt.Errorf("write host installation marker: %w", err)
+	}
+	if err := activateGeneration(u.paths, generation); err != nil {
+		return fmt.Errorf("activate deployment generation: %w", err)
 	}
 	if err := u.run(ctx, u.paths.Systemctl, "daemon-reload"); err != nil {
 		return fmt.Errorf("reload systemd: %w", err)
@@ -207,25 +217,6 @@ func (u *deploymentPayloadUpdate) write(
 }
 
 func (u *deploymentPayloadUpdate) Close() error { return nil }
-
-func readInstalledPayload(paths Paths) (map[string][]byte, error) {
-	payload := make(map[string][]byte, len(requiredPayloadFiles))
-	for _, file := range requiredPayloadFiles {
-		path := file.Target(paths)
-		info, err := os.Lstat(path)
-		if err != nil {
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s must be a regular file", path)
-		}
-		payload[file.Source], err = os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return payload, nil
-}
 
 func validatePayloadContents(payload map[string][]byte) error {
 	for _, file := range requiredPayloadFiles {
