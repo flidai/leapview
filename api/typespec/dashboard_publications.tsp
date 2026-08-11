@@ -74,6 +74,7 @@ interface DashboardPublications {
       #{ kind: "conflict", statusCode: 409, code: "PUBLICATION_NOT_CONFIGURED", publicDetail: "Dashboard publication is not present in the active configuration." },
       #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
     ],
+    additionalExposures: #["ui"],
     targetParameter: "workspace",
   })
   @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
@@ -91,6 +92,7 @@ interface DashboardPublications {
       #{ kind: "conflict", statusCode: 409, code: "PUBLICATION_NOT_CONFIGURED", publicDetail: "Dashboard publication is not present in the active configuration." },
       #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
     ],
+    additionalExposures: #["ui"],
     targetParameter: "workspace",
   })
   @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
@@ -108,6 +110,7 @@ interface DashboardPublications {
       #{ kind: "conflict", statusCode: 409, code: "PUBLICATION_NOT_CONFIGURED", publicDetail: "Dashboard publication is not present in the active configuration." },
       #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
     ],
+    additionalExposures: #["ui"],
     targetParameter: "workspace",
   })
   @apigen.auditPayload(DashboardPublicationCommandAuditPayload)

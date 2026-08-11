@@ -35,8 +35,17 @@ type APIGenOperationContract struct {
 // APIGenCommandContract is the authorization subset of APIGen's normalized
 // command descriptor.
 type APIGenCommandContract struct {
-	AuthzMode string
-	Privilege string
+	Owner       string
+	AuthzMode   string
+	Privilege   string
+	Target      *APIGenCommandTarget
+	Idempotency string
+	Concurrency string
+}
+
+type APIGenCommandTarget struct {
+	Parameter string
+	Type      string
 }
 
 // AuthorizeReplay re-runs the generated operation's current authorization
@@ -155,7 +164,10 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	if !ok {
 		return nil, false
 	}
-	if isGlobalAgentOperation(operationID) {
+	if contract.Command != nil && strings.HasSuffix(contract.Command.Owner, ".Agent") {
+		return a.module.ProtectGlobal(privilege, next.ServeHTTP), true
+	}
+	if contract.Command == nil && isGlobalAgentQuery(operationID) {
 		return a.module.ProtectGlobal(privilege, next.ServeHTTP), true
 	}
 	resolver, ok := a.objectResolverForContract(contract)
@@ -203,10 +215,9 @@ func apiGenOperationPrivilege(contract APIGenOperationContract) (Privilege, bool
 	return ParsePrivilege(value)
 }
 
-func isGlobalAgentOperation(operationID string) bool {
+func isGlobalAgentQuery(operationID string) bool {
 	switch operationID {
-	case "search", "listAgentConversations", "createAgentConversation", "archiveAgentConversation", "getAgentConversation", "updateAgentConversation",
-		"listAgentMessages", "listAgentRuns", "createAgentRun", "getAgentRun", "cancelAgentRun", "listAgentEvents":
+	case "search", "listAgentConversations", "getAgentConversation", "listAgentMessages", "listAgentRuns", "getAgentRun", "listAgentEvents":
 		return true
 	default:
 		return false
@@ -214,6 +225,34 @@ func isGlobalAgentOperation(operationID string) bool {
 }
 
 func (a *APIGenAuthorizer) objectResolverForContract(contract APIGenOperationContract) (ObjectResolver, bool) {
+	if contract.Command != nil && contract.Command.Target != nil {
+		target := *contract.Command.Target
+		switch target.Type {
+		case "workspace":
+			return func(r *http.Request, workspaceID string) []ObjectRef {
+				resolved := strings.TrimSpace(chi.URLParam(r, target.Parameter))
+				if resolved == "" {
+					resolved = workspaceID
+				}
+				return []ObjectRef{WorkspaceObject(resolved)}
+			}, true
+		case "project":
+			definition, ok := a.scopes["project-environment"]
+			return definition.resolver, ok && definition.resolver != nil
+		case "principal", "session", "token":
+			return func(_ *http.Request, workspaceID string) []ObjectRef {
+				objects := []ObjectRef{PlatformObject()}
+				if workspaceID = strings.TrimSpace(workspaceID); workspaceID != "" {
+					objects = append(objects, WorkspaceObject(workspaceID))
+				}
+				return objects
+			}, true
+		case "servicePrincipal", "conversation":
+			return func(*http.Request, string) []ObjectRef { return []ObjectRef{PlatformObject()} }, true
+		default:
+			return nil, false
+		}
+	}
 	expectedScope, ambiguous := a.objectScopeForPath(contract.Path)
 	if ambiguous {
 		return nil, false

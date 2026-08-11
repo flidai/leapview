@@ -199,12 +199,10 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		if hasMultipartBodies {
 			b.WriteString("\t\"os\"\n")
 		}
-		if hasRequestBodies {
-			b.WriteString("\t\"strings\"\n")
-		}
 	}
 	b.WriteString("\t\"encoding/json\"\n")
 	b.WriteString("\t\"net/http\"\n\n")
+	b.WriteString("\t\"strings\"\n\n")
 	if usesTime {
 		b.WriteString("\t\"time\"\n\n")
 	}
@@ -339,7 +337,19 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("\tif contract.Command.Execution != nil { source := contract.Command.Execution; execution = &apigencommand.AsyncExecutionContract{Mode: source.Mode, Guarantee: source.Guarantee, JobKind: source.JobKind, ResourceKind: source.ResourceKind, InitialEvent: source.InitialEvent, InitialState: source.InitialState, StatusOperation: source.StatusOperation, EventsOperation: source.EventsOperation, Cancellation: source.Cancellation} }\n")
 	b.WriteString("\tvar auditPayload *apigenaudit.Contract\n")
 	b.WriteString("\tif contract.Command.Audit.Payload != nil { source := contract.Command.Audit.Payload; fields := make([]apigenaudit.FieldContract, len(source.Fields)); for index, field := range source.Fields { fields[index] = apigenaudit.FieldContract{Name: field.Name, Sensitivity: apigenaudit.Sensitivity(field.Sensitivity)} }; auditPayload = &apigenaudit.Contract{Schema: source.Schema, SchemaVersion: source.SchemaVersion, Retention: apigenaudit.Retention(source.Retention), Fields: fields} }\n")
-	b.WriteString("\treturn apigencommand.Contract{OperationID: contract.OperationID, Owner: contract.Command.Owner, AuditAction: contract.Command.Audit.SuccessAction, Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee), AuditPayload: auditPayload, Execution: execution}, true\n")
+	b.WriteString("\tvar target *apigencommand.TargetContract\n")
+	b.WriteString("\tif contract.Command.Target != nil { target = &apigencommand.TargetContract{Parameter: contract.Command.Target.Parameter, Type: contract.Command.Target.Type} }\n")
+	b.WriteString("\texposures := make([]apigencommand.Surface, len(contract.Command.AdditionalExposures)); for index, exposure := range contract.Command.AdditionalExposures { exposures[index] = apigencommand.Surface(exposure) }\n")
+	b.WriteString("\treturn apigencommand.Contract{OperationID: contract.OperationID, Owner: contract.Command.Owner, Method: contract.Method, Path: contract.Path, Target: target, Idempotency: apigencommand.IdempotencyPolicy(contract.Command.Idempotency), Concurrency: apigencommand.ConcurrencyPolicy(contract.Command.Concurrency), AuthzMode: contract.Command.AuthzMode, Privilege: contract.Command.Privilege, AdditionalExposures: exposures, AuditAction: contract.Command.Audit.SuccessAction, Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee), AuditPayload: auditPayload, Execution: execution}, true\n")
+	b.WriteString("}\n\n")
+	b.WriteString("// GetAPIGenCommandRuntimeContracts returns every normalized generated command policy.\n")
+	b.WriteString("func GetAPIGenCommandRuntimeContracts() map[string]apigencommand.Contract {\n")
+	b.WriteString("\tout := map[string]apigencommand.Contract{}; for operationID := range genOperationContracts { if contract, ok := GetAPIGenCommandRuntimeContract(operationID); ok { out[operationID] = contract } }; return out\n")
+	b.WriteString("}\n\n")
+	b.WriteString("// GetAPIGenOperationContractForRequest resolves generated policy from a concrete method and path.\n")
+	b.WriteString("func GetAPIGenOperationContractForRequest(method, path string) (GenOperationContract, bool) {\n")
+	b.WriteString("\tvar matched GenOperationContract; found := false; parameters := 0\n")
+	b.WriteString("\tfor _, contract := range genOperationContracts { if strings.EqualFold(contract.Method, method) && apigencommand.MatchPath(contract.Path, path) { count := strings.Count(contract.Path, \"{\"); if !found || count < parameters { matched, found, parameters = contract, true, count } } }; if !found { return GenOperationContract{}, false }; return cloneAPIGenOperationContract(matched), true\n")
 	b.WriteString("}\n\n")
 	for _, endpoint := range doc.Endpoints {
 		if endpoint.Command == nil || endpoint.Command.Audit.Payload == nil {

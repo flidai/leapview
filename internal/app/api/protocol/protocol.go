@@ -254,20 +254,23 @@ func SignResponseCursor(r *http.Request, body []byte) []byte {
 }
 
 func requiresAPIIdempotency(r *http.Request) bool {
-	if r == nil || r.Method != http.MethodPost || IsQueryRequest(r) {
+	if r == nil {
 		return false
 	}
-	return !strings.HasPrefix(r.URL.Path, "/upload-protocols/tus")
+	if contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path); ok {
+		return contract.Command != nil && contract.Command.Idempotency == "required"
+	}
+	return false
 }
 
 func IsQueryRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodPost {
 		return false
 	}
-	path := r.URL.Path
-	return strings.HasSuffix(path, "/query") || strings.HasSuffix(path, "/query/explain") ||
-		strings.HasSuffix(path, "/preview") || strings.HasSuffix(path, "/preview/explain") ||
-		strings.HasSuffix(path, "/values") || strings.HasSuffix(path, "/authorization-checks")
+	if contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path); ok {
+		return contract.Kind == apiaggregate.GenOperationKindQuery
+	}
+	return false
 }
 
 func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next http.Handler) {

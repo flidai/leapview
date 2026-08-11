@@ -29,6 +29,35 @@ func TestAPICommandListsEveryGeneratedOperation(t *testing.T) {
 	}
 }
 
+func TestGeneratedCommandHeadersFollowIdempotencyAndConcurrencyPolicy(t *testing.T) {
+	create, ok := apiaggregate.GetAPIGenOperationContract("createAgentRun")
+	if !ok || create.Command == nil {
+		t.Fatal("createAgentRun command contract is missing")
+	}
+	key, ifMatch := generatedCommandHeaders(create, &apiCallOptions{idempotencyKey: "run-1", ifMatch: "ignored"})
+	if key != "run-1" || ifMatch != "" {
+		t.Fatalf("create command headers = %q/%q", key, ifMatch)
+	}
+
+	update, ok := apiaggregate.GetAPIGenOperationContract("updateRoleBinding")
+	if !ok || update.Command == nil {
+		t.Fatal("updateRoleBinding command contract is missing")
+	}
+	key, ifMatch = generatedCommandHeaders(update, &apiCallOptions{idempotencyKey: "ignored", ifMatch: `"revision-1"`})
+	if key != "" || ifMatch != `"revision-1"` {
+		t.Fatalf("concurrency command headers = %q/%q", key, ifMatch)
+	}
+
+	query, ok := apiaggregate.GetAPIGenOperationContract("getInstance")
+	if !ok {
+		t.Fatal("getInstance contract is missing")
+	}
+	key, ifMatch = generatedCommandHeaders(query, &apiCallOptions{idempotencyKey: "ignored", ifMatch: "ignored"})
+	if key != "" || ifMatch != "" {
+		t.Fatalf("query headers = %q/%q", key, ifMatch)
+	}
+}
+
 func TestAPICommandCallUsesGeneratedContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

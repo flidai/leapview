@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/agent"
@@ -95,6 +96,91 @@ func TestAgentAPICommandsRecordOneSuccessAudit(t *testing.T) {
 		if audits[index].OperationID != operationID || audits[index].Scope.PrincipalID != principalID || audits[index].TargetID != conversationID {
 			t.Fatalf("command audit[%d] = %#v, want operation %s for %s", index, audits[index], operationID, conversationID)
 		}
+	}
+}
+
+func TestAgentConversationUpdateUsesCanonicalRevisionAndProtocolFailure(t *testing.T) {
+	service, principalID := commandAuditService(t)
+	handler := NewHandler(Options{
+		Service: service,
+		CurrentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: principalID}, true
+		},
+	})
+	router := chi.NewRouter()
+	router.Post("/agent/conversations", handler.CreateConversation)
+	router.Get("/agent/conversations/{conversation}", handler.GetConversation)
+	router.Patch("/agent/conversations/{conversation}", handler.UpdateConversation)
+
+	created := httptest.NewRecorder()
+	router.ServeHTTP(created, commandAuditRequest(http.MethodPost, "/agent/conversations", `{"title":"Revision"}`))
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", created.Code, created.Body.String())
+	}
+	conversationID := decodeResponseID(t, created.Body.Bytes())
+	createETag := created.Header().Get("ETag")
+	if createETag == "" {
+		t.Fatal("create response omitted ETag")
+	}
+
+	got := httptest.NewRecorder()
+	router.ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/agent/conversations/"+conversationID, nil))
+	if got.Code != http.StatusOK || got.Header().Get("ETag") != createETag {
+		t.Fatalf("get status/etag = %d/%q, want 200/%q", got.Code, got.Header().Get("ETag"), createETag)
+	}
+
+	first := commandAuditRequest(http.MethodPatch, "/agent/conversations/"+conversationID, `{"title":"First"}`)
+	first.Header.Set("If-Match", createETag)
+	updated := httptest.NewRecorder()
+	router.ServeHTTP(updated, first)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("first update status = %d body=%s", updated.Code, updated.Body.String())
+	}
+
+	stale := commandAuditRequest(http.MethodPatch, "/agent/conversations/"+conversationID, `{"title":"Stale"}`)
+	stale.Header.Set("If-Match", createETag)
+	failed := httptest.NewRecorder()
+	router.ServeHTTP(failed, stale)
+	if failed.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale update status = %d body=%s", failed.Code, failed.Body.String())
+	}
+	var problem struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(failed.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode stale problem: %v", err)
+	}
+	if problem.Code != "PRECONDITION_FAILED" {
+		t.Fatalf("stale update code = %q", problem.Code)
+	}
+}
+
+func TestAgentUICommandInvocationUsesStableGeneratedIdentity(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
+	r.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "client-fixed"})
+	identity := uiRequestIdentity(r, "hello")
+	ctx, err := beginUICommandInvocation(r, createAgentConversationOperation, "", "hello", identity)
+	if err != nil {
+		t.Fatalf("begin create UI invocation: %v", err)
+	}
+	if operationID, ok := apigencommand.OperationID(ctx); !ok || operationID != createAgentConversationOperation.APIGenOperationID() {
+		t.Fatalf("operation ID = %q/%v", operationID, ok)
+	}
+	if got := r.Header.Get("X-Request-ID"); got != identity {
+		t.Fatalf("request identity = %q, want %q", got, identity)
+	}
+	if got := r.Header.Get("X-LeapView-Invocation-Surface"); got != "ui" {
+		t.Fatalf("surface = %q", got)
+	}
+
+	runCtx, err := beginUICommandInvocation(r, createAgentRunOperation, "conversation-1", "hello", identity)
+	if err != nil {
+		t.Fatalf("begin run UI invocation: %v", err)
+	}
+	if operationID, ok := apigencommand.OperationID(runCtx); !ok || operationID != createAgentRunOperation.APIGenOperationID() {
+		// The second invocation should replace the context state with the run
+		// operation while preserving the same request identity.
+		t.Fatalf("run operation ID = %q/%v", operationID, ok)
 	}
 }
 

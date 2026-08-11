@@ -37,7 +37,7 @@ func commandLookup(operationID string) (apigencommand.Contract, bool) {
 		return apigencommand.Contract{}, false
 	}
 	return apigencommand.Contract{
-		OperationID: operationID, Owner: "Widgets", AuditAction: "widget.created", Guarantee: apigencommand.GuaranteeBestEffort,
+		OperationID: operationID, Owner: "Widgets", Method: http.MethodPost, Path: "/widgets", Idempotency: apigencommand.IdempotencyRequired, AuthzMode: "authenticated", AuditAction: "widget.created", Guarantee: apigencommand.GuaranteeBestEffort,
 		AuditPayload: &apigenaudit.Contract{
 			Schema: "WidgetCreatedAuditPayload", SchemaVersion: 1, Retention: apigenaudit.RetentionSecurity,
 			Fields: []apigenaudit.FieldContract{{Name: "widgetId", Sensitivity: apigenaudit.SensitivityInternal}},
@@ -54,7 +54,9 @@ func TestGeneratedCommandBoundaryRejectsSuccessfulBypass(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	handler.HandleAPIGen("createWidget", recorder, httptest.NewRequest(http.MethodPost, "/", nil))
+	request := httptest.NewRequest(http.MethodPost, "/widgets", nil)
+	request.Header.Set("Idempotency-Key", "widget-1")
+	handler.HandleAPIGen("createWidget", recorder, request)
 	if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), "COMMAND_CONTRACT_NOT_EXECUTED") {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -76,9 +78,27 @@ func TestGeneratedCommandBoundaryAcceptsExecutorCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	handler.HandleAPIGen("createWidget", recorder, httptest.NewRequest(http.MethodPost, "/", nil))
+	request := httptest.NewRequest(http.MethodPost, "/widgets", nil)
+	request.Header.Set("Idempotency-Key", "widget-1")
+	handler.HandleAPIGen("createWidget", recorder, request)
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGeneratedCommandBoundaryAppliesGeneratedIdempotencyPolicy(t *testing.T) {
+	called := false
+	handler, err := buildTestHandler(func(_ string, _ http.ResponseWriter, _ *http.Request) bool {
+		called = true
+		return true
+	}, commandLookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	handler.HandleAPIGen("createWidget", recorder, httptest.NewRequest(http.MethodPost, "/widgets", nil))
+	if called || recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "IDEMPOTENCY_KEY_REQUIRED") {
+		t.Fatalf("called=%v status=%d body=%s", called, recorder.Code, recorder.Body.String())
 	}
 }
 
