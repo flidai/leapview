@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -98,5 +99,36 @@ func TestCommandOwnsConversationEnvelopePresentation(t *testing.T) {
 	query := client.transport.requests[0].Query
 	if query.Get("limit") != "7" || query.Get("pageToken") != "cursor" {
 		t.Fatalf("query = %s", query.Encode())
+	}
+}
+
+func TestCommandMatchesCreateAgentRunFailure(t *testing.T) {
+	client := &fakeClient{}
+	client.transport.do = func(request apigenclient.Request, out any) error {
+		switch request.OperationID {
+		case agentgen.GenOperationCreateAgentConversation:
+			return json.Unmarshal([]byte(`{"id":"conv_1","createdAt":"","principalId":"principal","status":"active","title":"","updatedAt":""}`), out)
+		case agentgen.GenOperationCreateAgentRun:
+			return &apigenclient.ProblemError{
+				OperationID: request.OperationID,
+				Response:    apigenclient.Response{StatusCode: 503},
+				Problem: apigenclient.ProblemDetails{
+					Code: "AGENT_SERVICE_UNAVAILABLE", Detail: "agent service is unavailable",
+				},
+			}
+		default:
+			t.Fatalf("unexpected operation %q", request.OperationID)
+		}
+		return nil
+	}
+	command := Command(context.Background(), Dependencies{Client: client})
+	command.SetArgs([]string{"ask", "Question", "--target", "https://example.test", "--token", "secret"})
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "create agent run failed (AGENT_SERVICE_UNAVAILABLE)") {
+		t.Fatalf("error = %v", err)
+	}
+	var failure agentgen.GenCreateAgentRunFailure
+	if errors.As(err, &failure) {
+		t.Fatalf("matched CLI error still exposes generated failure: %v", err)
 	}
 }

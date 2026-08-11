@@ -43,38 +43,70 @@ func (client *deploymentCLIClient) capabilities(ctx context.Context) (apigenapi.
 }
 
 func (client *deploymentCLIClient) createRelease(ctx context.Context, project, key string, body releasegen.ReleaseCreateRequest) (releasegen.ReleaseResponse, error) {
-	var response releasegen.ReleaseResponse
-	err := client.json(ctx, http.MethodPost, "createRelease", map[string]string{"project": project}, nil, key, body, &response)
-	return response, err
+	generated := releasegen.NewGenClient(capabilityAPITransport{target: client.target, token: client.token, client: client.http})
+	response, err := generated.CreateRelease(ctx, releasegen.GenCreateReleaseClientRequest{
+		Project: project,
+		Headers: releasegen.GenCreateReleaseClientHeaders{IdempotencyKey: key},
+		Body:    body,
+	})
+	if err == nil {
+		return response.Body, nil
+	}
+	var failure releasegen.GenCreateReleaseFailure
+	if errors.As(err, &failure) {
+		return releasegen.ReleaseResponse{}, createReleaseCLIError(failure)
+	}
+	return releasegen.ReleaseResponse{}, err
+}
+
+func createReleaseCLIError(failure releasegen.GenCreateReleaseFailure) error {
+	return releasegen.MatchGenCreateReleaseFailure(
+		failure,
+		problemError("release creation conflict"),
+		problemError("release request invalid"),
+	)
 }
 
 func (client *deploymentCLIClient) uploadReleaseArtifact(ctx context.Context, project, releaseID, workspaceID, contentDigest string, body io.Reader) (releasegen.ReleaseArtifactResponse, error) {
-	endpoint, err := apiOperationURL(client.target, "uploadReleaseArtifact", map[string]string{"project": project, "release": releaseID, "workspace": workspaceID}, nil)
-	if err != nil {
-		return releasegen.ReleaseArtifactResponse{}, err
+	generated := releasegen.NewGenClient(streamingBodyTransport{
+		transport: capabilityAPITransport{target: client.target, token: client.token, client: client.http},
+		body:      body,
+	})
+	response, err := generated.UploadReleaseArtifact(ctx, releasegen.GenUploadReleaseArtifactClientRequest{
+		Project: project, Release: releaseID, Workspace: workspaceID,
+		Headers: releasegen.GenUploadReleaseArtifactClientHeaders{
+			ContentType: "application/octet-stream", ContentDigest: contentDigest,
+		},
+	})
+	if err == nil {
+		return response.Body, nil
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, body)
-	if err != nil {
-		return releasegen.ReleaseArtifactResponse{}, err
+	var failure releasegen.GenUploadReleaseArtifactFailure
+	if errors.As(err, &failure) {
+		return releasegen.ReleaseArtifactResponse{}, uploadReleaseArtifactCLIError(failure)
 	}
-	request.Header.Set("Authorization", "Bearer "+client.token)
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Content-Type", "application/octet-stream")
-	request.Header.Set("Content-Digest", contentDigest)
-	response, err := client.http.Do(request)
-	if err != nil {
-		return releasegen.ReleaseArtifactResponse{}, fmt.Errorf("upload release artifact could not reach the server")
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, response.Body)
-		return releasegen.ReleaseArtifactResponse{}, fmt.Errorf("upload release artifact failed with HTTP %d", response.StatusCode)
-	}
-	var result releasegen.ReleaseArtifactResponse
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
-		return releasegen.ReleaseArtifactResponse{}, err
-	}
-	return result, nil
+	return releasegen.ReleaseArtifactResponse{}, err
+}
+
+type streamingBodyTransport struct {
+	transport apigenclient.Transport
+	body      io.Reader
+}
+
+func (transport streamingBodyTransport) DoAPIGen(ctx context.Context, request apigenclient.Request, response any) (apigenclient.Response, error) {
+	request.Body = transport.body
+	return transport.transport.DoAPIGen(ctx, request, response)
+}
+
+func uploadReleaseArtifactCLIError(failure releasegen.GenUploadReleaseArtifactFailure) error {
+	return releasegen.MatchGenUploadReleaseArtifactFailure(
+		failure,
+		problemError("release artifact upload conflict"),
+		problemError("release artifact digest mismatch"),
+		problemError("release is immutable"),
+		problemError("release artifact request invalid"),
+		problemError("release not found"),
+	)
 }
 
 func (client *deploymentCLIClient) finalizeRelease(ctx context.Context, project, releaseID, key string) (releasegen.ReleaseResponse, error) {
@@ -95,11 +127,6 @@ func (client *deploymentCLIClient) finalizeRelease(ctx context.Context, project,
 }
 
 func finalizeReleaseCLIError(failure releasegen.GenFinalizeReleaseFailure) error {
-	problemError := func(label string) func(apigenclient.ProblemDetails) error {
-		return func(problem apigenclient.ProblemDetails) error {
-			return fmt.Errorf("%s: %s (%s)", label, problem.Detail, problem.Code)
-		}
-	}
 	return releasegen.MatchGenFinalizeReleaseFailure(
 		failure,
 		problemError("release finalization conflict"),
@@ -110,6 +137,12 @@ func finalizeReleaseCLIError(failure releasegen.GenFinalizeReleaseFailure) error
 	)
 }
 
+func problemError(label string) func(apigenclient.ProblemDetails) error {
+	return func(problem apigenclient.ProblemDetails) error {
+		return fmt.Errorf("%s: %s (%s)", label, problem.Detail, problem.Code)
+	}
+}
+
 func (client *deploymentCLIClient) getRelease(ctx context.Context, project, releaseID string) (releasegen.ReleaseResponse, error) {
 	var response releasegen.ReleaseResponse
 	err := client.json(ctx, http.MethodGet, "getRelease", map[string]string{"project": project, "release": releaseID}, nil, "", nil, &response)
@@ -117,9 +150,39 @@ func (client *deploymentCLIClient) getRelease(ctx context.Context, project, rele
 }
 
 func (client *deploymentCLIClient) createDeployment(ctx context.Context, project, key string, body deploymentgen.DeploymentCreateRequest) (deploymentgen.DeploymentResponse, error) {
-	var response deploymentgen.DeploymentResponse
-	err := client.json(ctx, http.MethodPost, "createDeployment", map[string]string{"project": project}, nil, key, body, &response)
-	return response, err
+	generated := deploymentgen.NewGenClient(capabilityAPITransport{target: client.target, token: client.token, client: client.http})
+	response, err := generated.CreateDeployment(ctx, deploymentgen.GenCreateDeploymentClientRequest{
+		Project: project,
+		Headers: deploymentgen.GenCreateDeploymentClientHeaders{IdempotencyKey: key},
+		Body:    body,
+	})
+	if err == nil {
+		return response.Body, nil
+	}
+	var failure deploymentgen.GenCreateDeploymentFailure
+	if errors.As(err, &failure) {
+		return deploymentgen.DeploymentResponse{}, createDeploymentCLIError(failure)
+	}
+	return deploymentgen.DeploymentResponse{}, err
+}
+
+func createDeploymentCLIError(failure deploymentgen.GenCreateDeploymentFailure) error {
+	return deploymentgen.MatchGenCreateDeploymentFailure(
+		failure,
+		problemError("deployment approval conflict"),
+		problemError("deployment approval credential expired"),
+		problemError("deployment approval credential required"),
+		problemError("deployment approval request invalid"),
+		problemError("deployment approval unavailable"),
+		problemError("deployment authorization unavailable"),
+		problemError("deployment creation conflict"),
+		problemError("deployment request invalid"),
+		problemError("deployment not found"),
+		problemError("deployment publication management forbidden"),
+		problemError("release artifacts are incomplete"),
+		problemError("release is not ready"),
+		problemError("deployment service unavailable"),
+	)
 }
 
 func (client *deploymentCLIClient) getDeployment(ctx context.Context, project, deploymentID string) (deploymentgen.DeploymentResponse, error) {
