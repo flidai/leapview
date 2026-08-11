@@ -3,8 +3,10 @@ package clienttransport
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
@@ -32,5 +34,33 @@ func TestTransportPreservesStructuredProblem(t *testing.T) {
 	}
 	if problem.OperationID != "finalizeRelease" || problem.Problem.Code != "RELEASE_NOT_FOUND" || problem.Problem.RequestID != "request-1" {
 		t.Fatalf("problem = %#v", problem)
+	}
+}
+
+func TestTransportStreamsNonJSONReaderBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		payload, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if string(payload) != "streamed artifact" || request.Header.Get("Content-Type") != "application/octet-stream" {
+			t.Fatalf("payload = %q headers = %#v", payload, request.Header)
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	metadata, err := (Transport{Target: server.URL, Client: server.Client()}).DoAPIGen(
+		context.Background(),
+		apigenclient.Request{
+			Method:      http.MethodPut,
+			Path:        "/artifact",
+			Body:        strings.NewReader("streamed artifact"),
+			ContentType: "application/octet-stream",
+		},
+		nil,
+	)
+	if err != nil || metadata.StatusCode != http.StatusNoContent {
+		t.Fatalf("metadata = %#v error = %v", metadata, err)
 	}
 }

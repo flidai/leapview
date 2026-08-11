@@ -69,7 +69,7 @@ func (operations projectPublishOperations) Publish(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("publish candidate: %w", err)
+		return fmt.Errorf("publish candidate: %w", mapPublishProjectCandidateFailure(err))
 	}
 	if response.Body.Approval != nil &&
 		response.Body.Approval.Status == deploymentgen.DeploymentApprovalStatusPending {

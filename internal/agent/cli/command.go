@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"text/tabwriter"
 	"time"
 
+	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -95,6 +97,13 @@ func runAsk(ctx context.Context, client cliapi.Client, values *options, question
 			Body: agentgen.GenSchemaAgentConversationCreateRequest{Title: &title},
 		})
 		if err != nil {
+			var failure agentgen.GenCreateAgentConversationFailure
+			if errors.As(err, &failure) {
+				handler := func(problem apigenclient.ProblemDetails) error {
+					return generatedAgentProblemError("create agent conversation", problem)
+				}
+				return agentgen.MatchGenCreateAgentConversationFailure(failure, handler)
+			}
 			return err
 		}
 		conversationID = conversation.Body.Id
@@ -107,6 +116,13 @@ func runAsk(ctx context.Context, client cliapi.Client, values *options, question
 		Body: agentgen.GenSchemaAgentRunCreateRequest{Input: question},
 	})
 	if err != nil {
+		var failure agentgen.GenCreateAgentRunFailure
+		if errors.As(err, &failure) {
+			handler := func(problem apigenclient.ProblemDetails) error {
+				return generatedAgentProblemError("create agent run", problem)
+			}
+			return agentgen.MatchGenCreateAgentRunFailure(failure, handler, handler, handler, handler)
+		}
 		return err
 	}
 	run := runResponse.Body
@@ -146,6 +162,20 @@ func runAsk(ctx context.Context, client cliapi.Client, values *options, question
 		return fmt.Errorf("agent run ended with status %s: %s", run.Status, stringValue(run.Error))
 	}
 	return nil
+}
+
+func generatedAgentProblemError(operation string, problem apigenclient.ProblemDetails) error {
+	detail := problem.Detail
+	if detail == "" {
+		detail = problem.Title
+	}
+	if detail == "" {
+		detail = "request failed"
+	}
+	if problem.Code != "" {
+		return fmt.Errorf("%s failed (%s): %s", operation, problem.Code, detail)
+	}
+	return fmt.Errorf("%s failed: %s", operation, detail)
 }
 
 func runConversations(ctx context.Context, client cliapi.Client, values *options, out io.Writer) error {

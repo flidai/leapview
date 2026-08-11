@@ -32,7 +32,7 @@ func TestDataSyncDeduplicatesAndUsesStableIdempotencyKey(t *testing.T) {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		keys = append(keys, r.Header.Get("Idempotency-Key"))
-		writeUploadSession(t, w, plan, "upload-1", manageddataapi.ManagedDataUploadSessionStatusCompleted, []manageddataapi.ManagedDataFileUploadResponse{{
+		writeCreatedUploadSession(t, w, plan, "upload-1", manageddataapi.ManagedDataUploadSessionStatusCompleted, []manageddataapi.ManagedDataFileUploadResponse{{
 			File: wireFile(t, file), Status: manageddataapi.ManagedDataFileUploadStatusSkipped,
 			Negotiation: uploadNegotiation(manageddataapi.ManagedDataUploadNegotiation{Protocol: manageddataapi.ManagedDataUploadProtocolAlreadyPresent}),
 		}})
@@ -173,7 +173,7 @@ func TestDataSyncReplacesAReplayedTerminalUploadSession(t *testing.T) {
 				}})
 				return
 			}
-			writeUploadSession(t, w, plan, "upload-replacement", manageddataapi.ManagedDataUploadSessionStatusCompleted, []manageddataapi.ManagedDataFileUploadResponse{{
+			writeCreatedUploadSession(t, w, plan, "upload-replacement", manageddataapi.ManagedDataUploadSessionStatusCompleted, []manageddataapi.ManagedDataFileUploadResponse{{
 				File: wireFile(t, file), Status: manageddataapi.ManagedDataFileUploadStatusSkipped,
 			}})
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/upload-sessions/upload-stale"):
@@ -394,14 +394,23 @@ func wireFile(t *testing.T, file manageddata.File) manageddataapi.ManagedDataFil
 
 func writeUploadSession(t *testing.T, w http.ResponseWriter, plan localplan.Result, id string, status manageddataapi.ManagedDataUploadSessionStatus, files []manageddataapi.ManagedDataFileUploadResponse) {
 	t.Helper()
+	writeJSONTest(t, w, map[manageddataapi.ManagedDataUploadSessionStatus]int{manageddataapi.ManagedDataUploadSessionStatusOpen: http.StatusCreated}[status], uploadSessionResponse(plan, id, status, files))
+}
+
+func writeCreatedUploadSession(t *testing.T, w http.ResponseWriter, plan localplan.Result, id string, status manageddataapi.ManagedDataUploadSessionStatus, files []manageddataapi.ManagedDataFileUploadResponse) {
+	t.Helper()
+	writeJSONTest(t, w, http.StatusCreated, uploadSessionResponse(plan, id, status, files))
+}
+
+func uploadSessionResponse(plan localplan.Result, id string, status manageddataapi.ManagedDataUploadSessionStatus, files []manageddataapi.ManagedDataFileUploadResponse) manageddataapi.ManagedDataUploadSessionResponse {
 	wFiles := make([]manageddataapi.ManagedDataFileMetadata, len(plan.Manifest.Files))
 	for i, file := range plan.Manifest.Files {
-		wFiles[i] = wireFile(t, file)
+		wFiles[i] = manageddataapi.ManagedDataFileMetadata{Path: file.Path, Size: file.Size, Sha256: file.SHA256}
 	}
-	writeJSONTest(t, w, map[manageddataapi.ManagedDataUploadSessionStatus]int{manageddataapi.ManagedDataUploadSessionStatusOpen: http.StatusCreated}[status], manageddataapi.ManagedDataUploadSessionResponse{
+	return manageddataapi.ManagedDataUploadSessionResponse{
 		Id: id, Project: "demo", Connection: "orders", RevisionId: plan.Manifest.RevisionID(), Status: status,
 		Manifest: manageddataapi.ManagedDataManifest{Files: wFiles}, Files: files, CreatedAt: "2026-01-01T00:00:00Z", ExpiresAt: "2030-01-01T00:00:00Z",
-	})
+	}
 }
 
 func writeJSONTest(t *testing.T, w http.ResponseWriter, status int, value any) {

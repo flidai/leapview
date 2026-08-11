@@ -121,7 +121,7 @@ func (transport *candidateSynchronizationTransport) Upload(
 		},
 	)
 	if err != nil {
-		return err
+		return mapUploadProjectCandidateSourceBlobFailure(err)
 	}
 	if response.Body.Digest != artifact.Digest ||
 		response.Body.SizeBytes != int64(len(artifact.Content)) {
@@ -155,7 +155,7 @@ func (transport *candidateSynchronizationTransport) Commit(
 		},
 	)
 	if err != nil {
-		return projectdevloop.Candidate{}, err
+		return projectdevloop.Candidate{}, mapCommitProjectCandidateSynchronizationFailure(err)
 	}
 	if response.Body.ProvenanceDigest == nil {
 		return projectdevloop.Candidate{}, fmt.Errorf("target candidate is missing publication provenance")

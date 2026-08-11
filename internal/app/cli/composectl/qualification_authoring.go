@@ -320,7 +320,7 @@ func (c *Controller) runQualificationAuthoring(
 		},
 	)
 	if err != nil {
-		return report, fmt.Errorf("create qualification reviewer: %w", err)
+		return report, mapQualificationCreatePrincipalFailure(err)
 	}
 	reviewer := reviewerResponse.Body
 	if reviewer.Principal.Id == "" || reviewer.TemporaryPassword == "" {
@@ -354,7 +354,7 @@ func (c *Controller) runQualificationAuthoring(
 			return report, fmt.Errorf(
 				"grant qualification reviewer %s: %w",
 				privilege,
-				err,
+				mapQualificationCreateGrantFailure(err),
 			)
 		}
 	}
@@ -582,7 +582,7 @@ func (c *Controller) createQualificationAPIToken(
 		},
 	)
 	if err != nil {
-		return "", err
+		return "", mapQualificationCreateCurrentAPITokenFailure(err)
 	}
 	if response.Body.Token == "" {
 		return "", fmt.Errorf("%s token creation returned an empty credential", name)
@@ -722,7 +722,7 @@ func approveAndActivateQualificationPublication(
 		},
 	)
 	if err != nil {
-		return QualificationDeployment{}, err
+		return QualificationDeployment{}, mapQualificationApproveDeploymentFailure(err)
 	}
 	if approval.Body.Status != "approved" {
 		return QualificationDeployment{}, fmt.Errorf("publication approval transitioned to %q", approval.Body.Status)
@@ -736,7 +736,7 @@ func approveAndActivateQualificationPublication(
 			},
 		},
 	); err != nil {
-		return QualificationDeployment{}, err
+		return QualificationDeployment{}, mapQualificationActivateDeploymentFailure(err)
 	}
 	activationCtx, cancel := qualificationContext(ctx, 5*time.Minute)
 	defer cancel()
