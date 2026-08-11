@@ -40,7 +40,7 @@ func TestBuildKeepsPersistencePrivateAndExposesNamedServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), ServingStates: states,
+		Database: store.SQLDB(), ServingStates: states, RecordAudit: discardManagedDataAudit,
 		Product: ProductConfig{
 			Backend:          "local",
 			Dir:              filepath.Join(t.TempDir(), "managed"),
@@ -68,8 +68,9 @@ func TestModuleHTTPConcurrentCancelEmitsOneEventAndCleansTusState(t *testing.T) 
 	jobs := jobssqlite.NewRepository(store.SQLDB())
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Jobs: jobs, Workflow: jobs,
-		Product: ProductConfig{Backend: "local", Dir: managedRoot, UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour, MaxFiles: 10, MaxFileBytes: 1024, MaxRevisionBytes: 4096},
+		Database: store.SQLDB(), Jobs: jobs, Workflow: jobs, RecordAudit: discardManagedDataAudit,
+		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-a"}, true },
+		Product:          ProductConfig{Backend: "local", Dir: managedRoot, UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour, MaxFiles: 10, MaxFileBytes: 1024, MaxRevisionBytes: 4096},
 	})
 	if err != nil {
 		t.Fatal(err)

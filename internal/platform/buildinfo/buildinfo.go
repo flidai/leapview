@@ -76,14 +76,14 @@ func resolve(injected injectedMetadata, vcs vcsMetadata) Identity {
 		}
 	}
 
-	if requested, err := strconv.ParseBool(strings.TrimSpace(injected.release)); err == nil && requested &&
-		dirtyValid && !resolvedDirty &&
-		validVersion(injected.version) &&
-		validRevision(resolvedRevision) &&
-		validBuildTime(resolvedBuildTime) {
+	requestedRelease, releaseErr := strconv.ParseBool(strings.TrimSpace(injected.release))
+	qualifiedDevelopment := releaseErr == nil && !requestedRelease && validDevelopmentVersion(injected.version)
+	if releaseErr == nil && (requestedRelease || qualifiedDevelopment) &&
+		dirtyValid && !resolvedDirty && validVersion(injected.version) &&
+		validRevision(resolvedRevision) && validBuildTime(resolvedBuildTime) {
 		return Identity{
 			Version: strings.TrimSpace(injected.version), Revision: resolvedRevision,
-			BuildTime: resolvedBuildTime,
+			BuildTime: resolvedBuildTime, Development: !requestedRelease,
 		}
 	}
 
@@ -115,6 +115,11 @@ func readVCSMetadata() vcsMetadata {
 func validVersion(value string) bool {
 	value = strings.TrimSpace(value)
 	return value != "" && !strings.HasPrefix(value, "v") && semver.IsValid("v"+value)
+}
+
+func validDevelopmentVersion(value string) bool {
+	value = strings.TrimSpace(value)
+	return validVersion(value) && semver.Build("v"+value) != ""
 }
 
 func validRevision(value string) bool {

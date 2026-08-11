@@ -41,41 +41,38 @@
   --fontStack-system: "Inter Variable", "Inter", "Mona Sans VF", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
   --fontStack-sansSerif: var(--fontStack-system);
   --fontStack-sansSerifDisplay: var(--fontStack-system);
-  --lv-font-family-ui: var(--fontStack-system);
-  --lv-font-family-display: var(--fontStack-sansSerifDisplay);
-  --lv-font-family-mono: var(--fontStack-monospace);
   --lv-space-control: calc(var(--base-size-8) + var(--base-size-2));
 }
 
 @theme {
   --font-*: initial;
-  --font-sans: var(--lv-font-family-ui);
-  --font-display: var(--lv-font-family-display);
-  --font-mono: var(--lv-font-family-mono);
+  --font-sans: var(--fontStack-system);
+  --font-display: var(--fontStack-sansSerifDisplay);
+  --font-mono: var(--fontStack-monospace);
 
   --text-*: initial;
-  --text-caption: var(--lv-text-caption-size);
-  --text-body-sm: var(--lv-text-body-sm-size);
-  --text-body-md: var(--lv-text-body-md-size);
-  --text-body-lg: var(--lv-text-body-lg-size);
-  --text-subtitle: var(--lv-text-subtitle-size);
-  --text-title-sm: var(--lv-text-title-sm-size);
-  --text-title-md: var(--lv-text-title-md-size);
-  --text-title-lg: var(--lv-text-title-lg-size);
-  --text-display: var(--lv-text-display-size);
+  --text-caption: var(--text-caption-size);
+  --text-body-sm: var(--text-body-size-small);
+  --text-body-md: var(--text-body-size-medium);
+  --text-body-lg: var(--text-body-size-large);
+  --text-subtitle: var(--text-subtitle-size);
+  --text-title-sm: var(--text-title-size-small);
+  --text-title-md: var(--text-title-size-medium);
+  --text-title-lg: var(--text-title-size-large);
+  --text-display: var(--text-display-size);
 
   --font-weight-*: initial;
-  --font-weight-light: var(--lv-font-weight-light);
-  --font-weight-normal: var(--lv-font-weight-regular);
-  --font-weight-medium: var(--lv-font-weight-medium);
-  --font-weight-semibold: var(--lv-font-weight-strong);
+  --font-weight-light: var(--base-text-weight-light);
+  --font-weight-normal: var(--base-text-weight-normal);
+  --font-weight-medium: var(--base-text-weight-medium);
+  --font-weight-semibold: var(--base-text-weight-semibold);
 
   --leading-*: initial;
-  --leading-tight: var(--lv-line-height-tight);
-  --leading-snug: var(--lv-line-height-snug);
-  --leading-normal: var(--lv-line-height-normal);
-  --leading-relaxed: var(--lv-line-height-relaxed);
-  --leading-loose: var(--lv-line-height-loose);
+  --leading-tight: var(--base-text-lineHeight-tight);
+  --leading-snug: var(--base-text-lineHeight-snug);
+  --leading-normal: var(--base-text-lineHeight-normal);
+  --leading-relaxed: var(--base-text-lineHeight-relaxed);
+  --leading-loose: var(--base-text-lineHeight-loose);
 
   --spacing-*: initial;
   --spacing-0: 0;
@@ -336,45 +333,18 @@
 @layer base {
   :root {
     color-scheme: light dark;
-    --lv-text-caption-size: var(--text-caption-size);
-    --lv-text-body-sm-size: var(--text-body-size-small);
-    --lv-text-body-md-size: var(--text-body-size-medium);
-    --lv-text-body-lg-size: var(--text-body-size-large);
-    --lv-text-subtitle-size: var(--text-subtitle-size);
-    --lv-text-title-sm-size: var(--text-title-size-small);
-    --lv-text-title-md-size: var(--text-title-size-medium);
-    --lv-text-title-lg-size: var(--text-title-size-large);
-    --lv-text-display-size: var(--text-display-size);
-    --lv-text-page-title: var(--text-title-shorthand-small);
-    --lv-text-section-title: var(--text-body-shorthand-medium);
-    --lv-text-subtitle: var(--text-subtitle-shorthand);
-    --lv-text-body: var(--text-body-shorthand-medium);
-    --lv-text-body-small: var(--text-body-shorthand-small);
-    --lv-text-caption: var(--text-caption-shorthand);
-    --lv-text-code-block: var(--text-codeBlock-shorthand);
-    --lv-text-code-inline: var(--text-codeInline-shorthand);
-    --lv-font-size-caption: var(--lv-text-caption-size);
-    --lv-font-size-body-sm: var(--lv-text-body-sm-size);
-    --lv-font-size-body-md: var(--lv-text-body-md-size);
-    --lv-font-size-body-lg: var(--lv-text-body-lg-size);
-    --lv-font-size-subtitle: var(--lv-text-subtitle-size);
-    --lv-font-size-title-sm: var(--lv-text-title-sm-size);
-    --lv-font-size-title-md: var(--lv-text-title-md-size);
-    --lv-font-size-title-lg: var(--lv-text-title-lg-size);
-    --lv-font-size-display: var(--lv-text-display-size);
-    --lv-font-weight-light: var(--base-text-weight-light);
-    --lv-font-weight-regular: var(--base-text-weight-normal);
-    --lv-font-weight-normal: var(--base-text-weight-normal);
-    --lv-font-weight-medium: var(--base-text-weight-medium);
-    --lv-font-weight-strong: var(--base-text-weight-semibold);
-    --lv-line-height-none: 1;
-    --lv-line-height-compact: var(--base-text-lineHeight-tight);
-    --lv-line-height-default: var(--base-text-lineHeight-normal);
-    --lv-line-height-tight: var(--base-text-lineHeight-tight);
-    --lv-line-height-snug: var(--base-text-lineHeight-snug);
-    --lv-line-height-normal: var(--base-text-lineHeight-normal);
-    --lv-line-height-relaxed: var(--base-text-lineHeight-relaxed);
-    --lv-line-height-loose: var(--base-text-lineHeight-loose);
+    /* Product roles use complete Primer recipes; primitive scales stay in Primer's namespace. */
+    --lv-type-page-title: var(--text-title-shorthand-medium);
+    --lv-type-section-title: var(--text-title-shorthand-small);
+    --lv-type-title-large: var(--text-title-shorthand-large);
+    --lv-type-body-large: var(--text-body-shorthand-large);
+    --lv-type-body: var(--text-body-shorthand-medium);
+    --lv-type-body-compact: var(--text-body-weight) var(--text-body-size-medium) / var(--base-text-lineHeight-tight) var(--fontStack-sansSerif);
+    --lv-type-body-snug: var(--text-body-weight) var(--text-body-size-medium) / var(--base-text-lineHeight-snug) var(--fontStack-sansSerif);
+    --lv-type-secondary: var(--text-body-shorthand-small);
+    --lv-type-caption: var(--text-caption-shorthand);
+    --lv-type-code-block: var(--text-codeBlock-shorthand);
+    --lv-type-code-inline: var(--text-codeInline-shorthand);
     --lv-ease-out: var(--base-easing-easeOut);
     --lv-duration-fast: var(--motion-duration-short);
     --lv-duration-normal: var(--motion-duration-medium);
@@ -470,7 +440,7 @@
     --lv-fg-warning: var(--fgColor-attention);
     --lv-fg-danger: var(--fgColor-danger);
     --lv-fg-on-emphasis: var(--fgColor-onEmphasis);
-    --lv-bg-app: var(--dashboard-bgColor, var(--bgColor-inset));
+    --lv-bg-app: var(--bgColor-default);
     --lv-bg-page: var(--bgColor-default);
     --lv-bg-panel: var(--card-bgColor, var(--bgColor-default));
     --lv-bg-panel-muted: var(--bgColor-muted);
@@ -487,7 +457,7 @@
     --lv-bg-attention-muted: var(--bgColor-attention-muted);
     --lv-bg-danger-muted: var(--bgColor-danger-muted);
     --lv-bg-hover: var(--control-transparent-bgColor-hover);
-    --lv-sidebar-bg: var(--bgColor-default);
+    --lv-sidebar-bg: var(--bgColor-inset);
     --lv-report-rail-bg: var(--bgColor-muted);
     --lv-scrollbar-thumb: var(--borderColor-muted);
     --lv-scrollbar-thumb-hover: var(--borderColor-default);
@@ -655,7 +625,7 @@
     grid-template-columns: var(--lv-sidebar-width, var(--lv-sidebar-width-expanded)) minmax(0, 1fr);
     background: var(--lv-bg-app);
     color: var(--lv-fg-default);
-    font-family: var(--lv-font-family-ui, var(--fontStack-system));
+    font-family: var(--fontStack-system);
   }
 
   lv-app-shell > [slot='page'],

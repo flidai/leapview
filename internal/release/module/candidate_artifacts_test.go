@@ -92,8 +92,11 @@ func TestCandidateArtifactsRefreshThenReuseTargetSnapshot(t *testing.T) {
 	for _, prepared := range second.Workspaces {
 		if prepared.DataMode != "reuse_snapshot" ||
 			prepared.DataRevision != "snapshot:42" ||
-			len(prepared.Connections) != 0 {
+			len(prepared.Connections) == 0 {
 			t.Fatalf("unchanged workspace did not reuse target snapshot: %#v", prepared)
+		}
+		if diff := cmp.Diff(first.Workspaces[0].Connections, prepared.Connections); diff != "" {
+			t.Fatalf("snapshot reuse dropped target connection requirements (-want +got):\n%s", diff)
 		}
 		if state := states.states[servingstate.ID(prepared.ServingStateID)]; state.DuckLakeSnapshotID != 42 {
 			t.Fatalf("candidate serving state snapshot = %d, want 42", state.DuckLakeSnapshotID)

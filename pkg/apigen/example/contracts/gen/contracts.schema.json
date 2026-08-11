@@ -1,0 +1,172 @@
+{
+  "$defs": {
+    "DashboardEnvelope": {
+      "properties": {
+        "filters": {
+          "$ref": "#/$defs/DashboardFilters",
+          "x-libredash-patch-mode": "replace",
+          "x-libredash-signal-key": "filters"
+        },
+        "page": {
+          "$ref": "#/$defs/DashboardPageSignal",
+          "x-libredash-signal-key": "page"
+        },
+        "tables": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DashboardTable"
+          },
+          "type": "object",
+          "x-libredash-patch-mode": "merge",
+          "x-libredash-signal-key": "tables"
+        },
+        "visuals": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DashboardVisual"
+          },
+          "type": "object",
+          "x-libredash-patch-mode": "merge",
+          "x-libredash-signal-key": "visuals"
+        }
+      },
+      "required": [
+        "filters",
+        "page",
+        "tables",
+        "visuals"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-libredash-surface": "dashboard"
+    },
+    "DashboardFilterControl": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardFilters": {
+      "properties": {
+        "controls": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DashboardFilterControl"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "controls"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardPageSignal": {
+      "properties": {
+        "dashboardId": {
+          "type": "string"
+        },
+        "pageId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dashboardId",
+        "pageId",
+        "title"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardTable": {
+      "properties": {
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "rows": {
+          "items": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "columns",
+        "id",
+        "rows"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardVisual": {
+      "properties": {
+        "data": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "id",
+        "kind",
+        "title"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/DashboardEnvelope"
+    }
+  ],
+  "description": "Small data-contract example shaped like a dashboard signal envelope.",
+  "title": "APIGen Signal-Like Data Contracts",
+  "x-apigen-contracts": [
+    {
+      "kind": "ui-signal",
+      "name": "DashboardEnvelope",
+      "schema": {
+        "$ref": "#/$defs/DashboardEnvelope"
+      },
+      "tags": [
+        "dashboard",
+        "datastar"
+      ],
+      "x-libredash-surface": "dashboard"
+    }
+  ]
+}

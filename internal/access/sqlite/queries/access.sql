@@ -537,7 +537,11 @@ ORDER BY p.email, p.display_name, gm.principal_id;
 DELETE FROM grants
 WHERE grants.object_id IN (
   SELECT securable_objects.id FROM securable_objects
-  WHERE securable_objects.workspace_id = sqlc.arg(workspace_id) OR securable_objects.id = sqlc.arg(workspace_object_id)
+  WHERE (
+    securable_objects.workspace_id = sqlc.arg(workspace_id)
+    OR securable_objects.id = sqlc.arg(workspace_object_id)
+  )
+  AND securable_objects.object_type <> 'project_environment'
 );
 
 -- name: DeleteWorkspaceDataPolicies :exec

@@ -1,8 +1,10 @@
 package deployment
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,11 @@ func TestCandidateServiceCreatesResumesAndBuildsCanonicalPreviewURL(t *testing.T
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	repository := newCandidateMemoryRepository()
 	service := newCandidateTestService(t, repository, now)
+	var events []CandidateEvent
+	service.audit = func(_ context.Context, event CandidateEvent) error {
+		events = append(events, event)
+		return nil
+	}
 	digest := "sha256:" + strings.Repeat("a", 64)
 
 	started, err := service.Start(context.Background(), StartCandidateRequest{
@@ -29,6 +36,10 @@ func TestCandidateServiceCreatesResumesAndBuildsCanonicalPreviewURL(t *testing.T
 	require.NoError(t, err)
 	if resumed.Candidate != started.Candidate || !resumed.Resumed || started.Resumed {
 		t.Fatalf("started=%#v resumed=%#v", started, resumed)
+	}
+	if len(events) != 2 || events[0].Action != "candidate.started" || events[1].Action != "candidate.started" ||
+		!strings.Contains(events[1].MetadataJSON, `"resumed":true`) {
+		t.Fatalf("start audit events = %#v", events)
 	}
 	wantURL := "https://prod.leapview.example/candidates/" + started.Candidate.ID
 	if started.PreviewURL != wantURL || strings.Contains(started.PreviewURL, digest) ||
@@ -53,6 +64,7 @@ func TestCandidateServiceRetiresRuntimeOnCancelAndReconcile(t *testing.T) {
 		TargetID: "lvinst_prod", CanonicalOrigin: "https://prod.leapview.example", Environment: "prod",
 		Lifetime: time.Hour, MaxActivePerOwner: 4, Now: func() time.Time { return now },
 		NewID: func() (string, error) { return "cand_lifecycle", nil }, RuntimeLifecycle: lifecycle,
+		Audit: func(context.Context, CandidateEvent) error { return nil },
 	})
 	require.NoError(t, err)
 	started, err := service.Start(t.Context(), StartCandidateRequest{ProjectID: "finance", OwnerID: "owner", ArtifactDigest: "sha256:" + strings.Repeat("a", 64)})
@@ -66,6 +78,51 @@ func TestCandidateServiceRetiresRuntimeOnCancelAndReconcile(t *testing.T) {
 	require.NoError(t, err)
 	if lifecycle.reaped != 1 {
 		t.Fatalf("reap calls = %d, want 1", lifecycle.reaped)
+	}
+}
+
+func TestCandidateServiceRequiresAuditRecorder(t *testing.T) {
+	_, err := NewCandidateService(newCandidateMemoryRepository(), CandidateServiceConfig{
+		TargetID: "lvinst_prod", CanonicalOrigin: "https://prod.leapview.example", Environment: "prod",
+	})
+	if !errors.Is(err, ErrCandidateAuditUnavailable) {
+		t.Fatalf("NewCandidateService() error = %v, want ErrCandidateAuditUnavailable", err)
+	}
+}
+
+func TestCandidateServicePreservesCommittedMutationWhenBestEffortAuditFails(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	repository := newCandidateMemoryRepository()
+	var logs bytes.Buffer
+	service, err := NewCandidateService(repository, CandidateServiceConfig{
+		TargetID: "lvinst_prod", CanonicalOrigin: "https://prod.leapview.example", Environment: "prod",
+		Lifetime: time.Hour, MaxActivePerOwner: 4, Now: func() time.Time { return now },
+		NewID: func() (string, error) { return "cand_audit_failure", nil },
+		Audit: func(context.Context, CandidateEvent) error {
+			return errors.New("audit store unavailable")
+		},
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	require.NoError(t, err)
+
+	started, err := service.Start(t.Context(), StartCandidateRequest{
+		ProjectID: "finance", OwnerID: "principal_1",
+		ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
+	})
+	require.NoError(t, err)
+	if started.Candidate.ID != "cand_audit_failure" {
+		t.Fatalf("started candidate = %#v", started.Candidate)
+	}
+	persisted, err := repository.CandidateByID(t.Context(), started.Candidate.ID)
+	require.NoError(t, err)
+	if persisted != started.Candidate {
+		t.Fatalf("persisted candidate = %#v, want %#v", persisted, started.Candidate)
+	}
+	if output := logs.String(); !strings.Contains(output, "candidate audit failed") ||
+		!strings.Contains(output, "audit_action=candidate.started") ||
+		!strings.Contains(output, "candidate_id=cand_audit_failure") ||
+		!strings.Contains(output, "audit store unavailable") {
+		t.Fatalf("audit failure log = %q", output)
 	}
 }
 
@@ -263,6 +320,7 @@ func newCandidateTestService(t *testing.T, repository CandidateRepository, now t
 			counter++
 			return "cand_test_" + string(rune('0'+counter)), nil
 		},
+		Audit: func(context.Context, CandidateEvent) error { return nil },
 	})
 	require.NoError(t, err)
 	return service

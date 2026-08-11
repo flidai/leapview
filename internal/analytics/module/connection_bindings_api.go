@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
@@ -83,7 +84,7 @@ func (handler connectionBindingAPIHandler) Create(
 		Enabled: body.Enabled,
 	})
 	if err != nil {
-		writeConnectionBindingError(w, r, err)
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationCreateTargetConnectionBinding(), err)
 		return
 	}
 	w.Header().Set("Location", strings.TrimSuffix(r.URL.Path, "/")+"/"+binding.LogicalConnectionID.String())
@@ -168,7 +169,7 @@ func (handler connectionBindingAPIHandler) Update(
 		},
 	)
 	if err != nil {
-		writeConnectionBindingError(w, r, err)
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationUpdateTargetConnectionBinding(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, targetConnectionBindingResponse(binding))
@@ -185,7 +186,7 @@ func (handler connectionBindingAPIHandler) Test(
 	}
 	status, err := handler.config.Administration.Test(r.Context(), principalID, key)
 	if err != nil {
-		writeConnectionBindingError(w, r, err)
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationTestTargetConnectionBinding(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, targetConnectionHealthResponse(status))
@@ -202,7 +203,7 @@ func (handler connectionBindingAPIHandler) Refresh(
 	}
 	status, err := handler.config.Administration.RefreshNow(r.Context(), principalID, key)
 	if err != nil {
-		writeConnectionBindingError(w, r, err)
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationRefreshTargetConnectionBinding(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, targetConnectionHealthResponse(status))
@@ -244,7 +245,11 @@ func (handler connectionBindingAPIHandler) setEnabled(
 		binding, err = handler.config.Administration.Disable(r.Context(), principalID, key)
 	}
 	if err != nil {
-		writeConnectionBindingError(w, r, err)
+		operationID := analyticsgen.GenCommandOperationDisableTargetConnectionBinding()
+		if enabled {
+			operationID = analyticsgen.GenCommandOperationEnableTargetConnectionBinding()
+		}
+		writeConnectionBindingCommandFailure(w, r, operationID, err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, targetConnectionBindingResponse(binding))
@@ -458,6 +463,18 @@ func writeConnectionBindingError(w http.ResponseWriter, r *http.Request, err err
 		status, code, detail = http.StatusServiceUnavailable, "CONNECTION_PROVIDER_UNAVAILABLE", "Connection provider is unavailable"
 	}
 	apitransport.WriteProblem(w, r, status, code, detail, nil)
+}
+
+func writeConnectionBindingCommandFailure(w http.ResponseWriter, r *http.Request, operationID analyticsgen.GenCommandOperationID, err error) {
+	err = classifyConnectionBindingCommandFailure(err)
+	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, analyticsgen.GetAPIGenCommandFailureContracts, err)
+}
+
+func classifyConnectionBindingCommandFailure(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return apigenfailure.Wrap("provider_unavailable", err)
+	}
+	return err
 }
 
 func optionalString(value string) *string {

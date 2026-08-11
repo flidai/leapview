@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "04c93c4f105b62890ec729ba6680b0da80cd71c711aa5c0a6a718fb1384b1bee"
+	const expectedRouteContractDigest = "f70a574126a6b1718372b3e1e16e8fddb87017e964c6b22de0d722f8a042aa8f"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -166,7 +166,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.Contains(path, "/access/") || strings.HasSuffix(path, "/access/upsert") || strings.HasSuffix(path, "/access/remove"):
 		authenticated.owner = "workspace"
 		authenticated.privilege = "MANAGE_GRANTS"
-	case path == "/" || path == "/data" || path == "/data/command" ||
+	case path == "/" || path == "/catalog/search" || path == "/data" || path == "/data/command" ||
 		strings.HasPrefix(path, "/workspaces") || strings.HasPrefix(path, "/connections"):
 		authenticated.owner = "workspace"
 		authenticated.privilege = "VIEW_ITEM"
@@ -235,6 +235,7 @@ GET /admin/groups
 GET /admin/groups/{group}
 GET /admin/principals
 GET /admin/principals/{principal}
+GET /admin/profile
 GET /admin/publications
 GET /admin/queries
 GET /admin/storage
@@ -291,6 +292,8 @@ PATCH /admin/agent/config
 PATCH /metrics
 PATCH /static/*
 POST /admin/publications/command
+POST /admin/groups/search
+POST /admin/principals/search
 POST /admin/queries/command
 POST /admin/storage/select-table
 POST /auth/desktop/disconnect
@@ -301,6 +304,8 @@ POST /auth/logout
 POST /chat/turns
 POST /chats/turns
 POST /candidates/{candidate}/workspaces/{workspace}/commands/{command}
+POST /catalog/search
+POST /connections/search
 POST /data/command
 POST /device
 POST /metrics
@@ -330,6 +335,8 @@ POST /workspaces/{workspace}/commands/select
 POST /workspaces/{workspace}/commands/spatial-select
 POST /workspaces/{workspace}/commands/visual-spatial-window
 POST /workspaces/{workspace}/commands/visual-window
+POST /workspaces/search
+POST /workspaces/{workspace}/search
 PUT /metrics
 PUT /static/*
 TRACE /metrics

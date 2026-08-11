@@ -37,7 +37,8 @@ func (m WorkspaceRefreshMaterializer) Materialize(ctx context.Context, input ref
 	}
 	return m.Executor.MaterializeWorkspace(ctx, analyticsmaterialization.WorkspaceRequest{
 		Models: input.Definition.Models, ServingStateID: string(input.Candidate.ID),
-		WorkspaceID: string(input.Candidate.WorkspaceID), Environment: input.Environment,
+		ConnectionEvidenceServingStateID: string(input.Active.ID),
+		WorkspaceID:                      string(input.Candidate.WorkspaceID), Environment: input.Environment,
 		TargetType: input.Plan.TargetType, TargetID: input.Plan.TargetID,
 		SemanticDigest: input.Candidate.Digest, ArtifactDigest: input.Artifact.Digest,
 		Tables: input.Plan.Tables,

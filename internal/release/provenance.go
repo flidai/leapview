@@ -333,9 +333,9 @@ func normalizeTargetPlanProvenance(
 		}
 		switch workspace.DataMode {
 		case TargetDataReuseSnapshot:
-			if len(workspace.Bindings) != 0 || len(workspace.AuthoredConnections) != 0 {
+			if len(workspace.AuthoredConnections) != 0 {
 				return TargetPlanProvenance{}, provenanceInvalid(
-					fmt.Errorf("snapshot reuse cannot retain refresh connection evidence"),
+					fmt.Errorf("snapshot reuse cannot retain authored refresh connection evidence"),
 				)
 			}
 		case TargetDataRefreshSources:

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 )
@@ -21,20 +22,24 @@ type Authorizer interface {
 type Handler struct {
 	authorizer Authorizer
 	dispatch   Dispatch
+	commands   apigencommand.Lookup
 }
 
 const maxGeneratedJSONBodyBytes int64 = 16 << 20
 
 type Dispatch func(operationID string, w http.ResponseWriter, r *http.Request) bool
 
-func Build(authorizer Authorizer, dispatch Dispatch) (*Handler, error) {
+func Build(authorizer Authorizer, dispatch Dispatch, commands apigencommand.Lookup) (*Handler, error) {
 	if authorizer == nil {
 		return nil, fmt.Errorf("APIGen authorizer is required")
 	}
 	if dispatch == nil {
 		return nil, fmt.Errorf("APIGen dispatch function is required")
 	}
-	return &Handler{authorizer: authorizer, dispatch: dispatch}, nil
+	if commands == nil {
+		return nil, fmt.Errorf("APIGen command contract lookup is required")
+	}
+	return &Handler{authorizer: authorizer, dispatch: dispatch, commands: commands}, nil
 }
 
 func (h *Handler) HandleAPIGen(operationID string, w http.ResponseWriter, r *http.Request) {
@@ -46,9 +51,25 @@ func (h *Handler) HandleAPIGen(operationID string, w http.ResponseWriter, r *htt
 		if !validateBoundary(operationID, w, r) {
 			return
 		}
+		var guard *apigencommand.Guard
+		if h.commands != nil {
+			if contract, command := h.commands(operationID); command {
+				ctx, started, err := apigencommand.Begin(r.Context(), contract)
+				if err != nil {
+					apitransport.WriteProblem(w, r, http.StatusInternalServerError, "INVALID_COMMAND_CONTRACT", "The command contract is invalid.", nil)
+					return
+				}
+				r = r.WithContext(ctx)
+				guard = started
+			}
+		}
 		buffered := apiprotocol.NewResponseBuffer(w, r)
 		if ok := h.dispatch(operationID, buffered, r); !ok {
 			http.NotFound(w, r)
+			return
+		}
+		if guard != nil && buffered.StatusCode() >= 200 && buffered.StatusCode() < 300 && !guard.Completed() {
+			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "COMMAND_CONTRACT_NOT_EXECUTED", "The command did not execute through the generated command contract.", nil)
 			return
 		}
 		buffered.Flush()

@@ -18,20 +18,24 @@ model ManagedConnectionListResponse {
 }
 
 @tag("Managed Data")
-@summary("List project managed connections")
+@doc("Read-only discovery of project managed connections.")
 @route("/projects/{project}/connections")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
-@operationId("listManagedConnections")
-op listManagedConnections(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ManagedConnectionListResponse> | CommonErrors;
+interface ManagedConnections {
+  @summary("List project managed connections")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @operationId("listManagedConnections")
+  listManagedConnections(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ManagedConnectionListResponse> | CommonErrors;
 
-@tag("Managed Data")
-@summary("Describe a project managed connection")
-@route("/projects/{project}/connections/{connection}")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
-@operationId("getManagedConnection")
-op getManagedConnection(@path project: string, @path connection: string): OkJson<ManagedConnectionResponse> | CommonErrors;
+  @summary("Describe a project managed connection")
+  @route("/{connection}")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @operationId("getManagedConnection")
+  getManagedConnection(@path project: string, @path connection: string): OkJson<ManagedConnectionResponse> | CommonErrors;
+}
 
 @minLength(1)
 @maxLength(128)
@@ -250,117 +254,181 @@ model ManagedDataUploadSessionListResponse {
 }
 
 @tag("Managed Data")
-@summary("Get the active managed-data revision")
-@route("/projects/{project}/connections/{connection}/active-revision")
-@get
-@operationId("getActiveManagedDataRevision")
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
-op getActiveManagedDataRevision(
-  @path project: ManagedDataProjectId,
-  @path connection: ManagedDataConnectionId,
-): OkJson<ManagedDataActiveRevisionResponse> | CommonErrors;
+@doc("Managed-data revision queries and upload-session lifecycle commands. Revision reads, session reads, and event streaming do not mutate durable domain state.")
+@route("/projects/{project}/connections/{connection}")
+interface ManagedDataLifecycle {
+  @summary("Get the active managed-data revision")
+  @route("/active-revision")
+  @get
+  @operationId("getActiveManagedDataRevision")
+  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  getActiveManagedDataRevision(
+    @path project: ManagedDataProjectId,
+    @path connection: ManagedDataConnectionId,
+  ): OkJson<ManagedDataActiveRevisionResponse> | CommonErrors;
 
-@tag("Managed Data")
-@summary("List immutable managed-data revisions")
-@route("/projects/{project}/connections/{connection}/revisions")
-@get
-@operationId("listManagedDataRevisions")
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
-op listManagedDataRevisions(
-  @path project: ManagedDataProjectId,
-  @path connection: ManagedDataConnectionId,
-  @query limit?: ManagedDataPageLimit,
-  @query pageToken?: ManagedDataPageToken,
-): OkJson<ManagedDataRevisionListResponse> | CommonErrors;
+  @summary("List immutable managed-data revisions")
+  @route("/revisions")
+  @get
+  @operationId("listManagedDataRevisions")
+  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  listManagedDataRevisions(
+    @path project: ManagedDataProjectId,
+    @path connection: ManagedDataConnectionId,
+    @query limit?: ManagedDataPageLimit,
+    @query pageToken?: ManagedDataPageToken,
+  ): OkJson<ManagedDataRevisionListResponse> | CommonErrors;
 
-@tag("Managed Data")
-@summary("Get an immutable managed-data revision")
-@route("/projects/{project}/connections/{connection}/revisions/{revision}")
-@get
-@operationId("getManagedDataRevision")
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
-op getManagedDataRevision(
-  @path project: ManagedDataProjectId,
-  @path connection: ManagedDataConnectionId,
-  @path revision: ManagedDataRevisionId,
-): OkJson<ManagedDataRevisionResponse> | CommonErrors;
+  @summary("Get an immutable managed-data revision")
+  @route("/revisions/{revision}")
+  @get
+  @operationId("getManagedDataRevision")
+  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  getManagedDataRevision(
+    @path project: ManagedDataProjectId,
+    @path connection: ManagedDataConnectionId,
+    @path revision: ManagedDataRevisionId,
+  ): OkJson<ManagedDataRevisionResponse> | CommonErrors;
 
-@tag("Managed Data")
-@summary("Create a managed-data upload session from a canonical manifest")
-@route("/projects/{project}/connections/{connection}/upload-sessions")
-@post
-@operationId("createManagedDataUploadSession")
-@apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
-op createManagedDataUploadSession(
-  @path project: ManagedDataProjectId,
-  @path connection: ManagedDataConnectionId,
-  @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
-  @body body: ManagedDataUploadSessionCreateRequest,
-): CreatedJson<ManagedDataUploadSessionResponse> | CommonErrors;
+  @summary("Create a managed-data upload session from a canonical manifest")
+  @route("/upload-sessions")
+  @post
+  @operationId("createManagedDataUploadSession")
+  @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "managed_data.upload_session.created", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." },
+      #{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." },
+      #{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." },
+      #{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." },
+      #{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." },
+      #{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." },
+      #{ kind: "too_large", statusCode: 413, code: "MANAGED_DATA_UPLOAD_TOO_LARGE", publicDetail: "Managed-data upload request is too large." },
+      #{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." },
+      #{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." },
+      #{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." },
+    ],
+    targetParameter: "project",
+  })
+  createManagedDataUploadSession(
+    @path project: ManagedDataProjectId,
+    @path connection: ManagedDataConnectionId,
+    @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
+    @body body: ManagedDataUploadSessionCreateRequest,
+  ): CreatedJson<ManagedDataUploadSessionResponse> | CommonErrors;
 
-@tag("Managed Data")
-@summary("List managed-data upload sessions")
-@route("/projects/{project}/connections/{connection}/upload-sessions")
-@get
-@operationId("listManagedDataUploadSessions")
-@apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
-op listManagedDataUploadSessions(
-  @path project: ManagedDataProjectId,
-  @path connection: ManagedDataConnectionId,
-  @query limit?: ManagedDataPageLimit,
-  @query pageToken?: ManagedDataPageToken,
-): OkJson<ManagedDataUploadSessionListResponse> | CommonErrors;
+  @summary("List managed-data upload sessions")
+  @route("/upload-sessions")
+  @get
+  @operationId("listManagedDataUploadSessions")
+  @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  listManagedDataUploadSessions(
+    @path project: ManagedDataProjectId,
+    @path connection: ManagedDataConnectionId,
+    @query limit?: ManagedDataPageLimit,
+    @query pageToken?: ManagedDataPageToken,
+  ): OkJson<ManagedDataUploadSessionListResponse> | CommonErrors;
 
-@tag("Managed Data")
-@summary("Get a managed-data upload session")
-@route("/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}")
-@get
-@operationId("getManagedDataUploadSession")
-@apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
-op getManagedDataUploadSession(
-  @path project: ManagedDataProjectId,
-  @path connection: ManagedDataConnectionId,
-  @path uploadSession: ManagedDataUploadSessionId,
-): OkJson<ManagedDataUploadSessionResponse> | CommonErrors;
+  @summary("Get a managed-data upload session")
+  @route("/upload-sessions/{uploadSession}")
+  @get
+  @operationId("getManagedDataUploadSession")
+  @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  getManagedDataUploadSession(
+    @path project: ManagedDataProjectId,
+    @path connection: ManagedDataConnectionId,
+    @path uploadSession: ManagedDataUploadSessionId,
+  ): OkJson<ManagedDataUploadSessionResponse> | CommonErrors;
 
-@tag("Managed Data")
-@summary("Cancel a managed-data upload session")
-@route("/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/cancel")
-@post
-@operationId("cancelManagedDataUploadSession")
-@apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
-op cancelManagedDataUploadSession(
-  @path project: ManagedDataProjectId,
-  @path connection: ManagedDataConnectionId,
-  @path uploadSession: ManagedDataUploadSessionId,
-  @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
-): OkJson<ManagedDataUploadSessionResponse> | CommonErrors;
+  @summary("Cancel a managed-data upload session")
+  @route("/upload-sessions/{uploadSession}/cancel")
+  @post
+  @operationId("cancelManagedDataUploadSession")
+  @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "managed_data.upload_session.cancelled", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." },
+      #{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." },
+      #{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." },
+      #{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." },
+      #{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." },
+      #{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." },
+      #{ kind: "too_large", statusCode: 413, code: "MANAGED_DATA_UPLOAD_TOO_LARGE", publicDetail: "Managed-data upload request is too large." },
+      #{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." },
+      #{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." },
+      #{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." },
+    ],
+    targetParameter: "project",
+  })
+  cancelManagedDataUploadSession(
+    @path project: ManagedDataProjectId,
+    @path connection: ManagedDataConnectionId,
+    @path uploadSession: ManagedDataUploadSessionId,
+    @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
+  ): OkJson<ManagedDataUploadSessionResponse> | CommonErrors;
 
-@tag("Managed Data")
-@summary("Finalize a managed-data upload session")
-@route("/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/finalize")
-@post
-@operationId("finalizeManagedDataUploadSession")
-@apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
-op finalizeManagedDataUploadSession(
-  @path project: ManagedDataProjectId,
-  @path connection: ManagedDataConnectionId,
-  @path uploadSession: ManagedDataUploadSessionId,
-  @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
-): AcceptedJson<ManagedDataUploadSessionResponse> | CommonErrors;
+  @summary("Finalize a managed-data upload session")
+  @route("/upload-sessions/{uploadSession}/finalize")
+  @post
+  @operationId("finalizeManagedDataUploadSession")
+  @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "managed_data.upload_session.finalization_requested", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." },
+      #{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." },
+      #{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." },
+      #{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." },
+      #{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." },
+      #{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." },
+      #{ kind: "too_large", statusCode: 413, code: "MANAGED_DATA_UPLOAD_TOO_LARGE", publicDetail: "Managed-data upload request is too large." },
+      #{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." },
+      #{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." },
+      #{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." },
+    ],
+    execution: #{
+      mode: "async",
+      guarantee: "transactional",
+      jobKind: "upload.finalize",
+      resourceKind: "upload",
+      initialEvent: "upload_session.finalizing",
+      initialState: "finalizing",
+      statusOperation: "getManagedDataUploadSession",
+      eventsOperation: "listManagedDataUploadSessionEvents",
+      cancellation: "unsupported",
+    },
+    targetParameter: "project",
+  })
+  finalizeManagedDataUploadSession(
+    @path project: ManagedDataProjectId,
+    @path connection: ManagedDataConnectionId,
+    @path uploadSession: ManagedDataUploadSessionId,
+    @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
+  ): AcceptedJson<ManagedDataUploadSessionResponse> | CommonErrors;
 
-@tag("Managed Data")
-@summary("List or stream upload-session events")
-@route("/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/events")
-@get
-@operationId("listManagedDataUploadSessionEvents")
-@apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
-op listManagedDataUploadSessionEvents(
-  @path project: ManagedDataProjectId,
-  @path connection: ManagedDataConnectionId,
-  @path uploadSession: ManagedDataUploadSessionId,
-  @header accept?: string,
-  @header("Last-Event-ID") lastEventId?: string,
-  @query limit?: ManagedDataPageLimit,
-  @query pageToken?: ManagedDataPageToken,
-): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
+  @summary("List or stream upload-session events")
+  @route("/upload-sessions/{uploadSession}/events")
+  @get
+  @operationId("listManagedDataUploadSessionEvents")
+  @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+  @extension("x-leapview-object-scope", "project-environment")
+  listManagedDataUploadSessionEvents(
+    @path project: ManagedDataProjectId,
+    @path connection: ManagedDataConnectionId,
+    @path uploadSession: ManagedDataUploadSessionId,
+    @header accept?: string,
+    @header("Last-Event-ID") lastEventId?: string,
+    @query limit?: ManagedDataPageLimit,
+    @query pageToken?: ManagedDataPageToken,
+  ): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
+}

@@ -213,8 +213,7 @@ class WindowedTable extends LitElement {
       border-block-end: var(--lv-border-muted);
       padding: var(--base-size-8) var(--base-size-16);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
     }
 
     .footer {
@@ -225,7 +224,7 @@ class WindowedTable extends LitElement {
     .toolbar strong,
     .footer strong {
       color: var(--lv-fg-default);
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .options {
@@ -270,7 +269,7 @@ class WindowedTable extends LitElement {
       gap: var(--base-size-8);
       min-height: var(--control-xsmall-size);
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
       cursor: pointer;
     }
 
@@ -344,9 +343,8 @@ class WindowedTable extends LitElement {
       color: inherit;
       padding: 0 var(--base-size-8);
       cursor: pointer;
-      font: inherit;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
       text-align: left;
       text-transform: uppercase;
     }
@@ -429,7 +427,7 @@ class WindowedTable extends LitElement {
       align-items: center;
       padding: 0 var(--base-size-8);
       color: var(--lv-fg-default);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .cell.right,
@@ -443,8 +441,7 @@ class WindowedTable extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-family: var(--fontStack-monospace);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-code-inline);
     }
 
     .muted,
@@ -452,7 +449,7 @@ class WindowedTable extends LitElement {
     .error {
       color: var(--lv-fg-muted);
       padding: var(--base-size-16);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .error {

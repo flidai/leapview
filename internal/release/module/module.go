@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/release"
 	releasefilesystem "github.com/flidai/leapview/internal/release/filesystem"
@@ -21,6 +23,8 @@ type Module struct {
 	servingProvenance  release.ServingStateProvenanceRepository
 	environment        string
 	api                APIConfig
+	logger             *slog.Logger
+	finalizeExecution  apigencommand.AsyncExecutionContract
 }
 
 type Config struct {
@@ -32,6 +36,7 @@ type Config struct {
 	ArtifactDirectory string
 	Environment       servingstate.Environment
 	API               APIConfig
+	Logger            *slog.Logger
 }
 
 type ServingStateRepository interface {
@@ -50,6 +55,10 @@ type WorkspaceProvisioner interface {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	finalizeExecution, err := loadFinalizeExecutionContract()
+	if err != nil {
+		return nil, err
+	}
 	releases, finalization, catalog, deployments, err := releaseStores(config.Database, config.API.Workflow)
 	if err != nil {
 		return nil, err
@@ -76,7 +85,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Module{
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	module := &Module{
 		service: service,
 		candidateArtifacts: &candidateArtifactService{
 			states: config.States, workspaces: config.Workspaces,
@@ -85,8 +98,13 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			pins:        config.ManagedDataPins,
 		},
 		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
-		environment: string(config.Environment), api: config.API,
-	}, nil
+		environment: string(config.Environment), api: config.API, logger: logger,
+		finalizeExecution: finalizeExecution,
+	}
+	if err := validateFinalizeJobHandlers(finalizeExecution, module.JobHandlers()); err != nil {
+		return nil, err
+	}
+	return module, nil
 }
 
 func (m *Module) ProvenanceForServingState(

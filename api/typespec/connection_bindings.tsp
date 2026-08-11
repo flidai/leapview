@@ -128,138 +128,213 @@ model TargetConnectionBindingHealthResponse {
   hasActivePool: boolean;
 }
 
-@tag("Connections")
-@summary("List target connection bindings")
 @route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
-@operationId("listTargetConnectionBindings")
-op listTargetConnectionBindings(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-): OkJson<TargetConnectionBindingListResponse> | CommonErrors;
-
 @tag("Connections")
-@summary("Create a target connection binding")
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
-@operationId("createTargetConnectionBinding")
-op createTargetConnectionBinding(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-  @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
-  @body body: TargetConnectionBindingCreateRequest,
-): CreatedJson<TargetConnectionBindingResponse> | CommonErrors;
+interface TargetConnectionBindings {
+  @summary("List target connection bindings")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @operationId("listTargetConnectionBindings")
+  listTargetConnectionBindings(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+  ): OkJson<TargetConnectionBindingListResponse> | CommonErrors;
 
-@tag("Connections")
-@summary("Get target connection binding metadata")
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings/{connection}")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
-@operationId("getTargetConnectionBinding")
-op getTargetConnectionBinding(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-  @path connection: LogicalConnectionId,
-): OkJson<TargetConnectionBindingResponse> | CommonErrors;
+  @summary("Create a target connection binding")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "connection.binding.created", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
+      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
+      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
+      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
+      #{ kind: "credential_invalid", statusCode: 422, code: "CONNECTION_TEST_FAILED", publicDetail: "Connection validation failed." },
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
+      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
+    ],
+    targetParameter: "workspace",
+  })
+  @operationId("createTargetConnectionBinding")
+  createTargetConnectionBinding(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+    @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
+    @body body: TargetConnectionBindingCreateRequest,
+  ): CreatedJson<TargetConnectionBindingResponse> | CommonErrors;
 
-@tag("Connections")
-@summary("Plan a dependency-aware target connection change")
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings/{connection}/plan")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
-@operationId("planTargetConnectionBindingChange")
-op planTargetConnectionBindingChange(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-  @path connection: LogicalConnectionId,
-  @body body: TargetConnectionBindingPlanRequest,
-): OkJson<TargetConnectionBindingChangePlanResponse> | CommonErrors;
+  @summary("Get target connection binding metadata")
+  @route("/{connection}")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @operationId("getTargetConnectionBinding")
+  getTargetConnectionBinding(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+    @path connection: LogicalConnectionId,
+  ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
 
-@tag("Connections")
-@summary("Update target connection binding metadata")
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings/{connection}")
-@put
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
-@operationId("updateTargetConnectionBinding")
-op updateTargetConnectionBinding(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-  @path connection: LogicalConnectionId,
-  @body body: TargetConnectionBindingUpdateRequest,
-): OkJson<TargetConnectionBindingResponse> | CommonErrors;
+  @summary("Plan a dependency-aware target connection change")
+  @doc("Query classification: computes dependencies and a confirmation token without mutating durable binding or runtime state.")
+  @route("/{connection}/plan")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.query
+  @operationId("planTargetConnectionBindingChange")
+  planTargetConnectionBindingChange(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+    @path connection: LogicalConnectionId,
+    @body body: TargetConnectionBindingPlanRequest,
+  ): OkJson<TargetConnectionBindingChangePlanResponse> | CommonErrors;
 
-@tag("Connections")
-@summary("Test a target connection through the candidate runtime path")
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings/{connection}/test")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "TEST_CONNECTION" })
-@operationId("testTargetConnectionBinding")
-op testTargetConnectionBinding(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-  @path connection: LogicalConnectionId,
-  @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
-): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
+  @summary("Update target connection binding metadata")
+  @route("/{connection}")
+  @put
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "connection.binding.updated", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
+      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
+      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
+      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
+      #{ kind: "disabled", statusCode: 409, code: "CONNECTION_BINDING_DISABLED", publicDetail: "Connection binding is disabled." },
+      #{ kind: "confirmation_required", statusCode: 412, code: "CONFIRMATION_REQUIRED", publicDetail: "Dependency confirmation is required." },
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
+      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
+    ],
+    targetParameter: "workspace",
+  })
+  @operationId("updateTargetConnectionBinding")
+  updateTargetConnectionBinding(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+    @path connection: LogicalConnectionId,
+    @body body: TargetConnectionBindingUpdateRequest,
+  ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
 
-@tag("Connections")
-@summary("Refresh credentials and replace the validated target pool")
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings/{connection}/refresh")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "TEST_CONNECTION" })
-@operationId("refreshTargetConnectionBinding")
-op refreshTargetConnectionBinding(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-  @path connection: LogicalConnectionId,
-  @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
-): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
+  @summary("Test a target connection through the candidate runtime path")
+  @doc("Command classification: testing can persist validated health/version state and promote the replacement runtime pool.")
+  @route("/{connection}/test")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "TEST_CONNECTION" })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "credential.test.requested", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
+      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
+      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
+      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
+      #{ kind: "disabled", statusCode: 409, code: "CONNECTION_BINDING_DISABLED", publicDetail: "Connection binding is disabled." },
+      #{ kind: "credential_invalid", statusCode: 422, code: "CONNECTION_TEST_FAILED", publicDetail: "Connection validation failed." },
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
+      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
+    ],
+    targetParameter: "workspace",
+  })
+  @operationId("testTargetConnectionBinding")
+  testTargetConnectionBinding(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+    @path connection: LogicalConnectionId,
+    @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
+  ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
 
-@tag("Connections")
-@summary("Enable a target connection binding")
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings/{connection}/enable")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
-@operationId("enableTargetConnectionBinding")
-op enableTargetConnectionBinding(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-  @path connection: LogicalConnectionId,
-  @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
-): OkJson<TargetConnectionBindingResponse> | CommonErrors;
+  @summary("Refresh credentials and replace the validated target pool")
+  @route("/{connection}/refresh")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "TEST_CONNECTION" })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "credential.refresh.requested", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
+      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
+      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
+      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
+      #{ kind: "disabled", statusCode: 409, code: "CONNECTION_BINDING_DISABLED", publicDetail: "Connection binding is disabled." },
+      #{ kind: "credential_invalid", statusCode: 422, code: "CONNECTION_TEST_FAILED", publicDetail: "Connection validation failed." },
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
+      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
+    ],
+    targetParameter: "workspace",
+  })
+  @operationId("refreshTargetConnectionBinding")
+  refreshTargetConnectionBinding(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+    @path connection: LogicalConnectionId,
+    @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
+  ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
 
-@tag("Connections")
-@summary("Disable a target connection binding")
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings/{connection}/disable")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
-@operationId("disableTargetConnectionBinding")
-op disableTargetConnectionBinding(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-  @path connection: LogicalConnectionId,
-  @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
-): OkJson<TargetConnectionBindingResponse> | CommonErrors;
+  @summary("Enable a target connection binding")
+  @route("/{connection}/enable")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "connection.binding.enabled", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
+      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
+      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
+      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
+      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
+    ],
+    targetParameter: "workspace",
+  })
+  @operationId("enableTargetConnectionBinding")
+  enableTargetConnectionBinding(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+    @path connection: LogicalConnectionId,
+    @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
+  ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
 
-@tag("Connections")
-@summary("Get redacted target connection runtime health")
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings/{connection}/health")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_CONNECTION_HEALTH" })
-@operationId("getTargetConnectionBindingHealth")
-op getTargetConnectionBindingHealth(
-  @path workspace: string,
-  @path target: TargetConnectionIdentifier,
-  @path environment: TargetConnectionIdentifier,
-  @path connection: LogicalConnectionId,
-): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
+  @summary("Disable a target connection binding")
+  @route("/{connection}/disable")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "connection.binding.disabled", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
+      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
+      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
+      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
+      #{ kind: "disabled", statusCode: 409, code: "CONNECTION_BINDING_DISABLED", publicDetail: "Connection binding is disabled." },
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
+      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
+    ],
+    targetParameter: "workspace",
+  })
+  @operationId("disableTargetConnectionBinding")
+  disableTargetConnectionBinding(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+    @path connection: LogicalConnectionId,
+    @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
+  ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
+
+  @summary("Get redacted target connection runtime health")
+  @route("/{connection}/health")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_CONNECTION_HEALTH" })
+  @operationId("getTargetConnectionBindingHealth")
+  getTargetConnectionBindingHealth(
+    @path workspace: string,
+    @path target: TargetConnectionIdentifier,
+    @path environment: TargetConnectionIdentifier,
+    @path connection: LogicalConnectionId,
+  ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
+}

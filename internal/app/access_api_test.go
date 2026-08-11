@@ -34,8 +34,8 @@ func TestAPITokenWorkspaceAndPrivilegeAllowlistAreEnforced(t *testing.T) {
 	publishesReq.Header.Set("Idempotency-Key", "denied-release")
 	publishesRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(publishesRec, publishesReq)
-	if publishesRec.Code != http.StatusForbidden {
-		t.Fatalf("deployment candidate status = %d, want %d body=%s", publishesRec.Code, http.StatusForbidden, publishesRec.Body.String())
+	if publishesRec.Code != http.StatusNotFound {
+		t.Fatalf("project release status = %d, want concealed %d body=%s", publishesRec.Code, http.StatusNotFound, publishesRec.Body.String())
 	}
 
 	foreignWorkspaceReq := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/other/assets", nil)

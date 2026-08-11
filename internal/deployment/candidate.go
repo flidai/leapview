@@ -1,20 +1,21 @@
 package deployment
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/platform/digest"
 )
 
 var (
-	ErrCandidateNotFound    = errors.New("candidate not found")
-	ErrCandidateConflict    = errors.New("candidate conflict")
-	ErrCandidateQuota       = errors.New("candidate quota exceeded")
-	ErrCandidateInvalid     = errors.New("candidate invalid")
-	ErrCandidateUnavailable = errors.New("candidate service unavailable")
+	ErrCandidateNotFound         = apigenfailure.New("candidate_not_found", "candidate not found")
+	ErrCandidateConflict         = apigenfailure.New("candidate_conflict", "candidate conflict")
+	ErrCandidateQuota            = apigenfailure.New("candidate_quota", "candidate quota exceeded")
+	ErrCandidateInvalid          = apigenfailure.New("candidate_invalid", "candidate invalid")
+	ErrCandidateUnavailable      = apigenfailure.New("candidate_unavailable", "candidate service unavailable")
+	ErrCandidateAuditUnavailable = apigenfailure.New("audit_unavailable", "candidate audit unavailable")
 )
 
 type CandidateStatus string

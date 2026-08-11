@@ -54,3 +54,13 @@ func TestCapabilitiesReportOnlyEnabledUploadProtocols(t *testing.T) {
 		}
 	}
 }
+
+func TestCapabilitiesRequireAuthenticationWithoutWorkspaceAuthorization(t *testing.T) {
+	contract, ok := apigenapi.GetAPIGenOperationContracts()["getCapabilities"]
+	if !ok {
+		t.Fatal("getCapabilities contract is missing")
+	}
+	if !contract.Protected || contract.AuthzMode != "authenticated" {
+		t.Fatalf("getCapabilities authorization = protected:%t mode:%q, want authenticated", contract.Protected, contract.AuthzMode)
+	}
+}

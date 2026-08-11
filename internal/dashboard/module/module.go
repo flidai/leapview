@@ -33,23 +33,24 @@ import (
 )
 
 type Module struct {
-	handler            dashboardhttp.Handler
-	semantic           semanticapi.Handler
-	snapshot           func(context.Context, string) (string, error)
-	publications       *publicationsqlite.Repository
-	publicationService *publication.Service
-	publicURL          string
-	currentActor       func(*http.Request) string
-	streams            publication.StreamRegistry
-	publicBroker       dashboardhttp.SignalBroker
-	publicTelemetry    PublicTelemetry
-	logger             *slog.Logger
-	runtimeMetrics     queryruntime.Metrics
-	defaultWorkspaceID string
-	coordinators       *dashboardstream.Registry
-	lifecycleMu        sync.Mutex
-	lifecycleCancel    context.CancelFunc
-	lifecycleWG        sync.WaitGroup
+	handler                       dashboardhttp.Handler
+	semantic                      semanticapi.Handler
+	snapshot                      func(context.Context, string) (string, error)
+	publications                  *publicationsqlite.Repository
+	publicationService            *publication.Service
+	publicURL                     string
+	currentActor                  func(*http.Request) string
+	recordPublicationCommandAudit func(context.Context, publicationCommandAuditInput) error
+	streams                       publication.StreamRegistry
+	publicBroker                  dashboardhttp.SignalBroker
+	publicTelemetry               PublicTelemetry
+	logger                        *slog.Logger
+	runtimeMetrics                queryruntime.Metrics
+	defaultWorkspaceID            string
+	coordinators                  *dashboardstream.Registry
+	lifecycleMu                   sync.Mutex
+	lifecycleCancel               context.CancelFunc
+	lifecycleWG                   sync.WaitGroup
 }
 
 type Config struct {
@@ -62,6 +63,7 @@ type Config struct {
 	Trace              *pagestream.TraceStore
 	PublicURL          string
 	CurrentActor       func(*http.Request) string
+	RecordAudit        func(context.Context, access.AuditEventInput) error
 	RuntimeMetrics     queryruntime.Metrics
 	DefaultWorkspaceID string
 }
@@ -131,6 +133,14 @@ type Telemetry interface {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	var publicationCommandAudit func(context.Context, publicationCommandAuditInput) error
+	if config.Database != nil {
+		var err error
+		publicationCommandAudit, err = buildPublicationCommandAuditRecorder(config.RecordAudit)
+		if err != nil {
+			return nil, err
+		}
+	}
 	coordinators := dashboardstream.NewRegistry()
 	optionCursorSecret := make([]byte, 32)
 	if _, err := rand.Read(optionCursorSecret); err != nil {
@@ -228,7 +238,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		},
 		snapshot:  config.ServingSnapshot,
 		publicURL: config.PublicURL, currentActor: config.CurrentActor,
-		streams: publication.NewMemoryStreamRegistry(), publicBroker: config.HTTP.Broker,
+		recordPublicationCommandAudit: publicationCommandAudit,
+		streams:                       publication.NewMemoryStreamRegistry(), publicBroker: config.HTTP.Broker,
 		publicTelemetry: config.PublicTelemetry, logger: config.Logger,
 		runtimeMetrics: config.RuntimeMetrics, defaultWorkspaceID: config.DefaultWorkspaceID,
 		coordinators: coordinators,

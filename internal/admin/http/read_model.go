@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/admin/storage"
@@ -49,13 +50,7 @@ type ReadModel struct {
 }
 
 func (m ReadModel) Data(r *http.Request) (ui.AdminData, error) {
-	data := ui.AdminData{
-		Workspace:         workspace.WorkspaceView{ID: "platform", Title: "Platform"},
-		CSRFToken:         m.csrfToken(r),
-		AuthConfigured:    m.AuthConfigured,
-		AccessConfigured:  m.AccessConfigured,
-		AccessStatusLabel: "Configured",
-	}
+	data := m.baseData(r)
 	var err error
 	data.Agent, err = m.agentData(r)
 	if err != nil {
@@ -67,25 +62,68 @@ func (m ReadModel) Data(r *http.Request) (ui.AdminData, error) {
 			return data, err
 		}
 	}
+	if err := m.populateAccessDirectory(r, &data, true, true); err != nil {
+		return data, err
+	}
+	data.Storage = m.StorageService.Data(r.Context())
+	data.QueryHistory = m.QueryHistoryData(r, uisignals.AdminQueryHistoryFilters{}, "", 50)
+	return data, nil
+}
+
+func (m ReadModel) PrincipalsListData(r *http.Request) (ui.AdminData, error) {
+	data := m.baseData(r)
+	err := m.populateAccessDirectory(r, &data, true, false)
+	return data, err
+}
+
+func (m ReadModel) GroupsListData(r *http.Request) (ui.AdminData, error) {
+	data := m.baseData(r)
+	err := m.populateAccessDirectory(r, &data, false, true)
+	return data, err
+}
+
+func (m ReadModel) baseData(r *http.Request) ui.AdminData {
+	data := ui.AdminData{
+		Workspace:         workspace.WorkspaceView{ID: "platform", Title: "Platform"},
+		ListFilter:        strings.TrimSpace(r.URL.Query().Get("filter")),
+		ListQuery:         strings.TrimSpace(r.URL.Query().Get("q")),
+		CSRFToken:         m.csrfToken(r),
+		AuthConfigured:    m.AuthConfigured,
+		AccessConfigured:  m.AccessConfigured,
+		AccessStatusLabel: "Configured",
+	}
+	if principal, ok := m.currentPrincipal(r); ok {
+		data.Profile = ui.AdminProfile{
+			ID: principal.ID, Email: principal.Email, DisplayName: principal.DisplayName,
+			Username: profileUsername(principal),
+		}
+	}
+	return data
+}
+
+func (m ReadModel) populateAccessDirectory(r *http.Request, data *ui.AdminData, includePrincipals, includeGroups bool) error {
 	repo := m.Access
 	if repo == nil {
 		data.AccessConfigured = false
 		data.AccessStatusLabel = "Access store is not configured"
 		data.RoleCount = len(defaultRoleViews())
-		data.Storage = m.StorageService.Data(r.Context())
-		return data, nil
+		return nil
 	}
-	principals, err := m.principalsData(r, repo)
-	if err != nil {
-		return data, err
+	var principals []ui.AdminPrincipal
+	var err error
+	if includePrincipals {
+		principals, err = m.principalsData(r, repo)
+		if err != nil {
+			return err
+		}
 	}
 	groups, err := repo.ListAllGroups(r.Context())
 	if err != nil {
-		return data, err
+		return err
 	}
 	bindings, roles, err := m.roleBindingsAndRoles(r, repo)
 	if err != nil {
-		return data, err
+		return err
 	}
 	membersByGroup := map[string][]ui.AdminPrincipalRef{}
 	groupsByID := map[string]access.Group{}
@@ -102,13 +140,15 @@ func (m ReadModel) Data(r *http.Request) (ui.AdminData, error) {
 	}
 	data.RoleCount = len(roles)
 	data.BindingCount = len(bindings)
-	data.Principals = buildAdminPrincipals(principals, bindings, groupsByID, membersByGroup)
-	data.Groups = buildAdminGroups(groups, bindings, membersByGroup)
-	data.Storage = m.StorageService.Data(r.Context())
-	data.QueryHistory = m.QueryHistoryData(r, uisignals.AdminQueryHistoryFilters{}, "", 50)
-	data.PrincipalCount = len(data.Principals)
-	data.GroupCount = len(data.Groups)
-	return data, nil
+	if includePrincipals {
+		data.Principals = buildAdminPrincipals(principals, bindings, groupsByID, membersByGroup)
+		data.PrincipalCount = len(data.Principals)
+	}
+	if includeGroups {
+		data.Groups = buildAdminGroups(groups, bindings, membersByGroup)
+		data.GroupCount = len(data.Groups)
+	}
+	return nil
 }
 
 func (m ReadModel) PublicationData(r *http.Request) (ui.AdminData, error) {
@@ -176,8 +216,10 @@ func (m ReadModel) principalsData(r *http.Request, repo AccessReader) ([]ui.Admi
 	for _, row := range rows {
 		principals = append(principals, ui.AdminPrincipal{
 			ID:          row.ID,
+			Kind:        string(row.Kind),
 			Email:       row.Email,
 			DisplayName: row.DisplayName,
+			DisabledAt:  row.DisabledAt,
 			CreatedAt:   row.CreatedAt,
 			UpdatedAt:   row.UpdatedAt,
 		})
@@ -288,26 +330,35 @@ func (m ReadModel) csrfToken(r *http.Request) string {
 	return m.CSRFToken(r)
 }
 
+func profileUsername(principal Principal) string {
+	if email := strings.TrimSpace(principal.Email); email != "" {
+		if username, _, ok := strings.Cut(email, "@"); ok && username != "" {
+			return username
+		}
+	}
+	return strings.TrimSpace(principal.ID)
+}
+
 func buildAdminPrincipals(principals []ui.AdminPrincipal, bindings []workspace.RoleBindingView, groupsByID map[string]access.Group, membersByGroup map[string][]ui.AdminPrincipalRef) []ui.AdminPrincipal {
-	byID := make(map[string]*ui.AdminPrincipal, len(principals))
+	byID := make(map[string]int, len(principals))
 	out := make([]ui.AdminPrincipal, 0, len(principals))
 	for _, principal := range principals {
-		row := principal
-		byID[row.ID] = &row
-		out = append(out, row)
+		index := len(out)
+		byID[principal.ID] = index
+		out = append(out, principal)
 	}
 	for _, binding := range bindings {
 		if binding.SubjectType == string(access.SubjectPrincipal) && binding.PrincipalID != "" {
-			if principal := byID[binding.PrincipalID]; principal != nil {
-				principal.DirectRoles = appendUnique(principal.DirectRoles, binding.Role)
+			if index, ok := byID[binding.PrincipalID]; ok {
+				out[index].DirectRoles = appendUnique(out[index].DirectRoles, binding.Role)
 			}
 		}
 	}
 	for groupID, members := range membersByGroup {
 		group := groupsByID[groupID]
 		for _, member := range members {
-			if principal := byID[member.ID]; principal != nil {
-				principal.Groups = append(principal.Groups, ui.AdminGroupRef{
+			if index, ok := byID[member.ID]; ok {
+				out[index].Groups = appendAdminGroupRefUnique(out[index].Groups, ui.AdminGroupRef{
 					ID:         group.ID,
 					Name:       group.Name,
 					ExternalID: group.ExternalID,
@@ -316,15 +367,21 @@ func buildAdminPrincipals(principals []ui.AdminPrincipal, bindings []workspace.R
 		}
 	}
 	for i := range out {
-		if principal := byID[out[i].ID]; principal != nil {
-			sort.Strings(principal.DirectRoles)
-			sort.SliceStable(principal.Groups, func(i, j int) bool {
-				return principal.Groups[i].Name < principal.Groups[j].Name
-			})
-			out[i] = *principal
-		}
+		sort.Strings(out[i].DirectRoles)
+		sort.SliceStable(out[i].Groups, func(i, j int) bool {
+			return out[i].Groups[i].Name < out[i].Groups[j].Name
+		})
 	}
 	return out
+}
+
+func appendAdminGroupRefUnique(values []ui.AdminGroupRef, value ui.AdminGroupRef) []ui.AdminGroupRef {
+	for _, existing := range values {
+		if existing.ID == value.ID {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func buildAdminGroups(groups []access.Group, bindings []workspace.RoleBindingView, membersByGroup map[string][]ui.AdminPrincipalRef) []ui.AdminGroup {

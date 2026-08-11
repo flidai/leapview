@@ -11,23 +11,26 @@ import (
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	accesshttp "github.com/flidai/leapview/internal/access/http"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
+	accessoperation "github.com/flidai/leapview/internal/access/operation"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 )
 
 type Module struct {
-	handler       accesshttp.Handler
-	auth          *Auth
-	repository    func() (access.Repository, error)
-	workspaceIDs  func(context.Context) ([]string, error)
-	workspaceID   string
-	oauth         *mcpoauth.Service
-	oauthResource mcpoauth.ResourceServer
-	desktopAuth   *desktopauth.Service
-	authoringAuth *access.AuthoringAuthService
-	logger        *slog.Logger
-	presentation  webpage.Presentation
-	assets        staticasset.Resolver
+	handler             accesshttp.Handler
+	auth                *Auth
+	repository          func() (access.Repository, error)
+	workspaceIDs        func(context.Context) ([]string, error)
+	workspaceID         string
+	oauth               *mcpoauth.Service
+	oauthResource       mcpoauth.ResourceServer
+	desktopAuth         *desktopauth.Service
+	authoringAuth       *access.AuthoringAuthService
+	roleBindingCommands access.RoleBindingOperations
+	grantCommands       access.GrantOperations
+	logger              *slog.Logger
+	presentation        webpage.Presentation
+	assets              staticasset.Resolver
 }
 
 type surfaceConfig struct {
@@ -46,7 +49,7 @@ type surfaceConfig struct {
 	Assets             staticasset.Resolver
 }
 
-func newSurface(config surfaceConfig) *Module {
+func newSurface(config surfaceConfig) (*Module, error) {
 	logger := config.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -58,12 +61,46 @@ func newSurface(config surfaceConfig) *Module {
 		principal, ok := config.CurrentPrincipal(r)
 		return accesshttp.Principal{ID: principal.ID, Kind: principal.Kind, Email: principal.Email, DisplayName: principal.DisplayName, CreatedAt: principal.CreatedAt, UpdatedAt: principal.UpdatedAt}, ok
 	}
+	catalog, err := generatedRoleBindingCatalog()
+	if err != nil {
+		return nil, err
+	}
+	roleBindingCommands, err := accessoperation.NewRoleBindingCommands(accessoperation.RepositoryProvider(config.Repository), catalog)
+	if err != nil {
+		return nil, err
+	}
+	grantCatalog, err := generatedGrantCatalog()
+	if err != nil {
+		return nil, err
+	}
+	grantCommands, err := accessoperation.NewGrantCommands(accessoperation.RepositoryProvider(config.Repository), grantCatalog)
+	if err != nil {
+		return nil, err
+	}
 	return &Module{auth: config.Auth, repository: config.Repository, workspaceIDs: config.WorkspaceIDs, workspaceID: config.DefaultWorkspaceID, logger: logger,
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
-		presentation: config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
+		roleBindingCommands: roleBindingCommands,
+		grantCommands:       grantCommands,
+		presentation:        config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
 			Repository: config.Repository, CurrentPrincipal: currentPrincipal,
-			CurrentCredential: config.CurrentCredential, WorkspaceID: config.WorkspaceID, AuthoringAuth: config.AuthoringAuth,
-		}}
+			RoleBindingCommands: roleBindingCommands,
+			GrantCommands:       grantCommands,
+			CurrentCredential:   config.CurrentCredential, WorkspaceID: config.WorkspaceID, AuthoringAuth: config.AuthoringAuth,
+		}}, nil
+}
+
+func (m *Module) RoleBindingCommands() access.RoleBindingOperations {
+	if m == nil {
+		return nil
+	}
+	return m.roleBindingCommands
+}
+
+func (m *Module) GrantCommands() access.GrantOperations {
+	if m == nil {
+		return nil
+	}
+	return m.grantCommands
 }
 
 func (m *Module) HTTP() accesshttp.Handler { return m.handler }

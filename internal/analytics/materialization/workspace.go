@@ -10,15 +10,16 @@ import (
 )
 
 type WorkspaceRequest struct {
-	Models         map[string]*semanticmodel.Model
-	ServingStateID string
-	WorkspaceID    string
-	Environment    servingstate.Environment
-	TargetType     string
-	TargetID       string
-	SemanticDigest string
-	ArtifactDigest string
-	Tables         []string
+	Models                           map[string]*semanticmodel.Model
+	ServingStateID                   string
+	ConnectionEvidenceServingStateID string
+	WorkspaceID                      string
+	Environment                      servingstate.Environment
+	TargetType                       string
+	TargetID                         string
+	SemanticDigest                   string
+	ArtifactDigest                   string
+	Tables                           []string
 }
 
 type WorkspaceExecutor interface {

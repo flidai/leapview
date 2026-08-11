@@ -41,7 +41,15 @@ paths:
     post:
       operationId: decideDeviceAuthorization
       summary: Approve or deny CLI device authorization
-      parameters: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
       responses:
         '200':
           description: The request has succeeded.
@@ -296,6 +304,32 @@ paths:
             example:
               approved: true
               userCode: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: authoring.device.decided
+        authz_mode: authenticated
+        failures:
+          - code: DEVICE_AUTHORIZATION_DENIED
+            kind: denied
+            public_detail: Device authorization was denied.
+            status_code: !!float 400
+          - code: DEVICE_AUTHORIZATION_EXPIRED
+            kind: expired
+            public_detail: Device authorization has expired.
+            status_code: !!float 400
+          - code: INVALID_PRINCIPAL
+            kind: invalid_principal
+            public_detail: The authorizing principal is invalid.
+            status_code: !!float 400
+          - code: DEVICE_AUTHORIZATION_NOT_FOUND
+            kind: not_found
+            public_detail: Device authorization was not found.
+            status_code: !!float 404
+        idempotency: required
+        owner: LeapViewAPI.Access
   /api/v1/agent/conversations:
     get:
       operationId: listAgentConversations
@@ -577,6 +611,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -859,6 +894,23 @@ paths:
               $ref: '#/components/schemas/AgentConversationCreateRequest'
             example:
               title: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.conversation.created
+        authz_mode: privilege
+        failures:
+          - code: AGENT_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Agent service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Agent
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -1112,6 +1164,23 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.conversation.archived
+        authz_mode: privilege
+        failures:
+          - code: AGENT_CONVERSATION_NOT_FOUND
+            kind: not_found
+            public_detail: Agent conversation not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Agent
+        target:
+          parameter: conversation
+          type: conversation
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -1379,6 +1448,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -1660,6 +1730,28 @@ paths:
               $ref: '#/components/schemas/AgentConversationPatchRequest'
             example:
               title: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.conversation.updated
+        authz_mode: privilege
+        concurrency: if-match
+        failures:
+          - code: INVALID_AGENT_CONVERSATION
+            kind: invalid
+            public_detail: The agent conversation request is invalid.
+            status_code: !!float 422
+          - code: AGENT_CONVERSATION_NOT_FOUND
+            kind: not_found
+            public_detail: Agent conversation not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Agent
+        target:
+          parameter: conversation
+          type: conversation
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -1951,6 +2043,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -2241,6 +2334,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -2530,6 +2624,48 @@ paths:
             example:
               correlationId: example
               input: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.run.created
+        authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listAgentEvents
+          guarantee: transactional
+          initial_event: agent_run.queued
+          initial_state: running
+          job_kind: agent.run
+          mode: async
+          resource_kind: agent_run
+          status_operation: getAgentRun
+        failures:
+          - code: AGENT_RUN_CONFLICT
+            kind: conflict
+            public_detail: The agent conversation already has an active run.
+            status_code: !!float 409
+          - code: INVALID_AGENT_RUN
+            kind: invalid
+            public_detail: The agent run request is invalid.
+            status_code: !!float 422
+          - code: AGENT_CONVERSATION_NOT_FOUND
+            kind: not_found
+            public_detail: Agent conversation not found.
+            status_code: !!float 404
+          - code: AGENT_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Agent service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Agent
+        target:
+          parameter: conversation
+          type: conversation
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -2804,6 +2940,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -2811,6 +2948,7 @@ paths:
     post:
       operationId: cancelAgentRun
       summary: Cancel an agent run
+      description: Cancels an existing run and its queued work synchronously. The 202 response reports the resulting run state; this operation does not create a new asynchronous execution.
       parameters:
         - name: conversation
           in: path
@@ -3091,6 +3229,32 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: agent.run.cancelled
+        authz_mode: privilege
+        failures:
+          - code: AGENT_RUN_NOT_CANCELLABLE
+            kind: not_cancellable
+            public_detail: The agent run cannot be cancelled in its current state.
+            status_code: !!float 409
+          - code: AGENT_RUN_NOT_FOUND
+            kind: not_found
+            public_detail: Agent run not found.
+            status_code: !!float 404
+          - code: AGENT_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Agent service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Agent
+        target:
+          parameter: conversation
+          type: conversation
+        privilege: USE_AGENT
       x-authz:
         mode: privilege
         privilege: USE_AGENT
@@ -3408,6 +3572,7 @@ paths:
                 type: example
       tags:
         - Agent
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AGENT
@@ -3681,9 +3846,7 @@ paths:
                 type: example
       tags:
         - System
-      x-authz:
-        mode: privilege
-        privilege: USE_WORKSPACE
+      x-apigen-operation-kind: query
   /api/v1/instance:
     get:
       operationId: getInstance
@@ -3792,6 +3955,7 @@ paths:
                 type: example
       tags:
         - Instance
+      x-apigen-operation-kind: query
       x-authz:
         mode: none
   /api/v1/me:
@@ -4049,6 +4213,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -4333,6 +4498,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -4621,6 +4787,21 @@ paths:
               privileges:
                 - example
               workspaceId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: api_token.created
+        authz_mode: privilege
+        failures:
+          - code: API_TOKEN_INVALID
+            kind: invalid
+            public_detail: The API token request is invalid.
+            status_code: !!float 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -4875,6 +5056,23 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: api_token.revoked
+        authz_mode: privilege
+        failures:
+          - code: API_TOKEN_NOT_FOUND
+            kind: not_found
+            public_detail: API token not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: token
+          type: token
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -5161,6 +5359,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -5420,6 +5619,27 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: authoring.session.revoked
+        authz_mode: privilege
+        failures:
+          - code: INVALID_AUTHORING_CREDENTIAL
+            kind: invalid_credential
+            public_detail: The authoring session is invalid.
+            status_code: !!float 400
+          - code: AUTHORING_SESSION_NOT_FOUND
+            kind: not_found
+            public_detail: Authoring session not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: session
+          type: session
+        privilege: USE_WORKSPACE
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -5682,6 +5902,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -5967,6 +6188,7 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -6221,6 +6443,23 @@ paths:
                 type: example
       tags:
         - Current User
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: session.revoked
+        authz_mode: privilege
+        failures:
+          - code: SESSION_NOT_FOUND
+            kind: not_found
+            public_detail: Session not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: session
+          type: session
+        privilege: USE_WORKSPACE
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -6516,6 +6755,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -6798,6 +7038,21 @@ paths:
             example:
               displayName: example
               email: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: principal.local_user.created
+        authz_mode: privilege
+        failures:
+          - code: PRINCIPAL_ALREADY_EXISTS
+            kind: conflict
+            public_detail: A principal with this email already exists.
+            status_code: !!float 409
+        idempotency: required
+        owner: LeapViewAPI.Access
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -7052,6 +7307,27 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: principal.deleted
+        authz_mode: privilege
+        failures:
+          - code: PRINCIPAL_NOT_MUTABLE
+            kind: invalid
+            public_detail: This principal cannot be deleted by this operation.
+            status_code: !!float 422
+          - code: PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Principal not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -7316,6 +7592,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -7594,6 +7871,28 @@ paths:
               $ref: '#/components/schemas/PrincipalPatchRequest'
             example:
               displayName: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: principal.updated
+        authz_mode: privilege
+        concurrency: if-match
+        failures:
+          - code: PRINCIPAL_NOT_MUTABLE
+            kind: invalid
+            public_detail: This principal cannot be modified by this operation.
+            status_code: !!float 422
+          - code: PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Principal not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -7869,6 +8168,24 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: principal.local_password.reset
+        authz_mode: privilege
+        failures:
+          - code: PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Principal not found.
+            status_code: !!float 404
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -8160,6 +8477,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -8420,6 +8738,23 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: session.revoked
+        authz_mode: privilege
+        failures:
+          - code: SESSION_NOT_FOUND
+            kind: not_found
+            public_detail: Session not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -8702,6 +9037,7 @@ paths:
                 type: example
       tags:
         - Projects
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -8967,9 +9303,11 @@ paths:
                 type: example
       tags:
         - Projects
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidate-reviews/{candidate}:
     get:
       operationId: reviewProjectCandidate
@@ -9248,9 +9586,11 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: REVIEW_CANDIDATE
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidate-sessions/{candidateKey}/cancel:
     post:
       operationId: cancelProjectCandidateByKey
@@ -9537,9 +9877,40 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.cancelled
+        authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidate-sync/blobs/{digest}:
     put:
       operationId: uploadProjectCandidateSourceBlob
@@ -9830,9 +10201,43 @@ paths:
               type: string
               format: binary
             example: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.source_blob_uploaded
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Candidate source blob audit is temporarily unavailable.
+            status_code: !!float 503
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+          - code: INVALID_CANDIDATE_SOURCE_BLOB
+            kind: source_blob_invalid
+            public_detail: Candidate source blob headers do not match the canonical content identity.
+            status_code: !!float 422
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
+      x-leapview-object-scope: project-environment
       x-apigen-manual: true
   /api/v1/projects/{project}/candidate-sync/commit:
     post:
@@ -10134,13 +10539,45 @@ paths:
                 ref: example
                 repository: example
                 revision: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.ready
+        authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidate-sync/plan:
     post:
       operationId: planProjectCandidateSynchronization
       summary: Plan content-addressed synchronization for the current author's private candidate
+      description: 'Query classification: reports missing immutable blobs without uploading or committing source state.'
       parameters:
         - name: project
           in: path
@@ -10423,9 +10860,11 @@ paths:
                 ref: example
                 repository: example
                 revision: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidates:
     post:
       operationId: startProjectCandidate
@@ -10720,9 +11159,44 @@ paths:
             example:
               artifactDigest: example
               candidateKey: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.started
+        authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_QUOTA_EXCEEDED
+            kind: candidate_quota
+            public_detail: Candidate quota exceeded.
+            status_code: !!float 429
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidates/{candidate}:
     get:
       operationId: getProjectCandidate
@@ -11001,9 +11475,11 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidates/{candidate}/artifact:
     put:
       operationId: replaceProjectCandidateArtifact
@@ -11299,9 +11775,40 @@ paths:
             example:
               artifactDigest: example
               expectedArtifactDigest: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.artifact_replaced
+        authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidates/{candidate}/cancel:
     post:
       operationId: cancelProjectCandidate
@@ -11588,9 +12095,40 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.cancelled
+        authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidates/{candidate}/publish:
     post:
       operationId: publishProjectCandidate
@@ -11953,9 +12491,86 @@ paths:
               expectedRevision: 1
               provenanceDigest: example
               targetId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.queued
+        authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.queued
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
+        failures:
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Publication activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: PUBLICATION_MANAGEMENT_REQUIRED
+            kind: publication_forbidden
+            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            status_code: !!float 403
+          - code: RELEASE_INCOMPLETE
+            kind: release_incomplete
+            public_detail: The release is missing a workspace artifact.
+            status_code: !!float 409
+          - code: RELEASE_NOT_READY
+            kind: release_not_ready
+            public_detail: Only ready releases can be deployed.
+            status_code: !!float 409
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: PUBLISH_RELEASE
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/candidates/{candidate}/retry:
     post:
       operationId: retryProjectCandidate
@@ -12242,9 +12857,40 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: candidate.retried
+        authz_mode: privilege
+        failures:
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_NOT_FOUND
+            kind: candidate_not_found
+            public_detail: Candidate not found.
+            status_code: !!float 404
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: AUTHOR_PROJECT
       x-authz:
         mode: privilege
         privilege: AUTHOR_PROJECT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections:
     get:
       operationId: listManagedConnections
@@ -12527,9 +13173,11 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}:
     get:
       operationId: getManagedConnection
@@ -12796,9 +13444,11 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/active-revision:
     get:
       operationId: getActiveManagedDataRevision
@@ -13073,9 +13723,11 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/revisions:
     get:
       operationId: listManagedDataRevisions
@@ -13369,9 +14021,11 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/revisions/{revision}:
     get:
       operationId: getManagedDataRevision
@@ -13656,9 +14310,11 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/upload-sessions:
     get:
       operationId: listManagedDataUploadSessions
@@ -13979,9 +14635,11 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
     post:
       operationId: createManagedDataUploadSession
       summary: Create a managed-data upload session from a canonical manifest
@@ -14304,9 +14962,64 @@ paths:
                   - path: example
                     sha256: example
                     size: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.upload_session.created
+        authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_TOO_LARGE
+            kind: too_large
+            public_detail: Managed-data upload request is too large.
+            status_code: !!float 413
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}:
     get:
       operationId: getManagedDataUploadSession
@@ -14613,9 +15326,11 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/cancel:
     post:
       operationId: cancelManagedDataUploadSession
@@ -14930,9 +15645,64 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.upload_session.cancelled
+        authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_TOO_LARGE
+            kind: too_large
+            public_detail: Managed-data upload request is too large.
+            status_code: !!float 413
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/events:
     get:
       operationId: listManagedDataUploadSessionEvents
@@ -15259,9 +16029,11 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/finalize:
     post:
       operationId: finalizeManagedDataUploadSession
@@ -15581,9 +16353,74 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.upload_session.finalization_requested
+        authz_mode: privilege
+        execution:
+          cancellation: unsupported
+          events_operation: listManagedDataUploadSessionEvents
+          guarantee: transactional
+          initial_event: upload_session.finalizing
+          initial_state: finalizing
+          job_kind: upload.finalize
+          mode: async
+          resource_kind: upload
+          status_operation: getManagedDataUploadSession
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_TOO_LARGE
+            kind: too_large
+            public_detail: Managed-data upload request is too large.
+            status_code: !!float 413
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads:
     post:
       operationId: createManagedDataS3MultipartUpload
@@ -15888,9 +16725,60 @@ paths:
               $ref: '#/components/schemas/ManagedDataS3MultipartCreateRequest'
             example:
               path: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.s3_multipart_upload.created
+        authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/abort:
     post:
       operationId: abortManagedDataS3MultipartUpload
@@ -16190,9 +17078,60 @@ paths:
                 type: example
       tags:
         - Managed Data
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.s3_multipart_upload.aborted
+        authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
   ? /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/complete
   : post:
       operationId: completeManagedDataS3MultipartUpload
@@ -16503,13 +17442,69 @@ paths:
                 - etag: example
                   partNumber: 1
                   sha256: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: managed_data.s3_multipart_upload.completed
+        authz_mode: privilege
+        failures:
+          - code: BACKEND_UNAVAILABLE
+            kind: backend
+            public_detail: Managed-data storage is unavailable.
+            status_code: !!float 502
+          - code: MANAGED_DATA_UPLOAD_CONFLICT
+            kind: conflict
+            public_detail: Managed-data upload conflicts with its current state.
+            status_code: !!float 409
+          - code: UPLOAD_EXPIRED
+            kind: expired
+            public_detail: Managed-data upload has expired.
+            status_code: !!float 409
+          - code: UPLOAD_INCOMPLETE
+            kind: incomplete
+            public_detail: Managed-data upload is incomplete.
+            status_code: !!float 409
+          - code: UPLOAD_INTEGRITY_FAILED
+            kind: integrity
+            public_detail: Managed-data upload failed integrity verification.
+            status_code: !!float 409
+          - code: MANAGED_DATA_UPLOAD_INTERNAL_ERROR
+            kind: internal
+            public_detail: Managed-data upload could not be completed.
+            status_code: !!float 500
+          - code: MANAGED_DATA_UPLOAD_INVALID
+            kind: invalid
+            public_detail: The managed-data upload request is invalid.
+            status_code: !!float 400
+          - code: MANAGED_DATA_UPLOAD_NOT_FOUND
+            kind: not_found
+            public_detail: Managed-data upload resource not found.
+            status_code: !!float 404
+          - code: MANAGED_DATA_UPLOAD_TOO_LARGE
+            kind: too_large
+            public_detail: Managed-data upload request is too large.
+            status_code: !!float 413
+          - code: MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Managed-data upload service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.ManagedData
+        target:
+          parameter: project
+          type: project
+        privilege: INGEST_DATA
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
   ? /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/parts/{partNumber}/sign
   : post:
       operationId: signManagedDataS3MultipartPart
       summary: Sign one S3 multipart upload part
+      description: 'Query: issues a short-lived signed part-upload request and does not change durable multipart state.'
       parameters:
         - name: project
           in: path
@@ -16819,9 +17814,11 @@ paths:
             example:
               sha256: example
               size: 1
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: INGEST_DATA
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/deployments:
     get:
       operationId: listDeployments
@@ -17177,6 +18174,7 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -17534,9 +18532,86 @@ paths:
               $ref: '#/components/schemas/DeploymentCreateRequest'
             example:
               releaseId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.queued
+        authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.queued
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
+        failures:
+          - code: DEPLOYMENT_APPROVAL_CONFLICT
+            kind: approval_conflict
+            public_detail: The deployment approval conflicts with its current state.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Publication activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: PUBLICATION_MANAGEMENT_REQUIRED
+            kind: publication_forbidden
+            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            status_code: !!float 403
+          - code: RELEASE_INCOMPLETE
+            kind: release_incomplete
+            public_detail: The release is missing a workspace artifact.
+            status_code: !!float 409
+          - code: RELEASE_NOT_READY
+            kind: release_not_ready
+            public_detail: Only ready releases can be deployed.
+            status_code: !!float 409
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: REQUEST_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: REQUEST_DEPLOYMENT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/deployments/{deployment}:
     get:
       operationId: getDeployment
@@ -17876,6 +18951,7 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -18232,6 +19308,78 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.activation_requested
+        authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.activation_requested
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
+        failures:
+          - code: ACTIVATION_FORBIDDEN
+            kind: activation_forbidden
+            public_detail: Deployment activation is forbidden.
+            status_code: !!float 403
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: An approved deployment is required for activation.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: ACTIVATION_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded activation credential is required.
+            status_code: !!float 401
+          - code: APPROVAL_FORBIDDEN
+            kind: approval_forbidden
+            public_detail: Deployment approval is forbidden.
+            status_code: !!float 403
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Deployment activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: ASYNC_QUEUE_UNAVAILABLE
+            kind: queue_unavailable
+            public_detail: Deployment activation could not be persisted.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: ACTIVATE_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: ACTIVATE_DEPLOYMENT
@@ -18527,9 +19675,56 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.approval_requested
+        authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: The deployment approval is not valid for this action.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: REQUEST_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: REQUEST_DEPLOYMENT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/deployments/{deployment}/approval-requests/{approval}/approve:
     post:
       operationId: approveDeployment
@@ -18830,6 +20025,52 @@ paths:
               $ref: '#/components/schemas/DeploymentApprovalDecisionRequest'
             example:
               expectedRevision: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.approved
+        authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: The deployment approval is not valid for this action.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded approval credential is required.
+            status_code: !!float 401
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: SEPARATION_OF_DUTY_REQUIRED
+            kind: separation_of_duty
+            public_detail: A separate principal must approve this deployment.
+            status_code: !!float 409
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: APPROVE_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: APPROVE_DEPLOYMENT
@@ -19134,6 +20375,52 @@ paths:
               $ref: '#/components/schemas/DeploymentApprovalDecisionRequest'
             example:
               expectedRevision: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.denied
+        authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: The deployment approval is not valid for this action.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded approval credential is required.
+            status_code: !!float 401
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: SEPARATION_OF_DUTY_REQUIRED
+            kind: separation_of_duty
+            public_detail: A separate principal must approve this deployment.
+            status_code: !!float 409
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: APPROVE_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: APPROVE_DEPLOYMENT
@@ -19438,6 +20725,52 @@ paths:
               $ref: '#/components/schemas/DeploymentApprovalDecisionRequest'
             example:
               expectedRevision: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.approval_revoked
+        authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_APPROVAL_REQUIRED
+            kind: approval_conflict
+            public_detail: The deployment approval is not valid for this action.
+            status_code: !!float 409
+          - code: APPROVAL_CREDENTIAL_EXPIRED
+            kind: approval_credential_expired
+            public_detail: The deployment approval credential has expired.
+            status_code: !!float 401
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded approval credential is required.
+            status_code: !!float 401
+          - code: INVALID_DEPLOYMENT_APPROVAL
+            kind: approval_invalid
+            public_detail: The deployment approval request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_APPROVAL_NOT_FOUND
+            kind: approval_not_found
+            public_detail: Deployment approval not found.
+            status_code: !!float 404
+          - code: DEPLOYMENT_APPROVAL_UNAVAILABLE
+            kind: approval_unavailable
+            public_detail: Deployment approvals are unavailable.
+            status_code: !!float 503
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: SEPARATION_OF_DUTY_REQUIRED
+            kind: separation_of_duty
+            public_detail: A separate principal must approve this deployment.
+            status_code: !!float 409
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: APPROVE_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: APPROVE_DEPLOYMENT
@@ -19794,9 +21127,44 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.cancelled
+        authz_mode: privilege
+        failures:
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: ASYNC_QUEUE_UNAVAILABLE
+            kind: queue_unavailable
+            public_detail: Deployment cancellation could not be persisted.
+            status_code: !!float 503
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: REQUEST_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: REQUEST_DEPLOYMENT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/deployments/{deployment}/events:
     get:
       operationId: listDeploymentEvents
@@ -20111,9 +21479,11 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/deployments/{deployment}/retry:
     post:
       operationId: retryDeployment
@@ -20466,9 +21836,70 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.queued
+        authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.queued
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
+        failures:
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Publication activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: PUBLICATION_MANAGEMENT_REQUIRED
+            kind: publication_forbidden
+            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            status_code: !!float 403
+          - code: RELEASE_INCOMPLETE
+            kind: release_incomplete
+            public_detail: The release is missing a workspace artifact.
+            status_code: !!float 409
+          - code: RELEASE_NOT_READY
+            kind: release_not_ready
+            public_detail: Only ready releases can be deployed.
+            status_code: !!float 409
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: REQUEST_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: REQUEST_DEPLOYMENT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/deployments/{deployment}/rollback:
     post:
       operationId: rollbackDeployment
@@ -20821,9 +22252,70 @@ paths:
                 type: example
       tags:
         - Deployments
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: deployment.queued
+        authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listDeploymentEvents
+          guarantee: transactional
+          initial_event: deployment.queued
+          initial_state: queued
+          job_kind: deployment.activate
+          mode: async
+          resource_kind: deployment
+          status_operation: getDeployment
+        failures:
+          - code: APPROVAL_CREDENTIAL_REQUIRED
+            kind: approval_credential_required
+            public_detail: A bounded publication credential is required.
+            status_code: !!float 401
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Publication activation authorization could not be evaluated.
+            status_code: !!float 503
+          - code: DEPLOYMENT_CONFLICT
+            kind: conflict
+            public_detail: The deployment conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_DEPLOYMENT
+            kind: invalid
+            public_detail: The deployment request is invalid.
+            status_code: !!float 422
+          - code: DEPLOYMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Deployment not found.
+            status_code: !!float 404
+          - code: PUBLICATION_MANAGEMENT_REQUIRED
+            kind: publication_forbidden
+            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            status_code: !!float 403
+          - code: RELEASE_INCOMPLETE
+            kind: release_incomplete
+            public_detail: The release is missing a workspace artifact.
+            status_code: !!float 409
+          - code: RELEASE_NOT_READY
+            kind: release_not_ready
+            public_detail: Only ready releases can be deployed.
+            status_code: !!float 409
+          - code: DEPLOYMENT_SERVICE_UNAVAILABLE
+            kind: service_unavailable
+            public_detail: Deployment service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: ROLLBACK_DEPLOYMENT
       x-authz:
         mode: privilege
         privilege: ROLLBACK_DEPLOYMENT
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/releases:
     get:
       operationId: listReleases
@@ -21160,9 +22652,11 @@ paths:
                 type: example
       tags:
         - Releases
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
+      x-leapview-object-scope: project-environment
     post:
       operationId: createRelease
       summary: Create a draft project release
@@ -21548,9 +23042,32 @@ paths:
                 - artifactDigest: example
                   servingStateId: example
                   workspace: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: release.created
+        authz_mode: privilege
+        failures:
+          - code: RELEASE_CONFLICT
+            kind: conflict
+            public_detail: The release conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_RELEASE
+            kind: invalid
+            public_detail: The release request is invalid.
+            status_code: !!float 422
+        idempotency: required
+        owner: LeapViewAPI.Release
+        target:
+          parameter: project
+          type: project
+        privilege: PUBLISH_RELEASE
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/releases/{release}:
     get:
       operationId: getRelease
@@ -21871,9 +23388,11 @@ paths:
                 type: example
       tags:
         - Releases
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/releases/{release}/events:
     get:
       operationId: listReleaseEvents
@@ -22188,9 +23707,11 @@ paths:
                 type: example
       tags:
         - Releases
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/releases/{release}/finalize:
     post:
       operationId: finalizeRelease
@@ -22524,9 +24045,54 @@ paths:
                 type: example
       tags:
         - Releases
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: release.validating
+        authz_mode: privilege
+        execution:
+          cancellation: unsupported
+          events_operation: listReleaseEvents
+          guarantee: transactional
+          initial_event: release.validating
+          initial_state: validating
+          job_kind: release.finalize
+          mode: async
+          resource_kind: release
+          status_operation: getRelease
+        failures:
+          - code: RELEASE_CONFLICT
+            kind: conflict
+            public_detail: The release conflicts with its current state.
+            status_code: !!float 409
+          - code: RELEASE_IMMUTABLE
+            kind: immutable
+            public_detail: The release is immutable.
+            status_code: !!float 409
+          - code: RELEASE_INCOMPLETE
+            kind: incomplete
+            public_detail: The release artifacts are incomplete.
+            status_code: !!float 409
+          - code: RELEASE_NOT_FOUND
+            kind: not_found
+            public_detail: Release not found.
+            status_code: !!float 404
+          - code: ASYNC_QUEUE_UNAVAILABLE
+            kind: queue_unavailable
+            public_detail: Release finalization could not be queued.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Release
+        target:
+          parameter: project
+          type: project
+        privilege: PUBLISH_RELEASE
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
+      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/releases/{release}/workspaces/{workspace}/artifact:
     put:
       operationId: uploadReleaseArtifact
@@ -22825,9 +24391,43 @@ paths:
               type: string
               format: binary
             example: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: release.artifact_uploaded
+        authz_mode: privilege
+        failures:
+          - code: RELEASE_CONFLICT
+            kind: conflict
+            public_detail: The release conflicts with its current state.
+            status_code: !!float 409
+          - code: CONTENT_DIGEST_MISMATCH
+            kind: digest_mismatch
+            public_detail: The release artifact digest does not match the expected content.
+            status_code: !!float 422
+          - code: RELEASE_IMMUTABLE
+            kind: immutable
+            public_detail: The release is immutable.
+            status_code: !!float 409
+          - code: INVALID_RELEASE
+            kind: invalid
+            public_detail: The release artifact request is invalid.
+            status_code: !!float 422
+          - code: RELEASE_NOT_FOUND
+            kind: not_found
+            public_detail: Release or workspace artifact not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Release
+        target:
+          parameter: project
+          type: project
+        privilege: PUBLISH_RELEASE
       x-authz:
         mode: privilege
         privilege: PUBLISH_RELEASE
+      x-leapview-object-scope: project-environment
       x-apigen-manual: true
   /api/v1/projects/{project}/workspaces:
     get:
@@ -23110,9 +24710,11 @@ paths:
                 type: example
       tags:
         - Projects
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
+      x-leapview-object-scope: project-environment
   /api/v1/search:
     get:
       operationId: search
@@ -23451,6 +25053,7 @@ paths:
                 type: example
       tags:
         - Search
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -23731,6 +25334,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -24010,6 +25614,21 @@ paths:
             example:
               displayName: example
               id: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal.created
+        authz_mode: privilege
+        failures:
+          - code: SERVICE_PRINCIPAL_INVALID
+            kind: invalid
+            public_detail: The service principal request is invalid.
+            status_code: !!float 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -24263,6 +25882,23 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal.deleted
+        authz_mode: privilege
+        failures:
+          - code: SERVICE_PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Service principal not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: servicePrincipal
+          type: servicePrincipal
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -24526,6 +26162,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -24803,6 +26440,24 @@ paths:
               $ref: '#/components/schemas/ServicePrincipalPatchRequest'
             example:
               displayName: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal.updated
+        authz_mode: privilege
+        concurrency: if-match
+        failures:
+          - code: SERVICE_PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Service principal not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: servicePrincipal
+          type: servicePrincipal
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -25090,6 +26745,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -25378,6 +27034,24 @@ paths:
             example:
               expiresAt: "2026-01-02T15:04:05Z"
               name: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal_secret.created
+        authz_mode: privilege
+        failures:
+          - code: SERVICE_PRINCIPAL_SECRET_INVALID
+            kind: invalid
+            public_detail: The service principal secret request is invalid.
+            status_code: !!float 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: servicePrincipal
+          type: servicePrincipal
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -25637,6 +27311,23 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: service_principal_secret.revoked
+        authz_mode: privilege
+        failures:
+          - code: SERVICE_PRINCIPAL_SECRET_NOT_FOUND
+            kind: not_found
+            public_detail: Service principal secret not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: servicePrincipal
+          type: servicePrincipal
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -25907,6 +27598,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PLATFORM
@@ -26187,6 +27879,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -26451,6 +28144,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -26731,6 +28425,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -27017,6 +28712,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -27324,6 +29020,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -27602,6 +29299,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -27872,6 +29570,7 @@ paths:
                 type: example
       tags:
         - Workspaces
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -28210,6 +29909,7 @@ paths:
                 type: example
       tags:
         - Audit
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AUDIT
@@ -28492,6 +30192,7 @@ paths:
                 - objectId: example
                   objectType: example
                   privilege: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -28771,6 +30472,7 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -29055,6 +30757,7 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -29347,6 +31050,32 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: dashboard_publication.resumed
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Dashboard publication audit could not be persisted.
+            status_code: !!float 503
+          - code: PUBLICATION_NOT_CONFIGURED
+            kind: conflict
+            public_detail: Dashboard publication is not present in the active configuration.
+            status_code: !!float 409
+          - code: PUBLICATION_NOT_FOUND
+            kind: not_found
+            public_detail: Dashboard publication not found.
+            status_code: !!float 404
+        idempotency: required
+        owner: LeapViewAPI.Dashboard
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_PUBLICATIONS
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -29639,6 +31368,32 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: dashboard_publication.public_id_rotated
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Dashboard publication audit could not be persisted.
+            status_code: !!float 503
+          - code: PUBLICATION_NOT_CONFIGURED
+            kind: conflict
+            public_detail: Dashboard publication is not present in the active configuration.
+            status_code: !!float 409
+          - code: PUBLICATION_NOT_FOUND
+            kind: not_found
+            public_detail: Dashboard publication not found.
+            status_code: !!float 404
+        idempotency: required
+        owner: LeapViewAPI.Dashboard
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_PUBLICATIONS
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -29931,6 +31686,32 @@ paths:
                 type: example
       tags:
         - Publications
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: dashboard_publication.suspended
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Dashboard publication audit could not be persisted.
+            status_code: !!float 503
+          - code: PUBLICATION_NOT_CONFIGURED
+            kind: conflict
+            public_detail: Dashboard publication is not present in the active configuration.
+            status_code: !!float 409
+          - code: PUBLICATION_NOT_FOUND
+            kind: not_found
+            public_detail: Dashboard publication not found.
+            status_code: !!float 404
+        idempotency: required
+        owner: LeapViewAPI.Dashboard
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_PUBLICATIONS
       x-authz:
         mode: privilege
         privilege: MANAGE_PUBLICATIONS
@@ -30218,6 +31999,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -30504,6 +32286,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -30779,6 +32562,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -31112,6 +32896,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -31445,6 +33230,7 @@ paths:
                   interactionID: example
                   order: 1
                   visualID: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: QUERY_DATA
@@ -31795,6 +33581,7 @@ paths:
                   interactionID: example
                   order: 1
                   visualID: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: QUERY_DATA
@@ -32085,6 +33872,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -32447,6 +34235,7 @@ paths:
                   interactionID: example
                   order: 1
                   visualID: example
+      x-apigen-operation-kind: query
       x-apigen-tool:
         confirmation: never
         effect: read
@@ -32789,6 +34578,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -33083,6 +34873,24 @@ paths:
               policyType: example
               subjectId: example
               subjectType: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: data_policy.created
+        authz_mode: privilege
+        failures:
+          - code: DATA_POLICY_INVALID
+            kind: invalid
+            public_detail: The data policy request is invalid.
+            status_code: !!float 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -33342,6 +35150,23 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: data_policy.deleted
+        authz_mode: privilege
+        failures:
+          - code: DATA_POLICY_NOT_FOUND
+            kind: not_found
+            public_detail: Data policy not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -33615,6 +35440,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -33908,6 +35734,28 @@ paths:
               policyType: example
               subjectId: example
               subjectType: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: data_policy.updated
+        authz_mode: privilege
+        concurrency: if-match
+        failures:
+          - code: DATA_POLICY_INVALID
+            kind: invalid
+            public_detail: The data policy is invalid.
+            status_code: !!float 422
+          - code: DATA_POLICY_NOT_FOUND
+            kind: not_found
+            public_detail: Data policy not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -34198,6 +36046,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -34511,6 +36360,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -34805,6 +36655,26 @@ paths:
               subjectId: example
               subjectType: example
               privilege: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: grant.created
+        authz_mode: privilege
+        failures:
+          - code: GRANT_INVALID
+            kind: invalid
+            public_detail: The grant request is invalid.
+            status_code: !!float 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -35064,6 +36934,25 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: grant.deleted
+        authz_mode: privilege
+        failures:
+          - code: GRANT_NOT_FOUND
+            kind: not_found
+            public_detail: Grant not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -35339,6 +37228,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -35632,6 +37522,28 @@ paths:
               subjectId: example
               subjectType: example
               privilege: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: grant.updated
+        authz_mode: privilege
+        concurrency: if-match
+        failures:
+          - code: GRANT_INVALID
+            kind: invalid
+            public_detail: The grant is invalid.
+            status_code: !!float 422
+          - code: GRANT_NOT_FOUND
+            kind: not_found
+            public_detail: Grant not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -35917,6 +37829,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -36201,6 +38114,24 @@ paths:
             example:
               displayName: example
               name: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.created
+        authz_mode: privilege
+        failures:
+          - code: GROUP_INVALID
+            kind: invalid
+            public_detail: The group request is invalid.
+            status_code: !!float 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -36460,6 +38391,23 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.deleted
+        authz_mode: privilege
+        failures:
+          - code: GROUP_NOT_FOUND
+            kind: not_found
+            public_detail: Group not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -36728,6 +38676,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -37010,6 +38959,24 @@ paths:
               $ref: '#/components/schemas/GroupPatchRequest'
             example:
               displayName: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.updated
+        authz_mode: privilege
+        concurrency: if-match
+        failures:
+          - code: GROUP_NOT_FOUND
+            kind: not_found
+            public_detail: Group not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -37302,6 +39269,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -37567,6 +39535,23 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.member_removed
+        authz_mode: privilege
+        failures:
+          - code: GROUP_MEMBER_NOT_FOUND
+            kind: not_found
+            public_detail: Group member not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -37837,6 +39822,23 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: group.member_added
+        authz_mode: privilege
+        failures:
+          - code: GROUP_MEMBER_NOT_FOUND
+            kind: not_found
+            public_detail: Group or principal not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -38121,6 +40123,24 @@ paths:
               objectId: example
               objectType: example
               ownerPrincipalId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: ownership.transferred
+        authz_mode: privilege
+        failures:
+          - code: OWNERSHIP_TRANSFER_INVALID
+            kind: invalid
+            public_detail: The ownership transfer request is invalid.
+            status_code: !!float 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_ITEM
       x-authz:
         mode: privilege
         privilege: MANAGE_ITEM
@@ -38495,6 +40515,7 @@ paths:
                 type: example
       tags:
         - Audit
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_AUDIT
@@ -38788,6 +40809,7 @@ paths:
                 type: example
       tags:
         - Refresh Runs
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -39080,6 +41102,46 @@ paths:
             example:
               pipelineId: example
               retryOf: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: refresh.queued
+        authz_mode: privilege
+        execution:
+          cancellation: supported
+          events_operation: listRefreshRunEvents
+          guarantee: transactional
+          initial_event: refresh.queued
+          initial_state: queued
+          job_kind: refresh_pipeline
+          mode: async
+          resource_kind: refresh
+          status_operation: getRefreshRun
+        failures:
+          - code: REFRESH_RUN_CONFLICT
+            kind: conflict
+            public_detail: The refresh run conflicts with its current state.
+            status_code: !!float 409
+          - code: REFRESH_RUN_FORBIDDEN
+            kind: forbidden
+            public_detail: The refresh run is not permitted.
+            status_code: !!float 403
+          - code: INVALID_REFRESH_RUN
+            kind: invalid
+            public_detail: The refresh run request is invalid.
+            status_code: !!float 422
+          - code: REFRESH_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Refresh service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Refresh
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: USE_WORKSPACE
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -39357,6 +41419,7 @@ paths:
                 type: example
       tags:
         - Refresh Runs
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -39647,6 +41710,36 @@ paths:
                 type: example
       tags:
         - Refresh Runs
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: refresh.cancelled
+        authz_mode: privilege
+        failures:
+          - code: REFRESH_RUN_FORBIDDEN
+            kind: forbidden
+            public_detail: The refresh run is not permitted.
+            status_code: !!float 403
+          - code: REFRESH_RUN_NOT_CANCELLABLE
+            kind: not_cancellable
+            public_detail: Only queued refresh runs can be cancelled.
+            status_code: !!float 409
+          - code: REFRESH_RUN_NOT_FOUND
+            kind: not_found
+            public_detail: Refresh run not found.
+            status_code: !!float 404
+          - code: REFRESH_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Refresh service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Refresh
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: USE_WORKSPACE
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -39964,6 +42057,7 @@ paths:
                 type: example
       tags:
         - Refresh Runs
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: USE_WORKSPACE
@@ -40273,6 +42367,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -40561,6 +42656,26 @@ paths:
               role: example
               subjectId: example
               subjectType: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: role_binding.created
+        authz_mode: privilege
+        failures:
+          - code: ROLE_BINDING_INVALID
+            kind: invalid
+            public_detail: The role binding request is invalid.
+            status_code: !!float 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -40820,6 +42935,29 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: role_binding.deleted
+        authz_mode: privilege
+        failures:
+          - code: ROLE_BINDING_INVALID
+            kind: invalid
+            public_detail: The role binding request is invalid.
+            status_code: !!float 400
+          - code: ROLE_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Role binding not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -41091,6 +43229,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -41378,6 +43517,26 @@ paths:
               role: example
               subjectId: example
               subjectType: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          required: true
+          success_action: role_binding.updated
+        authz_mode: privilege
+        concurrency: if-match
+        failures:
+          - code: ROLE_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Role binding not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -41661,6 +43820,7 @@ paths:
                 type: example
       tags:
         - Access
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_GRANTS
@@ -41944,6 +44104,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -42232,6 +44393,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -42525,6 +44687,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -42806,6 +44969,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -43112,6 +45276,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -43447,6 +45612,7 @@ paths:
               sort:
                 - direction: asc
                   field: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PREVIEW_DATA
@@ -43765,6 +45931,7 @@ paths:
               sort:
                 - direction: asc
                   field: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: PREVIEW_DATA
@@ -44065,6 +46232,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -44399,6 +46567,7 @@ paths:
                 alias: example
                 field: example
                 grain: day
+      x-apigen-operation-kind: query
       x-apigen-tool:
         confirmation: never
         effect: read
@@ -44765,6 +46934,7 @@ paths:
                 alias: example
                 field: example
                 grain: day
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: QUERY_DATA
@@ -45059,6 +47229,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -45352,6 +47523,7 @@ paths:
                 type: example
       tags:
         - BI
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_ITEM
@@ -45656,6 +47828,7 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -45997,6 +48170,48 @@ paths:
               enabled: true
               id: example
               logicalConnection: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: connection.binding.created
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_TEST_FAILED
+            kind: credential_invalid
+            public_detail: Connection validation failed.
+            status_code: !!float 422
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -46307,6 +48522,7 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -46642,6 +48858,51 @@ paths:
                   tlsMode: example
               confirmationToken: example
               expectedRevision: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: connection.binding.updated
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONFIRMATION_REQUIRED
+            kind: confirmation_required
+            public_detail: Dependency confirmation is required.
+            status_code: !!float 412
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_BINDING_DISABLED
+            kind: disabled
+            public_detail: Connection binding is disabled.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -46960,6 +49221,48 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: connection.binding.disabled
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_BINDING_DISABLED
+            kind: disabled
+            public_detail: Connection binding is disabled.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -47278,6 +49581,44 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: connection.binding.enabled
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -47574,6 +49915,7 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: VIEW_CONNECTION_HEALTH
@@ -47581,6 +49923,7 @@ paths:
     post:
       operationId: planTargetConnectionBindingChange
       summary: Plan a dependency-aware target connection change
+      description: 'Query classification: computes dependencies and a confirmation token without mutating durable binding or runtime state.'
       parameters:
         - name: workspace
           in: path
@@ -47888,6 +50231,7 @@ paths:
                   port: 1
                   sourceIdentity: example
                   tlsMode: example
+      x-apigen-operation-kind: query
       x-authz:
         mode: privilege
         privilege: MANAGE_CONNECTION_METADATA
@@ -48192,6 +50536,52 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: credential.refresh.requested
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_TEST_FAILED
+            kind: credential_invalid
+            public_detail: Connection validation failed.
+            status_code: !!float 422
+          - code: CONNECTION_BINDING_DISABLED
+            kind: disabled
+            public_detail: Connection binding is disabled.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: TEST_CONNECTION
       x-authz:
         mode: privilege
         privilege: TEST_CONNECTION
@@ -48199,6 +50589,7 @@ paths:
     post:
       operationId: testTargetConnectionBinding
       summary: Test a target connection through the candidate runtime path
+      description: 'Command classification: testing can persist validated health/version state and promote the replacement runtime pool.'
       parameters:
         - name: workspace
           in: path
@@ -48496,6 +50887,52 @@ paths:
                 type: example
       tags:
         - Connections
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          required: true
+          success_action: credential.test.requested
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Connection binding audit could not be persisted.
+            status_code: !!float 503
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: !!float 409
+          - code: CONNECTION_TEST_FAILED
+            kind: credential_invalid
+            public_detail: Connection validation failed.
+            status_code: !!float 422
+          - code: CONNECTION_BINDING_DISABLED
+            kind: disabled
+            public_detail: Connection binding is disabled.
+            status_code: !!float 409
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: !!float 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: !!float 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: !!float 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: !!float 403
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: workspace
+          type: workspace
+        privilege: TEST_CONNECTION
       x-authz:
         mode: privilege
         privilege: TEST_CONNECTION
@@ -54483,7 +56920,7 @@ components:
           type: string
           format: date-time
           example: "2026-01-02T15:04:05Z"
-      description: Negotiated TUS transport. The endpoint implements the TUS protocol and remains separate from upload-session lifecycle commands.
+      description: Negotiated TUS transport. TUS protocol requests update transport progress but are not LeapView application operations; the durable command boundary remains the upload-session lifecycle.
       example:
         endpoint: example
         expiresAt: "2026-01-02T15:04:05Z"

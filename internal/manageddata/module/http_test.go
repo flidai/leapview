@@ -2,13 +2,21 @@ package module
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 )
 
 func TestBuildRejectsMissingOwnedPersistence(t *testing.T) {
-	if _, err := Build(t.Context(), Config{}); err == nil {
+	if _, err := Build(t.Context(), Config{RecordAudit: discardManagedDataAudit}); err == nil {
 		t.Fatal("managed-data module accepted missing database")
+	}
+}
+
+func TestBuildRejectsMissingCommandAuditSinkWhenEnabled(t *testing.T) {
+	if module, err := Build(t.Context(), Config{Database: new(sql.DB)}); !errors.Is(err, errManagedDataCommandAuditUnavailable) || module != nil {
+		t.Fatalf("module = %v, err = %v", module, err)
 	}
 }
 

@@ -72,7 +72,7 @@ func (r *Repository) ApproveDeviceAuthorization(ctx context.Context, id, princip
 	if err != nil {
 		return err
 	}
-	if err := txRepo.RecordAuditEvent(ctx, authoringDeviceAudit("authoring.device.approved", record, principalID, "success")); err != nil {
+	if err := txRepo.RecordAuditEvent(ctx, authoringDeviceAudit("authoring.device.decided", record, principalID, "success")); err != nil {
 		return fmt.Errorf("%w: %v", access.ErrAuditTransaction, err)
 	}
 	return tx.Commit()
@@ -102,7 +102,7 @@ func (r *Repository) DenyDeviceAuthorization(ctx context.Context, id, principalI
 	if err != nil {
 		return err
 	}
-	if err := txRepo.RecordAuditEvent(ctx, authoringDeviceAudit("authoring.device.denied", record, principalID, "success")); err != nil {
+	if err := txRepo.RecordAuditEvent(ctx, authoringDeviceAudit("authoring.device.decided", record, principalID, "success")); err != nil {
 		return fmt.Errorf("%w: %v", access.ErrAuditTransaction, err)
 	}
 	return tx.Commit()
@@ -395,6 +395,7 @@ func authoringDeviceAudit(action string, record access.DeviceAuthorization, prin
 	metadata, _ := json.Marshal(map[string]any{
 		"clientId": record.ClientID, "targetId": record.Scope.TargetID,
 		"projectId": record.Scope.ProjectID, "privileges": record.Scope.Privileges,
+		"decision": string(record.Status),
 	})
 	return access.AuditEventInput{
 		PrincipalID: principalID, Action: action, TargetType: "device_authorization",

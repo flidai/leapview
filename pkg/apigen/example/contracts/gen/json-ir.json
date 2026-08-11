@@ -1,0 +1,255 @@
+{
+  "api": {
+    "base_path": "/"
+  },
+  "contracts": [
+    {
+      "name": "DashboardEnvelope",
+      "schema": {
+        "ref": "DashboardEnvelope"
+      },
+      "kind": "ui-signal",
+      "tags": [
+        "dashboard",
+        "datastar"
+      ],
+      "extensions": {
+        "x-libredash-surface": "dashboard"
+      }
+    }
+  ],
+  "info": {
+    "title": "APIGen Signal-Like Data Contracts",
+    "version": "1.0.0",
+    "description": "Small data-contract example shaped like a dashboard signal envelope."
+  },
+  "schema_version": "v4",
+  "schemas": {
+    "DashboardEnvelope": {
+      "type": "object",
+      "properties": {
+        "filters": {
+          "schema": {
+            "ref": "DashboardFilters"
+          },
+          "extensions": {
+            "x-libredash-patch-mode": "replace",
+            "x-libredash-signal-key": "filters"
+          }
+        },
+        "page": {
+          "schema": {
+            "ref": "DashboardPageSignal"
+          },
+          "extensions": {
+            "x-libredash-signal-key": "page"
+          }
+        },
+        "tables": {
+          "schema": {
+            "type": "object",
+            "additional_properties": {
+              "schema": {
+                "ref": "DashboardTable"
+              }
+            }
+          },
+          "extensions": {
+            "x-libredash-patch-mode": "merge",
+            "x-libredash-signal-key": "tables"
+          }
+        },
+        "visuals": {
+          "schema": {
+            "type": "object",
+            "additional_properties": {
+              "schema": {
+                "ref": "DashboardVisual"
+              }
+            }
+          },
+          "extensions": {
+            "x-libredash-patch-mode": "merge",
+            "x-libredash-signal-key": "visuals"
+          }
+        }
+      },
+      "property_order": [
+        "page",
+        "filters",
+        "visuals",
+        "tables"
+      ],
+      "required": [
+        "page",
+        "filters",
+        "visuals",
+        "tables"
+      ],
+      "extensions": {
+        "x-libredash-surface": "dashboard"
+      }
+    },
+    "DashboardFilterControl": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "value": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "values": {
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "property_order": [
+        "type",
+        "value",
+        "values"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+    "DashboardFilters": {
+      "type": "object",
+      "properties": {
+        "controls": {
+          "schema": {
+            "type": "object",
+            "additional_properties": {
+              "schema": {
+                "ref": "DashboardFilterControl"
+              }
+            }
+          }
+        }
+      },
+      "property_order": [
+        "controls"
+      ],
+      "required": [
+        "controls"
+      ]
+    },
+    "DashboardPageSignal": {
+      "type": "object",
+      "properties": {
+        "dashboardId": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "pageId": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      },
+      "property_order": [
+        "dashboardId",
+        "pageId",
+        "title"
+      ],
+      "required": [
+        "dashboardId",
+        "pageId",
+        "title"
+      ]
+    },
+    "DashboardTable": {
+      "type": "object",
+      "properties": {
+        "columns": {
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "id": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "rows": {
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additional_properties": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "property_order": [
+        "id",
+        "columns",
+        "rows"
+      ],
+      "required": [
+        "id",
+        "columns",
+        "rows"
+      ]
+    },
+    "DashboardVisual": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "schema": {
+            "type": "object",
+            "additional_properties": {
+              "schema": {}
+            }
+          }
+        },
+        "id": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      },
+      "property_order": [
+        "id",
+        "kind",
+        "title",
+        "data"
+      ],
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "data"
+      ]
+    }
+  }
+}

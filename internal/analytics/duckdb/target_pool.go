@@ -140,10 +140,11 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 		"SET memory_limit = '" + strconv.FormatInt(factory.limits.MemoryMaxBytes, 10) + "B'",
 		"SET max_temp_directory_size = '" + strconv.FormatInt(factory.limits.TempMaxBytes, 10) + "B'",
 		"SET threads = " + strconv.Itoa(factory.limits.MaxThreads),
-		"INSTALL " + spec.RequiredExtension + " FROM core",
-		"LOAD " + spec.RequiredExtension,
-		secret,
 	}
+	for _, extension := range spec.RequiredExtensions {
+		statements = append(statements, "INSTALL "+extension+" FROM core", "LOAD "+extension)
+	}
+	statements = append(statements, secret)
 	statements = append(statements, activationStatements...)
 	statements = append(statements, "SET lock_configuration = true")
 	for _, statement := range statements {

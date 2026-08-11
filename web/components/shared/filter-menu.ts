@@ -33,7 +33,7 @@ class FilterMenu extends LitElement {
       display: inline-block;
       min-width: 0;
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
     }
 
     .trigger {
@@ -48,9 +48,7 @@ class FilterMenu extends LitElement {
       background: var(--lv-bg-panel);
       color: var(--lv-fg-default);
       cursor: pointer;
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body-compact);
       padding: 0 var(--lv-space-control);
       white-space: nowrap;
     }
@@ -100,8 +98,7 @@ class FilterMenu extends LitElement {
       border-radius: var(--lv-radius-small);
       background: var(--lv-bg-input);
       color: var(--lv-fg-default);
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
       padding: var(--base-size-8) var(--lv-space-control);
     }
 
@@ -120,7 +117,7 @@ class FilterMenu extends LitElement {
       border-radius: var(--lv-radius-small);
       cursor: pointer;
       padding: var(--lv-space-sm) var(--base-size-8);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .option:hover,
@@ -152,7 +149,7 @@ class FilterMenu extends LitElement {
     .error,
     .loading {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     .option-description {
@@ -189,8 +186,7 @@ class FilterMenu extends LitElement {
       background: var(--lv-bg-panel);
       color: var(--lv-fg-default);
       cursor: pointer;
-      font: inherit;
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
       padding: 0 var(--base-size-8);
     }
 

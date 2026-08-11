@@ -3,7 +3,9 @@ package module
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
@@ -26,6 +28,10 @@ type Module struct {
 	runtimeEnvironment string
 	defaultWorkspaceID string
 	layout             func(*http.Request) webpage.Provider
+	roleBindingUpsert  access.Privilege
+	roleBindingDelete  access.Privilege
+	grantUpsert        access.Privilege
+	grantDelete        access.Privilege
 }
 
 type Principal struct {
@@ -65,6 +71,8 @@ type Config struct {
 	WorkspaceID         func(string) string
 	Environment         func(*http.Request) string
 	AccessService       access.WorkspaceAccessService
+	RoleBindingCommands access.RoleBindingOperations
+	GrantCommands       access.GrantOperations
 	AssetCatalog        workspace.AssetCatalogReader
 	MetricsForWorkspace func(string) (queryruntime.Metrics, bool)
 	RootMetrics         queryruntime.Metrics
@@ -83,6 +91,14 @@ type Config struct {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	roleBindingUpsert, roleBindingDelete, err := roleBindingRoutePrivileges(config.RoleBindingCommands)
+	if err != nil {
+		return nil, err
+	}
+	grantUpsert, grantDelete, err := grantRoutePrivileges(config.GrantCommands)
+	if err != nil {
+		return nil, err
+	}
 	directoryPort := config.Directory
 	if directoryPort == nil && config.Database != nil {
 		var err error
@@ -103,6 +119,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		readModel: readModel, currentCredential: config.CurrentCredential,
 		rootMetrics: config.RootMetrics, runtimeEnvironment: config.RuntimeEnvironment,
 		defaultWorkspaceID: config.DefaultWorkspaceID, layout: config.Layout,
+		roleBindingUpsert: roleBindingUpsert, roleBindingDelete: roleBindingDelete,
+		grantUpsert: grantUpsert, grantDelete: grantDelete,
 	}
 	m.assetCatalog = config.AssetCatalog
 	if m.assetCatalog == nil && readModel != nil {
@@ -162,9 +180,56 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		RefreshState:  moduleRefreshState{module: m, upstream: config.RefreshState},
 		RefreshRunner: refreshRunner, Broker: config.Broker,
 		CSRFToken: config.CSRFToken, CurrentRoleLabel: config.CurrentRoleLabel, Layout: config.Layout,
+		RoleBindingCommands: config.RoleBindingCommands,
+		GrantCommands:       config.GrantCommands,
 	}
 	m.search = buildSearch(config.Database, config.AuthorizeObject)
 	return m, nil
+}
+
+func grantRoutePrivileges(operations access.GrantOperations) (access.Privilege, access.Privilege, error) {
+	if operations == nil {
+		return "", "", nil
+	}
+	descriptors := make(map[access.OperationID]access.OperationDescriptor, 2)
+	for _, operationID := range []access.OperationID{access.OperationCreateGrant, access.OperationDeleteGrant} {
+		descriptor, ok := operations.DescribeOperation(operationID)
+		if !ok {
+			return "", "", fmt.Errorf("workspace UI operation %q is not configured", operationID)
+		}
+		if !descriptor.Exposes(access.OperationSurfaceUI) || descriptor.Target.Type != access.SecurableWorkspace {
+			return "", "", fmt.Errorf("workspace UI operation %q has an incompatible generated contract", operationID)
+		}
+		descriptors[operationID] = descriptor
+	}
+	return descriptors[access.OperationCreateGrant].Privilege, descriptors[access.OperationDeleteGrant].Privilege, nil
+}
+
+func roleBindingRoutePrivileges(operations access.RoleBindingOperations) (access.Privilege, access.Privilege, error) {
+	if operations == nil {
+		return "", "", nil
+	}
+	descriptors := make(map[access.OperationID]access.OperationDescriptor, 3)
+	for _, operationID := range []access.OperationID{
+		access.OperationCreateRoleBinding,
+		access.OperationUpdateRoleBinding,
+		access.OperationDeleteRoleBinding,
+	} {
+		descriptor, ok := operations.DescribeOperation(operationID)
+		if !ok {
+			return "", "", fmt.Errorf("workspace UI operation %q is not configured", operationID)
+		}
+		if !descriptor.Exposes(access.OperationSurfaceUI) || descriptor.Target.Type != access.SecurableWorkspace {
+			return "", "", fmt.Errorf("workspace UI operation %q has an incompatible generated contract", operationID)
+		}
+		descriptors[operationID] = descriptor
+	}
+	create := descriptors[access.OperationCreateRoleBinding]
+	update := descriptors[access.OperationUpdateRoleBinding]
+	if create.Privilege != update.Privilege {
+		return "", "", fmt.Errorf("workspace role binding upsert operations require different privileges")
+	}
+	return create.Privilege, descriptors[access.OperationDeleteRoleBinding].Privilege, nil
 }
 
 func navigationCatalog(source dashboardcatalog.Catalog) catalog.Catalog {
@@ -223,11 +288,41 @@ func (m *Module) Home(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	if err := ui.CatalogPageForCatalogs(m.CatalogsForVisibleWorkspaces(r), providers...).Render(w); err != nil {
+	csrfToken := ""
+	if m.handler.CSRFToken != nil {
+		csrfToken = m.handler.CSRFToken(r)
+	}
+	if err := ui.CatalogPageForCatalogsQueryWithCSRF(m.CatalogsForVisibleWorkspaces(r), strings.TrimSpace(r.URL.Query().Get("q")), csrfToken, providers...).Render(w); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (m *Module) CatalogBootstrapSignals(r *http.Request, provider webpage.Provider) map[string]any {
-	return ui.CatalogBootstrapSignalsForCatalogs(m.CatalogsForVisibleWorkspaces(r), provider)
+func (m *Module) CatalogBootstrapSignals(r *http.Request, provider webpage.Provider) (map[string]any, error) {
+	var signals struct {
+		Query  *string `json:"entityListQuery"`
+		Filter *string `json:"entityListFilter"`
+	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		return nil, err
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if signals.Query != nil {
+		query = strings.TrimSpace(*signals.Query)
+	}
+	return ui.CatalogBootstrapSignalsForCatalogsQuery(m.CatalogsForVisibleWorkspaces(r), query, provider), nil
+}
+
+func (m *Module) CatalogSearch(w http.ResponseWriter, r *http.Request) {
+	var signals struct {
+		Query *string `json:"entityListQuery"`
+	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	query := ""
+	if signals.Query != nil {
+		query = strings.TrimSpace(*signals.Query)
+	}
+	_ = pagestream.PatchResponse(w, r, ui.CatalogListPatchForCatalogsQuery(m.CatalogsForVisibleWorkspaces(r), query))
 }

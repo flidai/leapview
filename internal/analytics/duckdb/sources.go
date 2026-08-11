@@ -383,8 +383,10 @@ func sqlLiteral(value any) string {
 func RequiredExtensions(model *semanticmodel.Model) []string {
 	extensions := map[string]struct{}{}
 	addConnection := func(kind string) {
-		if connection, ok := connectors.LookupConnection(kind); ok && connection.RequiredExtension != "" {
-			extensions[connection.RequiredExtension] = struct{}{}
+		if connection, ok := connectors.LookupConnection(kind); ok {
+			for _, extension := range connection.RequiredExtensions {
+				extensions[extension] = struct{}{}
+			}
 		}
 	}
 	addPath := func(path string) {

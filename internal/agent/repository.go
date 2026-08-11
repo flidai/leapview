@@ -2,14 +2,14 @@ package agent
 
 import (
 	"context"
-	"errors"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/platform/jobs"
 )
 
-var ErrNotFound = errors.New("agent record not found")
-var ErrConversationArchived = errors.New("agent conversation is archived")
-var ErrRequestConflict = errors.New("agent request id conflicts with existing run")
+var ErrNotFound = apigenfailure.New("not_found", "agent record not found")
+var ErrConversationArchived = apigenfailure.New("not_found", "agent conversation is archived")
+var ErrRequestConflict = apigenfailure.New("conflict", "agent request id conflicts with existing run")
 
 const (
 	ConversationDefaultTitle   = "New conversation"

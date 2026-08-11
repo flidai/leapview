@@ -2,13 +2,13 @@
 package publication
 
 import (
-	"errors"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 )
 
 var (
-	ErrNotFound               = errors.New("dashboard publication not found")
-	ErrConflict               = errors.New("dashboard publication conflict")
-	ErrStreamStateUnavailable = errors.New("durable publication stream state is unavailable")
+	ErrNotFound               = apigenfailure.New("not_found", "dashboard publication not found")
+	ErrConflict               = apigenfailure.New("conflict", "dashboard publication conflict")
+	ErrStreamStateUnavailable = apigenfailure.New("stream_state_unavailable", "durable publication stream state is unavailable")
 )
 
 type Status string

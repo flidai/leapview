@@ -90,6 +90,8 @@ func TestTargetRuntimePoolFactoryPreparesScopedQuackProbe(t *testing.T) {
 
 	joined := strings.Join(session.statements, "\n")
 	for _, required := range []string{
+		"INSTALL httpfs FROM core",
+		"LOAD httpfs",
 		"INSTALL quack FROM core",
 		"LOAD quack",
 		"CREATE OR REPLACE TEMPORARY SECRET leapview_lakehouse (TYPE quack, TOKEN 'source-secret', SCOPE 'quack:quack.example.com:443')",
@@ -99,6 +101,9 @@ func TestTargetRuntimePoolFactoryPreparesScopedQuackProbe(t *testing.T) {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("Quack runtime statements missing %q:\n%s", required, joined)
 		}
+	}
+	if strings.Index(joined, "LOAD httpfs") > strings.Index(joined, "LOAD quack") {
+		t.Fatalf("Quack dependency extension was loaded after Quack:\n%s", joined)
 	}
 	for _, forbidden := range []string{"ATTACH", "PERSISTENT SECRET", "PROVIDER", "HOST '"} {
 		if strings.Contains(joined, forbidden) {

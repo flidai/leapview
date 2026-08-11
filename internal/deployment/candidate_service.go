@@ -7,15 +7,26 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
+
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 )
 
 const (
-	defaultCandidateLifetime     = 8 * time.Hour
-	defaultCandidateQuota        = 4
-	CandidateBaseGenerationEmpty = "empty"
+	defaultCandidateLifetime       = 8 * time.Hour
+	defaultCandidateQuota          = 4
+	CandidateBaseGenerationEmpty   = "empty"
+	CandidateAuditStarted          = "candidate.started"
+	CandidateAuditArtifactReplaced = "candidate.artifact_replaced"
+	CandidateAuditReady            = "candidate.ready"
+	CandidateAuditFailed           = "candidate.failed"
+	CandidateAuditRetried          = "candidate.retried"
+	CandidateAuditCancelled        = "candidate.cancelled"
+	CandidateAuditExpired          = "candidate.expired"
 )
 
 type CandidateRepository interface {
@@ -36,6 +47,7 @@ type CandidateServiceConfig struct {
 	Now               func() time.Time
 	NewID             func() (string, error)
 	Audit             func(context.Context, CandidateEvent) error
+	Logger            *slog.Logger
 	RuntimeLifecycle  CandidateRuntimeLifecycle
 }
 
@@ -56,6 +68,7 @@ type CandidateService struct {
 	now               func() time.Time
 	newID             func() (string, error)
 	audit             func(context.Context, CandidateEvent) error
+	logger            *slog.Logger
 	runtimeLifecycle  CandidateRuntimeLifecycle
 }
 
@@ -93,6 +106,9 @@ func NewCandidateService(repository CandidateRepository, config CandidateService
 	if repository == nil {
 		return nil, fmt.Errorf("candidate repository is required")
 	}
+	if config.Audit == nil {
+		return nil, fmt.Errorf("%w: recorder is required", ErrCandidateAuditUnavailable)
+	}
 	config.TargetID = strings.TrimSpace(config.TargetID)
 	config.Environment = strings.TrimSpace(config.Environment)
 	origin, err := canonicalCandidateOrigin(config.CanonicalOrigin)
@@ -114,10 +130,14 @@ func NewCandidateService(repository CandidateRepository, config CandidateService
 	if config.NewID == nil {
 		config.NewID = newCandidateID
 	}
+	if config.Logger == nil {
+		config.Logger = slog.Default()
+	}
 	return &CandidateService{
 		repository: repository, targetID: config.TargetID, canonicalOrigin: origin,
 		environment: config.Environment, lifetime: config.Lifetime,
 		maxActivePerOwner: config.MaxActivePerOwner, now: config.Now, newID: config.NewID, audit: config.Audit,
+		logger:           config.Logger,
 		runtimeLifecycle: config.RuntimeLifecycle,
 	}, nil
 }
@@ -146,13 +166,10 @@ func (service *CandidateService) Start(ctx context.Context, request StartCandida
 	if err != nil {
 		return CandidateStartResult{}, err
 	}
-	action := "candidate.started"
-	if resumed {
-		action = "candidate.resumed"
-	}
-	if err := service.record(ctx, action, candidate, map[string]any{"resumed": resumed}); err != nil {
-		return CandidateStartResult{}, err
-	}
+	// StartCandidate is one stable operation regardless of whether storage
+	// creates a candidate or resumes the author's existing candidate. Preserve
+	// that distinction as metadata instead of changing the audit action.
+	service.recordBestEffort(ctx, CandidateAuditStarted, candidate, map[string]any{"resumed": resumed})
 	return CandidateStartResult{Candidate: candidate, PreviewURL: service.PreviewURL(candidate.ID), Resumed: resumed}, nil
 }
 
@@ -224,7 +241,7 @@ func (service *CandidateService) Review(
 }
 
 func (service *CandidateService) ReplaceArtifact(ctx context.Context, scope CandidateScope, expectedDigest, nextDigest string) (Candidate, error) {
-	return service.mutate(ctx, scope, "candidate.artifact_replaced", func(candidate Candidate) (Candidate, error) {
+	return service.mutate(ctx, scope, CandidateAuditArtifactReplaced, func(candidate Candidate) (Candidate, error) {
 		now := service.now().UTC()
 		return candidate.ReplaceArtifact(expectedDigest, nextDigest, now, now.Add(service.lifetime))
 	})
@@ -236,7 +253,7 @@ func (service *CandidateService) MarkReady(
 	artifactDigest,
 	provenanceDigest string,
 ) (Candidate, error) {
-	return service.mutate(ctx, scope, "candidate.ready", func(candidate Candidate) (Candidate, error) {
+	return service.mutate(ctx, scope, CandidateAuditReady, func(candidate Candidate) (Candidate, error) {
 		return candidate.MarkReady(
 			artifactDigest,
 			provenanceDigest,
@@ -246,20 +263,20 @@ func (service *CandidateService) MarkReady(
 }
 
 func (service *CandidateService) MarkFailed(ctx context.Context, scope CandidateScope, artifactDigest, failureCode string) (Candidate, error) {
-	return service.mutate(ctx, scope, "candidate.failed", func(candidate Candidate) (Candidate, error) {
+	return service.mutate(ctx, scope, CandidateAuditFailed, func(candidate Candidate) (Candidate, error) {
 		return candidate.MarkFailed(artifactDigest, failureCode, service.now().UTC())
 	})
 }
 
 func (service *CandidateService) Retry(ctx context.Context, scope CandidateScope) (Candidate, error) {
-	return service.mutate(ctx, scope, "candidate.retried", func(candidate Candidate) (Candidate, error) {
+	return service.mutate(ctx, scope, CandidateAuditRetried, func(candidate Candidate) (Candidate, error) {
 		now := service.now().UTC()
 		return candidate.Retry(now, now.Add(service.lifetime))
 	})
 }
 
 func (service *CandidateService) Cancel(ctx context.Context, scope CandidateScope) (Candidate, error) {
-	candidate, err := service.mutate(ctx, scope, "candidate.cancelled", func(candidate Candidate) (Candidate, error) {
+	candidate, err := service.mutate(ctx, scope, CandidateAuditCancelled, func(candidate Candidate) (Candidate, error) {
 		return candidate.Cancel(service.now().UTC())
 	})
 	if err == nil && service.runtimeLifecycle != nil {
@@ -305,9 +322,7 @@ func (service *CandidateService) mutate(
 	if err != nil {
 		return Candidate{}, err
 	}
-	if err := service.record(ctx, action, saved, nil); err != nil {
-		return Candidate{}, err
-	}
+	service.recordBestEffort(ctx, action, saved, nil)
 	return saved, nil
 }
 
@@ -331,9 +346,7 @@ func (service *CandidateService) expireOnRead(ctx context.Context, candidate Can
 		}
 		saved, err := service.repository.SaveCandidate(ctx, expired, candidate.Revision)
 		if err == nil {
-			if err := service.record(ctx, "candidate.expired", saved, nil); err != nil {
-				return Candidate{}, err
-			}
+			service.recordBestEffort(ctx, CandidateAuditExpired, saved, nil)
 			if service.runtimeLifecycle != nil {
 				service.runtimeLifecycle.RetireCandidate(saved.ID)
 			}
@@ -352,7 +365,7 @@ func (service *CandidateService) expireOnRead(ctx context.Context, candidate Can
 
 func (service *CandidateService) record(ctx context.Context, action string, candidate Candidate, metadata map[string]any) error {
 	if service.audit == nil {
-		return nil
+		return ErrCandidateAuditUnavailable
 	}
 	if metadata == nil {
 		metadata = map[string]any{}
@@ -369,6 +382,67 @@ func (service *CandidateService) record(ctx context.Context, action string, cand
 		Action: action, CandidateID: candidate.ID, ProjectID: candidate.ProjectID, TargetID: candidate.TargetID,
 		PrincipalID: candidate.OwnerID, Status: candidate.Status, MetadataJSON: string(encoded),
 	})
+}
+
+func (service *CandidateService) recordBestEffort(
+	ctx context.Context,
+	action string,
+	candidate Candidate,
+	metadata map[string]any,
+) {
+	logger := service.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	operationID, command := apigencommand.OperationID(ctx)
+	if !command {
+		operationID, command = candidateOperationID(action)
+	}
+	if !command {
+		if err := service.record(ctx, action, candidate, metadata); err != nil {
+			logger.ErrorContext(ctx, "candidate audit failed", "audit_action", action, "candidate_id", candidate.ID, "project_id", candidate.ProjectID, "principal_id", candidate.OwnerID, "error", err)
+		}
+		return
+	}
+	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		logger.ErrorContext(ctx, "candidate command executor is unavailable", "operation_id", operationID, "error", err)
+		return
+	}
+	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			if action != contract.AuditAction {
+				return fmt.Errorf("candidate audit action %q does not match generated action %q", action, contract.AuditAction)
+			}
+			return service.record(ctx, contract.AuditAction, candidate, metadata)
+		},
+		LogMessage: "candidate audit failed",
+		LogAttributes: []slog.Attr{
+			slog.String("candidate_id", candidate.ID),
+			slog.String("project_id", candidate.ProjectID),
+			slog.String("principal_id", candidate.OwnerID),
+		},
+	})
+	if err != nil {
+		logger.ErrorContext(ctx, "candidate command contract execution failed", "operation_id", operationID, "error", err)
+	}
+}
+
+func candidateOperationID(action string) (string, bool) {
+	switch action {
+	case CandidateAuditStarted:
+		return string(deploymentgen.GenOperationStartProjectCandidate), true
+	case CandidateAuditArtifactReplaced:
+		return string(deploymentgen.GenOperationReplaceProjectCandidateArtifact), true
+	case CandidateAuditReady:
+		return string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), true
+	case CandidateAuditRetried:
+		return string(deploymentgen.GenOperationRetryProjectCandidate), true
+	case CandidateAuditCancelled:
+		return string(deploymentgen.GenOperationCancelProjectCandidate), true
+	default:
+		return "", false
+	}
 }
 
 func canonicalCandidateOrigin(value string) (string, error) {

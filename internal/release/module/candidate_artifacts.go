@@ -240,7 +240,6 @@ func (service *candidateArtifactService) Prepare(
 			}
 			mode = "reuse_snapshot"
 			dataRevision = fmt.Sprintf("snapshot:%d", base.snapshotID)
-			connections = nil
 			authored = nil
 		}
 		result.Workspaces = append(result.Workspaces, release.CandidateArtifactWorkspace{

@@ -24,10 +24,29 @@ jobs:
     timeout-minutes: 60
     outputs:
       digest: ${{ steps.build.outputs.digest }}
+      version: ${{ steps.identity.outputs.version }}
+      revision: ${{ steps.identity.outputs.revision }}
+      build_time: ${{ steps.identity.outputs.build_time }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Resolve authoritative main build identity
+        id: identity
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          revision="$(git rev-parse HEAD)"
+          test "$revision" = "$GITHUB_SHA"
+          canonical_version="$(tr -d '[:space:]' < VERSION)"
+          test -n "$canonical_version"
+          build_time="$(git show -s --format=%cI "$revision")"
+          version="${canonical_version}+main.${revision:0:12}"
+          {
+            echo "version=$version"
+            echo "revision=$revision"
+            echo "build_time=$build_time"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -46,6 +65,12 @@ jobs:
           context: .
           file: Dockerfile
           platforms: linux/amd64
+          build-args: |
+            BUILD_VERSION=${{ steps.identity.outputs.version }}
+            BUILD_REVISION=${{ steps.identity.outputs.revision }}
+            BUILD_TIME=${{ steps.identity.outputs.build_time }}
+            BUILD_DIRTY=false
+            BUILD_RELEASE=false
           push: true
           pull: true
           tags: ${{ env.IMAGE_REPOSITORY }}:main-${{ github.sha }}
@@ -77,9 +102,19 @@ jobs:
       - name: Qualify the immutable production image
         env:
           IMAGE_DIGEST: ${{ needs.build-production-image.outputs.digest }}
+          IMAGE_VERSION: ${{ needs.build-production-image.outputs.version }}
+          IMAGE_REVISION: ${{ needs.build-production-image.outputs.revision }}
+          IMAGE_BUILD_TIME: ${{ needs.build-production-image.outputs.build_time }}
         run: |
           set -euo pipefail
           [[ "${IMAGE_DIGEST}" == sha256:* ]]
           immutable_image="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
           task image:qualify:production IMAGE="${immutable_image}"
+          identity="$(docker run --rm "${immutable_image}" version --json)"
+          jq -e \
+            --arg version "${IMAGE_VERSION}" \
+            --arg revision "${IMAGE_REVISION}" \
+            --arg build_time "${IMAGE_BUILD_TIME}" \
+            '.version == $version and .revision == $revision and .buildTime == $build_time and .dirty == false and .development == true' \
+            <<<"${identity}" >/dev/null
           printf 'Production image: `%s`\n' "${immutable_image}" >> "${GITHUB_STEP_SUMMARY}"

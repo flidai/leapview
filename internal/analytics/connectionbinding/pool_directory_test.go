@@ -24,6 +24,7 @@ func TestPoolDirectoryCreatesOneManagerPerBindingRevision(t *testing.T) {
 				},
 				Factory:    &recordingPoolFactory{},
 				Store:      &recordingBindingStore{},
+				Audit:      noOpRotationAudit{},
 				Now:        func() time.Time { return current.UpdatedAt },
 				StaleAfter: time.Hour,
 			})
@@ -78,6 +79,7 @@ func TestPoolDirectoryBoundsRefreshConcurrencyAndTimeout(t *testing.T) {
 			return NewPoolManager(PoolManagerConfig{
 				Binding: current, Resolver: resolver, Factory: &recordingPoolFactory{},
 				Store: &recordingBindingStore{}, Now: time.Now, StaleAfter: time.Hour,
+				Audit: noOpRotationAudit{},
 			})
 		},
 		RefreshTimeout: 40 * time.Millisecond,
@@ -127,7 +129,8 @@ func TestPoolDirectoryCloseRetiresManagersAndRejectsNewPools(t *testing.T) {
 					snapshots: []CredentialSnapshot{testSnapshot(t, "version-1", current.UpdatedAt)},
 				},
 				Factory: factory, Store: &recordingBindingStore{},
-				Now: func() time.Time { return current.UpdatedAt }, StaleAfter: time.Hour,
+				Audit: noOpRotationAudit{},
+				Now:   func() time.Time { return current.UpdatedAt }, StaleAfter: time.Hour,
 			})
 		},
 		RefreshTimeout: time.Second,
@@ -164,7 +167,8 @@ func TestPoolDirectoryAcquiresOnlyValidatedGenerationsAndReusesThem(t *testing.T
 		Build: func(current TargetBinding) (*PoolManager, error) {
 			return NewPoolManager(PoolManagerConfig{
 				Binding: current, Resolver: resolver, Factory: factory, Store: store,
-				Now: func() time.Time { return now }, StaleAfter: time.Hour,
+				Audit: noOpRotationAudit{},
+				Now:   func() time.Time { return now }, StaleAfter: time.Hour,
 			})
 		},
 		RefreshTimeout: time.Second,
@@ -218,6 +222,7 @@ func TestPoolDirectoryValidatedAcquireIsBoundedAndFailsClosed(t *testing.T) {
 			return NewPoolManager(PoolManagerConfig{
 				Binding: current, Resolver: resolver, Factory: &recordingPoolFactory{},
 				Store: &recordingBindingStore{}, Now: time.Now, StaleAfter: time.Hour,
+				Audit: noOpRotationAudit{},
 			})
 		},
 		RefreshTimeout: 40 * time.Millisecond,

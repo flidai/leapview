@@ -12,6 +12,7 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/command"
 	lddatastar "github.com/flidai/leapview/internal/dashboard/datastar"
 	"github.com/flidai/leapview/internal/dashboard/publication"
@@ -98,6 +99,14 @@ func TestPublicationDeploymentRequiresManagementPrivilege(t *testing.T) {
 		t.Fatalf("viewer authorization error = %v", err)
 	}
 	owner := testPrincipal(t, ctx, store, "owner-publication@example.com", "Owner", "owner")
+	if _, err := testAccessRepository(store).CreateGrant(ctx, access.GrantInput{
+		Object:      access.ProjectEnvironmentObject("project", "prod"),
+		SubjectType: access.SubjectPrincipal,
+		SubjectID:   owner.ID,
+		Privilege:   access.PrivilegeManagePublications,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := server.routes.deploymentModule.AuthorizePublicationDeployment(ctx, owner.ID, "prod", targets); err != nil {
 		t.Fatalf("owner authorization: %v", err)
 	}
@@ -226,6 +235,16 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 	}
 	if !strings.Contains(first.Body.String(), `"status":"suspended"`) || replay.Header().Get("Idempotency-Replayed") != "true" {
 		t.Fatalf("idempotent response headers=%v body=%s", replay.Header(), replay.Body.String())
+	}
+	contract, ok := dashboardgen.GetAPIGenOperationContract(dashboardgen.GenOperationSuspendDashboardPublication)
+	if !ok || contract.Command == nil {
+		t.Fatal("generated suspend publication command contract is missing")
+	}
+	events, err := testAccessRepository(store).ListAuditEvents(t.Context(), access.AuditEventFilter{
+		WorkspaceID: "test-workspace", Action: contract.Command.Audit.SuccessAction,
+	})
+	if err != nil || len(events) != 1 || events[0].TargetType != "dashboard_publication" || events[0].Status != "success" {
+		t.Fatalf("suspend publication audit events = %#v, err = %v", events, err)
 	}
 }
 

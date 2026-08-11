@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/refresh/artifact"
 	refresh "github.com/flidai/leapview/internal/refresh/run"
@@ -28,6 +29,36 @@ func TestWorkspaceRefreshMaterializerResolvesCandidateManagedDataAndReleasesLife
 	if !lifetime.released {
 		t.Fatal("managed data lifetime was not released after materialization")
 	}
+}
+
+func TestWorkspaceRefreshMaterializerUsesActiveReleaseConnectionEvidence(t *testing.T) {
+	executor := &recordingWorkspaceExecutor{}
+	materializer := WorkspaceRefreshMaterializer{Executor: executor}
+
+	_, err := materializer.Materialize(t.Context(), refresh.MaterializeInput{
+		Definition:  &artifact.Definition{Models: map[string]*semanticmodel.Model{}},
+		Active:      servingstate.State{ID: "active-sales", WorkspaceID: "sales", Environment: "prod"},
+		Candidate:   servingstate.State{ID: "refresh-sales", WorkspaceID: "sales", Environment: "prod"},
+		Environment: "prod",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executor.request.ServingStateID != "refresh-sales" {
+		t.Fatalf("materialization serving state = %q", executor.request.ServingStateID)
+	}
+	if executor.request.ConnectionEvidenceServingStateID != "active-sales" {
+		t.Fatalf("connection evidence serving state = %q", executor.request.ConnectionEvidenceServingStateID)
+	}
+}
+
+type recordingWorkspaceExecutor struct {
+	request analyticsmaterialization.WorkspaceRequest
+}
+
+func (e *recordingWorkspaceExecutor) MaterializeWorkspace(_ context.Context, request analyticsmaterialization.WorkspaceRequest) (int64, error) {
+	e.request = request
+	return 42, nil
 }
 
 type recordingManagedDataResolver struct {

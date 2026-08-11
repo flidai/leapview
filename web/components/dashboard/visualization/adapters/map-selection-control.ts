@@ -20,7 +20,7 @@ export class MapSelectionControl {
     this.#dispatch = dispatch
     this.element = document.createElement('div')
     this.element.dataset.mapSelectionControl = ''
-    this.element.style.cssText = 'position:absolute;left:8px;top:8px;z-index:3;font:12px/1.4 var(--lv-font-family-ui,system-ui)'
+    this.element.style.cssText = 'position:absolute;left:8px;top:8px;z-index:3;font:var(--lv-type-caption)'
 
     const style = document.createElement('style')
     style.textContent = '.lv-map-selection-option:focus-visible{outline:2px solid var(--lv-line-accent,#0969da);outline-offset:-2px;background:var(--lv-accent-subtle,#ddf4ff)}'
@@ -115,7 +115,7 @@ export class MapSelectionControl {
       item.setAttribute('aria-selected', String(option.selected))
       item.tabIndex = index === this.#activeIndex ? 0 : -1
       item.textContent = option.label
-      item.style.cssText = `cursor:pointer;padding:6px 8px;border-radius:5px;outline:none;${option.selected ? 'background:var(--lv-accent-subtle,#ddf4ff);font-weight:600' : ''}`
+      item.style.cssText = `cursor:pointer;padding:6px 8px;border-radius:5px;outline:none;${option.selected ? 'background:var(--lv-accent-subtle,#ddf4ff);font-weight:var(--base-text-weight-medium)' : ''}`
       this.#listbox.append(item)
     })
   }
@@ -174,5 +174,5 @@ export class MapSelectionControl {
 }
 
 function styleButton(button: HTMLButtonElement): void {
-  button.style.cssText = 'min-height:30px;padding:4px 9px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:inherit;font-weight:600;cursor:pointer;box-shadow:0 1px 2px rgba(31,35,40,.08)'
+  button.style.cssText = 'min-height:30px;padding:4px 9px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:inherit;font-weight:var(--base-text-weight-medium);cursor:pointer;box-shadow:0 1px 2px rgba(31,35,40,.08)'
 }

@@ -1,9 +1,11 @@
 package connectionbinding
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -72,21 +74,37 @@ func TestAdministrationAuditsSuccessfulMetadataMutationsWithoutCredentialMetadat
 	}
 }
 
-func TestAdministrationFailsClosedWhenMutationAuditIsUnavailable(t *testing.T) {
+func TestAdministrationRequiresAuditRecorder(t *testing.T) {
+	_, err := NewAdministration(AdministrationConfig{
+		Repository: &administrationRepository{}, Authorize: allowAdministration,
+		Dependencies: staticDependencyInspector{}, Now: time.Now,
+	})
+	if !errors.Is(err, ErrAdministrationAuditUnavailable) {
+		t.Fatalf("NewAdministration() error = %v, want ErrAdministrationAuditUnavailable", err)
+	}
+}
+
+func TestAdministrationPreservesMutationAndObservesBestEffortAuditFailure(t *testing.T) {
 	binding := validTargetBinding(t)
 	repository := &administrationRepository{binding: binding}
+	var logs bytes.Buffer
 	service, err := NewAdministration(AdministrationConfig{
 		Repository: repository, Authorize: allowAdministration,
 		Dependencies: staticDependencyInspector{},
 		Audit:        failingAdministrationAudit{},
+		Logger:       slog.New(slog.NewJSONHandler(&logs, nil)),
 		Now:          func() time.Time { return binding.UpdatedAt.Add(time.Minute) },
 	})
 	require.NoError(t, err)
-	_, err = service.Disable(context.Background(), "operator-1", BindingKey{
+	disabled, err := service.Disable(context.Background(), "operator-1", BindingKey{
 		Scope: binding.Scope, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
 	})
-	if !errors.Is(err, ErrAdministrationAuditUnavailable) {
-		t.Fatalf("Disable() audit error = %v", err)
+	if err != nil || disabled.Enabled || repository.binding.Enabled {
+		t.Fatalf("Disable() result = %#v, repository = %#v, error = %v", disabled, repository.binding, err)
+	}
+	if output := logs.String(); !strings.Contains(output, "best-effort connection administration audit failed") ||
+		!strings.Contains(output, string(AuditBindingDisabled)) || !strings.Contains(output, binding.ID) {
+		t.Fatalf("audit failure log = %s", output)
 	}
 }
 

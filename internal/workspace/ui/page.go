@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
+	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	catalog "github.com/flidai/leapview/internal/workspace/navigation"
 	uisignals "github.com/flidai/leapview/internal/workspace/ui/signals"
@@ -31,12 +32,24 @@ func runtimeSignal(kind uisignals.RouteKind) uisignals.RouteRuntimeSignal {
 }
 
 func CatalogPage(catalog catalog.Catalog, providers ...webpage.Provider) g.Node {
-	return catalogPageDocument(catalog, catalogPageSignal(catalog), providers...)
+	return CatalogPageForQuery(catalog, "", providers...)
 }
 
 func CatalogPageForCatalogs(catalogs []catalog.Catalog, providers ...webpage.Provider) g.Node {
+	return CatalogPageForCatalogsQuery(catalogs, "", providers...)
+}
+
+func CatalogPageForQuery(catalog catalog.Catalog, query string, providers ...webpage.Provider) g.Node {
+	return catalogPageDocument(catalog, catalogPageSignal(catalog, query), "", providers...)
+}
+
+func CatalogPageForCatalogsQuery(catalogs []catalog.Catalog, query string, providers ...webpage.Provider) g.Node {
+	return CatalogPageForCatalogsQueryWithCSRF(catalogs, query, "", providers...)
+}
+
+func CatalogPageForCatalogsQueryWithCSRF(catalogs []catalog.Catalog, query, csrfToken string, providers ...webpage.Provider) g.Node {
 	if len(catalogs) == 0 {
-		return CatalogPage(catalog.Catalog{}, providers...)
+		return catalogPageDocument(catalog.Catalog{}, catalogPageSignal(catalog.Catalog{}, query), csrfToken, providers...)
 	}
 	dashboards := []uisignals.CatalogDashboardSignal{}
 	for _, catalog := range catalogs {
@@ -52,50 +65,69 @@ func CatalogPageForCatalogs(catalogs []catalog.Catalog, providers ...webpage.Pro
 			})
 		}
 	}
-	page := catalogPageSignal(catalogs[0])
-	page.Dashboards = dashboards
-	return catalogPageDocument(catalogs[0], page, providers...)
+	page := catalogPageSignal(catalogs[0], query)
+	page.Dashboards = filterCatalogDashboards(dashboards, query)
+	return catalogPageDocument(catalogs[0], page, csrfToken, providers...)
 }
 
-func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSignal, providers ...webpage.Provider) g.Node {
+func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSignal, csrfToken string, providers ...webpage.Provider) g.Node {
 	layout := webpage.Resolve(firstProvider(providers), catalogLayoutContext(catalog))
-	catalogUpdatesURL := updatesURL(uisignals.RouteCatalog)
+	catalogUpdatesURL := updatesURL(uisignals.RouteCatalog, "q", uisignals.ValueOrZero(page.ListQuery))
 	title := "Dashboards"
 	if productName := strings.TrimSpace(layout.Presentation.ProductName); productName != "" {
 		title = productName + " Dashboards"
 	}
 	return webpage.Render(layout, webpage.Spec{
-		Title: title, Scripts: []string{"/static/catalog-page.js"},
+		Title: title, CSRFToken: csrfToken, Scripts: []string{"/static/catalog-page.js"},
 		UpdatesURL: catalogUpdatesURL,
-		Content:    g.El("lv-catalog-page", g.Attr("slot", "page")),
+		Content: g.El("lv-catalog-page",
+			g.Attr("slot", "page"),
+			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Post("/catalog/search", "entityListQuery", "entityListFilter")),
+		),
 	})
 }
 
-func CatalogBootstrapSignals(catalog catalog.Catalog, providers ...webpage.Provider) map[string]any {
-	return CatalogBootstrapSignalsForPage(catalog, catalogPageSignal(catalog), providers...)
+func CatalogListPatchForCatalogsQuery(catalogs []catalog.Catalog, query string) map[string]any {
+	page := catalogPageForCatalogsQuery(catalogs, query)
+	return map[string]any{"page": map[string]any{"dashboards": page.Dashboards}}
 }
 
-func CatalogBootstrapSignalsForCatalogs(catalogs []catalog.Catalog, providers ...webpage.Provider) map[string]any {
+func catalogPageForCatalogsQuery(catalogs []catalog.Catalog, query string) uisignals.CatalogPageSignal {
 	if len(catalogs) == 0 {
-		return CatalogBootstrapSignals(catalog.Catalog{}, providers...)
+		return catalogPageSignal(catalog.Catalog{}, query)
 	}
 	dashboards := []uisignals.CatalogDashboardSignal{}
-	for _, catalog := range catalogs {
-		for _, report := range catalog.Dashboards {
+	for _, workspaceCatalog := range catalogs {
+		for _, report := range workspaceCatalog.Dashboards {
 			dashboards = append(dashboards, uisignals.CatalogDashboardSignal{
-				ID:            catalog.Workspace.ID + "." + report.ID,
+				ID:            workspaceCatalog.Workspace.ID + "." + report.ID,
 				Title:         report.Title,
 				Description:   uisignals.Optional(report.Description),
 				SemanticModel: uisignals.Optional(report.SemanticModel),
 				PageCount:     int64(report.PageCount),
 				Tags:          uisignals.OptionalSlice(report.Tags),
-				Href:          "/workspaces/" + catalog.Workspace.ID + "/dashboards/" + report.ID,
+				Href:          "/workspaces/" + workspaceCatalog.Workspace.ID + "/dashboards/" + report.ID,
 			})
 		}
 	}
-	page := catalogPageSignal(catalogs[0])
-	page.Dashboards = dashboards
-	return CatalogBootstrapSignalsForPage(catalogs[0], page, providers...)
+	page := catalogPageSignal(catalogs[0], query)
+	page.Dashboards = filterCatalogDashboards(dashboards, query)
+	return page
+}
+
+func CatalogBootstrapSignals(catalog catalog.Catalog, providers ...webpage.Provider) map[string]any {
+	return CatalogBootstrapSignalsForPage(catalog, catalogPageSignal(catalog, ""), providers...)
+}
+
+func CatalogBootstrapSignalsForCatalogs(catalogs []catalog.Catalog, providers ...webpage.Provider) map[string]any {
+	return CatalogBootstrapSignalsForCatalogsQuery(catalogs, "", providers...)
+}
+
+func CatalogBootstrapSignalsForCatalogsQuery(catalogs []catalog.Catalog, query string, providers ...webpage.Provider) map[string]any {
+	if len(catalogs) == 0 {
+		return CatalogBootstrapSignalsForPage(catalog.Catalog{}, catalogPageSignal(catalog.Catalog{}, query), providers...)
+	}
+	return CatalogBootstrapSignalsForPage(catalogs[0], catalogPageForCatalogsQuery(catalogs, query), providers...)
 }
 
 func CatalogBootstrapSignalsForPage(catalog catalog.Catalog, page uisignals.CatalogPageSignal, providers ...webpage.Provider) map[string]any {
@@ -139,7 +171,7 @@ func firstProvider(providers []webpage.Provider) webpage.Provider {
 	return providers[0]
 }
 
-func catalogPageSignal(catalog catalog.Catalog) uisignals.CatalogPageSignal {
+func catalogPageSignal(catalog catalog.Catalog, query string) uisignals.CatalogPageSignal {
 	dashboards := make([]uisignals.CatalogDashboardSignal, 0, len(catalog.Dashboards))
 	for _, report := range catalog.Dashboards {
 		dashboards = append(dashboards, uisignals.CatalogDashboardSignal{
@@ -156,8 +188,28 @@ func catalogPageSignal(catalog catalog.Catalog) uisignals.CatalogPageSignal {
 		Kind:        uisignals.RouteCatalog,
 		Title:       "Dashboards",
 		Description: "Reports backed by semantic models.",
-		Dashboards:  dashboards,
+		Dashboards:  filterCatalogDashboards(dashboards, query),
+		ListQuery:   uisignals.Optional(query),
 	}
+}
+
+func filterCatalogDashboards(dashboards []uisignals.CatalogDashboardSignal, query string) []uisignals.CatalogDashboardSignal {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return dashboards
+	}
+	filtered := make([]uisignals.CatalogDashboardSignal, 0, len(dashboards))
+	for _, dashboard := range dashboards {
+		haystack := strings.ToLower(strings.Join([]string{
+			dashboard.Title,
+			uisignals.ValueOrZero(dashboard.Description),
+			uisignals.ValueOrZero(dashboard.SemanticModel),
+		}, " "))
+		if strings.Contains(haystack, query) {
+			filtered = append(filtered, dashboard)
+		}
+	}
+	return filtered
 }
 
 func recordTableBadgeValue(value, tone string) any {

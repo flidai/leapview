@@ -738,10 +738,11 @@ func TestSourceRelationCompilesGovernedQuackQuery(t *testing.T) {
 func TestRequiredExtensions(t *testing.T) {
 	model := &semanticmodel.Model{
 		Connections: map[string]semanticmodel.Connection{
-			"lake":  {Kind: "s3"},
-			"azure": {Kind: "azure_blob"},
-			"crm":   {Kind: "postgres"},
-			"duck":  {Kind: "ducklake", Path: "metadata.ducklake"},
+			"lake":   {Kind: "s3"},
+			"azure":  {Kind: "azure_blob"},
+			"crm":    {Kind: "postgres"},
+			"duck":   {Kind: "ducklake", Path: "metadata.ducklake"},
+			"remote": {Kind: "quack"},
 		},
 		Sources: map[string]semanticmodel.Source{
 			"events":   {Format: "parquet", Path: "s3://bucket/events/*.parquet", Connection: "lake"},
@@ -751,10 +752,11 @@ func TestRequiredExtensions(t *testing.T) {
 			"vectors":  {Format: "lance", Path: "vectors/products.lance", Connection: "lake"},
 			"accounts": {Connection: "crm", Object: "public.accounts"},
 			"lake_tbl": {Connection: "duck", Object: "main.orders"},
+			"jobs":     {Connection: "remote", Object: "operations.jobs"},
 		},
 	}
-	if got := strings.Join(RequiredExtensions(model), ","); got != "azure,delta,ducklake,excel,httpfs,lance,postgres,vortex" {
-		t.Fatalf("required extensions = %q, want azure,delta,ducklake,excel,httpfs,lance,postgres,vortex", got)
+	if got := strings.Join(RequiredExtensions(model), ","); got != "azure,delta,ducklake,excel,httpfs,lance,postgres,quack,vortex" {
+		t.Fatalf("required extensions = %q, want azure,delta,ducklake,excel,httpfs,lance,postgres,quack,vortex", got)
 	}
 }
 

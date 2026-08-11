@@ -821,12 +821,12 @@ func TestHomeRouteRendersDashboardCatalog(t *testing.T) {
 	if !strings.Contains(rendered, `"href":"/workspaces/test-workspace/dashboards/executive-sales"`) {
 		t.Fatalf("home missing dashboard link:\n%s", body)
 	}
-	for _, want := range []string{`Dashboards`, `/`, `Workspaces`, `/workspaces`, `Connections`, `/connections`, `Admin`, `/admin`} {
+	for _, want := range []string{`Dashboards`, `/`, `Workspaces`, `/workspaces`, `Data`, `/data`, `Admin`, `/admin`} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("home sidebar missing %q:\n%s", want, body)
 		}
 	}
-	for _, notWant := range []string{`Metric Views`, `/metrics`, `Semantic Models`, `/models`, `Settings`, `/workspaces/test-workspace/permissions`, `/workspaces/test-workspace/chat`} {
+	for _, notWant := range []string{`Connections`, `/connections`, `Metric Views`, `/metrics`, `Semantic Models`, `/models`, `Settings`, `/workspaces/test-workspace/permissions`, `/workspaces/test-workspace/chat`} {
 		if strings.Contains(rendered, notWant) {
 			t.Fatalf("home sidebar rendered removed navigation %q:\n%s", notWant, body)
 		}

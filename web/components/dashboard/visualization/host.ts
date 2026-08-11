@@ -61,9 +61,8 @@ export class VisualizationHost extends LitElement {
     .lv-visualization-label {
       overflow: hidden;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
       text-transform: uppercase;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -72,8 +71,8 @@ export class VisualizationHost extends LitElement {
       display: block;
       overflow: hidden;
       color: var(--lv-fg-default);
-      font-size: clamp(18px, 10cqi, var(--lv-font-size-display));
-      font-weight: var(--lv-font-weight-strong);
+      font-size: clamp(var(--text-title-size-small), 10cqi, var(--text-display-size));
+      font-weight: var(--base-text-weight-semibold);
       line-height: 1.1;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -81,9 +80,7 @@ export class VisualizationHost extends LitElement {
     .lv-visualization-note {
       overflow: hidden;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body-compact);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -93,19 +90,17 @@ export class VisualizationHost extends LitElement {
       align-items: center;
       gap: var(--base-size-4) var(--base-size-8);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body-compact);
     }
     .lv-kpi-delta {
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
     .lv-kpi-delta[data-status='favorable'] { color: var(--lv-fg-success); }
     .lv-kpi-delta[data-status='unfavorable'] { color: var(--lv-fg-danger); }
     .lv-kpi-delta[data-status='unavailable'] { color: var(--lv-fg-muted); }
     .lv-kpi-goal, .lv-kpi-status {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
     }
     .lv-kpi-status[data-tone='success'] { color: var(--lv-fg-success); }
     .lv-kpi-status[data-tone='warning'] { color: var(--lv-fg-warning); }
@@ -181,8 +176,8 @@ export class VisualizationHost extends LitElement {
       padding: var(--base-size-8) var(--base-size-12) var(--base-size-8) var(--base-size-16);
     }
     .lv-kpi-card[data-layout='stacked'] .lv-visualization-kpi {
-      font-size: clamp(18px, 10cqi, var(--lv-font-size-title-md));
-      line-height: var(--lv-line-height-tight);
+      font-size: clamp(var(--text-title-size-small), 10cqi, var(--text-title-size-medium));
+      line-height: var(--base-text-lineHeight-tight);
     }
     .lv-kpi-card[data-layout='stacked'] .lv-kpi-comparison {
       display: grid;
@@ -202,8 +197,7 @@ export class VisualizationHost extends LitElement {
       gap: var(--base-size-8);
       background: var(--lv-chart-surface);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
     }
     .loading-spinner {
       width: var(--base-size-20);
@@ -241,17 +235,15 @@ export class VisualizationHost extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
-      line-height: var(--lv-line-height-compact);
     }
     .toolbar-subtitle {
       margin: var(--base-size-2) 0 0;
       overflow: hidden;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-caption);
       text-overflow: ellipsis;
       white-space: nowrap;
     }

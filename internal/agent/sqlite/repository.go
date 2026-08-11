@@ -41,6 +41,17 @@ func (r *Repository) RunWorkflowAvailable() bool {
 	return r != nil && r.workflow != nil
 }
 
+// ConfigureRunWorkflow wires the shared transaction-capable workflow recorder
+// into repositories used to construct an agent service outside the module.
+func (r *Repository) ConfigureRunWorkflow(workflow jobs.WorkflowRecorder) {
+	if r != nil {
+		r.workflow = workflow
+		if events, ok := workflow.(jobs.Repository); ok {
+			r.events = events
+		}
+	}
+}
+
 func validAgentJobClaim(ctx context.Context, q *platformdb.Queries, jobID, runID string, fence jobs.Fence) bool {
 	if q == nil {
 		return false

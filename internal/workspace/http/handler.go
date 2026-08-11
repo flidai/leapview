@@ -29,15 +29,17 @@ import (
 )
 
 type Handler struct {
-	WorkspaceID      func(string) string
-	Environment      func(*nethttp.Request) string
-	ReadModel        ReadModel
-	RefreshState     RefreshStateProvider
-	RefreshRunner    AssetRefreshRunner
-	Broker           *pagestream.Broker
-	CSRFToken        func(*nethttp.Request) string
-	CurrentRoleLabel func(*nethttp.Request) string
-	Layout           func(*nethttp.Request) webpage.Provider
+	WorkspaceID         func(string) string
+	Environment         func(*nethttp.Request) string
+	ReadModel           ReadModel
+	RefreshState        RefreshStateProvider
+	RefreshRunner       AssetRefreshRunner
+	Broker              *pagestream.Broker
+	CSRFToken           func(*nethttp.Request) string
+	CurrentRoleLabel    func(*nethttp.Request) string
+	RoleBindingCommands access.RoleBindingCommander
+	GrantCommands       access.GrantOperations
+	Layout              func(*nethttp.Request) webpage.Provider
 }
 
 type workspaceAccessSignalPayload struct {
@@ -46,6 +48,16 @@ type workspaceAccessSignalPayload struct {
 		Search  string                    `json:"search"`
 	} `json:"workspaceAccess"`
 	WorkspaceAccessCommand ui.WorkspaceAccessCommand `json:"workspaceAccessCommand"`
+}
+
+type workspaceAssetFilterSignalPayload struct {
+	WorkspaceAssetType  *string `json:"workspaceAssetType"`
+	WorkspaceAssetQuery *string `json:"workspaceAssetQuery"`
+}
+
+type entityListSignalPayload struct {
+	Query  *string `json:"entityListQuery"`
+	Filter *string `json:"entityListFilter"`
 }
 
 func (h Handler) AccessSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -81,11 +93,77 @@ func (h Handler) WorkspaceCatalog(w nethttp.ResponseWriter, r *nethttp.Request) 
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 		return
 	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	workspaces = workspace.FilterWorkspaceViews(workspaces, query)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.WorkspacesPage(h.catalogForWorkspacesPage(r, workspaces), workspaces, h.currentRoleLabel(r), h.chromeOptions(r)...).Render(w); err != nil {
+	if err := ui.WorkspacesPageForEnvironmentQuery(h.catalogForWorkspacesPage(r, workspaces), workspaces, h.environment(r), query, h.currentRoleLabel(r), h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
+}
+
+func (h Handler) WorkspaceListSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var signals entityListSignalPayload
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	query := ""
+	if signals.Query != nil {
+		query = strings.TrimSpace(*signals.Query)
+	}
+	workspaces, err := h.workspaceList(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	workspaces = workspace.FilterWorkspaceViews(workspaces, query)
+	_ = pagestream.PatchResponse(w, r, ui.WorkspacesListResultsPatch(workspaces))
+}
+
+func (h Handler) WorkspaceAssetSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var signals workspaceAssetFilterSignalPayload
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
+	assets, edges, err := h.assetsAndEdges(r, workspaceID)
+	if err != nil {
+		nethttp.Error(w, err.Error(), statusForNotFound(err))
+		return
+	}
+	activeType, query := "", ""
+	if signals.WorkspaceAssetType != nil {
+		activeType = strings.TrimSpace(*signals.WorkspaceAssetType)
+	}
+	if signals.WorkspaceAssetQuery != nil {
+		query = strings.TrimSpace(*signals.WorkspaceAssetQuery)
+	}
+	filtered := workspace.FilterWorkspaceLandingAssets(assets, activeType, query)
+	_ = pagestream.PatchResponse(w, r, ui.WorkspaceAssetListResultsPatch(workspaceID, filtered, edges))
+}
+
+func (h Handler) ConnectionsSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var signals entityListSignalPayload
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	assets, edges, err := h.platformAssetsAndEdges(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), statusForNotFound(err))
+		return
+	}
+	activeType, query := "", ""
+	if signals.Filter != nil {
+		activeType = workspace.NormalizeConnectionAssetType(*signals.Filter)
+	}
+	if signals.Query != nil {
+		query = strings.TrimSpace(*signals.Query)
+	}
+	filtered := workspace.FilterConnectionAssets(assets, activeType, query)
+	_ = pagestream.PatchResponse(w, r, ui.ConnectionsListResultsPatch("platform", filtered, edges))
 }
 
 func (h Handler) WorkspaceAssets(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -103,7 +181,7 @@ func (h Handler) WorkspaceAssets(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, err.Error(), statusForNotFound(err))
 		return
 	}
-	filtered := workspace.FilterWorkspaceAssets(assets, r.URL.Query().Get("type"), r.URL.Query().Get("q"))
+	filtered := workspace.FilterWorkspaceLandingAssets(assets, r.URL.Query().Get("type"), r.URL.Query().Get("q"))
 	workspaceView := h.workspaceResponse(r, workspaceID)
 	access := h.workspaceAccess(r, workspaceView, h.canManageAccess(r, workspaceID), ui.WorkspaceAccessStatus{})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -215,7 +293,7 @@ func (h Handler) Connections(w nethttp.ResponseWriter, r *nethttp.Request) {
 	filtered := workspace.FilterConnectionAssets(assets, activeType, r.URL.Query().Get("q"))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.ConnectionsPageForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, activeType, r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), h.chromeOptions(r)...).Render(w); err != nil {
+	if err := ui.ConnectionsPageForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, activeType, r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }
@@ -223,12 +301,25 @@ func (h Handler) Connections(w nethttp.ResponseWriter, r *nethttp.Request) {
 func (h Handler) WorkspaceBootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	workspaceID := h.workspaceID(r.URL.Query().Get("workspace"))
 	if strings.TrimSpace(workspaceID) == "" {
+		var signals struct {
+			Query  *string `json:"entityListQuery"`
+			Filter *string `json:"entityListFilter"`
+		}
+		if err := pagestream.ReadSignals(r, &signals); err != nil {
+			nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+			return
+		}
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		if signals.Query != nil {
+			query = strings.TrimSpace(*signals.Query)
+		}
 		workspaces, err := h.workspaceList(r)
 		if err != nil {
 			nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 			return
 		}
-		h.patchAndWait(w, r, ui.WorkspacesBootstrapSignalsForEnvironment(h.catalogForWorkspacesPage(r, workspaces), workspaces, h.environment(r), h.currentRoleLabel(r), h.chromeOptions(r)...))
+		workspaces = workspace.FilterWorkspaceViews(workspaces, query)
+		h.patchAndWait(w, r, ui.WorkspacesBootstrapSignalsForEnvironmentQuery(h.catalogForWorkspacesPage(r, workspaces), workspaces, h.environment(r), query, h.currentRoleLabel(r), h.chromeOptions(r)...))
 		return
 	}
 	assets, _, err := h.assetsAndEdges(r, workspaceID)
@@ -238,7 +329,18 @@ func (h Handler) WorkspaceBootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.
 	}
 	activeType := r.URL.Query().Get("type")
 	query := r.URL.Query().Get("q")
-	filtered := workspace.FilterWorkspaceAssets(assets, activeType, query)
+	var filterSignals workspaceAssetFilterSignalPayload
+	if err := pagestream.ReadSignals(r, &filterSignals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	if filterSignals.WorkspaceAssetType != nil {
+		activeType = strings.TrimSpace(*filterSignals.WorkspaceAssetType)
+	}
+	if filterSignals.WorkspaceAssetQuery != nil {
+		query = strings.TrimSpace(*filterSignals.WorkspaceAssetQuery)
+	}
+	filtered := workspace.FilterWorkspaceLandingAssets(assets, activeType, query)
 	workspaceView := h.workspaceResponse(r, workspaceID)
 	access := h.workspaceAccess(r, workspaceView, h.canManageAccess(r, workspaceID), ui.WorkspaceAccessStatus{})
 	h.patchAndWait(w, r, ui.WorkspaceBootstrapSignalsForEnvironment(h.catalogForWorkspace(workspaceID), workspaceView, filtered, activeType, query, h.environment(r), h.currentRoleLabel(r), access, h.chromeOptions(r)...))
@@ -252,6 +354,20 @@ func (h Handler) ConnectionsBootstrapUpdates(w nethttp.ResponseWriter, r *nethtt
 	}
 	activeType := workspace.NormalizeConnectionAssetType(r.URL.Query().Get("type"))
 	query := r.URL.Query().Get("q")
+	var listSignals struct {
+		Query  *string `json:"entityListQuery"`
+		Filter *string `json:"entityListFilter"`
+	}
+	if err := pagestream.ReadSignals(r, &listSignals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	if listSignals.Query != nil {
+		query = strings.TrimSpace(*listSignals.Query)
+	}
+	if listSignals.Filter != nil {
+		activeType = workspace.NormalizeConnectionAssetType(*listSignals.Filter)
+	}
 	filtered := workspace.FilterConnectionAssets(assets, activeType, query)
 	h.patchAndWait(w, r, ui.ConnectionsBootstrapSignalsForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, activeType, query, h.environment(r), h.currentRoleLabel(r), h.chromeOptions(r)...))
 }
@@ -568,56 +684,6 @@ func (h Handler) RoleBindings(w nethttp.ResponseWriter, r *nethttp.Request) {
 	_ = writePagedJSON(w, r, out)
 }
 
-func (h Handler) UpsertRoleBinding(w nethttp.ResponseWriter, r *nethttp.Request) {
-	var input struct {
-		Email       string `json:"email"`
-		DisplayName string `json:"displayName"`
-		Role        string `json:"role"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeJSONError(w, err, nethttp.StatusBadRequest)
-		return
-	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	repo, err := h.accessRepository()
-	if err != nil {
-		writeJSONError(w, err, nethttp.StatusInternalServerError)
-		return
-	}
-	if repo == nil {
-		writeJSONError(w, errWorkspaceAccessNotConfigured, nethttp.StatusInternalServerError)
-		return
-	}
-	principal, err := repo.SetPrincipalRole(r.Context(), access.PrincipalRoleInput{WorkspaceID: workspaceID, Email: input.Email, DisplayName: input.DisplayName, Role: input.Role})
-	if err != nil {
-		writeJSONError(w, err, nethttp.StatusBadRequest)
-		return
-	}
-	writeJSON(w, nethttp.StatusOK, map[string]string{"principalId": principal.ID})
-}
-
-func (h Handler) DeleteRoleBinding(w nethttp.ResponseWriter, r *nethttp.Request) {
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	repo, err := h.accessRepository()
-	if err != nil {
-		writeJSONError(w, err, nethttp.StatusInternalServerError)
-		return
-	}
-	if repo == nil {
-		writeJSONError(w, errWorkspaceAccessNotConfigured, nethttp.StatusInternalServerError)
-		return
-	}
-	bindingID := chi.URLParam(r, "binding")
-	if bindingID == "" {
-		bindingID = chi.URLParam(r, "principal")
-	}
-	if err := repo.DeleteRoleBinding(r.Context(), workspaceID, bindingID); err != nil {
-		writeJSONError(w, err, nethttp.StatusBadRequest)
-		return
-	}
-	writeJSON(w, nethttp.StatusOK, map[string]string{"status": "removed"})
-}
-
 func (h Handler) AccessUpsert(w nethttp.ResponseWriter, r *nethttp.Request) {
 	signals := workspaceAccessSignalPayload{}
 	if err := pagestream.ReadSignals(r, &signals); err != nil {
@@ -636,7 +702,9 @@ func (h Handler) AccessUpsert(w nethttp.ResponseWriter, r *nethttp.Request) {
 		subjectType, subjectID, err := h.resolveAccessSubject(r, repo, command)
 		if err != nil {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
-		} else if _, err := repo.CreateGrant(r.Context(), access.GrantInput{
+		} else if h.GrantCommands == nil {
+			status = ui.WorkspaceAccessStatus{Error: "grant commands are unavailable"}
+		} else if _, err := h.GrantCommands.CreateGrant(r.Context(), h.grantInvocation(r), access.GrantInput{
 			Object:      object,
 			SubjectType: subjectType,
 			SubjectID:   subjectID,
@@ -650,10 +718,12 @@ func (h Handler) AccessUpsert(w nethttp.ResponseWriter, r *nethttp.Request) {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
 		} else {
 			input := access.RoleBindingInput{WorkspaceID: workspaceID, SubjectType: subjectType, SubjectID: subjectID, Role: command.Role}
-			if strings.TrimSpace(command.BindingID) != "" {
-				_, err = repo.UpdateRoleBinding(r.Context(), workspaceID, command.BindingID, input)
+			if h.RoleBindingCommands == nil {
+				err = fmt.Errorf("role binding commands are unavailable")
+			} else if strings.TrimSpace(command.BindingID) != "" {
+				_, err = h.RoleBindingCommands.UpdateRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, command.BindingID, input)
 			} else {
-				_, err = repo.CreateRoleBinding(r.Context(), input)
+				_, err = h.RoleBindingCommands.CreateRoleBinding(r.Context(), h.roleBindingInvocation(r), input)
 			}
 			if err != nil {
 				status = ui.WorkspaceAccessStatus{Error: err.Error()}
@@ -711,17 +781,47 @@ func (h Handler) AccessRemove(w nethttp.ResponseWriter, r *nethttp.Request) {
 	} else if repo == nil {
 		status = ui.WorkspaceAccessStatus{Error: errWorkspaceAccessNotConfigured.Error()}
 	} else if _, ok := assetAccessObject(r, workspaceID); ok {
-		if err := repo.DeleteGrant(r.Context(), workspaceID, command.BindingID); err != nil {
+		if h.GrantCommands == nil {
+			status = ui.WorkspaceAccessStatus{Error: "grant commands are unavailable"}
+		} else if _, err := h.GrantCommands.DeleteGrant(r.Context(), h.grantInvocation(r), workspaceID, command.BindingID); err != nil {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
 		}
 	} else if bindingID := strings.TrimSpace(command.BindingID); bindingID != "" {
-		if err := repo.DeleteRoleBinding(r.Context(), workspaceID, bindingID); err != nil {
+		if h.RoleBindingCommands == nil {
+			status = ui.WorkspaceAccessStatus{Error: "role binding commands are unavailable"}
+		} else if _, err := h.RoleBindingCommands.DeleteRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, bindingID); err != nil {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
 		}
-	} else if err := repo.RemovePrincipalRoles(r.Context(), workspaceID, command.PrincipalID); err != nil {
+	} else if h.RoleBindingCommands == nil {
+		status = ui.WorkspaceAccessStatus{Error: "role binding commands are unavailable"}
+	} else if bindings, err := repo.ListRoleBindings(r.Context(), workspaceID); err != nil {
 		status = ui.WorkspaceAccessStatus{Error: err.Error()}
+	} else {
+		for _, binding := range bindings {
+			if binding.PrincipalID != command.PrincipalID && binding.SubjectID != command.PrincipalID {
+				continue
+			}
+			if _, err := h.RoleBindingCommands.DeleteRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, binding.ID); err != nil {
+				status = ui.WorkspaceAccessStatus{Error: err.Error()}
+				break
+			}
+		}
 	}
 	h.patchWorkspaceAccess(w, r, workspaceID, status)
+}
+
+func (h Handler) roleBindingInvocation(r *nethttp.Request) access.RoleBindingInvocation {
+	principal, _ := h.ReadModel.currentPrincipal(r)
+	requestID := firstNonEmpty(r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID"))
+	return access.RoleBindingInvocation{
+		PrincipalID: principal.ID, Surface: access.OperationSurfaceUI,
+		RequestID:     requestID,
+		CorrelationID: firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), requestID),
+	}
+}
+
+func (h Handler) grantInvocation(r *nethttp.Request) access.GrantInvocation {
+	return h.roleBindingInvocation(r)
 }
 
 func (h Handler) patchWorkspaceAccess(w nethttp.ResponseWriter, r *nethttp.Request, workspaceID string, status ui.WorkspaceAccessStatus) {

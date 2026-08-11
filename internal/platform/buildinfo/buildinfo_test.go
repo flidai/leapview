@@ -24,6 +24,24 @@ func TestDevelopmentIdentityNeverClaimsReleaseVersion(t *testing.T) {
 	}
 }
 
+func TestDevelopmentIdentityPreservesQualifiedBuildVersion(t *testing.T) {
+	metadata := injectedMetadata{
+		version:   "0.2.0-rc.1+main.248521fd0cd8",
+		revision:  strings.Repeat("a", 40),
+		buildTime: "2026-08-07T07:33:28Z",
+		dirty:     "false",
+		release:   "false",
+	}
+	identity := resolve(metadata, vcsMetadata{})
+
+	if identity.Version != metadata.version || identity.Revision != metadata.revision || identity.BuildTime != metadata.buildTime {
+		t.Fatalf("qualified development identity = %#v", identity)
+	}
+	if !identity.Development || identity.Dirty {
+		t.Fatalf("qualified development state = %#v", identity)
+	}
+}
+
 func TestReleaseIdentityRequiresCompleteValidatedMetadata(t *testing.T) {
 	valid := injectedMetadata{
 		version:   "0.2.0-rc.1",

@@ -747,6 +747,7 @@ op listSemanticModelFields(@path workspace: string, @path("model") modelName: st
 @summary("Query governed semantic data with typed columns, filters, pagination, and provenance")
 @route("/workspaces/{workspace}/semantic-models/{model}/query")
 @post
+@apigen.query
 @apigen.authz(#{ mode: "privilege", privilege: "QUERY_DATA" })
 @extension("x-leapview-object-scope", "semantic-model")
 @extension("x-leapview-response-trailers", #["X-Next-Cursor"])
@@ -796,6 +797,7 @@ op querySemanticModel(@path workspace: WorkspaceId, @path("model") modelName: st
 @summary("Explain semantic model query")
 @route("/workspaces/{workspace}/semantic-models/{model}/query/explain")
 @post
+@apigen.query
 @apigen.authz(#{ mode: "privilege", privilege: "QUERY_DATA" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "model-explain"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }], output: #{ mode: "raw" } })
@@ -836,6 +838,7 @@ op listSemanticFields(@path workspace: string, @path("model") modelName: string,
 @summary("Preview semantic model dataset rows")
 @route("/workspaces/{workspace}/semantic-models/{model}/datasets/{dataset}/preview")
 @post
+@apigen.query
 @apigen.authz(#{ mode: "privilege", privilege: "PREVIEW_DATA" })
 @extension("x-leapview-object-scope", "semantic-model")
 @extension("x-leapview-response-trailers", #["X-Next-Cursor"])
@@ -847,6 +850,7 @@ op previewSemanticDataset(@path workspace: string, @path("model") modelName: str
 @summary("Explain semantic model dataset row preview")
 @route("/workspaces/{workspace}/semantic-models/{model}/datasets/{dataset}/preview/explain")
 @post
+@apigen.query
 @apigen.authz(#{ mode: "privilege", privilege: "PREVIEW_DATA" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "explain-preview"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
@@ -857,6 +861,7 @@ op explainSemanticPreview(@path workspace: string, @path("model") modelName: str
 @summary("Query dashboard page")
 @route("/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/query")
 @post
+@apigen.query
 @apigen.authz(#{ mode: "privilege", privilege: "QUERY_DATA" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "query-page"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "dashboard", displayName: "dashboard" }, #{ source: "path", name: "page", displayName: "page" }], output: #{ mode: "raw" } })
@@ -867,6 +872,7 @@ op queryDashboardPage(@path workspace: string, @path dashboard: string, @path pa
 @summary("Query an existing dashboard visual with governed filters and compact analytical output")
 @route("/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/visuals/{visual}/query")
 @post
+@apigen.query
 @apigen.authz(#{ mode: "privilege", privilege: "QUERY_DATA" })
 @extension("x-leapview-object-scope", "dashboard")
 @extension("x-leapview-response-trailers", #["X-Next-Cursor"])
@@ -889,6 +895,7 @@ op queryDashboardVisualData(@path workspace: WorkspaceId, @path dashboard: strin
 @summary("List dashboard filter values")
 @route("/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/filters/{filter}/values")
 @post
+@apigen.query
 @apigen.authz(#{ mode: "privilege", privilege: "QUERY_DATA" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "filter-options"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "dashboard", displayName: "dashboard" }, #{ source: "path", name: "page", displayName: "page" }, #{ source: "path", name: "filter", displayName: "filter" }], output: #{ mode: "raw" } })

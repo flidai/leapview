@@ -576,15 +576,32 @@ async function spatialWindowSnapshot(page: Page): Promise<SpatialWindowSnapshot>
 }
 
 async function waitForSpatialRevision(page: Page, previous: SpatialWindowSnapshot): Promise<void> {
-  await page.waitForFunction(({ dataRevision, requestSeq }) => {
-    const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
-    const host = dashboard?.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: any }
-    const envelope = host?.envelope
-    return envelope?.dataRevision > dataRevision
-      && envelope?.dataState?.window?.requestSeq > requestSeq
-      && envelope?.status?.kind !== 'loading'
-      && !envelope?.status?.message
-  }, { dataRevision: previous.dataRevision, requestSeq: previous.requestSeq }, { timeout: 120_000 })
+  const timeoutAt = Date.now() + 120_000
+  const quietWindowMs = 400
+  let readySignature = ''
+  let readySince = 0
+  let current = previous
+
+  while (Date.now() < timeoutAt) {
+    current = await spatialWindowSnapshot(page)
+    const ready = current.dataRevision > previous.dataRevision
+      && current.requestSeq > previous.requestSeq
+      && current.status !== 'loading'
+      && !current.message
+    const signature = `${current.dataRevision}:${current.requestSeq}:${current.windowID}:${current.status}`
+    if (!ready) {
+      readySignature = ''
+      readySince = 0
+    } else if (signature !== readySignature) {
+      readySignature = signature
+      readySince = Date.now()
+    } else if (Date.now() - readySince >= quietWindowMs) {
+      return
+    }
+    await page.waitForTimeout(50)
+  }
+
+  throw new Error(`spatial window did not settle after revision ${JSON.stringify(previous)}; latest ${JSON.stringify(current)}`)
 }
 
 async function waitForSpatialReset(page: Page, previous: SpatialWindowSnapshot, initial: SpatialWindowSnapshot): Promise<void> {

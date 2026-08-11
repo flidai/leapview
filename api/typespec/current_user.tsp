@@ -72,35 +72,45 @@ alias GetCurrentPrincipalOK = OkJson<PrincipalResponse>;
 op getCurrentPrincipal(): GetCurrentPrincipalOK | CommonErrors;
 
 alias ListCurrentAPITokensOK = OkJson<APITokenListResponse>;
-
-@tag("Current User")
-@summary("List current API tokens")
-@route("/me/api-tokens")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-@extension("x-leapview-object-scope", "principal")
-@operationId("listCurrentAPITokens")
-op listCurrentAPITokens(@query limit?: ListLimit, @query pageToken?: PageToken): ListCurrentAPITokensOK | CommonErrors;
-
 alias CreateCurrentAPITokenCreated = CreatedJson<APITokenCreateResponse>;
 
 @tag("Current User")
-@summary("Create current API token")
 @route("/me/api-tokens")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-@extension("x-leapview-object-scope", "principal")
-@operationId("createCurrentAPIToken")
-op createCurrentAPIToken(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: APITokenCreateRequest): CreateCurrentAPITokenCreated | CommonErrors;
+interface CurrentAPITokens {
+  @summary("List current API tokens")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @extension("x-leapview-object-scope", "principal")
+  @operationId("listCurrentAPITokens")
+  listCurrentAPITokens(@query limit?: ListLimit, @query pageToken?: PageToken): ListCurrentAPITokensOK | CommonErrors;
 
-@tag("Current User")
-@summary("Revoke current API token")
-@route("/me/api-tokens/{token}")
-@delete
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-@extension("x-leapview-object-scope", "principal")
-@operationId("revokeCurrentAPIToken")
-op revokeCurrentAPIToken(@path token: string): EmptyResponse | CommonErrors;
+  @summary("Create current API token")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @extension("x-leapview-object-scope", "principal")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "api_token.created", guarantee: "transactional" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "API_TOKEN_INVALID", publicDetail: "The API token request is invalid." },
+    ],
+  })
+  @operationId("createCurrentAPIToken")
+  createCurrentAPIToken(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: APITokenCreateRequest): CreateCurrentAPITokenCreated | CommonErrors;
+
+  @summary("Revoke current API token")
+  @route("/{token}")
+  @delete
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @extension("x-leapview-object-scope", "principal")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "api_token.revoked", guarantee: "transactional" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "API_TOKEN_NOT_FOUND", publicDetail: "API token not found." },
+    ],
+  })
+  @operationId("revokeCurrentAPIToken")
+  revokeCurrentAPIToken(@path token: string): EmptyResponse | CommonErrors;
+}
 
 alias ListCurrentEffectivePrivilegesOK = OkJson<EffectivePrivilegesResponse>;
 
@@ -116,19 +126,26 @@ op listCurrentEffectivePrivileges(@query workspace?: string): ListCurrentEffecti
 alias ListCurrentSessionsOK = OkJson<SessionListResponse>;
 
 @tag("Current User")
-@summary("List current sessions")
 @route("/me/sessions")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
-@extension("x-leapview-object-scope", "principal")
-@operationId("listCurrentSessions")
-op listCurrentSessions(@query limit?: ListLimit, @query pageToken?: PageToken): ListCurrentSessionsOK | CommonErrors;
+interface CurrentSessions {
+  @summary("List current sessions")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
+  @extension("x-leapview-object-scope", "principal")
+  @operationId("listCurrentSessions")
+  listCurrentSessions(@query limit?: ListLimit, @query pageToken?: PageToken): ListCurrentSessionsOK | CommonErrors;
 
-@tag("Current User")
-@summary("Revoke current session")
-@route("/me/sessions/{session}")
-@delete
-@apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
-@extension("x-leapview-object-scope", "principal")
-@operationId("revokeCurrentSession")
-op revokeCurrentSession(@path session: string): EmptyResponse | CommonErrors;
+  @summary("Revoke current session")
+  @route("/{session}")
+  @delete
+  @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
+  @extension("x-leapview-object-scope", "principal")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "session.revoked", guarantee: "transactional" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "SESSION_NOT_FOUND", publicDetail: "Session not found." },
+    ],
+  })
+  @operationId("revokeCurrentSession")
+  revokeCurrentSession(@path session: string): EmptyResponse | CommonErrors;
+}

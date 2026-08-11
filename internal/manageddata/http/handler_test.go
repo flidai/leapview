@@ -389,6 +389,7 @@ type fakeMultipart struct {
 	create   s3multipart.CreateRequest
 	sign     s3multipart.SignPartRequest
 	complete s3multipart.CompleteRequest
+	abort    s3multipart.AbortRequest
 }
 
 func (m *fakeMultipart) Create(_ context.Context, request s3multipart.CreateRequest) (s3multipart.UploadResult, error) {
@@ -408,7 +409,8 @@ func (m *fakeMultipart) Complete(_ context.Context, request s3multipart.Complete
 	return result, nil
 }
 
-func (m *fakeMultipart) Abort(context.Context, s3multipart.AbortRequest) (s3multipart.UploadResult, error) {
+func (m *fakeMultipart) Abort(_ context.Context, request s3multipart.AbortRequest) (s3multipart.UploadResult, error) {
+	m.abort = request
 	result := m.upload
 	result.Status = s3multipart.StatusAborted
 	return result, nil
@@ -421,7 +423,8 @@ func newHandler(repo managedhttp.Repository, uploads managedhttp.UploadCoordinat
 func handlerOptions(repo managedhttp.Repository, uploads managedhttp.UploadCoordinator, multipart s3multipart.Coordinator) managedhttp.Options {
 	return managedhttp.Options{
 		Repository: repo, Uploads: uploads, Multipart: multipart, Environment: "prod",
-		EnqueueFinalize: func(context.Context, control.UploadRequest) error { return nil },
+		EnqueueFinalize:    func(context.Context, control.UploadRequest) error { return nil },
+		RecordCommandAudit: func(context.Context, managedhttp.CommandAuditInput) error { return nil },
 		CurrentPrincipal: func(*http.Request) (managedhttp.Principal, bool) {
 			return managedhttp.Principal{ID: "principal-a"}, true
 		},

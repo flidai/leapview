@@ -2,12 +2,15 @@ package apigenruntime
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 )
 
 type testAuthorizer struct{}
@@ -16,9 +19,65 @@ func (testAuthorizer) Protect(_ string, next http.Handler) (http.Handler, bool) 
 	return next, true
 }
 
+func noCommandLookup(string) (apigencommand.Contract, bool) {
+	return apigencommand.Contract{}, false
+}
+
+func buildTestHandler(dispatch Dispatch, commands ...apigencommand.Lookup) (*Handler, error) {
+	lookup := apigencommand.Lookup(noCommandLookup)
+	if len(commands) != 0 {
+		lookup = commands[0]
+	}
+	return Build(testAuthorizer{}, dispatch, lookup)
+}
+
+func commandLookup(operationID string) (apigencommand.Contract, bool) {
+	if operationID != "createWidget" {
+		return apigencommand.Contract{}, false
+	}
+	return apigencommand.Contract{OperationID: operationID, Owner: "Widgets", AuditAction: "widget.created", Guarantee: apigencommand.GuaranteeBestEffort}, true
+}
+
+func TestGeneratedCommandBoundaryRejectsSuccessfulBypass(t *testing.T) {
+	handler, err := buildTestHandler(func(_ string, w http.ResponseWriter, _ *http.Request) bool {
+		w.WriteHeader(http.StatusCreated)
+		return true
+	}, commandLookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	handler.HandleAPIGen("createWidget", recorder, httptest.NewRequest(http.MethodPost, "/", nil))
+	if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), "COMMAND_CONTRACT_NOT_EXECUTED") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGeneratedCommandBoundaryAcceptsExecutorCompletion(t *testing.T) {
+	executor, err := apigencommand.NewExecutor(commandLookup, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := buildTestHandler(func(operationID string, w http.ResponseWriter, r *http.Request) bool {
+		if err := executor.Execute(r.Context(), operationID, apigencommand.Execution{BestEffortAudit: func(context.Context, apigencommand.Contract) error { return nil }}); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusCreated)
+		return true
+	}, commandLookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	handler.HandleAPIGen("createWidget", recorder, httptest.NewRequest(http.MethodPost, "/", nil))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestHandlerUsesInjectedGeneratedPartitionDispatch(t *testing.T) {
 	called := false
-	handler, err := Build(testAuthorizer{}, func(operationID string, w http.ResponseWriter, _ *http.Request) bool {
+	handler, err := buildTestHandler(func(operationID string, w http.ResponseWriter, _ *http.Request) bool {
 		called = true
 		if operationID != "getAgentConversation" {
 			t.Fatalf("operation ID = %q", operationID)
@@ -44,14 +103,20 @@ func TestHandlerUsesInjectedGeneratedPartitionDispatch(t *testing.T) {
 }
 
 func TestBuildRejectsMissingDispatch(t *testing.T) {
-	if _, err := Build(testAuthorizer{}, nil); err == nil {
+	if _, err := buildTestHandler(nil); err == nil {
 		t.Fatal("Build accepted a nil dispatch function")
+	}
+}
+
+func TestBuildRejectsMissingCommandContractLookup(t *testing.T) {
+	if _, err := Build(testAuthorizer{}, func(string, http.ResponseWriter, *http.Request) bool { return true }, nil); err == nil {
+		t.Fatal("Build accepted a nil command contract lookup")
 	}
 }
 
 func TestGeneratedTransportRejectsEmptyPageTokenBeforeService(t *testing.T) {
 	called := false
-	handler, err := Build(testAuthorizer{}, func(string, http.ResponseWriter, *http.Request) bool {
+	handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool {
 		called = true
 		return true
 	})
@@ -78,7 +143,7 @@ func TestGeneratedSemanticTransportRejectsLimitsAndArraysBeforeService(t *testin
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
-			handler, err := Build(testAuthorizer{}, func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
+			handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -95,7 +160,7 @@ func TestGeneratedSemanticTransportRejectsLimitsAndArraysBeforeService(t *testin
 
 func TestGeneratedTransportRejectsUnsupportedContentTypeBeforeService(t *testing.T) {
 	called := false
-	handler, err := Build(testAuthorizer{}, func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
+	handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +179,7 @@ func TestGeneratedTransportRejectsUnsupportedContentTypeBeforeService(t *testing
 
 func TestGeneratedTransportRequiresContentTypeForNonEmptyBody(t *testing.T) {
 	called := false
-	handler, err := Build(testAuthorizer{}, func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
+	handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +193,7 @@ func TestGeneratedTransportRequiresContentTypeForNonEmptyBody(t *testing.T) {
 
 func TestGeneratedTransportAllowsEmptyBodyWithoutContentType(t *testing.T) {
 	called := false
-	handler, err := Build(testAuthorizer{}, func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
+	handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +206,7 @@ func TestGeneratedTransportAllowsEmptyBodyWithoutContentType(t *testing.T) {
 
 func TestGeneratedTransportAcceptsJSONContentTypeParameters(t *testing.T) {
 	called := false
-	handler, err := Build(testAuthorizer{}, func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
+	handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +221,7 @@ func TestGeneratedTransportAcceptsJSONContentTypeParameters(t *testing.T) {
 
 func TestGeneratedSemanticTransportBoundsBodyBeforeService(t *testing.T) {
 	called := false
-	handler, err := Build(testAuthorizer{}, func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
+	handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })
 	if err != nil {
 		t.Fatal(err)
 	}

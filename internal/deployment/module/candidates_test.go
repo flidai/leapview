@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -148,6 +149,108 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 	}
 }
 
+func TestCandidateSourceBlobUploadPersistsGeneratedCommandAuditExactlyOnce(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	blobDigest := "sha256:" + strings.Repeat("b", 64)
+	sources := &candidateSourceSynchronizerStub{}
+	module.candidateSources = sources
+	var events []CandidateSourceBlobAuditEvent
+	module.candidateSourceBlobAudit = func(_ context.Context, event CandidateSourceBlobAuditEvent) error {
+		events = append(events, event)
+		return nil
+	}
+	request := httptest.NewRequest(
+		http.MethodPut,
+		"/api/v1/projects/finance/candidate-sync/blobs/"+blobDigest,
+		strings.NewReader("blob"),
+	)
+	request.Header.Set("X-Request-ID", "req-source-blob")
+	request.Header.Set("X-Correlation-ID", "corr-source-blob")
+	request.Header.Set("X-LeapView-Invocation-Surface", "cli")
+	response := httptest.NewRecorder()
+
+	module.UploadProjectCandidateSourceBlob(
+		response,
+		request,
+		"finance",
+		blobDigest,
+		"application/octet-stream",
+		standardContentDigest(t, blobDigest),
+	)
+
+	if response.Code != http.StatusCreated || string(sources.uploaded) != "blob" {
+		t.Fatalf("upload response = %d %s bytes=%q", response.Code, response.Body.String(), sources.uploaded)
+	}
+	if len(events) != 1 {
+		t.Fatalf("candidate source blob audits = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.PrincipalID != "principal_1" || event.ProjectID != "finance" ||
+		event.Digest != blobDigest || event.Action != "candidate.source_blob_uploaded" ||
+		event.Privilege != "AUTHOR_PROJECT" || event.Status != "success" ||
+		event.RequestID != "req-source-blob" || event.CorrelationID != "corr-source-blob" {
+		t.Fatalf("candidate source blob audit = %#v", event)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(event.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("decode audit metadata: %v", err)
+	}
+	if metadata["operationId"] != "uploadProjectCandidateSourceBlob" ||
+		metadata["surface"] != "cli" || metadata["digest"] != blobDigest ||
+		metadata["sizeBytes"] != float64(len("blob")) {
+		t.Fatalf("candidate source blob audit metadata = %#v", metadata)
+	}
+}
+
+func TestCandidateSourceBlobUploadPreservesSuccessWhenBestEffortAuditFails(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	var auditLog bytes.Buffer
+	module.logger = slog.New(slog.NewTextHandler(&auditLog, nil))
+	blobDigest := "sha256:" + strings.Repeat("b", 64)
+	sources := &candidateSourceSynchronizerStub{}
+	module.candidateSources = sources
+	auditCalls := 0
+	module.candidateSourceBlobAudit = func(context.Context, CandidateSourceBlobAuditEvent) error {
+		auditCalls++
+		return errors.New("audit store unavailable")
+	}
+
+	response := callCandidateAPI(
+		t,
+		http.MethodPut,
+		"/api/v1/projects/finance/candidate-sync/blobs/"+blobDigest,
+		"blob",
+		func(w http.ResponseWriter, r *http.Request) {
+			module.UploadProjectCandidateSourceBlob(
+				w,
+				r,
+				"finance",
+				blobDigest,
+				"application/octet-stream",
+				standardContentDigest(t, blobDigest),
+			)
+		},
+	)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("upload response = %d %s", response.Code, response.Body.String())
+	}
+	if auditCalls != 1 {
+		t.Fatalf("candidate source blob audit calls = %d, want 1", auditCalls)
+	}
+	if string(sources.uploaded) != "blob" {
+		t.Fatalf("immutable blob write was unexpectedly rolled back: %q", sources.uploaded)
+	}
+	if response.Header().Get("Location") == "" {
+		t.Fatal("successful command did not return a location")
+	}
+	if !strings.Contains(auditLog.String(), "candidate source blob audit failed") ||
+		!strings.Contains(auditLog.String(), "uploadProjectCandidateSourceBlob") ||
+		!strings.Contains(auditLog.String(), "audit store unavailable") {
+		t.Fatalf("audit failure log = %q", auditLog.String())
+	}
+}
+
 func TestCandidateSynchronizationNeverMarksReadyBeforeProvenanceIsRetained(t *testing.T) {
 	module := testCandidateModule(t, "principal_1")
 	digest := "sha256:" + strings.Repeat("a", 64)
@@ -258,7 +361,8 @@ func TestCandidateSynchronizationRejectsReadyCandidateWithInvalidProvenance(t *t
 		},
 	)
 	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Body.String())
-	require.Contains(t, response.Body.String(), "reset target state")
+	require.Contains(t, response.Body.String(), "INVALID_CANDIDATE")
+	require.NotContains(t, response.Body.String(), "reset target state")
 	current, err := module.candidates.Get(t.Context(), candidateScope(ready))
 	require.NoError(t, err)
 	require.Equal(t, ready, current)
@@ -630,11 +734,15 @@ func testCandidateModuleWithClock(t *testing.T, principalID string, now func() t
 		TargetID: "lvinst_prod", CanonicalOrigin: "https://prod.leapview.example", Environment: "prod",
 		Lifetime: lifetime, Now: now, NewID: func() (string, error) { return "cand_opaque_1", nil },
 		RuntimeLifecycle: lifecycle,
+		Audit:            func(context.Context, deployment.CandidateEvent) error { return nil },
 	})
 	require.NoError(t, err)
 	return &Module{
 		candidates:                service,
 		candidateRuntimeLifecycle: lifecycle,
+		candidateSourceBlobAudit: func(context.Context, CandidateSourceBlobAuditEvent) error {
+			return nil
+		},
 		handler: deploymenthttp.NewHandler(deploymenthttp.Options{
 			CurrentPrincipal: func(*http.Request) (deploymenthttp.Principal, bool) {
 				return deploymenthttp.Principal{ID: principalID}, true

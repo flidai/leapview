@@ -56,6 +56,26 @@ func TestProvenanceAllowsAuthoredOnlySourceRefresh(t *testing.T) {
 	)
 }
 
+func TestProvenanceRetainsBindingEvidenceForSnapshotReuse(t *testing.T) {
+	input := provenanceInput("target-dev", "dev", "a")
+	workspace := &input.Plan.Workspaces[0]
+	workspace.Bindings = []BindingEvidence{{
+		BindingID: "warehouse", LogicalConnection: "warehouse",
+		ConnectorKind: "postgres", Revision: 2,
+		ValidatedVersion: "version-9", EndpointConfigHash: shaIdentity("8"),
+	}}
+
+	provenance, err := NewProvenance(input)
+	require.NoError(t, err)
+	var retained []BindingEvidence
+	for _, planned := range provenance.Plan.Workspaces {
+		if planned.WorkspaceID == workspace.WorkspaceID {
+			retained = planned.Bindings
+		}
+	}
+	require.Equal(t, workspace.Bindings, retained)
+}
+
 func TestProvenanceBindsOptionalSourceRevisionWithoutChangingArtifactIdentity(t *testing.T) {
 	withoutRevision, err := NewProvenance(provenanceInput("target-dev", "dev", "a"))
 	require.NoError(t, err)

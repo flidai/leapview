@@ -656,6 +656,18 @@ func candidateCompatibility(suffix string) CandidateCompatibility {
 	}
 }
 
+func TestCandidateSnapshotReuseAllowsRetainedBindingEvidence(t *testing.T) {
+	err := validateCandidateDataMode(servingstate.State{DuckLakeSnapshotID: 42}, CandidateCompatibility{
+		DataMode: CandidateDataReuseSnapshot,
+		Bindings: []CandidateBindingVersion{{
+			BindingID: "binding_warehouse", LogicalConnection: "warehouse",
+			ConnectorKind: "postgres", Revision: 7, ProviderVersion: "provider:v3",
+			EndpointConfigHash: "sha256:" + strings.Repeat("a", 64),
+		}},
+	}, ManagedDataResolution{})
+	require.NoError(t, err)
+}
+
 type candidateTestLifetime struct {
 	closes atomic.Int32
 }

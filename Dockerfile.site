@@ -6,6 +6,7 @@ FROM golang:1.25-bookworm@sha256:a9c020ee3d1508c7be5435c262434e3d3fc1d0e76a11afe
 WORKDIR /src
 
 COPY go.mod go.sum ./
+COPY pkg/apigen/go.mod pkg/apigen/go.sum ./pkg/apigen/
 RUN go mod download
 
 FROM go-deps AS sourcegen

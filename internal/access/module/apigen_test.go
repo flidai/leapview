@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
@@ -46,12 +47,34 @@ func testAPIGenContracts() map[string]APIGenOperationContract {
 	generated := apiaggregate.GetAPIGenOperationContracts()
 	contracts := make(map[string]APIGenOperationContract, len(generated))
 	for operationID, contract := range generated {
+		var command *APIGenCommandContract
+		if contract.Command != nil {
+			command = &APIGenCommandContract{AuthzMode: contract.Command.AuthzMode, Privilege: contract.Command.Privilege}
+		}
 		contracts[operationID] = APIGenOperationContract{
 			OperationID: contract.OperationID, Method: contract.Method, Path: contract.Path, Protected: contract.Protected,
-			AuthzMode: contract.AuthzMode, Extensions: contract.Extensions,
+			AuthzMode: contract.AuthzMode, Command: command, Extensions: contract.Extensions,
 		}
 	}
 	return contracts
+}
+
+func TestAPIGenOperationPrivilegeUsesTypedCommandAuthorization(t *testing.T) {
+	contract := APIGenOperationContract{
+		AuthzMode: "privilege",
+		Command:   &APIGenCommandContract{AuthzMode: "privilege", Privilege: string(access.PrivilegeManagePlatform)},
+		Extensions: map[string]any{
+			"x-authz": map[string]any{"mode": "privilege", "privilege": string(access.PrivilegeUseWorkspace)},
+		},
+	}
+	privilege, ok := apiGenOperationPrivilege(contract)
+	if !ok || privilege != access.PrivilegeManagePlatform {
+		t.Fatalf("typed command privilege = %q, %t", privilege, ok)
+	}
+	contract.Command.AuthzMode = "authenticated"
+	if _, ok := apiGenOperationPrivilege(contract); ok {
+		t.Fatal("mismatched typed command authorization was accepted")
+	}
 }
 
 func TestAPIGenAuthorizationContractCoverage(t *testing.T) {
@@ -62,6 +85,10 @@ func TestAPIGenAuthorizationContractCoverage(t *testing.T) {
 	}
 	publicAuthoringAuth := map[string]bool{
 		"getInstance": true,
+	}
+	authenticatedOnly := map[string]bool{
+		"decideDeviceAuthorization": true,
+		"getCapabilities":           true,
 	}
 	for operationID, contract := range contracts {
 		if publicAuthoringAuth[operationID] {
@@ -77,7 +104,7 @@ func TestAPIGenAuthorizationContractCoverage(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s has invalid authorization metadata", operationID)
 		}
-		if operationID == "decideDeviceAuthorization" {
+		if authenticatedOnly[operationID] {
 			if contract.AuthzMode != "authenticated" {
 				t.Fatalf("%s auth mode = %q, want authenticated", operationID, contract.AuthzMode)
 			}
@@ -201,13 +228,22 @@ func TestManagedDataAndDeploymentAPIGenPrivilegesAndScopes(t *testing.T) {
 			t.Errorf("%s has an invalid object scope", operationID)
 			continue
 		}
-		wantScoped := operationID == "getDeployment" ||
-			operationID == "listDeployments" ||
-			operationID == "approveDeployment" ||
-			operationID == "revokeDeploymentApproval" ||
-			operationID == "activateDeployment"
+		wantScoped := true
 		if gotScoped := resolver != nil; gotScoped != wantScoped {
 			t.Errorf("%s project-environment scoped = %t, want %t", operationID, gotScoped, wantScoped)
 		}
+	}
+}
+
+func TestProjectRoutesUseTheProjectEnvironmentAuthorizationBoundary(t *testing.T) {
+	authorizer := testAPIGenAuthorizer(t)
+	for operationID, contract := range authorizer.operations {
+		if !strings.Contains(contract.Path, "/projects/{project}") {
+			continue
+		}
+		require.Equal(t, "project-environment", contract.Extensions[apiGenObjectScopeExtension], operationID)
+		resolver, ok := authorizer.objectResolverForContract(contract)
+		require.True(t, ok, operationID)
+		require.NotNil(t, resolver, operationID)
 	}
 }

@@ -7,18 +7,21 @@ import (
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 type duckDBWorkspaceMaterializer struct {
 	environment *analyticsducklake.Environment
 	credentials analyticsduckdb.CredentialResolver
+	module      *Module
 }
 
 func (e duckDBWorkspaceMaterializer) MaterializeWorkspace(ctx context.Context, request analyticsmaterialization.WorkspaceRequest) (int64, error) {
 	runtime, err := analyticsduckdb.OpenWorkspaceMaterializeRuntime(ctx, analyticsduckdb.WorkspaceRuntimeConfig{
 		Models: request.Models, Database: e.environment,
 		CredentialResolver: e.credentials,
+		ConnectionResolver: e.connectionResolver(request),
 		ServingStateID:     request.ServingStateID, WorkspaceID: request.WorkspaceID,
 		Environment: string(servingstate.NormalizeEnvironment(request.Environment)),
 		TargetType:  request.TargetType, TargetID: request.TargetID,
@@ -37,4 +40,14 @@ func (e duckDBWorkspaceMaterializer) MaterializeWorkspace(ctx context.Context, r
 		return 0, fmt.Errorf("refresh did not produce a DuckLake snapshot")
 	}
 	return snapshotID, nil
+}
+
+func (e duckDBWorkspaceMaterializer) connectionResolver(request analyticsmaterialization.WorkspaceRequest) analyticsruntime.ConnectionResolver {
+	if e.module == nil || e.module.activeRuntimeBindingEvidence == nil || request.ConnectionEvidenceServingStateID == "" {
+		return nil
+	}
+	return &activeRuntimeConnectionResolver{
+		module: e.module, servingStateID: request.ConnectionEvidenceServingStateID,
+		workspaceID: request.WorkspaceID, environment: string(servingstate.NormalizeEnvironment(request.Environment)),
+	}
 }

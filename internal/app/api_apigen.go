@@ -29,9 +29,16 @@ func accessAPIGenOperationContracts() map[string]accessmodule.APIGenOperationCon
 	generated := apiaggregate.GetAPIGenOperationContracts()
 	contracts := make(map[string]accessmodule.APIGenOperationContract, len(generated))
 	for operationID, contract := range generated {
+		var command *accessmodule.APIGenCommandContract
+		if contract.Command != nil {
+			command = &accessmodule.APIGenCommandContract{
+				AuthzMode: contract.Command.AuthzMode,
+				Privilege: contract.Command.Privilege,
+			}
+		}
 		contracts[operationID] = accessmodule.APIGenOperationContract{
 			OperationID: contract.OperationID, Method: contract.Method, Path: contract.Path, Protected: contract.Protected,
-			AuthzMode: contract.AuthzMode, Extensions: contract.Extensions,
+			AuthzMode: contract.AuthzMode, Command: command, Extensions: contract.Extensions,
 		}
 	}
 	return contracts

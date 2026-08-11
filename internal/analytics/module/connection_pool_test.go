@@ -30,10 +30,12 @@ func TestConnectionAdministrationComposesTargetOwnedValidatedPoolDirectory(t *te
 		Authorize: func(context.Context, string, ConnectionAdministrationPermission, ConnectionTargetBinding) error {
 			return nil
 		},
-		Dependencies:   moduleDependencyInspector{},
-		Now:            func() time.Time { return now },
-		RefreshTimeout: time.Second,
-		MaxConcurrent:  1,
+		Dependencies:        moduleDependencyInspector{},
+		Audit:               moduleRotationAuditNoop{},
+		AdministrationAudit: moduleAdministrationAuditNoop{},
+		Now:                 func() time.Time { return now },
+		RefreshTimeout:      time.Second,
+		MaxConcurrent:       1,
 	})
 	require.NoError(t, err)
 	health, err := administration.Test(context.Background(), "operator-1", connectionbinding.BindingKey{
@@ -51,6 +53,7 @@ func TestConnectionAdministrationComposesTargetOwnedValidatedPoolDirectory(t *te
 		Authorize: func(context.Context, string, ConnectionTargetBinding) error {
 			return nil
 		},
+		Audit:          moduleRotationAuditNoop{},
 		Now:            func() time.Time { return now },
 		RefreshTimeout: time.Second,
 		MaxConcurrent:  1,
@@ -101,10 +104,12 @@ func TestConnectionAdministrationRejectsBindingsForAnotherTarget(t *testing.T) {
 		Authorize: func(context.Context, string, ConnectionAdministrationPermission, ConnectionTargetBinding) error {
 			return nil
 		},
-		Dependencies:   moduleDependencyInspector{},
-		Now:            func() time.Time { return now },
-		RefreshTimeout: time.Second,
-		MaxConcurrent:  1,
+		Dependencies:        moduleDependencyInspector{},
+		Audit:               moduleRotationAuditNoop{},
+		AdministrationAudit: moduleAdministrationAuditNoop{},
+		Now:                 func() time.Time { return now },
+		RefreshTimeout:      time.Second,
+		MaxConcurrent:       1,
 	})
 	require.NoError(t, err)
 	_, err = administration.Get(context.Background(), "operator-1", connectionbinding.BindingKey{
@@ -132,7 +137,8 @@ func TestCandidateRuntimeBindingRegistrationMakesOnlyItsValidatedGenerationAvail
 		Authorize: func(context.Context, string, ConnectionTargetBinding) error {
 			return nil
 		},
-		Now: func() time.Time { return now },
+		Audit: moduleRotationAuditNoop{},
+		Now:   func() time.Time { return now },
 	})
 	require.NoError(t, err)
 	leases, err := leaser.Acquire(t.Context(), RuntimeBindingRequest{
@@ -196,7 +202,8 @@ func TestCandidateRuntimeBindingReplacementRemovalIsGenerationSafe(t *testing.T)
 		Authorize: func(context.Context, string, ConnectionTargetBinding) error {
 			return nil
 		},
-		Now: func() time.Time { return now },
+		Audit: moduleRotationAuditNoop{},
+		Now:   func() time.Time { return now },
 	})
 	require.NoError(t, err)
 	acquire := func() *RuntimeBindingLeases {
@@ -282,10 +289,12 @@ func TestConnectionAdministrationUsesExplicitEnvironmentResolverOnlyForDevelopme
 		Authorize: func(context.Context, string, ConnectionAdministrationPermission, ConnectionTargetBinding) error {
 			return nil
 		},
-		Dependencies:   moduleDependencyInspector{},
-		Now:            func() time.Time { return now },
-		RefreshTimeout: time.Second,
-		MaxConcurrent:  1,
+		Dependencies:        moduleDependencyInspector{},
+		Audit:               moduleRotationAuditNoop{},
+		AdministrationAudit: moduleAdministrationAuditNoop{},
+		Now:                 func() time.Time { return now },
+		RefreshTimeout:      time.Second,
+		MaxConcurrent:       1,
 	})
 	require.NoError(t, err)
 	_, err = administration.Test(context.Background(), "operator-1", connectionbinding.BindingKey{

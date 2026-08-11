@@ -169,8 +169,7 @@ func (service *CandidateRuntimeService) Prepare(
 		}
 		switch workspaces[index].DataMode {
 		case CandidateDataReuseSnapshot:
-			if len(workspaces[index].Connections) != 0 ||
-				len(workspaces[index].AuthoredConnections) != 0 {
+			if len(workspaces[index].AuthoredConnections) != 0 {
 				return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 			}
 		case CandidateDataRefreshSources:

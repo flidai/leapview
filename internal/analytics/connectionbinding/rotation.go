@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -30,6 +33,7 @@ type PoolManagerConfig struct {
 	Factory    RuntimePoolFactory
 	Store      BindingStateStore
 	Audit      RotationAuditRecorder
+	Logger     *slog.Logger
 	Now        func() time.Time
 	StaleAfter time.Duration
 	Schedule   RefreshSchedule
@@ -40,6 +44,7 @@ type PoolManager struct {
 	factory  RuntimePoolFactory
 	store    BindingStateStore
 	audit    RotationAuditRecorder
+	logger   *slog.Logger
 	now      func() time.Time
 	stale    time.Duration
 	schedule RefreshSchedule
@@ -68,9 +73,16 @@ func NewPoolManager(config PoolManagerConfig) (*PoolManager, error) {
 	if config.Resolver == nil || config.Factory == nil || config.Store == nil || config.Now == nil || config.StaleAfter <= 0 {
 		return nil, fmt.Errorf("%w: resolver, pool factory, binding store, clock, and stale policy are required", ErrInvalidBinding)
 	}
+	if config.Audit == nil {
+		return nil, fmt.Errorf("%w: recorder is required", ErrRotationAuditUnavailable)
+	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &PoolManager{
 		resolver: config.Resolver, factory: config.Factory, store: config.Store,
-		audit: config.Audit, now: config.Now, stale: config.StaleAfter,
+		audit: config.Audit, logger: logger, now: config.Now, stale: config.StaleAfter,
 		schedule: config.Schedule, binding: config.Binding,
 	}, nil
 }
@@ -246,7 +258,7 @@ func (manager *PoolManager) withAudit(
 	result error,
 ) error {
 	if manager.audit == nil {
-		return result
+		return errors.Join(result, ErrRotationAuditUnavailable)
 	}
 	manager.mu.Lock()
 	binding := manager.binding
@@ -257,10 +269,44 @@ func (manager *PoolManager) withAudit(
 		Actor:           strings.TrimSpace(request.Actor), Operation: request.Operation,
 		Timestamp: timestamp.UTC(), Outcome: outcome, Reason: reason,
 	}
-	if err := manager.audit.RecordCredentialRotation(context.WithoutCancel(ctx), event); err != nil {
-		return errors.Join(result, ErrRotationAuditUnavailable)
+	operationID, command := rotationOperationID(request.Operation)
+	if !command {
+		if err := manager.audit.RecordCredentialRotation(context.WithoutCancel(ctx), event); err != nil {
+			manager.logger.ErrorContext(ctx, "best-effort credential rotation audit failed", "operation", request.Operation, "outcome", outcome, "workspace_id", binding.Scope.WorkspaceID, "principal", strings.TrimSpace(request.Actor), "binding_id", binding.ID, "target_id", binding.TargetID, "reason", reason, "error", err)
+		}
+		return result
 	}
-	return result
+	executor, err := apigencommand.NewExecutor(analyticsgen.GetAPIGenCommandRuntimeContract, manager.logger)
+	if err != nil {
+		return errors.Join(result, err)
+	}
+	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(context.Context, apigencommand.Contract) error {
+			return manager.audit.RecordCredentialRotation(context.WithoutCancel(ctx), event)
+		},
+		LogMessage: "best-effort credential rotation audit failed",
+		LogAttributes: []slog.Attr{
+			slog.String("operation", string(request.Operation)),
+			slog.String("outcome", string(outcome)),
+			slog.String("workspace_id", binding.Scope.WorkspaceID),
+			slog.String("principal", strings.TrimSpace(request.Actor)),
+			slog.String("binding_id", binding.ID),
+			slog.String("target_id", binding.TargetID),
+			slog.String("reason", reason),
+		},
+	})
+	return errors.Join(result, err)
+}
+
+func rotationOperationID(operation RefreshOperation) (string, bool) {
+	switch operation {
+	case RefreshTest:
+		return string(analyticsgen.GenOperationTestTargetConnectionBinding), true
+	case RefreshRequested:
+		return string(analyticsgen.GenOperationRefreshTargetConnectionBinding), true
+	default:
+		return "", false
+	}
 }
 
 func (manager *PoolManager) recordRefresh(now time.Time) {

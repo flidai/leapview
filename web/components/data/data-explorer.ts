@@ -61,7 +61,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       min-height: 100svh;
       color: var(--lv-fg-default);
       background: var(--lv-bg-app);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
     }
 
     .route {
@@ -94,9 +94,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-title-sm);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-section-title);
     }
 
     .detail {
@@ -105,7 +103,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-muted);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .explorer {
@@ -145,8 +143,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-control);
       color: var(--lv-fg-default);
       padding: 0 var(--base-size-8) 0 var(--base-size-32);
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     .search-icon {
@@ -178,8 +175,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-muted);
       cursor: pointer;
       list-style: none;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
       text-transform: uppercase;
     }
 
@@ -239,19 +236,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
 
     .object-button strong {
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .object-button small {
       margin-top: var(--base-size-2);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     .object-button span:last-child {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     .main {
@@ -280,8 +277,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-title-sm);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-section-title);
     }
 
     .badges {
@@ -297,8 +293,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-panel-muted);
       color: var(--lv-fg-muted);
       padding: var(--base-size-2) var(--base-size-8);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .icon-button {
@@ -344,15 +340,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       white-space: pre-wrap;
       word-break: break-word;
       color: var(--lv-fg-muted);
-      font-family: var(--fontStack-monospace);
-      font-size: var(--lv-font-size-caption);
-      line-height: var(--lv-line-height-default);
+      font: var(--lv-type-code-block);
     }
 
     .empty {
       color: var(--lv-fg-muted);
       padding: var(--base-size-16);
-      font-size: var(--lv-font-size-body-sm);
+      font: var(--lv-type-body);
     }
 
     @media (max-width: 760px) {

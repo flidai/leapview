@@ -2,17 +2,17 @@ package manageddata
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/platform/jobs"
 )
 
 var (
-	ErrNotFound = errors.New("managed data record not found")
-	ErrConflict = errors.New("managed data conflict")
+	ErrNotFound = apigenfailure.New("not_found", "managed data record not found")
+	ErrConflict = apigenfailure.New("conflict", "managed data conflict")
 )
 
 type CollectionStatus string

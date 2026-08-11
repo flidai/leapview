@@ -1022,10 +1022,9 @@ func validateCandidateDataMode(
 ) error {
 	switch compatibility.DataMode {
 	case CandidateDataReuseSnapshot:
-		if state.DuckLakeSnapshotID <= 0 || len(compatibility.Bindings) != 0 ||
-			len(compatibility.AuthoredConnections) != 0 {
+		if state.DuckLakeSnapshotID <= 0 || len(compatibility.AuthoredConnections) != 0 {
 			return fmt.Errorf(
-				"%w: immutable snapshot reuse requires an existing snapshot and no refresh connections",
+				"%w: immutable snapshot reuse requires an existing snapshot and no authored refresh connections",
 				ErrCandidateRuntimeIncompatible,
 			)
 		}

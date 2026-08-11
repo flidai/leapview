@@ -1305,6 +1305,7 @@ func TestRefreshPersistenceIsConstructedOnlyByItsModule(t *testing.T) {
 		}
 		if file.pkgDir == "internal/refresh/module" {
 			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepository(")
+			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepositoryWithWorkflow(")
 			constructors += strings.Count(file.body, "refreshsqlite.NewRepository(")
 		}
 	}
@@ -2646,7 +2647,15 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"branches: [main]",
 		"build-production-image:",
 		"name: Build production image",
+		"id: identity",
+		"git show -s --format=%cI \"$revision\"",
 		"uses: docker/build-push-action@",
+		"BUILD_VERSION=${{ steps.identity.outputs.version }}",
+		"BUILD_REVISION=${{ steps.identity.outputs.revision }}",
+		"BUILD_TIME=${{ steps.identity.outputs.build_time }}",
+		"BUILD_DIRTY=false",
+		"BUILD_RELEASE=false",
+		".dirty == false and .development == true",
 		"cache-from: type=gha,scope=production-amd64",
 		"cache-to: type=gha,mode=max,scope=production-amd64",
 		"qualify-production-image:",
@@ -3082,6 +3091,28 @@ func TestLeapViewDeclaresGitHubHostedCIContract(t *testing.T) {
 	} {
 		if !strings.Contains(string(navigation), want) {
 			t.Fatalf("documentation navigation missing GitHub-hosted CI architecture fragment %q", want)
+		}
+	}
+}
+
+func TestFrontendScriptsDoNotRepeatedlyInstallPlaywright(t *testing.T) {
+	root := repoRoot(t)
+	packageJSON, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil {
+		t.Fatalf("read package manifest: %v", err)
+	}
+	var manifest struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(packageJSON, &manifest); err != nil {
+		t.Fatalf("decode package manifest: %v", err)
+	}
+	if got := manifest.Scripts["browser:ensure"]; got != "bun scripts/ensure_playwright.ts" {
+		t.Fatalf("browser:ensure must use the filesystem-first Playwright provisioner, got %q", got)
+	}
+	for name, command := range manifest.Scripts {
+		if strings.Contains(command, "playwright install chromium") {
+			t.Errorf("script %q repeatedly provisions Chromium instead of using browser:ensure", name)
 		}
 	}
 }

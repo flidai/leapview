@@ -141,6 +141,36 @@ func TestCandidateRuntimeServiceAllowsAuthoredOnlyRefreshWithoutSecretBinding(t 
 	}}, host.inputs[0].Registration.Compatibility.AuthoredConnections)
 }
 
+func TestCandidateRuntimeServiceRetainsBindingEvidenceWhenReusingSnapshot(t *testing.T) {
+	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
+	connections := &candidateRuntimeConnections{}
+	host := &candidateRuntimeHost{}
+	service, err := NewCandidateRuntimeService(CandidateRuntimeServiceConfig{
+		Connections: connections, Runtime: host, RuntimeVersion: "leapview:test",
+	})
+	require.NoError(t, err)
+
+	receipt, err := service.Prepare(t.Context(), CandidateRuntimeRequest{
+		Candidate:                candidateRuntimeTestCandidate(t, now),
+		AuthorizationFingerprint: "policy:v1",
+		Workspaces: []CandidateWorkspaceRuntime{{
+			WorkspaceID: "sales", ServingStateID: "state_sales",
+			ArtifactDigest: "sha256:" + strings.Repeat("c", 64),
+			DataRevision:   "snapshot:42", DataMode: CandidateDataReuseSnapshot,
+			Connections: []CandidateConnectionRequirement{{
+				LogicalConnectionID: "warehouse", ConnectorKind: "postgres",
+			}},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, receipt.Workspaces, 1)
+	require.Len(t, receipt.Workspaces[0].Bindings, 1)
+	require.Equal(t, "binding_warehouse", receipt.Workspaces[0].Bindings[0].BindingID)
+	require.Len(t, host.inputs, 1)
+	require.Equal(t, runtimehost.CandidateDataReuseSnapshot, host.inputs[0].Registration.Compatibility.DataMode)
+	require.Len(t, host.inputs[0].Registration.Compatibility.Bindings, 1)
+}
+
 func TestCandidateRuntimeServiceReleasesPartialConnectionsOnFailure(t *testing.T) {
 	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
 	connections := &candidateRuntimeConnections{failWorkspace: "sales"}
@@ -218,14 +248,6 @@ func TestCandidateRuntimeServiceRejectsDuplicateNormalizedWorkspacesBeforeAcquir
 func TestCandidateRuntimeServiceRejectsDataModeAndConnectionMismatchBeforeAcquisition(t *testing.T) {
 	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
 	for name, workspace := range map[string]CandidateWorkspaceRuntime{
-		"reuse_with_connection": {
-			WorkspaceID: "sales", ServingStateID: "state_1",
-			ArtifactDigest: "artifact-1", DataRevision: "snapshot:11",
-			DataMode: CandidateDataReuseSnapshot,
-			Connections: []CandidateConnectionRequirement{{
-				LogicalConnectionID: "warehouse", ConnectorKind: "postgres",
-			}},
-		},
 		"refresh_without_connection": {
 			WorkspaceID: "sales", ServingStateID: "state_1",
 			ArtifactDigest: "artifact-1", DataRevision: "snapshot:11",

@@ -22,6 +22,10 @@ async function withWorkspace(run: (workspace: string) => Promise<void>): Promise
       ":root { --base-size-4: 0.25rem; --base-size-8: 0.5rem; --control-small-size: 1.75rem; --motion-duration-short: 200ms; }\n",
     );
     await writeFile(
+      path.join(workspace, "docs", "reference", "primer-primitives-css", "typography.css"),
+      ":root { --base-text-weight-semibold: 600; --base-text-lineHeight-tight: 1.25; --base-text-lineHeight-normal: 1.5; --text-body-size-medium: 0.875rem; --text-body-shorthand-medium: 400 0.875rem/1.5 system-ui; }\n",
+    );
+    await writeFile(
       path.join(workspace, "docs", "reference", "primer-primitives-css", "theme-light.css"),
       [
         ":root {",
@@ -71,6 +75,62 @@ describe("checkPrimerAlignment", () => {
 
       const violations = await checkPrimerAlignment({root: workspace});
       expect(violations.map(violation => violation.kind)).toEqual(["raw-color", "raw-color", "raw-var-fallback"]);
+    });
+  });
+
+  test("rejects raw font sizes and mirrored typography aliases", async () => {
+    await withWorkspace(async workspace => {
+      await writeFile(
+        path.join(workspace, "static", "app.input.css"),
+        ":root { --lv-font-size-body: var(--text-body-size-medium); --lv-type-body: var(--text-body-shorthand-medium); }\n",
+      );
+      await writeFile(
+        path.join(workspace, "web", "components", "example", "bad.ts"),
+        "import {css} from 'lit';\nexport const styles = css`:host { font-size: 13px; } .good { font: var(--lv-type-body); }`;\n",
+      );
+
+      const violations = await checkPrimerAlignment({root: workspace});
+      expect(violations.map(violation => violation.kind)).toEqual(["primitive-typography-alias", "raw-font-size"]);
+    });
+  });
+
+  test("rejects raw weights and redundant title weight overrides", async () => {
+    await withWorkspace(async workspace => {
+      await writeFile(
+        path.join(workspace, "static", "app.input.css"),
+        ":root { --lv-type-page-title: var(--text-body-shorthand-medium); }\n",
+      );
+      await writeFile(
+        path.join(workspace, "web", "components", "example", "bad.ts"),
+        "import {css} from 'lit';\nexport const styles = css`.raw { font-weight: 750; } .title { font: var(--lv-type-page-title); font-weight: var(--base-text-weight-semibold); }`;\nconst inline = 'font-weight:600';\n",
+      );
+
+      const violations = await checkPrimerAlignment({root: workspace});
+      expect(violations.map(violation => violation.kind)).toEqual([
+        "redundant-type-weight",
+        "raw-font-weight",
+        "raw-font-weight",
+      ]);
+    });
+  });
+
+  test("rejects redundant semantic recipe line-height overrides", async () => {
+    await withWorkspace(async workspace => {
+      await writeFile(
+        path.join(workspace, "static", "app.input.css"),
+        ":root { --lv-type-caption: var(--text-body-shorthand-medium); --lv-type-body: var(--text-body-shorthand-medium); --lv-type-page-title: var(--text-body-shorthand-medium); }\n",
+      );
+      await writeFile(
+        path.join(workspace, "web", "components", "example", "bad.ts"),
+        "import {css} from 'lit';\nexport const styles = css`.caption { font: var(--lv-type-caption); line-height: var(--base-text-lineHeight-tight); } .body { font: var(--lv-type-body); line-height: var(--base-text-lineHeight-normal); } .title { font: var(--lv-type-page-title); line-height: var(--base-text-lineHeight-tight); }`;\n",
+      );
+
+      const violations = await checkPrimerAlignment({root: workspace});
+      expect(violations.map(violation => violation.kind)).toEqual([
+        "redundant-type-line-height",
+        "redundant-type-line-height",
+        "redundant-type-line-height",
+      ]);
     });
   });
 

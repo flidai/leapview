@@ -3,8 +3,12 @@ package connectionbinding
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
+
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 )
 
 type AdministrationAuditAction string
@@ -43,7 +47,7 @@ func (service *Administration) recordMutation(
 	binding TargetBinding,
 ) error {
 	if service == nil || service.audit == nil {
-		return nil
+		return ErrAdministrationAuditUnavailable
 	}
 	event := AdministrationAuditEvent{
 		WorkspaceID: binding.Scope.WorkspaceID, BindingID: binding.ID,
@@ -51,8 +55,41 @@ func (service *Administration) recordMutation(
 		Actor: strings.TrimSpace(actor), Action: action, Outcome: AdministrationAuditSucceeded,
 		Revision: binding.Revision, Timestamp: service.now().UTC(),
 	}
-	if err := service.audit.RecordConnectionAdministration(context.WithoutCancel(ctx), event); err != nil {
-		return fmt.Errorf("%w: %v", ErrAdministrationAuditUnavailable, err)
+	operationID, ok := administrationOperationID(action)
+	if !ok {
+		return fmt.Errorf("connection administration audit action %q has no generated operation", action)
 	}
-	return nil
+	executor, err := apigencommand.NewExecutor(analyticsgen.GetAPIGenCommandRuntimeContract, service.logger)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(context.Context, apigencommand.Contract) error {
+			return service.audit.RecordConnectionAdministration(context.WithoutCancel(ctx), event)
+		},
+		LogMessage: "best-effort connection administration audit failed",
+		LogAttributes: []slog.Attr{
+			slog.String("workspace_id", binding.Scope.WorkspaceID),
+			slog.String("principal_id", strings.TrimSpace(actor)),
+			slog.String("binding_id", binding.ID),
+			slog.String("target_id", binding.TargetID),
+			slog.String("logical_connection", string(binding.LogicalConnectionID)),
+			slog.Int64("revision", binding.Revision),
+		},
+	})
+}
+
+func administrationOperationID(action AdministrationAuditAction) (string, bool) {
+	switch action {
+	case AuditBindingCreated:
+		return string(analyticsgen.GenOperationCreateTargetConnectionBinding), true
+	case AuditBindingUpdated:
+		return string(analyticsgen.GenOperationUpdateTargetConnectionBinding), true
+	case AuditBindingEnabled:
+		return string(analyticsgen.GenOperationEnableTargetConnectionBinding), true
+	case AuditBindingDisabled:
+		return string(analyticsgen.GenOperationDisableTargetConnectionBinding), true
+	default:
+		return "", false
+	}
 }

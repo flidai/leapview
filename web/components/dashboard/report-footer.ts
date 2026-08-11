@@ -50,8 +50,8 @@ class ReportFooter extends LitElement {
       align-items: center;
       gap: var(--base-size-8);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
       white-space: nowrap;
     }
 

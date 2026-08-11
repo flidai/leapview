@@ -105,7 +105,7 @@ func TestAuthoringAuthSQLiteDeviceExchangeIsAtomicAndRefreshReplayRevokesFamily(
 		actions[event.Action] = true
 	}
 	for _, action := range []string{
-		"authoring.device.started", "authoring.device.approved", "authoring.session.created",
+		"authoring.device.started", "authoring.device.decided", "authoring.session.created",
 		"authoring.token.refreshed", "authoring.refresh.replay",
 	} {
 		if !actions[action] {

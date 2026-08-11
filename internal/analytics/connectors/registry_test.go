@@ -85,7 +85,7 @@ func TestRegistrySpecializedCapabilities(t *testing.T) {
 
 	quack, _ := LookupConnection("quack")
 	if quack.AttachKind != AttachQuack || quack.ObjectRelation != ObjectRelationQuackQuery ||
-		!quack.AllowsObjectSource || quack.RequiredExtension != "quack" || quack.SecretType != "quack" {
+		!quack.AllowsObjectSource || !equalStrings(quack.RequiredExtensions, []string{"httpfs", "quack"}) || quack.SecretType != "quack" {
 		t.Fatalf("quack registry = %#v, want governed object connection", quack)
 	}
 
@@ -95,10 +95,22 @@ func TestRegistrySpecializedCapabilities(t *testing.T) {
 	}
 
 	s3, _ := LookupConnection("s3")
-	if s3.RequiredExtension != "httpfs" || s3.SecretType != "s3" || !s3.AllowsPathSource {
+	if !equalStrings(s3.RequiredExtensions, []string{"httpfs"}) || s3.SecretType != "s3" || !s3.AllowsPathSource {
 		t.Fatalf("s3 registry = %#v, want httpfs path source", s3)
 	}
 
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestRegistryConnectionAuthPolicy(t *testing.T) {
