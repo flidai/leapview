@@ -45,14 +45,15 @@ func (m *Module) MutatePublication(ctx context.Context, workspaceID, name, actor
 	if !ok {
 		return row, publication.ErrConflict
 	}
+	operationIDValue := operationID.APIGenOperationID()
 	executor, err := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, m.logger)
 	if err != nil {
 		return row, err
 	}
-	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+	err = executor.Execute(ctx, operationIDValue, apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
 			return m.recordPublicationCommandAudit(ctx, publicationCommandAuditInput{
-				operationID: operationID, workspaceID: strings.TrimSpace(workspaceID), principalID: strings.TrimSpace(actorID),
+				operationID: operationIDValue, workspaceID: strings.TrimSpace(workspaceID), principalID: strings.TrimSpace(actorID),
 				targetID: strings.TrimSpace(row.ID), surface: "ui",
 			})
 		},
@@ -124,9 +125,10 @@ func (m *Module) RotateDashboardPublication(w http.ResponseWriter, r *http.Reque
 func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string, action publication.Action) {
 	operationID, operationKnown := publicationOperationID(action)
 	if !operationKnown {
-		m.writePublicationMutation(w, r, "", publication.Publication{}, publication.ErrConflict)
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PUBLICATION_COMMAND_UNKNOWN", "Dashboard publication command is unknown", nil)
 		return
 	}
+	operationIDValue := operationID.APIGenOperationID()
 	if m == nil || m.publicationService == nil {
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, publication.ErrNotFound)
 		return
@@ -151,9 +153,9 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		if executorErr != nil {
 			err = executorErr
 		} else {
-			err = executor.Execute(r.Context(), operationID, apigencommand.Execution{
+			err = executor.Execute(r.Context(), operationIDValue, apigencommand.Execution{
 				BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
-					return m.recordPublicationCommandAudit(ctx, publicationAuditRequestInput(r, operationID, workspaceID, actor, row.ID))
+					return m.recordPublicationCommandAudit(ctx, publicationAuditRequestInput(r, operationIDValue, workspaceID, actor, row.ID))
 				},
 				LogMessage: "best-effort dashboard publication command audit failed",
 				LogAttributes: []slog.Attr{
@@ -186,7 +188,7 @@ func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, wo
 	return row, true
 }
 
-func (m *Module) writePublicationMutation(w http.ResponseWriter, r *http.Request, operationID string, row publication.Publication, err error) {
+func (m *Module) writePublicationMutation(w http.ResponseWriter, r *http.Request, operationID dashboardgen.GenCommandOperationID, row publication.Publication, err error) {
 	if err != nil {
 		var logger *slog.Logger
 		if m != nil {

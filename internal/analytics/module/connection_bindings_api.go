@@ -84,7 +84,7 @@ func (handler connectionBindingAPIHandler) Create(
 		Enabled: body.Enabled,
 	})
 	if err != nil {
-		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenOperationCreateTargetConnectionBinding, err)
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationCreateTargetConnectionBinding(), err)
 		return
 	}
 	w.Header().Set("Location", strings.TrimSuffix(r.URL.Path, "/")+"/"+binding.LogicalConnectionID.String())
@@ -169,7 +169,7 @@ func (handler connectionBindingAPIHandler) Update(
 		},
 	)
 	if err != nil {
-		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenOperationUpdateTargetConnectionBinding, err)
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationUpdateTargetConnectionBinding(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, targetConnectionBindingResponse(binding))
@@ -186,7 +186,7 @@ func (handler connectionBindingAPIHandler) Test(
 	}
 	status, err := handler.config.Administration.Test(r.Context(), principalID, key)
 	if err != nil {
-		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenOperationTestTargetConnectionBinding, err)
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationTestTargetConnectionBinding(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, targetConnectionHealthResponse(status))
@@ -203,7 +203,7 @@ func (handler connectionBindingAPIHandler) Refresh(
 	}
 	status, err := handler.config.Administration.RefreshNow(r.Context(), principalID, key)
 	if err != nil {
-		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenOperationRefreshTargetConnectionBinding, err)
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationRefreshTargetConnectionBinding(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, targetConnectionHealthResponse(status))
@@ -245,9 +245,9 @@ func (handler connectionBindingAPIHandler) setEnabled(
 		binding, err = handler.config.Administration.Disable(r.Context(), principalID, key)
 	}
 	if err != nil {
-		operationID := analyticsgen.GenOperationDisableTargetConnectionBinding
+		operationID := analyticsgen.GenCommandOperationDisableTargetConnectionBinding()
 		if enabled {
-			operationID = analyticsgen.GenOperationEnableTargetConnectionBinding
+			operationID = analyticsgen.GenCommandOperationEnableTargetConnectionBinding()
 		}
 		writeConnectionBindingCommandFailure(w, r, operationID, err)
 		return
@@ -465,7 +465,7 @@ func writeConnectionBindingError(w http.ResponseWriter, r *http.Request, err err
 	apitransport.WriteProblem(w, r, status, code, detail, nil)
 }
 
-func writeConnectionBindingCommandFailure(w http.ResponseWriter, r *http.Request, operationID string, err error) {
+func writeConnectionBindingCommandFailure(w http.ResponseWriter, r *http.Request, operationID analyticsgen.GenCommandOperationID, err error) {
 	err = classifyConnectionBindingCommandFailure(err)
 	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, analyticsgen.GetAPIGenCommandFailureContracts, err)
 }

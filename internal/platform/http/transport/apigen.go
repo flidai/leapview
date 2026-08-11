@@ -60,17 +60,24 @@ func WriteAPIGenFailure(ctx context.Context, w http.ResponseWriter, r *http.Requ
 	_ = writeJSONBody(w, problem)
 }
 
+// CommandOperationID is implemented by opaque generated capability-specific
+// operation tokens. It prevents handlers from passing free-form strings.
+type CommandOperationID interface {
+	APIGenOperationID() string
+}
+
 // CommandFailureLookup returns the generated failure contracts for one command.
-type CommandFailureLookup func(string) ([]apigenfailure.Contract, bool)
+type CommandFailureLookup[OperationID CommandOperationID] func(OperationID) ([]apigenfailure.Contract, bool)
 
 // WriteAPIGenCommandFailure resolves a typed domain error through the generated
 // operation contract. Unknown errors fail closed to the shared safe 500 shape.
-func WriteAPIGenCommandFailure(ctx context.Context, w http.ResponseWriter, r *http.Request, logger *slog.Logger, operationID string, lookup CommandFailureLookup, cause error) {
+func WriteAPIGenCommandFailure[OperationID CommandOperationID](ctx context.Context, w http.ResponseWriter, r *http.Request, logger *slog.Logger, operationID OperationID, lookup CommandFailureLookup[OperationID], cause error) {
+	operationName := operationID.APIGenOperationID()
 	if lookup != nil {
 		if contracts, ok := lookup(operationID); ok && apigenfailure.ValidateContracts(contracts) == nil {
 			if contract, matched := apigenfailure.Match(contracts, cause); matched {
 				WriteAPIGenFailure(ctx, w, r, logger, APIGenFailure{
-					OperationID: operationID, Kind: contract.Kind, StatusCode: contract.StatusCode,
+					OperationID: operationName, Kind: contract.Kind, StatusCode: contract.StatusCode,
 					Code: contract.Code, PublicDetail: contract.PublicDetail, Cause: cause,
 				})
 				return
@@ -78,7 +85,7 @@ func WriteAPIGenCommandFailure(ctx context.Context, w http.ResponseWriter, r *ht
 		}
 	}
 	WriteAPIGenFailure(ctx, w, r, logger, APIGenFailure{
-		OperationID: operationID, Kind: "handler", StatusCode: http.StatusInternalServerError,
+		OperationID: operationName, Kind: "handler", StatusCode: http.StatusInternalServerError,
 		Code: "INTERNAL_ERROR", PublicDetail: "The request could not be completed.", Cause: cause,
 	})
 }

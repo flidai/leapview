@@ -246,6 +246,17 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("// GenOperationContract captures APIGen-owned contract metadata for one operation.\n")
 	b.WriteString("type GenOperationKind string\n\n")
 	b.WriteString("const (\n\tGenOperationKindCommand GenOperationKind = \"command\"\n\tGenOperationKindQuery GenOperationKind = \"query\"\n)\n\n")
+	b.WriteString("// GenCommandOperationID is an opaque compiler-checked generated command identity.\n")
+	b.WriteString("type GenCommandOperationID struct { value string }\n\n")
+	b.WriteString("// APIGenOperationID returns the generated wire operation ID.\n")
+	b.WriteString("func (operation GenCommandOperationID) APIGenOperationID() string { return operation.value }\n\n")
+	for _, endpoint := range doc.Endpoints {
+		if endpoint.Command == nil {
+			continue
+		}
+		fmt.Fprintf(&b, "// GenCommandOperation%s returns the generated identity for %s.\n", exportedName(endpoint.OperationID), endpoint.OperationID)
+		fmt.Fprintf(&b, "func GenCommandOperation%s() GenCommandOperationID { return GenCommandOperationID{value: %q} }\n\n", exportedName(endpoint.OperationID), endpoint.OperationID)
+	}
 	b.WriteString("type GenOperationSurface string\n\n")
 	b.WriteString("const (\n\tGenOperationSurfaceUI GenOperationSurface = \"ui\"\n\tGenOperationSurfaceAgent GenOperationSurface = \"agent\"\n\tGenOperationSurfaceAutomation GenOperationSurface = \"automation\"\n)\n\n")
 	b.WriteString("type GenAuditPolicy struct {\n\tRequired bool\n\tSuccessAction string\n\tGuarantee string\n}\n\n")
@@ -321,8 +332,8 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("\treturn apigencommand.Contract{OperationID: contract.OperationID, Owner: contract.Command.Owner, AuditAction: contract.Command.Audit.SuccessAction, Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee), Execution: execution}, true\n")
 	b.WriteString("}\n\n")
 	b.WriteString("// GetAPIGenCommandFailureContracts returns the generated domain-failure vocabulary for a command.\n")
-	b.WriteString("func GetAPIGenCommandFailureContracts(operationID string) ([]apigenfailure.Contract, bool) {\n")
-	b.WriteString("\tcontract, ok := genOperationContracts[operationID]\n")
+	b.WriteString("func GetAPIGenCommandFailureContracts(operationID GenCommandOperationID) ([]apigenfailure.Contract, bool) {\n")
+	b.WriteString("\tcontract, ok := genOperationContracts[operationID.APIGenOperationID()]\n")
 	b.WriteString("\tif !ok || contract.Command == nil || contract.Command.Failures == nil { return nil, false }\n")
 	b.WriteString("\tout := make([]apigenfailure.Contract, len(contract.Command.Failures))\n")
 	b.WriteString("\tfor index, failure := range contract.Command.Failures { out[index] = apigenfailure.Contract{Kind: failure.Kind, StatusCode: failure.StatusCode, Code: failure.Code, PublicDetail: failure.PublicDetail} }\n")

@@ -52,7 +52,7 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 	input := release.CreateInput{ProjectID: project, ProjectDigest: body.ProjectDigest, IdempotencyKey: idempotencyKey, CreatedBy: principal.ID}
 	provenance, err := releaseProvenanceFromAPI(body.Provenance)
 	if err != nil {
-		m.writeCommandFailure(w, r, string(releasegen.GenOperationCreateRelease), fmt.Errorf("%w: invalid provenance", release.ErrInvalid))
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), fmt.Errorf("%w: invalid provenance", release.ErrInvalid))
 		return
 	}
 	input.Provenance = provenance
@@ -64,7 +64,7 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 	}
 	created, err := m.service.Create(r.Context(), input)
 	if err != nil {
-		m.writeCommandFailure(w, r, string(releasegen.GenOperationCreateRelease), err)
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), err)
 		return
 	}
 	m.recordBestEffortEvent(
@@ -110,7 +110,7 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 	}
 	artifact, err := m.service.UploadArtifact(r.Context(), project, releaseID, workspaceID, contentDigest, http.MaxBytesReader(w, r.Body, releasefilesystem.MaxUploadBytes))
 	if err != nil {
-		m.writeCommandFailure(w, r, string(releasegen.GenOperationUploadReleaseArtifact), err)
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), err)
 		return
 	}
 	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, WorkspaceID: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes}
@@ -125,16 +125,16 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project, releaseID, _ string) {
 	payload, err := json.Marshal(FinalizeJob{Project: project, Release: releaseID})
 	if err != nil {
-		m.writeCommandFailure(w, r, string(releasegen.GenOperationFinalizeRelease), err)
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), err)
 		return
 	}
 	event, err := json.Marshal(map[string]any{"releaseId": releaseID, "projectId": project, "status": m.finalizeExecution.InitialState})
 	if err != nil {
-		m.writeCommandFailure(w, r, string(releasegen.GenOperationFinalizeRelease), err)
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), err)
 		return
 	}
 	if m.api.Workflow == nil {
-		m.writeCommandFailure(w, r, string(releasegen.GenOperationFinalizeRelease), apigenfailure.New("queue_unavailable", "release workflow is unavailable"))
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), apigenfailure.New("queue_unavailable", "release workflow is unavailable"))
 		return
 	}
 	var row release.Release
@@ -163,14 +163,14 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 		})
 	}
 	if err != nil {
-		m.writeCommandFailure(w, r, string(releasegen.GenOperationFinalizeRelease), err)
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), err)
 		return
 	}
 	w.Header().Set("Location", location(project, releaseID))
 	apitransport.WriteJSON(w, http.StatusAccepted, response(row))
 }
 
-func (m *Module) writeCommandFailure(w http.ResponseWriter, r *http.Request, operationID string, err error) {
+func (m *Module) writeCommandFailure(w http.ResponseWriter, r *http.Request, operationID releasegen.GenCommandOperationID, err error) {
 	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, m.logger, operationID, releasegen.GetAPIGenCommandFailureContracts, err)
 }
 

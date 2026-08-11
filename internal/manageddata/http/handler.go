@@ -136,7 +136,7 @@ func (h *Handler) GetManagedDataRevision(w stdhttp.ResponseWriter, r *stdhttp.Re
 
 func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection string, headers apigenapi.GenCreateManagedDataUploadSessionHeaders) {
 	if h.options.Uploads == nil {
-		h.writeCommandUnavailable(w, r, manageddatagen.GenOperationCreateManagedDataUploadSession)
+		h.writeCommandUnavailable(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession())
 		return
 	}
 	if !validScope(project, connection) || !validIdempotencyKey(headers.IdempotencyKey) {
@@ -150,10 +150,10 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	}
 	manifest, err := manifestFromWire(body.Manifest)
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCreateManagedDataUploadSession, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
 		return
 	}
-	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenOperationCreateManagedDataUploadSession)
+	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession())
 	if !ok {
 		return
 	}
@@ -161,22 +161,22 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		Project: project, Connection: connection, Manifest: manifest, Actor: actor, IdempotencyKey: headers.IdempotencyKey,
 	})
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCreateManagedDataUploadSession, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
 		return
 	}
 	if h.options.RecordUploadCreated != nil {
 		if err := h.options.RecordUploadCreated(r.Context(), result); err != nil {
-			h.writeCommandUnavailableCause(w, r, manageddatagen.GenOperationCreateManagedDataUploadSession, err)
+			h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
 			return
 		}
 	}
 	response, err := uploadResponse(result, project, connection, "")
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCreateManagedDataUploadSession, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenOperationCreateManagedDataUploadSession, actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
-		h.writeCommandUnavailableCause(w, r, manageddatagen.GenOperationCreateManagedDataUploadSession, err)
+	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusCreated, response)
@@ -239,14 +239,14 @@ func (h *Handler) ListManagedDataUploadSessions(w stdhttp.ResponseWriter, r *std
 
 func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string, headers apigenapi.GenCancelManagedDataUploadSessionHeaders) {
 	if h.options.Uploads == nil {
-		h.writeCommandUnavailable(w, r, manageddatagen.GenOperationCancelManagedDataUploadSession)
+		h.writeCommandUnavailable(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession())
 		return
 	}
 	if !validUploadScope(project, connection, uploadSession) || !validIdempotencyKey(headers.IdempotencyKey) {
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenOperationCancelManagedDataUploadSession)
+	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession())
 	if !ok {
 		return
 	}
@@ -256,7 +256,7 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	}
 	result, err := abort(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession})
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCancelManagedDataUploadSession, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
 		return
 	}
 	// An explicitly supplied AbortUpload is the module's atomic capability: it
@@ -266,17 +266,17 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	// control service.
 	if h.options.AbortUpload == nil && result.Status == manageddata.UploadStatusAborted && h.options.RecordUploadCancelled != nil {
 		if err := h.options.RecordUploadCancelled(r.Context(), result); err != nil {
-			h.writeCommandError(w, r, manageddatagen.GenOperationCancelManagedDataUploadSession, err)
+			h.writeCommandError(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
 			return
 		}
 	}
 	response, err := uploadResponse(result, project, connection, uploadSession)
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCancelManagedDataUploadSession, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenOperationCancelManagedDataUploadSession, actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
-		h.writeCommandUnavailableCause(w, r, manageddatagen.GenOperationCancelManagedDataUploadSession, err)
+	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusOK, response)
@@ -284,14 +284,14 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 
 func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string, headers apigenapi.GenFinalizeManagedDataUploadSessionHeaders) {
 	if h.options.Uploads == nil {
-		h.writeCommandUnavailable(w, r, manageddatagen.GenOperationFinalizeManagedDataUploadSession)
+		h.writeCommandUnavailable(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession())
 		return
 	}
 	if !validUploadScope(project, connection, uploadSession) || !validIdempotencyKey(headers.IdempotencyKey) {
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenOperationFinalizeManagedDataUploadSession)
+	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession())
 	if !ok {
 		return
 	}
@@ -304,27 +304,27 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 		result, err = h.options.Uploads.BeginFinalizeUpload(r.Context(), request)
 	}
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationFinalizeManagedDataUploadSession, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), err)
 		return
 	}
 	response, err := uploadResponse(result, project, connection, uploadSession)
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationFinalizeManagedDataUploadSession, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), err)
 		return
 	}
 	if h.options.BeginFinalize == nil && h.options.EnqueueFinalize == nil {
-		h.writeCommandUnavailable(w, r, manageddatagen.GenOperationFinalizeManagedDataUploadSession)
+		h.writeCommandUnavailable(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession())
 		return
 	}
 	if h.options.BeginFinalize == nil {
 		err = h.options.EnqueueFinalize(r.Context(), request)
 	}
 	if err != nil {
-		h.writeCommandUnavailableCause(w, r, manageddatagen.GenOperationFinalizeManagedDataUploadSession, err)
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenOperationFinalizeManagedDataUploadSession, actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
-		h.writeCommandUnavailableCause(w, r, manageddatagen.GenOperationFinalizeManagedDataUploadSession, err)
+	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), err)
 		return
 	}
 	w.Header().Set("Location", "/api/v1/projects/"+project+"/connections/"+connection+"/upload-sessions/"+uploadSession)
@@ -333,7 +333,7 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 
 func (h *Handler) CreateManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string, headers apigenapi.GenCreateManagedDataS3MultipartUploadHeaders) {
 	if h.options.Multipart == nil || h.options.Uploads == nil {
-		h.writeCommandUnavailable(w, r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload)
+		h.writeCommandUnavailable(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload())
 		return
 	}
 	if !validUploadScope(project, connection, uploadSession) || !validIdempotencyKey(headers.IdempotencyKey) {
@@ -345,20 +345,20 @@ func (h *Handler) CreateManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r
 		h.writeError(w, r, err)
 		return
 	}
-	upload, ok := h.recoverUploadCommand(w, r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload, project, connection, uploadSession)
+	upload, ok := h.recoverUploadCommand(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), project, connection, uploadSession)
 	if !ok {
 		return
 	}
 	file, found := uploadFile(upload, body.Path)
 	if !found {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload, ErrNotFound)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), ErrNotFound)
 		return
 	}
 	if file.Status == control.FileStatusVerified || file.Transport.Protocol != control.ProtocolS3Multipart {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload, ErrConflict)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), ErrConflict)
 		return
 	}
-	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload)
+	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload())
 	if !ok {
 		return
 	}
@@ -367,16 +367,16 @@ func (h *Handler) CreateManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r
 		Path: body.Path, IdempotencyKey: headers.IdempotencyKey,
 	})
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), err)
 		return
 	}
 	response, err := multipartResponse(result, upload, "")
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload, actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
-		h.writeCommandUnavailableCause(w, r, manageddatagen.GenOperationCreateManagedDataS3MultipartUpload, err)
+	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), err)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusCreated, response)
@@ -424,7 +424,7 @@ func (h *Handler) SignManagedDataS3MultipartPart(w stdhttp.ResponseWriter, r *st
 
 func (h *Handler) CompleteManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession, multipartUpload string, headers apigenapi.GenCompleteManagedDataS3MultipartUploadHeaders) {
 	if h.options.Multipart == nil || h.options.Uploads == nil {
-		h.writeCommandUnavailable(w, r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload)
+		h.writeCommandUnavailable(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload())
 		return
 	}
 	if !validMultipartMutation(project, connection, uploadSession, multipartUpload, headers.IdempotencyKey) {
@@ -437,28 +437,28 @@ func (h *Handler) CompleteManagedDataS3MultipartUpload(w stdhttp.ResponseWriter,
 		return
 	}
 	if len(body.Parts) < 1 || len(body.Parts) > maxCompletedParts {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload, ErrTooLarge)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), ErrTooLarge)
 		return
 	}
 	parts := make([]s3multipart.CompletedPart, len(body.Parts))
 	seen := make(map[int32]struct{}, len(body.Parts))
 	for i, part := range body.Parts {
 		if part.PartNumber < 1 || part.PartNumber > 10_000 || strings.TrimSpace(part.Etag) == "" || len(part.Etag) > 1024 || part.Sha256 != nil && !digestPattern.MatchString(*part.Sha256) {
-			h.writeCommandError(w, r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload, ErrInvalid)
+			h.writeCommandError(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), ErrInvalid)
 			return
 		}
 		if _, exists := seen[part.PartNumber]; exists {
-			h.writeCommandError(w, r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload, ErrInvalid)
+			h.writeCommandError(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), ErrInvalid)
 			return
 		}
 		seen[part.PartNumber] = struct{}{}
 		parts[i] = s3multipart.CompletedPart{PartNumber: part.PartNumber, ETag: part.Etag, SHA256: valueOrEmpty(part.Sha256)}
 	}
-	upload, ok := h.recoverUploadCommand(w, r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload, project, connection, uploadSession)
+	upload, ok := h.recoverUploadCommand(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), project, connection, uploadSession)
 	if !ok {
 		return
 	}
-	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload)
+	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload())
 	if !ok {
 		return
 	}
@@ -467,16 +467,16 @@ func (h *Handler) CompleteManagedDataS3MultipartUpload(w stdhttp.ResponseWriter,
 		IdempotencyKey: headers.IdempotencyKey, Parts: parts,
 	})
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), err)
 		return
 	}
 	response, err := multipartResponse(result, upload, multipartUpload)
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload, actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
-		h.writeCommandUnavailableCause(w, r, manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload, err)
+	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), err)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusOK, response)
@@ -484,18 +484,18 @@ func (h *Handler) CompleteManagedDataS3MultipartUpload(w stdhttp.ResponseWriter,
 
 func (h *Handler) AbortManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession, multipartUpload string, headers apigenapi.GenAbortManagedDataS3MultipartUploadHeaders) {
 	if h.options.Multipart == nil || h.options.Uploads == nil {
-		h.writeCommandUnavailable(w, r, manageddatagen.GenOperationAbortManagedDataS3MultipartUpload)
+		h.writeCommandUnavailable(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload())
 		return
 	}
 	if !validMultipartMutation(project, connection, uploadSession, multipartUpload, headers.IdempotencyKey) {
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	upload, ok := h.recoverUploadCommand(w, r, manageddatagen.GenOperationAbortManagedDataS3MultipartUpload, project, connection, uploadSession)
+	upload, ok := h.recoverUploadCommand(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), project, connection, uploadSession)
 	if !ok {
 		return
 	}
-	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenOperationAbortManagedDataS3MultipartUpload)
+	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload())
 	if !ok {
 		return
 	}
@@ -504,16 +504,16 @@ func (h *Handler) AbortManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r 
 		MultipartUploadID: multipartUpload, IdempotencyKey: headers.IdempotencyKey,
 	})
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationAbortManagedDataS3MultipartUpload, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), err)
 		return
 	}
 	response, err := multipartResponse(result, upload, multipartUpload)
 	if err != nil {
-		h.writeCommandError(w, r, manageddatagen.GenOperationAbortManagedDataS3MultipartUpload, err)
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenOperationAbortManagedDataS3MultipartUpload, actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
-		h.writeCommandUnavailableCause(w, r, manageddatagen.GenOperationAbortManagedDataS3MultipartUpload, err)
+	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), err)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusOK, response)
@@ -554,7 +554,7 @@ func (h *Handler) recoverUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, pr
 	return result, true
 }
 
-func (h *Handler) recoverUploadCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID, project, connection, uploadSession string) (control.UploadResult, bool) {
+func (h *Handler) recoverUploadCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID, project, connection, uploadSession string) (control.UploadResult, bool) {
 	result, err := h.recoverUploadResult(r, project, connection, uploadSession)
 	if err != nil {
 		h.writeCommandError(w, r, operationID, err)
@@ -646,15 +646,15 @@ func (h *Handler) writeUnavailable(w stdhttp.ResponseWriter, r *stdhttp.Request)
 
 // writeCommandError resolves classified domain failures through the generated
 // operation contract.
-func (h *Handler) writeCommandError(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string, err error) {
+func (h *Handler) writeCommandError(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID, err error) {
 	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, h.options.Logger, operationID, manageddatagen.GetAPIGenCommandFailureContracts, err)
 }
 
-func (h *Handler) writeCommandUnavailable(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string) {
+func (h *Handler) writeCommandUnavailable(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID) {
 	h.writeCommandError(w, r, operationID, ErrUnavailable)
 }
 
-func (h *Handler) writeCommandUnavailableCause(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string, cause error) {
+func (h *Handler) writeCommandUnavailableCause(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID, cause error) {
 	if cause == nil {
 		cause = ErrUnavailable
 	} else {

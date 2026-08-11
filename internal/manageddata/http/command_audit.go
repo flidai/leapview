@@ -15,13 +15,14 @@ var errCommandAuditUnavailable = apigenfailure.New("unavailable", "managed-data 
 
 func (h *Handler) recordCommandAudit(
 	r *stdhttp.Request,
-	operationID string,
+	operationID manageddatagen.GenCommandOperationID,
 	principalID string,
 	projectID string,
 	connectionID string,
 	targetType string,
 	targetID string,
 ) error {
+	operationIDValue := operationID.APIGenOperationID()
 	if h == nil || h.options.RecordCommandAudit == nil {
 		return errCommandAuditUnavailable
 	}
@@ -42,10 +43,10 @@ func (h *Handler) recordCommandAudit(
 	if err != nil {
 		return err
 	}
-	err = executor.Execute(r.Context(), operationID, apigencommand.Execution{
+	err = executor.Execute(r.Context(), operationIDValue, apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
 			return h.options.RecordCommandAudit(ctx, CommandAuditInput{
-				OperationID: operationID, PrincipalID: strings.TrimSpace(principalID),
+				OperationID: operationIDValue, PrincipalID: strings.TrimSpace(principalID),
 				ProjectID: strings.TrimSpace(projectID), ConnectionID: strings.TrimSpace(connectionID),
 				TargetType: strings.TrimSpace(targetType), TargetID: strings.TrimSpace(targetID),
 				RequestID: requestID, CorrelationID: correlationID, Surface: surface,
@@ -77,7 +78,7 @@ func (h *Handler) commandAuditActor(w stdhttp.ResponseWriter, r *stdhttp.Request
 	return h.actor(w, r)
 }
 
-func (h *Handler) commandAuditActorForOperation(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string) (string, bool) {
+func (h *Handler) commandAuditActorForOperation(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID) (string, bool) {
 	if h == nil || h.options.RecordCommandAudit == nil {
 		if h != nil {
 			h.writeCommandUnavailable(w, r, operationID)

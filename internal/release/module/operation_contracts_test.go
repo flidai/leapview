@@ -56,7 +56,7 @@ func TestReleaseLifecycleOperationContracts(t *testing.T) {
 		finalize.Cancellation != "unsupported" {
 		t.Fatalf("finalize release execution contract = %#v", finalize)
 	}
-	failures, ok := releasegen.GetAPIGenCommandFailureContracts("finalizeRelease")
+	failures, ok := releasegen.GetAPIGenCommandFailureContracts(releasegen.GenCommandOperationFinalizeRelease())
 	if !ok || len(failures) != 5 {
 		t.Fatalf("finalize release failure contracts = %#v, %v", failures, ok)
 	}

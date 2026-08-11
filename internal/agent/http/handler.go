@@ -92,7 +92,7 @@ func (h *Handler) CreateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)
 		}
-		h.writeCommandFailure(w, r, createAgentConversationOperation, err, stdhttp.StatusInternalServerError)
+		h.writeCommandFailure(w, r, createAgentConversationOperation, err)
 		return
 	}
 	h.recordCommandAudit(r, createAgentConversationOperation, scope, "conversation", conversation.ID)
@@ -150,7 +150,7 @@ func (h *Handler) UpdateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, agent.ErrNotFound) {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		h.writeCommandFailure(w, r, updateAgentConversationOperation, err, stdhttp.StatusNotFound)
+		h.writeCommandFailure(w, r, updateAgentConversationOperation, err)
 		return
 	}
 	if !agentIfMatch(r.Header.Get("If-Match"), agentResourceETag(agentConversationDTO(existing))) {
@@ -164,14 +164,12 @@ func (h *Handler) UpdateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 	}
 	conversation, err := service.UpdateConversation(r.Context(), scope, chi.URLParam(r, "conversation"), input.Title)
 	if err != nil {
-		status := stdhttp.StatusUnprocessableEntity
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, agent.ErrNotFound) {
 			err = apigenfailure.Wrap("not_found", err)
-			status = stdhttp.StatusNotFound
 		} else if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("invalid", err)
 		}
-		h.writeCommandFailure(w, r, updateAgentConversationOperation, err, status)
+		h.writeCommandFailure(w, r, updateAgentConversationOperation, err)
 		return
 	}
 	h.recordCommandAudit(r, updateAgentConversationOperation, scope, "conversation", conversation.ID)
@@ -190,7 +188,7 @@ func (h *Handler) ArchiveConversation(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		if errors.Is(err, sql.ErrNoRows) {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		h.writeCommandFailure(w, r, archiveAgentConversationOperation, err, statusForNotFound(err))
+		h.writeCommandFailure(w, r, archiveAgentConversationOperation, err)
 		return
 	}
 	h.recordCommandAudit(r, archiveAgentConversationOperation, scope, "conversation", conversation.ID)
@@ -327,7 +325,7 @@ func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	if strings.TrimSpace(input.Input) == "" {
-		h.writeCommandFailure(w, r, createAgentRunOperation, apigenfailure.New("invalid", "agent run input is required"), stdhttp.StatusUnprocessableEntity)
+		h.writeCommandFailure(w, r, createAgentRunOperation, apigenfailure.New("invalid", "agent run input is required"))
 		return
 	}
 	started, err := service.StartDurablePrompt(r.Context(), agent.PromptInput{
@@ -351,7 +349,7 @@ func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)
 		}
-		h.writeCommandFailure(w, r, createAgentRunOperation, err, stdhttp.StatusInternalServerError)
+		h.writeCommandFailure(w, r, createAgentRunOperation, err)
 		return
 	}
 	run, err := service.GetRun(r.Context(), scope, started.ConversationID, started.RunID)
@@ -362,18 +360,18 @@ func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		} else if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)
 		}
-		h.writeCommandFailure(w, r, createAgentRunOperation, err, stdhttp.StatusInternalServerError)
+		h.writeCommandFailure(w, r, createAgentRunOperation, err)
 		return
 	}
 	w.Header().Set("Location", "/api/v1/agent/conversations/"+started.ConversationID+"/runs/"+started.RunID)
 	if h.options.EnqueueRun == nil {
 		_ = started.Abort(context.Background(), fmt.Errorf("durable agent queue is unavailable"))
-		h.writeCommandFailure(w, r, createAgentRunOperation, apigenfailure.New("unavailable", "durable agent queue is unavailable"), stdhttp.StatusServiceUnavailable)
+		h.writeCommandFailure(w, r, createAgentRunOperation, apigenfailure.New("unavailable", "durable agent queue is unavailable"))
 		return
 	}
 	if err := h.options.EnqueueRun(r.Context(), scope, started); err != nil {
 		_ = started.Abort(context.Background(), err)
-		h.writeCommandFailure(w, r, createAgentRunOperation, apigenfailure.Wrap("unavailable", err), stdhttp.StatusServiceUnavailable)
+		h.writeCommandFailure(w, r, createAgentRunOperation, apigenfailure.Wrap("unavailable", err))
 		return
 	}
 	h.recordCommandAudit(r, createAgentRunOperation, scope, "conversation", started.ConversationID)
@@ -390,18 +388,16 @@ func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if h.options.CancelQueuedRun != nil {
 		cancelled, err := h.options.CancelQueuedRun(r.Context(), scope, conversationID, runID)
 		if err != nil {
-			h.writeCommandFailure(w, r, cancelAgentRunOperation, apigenfailure.Wrap("unavailable", err), stdhttp.StatusServiceUnavailable)
+			h.writeCommandFailure(w, r, cancelAgentRunOperation, apigenfailure.Wrap("unavailable", err))
 			return
 		}
 		if cancelled {
 			run, err := service.GetRun(r.Context(), scope, conversationID, runID)
 			if err != nil {
-				status := stdhttp.StatusInternalServerError
 				if errors.Is(err, sql.ErrNoRows) || errors.Is(err, agent.ErrNotFound) {
 					err = apigenfailure.Wrap("not_found", err)
-					status = stdhttp.StatusNotFound
 				}
-				h.writeCommandFailure(w, r, cancelAgentRunOperation, err, status)
+				h.writeCommandFailure(w, r, cancelAgentRunOperation, err)
 				return
 			}
 			h.recordCommandAudit(r, cancelAgentRunOperation, scope, "conversation", conversationID)
@@ -411,16 +407,14 @@ func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}
 	}
 	if err := service.CancelRun(r.Context(), scope, conversationID, runID); err != nil {
-		status := stdhttp.StatusInternalServerError
 		if errors.Is(err, agent.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
 			err = apigenfailure.Wrap("not_found", err)
-			status = stdhttp.StatusNotFound
 		} else if errors.Is(err, agent.ErrRunNotCancellable) {
-			status = stdhttp.StatusConflict
+			// The generated command contract classifies this sentinel directly.
 		} else if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)
 		}
-		h.writeCommandFailure(w, r, cancelAgentRunOperation, err, status)
+		h.writeCommandFailure(w, r, cancelAgentRunOperation, err)
 		return
 	}
 	run, err := service.GetRun(r.Context(), scope, conversationID, runID)
@@ -430,7 +424,7 @@ func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		} else if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)
 		}
-		h.writeCommandFailure(w, r, cancelAgentRunOperation, err, stdhttp.StatusInternalServerError)
+		h.writeCommandFailure(w, r, cancelAgentRunOperation, err)
 		return
 	}
 	h.recordCommandAudit(r, cancelAgentRunOperation, scope, "conversation", conversationID)
@@ -678,18 +672,17 @@ func (h *Handler) agentRequest(w stdhttp.ResponseWriter, r *stdhttp.Request) (*a
 // agentCommandRequest keeps capability availability on the generated command
 // failure path while leaving authentication and query failures on their
 // existing transport-owned path.
-func (h *Handler) agentCommandRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string) (*agent.Service, agent.Scope, bool) {
+func (h *Handler) agentCommandRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID agentgen.GenCommandOperationID) (*agent.Service, agent.Scope, bool) {
 	if h.options.Service == nil || !h.options.Service.Enabled() {
-		h.writeCommandFailure(w, r, operationID, agent.ErrDisabled, stdhttp.StatusServiceUnavailable)
+		h.writeCommandFailure(w, r, operationID, agent.ErrDisabled)
 		return nil, agent.Scope{}, false
 	}
 	return h.agentRequest(w, r)
 }
 
 // writeCommandFailure resolves classified domain failures through the
-// generated operation vocabulary. The final argument remains temporarily for
-// source compatibility with transport-owned call sites and is not authoritative.
-func (h *Handler) writeCommandFailure(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string, err error, _ int) {
+// compiler-checked generated operation vocabulary.
+func (h *Handler) writeCommandFailure(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID agentgen.GenCommandOperationID, err error) {
 	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, h.options.Logger, operationID, agentgen.GetAPIGenCommandFailureContracts, err)
 }
 

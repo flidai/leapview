@@ -11,6 +11,10 @@ import (
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 )
 
+type testCommandOperationID struct{ value string }
+
+func (operation testCommandOperationID) APIGenOperationID() string { return operation.value }
+
 func TestWriteJSONNormalizesTimestampsAndRequiredCollections(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	WriteJSON(recorder, 200, map[string]any{
@@ -64,8 +68,9 @@ func int32Pointer(value int32) *int32 { return &value }
 func TestWriteAPIGenCommandFailureUsesGeneratedPublicContract(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/widgets/widget_1/finalize", nil)
 	response := httptest.NewRecorder()
-	lookup := func(operationID string) ([]apigenfailure.Contract, bool) {
-		if operationID != "finalizeWidget" {
+	operation := testCommandOperationID{value: "finalizeWidget"}
+	lookup := func(operationID testCommandOperationID) ([]apigenfailure.Contract, bool) {
+		if operationID.APIGenOperationID() != "finalizeWidget" {
 			return nil, false
 		}
 		return []apigenfailure.Contract{{
@@ -74,7 +79,7 @@ func TestWriteAPIGenCommandFailureUsesGeneratedPublicContract(t *testing.T) {
 		}}, true
 	}
 
-	WriteAPIGenCommandFailure(context.Background(), response, request, nil, "finalizeWidget", lookup, apigenfailure.New("conflict", "private storage detail"))
+	WriteAPIGenCommandFailure(context.Background(), response, request, nil, operation, lookup, apigenfailure.New("conflict", "private storage detail"))
 
 	if response.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusConflict)
@@ -92,7 +97,7 @@ func TestWriteAPIGenCommandFailureHidesUnknownCause(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/widgets/widget_1/finalize", nil)
 	response := httptest.NewRecorder()
 
-	WriteAPIGenCommandFailure(context.Background(), response, request, nil, "finalizeWidget", nil, errors.New("database password is secret"))
+	WriteAPIGenCommandFailure(context.Background(), response, request, nil, testCommandOperationID{value: "finalizeWidget"}, nil, errors.New("database password is secret"))
 
 	var problem ProblemDetails
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {

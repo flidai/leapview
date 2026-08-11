@@ -85,16 +85,16 @@ func buildPublicationCommandAuditRecorder(
 	}, nil
 }
 
-func publicationOperationID(action publication.Action) (string, bool) {
+func publicationOperationID(action publication.Action) (dashboardgen.GenCommandOperationID, bool) {
 	switch action {
 	case publication.ActionSuspend:
-		return dashboardgen.GenOperationSuspendDashboardPublication, true
+		return dashboardgen.GenCommandOperationSuspendDashboardPublication(), true
 	case publication.ActionResume:
-		return dashboardgen.GenOperationResumeDashboardPublication, true
+		return dashboardgen.GenCommandOperationResumeDashboardPublication(), true
 	case publication.ActionRotate:
-		return dashboardgen.GenOperationRotateDashboardPublication, true
+		return dashboardgen.GenCommandOperationRotateDashboardPublication(), true
 	default:
-		return "", false
+		return dashboardgen.GenCommandOperationID{}, false
 	}
 }
 

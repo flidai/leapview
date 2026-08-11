@@ -82,11 +82,11 @@ func TestAgentAPICommandsRecordOneSuccessAudit(t *testing.T) {
 	}
 
 	want := []string{
-		createAgentConversationOperation,
-		updateAgentConversationOperation,
-		createAgentRunOperation,
-		cancelAgentRunOperation,
-		archiveAgentConversationOperation,
+		createAgentConversationOperation.APIGenOperationID(),
+		updateAgentConversationOperation.APIGenOperationID(),
+		createAgentRunOperation.APIGenOperationID(),
+		cancelAgentRunOperation.APIGenOperationID(),
+		archiveAgentConversationOperation.APIGenOperationID(),
 	}
 	if len(audits) != len(want) {
 		t.Fatalf("command audits = %#v", audits)
@@ -117,7 +117,7 @@ func TestAgentCommandPreservesSuccessAndObservesBestEffortAuditFailure(t *testin
 		t.Fatalf("create conversation status = %d body=%s", response.Code, response.Body.String())
 	}
 	if output := logs.String(); !strings.Contains(output, "best-effort agent command audit failed") ||
-		!strings.Contains(output, createAgentConversationOperation) || !strings.Contains(output, principalID) {
+		!strings.Contains(output, createAgentConversationOperation.APIGenOperationID()) || !strings.Contains(output, principalID) {
 		t.Fatalf("audit failure log = %s", output)
 	}
 }
@@ -143,7 +143,7 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 	if draftResponse.Code != http.StatusOK {
 		t.Fatalf("draft chat status = %d body=%s", draftResponse.Code, draftResponse.Body.String())
 	}
-	if len(audits) != 2 || audits[0].OperationID != createAgentConversationOperation || audits[1].OperationID != createAgentRunOperation || audits[0].TargetID != audits[1].TargetID {
+	if len(audits) != 2 || audits[0].OperationID != createAgentConversationOperation.APIGenOperationID() || audits[1].OperationID != createAgentRunOperation.APIGenOperationID() || audits[0].TargetID != audits[1].TargetID {
 		t.Fatalf("draft chat audits = %#v", audits)
 	}
 
@@ -155,7 +155,7 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 	activeRequest := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
 	activeResponse := httptest.NewRecorder()
 	handler.runChatTurn(activeResponse, activeRequest, service, scope, "client-2", conversation.ID, "again", nil, true)
-	if len(audits) != 1 || audits[0].OperationID != createAgentRunOperation || audits[0].TargetID != conversation.ID {
+	if len(audits) != 1 || audits[0].OperationID != createAgentRunOperation.APIGenOperationID() || audits[0].TargetID != conversation.ID {
 		t.Fatalf("active chat audits = %#v", audits)
 	}
 }

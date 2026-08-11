@@ -137,7 +137,7 @@ func (h Handler) ListCurrentAPITokens(w stdhttp.ResponseWriter, r *stdhttp.Reque
 func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
-		writeCommandFailure(w, r, "createCurrentAPIToken", fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), fmt.Errorf("authenticated principal is required"))
 		return
 	}
 	var input struct {
@@ -147,21 +147,21 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		ExpiresAt   string   `json:"expiresAt"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "createCurrentAPIToken", apigenfailure.Wrap("invalid", err), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), apigenfailure.Wrap("invalid", err))
 		return
 	}
 	var expiresAt time.Time
 	if strings.TrimSpace(input.ExpiresAt) != "" {
 		parsed, err := time.Parse(time.RFC3339, input.ExpiresAt)
 		if err != nil {
-			writeCommandFailure(w, r, "createCurrentAPIToken", apigenfailure.Wrap("invalid", err), stdhttp.StatusBadRequest)
+			writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), apigenfailure.Wrap("invalid", err))
 			return
 		}
 		expiresAt = parsed
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "createCurrentAPIToken", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), err)
 		return
 	}
 	var token string
@@ -175,7 +175,7 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return accessAuditInput(r, "api_token.created", principal.ID, row.WorkspaceID, "api_token", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"name": row.Name, "privileges": row.Privileges}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "createCurrentAPIToken", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"token": token, "apiToken": apiTokenDTO(row)})
@@ -184,12 +184,12 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
-		writeCommandFailure(w, r, "revokeCurrentAPIToken", fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentAPIToken(), fmt.Errorf("authenticated principal is required"))
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "revokeCurrentAPIToken", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentAPIToken(), err)
 		return
 	}
 	tokenID := chi.URLParam(r, "token")
@@ -207,7 +207,7 @@ func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return accessAuditInput(r, "api_token.revoked", principal.ID, revoked.WorkspaceID, "api_token", tokenID, access.PrivilegeManageGrants, "success", map[string]any{"name": revoked.Name, "privileges": revoked.Privileges}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "revokeCurrentAPIToken", err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRevokeCurrentAPIToken(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -247,10 +247,10 @@ func (h Handler) listPrincipalSessions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 func (h Handler) RevokeCurrentSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
-		writeCommandFailure(w, r, "revokeCurrentSession", fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentSession(), fmt.Errorf("authenticated principal is required"))
 		return
 	}
-	h.revokePrincipalSession(w, r, "revokeCurrentSession", principal.ID, principal.ID, access.PrivilegeUseWorkspace, nil)
+	h.revokePrincipalSession(w, r, accessgen.GenCommandOperationRevokeCurrentSession(), principal.ID, principal.ID, access.PrivilegeUseWorkspace, nil)
 }
 
 func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -258,7 +258,7 @@ func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Req
 	h.revokePrincipalSession(
 		w,
 		r,
-		"revokePrincipalSession",
+		accessgen.GenCommandOperationRevokePrincipalSession(),
 		h.currentPrincipalID(r),
 		targetPrincipalID,
 		access.PrivilegeManageGrants,
@@ -269,7 +269,7 @@ func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Req
 func (h Handler) revokePrincipalSession(
 	w stdhttp.ResponseWriter,
 	r *stdhttp.Request,
-	operationID string,
+	operationID accessgen.GenCommandOperationID,
 	actorPrincipalID string,
 	targetPrincipalID string,
 	privilege access.Privilege,
@@ -277,7 +277,7 @@ func (h Handler) revokePrincipalSession(
 ) {
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, operationID, err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, operationID, err)
 		return
 	}
 	sessionID := chi.URLParam(r, "session")
@@ -330,12 +330,12 @@ func (h Handler) CreatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		if err := decodeStrictJSON(r, &input); err != nil {
-			writeCommandFailure(w, r, "createPrincipal", err, stdhttp.StatusBadRequest)
+			writeCommandFailure(w, r, accessgen.GenCommandOperationCreatePrincipal(), err)
 			return
 		}
 	} else {
 		if err := r.ParseForm(); err != nil {
-			writeCommandFailure(w, r, "createPrincipal", err, stdhttp.StatusBadRequest)
+			writeCommandFailure(w, r, accessgen.GenCommandOperationCreatePrincipal(), err)
 			return
 		}
 		input.Email = r.Form.Get("email")
@@ -343,7 +343,7 @@ func (h Handler) CreatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "createPrincipal", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreatePrincipal(), err)
 		return
 	}
 	var created access.LocalPasswordReset
@@ -367,13 +367,13 @@ func (h Handler) CreatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				map[string]any{"email": email, "reason": "duplicate"},
 			)
 			if auditErr := access.PersistAuditEvent(r.Context(), repo, audit); auditErr != nil {
-				writeAuditedMutationError(w, r, "createPrincipal", fmt.Errorf("%w: %v", access.ErrAuditTransaction, auditErr), stdhttp.StatusInternalServerError)
+				writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreatePrincipal(), fmt.Errorf("%w: %v", access.ErrAuditTransaction, auditErr), stdhttp.StatusInternalServerError)
 				return
 			}
-			writeAuditedMutationError(w, r, "createPrincipal", err, stdhttp.StatusConflict)
+			writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreatePrincipal(), err, stdhttp.StatusConflict)
 			return
 		}
-		writeAuditedMutationError(w, r, "createPrincipal", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreatePrincipal(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, localPasswordResetDTO(created))
@@ -396,7 +396,7 @@ func (h Handler) GetPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "deletePrincipal", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), err)
 		return
 	}
 	id := chi.URLParam(r, "principal")
@@ -406,17 +406,17 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if status == stdhttp.StatusNotFound {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		writeCommandFailure(w, r, "deletePrincipal", err, status)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), err)
 		return
 	}
 	if !principalKindAllowsGenericMutation(existing.Kind) {
-		writeCommandFailure(w, r, "deletePrincipal", apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)))
 		return
 	}
 	if _, ok := repo.(interface {
 		DeletePrincipal(context.Context, string) error
 	}); !ok {
-		writeCommandFailure(w, r, "deletePrincipal", fmt.Errorf("principal deletion is unavailable"), stdhttp.StatusServiceUnavailable)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), fmt.Errorf("principal deletion is unavailable"))
 		return
 	}
 	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
@@ -432,7 +432,7 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "deletePrincipal", err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeletePrincipal(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -441,7 +441,7 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "resetPrincipalPassword", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), err)
 		return
 	}
 	var reset access.LocalPasswordReset
@@ -451,7 +451,7 @@ func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return accessAuditInput(r, "principal.local_password.reset", h.currentPrincipalID(r), "", "principal", reset.Principal.ID, access.PrivilegeManageGrants, "success", map[string]any{"email": reset.Principal.Email}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "resetPrincipalPassword", err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), err, statusForNotFound(err))
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, localPasswordResetDTO(reset))
@@ -462,12 +462,12 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "updatePrincipal", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "updatePrincipal", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err)
 		return
 	}
 	existing, err := repo.PrincipalByID(r.Context(), chi.URLParam(r, "principal"))
@@ -476,11 +476,11 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if status == stdhttp.StatusNotFound {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		writeCommandFailure(w, r, "updatePrincipal", err, status)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err)
 		return
 	}
 	if !principalKindAllowsGenericMutation(existing.Kind) {
-		writeCommandFailure(w, r, "updatePrincipal", apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)))
 		return
 	}
 	if !requireIfMatch(w, r, resourceETag(principalDTO(existing))) {
@@ -498,7 +498,7 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "updatePrincipal", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(principal))
@@ -562,7 +562,7 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "oauth.token.created", principal.ID, input.WorkspaceID, "api_token", row.ID, "", "success", map[string]any{"grantType": "client_credentials"}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "", err, stdhttp.StatusBadRequest)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeSecretJSON(w, stdhttp.StatusOK, map[string]any{
@@ -612,12 +612,12 @@ func (h Handler) CreateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "createServicePrincipal", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipal(), err)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "createServicePrincipal", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipal(), err)
 		return
 	}
 	var row access.Principal
@@ -627,7 +627,7 @@ func (h Handler) CreateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return accessAuditInput(r, "service_principal.created", principal.ID, "", "service_principal", row.ID, access.PrivilegeManagePlatform, "success", nil), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "createServicePrincipal", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateServicePrincipal(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, principalDTO(row))
@@ -639,12 +639,12 @@ func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "updateServicePrincipal", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "updateServicePrincipal", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err)
 		return
 	}
 	existing, err := repo.PrincipalByID(r.Context(), chi.URLParam(r, "servicePrincipal"))
@@ -652,11 +652,11 @@ func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		if errors.Is(err, sql.ErrNoRows) {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		writeCommandFailure(w, r, "updateServicePrincipal", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err)
 		return
 	}
 	if existing.Kind != access.PrincipalKindServicePrincipal {
-		writeCommandFailure(w, r, "updateServicePrincipal", apigenfailure.Wrap("not_found", sql.ErrNoRows), stdhttp.StatusNotFound)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), apigenfailure.Wrap("not_found", sql.ErrNoRows))
 		return
 	}
 	if !requireIfMatch(w, r, resourceETag(principalDTO(existing))) {
@@ -669,7 +669,7 @@ func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return accessAuditInput(r, "service_principal.updated", principal.ID, "", "service_principal", row.ID, access.PrivilegeManagePlatform, "success", nil), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "updateServicePrincipal", err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err, statusForNotFound(err))
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
@@ -679,7 +679,7 @@ func (h Handler) DeleteServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "deleteServicePrincipal", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteServicePrincipal(), err)
 		return
 	}
 	id := chi.URLParam(r, "servicePrincipal")
@@ -688,7 +688,7 @@ func (h Handler) DeleteServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return accessAuditInput(r, "service_principal.deleted", principal.ID, "", "service_principal", id, access.PrivilegeManagePlatform, "success", nil), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "deleteServicePrincipal", err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteServicePrincipal(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -701,21 +701,21 @@ func (h Handler) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 		ExpiresAt string `json:"expiresAt"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "createServicePrincipalSecret", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipalSecret(), err)
 		return
 	}
 	var expiresAt time.Time
 	if strings.TrimSpace(input.ExpiresAt) != "" {
 		parsed, err := time.Parse(time.RFC3339, input.ExpiresAt)
 		if err != nil {
-			writeCommandFailure(w, r, "createServicePrincipalSecret", err, stdhttp.StatusBadRequest)
+			writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipalSecret(), err)
 			return
 		}
 		expiresAt = parsed
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "createServicePrincipalSecret", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipalSecret(), err)
 		return
 	}
 	var rawSecret string
@@ -726,7 +726,7 @@ func (h Handler) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 		return accessAuditInput(r, "service_principal_secret.created", principal.ID, "", "service_principal", row.ServicePrincipalID, access.PrivilegeManagePlatform, "success", map[string]any{"secretId": row.ID}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "createServicePrincipalSecret", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateServicePrincipalSecret(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"secret": rawSecret, "clientSecret": servicePrincipalSecretDTO(row, "")})
@@ -782,7 +782,7 @@ func (h Handler) RevokeServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "revokeServicePrincipalSecret", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeServicePrincipalSecret(), err)
 		return
 	}
 	servicePrincipalID := chi.URLParam(r, "servicePrincipal")
@@ -792,7 +792,7 @@ func (h Handler) RevokeServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 		return accessAuditInput(r, "service_principal_secret.revoked", principal.ID, "", "service_principal", servicePrincipalID, access.PrivilegeManagePlatform, "success", map[string]any{"secretId": secretID}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "revokeServicePrincipalSecret", err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRevokeServicePrincipalSecret(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -822,12 +822,12 @@ func (h Handler) CreateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "createGroup", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGroup(), err)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "createGroup", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGroup(), err)
 		return
 	}
 	name := firstNonEmpty(input.DisplayName, input.Name)
@@ -838,14 +838,14 @@ func (h Handler) CreateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "group.created", h.currentPrincipalID(r), group.WorkspaceID, "group", group.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(group)), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "createGroup", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateGroup(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, groupDTO(group))
 }
 
 func (h Handler) GetGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	group, ok := h.groupByID(w, r, "")
+	group, ok := h.groupByID(w, r, nil)
 	if !ok {
 		return
 	}
@@ -857,10 +857,10 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "updateGroup", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGroup(), err)
 		return
 	}
-	group, ok := h.groupByID(w, r, "updateGroup")
+	group, ok := h.groupByID(w, r, commandOperation(accessgen.GenCommandOperationUpdateGroup()))
 	if !ok {
 		return
 	}
@@ -869,7 +869,7 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "updateGroup", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGroup(), err)
 		return
 	}
 	var updated access.Group
@@ -879,20 +879,20 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "group.updated", h.currentPrincipalID(r), updated.WorkspaceID, "group", updated.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(updated)), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "updateGroup", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateGroup(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, groupDTO(updated))
 }
 
 func (h Handler) DeleteGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	group, ok := h.groupByID(w, r, "deleteGroup")
+	group, ok := h.groupByID(w, r, commandOperation(accessgen.GenCommandOperationDeleteGroup()))
 	if !ok {
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "deleteGroup", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGroup(), err)
 		return
 	}
 	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
@@ -900,7 +900,7 @@ func (h Handler) DeleteGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "group.deleted", h.currentPrincipalID(r), group.WorkspaceID, "group", group.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(group)), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "deleteGroup", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteGroup(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -927,7 +927,7 @@ func (h Handler) ListGroupMembers(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "addGroupMember", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationAddGroupMember(), err)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
@@ -938,7 +938,7 @@ func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return accessAuditInput(r, "group.member_added", h.currentPrincipalID(r), workspaceID, "group_member", groupID+":"+principalID, access.PrivilegeManageGrants, "success", map[string]any{"groupId": groupID, "memberPrincipalId": principalID}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "addGroupMember", err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationAddGroupMember(), err, statusForNotFound(err))
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]string{"status": "added"})
@@ -947,7 +947,7 @@ func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "removeGroupMember", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationRemoveGroupMember(), err)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
@@ -958,7 +958,7 @@ func (h Handler) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		return accessAuditInput(r, "group.member_removed", h.currentPrincipalID(r), workspaceID, "group_member", groupID+":"+principalID, access.PrivilegeManageGrants, "success", map[string]any{"groupId": groupID, "memberPrincipalId": principalID}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "removeGroupMember", err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRemoveGroupMember(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1019,18 +1019,18 @@ func (h Handler) GetRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h Handler) CreateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	input, ok := decodeRoleBindingInput(w, r, "createRoleBinding")
+	input, ok := decodeRoleBindingInput(w, r, accessgen.GenCommandOperationCreateRoleBinding())
 	if !ok {
 		return
 	}
 	commands := h.RoleBindingCommands
 	if commands == nil {
-		writeCommandFailure(w, r, "createRoleBinding", fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateRoleBinding(), fmt.Errorf("role binding command service is not configured"))
 		return
 	}
 	row, err := commands.CreateRoleBinding(r.Context(), h.roleBindingInvocation(r), input)
 	if err != nil {
-		writeAuditedMutationError(w, r, "createRoleBinding", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateRoleBinding(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, apiRoleBindingDTO(row))
@@ -1109,10 +1109,10 @@ func (h Handler) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Privilege   string `json:"privilege"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "createGrant", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGrant(), err)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, "createGrant", input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationCreateGrant()), input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
@@ -1121,24 +1121,24 @@ func (h Handler) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
 	if !knownGrantSubjectType(subjectType) {
-		writeCommandFailure(w, r, "createGrant", apigenfailure.New("invalid", fmt.Sprintf("unsupported subject type %q", input.SubjectType)), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGrant(), apigenfailure.New("invalid", fmt.Sprintf("unsupported subject type %q", input.SubjectType)))
 		return
 	}
 	privilege := access.Privilege(strings.TrimSpace(input.Privilege))
 	if !knownPrivilege(privilege) {
-		writeCommandFailure(w, r, "createGrant", apigenfailure.New("invalid", fmt.Sprintf("unsupported privilege %q", input.Privilege)), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGrant(), apigenfailure.New("invalid", fmt.Sprintf("unsupported privilege %q", input.Privilege)))
 		return
 	}
 	commands := h.GrantCommands
 	if commands == nil {
-		writeCommandFailure(w, r, "createGrant", fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGrant(), fmt.Errorf("grant command service is not configured"))
 		return
 	}
 	grant, err := commands.CreateGrant(r.Context(), h.grantInvocation(r), access.GrantInput{
 		Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege,
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "createGrant", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateGrant(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, grantDTO(grant))
@@ -1166,7 +1166,7 @@ func (h Handler) GetGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "updateGrant", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), err)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
@@ -1177,7 +1177,7 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if status == stdhttp.StatusNotFound {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		writeCommandFailure(w, r, "updateGrant", err, status)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), err)
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromGrant(current)) {
@@ -1190,10 +1190,10 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		ObjectType, ObjectID, SubjectType, SubjectID, Privilege string
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "updateGrant", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), err)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, "updateGrant", input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationUpdateGrant()), input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
@@ -1203,19 +1203,19 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
 	privilege := access.Privilege(strings.TrimSpace(input.Privilege))
 	if !knownGrantSubjectType(subjectType) || !knownPrivilege(privilege) {
-		writeCommandFailure(w, r, "updateGrant", apigenfailure.New("invalid", "unsupported grant subject or privilege"), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), apigenfailure.New("invalid", "unsupported grant subject or privilege"))
 		return
 	}
 	commands := h.GrantCommands
 	if commands == nil {
-		writeCommandFailure(w, r, "updateGrant", fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), fmt.Errorf("grant command service is not configured"))
 		return
 	}
 	updated, err := commands.UpdateGrant(r.Context(), h.grantInvocation(r), workspaceID, id, access.GrantInput{
 		Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege,
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "updateGrant", err, stdhttp.StatusUnprocessableEntity)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateGrant(), err, stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	dto := grantDTO(updated)
@@ -1226,7 +1226,7 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h Handler) DeleteGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "deleteGrant", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGrant(), err)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
@@ -1236,7 +1236,7 @@ func (h Handler) DeleteGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if status == stdhttp.StatusNotFound {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		writeCommandFailure(w, r, "deleteGrant", err, status)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGrant(), err)
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromGrant(grant)) {
@@ -1244,12 +1244,12 @@ func (h Handler) DeleteGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	commands := h.GrantCommands
 	if commands == nil {
-		writeCommandFailure(w, r, "deleteGrant", fmt.Errorf("grant command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGrant(), fmt.Errorf("grant command service is not configured"))
 		return
 	}
 	_, err = commands.DeleteGrant(r.Context(), h.grantInvocation(r), workspaceID, grant.ID)
 	if err != nil {
-		writeAuditedMutationError(w, r, "deleteGrant", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteGrant(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1291,10 +1291,10 @@ func (h Handler) CreateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		Expression  map[string]any `json:"expression"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "createDataPolicy", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), err)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, "createDataPolicy", input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationCreateDataPolicy()), input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
@@ -1302,31 +1302,31 @@ func (h Handler) CreateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return
 	}
 	if !knownDataPolicyType(input.PolicyType) {
-		writeCommandFailure(w, r, "createDataPolicy", apigenfailure.New("invalid", fmt.Sprintf("unsupported policyType %q", input.PolicyType)), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), apigenfailure.New("invalid", fmt.Sprintf("unsupported policyType %q", input.PolicyType)))
 		return
 	}
 	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
 	subjectID := strings.TrimSpace(input.SubjectID)
 	if subjectType != "" && !knownDataPolicySubjectType(subjectType) {
-		writeCommandFailure(w, r, "createDataPolicy", apigenfailure.New("invalid", fmt.Sprintf("unsupported subjectType %q", input.SubjectType)), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), apigenfailure.New("invalid", fmt.Sprintf("unsupported subjectType %q", input.SubjectType)))
 		return
 	}
 	if subjectType != "" && subjectID == "" {
-		writeCommandFailure(w, r, "createDataPolicy", apigenfailure.New("invalid", "subjectId is required when subjectType is set"), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), apigenfailure.New("invalid", "subjectId is required when subjectType is set"))
 		return
 	}
 	if subjectType == "" && subjectID != "" {
-		writeCommandFailure(w, r, "createDataPolicy", apigenfailure.New("invalid", "subjectType is required when subjectId is set"), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), apigenfailure.New("invalid", "subjectType is required when subjectId is set"))
 		return
 	}
 	expression, err := json.Marshal(input.Expression)
 	if err != nil {
-		writeCommandFailure(w, r, "createDataPolicy", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), err)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "createDataPolicy", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), err)
 		return
 	}
 	var row access.DataPolicy
@@ -1336,7 +1336,7 @@ func (h Handler) CreateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return accessAuditInput(r, "data_policy.created", principal.ID, row.WorkspaceID, "data_policy", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": row.ObjectID, "policyType": row.PolicyType}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "createDataPolicy", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateDataPolicy(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, dataPolicyDTO(row))
@@ -1365,7 +1365,7 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "updateDataPolicy", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
@@ -1376,7 +1376,7 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		if status == stdhttp.StatusNotFound {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		writeCommandFailure(w, r, "updateDataPolicy", err, status)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err)
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromCanonical(current.WorkspaceID, current.ObjectID)) {
@@ -1394,25 +1394,25 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		Expression  map[string]any `json:"expression"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "updateDataPolicy", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, "updateDataPolicy", input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationUpdateDataPolicy()), input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
 	if !knownDataPolicyType(input.PolicyType) {
-		writeCommandFailure(w, r, "updateDataPolicy", apigenfailure.New("invalid", fmt.Sprintf("unsupported policyType %q", input.PolicyType)), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), apigenfailure.New("invalid", fmt.Sprintf("unsupported policyType %q", input.PolicyType)))
 		return
 	}
 	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
 	if subjectType != "" && (!knownDataPolicySubjectType(subjectType) || strings.TrimSpace(input.SubjectID) == "") {
-		writeCommandFailure(w, r, "updateDataPolicy", apigenfailure.New("invalid", "invalid data policy subject"), stdhttp.StatusUnprocessableEntity)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), apigenfailure.New("invalid", "invalid data policy subject"))
 		return
 	}
 	expression, err := json.Marshal(input.Expression)
 	if err != nil {
-		writeCommandFailure(w, r, "updateDataPolicy", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err)
 		return
 	}
 	var updated access.DataPolicy
@@ -1422,7 +1422,7 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return accessAuditInput(r, "data_policy.updated", principal.ID, updated.WorkspaceID, "data_policy", updated.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": updated.ObjectID, "policyType": updated.PolicyType}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "updateDataPolicy", err, stdhttp.StatusUnprocessableEntity)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err, stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	dto := dataPolicyDTO(updated)
@@ -1455,7 +1455,7 @@ func (h Handler) CheckAuthorizationBatch(w stdhttp.ResponseWriter, r *stdhttp.Re
 			writeJSONError(w, fmt.Errorf("unsupported privilege %q", item.Privilege), stdhttp.StatusUnprocessableEntity)
 			return
 		}
-		object, valid := objectRefFromValues(w, r, "", item.ObjectType, item.ObjectID)
+		object, valid := objectRefFromValues(w, r, nil, item.ObjectType, item.ObjectID)
 		if !valid {
 			return
 		}
@@ -1485,7 +1485,7 @@ func (h Handler) DeleteDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 	principal, _ := h.currentPrincipal(r)
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "deleteDataPolicy", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteDataPolicy(), err)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
@@ -1495,7 +1495,7 @@ func (h Handler) DeleteDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		if status == stdhttp.StatusNotFound {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		writeCommandFailure(w, r, "deleteDataPolicy", err, status)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteDataPolicy(), err)
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromCanonical(row.WorkspaceID, row.ObjectID)) {
@@ -1506,7 +1506,7 @@ func (h Handler) DeleteDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return accessAuditInput(r, "data_policy.deleted", principal.ID, row.WorkspaceID, "data_policy", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": row.ObjectID, "policyType": row.PolicyType}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "deleteDataPolicy", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteDataPolicy(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1520,10 +1520,10 @@ func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		OwnerPrincipalID string `json:"ownerPrincipalId"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, "transferOwnership", err, stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationTransferOwnership(), err)
 		return
 	}
-	object, ok := objectRefFromValues(w, r, "transferOwnership", input.ObjectType, input.ObjectID)
+	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationTransferOwnership()), input.ObjectType, input.ObjectID)
 	if !ok {
 		return
 	}
@@ -1532,7 +1532,7 @@ func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "transferOwnership", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationTransferOwnership(), err)
 		return
 	}
 	var updated access.SecurableObject
@@ -1542,7 +1542,7 @@ func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		return accessAuditInput(r, "ownership.transferred", principal.ID, updated.WorkspaceID, "securable_object", updated.ID, access.PrivilegeManageItem, "success", map[string]any{"ownerPrincipalId": updated.OwnerPrincipalID, "objectType": string(updated.Type)}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, "transferOwnership", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationTransferOwnership(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, securableObjectDTO(updated))
@@ -1551,7 +1551,7 @@ func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request)
 func (h Handler) UpdateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, "updateRoleBinding", err, stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateRoleBinding(), err)
 		return
 	}
 	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
@@ -1561,24 +1561,24 @@ func (h Handler) UpdateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		if status == stdhttp.StatusNotFound {
 			err = apigenfailure.Wrap("not_found", err)
 		}
-		writeCommandFailure(w, r, "updateRoleBinding", err, status)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateRoleBinding(), err)
 		return
 	}
 	if !requireIfMatch(w, r, resourceETag(apiRoleBindingDTO(current))) {
 		return
 	}
-	input, ok := decodeRoleBindingInput(w, r, "updateRoleBinding")
+	input, ok := decodeRoleBindingInput(w, r, accessgen.GenCommandOperationUpdateRoleBinding())
 	if !ok {
 		return
 	}
 	commands := h.RoleBindingCommands
 	if commands == nil {
-		writeCommandFailure(w, r, "updateRoleBinding", fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateRoleBinding(), fmt.Errorf("role binding command service is not configured"))
 		return
 	}
 	row, err := commands.UpdateRoleBinding(r.Context(), h.roleBindingInvocation(r), input.WorkspaceID, chi.URLParam(r, "binding"), input)
 	if err != nil {
-		writeAuditedMutationError(w, r, "updateRoleBinding", err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateRoleBinding(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, apiRoleBindingDTO(row))
@@ -1589,12 +1589,12 @@ func (h Handler) DeleteRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	bindingID := chi.URLParam(r, "binding")
 	commands := h.RoleBindingCommands
 	if commands == nil {
-		writeCommandFailure(w, r, "deleteRoleBinding", fmt.Errorf("role binding command service is not configured"), stdhttp.StatusInternalServerError)
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteRoleBinding(), fmt.Errorf("role binding command service is not configured"))
 		return
 	}
 	_, err := commands.DeleteRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, bindingID)
 	if err != nil {
-		writeAuditedMutationError(w, r, "deleteRoleBinding", err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteRoleBinding(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1882,16 +1882,16 @@ func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation fun
 	})
 }
 
-func writeCommandFailure(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string, err error, _ int) {
+func writeCommandFailure(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID, err error) {
 	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, accessgen.GetAPIGenCommandFailureContracts, err)
 }
 
-func writeAuditedMutationError(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string, err error, mutationStatus int) {
+func writeAuditedMutationError(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID, err error, mutationStatus int) {
 	if mutationStatus == stdhttp.StatusNotFound && errors.Is(err, sql.ErrNoRows) {
 		err = apigenfailure.Wrap("not_found", err)
 	}
 	if _, classified := apigenfailure.KindOf(err); !classified {
-		switch operationID {
+		switch operationID.APIGenOperationID() {
 		case "createCurrentAPIToken", "createServicePrincipal", "createServicePrincipalSecret", "createGroup", "createRoleBinding", "createGrant", "transferOwnership", "createDataPolicy":
 			err = apigenfailure.Wrap("invalid", err)
 		case "updateGrant", "updateDataPolicy":
@@ -1900,7 +1900,7 @@ func writeAuditedMutationError(w stdhttp.ResponseWriter, r *stdhttp.Request, ope
 			}
 		}
 	}
-	writeCommandFailure(w, r, operationID, err, mutationStatus)
+	writeCommandFailure(w, r, operationID, err)
 }
 
 func auditEventDTO(row access.AuditEvent) map[string]any {
@@ -2020,13 +2020,17 @@ func knownDataPolicyType(value string) bool {
 }
 
 func objectRefFromRequest(w stdhttp.ResponseWriter, r *stdhttp.Request) (access.ObjectRef, bool) {
-	return objectRefFromValues(w, r, "", r.URL.Query().Get("objectType"), r.URL.Query().Get("objectId"))
+	return objectRefFromValues(w, r, nil, r.URL.Query().Get("objectType"), r.URL.Query().Get("objectId"))
 }
 
-func objectRefFromValues(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID, objectType, objectID string) (access.ObjectRef, bool) {
+func commandOperation(operationID accessgen.GenCommandOperationID) *accessgen.GenCommandOperationID {
+	return &operationID
+}
+
+func objectRefFromValues(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID *accessgen.GenCommandOperationID, objectType, objectID string) (access.ObjectRef, bool) {
 	writeInvalid := func(err error) {
-		if operationID != "" {
-			writeCommandFailure(w, r, operationID, apigenfailure.Wrap("invalid", err), stdhttp.StatusBadRequest)
+		if operationID != nil {
+			writeCommandFailure(w, r, *operationID, apigenfailure.Wrap("invalid", err))
 			return
 		}
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
@@ -2173,10 +2177,10 @@ func objectAuthorizationDenialStatus(r *stdhttp.Request) int {
 	return stdhttp.StatusForbidden
 }
 
-func (h Handler) groupByID(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string) (access.Group, bool) {
+func (h Handler) groupByID(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID *accessgen.GenCommandOperationID) (access.Group, bool) {
 	writeFailure := func(err error) {
-		if operationID != "" {
-			writeCommandFailure(w, r, operationID, err, stdhttp.StatusInternalServerError)
+		if operationID != nil {
+			writeCommandFailure(w, r, *operationID, err)
 			return
 		}
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -2196,22 +2200,22 @@ func (h Handler) groupByID(w stdhttp.ResponseWriter, r *stdhttp.Request, operati
 			return row, true
 		}
 	}
-	if operationID != "" {
-		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("not_found", sql.ErrNoRows), stdhttp.StatusNotFound)
+	if operationID != nil {
+		writeCommandFailure(w, r, *operationID, apigenfailure.Wrap("not_found", sql.ErrNoRows))
 	} else {
 		writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
 	}
 	return access.Group{}, false
 }
 
-func decodeRoleBindingInput(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID string) (access.RoleBindingInput, bool) {
+func decodeRoleBindingInput(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID) (access.RoleBindingInput, bool) {
 	var input struct {
 		SubjectType string `json:"subjectType"`
 		SubjectID   string `json:"subjectId"`
 		Role        string `json:"role"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("invalid", err), stdhttp.StatusBadRequest)
+		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("invalid", err))
 		return access.RoleBindingInput{}, false
 	}
 	return access.RoleBindingInput{

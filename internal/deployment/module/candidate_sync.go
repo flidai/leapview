@@ -32,11 +32,11 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	principalID, ok := m.candidateSynchronizationPrincipal(w, r, "")
+	principalID, ok := m.candidateSynchronizationPrincipal(w, r, nil)
 	if !ok {
 		return
 	}
-	if !m.validateExpectedCandidate(w, r, project, principalID, request, "") {
+	if !m.validateExpectedCandidate(w, r, project, principalID, request, nil) {
 		return
 	}
 	missing, err := m.candidateSources.Plan(r.Context(), deployment.CandidateSourceScope{
@@ -56,7 +56,8 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 	r *http.Request,
 	project, identity, contentType, contentDigest string,
 ) {
-	principalID, ok := m.candidateSynchronizationPrincipal(w, r, string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob))
+	operationID := deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob()
+	principalID, ok := m.candidateSynchronizationPrincipal(w, r, deploymentCommandOperation(operationID))
 	if !ok {
 		return
 	}
@@ -64,7 +65,7 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 	if contentType != "application/octet-stream" ||
 		digest.ValidateSHA256Identity(identity) != nil ||
 		strings.TrimSpace(contentDigest) != candidateSourceContentDigest(identity) {
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob), apigenfailure.New("source_blob_invalid", "Candidate source blob headers do not match the canonical content identity"))
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), apigenfailure.New("source_blob_invalid", "Candidate source blob headers do not match the canonical content identity"))
 		return
 	}
 	counter := &candidateSourceCountingReader{source: http.MaxBytesReader(
@@ -73,7 +74,7 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 	if err := m.candidateSources.Upload(r.Context(), deployment.CandidateSourceScope{
 		ProjectID: project, OwnerID: principalID,
 	}, identity, counter); err != nil {
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob), err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), err)
 		return
 	}
 	logger := m.logger
@@ -82,10 +83,10 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 	}
 	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
 	if err != nil {
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob), apigenfailure.New("audit_unavailable", "Candidate source blob audit is temporarily unavailable"))
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), apigenfailure.New("audit_unavailable", "Candidate source blob audit is temporarily unavailable"))
 		return
 	}
-	if err := executor.Execute(r.Context(), string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob), apigencommand.Execution{
+	if err := executor.Execute(r.Context(), operationID.APIGenOperationID(), apigencommand.Execution{
 		BestEffortAudit: func(context.Context, apigencommand.Contract) error {
 			return m.recordCandidateSourceBlobAudit(r, principalID, project, identity, counter.read)
 		},
@@ -95,7 +96,7 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 			slog.String("digest", identity),
 		},
 	}); err != nil {
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob), apigenfailure.New("audit_unavailable", "Candidate source blob audit is temporarily unavailable"))
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), apigenfailure.New("audit_unavailable", "Candidate source blob audit is temporarily unavailable"))
 		return
 	}
 	w.Header().Set("Location", "/api/v1/projects/"+url.PathEscape(strings.TrimSpace(project))+
@@ -157,18 +158,19 @@ func (m *Module) CommitProjectCandidateSynchronization(
 	if !ok {
 		return
 	}
-	principalID, ok := m.candidateSynchronizationPrincipal(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization))
+	operationID := deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization()
+	principalID, ok := m.candidateSynchronizationPrincipal(w, r, deploymentCommandOperation(operationID))
 	if !ok {
 		return
 	}
-	if !m.validateExpectedCandidate(w, r, project, principalID, request, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization)) {
+	if !m.validateExpectedCandidate(w, r, project, principalID, request, deploymentCommandOperation(operationID)) {
 		return
 	}
 	scope := deployment.CandidateSourceScope{ProjectID: project, OwnerID: principalID}
 	scope.CandidateKey = request.CandidateKey
 	source, err := m.candidateSources.Commit(r.Context(), scope, request)
 	if err != nil {
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), err)
 		return
 	}
 	var candidate deployment.Candidate
@@ -188,14 +190,14 @@ func (m *Module) CommitProjectCandidateSynchronization(
 		})
 	}
 	if err != nil {
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), err)
 		return
 	}
 	requestedSourceRevision, err := candidateSourceRevisionProvenance(
 		request.SourceRevision,
 	)
 	if err != nil {
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), candidatePreparationError(err))
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), candidatePreparationError(err))
 		return
 	}
 	if candidate.Status == deployment.CandidateReady &&
@@ -205,7 +207,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 			candidate,
 		)
 		if verifyErr != nil {
-			m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), candidatePreparationError(verifyErr))
+			m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), candidatePreparationError(verifyErr))
 			return
 		}
 		if equalCandidateSourceRevision(
@@ -220,7 +222,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 	currentArtifactDigest := candidate.ArtifactDigest
 	tentative, err := tentativeCandidate(candidate, request)
 	if err != nil {
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), err)
 		return
 	}
 	preparationContext := r.Context()
@@ -230,7 +232,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 			preparationContext,
 		)
 		if err != nil {
-			m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), candidatePreparationError(err))
+			m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), candidatePreparationError(err))
 			return
 		}
 		defer preparationLease.Release()
@@ -252,7 +254,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 				"CANDIDATE_PREPARATION_FAILED",
 			)
 		}
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), candidatePreparationError(err))
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), candidatePreparationError(err))
 		return
 	}
 	if replaceCandidate {
@@ -263,7 +265,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 			request.ArtifactDigest,
 		)
 		if err != nil {
-			m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), err)
+			m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), err)
 			return
 		}
 	}
@@ -274,7 +276,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 		provenance.Digest,
 	)
 	if err != nil {
-		m.writeCandidateCommandFailure(w, r, string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, m.candidateResponse(candidate, false))
@@ -661,23 +663,23 @@ func (m *Module) decodeCandidateSynchronizationRequest(
 func (m *Module) candidateSynchronizationPrincipal(
 	w http.ResponseWriter,
 	r *http.Request,
-	operationID string,
+	operationID *deploymentgen.GenCommandOperationID,
 ) (string, bool) {
 	var principalID string
 	var ok bool
-	if operationID == "" {
+	if operationID == nil {
 		principalID, ok = m.candidatePrincipalID(w, r)
 	} else {
-		principalID, ok = m.candidatePrincipalIDCommand(w, r, operationID)
+		principalID, ok = m.candidatePrincipalIDCommand(w, r, *operationID)
 	}
 	if !ok {
 		return "", false
 	}
 	if m.candidateSources == nil {
-		if operationID == "" {
+		if operationID == nil {
 			writeCandidateUnavailable(w, r)
 		} else {
-			m.writeCandidateCommandFailure(w, r, operationID, deployment.ErrCandidateUnavailable)
+			m.writeCandidateCommandFailure(w, r, *operationID, deployment.ErrCandidateUnavailable)
 		}
 		return "", false
 	}
@@ -689,7 +691,7 @@ func (m *Module) validateExpectedCandidate(
 	r *http.Request,
 	project, principalID string,
 	request deployment.CandidateSynchronizationRequest,
-	operationID string,
+	operationID *deploymentgen.GenCommandOperationID,
 ) bool {
 	hasID := strings.TrimSpace(request.ExpectedCandidateID) != ""
 	hasDigest := strings.TrimSpace(request.ExpectedArtifactDigest) != ""
@@ -698,10 +700,10 @@ func (m *Module) validateExpectedCandidate(
 			"%w: expected candidate identity and digest must be supplied together",
 			deployment.ErrCandidateInvalid,
 		)
-		if operationID == "" {
+		if operationID == nil {
 			writeCandidateAPIError(w, r, err)
 		} else {
-			m.writeCandidateCommandFailure(w, r, operationID, err)
+			m.writeCandidateCommandFailure(w, r, *operationID, err)
 		}
 		return false
 	}
@@ -712,18 +714,18 @@ func (m *Module) validateExpectedCandidate(
 		ProjectID: project, CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
 	})
 	if err != nil {
-		if operationID == "" {
+		if operationID == nil {
 			writeCandidateAPIError(w, r, err)
 		} else {
-			m.writeCandidateCommandFailure(w, r, operationID, err)
+			m.writeCandidateCommandFailure(w, r, *operationID, err)
 		}
 		return false
 	}
 	if candidate.ArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) {
-		if operationID == "" {
+		if operationID == nil {
 			writeCandidateAPIError(w, r, deployment.ErrCandidateConflict)
 		} else {
-			m.writeCandidateCommandFailure(w, r, operationID, deployment.ErrCandidateConflict)
+			m.writeCandidateCommandFailure(w, r, *operationID, deployment.ErrCandidateConflict)
 		}
 		return false
 	}
@@ -732,14 +734,18 @@ func (m *Module) validateExpectedCandidate(
 		candidateKey = "default"
 	}
 	if candidate.Key != candidateKey {
-		if operationID == "" {
+		if operationID == nil {
 			writeCandidateAPIError(w, r, deployment.ErrCandidateConflict)
 		} else {
-			m.writeCandidateCommandFailure(w, r, operationID, deployment.ErrCandidateConflict)
+			m.writeCandidateCommandFailure(w, r, *operationID, deployment.ErrCandidateConflict)
 		}
 		return false
 	}
 	return true
+}
+
+func deploymentCommandOperation(operationID deploymentgen.GenCommandOperationID) *deploymentgen.GenCommandOperationID {
+	return &operationID
 }
 
 func candidateSourceContentDigest(identity string) string {

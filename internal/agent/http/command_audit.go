@@ -11,12 +11,12 @@ import (
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 )
 
-const (
-	createAgentConversationOperation  = "createAgentConversation"
-	archiveAgentConversationOperation = "archiveAgentConversation"
-	updateAgentConversationOperation  = "updateAgentConversation"
-	createAgentRunOperation           = "createAgentRun"
-	cancelAgentRunOperation           = "cancelAgentRun"
+var (
+	createAgentConversationOperation  = agentgen.GenCommandOperationCreateAgentConversation()
+	archiveAgentConversationOperation = agentgen.GenCommandOperationArchiveAgentConversation()
+	updateAgentConversationOperation  = agentgen.GenCommandOperationUpdateAgentConversation()
+	createAgentRunOperation           = agentgen.GenCommandOperationCreateAgentRun()
+	cancelAgentRunOperation           = agentgen.GenCommandOperationCancelAgentRun()
 )
 
 // CommandAuditInput identifies one successfully completed agent command.
@@ -31,11 +31,12 @@ type CommandAuditInput struct {
 
 func (h *Handler) recordCommandAudit(
 	r *stdhttp.Request,
-	operationID string,
+	operationID agentgen.GenCommandOperationID,
 	scope agent.Scope,
 	targetType string,
 	targetID string,
 ) {
+	operationIDValue := operationID.APIGenOperationID()
 	if h == nil || h.options.RecordCommandAudit == nil {
 		return
 	}
@@ -50,13 +51,13 @@ func (h *Handler) recordCommandAudit(
 	}
 	executor, err := apigencommand.NewExecutor(agentgen.GetAPIGenCommandRuntimeContract, logger)
 	if err != nil {
-		logger.ErrorContext(r.Context(), "agent command contract executor is unavailable", "operation_id", operationID, "error", err)
+		logger.ErrorContext(r.Context(), "agent command contract executor is unavailable", "operation_id", operationIDValue, "error", err)
 		return
 	}
-	err = executor.Execute(r.Context(), operationID, apigencommand.Execution{
+	err = executor.Execute(r.Context(), operationIDValue, apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
 			return h.options.RecordCommandAudit(ctx, CommandAuditInput{
-				OperationID: operationID, Scope: scope,
+				OperationID: operationIDValue, Scope: scope,
 				TargetType: strings.TrimSpace(targetType), TargetID: strings.TrimSpace(targetID),
 				RequestID: requestID, CorrelationID: correlationID,
 			})
@@ -70,7 +71,7 @@ func (h *Handler) recordCommandAudit(
 		},
 	})
 	if err != nil {
-		logger.ErrorContext(r.Context(), "agent command contract execution failed", "operation_id", operationID, "error", err)
+		logger.ErrorContext(r.Context(), "agent command contract execution failed", "operation_id", operationIDValue, "error", err)
 	}
 }
 
