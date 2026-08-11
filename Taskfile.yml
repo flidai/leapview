@@ -186,6 +186,7 @@ tasks:
   ci:test:frontend:core:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
+      - bun test scripts/ensure_playwright.test.ts
       - bun run test:primer-primitives
       - bun run test:primer-alignment
       - bun run test:theme
@@ -792,6 +793,18 @@ tasks:
     cmds:
       - task: apigen:test
       - task: test:go:prepared
+
+  ci:lane:go:packages:
+    desc: Run generated API and non-application Go package tests
+    cmds:
+      - task: apigen:test
+      - task: test:go:packages
+
+  ci:lane:go:application:
+    desc: Run sharded application and external-service Go tests
+    cmds:
+      - task: test:go:app:shards
+      - task: test:go:external
 
   ci:lane:frontend:
     desc: Run the bounded frontend and browser-contract lane

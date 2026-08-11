@@ -92,6 +92,11 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
 
+      - name: Populate main-branch Bun cache
+        run: |
+          bun install --frozen-lockfile
+          bun install --cwd desktop --frozen-lockfile
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:

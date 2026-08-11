@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  go-validation:
-    name: Go tests (nightly)
+  go-packages-validation:
+    name: Go package tests (nightly)
     if: github.repository == 'flidai/leapview'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -33,11 +33,34 @@ jobs:
       - name: Prepare generated and embedded assets
         run: task ci:prepare
 
-      - name: Run Go validation
-        run: task ci:lane:go
+      - name: Run Go package validation
+        run: task ci:lane:go:packages
 
       - name: Verify generated artifacts
         run: task generated:check
+
+  go-application-validation:
+    name: Go application tests (nightly)
+    if: github.repository == 'flidai/leapview'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Prepare generated and embedded assets
+        run: task ci:prepare
+
+      - name: Run Go application validation
+        run: task ci:lane:go:application
 
   frontend-validation:
     name: Frontend tests (nightly)
@@ -68,7 +91,7 @@ jobs:
   full-validation:
     name: Full nightly validation
     if: github.repository == 'flidai/leapview'
-    needs: [go-validation, frontend-validation]
+    needs: [go-packages-validation, go-application-validation, frontend-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -113,18 +136,19 @@ jobs:
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [go-validation, frontend-validation, full-validation, security-validation]
+    needs: [go-packages-validation, go-application-validation, frontend-validation, full-validation, security-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require exhaustive nightly validation
         env:
-          GO_RESULT: ${{ needs.go-validation.result }}
+          GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}
+          GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
           FULL_RESULT: ${{ needs.full-validation.result }}
           SECURITY_RESULT: ${{ needs.security-validation.result }}
         run: |
-          for result in "${GO_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}"; do
+          for result in "${GO_PACKAGES_RESULT}" "${GO_APPLICATION_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}"; do
             test "${result}" = success || {
               printf 'Nightly validation result: %s\n' "${result}" >&2
               exit 1

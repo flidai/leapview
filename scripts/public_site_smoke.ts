@@ -68,6 +68,7 @@ export interface PublicSiteSmokeOptions {
   allowHTTP?: boolean
   verifyArtifacts?: boolean
   fetch?: typeof fetch
+  requestTimeoutMs?: number
 }
 
 function normalizedOrigin(raw: string): string {
@@ -78,10 +79,19 @@ function normalizedOrigin(raw: string): string {
   return url.origin
 }
 
-async function successfulResponse(fetcher: typeof fetch, url: string, init?: RequestInit): Promise<Response> {
+async function successfulResponse(
+  fetcher: typeof fetch,
+  url: string,
+  requestTimeoutMs: number,
+  init?: RequestInit,
+): Promise<Response> {
   let response: Response
   try {
-    response = await fetcher(url, { redirect: 'follow', ...init })
+    response = await fetcher(url, {
+      redirect: 'follow',
+      ...init,
+      signal: init?.signal ?? AbortSignal.timeout(requestTimeoutMs),
+    })
   } catch (error) {
     throw new Error(`request failed for ${url}: ${error instanceof Error ? error.message : String(error)}`)
   }
@@ -94,13 +104,15 @@ async function successfulResponse(fetcher: typeof fetch, url: string, init?: Req
 
 export async function verifyPublicSite(options: PublicSiteSmokeOptions): Promise<void> {
   const fetcher = options.fetch ?? fetch
+  const requestTimeoutMs = options.requestTimeoutMs ?? 15_000
+  const request = (url: string, init?: RequestInit) => successfulResponse(fetcher, url, requestTimeoutMs, init)
   const baseURL = normalizedOrigin(options.baseURL)
   if (!options.allowHTTP && new URL(baseURL).protocol !== 'https:') {
     throw new Error(`public site must use HTTPS: ${baseURL}`)
   }
 
   for (const alias of options.aliases ?? []) {
-    const response = await successfulResponse(fetcher, alias)
+    const response = await request(alias)
     const finalURL = new URL(response.url)
     await response.body?.cancel()
     if (finalURL.origin !== baseURL || finalURL.pathname !== '/') {
@@ -109,20 +121,20 @@ export async function verifyPublicSite(options: PublicSiteSmokeOptions): Promise
   }
 
   for (const path of ['/healthz', '/readyz']) {
-    const response = await successfulResponse(fetcher, baseURL + path)
+    const response = await request(baseURL + path)
     const body = (await response.text()).trim()
     if (body !== 'ok') {
       throw new Error(`${path} returned ${JSON.stringify(body)}, want "ok"`)
     }
   }
 
-  const manifestResponse = await successfulResponse(fetcher, baseURL + '/release.json')
+  const manifestResponse = await request(baseURL + '/release.json')
   const deployedRelease = (await manifestResponse.json()) as PublicReleaseManifest
   if (!isDeepStrictEqual(deployedRelease, options.expectedRelease)) {
     throw new Error('deployed /release.json does not match docs/public-release.json')
   }
 
-  const installationResponse = await successfulResponse(fetcher, baseURL + '/docs/installation')
+  const installationResponse = await request(baseURL + '/docs/installation')
   const installation = await installationResponse.text()
   const requiredValues = [
     options.expectedRelease.version,
@@ -138,12 +150,12 @@ export async function verifyPublicSite(options: PublicSiteSmokeOptions): Promise
     }
   }
 
-  const desktopManifestResponse = await successfulResponse(fetcher, baseURL + '/desktop-release.json')
+  const desktopManifestResponse = await request(baseURL + '/desktop-release.json')
   const deployedDesktopRelease = (await desktopManifestResponse.json()) as DesktopReleaseManifest
   if (!isDeepStrictEqual(deployedDesktopRelease, options.expectedDesktopRelease)) {
     throw new Error('deployed /desktop-release.json does not match docs/desktop-release.json')
   }
-  const desktopPageResponse = await successfulResponse(fetcher, baseURL + '/download')
+  const desktopPageResponse = await request(baseURL + '/download')
   const desktopPage = await desktopPageResponse.text()
   if (options.expectedDesktopRelease.status === 'preparing') {
     if (
@@ -179,7 +191,7 @@ export async function verifyPublicSite(options: PublicSiteSmokeOptions): Promise
   if (options.verifyArtifacts !== false) {
     for (const artifact of options.expectedRelease.artifacts) {
       for (const url of [artifact.archiveUrl, artifact.checksumUrl]) {
-        const response = await successfulResponse(fetcher, url, { headers: { Range: 'bytes=0-0' } })
+        const response = await request(url, { headers: { Range: 'bytes=0-0' } })
         await response.body?.cancel()
       }
     }
@@ -191,7 +203,7 @@ export async function verifyPublicSite(options: PublicSiteSmokeOptions): Promise
           artifact.provenanceUrl,
           artifact.sbomUrl,
         ]) {
-          const response = await successfulResponse(fetcher, url, { headers: { Range: 'bytes=0-0' } })
+          const response = await request(url, { headers: { Range: 'bytes=0-0' } })
           await response.body?.cancel()
         }
       }

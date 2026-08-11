@@ -1,7 +1,10 @@
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
-import { chromium } from '@playwright/test'
+
+if (process.env.LEAPVIEW_PLAYWRIGHT_READY === '1') process.exit(0)
+
+const { chromium } = await import('@playwright/test')
 
 const executable = chromium.executablePath()
 
