@@ -3,22 +3,22 @@ package control
 
 import (
 	"context"
-	"errors"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/platform/jobs"
 )
 
 var (
-	ErrInvalid    = errors.New("invalid managed data request")
-	ErrNotFound   = errors.New("managed data resource not found")
-	ErrConflict   = errors.New("managed data conflict")
-	ErrIncomplete = errors.New("managed data upload is incomplete")
-	ErrExpired    = errors.New("managed data upload has expired")
-	ErrIntegrity  = errors.New("managed data integrity check failed")
-	ErrBackend    = errors.New("managed data storage is unavailable")
-	ErrInternal   = errors.New("managed data service failed")
+	ErrInvalid    = apigenfailure.New("invalid", "invalid managed data request")
+	ErrNotFound   = apigenfailure.New("not_found", "managed data resource not found")
+	ErrConflict   = apigenfailure.New("conflict", "managed data conflict")
+	ErrIncomplete = apigenfailure.New("incomplete", "managed data upload is incomplete")
+	ErrExpired    = apigenfailure.New("expired", "managed data upload has expired")
+	ErrIntegrity  = apigenfailure.New("integrity", "managed data integrity check failed")
+	ErrBackend    = apigenfailure.New("backend", "managed data storage is unavailable")
+	ErrInternal   = apigenfailure.New("internal", "managed data service failed")
 )
 
 type Repository interface {

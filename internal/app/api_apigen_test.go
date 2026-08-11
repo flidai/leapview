@@ -3,8 +3,11 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -51,8 +54,6 @@ func (r apiSnapshotWorkspaceRepository) AssetVersions(context.Context, workspace
 }
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
-	const apigenVersion = "v0.7.3"
-
 	root := projectRoot(t)
 	manifest, err := os.ReadFile(filepath.Join(root, "api", "apigen.yaml"))
 	if err != nil {
@@ -110,14 +111,15 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"github.com/Yacobolo/toolbelt/apigen/cmd/apigen@" + apigenVersion + " typespec-compile",
-		"github.com/Yacobolo/toolbelt/apigen/cmd/apigen@" + apigenVersion + " all",
+		"github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile",
+		"github.com/Yacobolo/toolbelt/apigen/cmd/apigen all",
+		"go -C pkg/apigen test ./...",
 	} {
 		if !strings.Contains(taskText, want) {
 			t.Fatalf("Taskfile.yml missing generation command %q", want)
 		}
 	}
-	for _, forbidden := range []string{"cue-compile", "apigen@v0.2.0", "apigen@v0.3.0", "apigen@v0.3.2", "apigen@v0.3.3", "apigen@v0.4.0", "apigen@v0.5.0", "apigen@v0.5.1", "apigen@v0.5.2", "apigen@v0.5.3", "apigen@v0.6.0", "apigen@v0.6.1", "apigen@v0.6.2", "apigen@v0.6.3", "apigen@v0.6.4", "apigen@v0.6.5", "apigen@v0.7.0", "apigen@v0.7.1", "apigen@v0.7.2", "apigenpostprocess"} {
+	for _, forbidden := range []string{"cue-compile", "apigen@v0.2.0", "apigen@v0.3.0", "apigen@v0.3.2", "apigen@v0.3.3", "apigen@v0.4.0", "apigen@v0.5.0", "apigen@v0.5.1", "apigen@v0.5.2", "apigen@v0.5.3", "apigen@v0.6.0", "apigen@v0.6.1", "apigen@v0.6.2", "apigen@v0.6.3", "apigen@v0.6.4", "apigen@v0.6.5", "apigen@v0.7.0", "apigen@v0.7.1", "apigen@v0.7.2", "apigen@v0.7.3", "apigenpostprocess"} {
 		if strings.Contains(taskText, forbidden) {
 			t.Fatalf("Taskfile.yml should not contain superseded generator %q", forbidden)
 		}
@@ -126,8 +128,18 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read container source-generation script: %v", err)
 	}
-	if want := "APIGEN=github.com/Yacobolo/toolbelt/apigen/cmd/apigen@" + apigenVersion; !strings.Contains(string(buildSources), want) {
+	if want := "APIGEN=github.com/Yacobolo/toolbelt/apigen/cmd/apigen"; !strings.Contains(string(buildSources), want) {
 		t.Fatalf("container source-generation script missing APIGen pin %q", want)
+	}
+	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	if !strings.Contains(string(goMod), "replace github.com/Yacobolo/toolbelt/apigen => ./pkg/apigen") {
+		t.Fatal("go.mod does not select the vendored APIGen module")
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkg", "apigen", "UPSTREAM.md")); err != nil {
+		t.Fatalf("vendored APIGen provenance is missing: %v", err)
 	}
 	for _, want := range []string{
 		"typespec-compile -manifest api/apigen.yaml -target desktop-discovery-contracts",
@@ -1017,6 +1029,200 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		}
 		if _, ok := contract.Extensions["x-leapview-dispatch"]; ok {
 			t.Fatalf("%s should not have raw-body dispatch extension", operationID)
+		}
+	}
+}
+
+func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
+	rolesByPrivilege := make(map[access.Privilege][]string)
+	for _, role := range access.DefaultRoles() {
+		for _, privilege := range role.Privileges {
+			rolesByPrivilege[privilege] = append(rolesByPrivilege[privilege], role.Name)
+		}
+	}
+	for operationID, contract := range apiaggregate.GetAPIGenOperationContracts() {
+		switch contract.Kind {
+		case apiaggregate.GenOperationKindQuery:
+			if contract.Command != nil {
+				t.Errorf("query %s has command metadata: %#v", operationID, contract.Command)
+			}
+		case apiaggregate.GenOperationKindCommand:
+			command := contract.Command
+			if command == nil {
+				t.Errorf("command %s has no command metadata", operationID)
+				continue
+			}
+			if !command.Audit.Required || command.Audit.SuccessAction == "" {
+				t.Errorf("command %s does not require a stable success audit: %#v", operationID, command.Audit)
+			}
+			if command.Failures == nil {
+				t.Errorf("command %s did not explicitly declare its failure vocabulary", operationID)
+			}
+			runtimeFailures, ok := apiaggregate.GetAPIGenCommandFailureContracts(operationID)
+			if !ok {
+				t.Errorf("command %s has no generated runtime failure contract", operationID)
+			} else if len(runtimeFailures) != len(command.Failures) {
+				t.Errorf("command %s runtime failure count = %d, generated count = %d", operationID, len(runtimeFailures), len(command.Failures))
+			} else {
+				for index, failure := range command.Failures {
+					runtimeFailure := runtimeFailures[index]
+					if runtimeFailure.Kind != failure.Kind || runtimeFailure.StatusCode != failure.StatusCode || runtimeFailure.Code != failure.Code || runtimeFailure.PublicDetail != failure.PublicDetail {
+						t.Errorf("command %s runtime failure %#v differs from generated failure %#v", operationID, runtimeFailure, failure)
+					}
+					if !slices.Contains(contract.DocumentedStatusCodes, failure.StatusCode) {
+						t.Errorf("command %s failure %q status %d is not documented", operationID, failure.Kind, failure.StatusCode)
+					}
+				}
+			}
+			if command.Audit.Guarantee != "transactional" && command.Audit.Guarantee != "best-effort" {
+				t.Errorf("command %s has no supported audit guarantee: %#v", operationID, command.Audit)
+			}
+			runtimeContract, ok := apiaggregate.GetAPIGenCommandRuntimeContract(operationID)
+			if !ok {
+				t.Errorf("command %s has no generated runtime contract", operationID)
+			} else if err := runtimeContract.Validate(); err != nil {
+				t.Errorf("command %s runtime contract is invalid: %v", operationID, err)
+			} else if runtimeContract.OperationID != operationID || runtimeContract.Owner != command.Owner ||
+				runtimeContract.AuditAction != command.Audit.SuccessAction || string(runtimeContract.Guarantee) != command.Audit.Guarantee {
+				t.Errorf("command %s runtime contract %#v differs from generated metadata %#v", operationID, runtimeContract, command)
+			}
+			if command.AuthzMode != contract.AuthzMode {
+				t.Errorf("command %s authz mode %q differs from operation mode %q", operationID, command.AuthzMode, contract.AuthzMode)
+			}
+			if contract.Method == http.MethodPost && command.Idempotency != "required" {
+				t.Errorf("POST command %s idempotency = %q", operationID, command.Idempotency)
+			}
+			if contract.Method == http.MethodPatch && command.Concurrency != "if-match" {
+				t.Errorf("PATCH command %s concurrency = %q", operationID, command.Concurrency)
+			}
+			if command.Target != nil && !strings.Contains(contract.Path, "{"+command.Target.Parameter+"}") {
+				t.Errorf("command %s target %#v is absent from %s", operationID, command.Target, contract.Path)
+			}
+			if command.AuthzMode == "privilege" {
+				privilege, ok := access.ParsePrivilege(command.Privilege)
+				if !ok {
+					t.Errorf("command %s has unknown privilege %q", operationID, command.Privilege)
+					continue
+				}
+				if len(rolesByPrivilege[privilege]) == 0 {
+					t.Errorf("command %s privilege %q is not granted by any authored role", operationID, privilege)
+				}
+			}
+		default:
+			t.Errorf("operation %s has no normalized command/query kind: %q", operationID, contract.Kind)
+		}
+	}
+}
+
+func TestAPIGenAsyncExecutionContractsAreGeneratedEndToEnd(t *testing.T) {
+	contracts := apiaggregate.GetAPIGenOperationContracts()
+	starters := make([]string, 0)
+	controls := make([]string, 0)
+	for operationID, operation := range contracts {
+		accepted := slices.Contains(operation.DocumentedStatusCodes, http.StatusAccepted)
+		if operation.Command == nil {
+			if accepted {
+				t.Errorf("non-command operation %q documents 202 Accepted", operationID)
+			}
+			continue
+		}
+		if operation.Command.Execution == nil {
+			if accepted {
+				controls = append(controls, operationID)
+			}
+			continue
+		}
+		starters = append(starters, operationID)
+		if !accepted {
+			t.Errorf("async starter %q does not document 202 Accepted", operationID)
+		}
+		runtimeContract, ok := apiaggregate.GetAPIGenCommandRuntimeContract(operationID)
+		if !ok || runtimeContract.Execution == nil {
+			t.Fatalf("async operation %q has no runtime execution contract", operationID)
+		}
+		generated, runtime := operation.Command.Execution, runtimeContract.Execution
+		if generated.Mode != runtime.Mode || generated.Guarantee != runtime.Guarantee || generated.JobKind != runtime.JobKind || generated.ResourceKind != runtime.ResourceKind ||
+			generated.InitialEvent != runtime.InitialEvent || generated.InitialState != runtime.InitialState ||
+			generated.StatusOperation != runtime.StatusOperation || generated.EventsOperation != runtime.EventsOperation ||
+			generated.Cancellation != runtime.Cancellation {
+			t.Errorf("async operation %q runtime contract %#v differs from generated metadata %#v", operationID, runtime, generated)
+		}
+		if generated.Guarantee != "transactional" {
+			t.Errorf("async operation %q execution guarantee = %q, want transactional", operationID, generated.Guarantee)
+		}
+		for role, referencedOperationID := range map[string]string{
+			"status": generated.StatusOperation,
+			"events": generated.EventsOperation,
+		} {
+			referenced, ok := contracts[referencedOperationID]
+			if !ok {
+				t.Errorf("async operation %q %s operation %q does not exist", operationID, role, referencedOperationID)
+				continue
+			}
+			if referenced.Kind != apiaggregate.GenOperationKindQuery || referenced.Method != http.MethodGet {
+				t.Errorf("async operation %q %s operation %q is %s %s, want GET query", operationID, role, referencedOperationID, referenced.Method, referenced.Kind)
+			}
+		}
+	}
+	sort.Strings(starters)
+	sort.Strings(controls)
+	wantStarters := []string{
+		"activateDeployment",
+		"createAgentRun",
+		"createDeployment",
+		"createRefreshRun",
+		"finalizeManagedDataUploadSession",
+		"finalizeRelease",
+		"publishProjectCandidate",
+		"retryDeployment",
+		"rollbackDeployment",
+	}
+	wantControls := []string{"cancelAgentRun", "cancelDeployment", "cancelRefreshRun"}
+	if !slices.Equal(starters, wantStarters) {
+		t.Errorf("async starters = %v, want %v", starters, wantStarters)
+	}
+	if !slices.Equal(controls, wantControls) {
+		t.Errorf("synchronous controls returning 202 = %v, want %v", controls, wantControls)
+	}
+}
+
+func TestRoleBindingOperationsPublishTransportNeutralCommandContract(t *testing.T) {
+	contracts := accessgen.GetAPIGenOperationContracts()
+	expected := map[access.OperationID]struct {
+		audit       string
+		idempotency string
+		concurrency string
+	}{
+		access.OperationCreateRoleBinding: {audit: "role_binding.created", idempotency: "required"},
+		access.OperationUpdateRoleBinding: {audit: "role_binding.updated", concurrency: "if-match"},
+		access.OperationDeleteRoleBinding: {audit: "role_binding.deleted"},
+	}
+	for operationID, want := range expected {
+		contract, ok := contracts[string(operationID)]
+		if !ok {
+			t.Fatalf("operation %q is not generated", operationID)
+		}
+		if contract.Namespace != "LeapViewAPI.Access" || contract.Command == nil {
+			t.Fatalf("operation %q typed contract = %#v", operationID, contract)
+		}
+		command := contract.Command
+		if command.Owner != "LeapViewAPI.Access" || !command.Audit.Required || command.Audit.SuccessAction != want.audit {
+			t.Errorf("operation %q audit/owner contract = %#v", operationID, command)
+		}
+		if command.Target == nil || command.Target.Type != "workspace" || command.Target.Parameter != "workspace" {
+			t.Errorf("operation %q target = %#v", operationID, command.Target)
+		}
+		if command.AuthzMode != "privilege" || command.Privilege != string(access.PrivilegeManageGrants) {
+			t.Errorf("operation %q authorization = %#v", operationID, command)
+		}
+		if command.Idempotency != want.idempotency || command.Concurrency != want.concurrency {
+			t.Errorf("operation %q transport policies = %#v", operationID, command)
+		}
+		if len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != accessgen.GenOperationSurfaceUI {
+			t.Errorf("operation %q additional exposures = %v", operationID, command.AdditionalExposures)
+		}
+		if _, legacy := contract.Extensions["x-leapview-operation"]; legacy {
+			t.Errorf("operation %q retained the legacy generic extension", operationID)
 		}
 	}
 }

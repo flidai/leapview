@@ -10,8 +10,11 @@ import (
 	"strings"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
@@ -22,9 +25,9 @@ import (
 )
 
 var (
-	ErrPublicationForbidden = errors.New("publication deployment forbidden")
-	ErrApprovalForbidden    = errors.New("deployment approval forbidden")
-	ErrActivationForbidden  = errors.New("deployment activation forbidden")
+	ErrPublicationForbidden = apigenfailure.New("publication_forbidden", "publication deployment forbidden")
+	ErrApprovalForbidden    = apigenfailure.New("approval_forbidden", "deployment approval forbidden")
+	ErrActivationForbidden  = apigenfailure.New("activation_forbidden", "deployment activation forbidden")
 )
 
 type PageParams = deploymentapi.PageParams
@@ -47,9 +50,10 @@ type JobStore interface {
 }
 
 type APIConfig struct {
-	Releases ReleasePort
-	Jobs     JobStore
-	Workflow jobs.WorkflowRecorder
+	Releases  ReleasePort
+	Jobs      JobStore
+	Workflow  jobs.WorkflowRecorder
+	Committer jobs.WorkflowCommitter
 }
 
 func (m *Module) CreateDeployment(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
@@ -58,10 +62,16 @@ func (m *Module) CreateDeployment(w http.ResponseWriter, r *http.Request, projec
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", err.Error(), nil)
 		return
 	}
-	m.createDeployment(w, r, project, body.ReleaseID, idempotencyKey, "")
+	m.createDeployment(w, r, deploymentgen.GenCommandOperationCreateDeployment(), project, body.ReleaseID, idempotencyKey, "")
 }
 
-func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, project, releaseID, idempotencyKey, rollbackOf string) {
+func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, project, releaseID, idempotencyKey, rollbackOf string) {
+	operationIDValue := operationID.APIGenOperationID()
+	execution, err := m.execution(operationIDValue)
+	if err != nil {
+		m.writeCommandFailure(w, r, operationID, err)
+		return
+	}
 	principal, ok := m.principal(r)
 	if !ok {
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
@@ -71,21 +81,21 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, projec
 	if m.protected {
 		approvalActor, ok = m.approvalActor(r, principal.ID)
 		if !ok {
-			apitransport.WriteProblem(w, r, http.StatusUnauthorized, "APPROVAL_CREDENTIAL_REQUIRED", "A bounded publication credential is required", nil)
+			m.writeCommandFailure(w, r, operationID, apigenfailure.New("approval_credential_required", "A bounded publication credential is required"))
 			return
 		}
 	}
 	if m.jobs.Coordinator == nil || m.api.Releases == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "DEPLOYMENT_SERVICE_UNAVAILABLE", "Deployment service is unavailable", nil)
+		m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Deployment service is unavailable"))
 		return
 	}
 	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
 	if targetRelease.Status != release.StatusReady {
-		apitransport.WriteProblem(w, r, http.StatusConflict, "RELEASE_NOT_READY", "Only ready releases can be deployed", nil)
+		m.writeCommandFailure(w, r, operationID, apigenfailure.New("release_not_ready", "Only ready releases can be deployed"))
 		return
 	}
 	evidence, err := publishEvidence(
@@ -94,13 +104,13 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, projec
 		m.handlerEnvironment(),
 	)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
 	targets := make([]apiadapter.TargetRequest, 0, len(targetRelease.Artifacts))
 	for _, artifact := range targetRelease.Artifacts {
 		if artifact.ServingStateID == "" {
-			apitransport.WriteProblem(w, r, http.StatusConflict, "RELEASE_INCOMPLETE", "Release is missing a workspace artifact", nil)
+			m.writeCommandFailure(w, r, operationID, apigenfailure.New("release_incomplete", "Release is missing a workspace artifact"))
 			return
 		}
 		targets = append(targets, apiadapter.TargetRequest{Workspace: artifact.WorkspaceID, CandidateID: artifact.ServingStateID})
@@ -108,10 +118,10 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, projec
 	if !m.protected && m.jobs.Authorize != nil {
 		if err := m.jobs.Authorize(r.Context(), principal.ID, m.handlerEnvironment(), targets); err != nil {
 			if errors.Is(err, ErrPublicationForbidden) {
-				apitransport.WriteProblem(w, r, http.StatusForbidden, "PUBLICATION_MANAGEMENT_REQUIRED", "MANAGE_PUBLICATIONS is required to activate a workspace containing a public dashboard publication", nil)
+				m.writeCommandFailure(w, r, operationID, err)
 				return
 			}
-			apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "AUTHORIZATION_UNAVAILABLE", "Publication activation authorization could not be evaluated", nil)
+			m.writeCommandFailure(w, r, operationID, apigenfailure.Wrap("authorization_unavailable", err))
 			return
 		}
 	}
@@ -119,21 +129,21 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, projec
 		Project: project, Environment: m.handlerEnvironment(), Targets: targets, Actor: principal.ID, IdempotencyKey: idempotencyKey,
 		ReleaseID: releaseID, Evidence: evidence, RollbackOf: rollbackOf,
 	}
-	if !m.protected {
-		createRequest.Workflow = func(deploymentID string) jobs.WorkflowIntent {
-			return activationWorkflow(
-				project,
-				deploymentID,
-				releaseID,
-				deployment.ApprovalActor{PrincipalID: principal.ID},
-				deployment.Approval{},
-				idempotencyKey+":cutover",
-			)
-		}
+	createRequest.Workflow = func(deploymentID string) jobs.WorkflowIntent {
+		return activationWorkflow(
+			execution,
+			!m.protected,
+			project,
+			deploymentID,
+			releaseID,
+			deployment.ApprovalActor{PrincipalID: principal.ID},
+			deployment.Approval{},
+			idempotencyKey+":cutover",
+		)
 	}
 	created, err := m.jobs.Coordinator.Create(r.Context(), createRequest)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
 	response := deploymentResponse(created, targetRelease)
@@ -145,12 +155,13 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, projec
 			approvalActor,
 		)
 		if approvalErr != nil {
-			writeAPIError(w, r, approvalErr)
+			m.writeCommandFailure(w, r, operationID, approvalErr)
 			return
 		}
 		mapped := approvalResponse(approval)
 		response.Approval = &mapped
 	}
+	m.completePersistedExecution(r.Context(), operationIDValue, created.ID)
 	w.Header().Set("Location", deploymentLocation(project, created.ID))
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
 }
@@ -285,30 +296,34 @@ func (m *Module) ListDeployments(w http.ResponseWriter, r *http.Request, project
 }
 
 func (m *Module) CancelDeployment(w http.ResponseWriter, r *http.Request, project, deploymentID string) {
+	operationID := deploymentgen.GenCommandOperationCancelDeployment()
 	if m.jobs.Coordinator == nil || m.api.Releases == nil || m.api.Jobs == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "DEPLOYMENT_SERVICE_UNAVAILABLE", "Deployment service is unavailable", nil)
+		m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Deployment service is unavailable"))
 		return
 	}
 	releaseID, _, err := m.api.Releases.DeploymentRelease(r.Context(), project, deploymentID)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
 	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
 	if err := m.api.Jobs.Cancel(r.Context(), "deployment:"+deploymentID+":activate"); err != nil && !errors.Is(err, jobs.ErrConflict) {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE", "Deployment cancellation could not be persisted", nil)
+		m.writeCommandFailure(w, r, operationID, apigenfailure.Wrap("queue_unavailable", err))
 		return
 	}
 	row, err := m.jobs.Coordinator.Cancel(r.Context(), apiadapter.Scope{Project: project, DeploymentID: deploymentID})
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	_ = m.appendAPIEvent(r.Context(), deploymentID, "deployment.cancelled", map[string]any{"deploymentId": deploymentID, "status": "cancelled"})
+	m.recordBestEffortAPIEvent(
+		r.Context(), operationID.APIGenOperationID(), deploymentID,
+		deploymentCancelledAuditAction, map[string]any{"deploymentId": deploymentID, "status": "cancelled"},
+	)
 	w.Header().Set("Location", deploymentLocation(project, deploymentID))
 	apitransport.WriteJSON(w, http.StatusAccepted, deploymentResponse(row, targetRelease))
 }
@@ -320,8 +335,9 @@ func (m *Module) RetryDeployment(
 	deploymentID,
 	idempotencyKey string,
 ) {
+	operationID := deploymentgen.GenCommandOperationRetryDeployment()
 	if m.jobs.Coordinator == nil || m.api.Releases == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "DEPLOYMENT_SERVICE_UNAVAILABLE", "Deployment service is unavailable", nil)
+		m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Deployment service is unavailable"))
 		return
 	}
 	releaseID, _, err := m.api.Releases.DeploymentRelease(
@@ -330,7 +346,7 @@ func (m *Module) RetryDeployment(
 		deploymentID,
 	)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
 	row, err := m.jobs.Coordinator.Get(
@@ -338,7 +354,7 @@ func (m *Module) RetryDeployment(
 		apiadapter.Scope{Project: project, DeploymentID: deploymentID},
 	)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
 	retryable := row.Status == apiadapter.StatusFailed ||
@@ -354,9 +370,10 @@ func (m *Module) RetryDeployment(
 		}
 	}
 	if !retryable {
-		writeAPIError(
+		m.writeCommandFailure(
 			w,
 			r,
+			operationID,
 			fmt.Errorf(
 				"%w: deployment is %s and cannot be retried",
 				deployment.ErrConflict,
@@ -365,20 +382,21 @@ func (m *Module) RetryDeployment(
 		)
 		return
 	}
-	m.createDeployment(w, r, project, releaseID, idempotencyKey, "")
+	m.createDeployment(w, r, deploymentgen.GenCommandOperationRetryDeployment(), project, releaseID, idempotencyKey, "")
 }
 
 func (m *Module) RollbackDeployment(w http.ResponseWriter, r *http.Request, project, deploymentID, idempotencyKey string) {
+	operationID := deploymentgen.GenCommandOperationRollbackDeployment()
 	if m.api.Releases == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "DEPLOYMENT_SERVICE_UNAVAILABLE", "Deployment service is unavailable", nil)
+		m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Deployment service is unavailable"))
 		return
 	}
 	releaseID, err := m.api.Releases.PriorDeploymentRelease(r.Context(), project, deploymentID)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	m.createDeployment(w, r, project, releaseID, idempotencyKey, deploymentID)
+	m.createDeployment(w, r, deploymentgen.GenCommandOperationRollbackDeployment(), project, releaseID, idempotencyKey, deploymentID)
 }
 
 func (m *Module) RequestDeploymentApproval(
@@ -395,18 +413,22 @@ func (m *Module) RequestDeploymentApproval(
 	}
 	actor, ok := m.approvalActor(r, principal.ID)
 	if !ok {
-		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "APPROVAL_CREDENTIAL_REQUIRED", "A bounded publication credential is required", nil)
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeploymentApproval(), apigenfailure.New("approval_credential_required", "A bounded publication credential is required"))
 		return
 	}
-	row, releaseID, ok := m.approvalDeployment(w, r, project, deploymentID)
+	row, releaseID, ok := m.approvalDeployment(w, r, project, deploymentID, deploymentgen.GenCommandOperationRequestDeploymentApproval())
 	if !ok {
 		return
 	}
 	approval, err := m.requestApproval(r.Context(), row, releaseID, actor)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeploymentApproval(), err)
 		return
 	}
+	m.recordBestEffortAPIEvent(r.Context(), deploymentgen.GenCommandOperationRequestDeploymentApproval().APIGenOperationID(), deploymentID, deploymentApprovalRequestedAuditAction, map[string]any{
+		"deploymentId": deploymentID,
+		"approvalId":   approval.ID,
+	})
 	w.Header().Set("Location", approvalLocation(project, deploymentID, approval.ID))
 	apitransport.WriteJSON(w, http.StatusCreated, approvalResponse(approval))
 }
@@ -458,23 +480,26 @@ func (m *Module) ActivateDeployment(
 	}
 	actor, ok := m.approvalActor(r, principal.ID)
 	if !ok {
-		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "ACTIVATION_CREDENTIAL_REQUIRED", "A bounded activation credential is required", nil)
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.New("approval_credential_required", "A bounded activation credential is required"))
 		return
 	}
-	row, releaseID, ok := m.approvalDeployment(w, r, project, deploymentID)
+	row, releaseID, ok := m.approvalDeployment(w, r, project, deploymentID, deploymentgen.GenCommandOperationActivateDeployment())
 	if !ok {
 		return
 	}
 	approval, err := m.authorizeApprovedActivation(r.Context(), row, releaseID, actor)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), err)
 		return
 	}
-	if m.api.Jobs == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE", "Deployment activation queue is unavailable", nil)
+	execution, err := m.execution(deploymentgen.GenCommandOperationActivateDeployment().APIGenOperationID())
+	if err != nil {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), err)
 		return
 	}
 	workflow := activationWorkflow(
+		execution,
+		true,
 		project,
 		deploymentID,
 		releaseID,
@@ -482,24 +507,23 @@ func (m *Module) ActivateDeployment(
 		approval,
 		idempotencyKey,
 	)
-	if _, err := m.api.Jobs.Enqueue(r.Context(), workflow.Job); err != nil &&
-		!errors.Is(err, jobs.ErrConflict) {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE", "Deployment activation could not be persisted", nil)
+	if m.api.Committer == nil {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.New("queue_unavailable", "Deployment activation queue is unavailable"))
 		return
 	}
-	_ = m.appendAPIEvent(r.Context(), deploymentID, "deployment.activation_requested", map[string]any{
-		"deploymentId":     deploymentID,
-		"approvalId":       approval.ID,
-		"approvalRevision": approval.Revision,
-	})
+	if err := m.api.Committer.CommitWorkflow(r.Context(), workflow); err != nil && !errors.Is(err, jobs.ErrConflict) {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.Wrap("queue_unavailable", err))
+		return
+	}
 	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), err)
 		return
 	}
 	response := deploymentResponse(row, targetRelease)
 	mapped := approvalResponse(approval)
 	response.Approval = &mapped
+	m.completePersistedExecution(r.Context(), deploymentgen.GenCommandOperationActivateDeployment().APIGenOperationID(), deploymentID)
 	w.Header().Set("Location", deploymentLocation(project, deploymentID))
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
 }
@@ -571,10 +595,11 @@ func (m *Module) approvalDeployment(
 	r *http.Request,
 	project,
 	deploymentID string,
+	operationID deploymentgen.GenCommandOperationID,
 ) (apiadapter.Deployment, string, bool) {
 	if m == nil || m.approvals == nil ||
 		m.jobs.Coordinator == nil || m.api.Releases == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "DEPLOYMENT_APPROVAL_UNAVAILABLE", "Deployment approvals are unavailable", nil)
+		m.writeCommandFailure(w, r, operationID, apigenfailure.New("approval_unavailable", "Deployment approvals are unavailable"))
 		return apiadapter.Deployment{}, "", false
 	}
 	releaseID, _, err := m.api.Releases.DeploymentRelease(
@@ -583,7 +608,7 @@ func (m *Module) approvalDeployment(
 		deploymentID,
 	)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return apiadapter.Deployment{}, "", false
 	}
 	row, err := m.jobs.Coordinator.Get(
@@ -591,13 +616,14 @@ func (m *Module) approvalDeployment(
 		apiadapter.Scope{Project: project, DeploymentID: deploymentID},
 	)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return apiadapter.Deployment{}, "", false
 	}
 	if row.Status != apiadapter.StatusPending {
-		writeAPIError(
+		m.writeCommandFailure(
 			w,
 			r,
+			operationID,
 			fmt.Errorf(
 				"%w: deployment is %s",
 				deployment.ErrConflict,
@@ -616,16 +642,21 @@ func (m *Module) requestApproval(
 	actor deployment.ApprovalActor,
 ) (deployment.Approval, error) {
 	if m == nil || m.approvals == nil {
-		return deployment.Approval{}, errors.New(
-			"deployment approvals are unavailable",
-		)
+		return deployment.Approval{}, apigenfailure.New("approval_unavailable", "deployment approvals are unavailable")
 	}
-	return m.approvals.Request(ctx, deployment.ApprovalRequest{
+	approval, err := m.approvals.Request(ctx, deployment.ApprovalRequest{
 		ProjectID: row.Project, DeploymentID: row.ID,
 		Environment:   row.Environment,
 		RequestDigest: row.RequestDigest,
 		ReleaseID:     releaseID, RequestedBy: actor,
 	})
+	if err != nil {
+		if _, classified := apigenfailure.KindOf(err); !classified {
+			err = apigenfailure.Wrap("approval_unavailable", err)
+		}
+		return deployment.Approval{}, err
+	}
+	return approval, nil
 }
 
 type approvalDecision uint8
@@ -636,6 +667,17 @@ const (
 	approvalDecisionRevoke
 )
 
+func operationIDForDecision(decision approvalDecision) deploymentgen.GenCommandOperationID {
+	switch decision {
+	case approvalDecisionApprove:
+		return deploymentgen.GenCommandOperationApproveDeployment()
+	case approvalDecisionDeny:
+		return deploymentgen.GenCommandOperationDenyDeploymentApproval()
+	default:
+		return deploymentgen.GenCommandOperationRevokeDeploymentApproval()
+	}
+}
+
 func (m *Module) transitionApproval(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -644,6 +686,7 @@ func (m *Module) transitionApproval(
 	approvalID string,
 	decision approvalDecision,
 ) {
+	operationID := operationIDForDecision(decision)
 	var body deploymentapi.ApprovalDecisionRequest
 	if err := apitransport.DecodeBody(w, r, &body); err != nil {
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", err.Error(), nil)
@@ -656,10 +699,10 @@ func (m *Module) transitionApproval(
 	}
 	actor, ok := m.approvalActor(r, principal.ID)
 	if !ok {
-		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "APPROVAL_CREDENTIAL_REQUIRED", "A bounded approval credential is required", nil)
+		m.writeCommandFailure(w, r, operationID, apigenfailure.New("approval_credential_required", "A bounded approval credential is required"))
 		return
 	}
-	if _, _, ok := m.approvalDeployment(w, r, project, deploymentID); !ok {
+	if _, _, ok := m.approvalDeployment(w, r, project, deploymentID, operationID); !ok {
 		return
 	}
 	transition := deployment.ApprovalTransition{
@@ -683,17 +726,17 @@ func (m *Module) transitionApproval(
 		err = deployment.ErrApprovalInvalid
 	}
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	eventType := "deployment.approval_revoked"
+	eventType := deploymentApprovalRevokedAuditAction
 	switch decision {
 	case approvalDecisionApprove:
-		eventType = "deployment.approved"
+		eventType = deploymentApprovedAuditAction
 	case approvalDecisionDeny:
-		eventType = "deployment.denied"
+		eventType = deploymentDeniedAuditAction
 	}
-	_ = m.appendAPIEvent(r.Context(), deploymentID, eventType, map[string]any{
+	m.recordBestEffortAPIEvent(r.Context(), operationID.APIGenOperationID(), deploymentID, eventType, map[string]any{
 		"deploymentId":     deploymentID,
 		"approvalId":       approval.ID,
 		"approvalRevision": approval.Revision,
@@ -723,12 +766,13 @@ func (m *Module) authorizeApprovedActivation(
 		},
 	)
 	if err != nil {
+		if _, classified := apigenfailure.KindOf(err); !classified {
+			err = apigenfailure.Wrap("approval_unavailable", err)
+		}
 		return deployment.Approval{}, err
 	}
 	if m.authorizeApproval == nil {
-		return deployment.Approval{}, errors.New(
-			"approval authorization is unavailable",
-		)
+		return deployment.Approval{}, apigenfailure.New("approval_unavailable", "approval authorization is unavailable")
 	}
 	if err := m.authorizeApproval(
 		ctx,
@@ -741,12 +785,13 @@ func (m *Module) authorizeApprovedActivation(
 		row.Project,
 		row.Environment,
 	); err != nil {
+		if _, classified := apigenfailure.KindOf(err); !classified {
+			err = apigenfailure.Wrap("authorization_unavailable", err)
+		}
 		return deployment.Approval{}, err
 	}
 	if m.authorizeActivation == nil {
-		return deployment.Approval{}, errors.New(
-			"activation authorization is unavailable",
-		)
+		return deployment.Approval{}, apigenfailure.New("authorization_unavailable", "activation authorization is unavailable")
 	}
 	if err := m.authorizeActivation(
 		ctx,
@@ -754,6 +799,9 @@ func (m *Module) authorizeApprovedActivation(
 		row.Project,
 		row.Environment,
 	); err != nil {
+		if _, classified := apigenfailure.KindOf(err); !classified {
+			err = apigenfailure.Wrap("authorization_unavailable", err)
+		}
 		return deployment.Approval{}, err
 	}
 	return approval, nil
@@ -785,6 +833,74 @@ func (m *Module) appendAPIEvent(ctx context.Context, deploymentID, eventType str
 	}
 	_, err = m.api.Jobs.AppendEvent(ctx, "deployment", deploymentID, eventType, encoded)
 	return err
+}
+
+func (m *Module) recordBestEffortAPIEvent(
+	ctx context.Context,
+	operationID, deploymentID, eventType string,
+	data any,
+) {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		logger.ErrorContext(ctx, "deployment command executor is unavailable", "operation_id", operationID, "error", err)
+		return
+	}
+	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			if eventType != contract.AuditAction {
+				return fmt.Errorf("deployment audit action %q does not match generated action %q", eventType, contract.AuditAction)
+			}
+			return m.appendAPIEvent(ctx, deploymentID, contract.AuditAction, data)
+		},
+		LogMessage: "deployment audit failed",
+		LogAttributes: []slog.Attr{
+			slog.String("deployment_id", deploymentID),
+		},
+	})
+	if err != nil {
+		logger.ErrorContext(ctx, "deployment command contract execution failed", "operation_id", operationID, "error", err)
+	}
+}
+
+func (m *Module) completePersistedExecution(ctx context.Context, operationID, deploymentID string) {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		logger.ErrorContext(ctx, "deployment command executor is unavailable", "operation_id", operationID, "error", err)
+		return
+	}
+	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			if contract.Execution == nil || contract.Execution.InitialEvent != contract.AuditAction {
+				return fmt.Errorf("deployment command %q audit and initial lifecycle event disagree", operationID)
+			}
+			if m.api.Jobs == nil {
+				return errors.New("deployment event store is unavailable")
+			}
+			events, err := m.api.Jobs.ListEvents(ctx, contract.Execution.ResourceKind, deploymentID, 0, 200)
+			if err != nil {
+				return err
+			}
+			for _, event := range events {
+				if event.EventType == contract.Execution.InitialEvent {
+					return nil
+				}
+			}
+			return fmt.Errorf("deployment initial lifecycle event %q is unavailable", contract.Execution.InitialEvent)
+		},
+		LogMessage:    "deployment persisted audit verification failed",
+		LogAttributes: []slog.Attr{slog.String("deployment_id", deploymentID)},
+	})
+	if err != nil {
+		logger.ErrorContext(ctx, "deployment command contract execution failed", "operation_id", operationID, "error", err)
+	}
 }
 
 func deploymentResponse(
@@ -954,8 +1070,36 @@ func approvalLocation(project, deploymentID, approvalID string) string {
 		"/approval-requests/" + approvalID
 }
 
+func (m *Module) writeCommandFailure(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, err error) {
+	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, m.logger, operationID, deploymentgen.GetAPIGenCommandFailureContracts, err)
+}
+
 func writeAPIError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code := http.StatusInternalServerError, "INTERNAL_ERROR"
+	if kind, ok := apigenfailure.KindOf(err); ok {
+		switch kind {
+		case "service_unavailable":
+			status, code = http.StatusServiceUnavailable, "DEPLOYMENT_SERVICE_UNAVAILABLE"
+		case "queue_unavailable":
+			status, code = http.StatusServiceUnavailable, "ASYNC_QUEUE_UNAVAILABLE"
+		case "authorization_unavailable":
+			status, code = http.StatusServiceUnavailable, "AUTHORIZATION_UNAVAILABLE"
+		case "approval_unavailable":
+			status, code = http.StatusServiceUnavailable, "DEPLOYMENT_APPROVAL_UNAVAILABLE"
+		case "release_not_ready":
+			status, code = http.StatusConflict, "RELEASE_NOT_READY"
+		case "release_incomplete":
+			status, code = http.StatusConflict, "RELEASE_INCOMPLETE"
+		case "approval_credential_required":
+			status, code = http.StatusUnauthorized, "APPROVAL_CREDENTIAL_REQUIRED"
+		case "activation_forbidden":
+			status, code = http.StatusForbidden, "ACTIVATION_FORBIDDEN"
+		case "publication_forbidden":
+			status, code = http.StatusForbidden, "PUBLICATION_MANAGEMENT_REQUIRED"
+		case "invalid":
+			status, code = http.StatusUnprocessableEntity, "INVALID_DEPLOYMENT"
+		}
+	}
 	switch {
 	case errors.Is(err, release.ErrNotFound), errors.Is(err, deployment.ErrNotFound):
 		status, code = http.StatusNotFound, "DEPLOYMENT_NOT_FOUND"

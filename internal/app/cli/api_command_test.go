@@ -83,6 +83,48 @@ func TestAPICommandCallUsesGeneratedContract(t *testing.T) {
 	}
 }
 
+func TestAPICommandInvokesRoleBindingOperation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/workspaces/sales/role-bindings" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("X-LeapView-Client"); got != "cli" {
+			t.Fatalf("X-LeapView-Client = %q", got)
+		}
+		if got := r.Header.Get("Idempotency-Key"); got != "binding-commit-a" {
+			t.Fatalf("Idempotency-Key = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["subjectId"] != "principal-viewer" || body["role"] != "viewer" {
+			t.Fatalf("body = %#v", body)
+		}
+		w.WriteHeader(http.StatusCreated)
+		writeCLIJSON(t, w, map[string]any{"id": "binding-1"})
+	}))
+	defer server.Close()
+
+	output := captureStdout(t, func() {
+		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
+		cmd.SetArgs([]string{
+			"call", "createRoleBinding",
+			"--target", server.URL,
+			"--token", "token",
+			"--path", "workspace=sales",
+			"--body-json", `{"subjectType":"principal","subjectId":"principal-viewer","role":"viewer"}`,
+			"--idempotency-key", "binding-commit-a",
+		})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("api call createRoleBinding: %v", err)
+		}
+	})
+	if strings.TrimSpace(output) != `{"id":"binding-1"}` {
+		t.Fatalf("output = %q", output)
+	}
+}
+
 func TestAPICommandCallDefaultsJSONBodyFileContentTypeFromGeneratedContract(t *testing.T) {
 	bodyPath := filepath.Join(t.TempDir(), "turn.json")
 	if err := os.WriteFile(bodyPath, []byte(`{"input":"hello"}`), 0o644); err != nil {

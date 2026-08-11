@@ -20,7 +20,8 @@ func TestAdministrationRequiresDependencyPlanConfirmationForConfigurationChanges
 			{Kind: "candidate", ID: "candidate-1", Label: "Author preview"},
 			{Kind: "serving_state", ID: "state-1", Label: "Active sales"},
 		}},
-		Now: func() time.Time { return now },
+		Audit: noOpAdministrationAudit{},
+		Now:   func() time.Time { return now },
 	})
 	require.NoError(t, err)
 	key := BindingKey{
@@ -64,6 +65,7 @@ func TestAdministrationSeparatesMetadataAndRefreshAuthorization(t *testing.T) {
 		},
 		Dependencies: staticDependencyInspector{},
 		Pools:        staticPoolDirectory{pool: pool},
+		Audit:        noOpAdministrationAudit{},
 		Now:          time.Now,
 	})
 	require.NoError(t, err)
@@ -87,6 +89,7 @@ func TestAdministrationTestUsesCandidateRuntimePathAndDistinctAuditOperation(t *
 		Authorize:    allowAdministration,
 		Dependencies: staticDependencyInspector{},
 		Pools:        staticPoolDirectory{pool: pool},
+		Audit:        noOpAdministrationAudit{},
 		Now:          time.Now,
 	})
 	require.NoError(t, err)
@@ -123,6 +126,7 @@ func TestAdministrationListsOnlyTheRequestedTargetScope(t *testing.T) {
 			return nil
 		},
 		Dependencies: staticDependencyInspector{},
+		Audit:        noOpAdministrationAudit{},
 		Now:          time.Now,
 	})
 	require.NoError(t, err)
@@ -154,7 +158,8 @@ func TestAdministrationAuthorizesBeforeEnsuringWorkspaceScopeAndCreatingBinding(
 			order = append(order, "authorize")
 			return nil
 		},
-		Dependencies: staticDependencyInspector{}, Now: func() time.Time { return binding.CreatedAt },
+		Dependencies: staticDependencyInspector{}, Audit: noOpAdministrationAudit{},
+		Now: func() time.Time { return binding.CreatedAt },
 	})
 	require.NoError(t, err)
 	_, err = service.Create(context.Background(), "operator-1", TargetBindingInput{
@@ -181,7 +186,8 @@ func TestAdministrationDoesNotEnsureWorkspaceScopeWhenCreateIsUnauthorized(t *te
 		Authorize: func(context.Context, string, AdministrationPermission, TargetBinding) error {
 			return ErrUnauthorizedBinding
 		},
-		Dependencies: staticDependencyInspector{}, Now: func() time.Time { return binding.CreatedAt },
+		Dependencies: staticDependencyInspector{}, Audit: noOpAdministrationAudit{},
+		Now: func() time.Time { return binding.CreatedAt },
 	})
 	require.NoError(t, err)
 

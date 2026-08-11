@@ -85,6 +85,12 @@ type WorkflowRecorder interface {
 	RecordWorkflow(context.Context, transaction.Transaction, WorkflowIntent) error
 }
 
+// WorkflowCommitter atomically records an event and its optional follow-up job
+// when the caller does not already own a domain transaction.
+type WorkflowCommitter interface {
+	CommitWorkflow(context.Context, WorkflowIntent) error
+}
+
 type WorkflowRecorderFunc func(context.Context, transaction.Transaction, WorkflowIntent) error
 
 func (f WorkflowRecorderFunc) RecordWorkflow(ctx context.Context, tx transaction.Transaction, intent WorkflowIntent) error {

@@ -183,6 +183,20 @@ func (m *Module) RecordWorkflow(ctx context.Context, tx transaction.Transaction,
 	}
 	return m.repository.RecordWorkflow(ctx, tx, intent)
 }
+func (m *Module) CommitWorkflow(ctx context.Context, intent jobs.WorkflowIntent) error {
+	if m == nil || m.repository == nil || m.config.Database == nil {
+		return jobs.ErrStoreRequired
+	}
+	tx, err := m.config.Database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := m.RecordWorkflow(ctx, tx, intent); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 func (m *Module) ListEvents(ctx context.Context, kind, id string, after int64, limit int) ([]jobs.Event, error) {
 	return m.repository.ListEvents(ctx, kind, id, after, limit)
 }

@@ -1,12 +1,15 @@
 package http
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	stdhttp "net/http"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -44,7 +47,7 @@ func (h Handler) DecideDeviceAuthorization(w stdhttp.ResponseWriter, r *stdhttp.
 		err = service.DenyDeviceAuthorization(r.Context(), actor, input.UserCode)
 	}
 	if err != nil {
-		writeAuthoringAuthError(w, err)
+		writeAuthoringCommandError(w, r, accessgen.GenCommandOperationDecideDeviceAuthorization(), err)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]string{"status": status})
@@ -84,7 +87,7 @@ func (h Handler) RevokeCurrentAuthoringSession(w stdhttp.ResponseWriter, r *stdh
 	}
 	sessionID := chi.URLParam(r, "session")
 	if err := service.RevokeSession(r.Context(), principal.ID, sessionID); err != nil {
-		writeAuthoringAuthError(w, err)
+		writeAuthoringCommandError(w, r, accessgen.GenCommandOperationRevokeCurrentAuthoringSession(), err)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]string{"status": "revoked"})
@@ -141,4 +144,11 @@ func writeAuthoringAuthError(w stdhttp.ResponseWriter, err error) {
 		status = stdhttp.StatusUnprocessableEntity
 	}
 	writeJSONError(w, err, status)
+}
+
+func writeAuthoringCommandError(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID, err error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		err = apigenfailure.Wrap("not_found", err)
+	}
+	writeCommandFailure(w, r, operationID, err)
 }

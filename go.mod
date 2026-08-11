@@ -2,6 +2,8 @@ module github.com/flidai/leapview
 
 go 1.25.12
 
+replace github.com/Yacobolo/toolbelt/apigen => ./pkg/apigen
+
 require (
 	cuelang.org/go v0.16.1
 	github.com/Yacobolo/toolbelt/apigen v0.7.3

@@ -466,6 +466,29 @@ tasks:
     cmds:
       - go run ./internal/app/tools/configgen --check
 
+  apigen:test:
+    desc: Test the vendored APIGen Go module and TypeSpec library
+    cmds:
+      - go -C pkg/apigen test ./...
+      - npm --prefix pkg/apigen/typespec ci
+      - npm --prefix pkg/apigen/typespec test
+
+  apigen:build:
+    desc: Build the vendored APIGen TypeSpec emitter used by generation
+    method: checksum
+    sources:
+      - pkg/apigen/typespec/src/**/*.ts
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
+      - pkg/apigen/typespec/tsconfig.json
+    generates:
+      - pkg/apigen/typespec/dist/src/**/*.js
+      - pkg/apigen/typespec/dist/src/**/*.d.ts
+    cmds:
+      - npm --prefix pkg/apigen/typespec ci
+      - npm --prefix pkg/apigen/typespec run build
+
   generated:check:
     desc: Verify intentional public contract snapshots are current
     deps:
@@ -486,6 +509,8 @@ tasks:
 
   api:generate:
     desc: Generate headless API contract artifacts and APIGen Go surfaces
+    deps:
+      - apigen:build
     method: checksum
     run: once
     sources:
@@ -494,6 +519,8 @@ tasks:
       - api/typespec/**/*.tsp
       - api/visualization/**/*.tsp
       - internal/app/tools/openapidocgen/**/*.go
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/dist/src/**/*
     generates:
       - api/gen/json-ir.json
       - api/gen/openapi.yaml
@@ -536,44 +563,52 @@ tasks:
       - docs/api/openapi.yaml
       - docs/api/operations.json
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 typespec-compile -manifest api/apigen.yaml -target leapview-v1
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 all -manifest api/apigen.yaml -target leapview-v1
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target leapview-v1
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target leapview-v1
       - go run ./internal/app/tools/apigenpatch
       - go run ./internal/app/tools/openapidocgen
 
   agent-contracts:generate:
     desc: Generate compact agent-tool DTOs and JSON Schemas
+    deps:
+      - apigen:build
     method: checksum
     sources:
       - Taskfile.yml
       - api/apigen.yaml
       - internal/agent/contracts/typespec/**/*.tsp
       - internal/agent/contracts/generate/**/*.go
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/dist/src/**/*
     generates:
       - internal/agent/contracts/gen/agent-tools-ir.json
       - internal/agent/contracts/gen/agent-tools.schema.json
       - internal/agent/contracts/models.gen.go
       - internal/agent/contracts/schemas.gen.go
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 typespec-compile -manifest api/apigen.yaml -target agent-tool-contracts
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 all -manifest api/apigen.yaml -target agent-tool-contracts
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target agent-tool-contracts
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target agent-tool-contracts
       - go run ./internal/agent/contracts/generate
 
   desktop-discovery:generate:
     desc: Generate the public desktop discovery and failure contracts
+    deps:
+      - apigen:build
     method: checksum
     sources:
       - Taskfile.yml
       - api/apigen.yaml
       - api/desktop-discovery/**/*.tsp
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/dist/src/**/*
     generates:
       - api/gen/desktop-discovery-ir.json
       - schemas/desktop/discovery.schema.json
       - internal/app/desktopdiscovery/models.gen.go
       - desktop/src/generated/desktop-discovery.ts
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 typespec-compile -manifest api/apigen.yaml -target desktop-discovery-contracts
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 all -manifest api/apigen.yaml -target desktop-discovery-contracts
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target desktop-discovery-contracts
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target desktop-discovery-contracts
 
   schema:generate:
     desc: Generate JSON Schema artifacts for LeapView YAML contracts
@@ -615,6 +650,8 @@ tasks:
       - api/signals/**/*.tsp
       - api/visualization/**/*.tsp
       - internal/app/tools/signalcontracts/**/*.go
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/dist/src/**/*
     generates:
       - api/gen/ui-signals-ir.json
       - internal/access/ui/signals/models.gen.go
@@ -624,20 +661,23 @@ tasks:
       - internal/workspace/ui/signals/models.gen.go
       - web/generated/signals/index.ts
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 typespec-compile -manifest api/apigen.yaml -target ui-signals
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 all -manifest api/apigen.yaml -target ui-signals
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target ui-signals
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target ui-signals
       - go run ./internal/app/tools/signalcontracts
 
   visualization-ir:generate:
     desc: Generate renderer-independent visualization IR contracts from TypeSpec
     deps:
       - node:deps
+      - apigen:build
     method: checksum
     sources:
       - Taskfile.yml
       - api/apigen.yaml
       - api/visualization/**/*.tsp
       - scripts/generate_visualization_validator.ts
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/dist/src/**/*
     generates:
       - api/gen/visualization-ir.json
       - internal/dashboard/visualization/ir/models.gen.go
@@ -647,8 +687,8 @@ tasks:
       - web/generated/visualization/validate.ts
       - api/gen/visualization.schema.json
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 typespec-compile -manifest api/apigen.yaml -target visualization-ir
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.3 all -manifest api/apigen.yaml -target visualization-ir
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target visualization-ir
+      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target visualization-ir
       - bun scripts/generate_visualization_validator.ts
 
   layout-contract:generate:
@@ -748,6 +788,7 @@ tasks:
   ci:lane:go:
     desc: Run the bounded Go unit and integration lane
     cmds:
+      - task: apigen:test
       - task: test:go:prepared
 
   ci:lane:frontend:

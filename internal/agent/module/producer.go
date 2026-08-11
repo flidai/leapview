@@ -30,41 +30,29 @@ func (m *Module) enqueueRun(ctx context.Context, scope agent.Scope, started *age
 	if started.DurablyQueued() {
 		return nil
 	}
-	if err := jobs.AppendJSONEvent(ctx, m.jobs, "agent_run", started.RunID, "agent_run.queued", map[string]any{
-		"runId": started.RunID, "conversationId": started.ConversationID, "status": "running",
-	}); err != nil {
-		return err
-	}
-	return jobs.EnqueueJSON(ctx, m.jobs, jobs.JSONEnqueueInput{
-		ID: "agent:" + started.RunID + ":run", Kind: RunJobKind,
-		WorkloadClass: m.runWorkloadClass, WorkspaceID: runWorkspaceID(scope, m.defaultWorkspaceID, m.globalWorkspaceID),
-		ResourceKind: "agent_run", ResourceID: started.RunID,
-		Payload: RunJob{
-			Scope: scope, Conversation: started.ConversationID,
-			Run: started.RunID, CorrelationID: started.CorrelationID, ChatClientID: chatClientID,
-		},
-	})
+	return errors.New("transactional agent run workflow is unavailable")
 }
 
 func (m *Module) runWorkflow(input agent.PromptInput, runID string, dispatch agent.PromptDispatch) jobs.WorkflowIntent {
+	execution := m.runExecution
 	scope := input.Scope
 	payload, _ := json.Marshal(RunJob{
 		Scope: scope, Conversation: input.ConversationID, Run: runID, CorrelationID: input.CorrelationID,
 		ChatClientID: dispatch.ChatClientID,
 	})
 	event, _ := json.Marshal(map[string]any{
-		"runId": runID, "conversationId": input.ConversationID, "status": "running",
+		"runId": runID, "conversationId": input.ConversationID, "status": execution.InitialState,
 	})
 	return jobs.WorkflowIntent{
 		Event: jobs.EventInput{
-			Key: "agent_run.queued", ResourceKind: "agent_run", ResourceID: runID,
-			EventType: "agent_run.queued", Data: event,
+			Key: execution.InitialEvent, ResourceKind: execution.ResourceKind, ResourceID: runID,
+			EventType: execution.InitialEvent, Data: event,
 		},
 		Job: jobs.EnqueueInput{
-			ID: "agent:" + runID + ":run", Kind: RunJobKind,
+			ID: "agent:" + runID + ":run", Kind: execution.JobKind,
 			WorkloadClass: m.runWorkloadClass,
 			WorkspaceID:   runWorkspaceID(scope, m.defaultWorkspaceID, m.globalWorkspaceID),
-			ResourceKind:  "agent_run", ResourceID: runID, Payload: payload,
+			ResourceKind:  execution.ResourceKind, ResourceID: runID, Payload: payload,
 		},
 	}
 }
@@ -78,7 +66,7 @@ func (m *Module) CancelQueuedRun(ctx context.Context, scope agent.Scope, convers
 	}
 	data, _ := json.Marshal(map[string]any{"runId": runID, "conversationId": conversationID})
 	workflow := jobs.WorkflowIntent{Event: jobs.EventInput{
-		Key: "agent_run.canceled:" + runID, ResourceKind: "agent_run", ResourceID: runID,
+		Key: "agent_run.canceled:" + runID, ResourceKind: m.runExecution.ResourceKind, ResourceID: runID,
 		EventType: "agent_run.canceled", Data: data,
 	}}
 	if m.service.SupportsCancellationWorkflow() {
@@ -104,7 +92,7 @@ func (m *Module) CancelQueuedRun(ctx context.Context, scope agent.Scope, convers
 			return false, fallbackErr
 		}
 	}
-	_ = jobs.AppendJSONEvent(ctx, m.jobs, "agent_run", runID, "agent_run.canceled", map[string]any{"runId": runID, "conversationId": conversationID})
+	_ = jobs.AppendJSONEvent(ctx, m.jobs, m.runExecution.ResourceKind, runID, "agent_run.canceled", map[string]any{"runId": runID, "conversationId": conversationID})
 	return true, nil
 }
 

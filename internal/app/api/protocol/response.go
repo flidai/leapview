@@ -41,6 +41,13 @@ func NewResponseBuffer(w http.ResponseWriter, r *http.Request) *ResponseBuffer {
 
 func (w *ResponseBuffer) Header() http.Header { return w.header }
 
+func (w *ResponseBuffer) StatusCode() int {
+	if w == nil || w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
 func (w *ResponseBuffer) WriteHeader(status int) {
 	if w.status == 0 {
 		w.status = status

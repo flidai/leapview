@@ -1,0 +1,557 @@
+{
+  "api": {
+    "base_path": "/"
+  },
+  "endpoints": [
+    {
+      "method": "get",
+      "path": "/todos",
+      "operation_id": "listTodos",
+      "summary": "List todos",
+      "tags": [
+        "Todos"
+      ],
+      "parameters": [
+        {
+          "name": "status",
+          "in": "query",
+          "description": "Optional status filter.",
+          "explode": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status_code": 200,
+          "description": "The request has succeeded.",
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "ListTodosResponse"
+              }
+            }
+          ]
+        },
+        {
+          "status_code": 400,
+          "description": "The request is invalid.",
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
+        }
+      ],
+      "cli": {
+        "command": [
+          "todos",
+          "list"
+        ],
+        "body_input": "none",
+        "confirm": "none",
+        "output": {
+          "mode": "collection",
+          "table_columns": [
+            "id",
+            "title",
+            "status"
+          ],
+          "quiet_fields": [
+            "id"
+          ]
+        },
+        "pagination": {
+          "items_field": "data"
+        }
+      },
+      "tool": {
+        "name": "list_todos",
+        "effect": "read",
+        "confirmation": "never",
+        "tags": [
+          "todos",
+          "read"
+        ],
+        "output": {
+          "mode": "project",
+          "select": [
+            {
+              "source": "/data",
+              "select": [
+                {
+                  "source": "/id"
+                },
+                {
+                  "source": "/title"
+                },
+                {
+                  "source": "/status"
+                }
+              ],
+              "count_as": "count"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "post",
+      "path": "/todos",
+      "operation_id": "createTodo",
+      "summary": "Create todo",
+      "tags": [
+        "Todos"
+      ],
+      "request_body": {
+        "required": true,
+        "contents": [
+          {
+            "content_type": "application/json",
+            "body_kind": "json",
+            "schema": {
+              "ref": "CreateTodoRequest"
+            }
+          }
+        ]
+      },
+      "responses": [
+        {
+          "status_code": 201,
+          "description": "A todo has been created.",
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Todo"
+              }
+            }
+          ]
+        },
+        {
+          "status_code": 400,
+          "description": "The request is invalid.",
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
+        }
+      ],
+      "cli": {
+        "command": [
+          "todos",
+          "create"
+        ],
+        "args": [
+          {
+            "source": "body",
+            "name": "title",
+            "display_name": "title"
+          }
+        ],
+        "body_input": "flags_or_json",
+        "confirm": "none",
+        "output": {
+          "mode": "detail",
+          "quiet_fields": [
+            "id"
+          ]
+        }
+      }
+    },
+    {
+      "method": "delete",
+      "path": "/todos/{todo_id}",
+      "operation_id": "deleteTodo",
+      "summary": "Delete todo",
+      "tags": [
+        "Todos"
+      ],
+      "parameters": [
+        {
+          "name": "todo_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status_code": 204,
+          "description": "The todo has been deleted."
+        },
+        {
+          "status_code": 404,
+          "description": "The todo was not found.",
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
+        }
+      ],
+      "cli": {
+        "command": [
+          "todos",
+          "delete"
+        ],
+        "args": [
+          {
+            "source": "path",
+            "name": "todo_id",
+            "display_name": "todo-id"
+          }
+        ],
+        "body_input": "none",
+        "confirm": "always",
+        "output": {
+          "mode": "empty"
+        }
+      },
+      "tool": {
+        "name": "delete_todo",
+        "effect": "destructive",
+        "confirmation": "always",
+        "output": {
+          "mode": "empty"
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/todos/{todo_id}",
+      "operation_id": "getTodo",
+      "summary": "Get todo",
+      "tags": [
+        "Todos"
+      ],
+      "parameters": [
+        {
+          "name": "todo_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status_code": 200,
+          "description": "The request has succeeded.",
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Todo"
+              }
+            }
+          ]
+        },
+        {
+          "status_code": 404,
+          "description": "The todo was not found.",
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
+        }
+      ],
+      "cli": {
+        "command": [
+          "todos",
+          "get"
+        ],
+        "args": [
+          {
+            "source": "path",
+            "name": "todo_id",
+            "display_name": "todo-id"
+          }
+        ],
+        "body_input": "none",
+        "confirm": "none",
+        "output": {
+          "mode": "detail",
+          "quiet_fields": [
+            "id"
+          ]
+        }
+      }
+    },
+    {
+      "method": "post",
+      "path": "/todos/{todo_id}/complete",
+      "operation_id": "completeTodo",
+      "summary": "Complete todo",
+      "tags": [
+        "Todos"
+      ],
+      "parameters": [
+        {
+          "name": "todo_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status_code": 200,
+          "description": "The todo has been completed.",
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Todo"
+              }
+            }
+          ]
+        },
+        {
+          "status_code": 404,
+          "description": "The todo was not found.",
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
+        }
+      ],
+      "cli": {
+        "command": [
+          "todos",
+          "complete"
+        ],
+        "args": [
+          {
+            "source": "path",
+            "name": "todo_id",
+            "display_name": "todo-id"
+          }
+        ],
+        "body_input": "none",
+        "confirm": "none",
+        "output": {
+          "mode": "detail",
+          "quiet_fields": [
+            "id"
+          ]
+        }
+      }
+    }
+  ],
+  "info": {
+    "title": "APIGen Todo Example",
+    "version": "0.1.0",
+    "description": "Small in-memory todo API authored in TypeSpec to showcase APIGen generation and strict server wiring."
+  },
+  "openapi": {
+    "version": "3.0.0",
+    "tag_order": [
+      "Todos"
+    ],
+    "security": [
+      {
+        "BearerAuth": []
+      },
+      {
+        "ApiKeyAuth": []
+      }
+    ],
+    "security_schemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "Bearer"
+      }
+    }
+  },
+  "schema_version": "v4",
+  "schemas": {
+    "CreateTodoRequest": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      },
+      "property_order": [
+        "title"
+      ],
+      "required": [
+        "title"
+      ]
+    },
+    "Error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "message": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      },
+      "property_order": [
+        "code",
+        "message"
+      ],
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "ListTodosResponse": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "schema": {
+            "type": "array",
+            "items": {
+              "ref": "Todo"
+            }
+          }
+        }
+      },
+      "property_order": [
+        "data"
+      ],
+      "required": [
+        "data"
+      ]
+    },
+    "Todo": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      },
+      "property_order": [
+        "id",
+        "title",
+        "status"
+      ],
+      "required": [
+        "id",
+        "title",
+        "status"
+      ]
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8081",
+      "description": "Example development server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Todos",
+      "description": "Todo lifecycle endpoints for the APIGen example."
+    }
+  ],
+  "transport_errors": {
+    "schema": {
+      "ref": "Error"
+    },
+    "content_type": "application/json",
+    "failures": {
+      "handler": {
+        "status_code": 500,
+        "code": "internal_error",
+        "public_detail": "Internal server error."
+      },
+      "header_parameter": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid request."
+      },
+      "malformed_body": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid request body."
+      },
+      "multipart": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid multipart body."
+      },
+      "path_parameter": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid request."
+      },
+      "query_parameter": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid request."
+      },
+      "response_serialization": {
+        "status_code": 500,
+        "code": "internal_error",
+        "public_detail": "Internal server error."
+      },
+      "unsupported_media_type": {
+        "status_code": 415,
+        "code": "unsupported_media_type",
+        "public_detail": "Unsupported media type."
+      }
+    }
+  }
+}

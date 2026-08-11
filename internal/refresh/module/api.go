@@ -2,14 +2,17 @@ package module
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 )
@@ -19,12 +22,37 @@ type EventStore interface {
 	jobhttp.EventReader
 }
 
-func (m *Module) recordRunCreated(ctx context.Context, run refreshrun.RunRecord) error {
-	response, ok := materializehttp.PipelineRunResponseFor(run)
-	if !ok {
-		return fmt.Errorf("refresh service returned a non-pipeline run")
+func (m *Module) verifyRunCreated(ctx context.Context, run refreshrun.RunRecord) error {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
 	}
-	return jobs.AppendJSONEvent(ctx, m.events, "refresh", run.ID, "refresh.queued", response)
+	executor, err := apigencommand.NewExecutor(refreshgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(ctx, string(refreshgen.GenOperationCreateRefreshRun), apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			if contract.Execution == nil || contract.Execution.InitialEvent != contract.AuditAction {
+				return errors.New("refresh audit and initial lifecycle event disagree")
+			}
+			if m.events == nil {
+				return errors.New("refresh event store is unavailable")
+			}
+			events, err := m.events.ListEvents(ctx, contract.Execution.ResourceKind, run.ID, 0, 200)
+			if err != nil {
+				return err
+			}
+			for _, event := range events {
+				if event.EventType == contract.Execution.InitialEvent {
+					return nil
+				}
+			}
+			return errors.New("refresh initial lifecycle event is unavailable")
+		},
+		LogMessage:    "refresh persisted audit verification failed",
+		LogAttributes: []slog.Attr{slog.String("refresh_run_id", run.ID)},
+	})
 }
 
 func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) func(context.Context, refreshrun.JobRecord) {
@@ -40,7 +68,7 @@ func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) 
 		if !ok || m.events == nil {
 			return
 		}
-		_ = jobs.AppendJSONEvent(ctx, m.events, "refresh", run.ID, "refresh."+run.Status, response)
+		_ = jobs.AppendJSONEvent(ctx, m.events, m.refreshExecution.ResourceKind, run.ID, "refresh."+run.Status, response)
 	}
 }
 
@@ -57,50 +85,74 @@ func (m *Module) GetRefreshRun(w http.ResponseWriter, r *http.Request, _, _ stri
 }
 
 func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, workspaceID, runID string) {
+	operationID := refreshgen.GenCommandOperationCancelRefreshRun()
 	if m == nil || m.runs == nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "REFRESH_SERVICE_UNAVAILABLE", "Refresh service is unavailable", nil)
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
 		return
 	}
 	resolvedWorkspaceID := m.workspaceID(workspaceID)
 	prior, err := m.GetRun(r.Context(), resolvedWorkspaceID, runID)
 	if err != nil || prior.Environment != m.environment {
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
 	publicPrior, ok := materializehttp.PipelineRunResponseFor(prior)
 	if !ok {
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
 	allowed, err := m.authorize(r, resolvedWorkspaceID, publicPrior.PipelineID, true)
 	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "REFRESH_AUTHORIZATION_FAILED", "Refresh authorization failed", nil)
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.Wrap("unavailable", err))
 		return
 	}
 	if !allowed {
-		apitransport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Refresh run is not accessible", nil)
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("forbidden", "Refresh run is not accessible"))
 		return
 	}
 	row, err := m.CancelRun(r.Context(), resolvedWorkspaceID, runID)
 	if err != nil {
 		if errors.Is(err, refreshrun.ErrRunNotCancellable) {
-			apitransport.WriteProblem(w, r, http.StatusConflict, "REFRESH_NOT_CANCELLABLE", "Only queued refresh runs can be cancelled", nil)
+			writeRefreshCommandFailure(m, w, r, operationID, err)
 			return
 		}
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.Wrap("not_found", err))
+		} else {
+			writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.Wrap("unavailable", err))
+		}
 		return
 	}
 	response, ok := materializehttp.PipelineRunResponseFor(row)
 	if !ok {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "REFRESH_RESPONSE_INVALID", "Refresh response is invalid", nil)
+		writeRefreshCommandFailure(m, w, r, operationID, errors.New("refresh response is invalid"))
 		return
 	}
-	if err := jobs.AppendJSONEvent(r.Context(), m.events, "refresh", runID, "refresh.cancelled", response); err != nil {
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_EVENT_STORE_UNAVAILABLE", "Refresh cancellation could not be recorded", nil)
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(refreshgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		writeRefreshCommandFailure(m, w, r, operationID, err)
+		return
+	}
+	if err := executor.Execute(r.Context(), string(refreshgen.GenOperationCancelRefreshRun), apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			return jobs.AppendJSONEvent(ctx, m.events, m.refreshExecution.ResourceKind, runID, contract.AuditAction, response)
+		},
+		LogMessage:    "refresh audit failed",
+		LogAttributes: []slog.Attr{slog.String("refresh_run_id", runID)},
+	}); err != nil {
+		writeRefreshCommandFailure(m, w, r, operationID, err)
 		return
 	}
 	w.Header().Set("Location", "/api/v1/workspaces/"+workspaceID+"/refresh-runs/"+runID)
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
+}
+
+func writeRefreshCommandFailure(_ *Module, w http.ResponseWriter, r *http.Request, operationID refreshgen.GenCommandOperationID, err error) {
+	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, refreshgen.GetAPIGenCommandFailureContracts, err)
 }
 
 func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, workspaceID, runID string, limit *int32, pageToken *string) {
@@ -132,7 +184,7 @@ func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, wo
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_EVENT_STORE_UNAVAILABLE", "Refresh events are unavailable", nil)
 		return
 	}
-	jobhttp.WriteEventPage(w, r, m.events, "refresh", runID, limit, pageToken, "refresh:"+workspaceID+":"+runID)
+	jobhttp.WriteEventPage(w, r, m.events, m.refreshExecution.ResourceKind, runID, limit, pageToken, m.refreshExecution.ResourceKind+":"+workspaceID+":"+runID)
 }
 
 func (m *Module) DispatchAPIGenOperation(operationID string, logger *slog.Logger, w http.ResponseWriter, r *http.Request) bool {

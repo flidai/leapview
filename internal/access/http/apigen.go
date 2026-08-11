@@ -35,7 +35,8 @@ func (d *APIGenDispatcher) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdh
 	d.handler.GetCurrentPrincipal(w, r)
 }
 
-func (d *APIGenDispatcher) DecideDeviceAuthorization(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+func (d *APIGenDispatcher) DecideDeviceAuthorization(w stdhttp.ResponseWriter, r *stdhttp.Request, headers accessgen.GenDecideDeviceAuthorizationHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
 	d.handler.DecideDeviceAuthorization(w, r)
 }
 

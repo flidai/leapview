@@ -48,7 +48,11 @@ func newModuleJobFixture(t *testing.T) moduleJobFixture {
 	service := agent.NewService(repo, agent.Config{APIKey: "key", Model: "fake"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
 		return agentcore.ModelResponse{Content: "done", FinishReason: agentcore.FinishReasonStop}, nil
 	})))
-	return moduleJobFixture{store: store, repo: repo, jobs: queue, mod: &Module{service: service, runWorkloadClass: jobs.WorkloadClassBackground}, owner: owner}
+	execution, err := loadRunExecutionContract()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return moduleJobFixture{store: store, repo: repo, jobs: queue, mod: &Module{service: service, runWorkloadClass: jobs.WorkloadClassBackground, runExecution: execution}, owner: owner}
 }
 
 func (f moduleJobFixture) scope() agent.Scope {
@@ -78,7 +82,7 @@ func (f moduleJobFixture) run(t *testing.T, id, status string) (agent.Conversati
 func (f moduleJobFixture) claim(t *testing.T, conv agent.Conversation, run agent.Run) jobs.Job {
 	t.Helper()
 	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: conv.ID, Run: run.ID})
-	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: RunJobKind, WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: run.ID, Payload: payload})
+	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: run.ID, Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +260,7 @@ func TestJobHandlerInvalidPersistedStatusFailsSafely(t *testing.T) {
 func TestJobHandlerMissingRunFailsWithoutDomainEvent(t *testing.T) {
 	f := newModuleJobFixture(t)
 	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: "missing-conversation", Run: "missing-run"})
-	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:missing-run:run", Kind: RunJobKind, WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: "missing-run", Payload: payload})
+	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:missing-run:run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: "missing-run", Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}

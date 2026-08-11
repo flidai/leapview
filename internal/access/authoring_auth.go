@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -15,17 +14,19 @@ import (
 	"time"
 )
 
+import apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+
 var (
-	ErrAuthoringScopeDenied        = errors.New("authoring credential scope denied")
-	ErrDeviceAuthorizationPending  = errors.New("device authorization pending")
-	ErrDeviceAuthorizationSlowDown = errors.New("device authorization polling too quickly")
-	ErrDeviceAuthorizationExpired  = errors.New("device authorization expired")
-	ErrDeviceAuthorizationDenied   = errors.New("device authorization denied")
-	ErrInvalidAuthoringCredential  = errors.New("invalid authoring credential")
-	ErrAuthoringCredentialExpired  = errors.New("authoring credential expired")
-	ErrAuthoringRefreshReplay      = errors.New("authoring refresh token replay detected")
-	ErrInvalidAuthoringPrincipal   = errors.New("invalid authoring principal")
-	ErrInvalidWorkloadLifetime     = errors.New("invalid authoring workload lifetime")
+	ErrAuthoringScopeDenied        = apigenfailure.New("scope_denied", "authoring credential scope denied")
+	ErrDeviceAuthorizationPending  = apigenfailure.New("pending", "device authorization pending")
+	ErrDeviceAuthorizationSlowDown = apigenfailure.New("rate_limited", "device authorization polling too quickly")
+	ErrDeviceAuthorizationExpired  = apigenfailure.New("expired", "device authorization expired")
+	ErrDeviceAuthorizationDenied   = apigenfailure.New("denied", "device authorization denied")
+	ErrInvalidAuthoringCredential  = apigenfailure.New("invalid_credential", "invalid authoring credential")
+	ErrAuthoringCredentialExpired  = apigenfailure.New("credential_expired", "authoring credential expired")
+	ErrAuthoringRefreshReplay      = apigenfailure.New("replay", "authoring refresh token replay detected")
+	ErrInvalidAuthoringPrincipal   = apigenfailure.New("invalid_principal", "invalid authoring principal")
+	ErrInvalidWorkloadLifetime     = apigenfailure.New("invalid_lifetime", "invalid authoring workload lifetime")
 )
 
 const AuthoringCLIClientID = "leapview-cli"

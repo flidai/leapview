@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
@@ -21,12 +22,14 @@ type Module struct {
 	candidateRuntimes         CandidateRuntimePreparer
 	candidateRuntimeLifecycle deployment.CandidateRuntimeLifecycle
 	candidateSources          deployment.CandidateSourceSynchronizer
+	candidateSourceBlobAudit  func(context.Context, CandidateSourceBlobAuditEvent) error
 	candidateArtifacts        release.CandidateArtifactPreparer
 	candidateAdmission        CandidatePreparationAdmitter
 	logger                    *slog.Logger
 	jobs                      JobConfig
 	api                       APIConfig
 	instanceID                string
+	executions                map[string]apigencommand.AsyncExecutionContract
 	protected                 bool
 	currentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
 	authorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
@@ -76,6 +79,21 @@ func (admit CandidatePreparationAdmitterFunc) AcquireCandidatePreparation(
 	return admit(ctx)
 }
 
+// CandidateSourceBlobAuditEvent is the transport-neutral audit record emitted
+// after an immutable candidate source blob has been accepted. Action and
+// Privilege are copied from the generated command contract by the module.
+type CandidateSourceBlobAuditEvent struct {
+	PrincipalID   string
+	ProjectID     string
+	Digest        string
+	Action        string
+	Privilege     string
+	Status        string
+	RequestID     string
+	CorrelationID string
+	MetadataJSON  string
+}
+
 const (
 	CandidatePreparing          = deployment.CandidatePreparing
 	CandidateReady              = deployment.CandidateReady
@@ -111,6 +129,7 @@ type Config struct {
 	ApprovalLifetime          time.Duration
 	MaxCandidatesPerOwner     int
 	CandidateAudit            func(context.Context, deployment.CandidateEvent) error
+	CandidateSourceBlobAudit  func(context.Context, CandidateSourceBlobAuditEvent) error
 	CandidateConnections      deployment.CandidateConnectionLeaser
 	CandidateRuntime          deployment.CandidateRuntimeHost
 	CandidateRuntimeLifecycle deployment.CandidateRuntimeLifecycle
@@ -129,6 +148,10 @@ type Config struct {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	executions, err := loadDeploymentExecutionContracts()
+	if err != nil {
+		return nil, err
+	}
 	options := deploymenthttp.Options{MaxJSONBodyBytes: config.MaxJSONBodyBytes}
 	options.CurrentPrincipal = func(r *http.Request) (deploymenthttp.Principal, bool) {
 		if config.CurrentPrincipal == nil {
@@ -176,10 +199,14 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := requireCandidateAuditSink(config.CandidateAudit); err != nil {
+			return nil, err
+		}
 		candidates, err = deployment.NewCandidateService(candidateRepository, deployment.CandidateServiceConfig{
 			TargetID: config.InstanceID, CanonicalOrigin: config.CanonicalOrigin,
 			Environment: config.InstanceEnvironment, Lifetime: config.CandidateLifetime,
 			MaxActivePerOwner: config.MaxCandidatesPerOwner, Audit: config.CandidateAudit,
+			Logger:           config.Logger,
 			RuntimeLifecycle: config.CandidateRuntimeLifecycle,
 		})
 		if err != nil {
@@ -206,11 +233,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		handler: deploymenthttp.NewHandler(options), candidates: candidates,
 		approvals:         approvals,
 		candidateRuntimes: candidateRuntimes, candidateRuntimeLifecycle: config.CandidateRuntimeLifecycle, candidateSources: config.CandidateSources,
-		candidateArtifacts: config.CandidateArtifacts,
-		candidateAdmission: config.CandidateAdmission,
-		logger:             config.Logger,
-		jobs:               jobs, api: config.API, protected: config.Protected,
-		instanceID:           config.InstanceID,
+		candidateArtifacts:       config.CandidateArtifacts,
+		candidateAdmission:       config.CandidateAdmission,
+		candidateSourceBlobAudit: config.CandidateSourceBlobAudit,
+		logger:                   config.Logger,
+		jobs:                     jobs, api: config.API, protected: config.Protected,
+		instanceID: config.InstanceID, executions: executions,
 		currentApprovalActor: config.CurrentApprovalActor,
 		authorizeApproval:    config.AuthorizeApproval,
 		authorizeActivation:  config.AuthorizeActivation,
@@ -220,6 +248,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	if m.jobs.Authorize == nil {
 		m.jobs.Authorize = m.publicationAuthorizer(config.PublicationAuthorization)
+	}
+	if err := validateDeploymentJobHandlers(executions, m.JobHandlers()); err != nil {
+		return nil, err
 	}
 	return m, nil
 }

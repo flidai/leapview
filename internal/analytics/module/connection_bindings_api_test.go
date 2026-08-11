@@ -106,6 +106,7 @@ func newTestConnectionAdministration(
 		},
 		Dependencies: apiDependencyInspector{},
 		Pools:        pools,
+		Audit:        moduleAdministrationAuditNoop{},
 		Now:          func() time.Time { return now },
 	})
 	require.NoError(t, err)

@@ -163,7 +163,7 @@ func (r *Repository) CreateDeployment(ctx context.Context, input deployment.Crea
 }
 
 func (r *Repository) recordCreationConsequences(ctx context.Context, input deployment.CreateInput) error {
-	if input.ReleaseID == "" && input.Workflow.Job.ID == "" {
+	if input.ReleaseID == "" && input.Workflow.Event.Key == "" && input.Workflow.Job.ID == "" {
 		return nil
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -186,7 +186,7 @@ func (r *Repository) applyCreationConsequences(ctx context.Context, tx transacti
 			return err
 		}
 	}
-	if input.Workflow.Job.ID != "" {
+	if input.Workflow.Event.Key != "" || input.Workflow.Job.ID != "" {
 		if r.hooks.RecordWorkflow == nil {
 			return fmt.Errorf("deployment workflow recorder is required")
 		}

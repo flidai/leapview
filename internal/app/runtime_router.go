@@ -604,11 +604,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		refreshSupport := workspaceRefreshSupport(refreshDeps)
 		var err error
 		routes.workspaceModule, err = workspacemodule.Build(ctx, workspacemodule.Config{
-			Database:      database,
-			Directory:     persistence.workspaceDirectory,
-			ReadModel:     persistence.workspaceReadModel,
-			AccessService: routes.accessModule.WorkspaceAccessService(),
-			AssetCatalog:  persistence.workspaceAssetCatalog,
+			Database:            database,
+			Directory:           persistence.workspaceDirectory,
+			ReadModel:           persistence.workspaceReadModel,
+			AccessService:       routes.accessModule.WorkspaceAccessService(),
+			RoleBindingCommands: routes.accessModule.RoleBindingCommands(),
+			GrantCommands:       routes.accessModule.GrantCommands(),
+			AssetCatalog:        persistence.workspaceAssetCatalog,
 			WorkspaceID: func(value string) string {
 				return workspaceID(value)
 			},
@@ -666,6 +668,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Privilege: accessmodule.PrivilegeDeploy, Status: string(event.Status), MetadataJSON: event.MetadataJSON,
 			})
 		}
+		config.CandidateSourceBlobAudit = candidateSourceBlobAuditRecorder(
+			routes.accessModule,
+			policy.defaultWorkspaceID,
+		)
 		config.Jobs = deploymentmodule.JobConfig{
 			Reconcile: func(ctx context.Context) error {
 				if routes.refreshModule == nil {
@@ -676,7 +682,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Events: platform.asyncJobs,
 			Logger: platform.logger,
 		}
-		config.API = deploymentmodule.APIConfig{Releases: routes.releaseModule.DeploymentLinkage(), Jobs: platform.asyncJobs, Workflow: platform.jobModule}
+		config.API = deploymentmodule.APIConfig{Releases: routes.releaseModule.DeploymentLinkage(), Jobs: platform.asyncJobs, Workflow: platform.jobModule, Committer: platform.jobModule}
 		config.PublicationAuthorization = deploymentmodule.PublicationAuthorizationConfig{
 			States: persistence.servingStateRepo, AuthorizeObject: routes.accessModule.AuthorizeObject,
 			Bypass: func(actor string) bool {
@@ -692,7 +698,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if routes.dashboardModule == nil {
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
-			Database: database,
+			Database:    database,
+			RecordAudit: routes.accessModule.RecordAudit,
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics: runtime.metrics,
 				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
@@ -1088,67 +1095,67 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	appResponder := apiprotocol.TransportErrorResponder{Logger: platform.logger}
 	appAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return apigenapi.DispatchAPIGenOperation(operationID, apiDispatcher, appResponder, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build application APIGen transport: %w", err)
 	}
 	accessAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.accessModule.DispatchAPIGenOperation(operationID, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build Access APIGen transport: %w", err)
 	}
 	agentAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.agentModule.DispatchAPIGenOperation(operationID, w, r, platform.logger)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build Agent APIGen transport: %w", err)
 	}
 	analyticsAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return analyticsmodule.DispatchAPIGenOperation(analyticsAPI, operationID, platform.logger, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build Analytics APIGen transport: %w", err)
 	}
 	projectAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return projecthttp.DispatchAPIGenOperation(operationID, routes.releaseModule, platform.logger, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build Project APIGen transport: %w", err)
 	}
 	refreshAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.refreshModule.DispatchAPIGenOperation(operationID, platform.logger, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build Refresh APIGen transport: %w", err)
 	}
 	deploymentAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.deploymentModule.DispatchAPIGenOperation(operationID, platform.logger, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build Deployment APIGen transport: %w", err)
 	}
 	releaseAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.releaseModule.DispatchAPIGenOperation(operationID, platform.logger, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build Release APIGen transport: %w", err)
 	}
 	workspaceAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.workspaceModule.DispatchAPIGenOperation(operationID, platform.logger, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build Workspace APIGen transport: %w", err)
 	}
 	managedDataAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.managedDataModule.DispatchAPIGenOperation(operationID, routes.releaseModule, platform.logger, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build ManagedData APIGen transport: %w", err)
 	}
 	dashboardAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.dashboardModule.DispatchAPIGenOperation(operationID, platform.logger, w, r)
-	})
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
 	if err != nil {
 		return fmt.Errorf("build Dashboard APIGen transport: %w", err)
 	}

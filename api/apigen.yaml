@@ -1,5 +1,6 @@
 targets:
   - name: leapview-v1
+    strict_operation_kinds: true
     typespec_dir: .
     typespec_entrypoint: typespec/main.tsp
     ir_out: gen/json-ir.json

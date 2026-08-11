@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/platform/jobs"
 	platformdb "github.com/flidai/leapview/internal/refresh/internal/db"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -17,12 +19,24 @@ import (
 )
 
 type SQLRunRepository struct {
-	db *sql.DB
-	q  *platformdb.Queries
+	db        *sql.DB
+	q         *platformdb.Queries
+	workflow  jobs.WorkflowRecorder
+	execution RunWorkflowConfig
+}
+
+type RunWorkflowConfig struct {
+	ResourceKind string
+	InitialEvent string
+	InitialState string
 }
 
 func NewSQLRunRepository(db *sql.DB) *SQLRunRepository {
 	return &SQLRunRepository{db: db, q: platformdb.New(db)}
+}
+
+func NewSQLRunRepositoryWithWorkflow(db *sql.DB, workflow jobs.WorkflowRecorder, execution RunWorkflowConfig) *SQLRunRepository {
+	return &SQLRunRepository{db: db, q: platformdb.New(db), workflow: workflow, execution: execution}
 }
 
 func (r *SQLRunRepository) CreateRun(ctx context.Context, input refreshrun.RunInput) (refreshrun.RunRecord, error) {
@@ -96,6 +110,23 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		}
 		if affected != 1 {
 			return refreshrun.RunRecord{}, fmt.Errorf("scheduled refresh occurrence is not claimable")
+		}
+	}
+	if normalized.ParentRunID == "" && r.workflow != nil {
+		if strings.TrimSpace(r.execution.ResourceKind) == "" || strings.TrimSpace(r.execution.InitialEvent) == "" || strings.TrimSpace(r.execution.InitialState) == "" {
+			return refreshrun.RunRecord{}, fmt.Errorf("refresh workflow contract is required")
+		}
+		data, _ := json.Marshal(map[string]any{
+			"id": runID, "workspaceId": normalized.WorkspaceID,
+			"pipelineId":    strings.TrimPrefix(normalized.TargetID, normalized.WorkspaceID+"."),
+			"semanticModel": normalized.ModelID, "trigger": normalized.TriggerType,
+			"retryOf": normalized.RetryOf, "status": r.execution.InitialState,
+		})
+		if err := r.workflow.RecordWorkflow(ctx, tx, jobs.WorkflowIntent{Event: jobs.EventInput{
+			Key: r.execution.InitialEvent, ResourceKind: r.execution.ResourceKind,
+			ResourceID: runID, EventType: r.execution.InitialEvent, Data: data,
+		}}); err != nil {
+			return refreshrun.RunRecord{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {

@@ -1305,6 +1305,7 @@ func TestRefreshPersistenceIsConstructedOnlyByItsModule(t *testing.T) {
 		}
 		if file.pkgDir == "internal/refresh/module" {
 			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepository(")
+			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepositoryWithWorkflow(")
 			constructors += strings.Count(file.body, "refreshsqlite.NewRepository(")
 		}
 	}

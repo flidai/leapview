@@ -34,11 +34,15 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/workspaces/{workspace}/assets/{asset}/{section}", guard.ProtectWithObjects(access.PrivilegeViewItem, assetObjectRefs, h.WorkspaceAssetSection))
 	r.Post("/workspaces/{workspace}/assets/{asset}/refresh", guard.ProtectWithObjects(access.PrivilegeRefreshData, assetObjectRefs, h.RefreshAsset))
 	r.Get("/workspaces/{workspace}/data", guard.Protect(access.PrivilegeViewItem, h.WorkspaceDataExplorerRedirect))
-	r.Post("/workspaces/{workspace}/access/upsert", guard.Protect(access.PrivilegeManageGrants, h.AccessUpsert))
+	if h.RoleBindingCommands != nil {
+		r.Post("/workspaces/{workspace}/access/upsert", guard.Protect(m.roleBindingUpsert, h.AccessUpsert))
+		r.Post("/workspaces/{workspace}/access/remove", guard.Protect(m.roleBindingDelete, h.AccessRemove))
+	}
 	r.Get("/workspaces/{workspace}/access/search", guard.Protect(access.PrivilegeManageGrants, h.AccessSearch))
-	r.Post("/workspaces/{workspace}/access/remove", guard.Protect(access.PrivilegeManageGrants, h.AccessRemove))
-	r.Post("/workspaces/{workspace}/assets/{asset}/access/upsert", guard.ProtectWithObjects(access.PrivilegeManageGrants, workspacehttp.AssetObjectRefs, h.AccessUpsert))
-	r.Post("/workspaces/{workspace}/assets/{asset}/access/remove", guard.ProtectWithObjects(access.PrivilegeManageGrants, workspacehttp.AssetObjectRefs, h.AccessRemove))
+	if h.GrantCommands != nil {
+		r.Post("/workspaces/{workspace}/assets/{asset}/access/upsert", guard.ProtectWithObjects(m.grantUpsert, workspacehttp.AssetObjectRefs, h.AccessUpsert))
+		r.Post("/workspaces/{workspace}/assets/{asset}/access/remove", guard.ProtectWithObjects(m.grantDelete, workspacehttp.AssetObjectRefs, h.AccessRemove))
+	}
 	r.Get("/connections", guard.Protect(access.PrivilegeViewItem, h.Connections))
 	r.Post("/connections/search", guard.Protect(access.PrivilegeViewItem, h.ConnectionsSearch))
 	r.Get("/connections/{connection}/sources/{source}", guard.Protect(access.PrivilegeViewItem, h.ConnectionSource))

@@ -9,17 +9,19 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 )
 
 var (
-	ErrApprovalNotFound          = errors.New("deployment approval not found")
-	ErrApprovalConflict          = errors.New("deployment approval conflict")
-	ErrApprovalInvalid           = errors.New("deployment approval invalid")
-	ErrApprovalRequired          = errors.New("deployment approval required")
-	ErrApprovalExpired           = errors.New("deployment approval expired")
-	ErrApprovalCredentialExpired = errors.New("deployment approval credential expired")
-	ErrApprovalSeparationOfDuty  = errors.New("deployment approval separation of duty violated")
-	ErrApprovalScope             = errors.New("deployment approval scope mismatch")
+	ErrApprovalNotFound          = apigenfailure.New("approval_not_found", "deployment approval not found")
+	ErrApprovalConflict          = apigenfailure.New("approval_conflict", "deployment approval conflict")
+	ErrApprovalInvalid           = apigenfailure.New("approval_invalid", "deployment approval invalid")
+	ErrApprovalRequired          = apigenfailure.New("approval_conflict", "deployment approval required")
+	ErrApprovalExpired           = apigenfailure.New("approval_conflict", "deployment approval expired")
+	ErrApprovalCredentialExpired = apigenfailure.New("approval_credential_expired", "deployment approval credential expired")
+	ErrApprovalSeparationOfDuty  = apigenfailure.New("separation_of_duty", "deployment approval separation of duty violated")
+	ErrApprovalScope             = apigenfailure.New("approval_not_found", "deployment approval scope mismatch")
 )
 
 type ApprovalStatus string

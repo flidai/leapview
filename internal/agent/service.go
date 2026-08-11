@@ -9,15 +9,16 @@ import (
 	"sync"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	agentconfig "github.com/flidai/leapview/internal/agent/config"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
 var (
-	ErrDisabled          = errors.New("agent is not configured")
-	ErrBusy              = errors.New("agent conversation already has a running turn")
-	ErrRunNotCancellable = errors.New("agent run is not cancellable")
+	ErrDisabled          = apigenfailure.New("unavailable", "agent is not configured")
+	ErrBusy              = apigenfailure.New("conflict", "agent conversation already has a running turn")
+	ErrRunNotCancellable = apigenfailure.New("not_cancellable", "agent run is not cancellable")
 )
 
 const (
@@ -63,6 +64,24 @@ func (s *Service) SetPromptWorkflow(factory func(PromptInput, string, PromptDisp
 	if s != nil {
 		s.promptWorkflow = factory
 	}
+}
+
+// ConfigureRunWorkflow connects an externally constructed service to the
+// application workflow recorder before prompt execution begins.
+func (s *Service) ConfigureRunWorkflow(recorder jobs.WorkflowRecorder) error {
+	if s == nil || s.repo == nil || recorder == nil {
+		return fmt.Errorf("agent run workflow recorder is required")
+	}
+	configurer, ok := s.repo.(interface{ ConfigureRunWorkflow(jobs.WorkflowRecorder) })
+	if ok {
+		configurer.ConfigureRunWorkflow(recorder)
+	} else if !s.runWorkflowAvailable() {
+		return fmt.Errorf("agent repository does not support durable workflow configuration")
+	}
+	if !s.runWorkflowAvailable() {
+		return fmt.Errorf("agent repository did not enable durable workflows")
+	}
+	return nil
 }
 
 func (s *Service) runWorkflowAvailable() bool {

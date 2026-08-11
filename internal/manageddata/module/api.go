@@ -23,19 +23,19 @@ func (m *Module) beginFinalize(ctx context.Context, request control.UploadReques
 	if err != nil {
 		return control.UploadResult{}, err
 	}
-	event, err := json.Marshal(map[string]any{"uploadSessionId": request.UploadID, "status": "finalizing"})
+	event, err := json.Marshal(map[string]any{"uploadSessionId": request.UploadID, "status": m.finalizeExecution.InitialState})
 	if err != nil {
 		return control.UploadResult{}, err
 	}
 	request.Workflow = jobs.WorkflowIntent{
 		Event: jobs.EventInput{
-			Key: "upload_session.finalizing", ResourceKind: "upload", ResourceID: request.UploadID,
-			EventType: "upload_session.finalizing", Data: event,
+			Key: m.finalizeExecution.InitialEvent, ResourceKind: m.finalizeExecution.ResourceKind, ResourceID: request.UploadID,
+			EventType: m.finalizeExecution.InitialEvent, Data: event,
 		},
 		Job: jobs.EnqueueInput{
-			ID: "upload:" + request.UploadID + ":finalize", Kind: FinalizeUploadJobKind,
+			ID: m.finalizeExecution.ResourceKind + ":" + request.UploadID + ":finalize", Kind: m.finalizeExecution.JobKind,
 			WorkloadClass: "control", WorkspaceID: "_node",
-			ResourceKind: "upload", ResourceID: request.UploadID, Payload: payload,
+			ResourceKind: m.finalizeExecution.ResourceKind, ResourceID: request.UploadID, Payload: payload,
 		},
 	}
 	if m == nil || m.uploads == nil {
@@ -78,7 +78,7 @@ func (m *Module) recordUploadCancelled(ctx context.Context, result control.Uploa
 	defer m.eventMu.Unlock()
 	// Cancellation is replayed by idempotent clients. Check the durable stream
 	// before appending so a replay emits exactly one terminal event.
-	events, err := m.jobs.ListEvents(ctx, "upload", result.ID, 0, 250)
+	events, err := m.jobs.ListEvents(ctx, m.finalizeExecution.ResourceKind, result.ID, 0, 250)
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func (m *Module) appendEvent(ctx context.Context, uploadID, eventType string, da
 	if err != nil {
 		return err
 	}
-	_, err = m.jobs.AppendEvent(ctx, "upload", uploadID, eventType, encoded)
+	_, err = m.jobs.AppendEvent(ctx, m.finalizeExecution.ResourceKind, uploadID, eventType, encoded)
 	return err
 }
 
@@ -117,5 +117,5 @@ func (m *Module) ListUploadSessionEvents(w http.ResponseWriter, r *http.Request,
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_EVENT_STORE_UNAVAILABLE", "Upload events are unavailable", nil)
 		return
 	}
-	jobhttp.WriteEventPage(w, r, m.jobs, "upload", sessionID, params.Limit, params.PageToken, "upload:"+projectID+":"+connectionID+":"+sessionID)
+	jobhttp.WriteEventPage(w, r, m.jobs, m.finalizeExecution.ResourceKind, sessionID, params.Limit, params.PageToken, m.finalizeExecution.ResourceKind+":"+projectID+":"+connectionID+":"+sessionID)
 }

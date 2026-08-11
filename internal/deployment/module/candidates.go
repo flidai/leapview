@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	deploymentui "github.com/flidai/leapview/internal/deployment/ui"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -73,7 +75,7 @@ func (m *Module) StartProjectCandidate(w http.ResponseWriter, r *http.Request, p
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", err.Error(), nil)
 		return
 	}
-	principalID, ok := m.candidatePrincipalID(w, r)
+	principalID, ok := m.candidatePrincipalIDCommand(w, r, deploymentgen.GenCommandOperationStartProjectCandidate())
 	if !ok {
 		return
 	}
@@ -85,7 +87,7 @@ func (m *Module) StartProjectCandidate(w http.ResponseWriter, r *http.Request, p
 	}
 	result, err := m.candidates.Start(r.Context(), startRequest)
 	if err != nil {
-		writeCandidateAPIError(w, r, err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationStartProjectCandidate(), err)
 		return
 	}
 	w.Header().Set("Location", candidateLocation(project, result.Candidate.ID))
@@ -131,7 +133,7 @@ func (m *Module) ReplaceProjectCandidateArtifact(w http.ResponseWriter, r *http.
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", err.Error(), nil)
 		return
 	}
-	principalID, ok := m.candidatePrincipalID(w, r)
+	principalID, ok := m.candidatePrincipalIDCommand(w, r, deploymentgen.GenCommandOperationReplaceProjectCandidateArtifact())
 	if !ok {
 		return
 	}
@@ -139,14 +141,14 @@ func (m *Module) ReplaceProjectCandidateArtifact(w http.ResponseWriter, r *http.
 		ProjectID: project, CandidateID: candidateID, OwnerID: principalID,
 	}, body.ExpectedArtifactDigest, body.ArtifactDigest)
 	if err != nil {
-		writeCandidateAPIError(w, r, err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationReplaceProjectCandidateArtifact(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, m.candidateResponse(candidate, false))
 }
 
 func (m *Module) RetryProjectCandidate(w http.ResponseWriter, r *http.Request, project, candidateID, _ string) {
-	principalID, ok := m.candidatePrincipalID(w, r)
+	principalID, ok := m.candidatePrincipalIDCommand(w, r, deploymentgen.GenCommandOperationRetryProjectCandidate())
 	if !ok {
 		return
 	}
@@ -154,14 +156,14 @@ func (m *Module) RetryProjectCandidate(w http.ResponseWriter, r *http.Request, p
 		ProjectID: project, CandidateID: candidateID, OwnerID: principalID,
 	})
 	if err != nil {
-		writeCandidateAPIError(w, r, err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationRetryProjectCandidate(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, m.candidateResponse(candidate, false))
 }
 
 func (m *Module) CancelProjectCandidate(w http.ResponseWriter, r *http.Request, project, candidateID, _ string) {
-	principalID, ok := m.candidatePrincipalID(w, r)
+	principalID, ok := m.candidatePrincipalIDCommand(w, r, deploymentgen.GenCommandOperationCancelProjectCandidate())
 	if !ok {
 		return
 	}
@@ -169,7 +171,7 @@ func (m *Module) CancelProjectCandidate(w http.ResponseWriter, r *http.Request, 
 		ProjectID: project, CandidateID: candidateID, OwnerID: principalID,
 	})
 	if err != nil {
-		writeCandidateAPIError(w, r, err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCancelProjectCandidate(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, m.candidateResponse(candidate, false))
@@ -182,7 +184,7 @@ func (m *Module) CancelProjectCandidateByKey(
 	candidateKey,
 	_ string,
 ) {
-	principalID, ok := m.candidatePrincipalID(w, r)
+	principalID, ok := m.candidatePrincipalIDCommand(w, r, deploymentgen.GenCommandOperationCancelProjectCandidateByKey())
 	if !ok {
 		return
 	}
@@ -193,7 +195,7 @@ func (m *Module) CancelProjectCandidateByKey(
 		candidateKey,
 	)
 	if err != nil {
-		writeCandidateAPIError(w, r, err)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCancelProjectCandidateByKey(), err)
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, m.candidateResponse(candidate, false))
@@ -218,7 +220,7 @@ func (m *Module) PublishProjectCandidate(
 		)
 		return
 	}
-	candidate, ok := m.ownedCandidate(w, r, project, candidateID)
+	candidate, ok := m.ownedCandidateCommand(w, r, project, candidateID, deploymentgen.GenCommandOperationPublishProjectCandidate())
 	if !ok {
 		return
 	}
@@ -229,18 +231,11 @@ func (m *Module) PublishProjectCandidate(
 		candidate.ProvenanceDigest != provenanceDigest ||
 		candidate.TargetID != targetID ||
 		targetID != strings.TrimSpace(m.instanceID) {
-		writeCandidateAPIError(w, r, deployment.ErrCandidateConflict)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationPublishProjectCandidate(), deployment.ErrCandidateConflict)
 		return
 	}
 	if m.api.Releases == nil {
-		apitransport.WriteProblem(
-			w,
-			r,
-			http.StatusServiceUnavailable,
-			"DEPLOYMENT_SERVICE_UNAVAILABLE",
-			"Candidate publication is unavailable",
-			nil,
-		)
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationPublishProjectCandidate(), apigenfailure.New("service_unavailable", "Candidate publication is unavailable"))
 		return
 	}
 	published, err := m.api.Releases.PublishCandidate(
@@ -256,7 +251,7 @@ func (m *Module) PublishProjectCandidate(
 		},
 	)
 	if err != nil {
-		writeAPIError(w, r, err)
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationPublishProjectCandidate(), err)
 		return
 	}
 	if m.candidateRuntimeLifecycle != nil {
@@ -265,6 +260,7 @@ func (m *Module) PublishProjectCandidate(
 	m.createDeployment(
 		w,
 		r,
+		deploymentgen.GenCommandOperationPublishProjectCandidate(),
 		project,
 		published.ID,
 		idempotencyKey,
@@ -287,6 +283,21 @@ func (m *Module) ownedCandidate(w http.ResponseWriter, r *http.Request, project,
 	return candidate, true
 }
 
+func (m *Module) ownedCandidateCommand(w http.ResponseWriter, r *http.Request, project, candidateID string, operationID deploymentgen.GenCommandOperationID) (deployment.Candidate, bool) {
+	principalID, ok := m.candidatePrincipalIDCommand(w, r, operationID)
+	if !ok {
+		return deployment.Candidate{}, false
+	}
+	candidate, err := m.candidates.Get(r.Context(), deployment.CandidateScope{
+		ProjectID: project, CandidateID: candidateID, OwnerID: principalID,
+	})
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return deployment.Candidate{}, false
+	}
+	return candidate, true
+}
+
 func (m *Module) candidatePrincipalID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	principal, ok := m.principal(r)
 	if !ok {
@@ -295,6 +306,19 @@ func (m *Module) candidatePrincipalID(w http.ResponseWriter, r *http.Request) (s
 	}
 	if m.candidates == nil {
 		writeCandidateUnavailable(w, r)
+		return "", false
+	}
+	return principal.ID, true
+}
+
+func (m *Module) candidatePrincipalIDCommand(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID) (string, bool) {
+	principal, ok := m.principal(r)
+	if !ok {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return "", false
+	}
+	if m.candidates == nil {
+		m.writeCandidateCommandFailure(w, r, operationID, deployment.ErrCandidateUnavailable)
 		return "", false
 	}
 	return principal.ID, true
@@ -332,6 +356,24 @@ func writeCandidateUnavailable(w http.ResponseWriter, r *http.Request) {
 
 func writeCandidateAPIError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code, detail := http.StatusInternalServerError, "INTERNAL_ERROR", "The candidate request could not be completed"
+	if kind, ok := apigenfailure.KindOf(err); ok {
+		switch kind {
+		case "candidate_unavailable":
+			status, code, detail = http.StatusServiceUnavailable, "CANDIDATE_SERVICE_UNAVAILABLE", "Candidate service is unavailable"
+		case "candidate_not_found":
+			status, code, detail = http.StatusNotFound, "CANDIDATE_NOT_FOUND", "Candidate not found"
+		case "candidate_conflict":
+			status, code, detail = http.StatusConflict, "CANDIDATE_CONFLICT", err.Error()
+		case "candidate_quota":
+			status, code, detail = http.StatusTooManyRequests, "CANDIDATE_QUOTA_EXCEEDED", "Candidate quota exceeded"
+		case "candidate_invalid":
+			status, code, detail = http.StatusUnprocessableEntity, "INVALID_CANDIDATE", err.Error()
+		case "source_blob_invalid":
+			status, code, detail = http.StatusUnprocessableEntity, "INVALID_CANDIDATE_SOURCE_BLOB", err.Error()
+		case "audit_unavailable":
+			status, code, detail = http.StatusServiceUnavailable, "AUDIT_UNAVAILABLE", "Candidate source blob audit is temporarily unavailable"
+		}
+	}
 	switch {
 	case errors.Is(err, deployment.ErrCandidateUnavailable),
 		errors.Is(err, project.ErrCandidateSourceUnavailable):
@@ -346,4 +388,22 @@ func writeCandidateAPIError(w http.ResponseWriter, r *http.Request, err error) {
 		status, code, detail = http.StatusUnprocessableEntity, "INVALID_CANDIDATE", err.Error()
 	}
 	apitransport.WriteProblem(w, r, status, code, detail, nil)
+}
+
+func (m *Module) writeCandidateCommandFailure(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, err error) {
+	err = classifyCandidateFailure(err)
+	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, m.logger, operationID, deploymentgen.GetAPIGenCommandFailureContracts, err)
+}
+
+func classifyCandidateFailure(err error) error {
+	switch {
+	case errors.Is(err, project.ErrCandidateSourceUnavailable):
+		return apigenfailure.Wrap("candidate_unavailable", err)
+	case errors.Is(err, project.ErrCandidateSourceConflict):
+		return apigenfailure.Wrap("candidate_conflict", err)
+	case errors.Is(err, project.ErrCandidateSourceInvalid):
+		return apigenfailure.Wrap("candidate_invalid", err)
+	default:
+		return err
+	}
 }

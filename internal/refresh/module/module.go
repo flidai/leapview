@@ -12,8 +12,10 @@ import (
 	"sync"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	refreshanalytics "github.com/flidai/leapview/internal/refresh/analyticsruntime"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
@@ -48,6 +50,7 @@ type Config struct {
 	WorkloadStats       func() workload.Stats
 	RunFinished         func(context.Context, refreshrun.RunRecord)
 	Events              EventStore
+	Workflow            jobs.WorkflowRecorder
 	Clock               refreshschedule.Clock
 	EnableDispatcher    bool
 	EnableScheduler     bool
@@ -95,6 +98,7 @@ type Module struct {
 	leaseTimeout       time.Duration
 	logger             *slog.Logger
 	events             EventStore
+	refreshExecution   apigencommand.AsyncExecutionContract
 
 	mu          sync.Mutex
 	background  context.Context
@@ -107,6 +111,10 @@ type Module struct {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	refreshExecution, err := loadRefreshExecutionContract()
+	if err != nil {
+		return nil, err
+	}
 	interval := config.ScheduleInterval
 	if interval <= 0 {
 		interval = time.Minute
@@ -128,7 +136,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		environment: config.Environment, refreshClock: config.Clock,
 		reconcileSchedules: config.ReconcileSchedules, scheduleInterval: interval,
 		leaseTimeout: leaseTimeout, logger: logger,
-		events: config.Events,
+		events:           config.Events,
+		refreshExecution: refreshExecution,
 	}
 	m.handler.CurrentPrincipal = func(r *http.Request) (materializehttp.Principal, bool) {
 		if config.HTTP.CurrentPrincipal == nil {
@@ -143,13 +152,18 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	m.handler.AuthorizePipelineRun = func(r *http.Request, workspaceID, pipelineID string) (bool, error) {
 		return authorizePipeline(r, workspaceID, pipelineID, access.PrivilegeRefreshData, config.Authorization)
 	}
-	if m.events != nil {
-		m.handler.RunCreated = m.recordRunCreated
-	}
+	m.handler.RunCreated = m.verifyRunCreated
 	if config.Database == nil {
 		return m, nil
 	}
-	m.runs = refreshsqlite.NewSQLRunRepository(config.Database)
+	if config.Workflow == nil {
+		return nil, errors.New("refresh workflow recorder is required")
+	}
+	m.runs = refreshsqlite.NewSQLRunRepositoryWithWorkflow(config.Database, config.Workflow, refreshsqlite.RunWorkflowConfig{
+		ResourceKind: refreshExecution.ResourceKind,
+		InitialEvent: refreshExecution.InitialEvent,
+		InitialState: refreshExecution.InitialState,
+	})
 	m.schedules = refreshsqlite.NewRepository(config.Database)
 	m.service = config.Service
 	if m.service.Artifacts == nil {

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -69,6 +70,7 @@ type Module struct {
 	bindings          *binding.Binder
 	runtimeResolver   *manageddataresolver.Resolver
 	metadata          DeploymentMetadata
+	finalizeExecution apigencommand.AsyncExecutionContract
 }
 
 type repository interface {
@@ -101,6 +103,7 @@ type Config struct {
 	Jobs             JobStore
 	Workflow         jobs.WorkflowRecorder
 	ServingStates    ServingStateReader
+	RecordAudit      func(context.Context, CommandAuditEvent) error
 }
 
 type ProductConfig struct {
@@ -127,6 +130,17 @@ type ServingStateReader interface {
 }
 
 func Build(ctx context.Context, cfg Config) (*Module, error) {
+	finalizeExecution, err := loadFinalizeUploadExecutionContract()
+	if err != nil {
+		return nil, err
+	}
+	var commandAudit func(context.Context, manageddatahttp.CommandAuditInput) error
+	if !cfg.Disabled {
+		commandAudit, err = buildManagedDataCommandAuditRecorder(cfg.RecordAudit)
+		if err != nil {
+			return nil, err
+		}
+	}
 	currentPrincipal := func(r *http.Request) (manageddatahttp.Principal, bool) {
 		if cfg.CurrentPrincipal == nil {
 			return manageddatahttp.Principal{}, false
@@ -135,10 +149,10 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		return manageddatahttp.Principal{ID: principal.ID}, ok
 	}
 	if cfg.Disabled {
-		module := &Module{jobs: cfg.Jobs, maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker)}
+		module := &Module{jobs: cfg.Jobs, maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker), finalizeExecution: finalizeExecution}
 		module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 			CurrentPrincipal: currentPrincipal, MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
-			Environment: cfg.Environment,
+			Environment: cfg.Environment, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 		})
 		return module, nil
 	}
@@ -198,15 +212,18 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 			collector: collector, runtime: runtimeCollector,
 		},
 		jobs: cfg.Jobs, workflow: cfg.Workflow, bindings: bindings, runtimeResolver: runtimeResolver,
-		metadata: metadataReader{repository: repository},
+		metadata: metadataReader{repository: repository}, finalizeExecution: finalizeExecution,
 	}
 	module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 		Repository: apiRepository, Uploads: uploads, Multipart: multipart,
 		CurrentPrincipal: currentPrincipal, Environment: cfg.Environment,
 		BeginFinalize: module.beginFinalize, RecordUploadCreated: module.recordUploadCreated,
-		AbortUpload: module.abortUpload,
+		AbortUpload: module.abortUpload, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 	})
 	module.maintenanceWorker = newMaintenanceWorker(module.maintenance, cfg.Worker)
+	if err := validateFinalizeUploadJobHandlers(finalizeExecution, module.JobHandlers(cfg.Jobs)); err != nil {
+		return nil, err
+	}
 	return module, nil
 }
 
