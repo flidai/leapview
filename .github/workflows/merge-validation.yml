@@ -12,6 +12,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  apigen-validation:
+    name: APIGen tests (merge queue)
+    if: github.repository == 'flidai/leapview'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out merge group
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Run APIGen validation
+        run: task ci:lane:go:apigen
+
   go-packages-validation:
     name: Go package tests (merge queue)
     if: github.repository == 'flidai/leapview'
@@ -96,7 +118,7 @@ jobs:
   full-validation:
     name: Full merge validation
     if: github.repository == 'flidai/leapview'
-    needs: [go-packages-validation, go-application-validation, frontend-validation]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -123,17 +145,22 @@ jobs:
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [go-packages-validation, go-application-validation, frontend-validation, full-validation]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require full merge validation
         env:
+          APIGEN_RESULT: ${{ needs.apigen-validation.result }}
           GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}
           GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
           FULL_VALIDATION_RESULT: ${{ needs.full-validation.result }}
         run: |
+          test "${APIGEN_RESULT}" = success || {
+            printf 'APIGen validation: %s\n' "${APIGEN_RESULT}" >&2
+            exit 1
+          }
           test "${GO_PACKAGES_RESULT}" = success || {
             printf 'Go package validation: %s\n' "${GO_PACKAGES_RESULT}" >&2
             exit 1

@@ -795,10 +795,14 @@ tasks:
       - task: test:go:prepared
 
   ci:lane:go:packages:
-    desc: Run generated API and non-application Go package tests
+    desc: Run non-application Go package tests
+    cmds:
+      - task: test:go:packages
+
+  ci:lane:go:apigen:
+    desc: Run the vendored APIGen Go module and TypeSpec tests
     cmds:
       - task: apigen:test
-      - task: test:go:packages
 
   ci:lane:go:application:
     desc: Run sharded application and external-service Go tests
