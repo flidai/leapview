@@ -191,6 +191,138 @@ func TestUpgradeOperationFaultsPreserveInitialServiceState(t *testing.T) {
 	}
 }
 
+func TestUpgradeAppliesAndRollsBackDeploymentPayload(t *testing.T) {
+	current := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	next := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	for _, test := range []struct {
+		name          string
+		restartErr    error
+		wantRollbacks int
+	}{
+		{name: "successful cutover"},
+		{name: "failed health check", restartErr: errors.New("unhealthy"), wantRollbacks: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "backups"), 0o700))
+			require.NoError(t, os.WriteFile(
+				filepath.Join(root, deploymentEnvName),
+				[]byte("LEAPVIEW_IMAGE="+current+"\nCOMPOSE_HTTPS=0\n"),
+				0o600,
+			))
+			update := &recordingDeploymentPayloadUpdate{}
+			manager := &recordingDeploymentPayloadManager{update: update}
+			controller, err := New(Options{Root: root, DeploymentPayloads: manager})
+			require.NoError(t, err)
+			controller.isRunningOverride = func(context.Context) (bool, error) { return true, nil }
+			controller.stopOverride = func(context.Context, int) error { return nil }
+			controller.backupArchiveOverride = func(_ context.Context, path string) error {
+				return os.WriteFile(path, []byte("checkpoint"), 0o600)
+			}
+			controller.restoreArchiveOverride = func(context.Context, string) error { return nil }
+			controller.composeOverride = func(context.Context, io.Reader, io.Writer, io.Writer, ...string) error { return nil }
+			starts := 0
+			controller.startOverride = func(context.Context) error {
+				starts++
+				if starts == 1 {
+					return test.restartErr
+				}
+				return nil
+			}
+
+			err = controller.Upgrade(t.Context(), next)
+			if test.restartErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, test.restartErr)
+			}
+			require.Equal(t, [][2]string{{current, next}}, manager.prepared)
+			require.Equal(t, 1, update.applies)
+			require.Equal(t, test.wantRollbacks, update.rollbacks)
+			require.Equal(t, 1, update.closes)
+		})
+	}
+}
+
+func TestRollbackAppliesAndRestoresDeploymentPayload(t *testing.T) {
+	current := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	previous := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	for _, test := range []struct {
+		name          string
+		restartErr    error
+		wantRollbacks int
+	}{
+		{name: "successful rollback"},
+		{name: "failed rollback health check", restartErr: errors.New("unhealthy"), wantRollbacks: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "backups"), 0o700))
+			checkpoint := filepath.Join(root, "backups", "pre-upgrade.tar.gz")
+			require.NoError(t, os.WriteFile(checkpoint, []byte("checkpoint"), 0o600))
+			require.NoError(t, os.WriteFile(
+				filepath.Join(root, deploymentEnvName),
+				[]byte("LEAPVIEW_IMAGE="+current+"\nCOMPOSE_HTTPS=0\n"),
+				0o600,
+			))
+			require.NoError(t, os.WriteFile(
+				filepath.Join(root, rollbackEnvName),
+				[]byte("PREVIOUS_IMAGE="+previous+"\nCHECKPOINT="+checkpoint+"\n"),
+				0o600,
+			))
+			update := &recordingDeploymentPayloadUpdate{}
+			manager := &recordingDeploymentPayloadManager{update: update}
+			controller, err := New(Options{Root: root, DeploymentPayloads: manager})
+			require.NoError(t, err)
+			controller.isRunningOverride = func(context.Context) (bool, error) { return true, nil }
+			controller.stopOverride = func(context.Context, int) error { return nil }
+			controller.backupArchiveOverride = func(_ context.Context, path string) error {
+				return os.WriteFile(path, []byte("before"), 0o600)
+			}
+			controller.restoreArchiveOverride = func(context.Context, string) error { return nil }
+			starts := 0
+			controller.startOverride = func(context.Context) error {
+				starts++
+				if starts == 1 {
+					return test.restartErr
+				}
+				return nil
+			}
+
+			err = controller.Rollback(t.Context(), true)
+			if test.restartErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, test.restartErr)
+			}
+			require.Equal(t, [][2]string{{current, previous}}, manager.prepared)
+			require.Equal(t, 1, update.applies)
+			require.Equal(t, test.wantRollbacks, update.rollbacks)
+			require.Equal(t, 1, update.closes)
+		})
+	}
+}
+
+type recordingDeploymentPayloadManager struct {
+	prepared [][2]string
+	update   DeploymentPayloadUpdate
+}
+
+func (m *recordingDeploymentPayloadManager) Prepare(_ context.Context, current, next string) (DeploymentPayloadUpdate, error) {
+	m.prepared = append(m.prepared, [2]string{current, next})
+	return m.update, nil
+}
+
+type recordingDeploymentPayloadUpdate struct {
+	applies   int
+	rollbacks int
+	closes    int
+}
+
+func (u *recordingDeploymentPayloadUpdate) Apply() error    { u.applies++; return nil }
+func (u *recordingDeploymentPayloadUpdate) Rollback() error { u.rollbacks++; return nil }
+func (u *recordingDeploymentPayloadUpdate) Close() error    { u.closes++; return nil }
+
 func TestRestoreOperationFaultsPreserveInitialServiceState(t *testing.T) {
 	for _, test := range []struct {
 		name       string

@@ -28,6 +28,11 @@ variable "image" {
   description = "Base operating-system image."
   type        = string
   default     = "ubuntu-24.04"
+
+  validation {
+    condition     = var.image == "ubuntu-24.04"
+    error_message = "image must be ubuntu-24.04; the automated host contract supports Ubuntu 24.04 LTS only."
+  }
 }
 
 variable "ssh_allowed_cidrs" {

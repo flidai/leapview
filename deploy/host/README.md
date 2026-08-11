@@ -33,6 +33,9 @@ shared `bootstrap-ubuntu.sh`; it contains no application lifecycle logic.
 The production image carries the matching payload under
 `/usr/local/share/leapview/deployment`. A digest therefore selects the server,
 controller, Compose files, proxy defaults, and host operations assets together.
+Host upgrades stage that payload before downtime, switch it with the application
+image, and restore the previous payload if health checks fail or the operator
+requests rollback.
 
 After installation, every provider exposes the same operations interface:
 

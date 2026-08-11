@@ -41,6 +41,8 @@ LeapView's provider adapters share one Ubuntu 24.04 LTS host bootstrap. It insta
 
 This boundary keeps server creation, IPs, firewalls, DNS, and optional provider snapshots in thin provider adapters. Compose configuration, proxy defaults, initialization, backup retention, upgrades, and rollback remain provider-neutral. After bootstrap, operators use the same `leapviewctl` commands on every supported VPS provider.
 
+On managed hosts, upgrades stage the controller, Compose, proxy, and systemd payload from the target image before downtime. The payload switches in the same operation as the application image and is restored together with the previous image and state after a failed health check or explicit rollback.
+
 Provider independence does not expand the guest operating-system matrix: the automated host contract supports Ubuntu 24.04 LTS with systemd on `linux/amd64` and `linux/arm64`. Other Docker hosts can continue to use the generic Compose package directly.
 
 ## Persistent and external storage

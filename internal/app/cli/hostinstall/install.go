@@ -66,10 +66,15 @@ type Installer struct {
 }
 
 func DefaultPaths(payload, config string) Paths {
+	paths := InstalledPaths("/opt/leapview")
+	paths.Payload = payload
+	paths.Config = config
+	return paths
+}
+
+func InstalledPaths(root string) Paths {
 	return Paths{
-		Payload:   payload,
-		Config:    config,
-		Root:      "/opt/leapview",
+		Root:      root,
 		ConfigDir: "/etc/leapview",
 		SystemBin: "/usr/local/sbin",
 		Systemd:   "/etc/systemd/system",

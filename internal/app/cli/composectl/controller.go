@@ -43,6 +43,7 @@ type Options struct {
 	Stdin                   io.Reader
 	Stdout                  io.Writer
 	Stderr                  io.Writer
+	DeploymentPayloads      DeploymentPayloadManager
 	Now                     func() time.Time
 	Sleep                   func(context.Context, time.Duration) error
 	qualificationExecutor   qualificationCommandExecutor
@@ -55,6 +56,7 @@ type Controller struct {
 	stdin                   io.Reader
 	stdout                  io.Writer
 	stderr                  io.Writer
+	deploymentPayloads      DeploymentPayloadManager
 	now                     func() time.Time
 	sleep                   func(context.Context, time.Duration) error
 	qualificationExecutor   qualificationCommandExecutor
@@ -67,6 +69,19 @@ type Controller struct {
 	backupArchiveOverride   func(context.Context, string) error
 	restoreArchiveOverride  func(context.Context, string) error
 	composeOverride         func(context.Context, io.Reader, io.Writer, io.Writer, ...string) error
+}
+
+// DeploymentPayloadManager stages host-level controller and deployment assets
+// for the same immutable image transaction as application state and runtime.
+// Generic Compose installations leave this unset.
+type DeploymentPayloadManager interface {
+	Prepare(context.Context, string, string) (DeploymentPayloadUpdate, error)
+}
+
+type DeploymentPayloadUpdate interface {
+	Apply() error
+	Rollback() error
+	Close() error
 }
 
 type InitOptions struct {
@@ -120,7 +135,7 @@ func New(options Options) (*Controller, error) {
 	}
 	return &Controller{
 		root: root, dockerBin: dockerBin, stdin: stdin, stdout: stdout,
-		stderr: stderr, now: now, sleep: sleep,
+		stderr: stderr, deploymentPayloads: options.DeploymentPayloads, now: now, sleep: sleep,
 		qualificationExecutor:   executor,
 		qualificationContainers: containers,
 	}, nil
@@ -437,6 +452,13 @@ func (c *Controller) Upgrade(ctx context.Context, next string) error {
 			_, err := fmt.Fprintf(c.stdout, "already running %s\n", next)
 			return err
 		}
+		payloadUpdate, err := c.prepareDeploymentPayload(ctx, current, next)
+		if err != nil {
+			return fmt.Errorf("prepare deployment payload: %w", err)
+		}
+		if payloadUpdate != nil {
+			defer payloadUpdate.Close()
+		}
 		wasRunning, err := c.isRunning(ctx)
 		if err != nil {
 			return err
@@ -487,7 +509,16 @@ func (c *Controller) Upgrade(ctx context.Context, next string) error {
 			}
 			return errors.Join(fmt.Errorf("upgrade image pull failed; previous state restoration was incomplete: %w", err), imageErr, markerErr, stateErr)
 		}
-		// A stopped service remains stopped after an image-only upgrade. Running
+		if payloadUpdate != nil {
+			if err := payloadUpdate.Apply(); err != nil {
+				imageErr := c.setImage(current)
+				payloadErr := payloadUpdate.Rollback()
+				markerErr := restoreMarker()
+				stateErr := c.restoreServiceState(ctx, wasRunning)
+				return errors.Join(fmt.Errorf("apply deployment payload: %w", err), imageErr, payloadErr, markerErr, stateErr)
+			}
+		}
+		// A stopped service remains stopped after an upgrade. Running
 		// it here would turn a maintenance operation into an implicit start.
 		if !wasRunning {
 			return nil
@@ -499,6 +530,7 @@ func (c *Controller) Upgrade(ctx context.Context, next string) error {
 			// resulting state is known.
 			stopErr := c.stop(ctx, 30)
 			imageErr := c.setImage(current)
+			payloadErr := rollbackDeploymentPayload(payloadUpdate)
 			restoreErr := c.restoreArchive(ctx, checkpoint)
 			markerErr := restoreMarker()
 			stateErr := c.restoreServiceState(ctx, wasRunning)
@@ -509,6 +541,9 @@ func (c *Controller) Upgrade(ctx context.Context, next string) error {
 			if imageErr != nil {
 				errs = append(errs, fmt.Errorf("restore previous image %s: %w", current, imageErr))
 			}
+			if payloadErr != nil {
+				errs = append(errs, fmt.Errorf("restore previous deployment payload: %w", payloadErr))
+			}
 			if restoreErr != nil {
 				errs = append(errs, fmt.Errorf("restore previous data from %s: %w", checkpoint, restoreErr))
 			}
@@ -518,7 +553,7 @@ func (c *Controller) Upgrade(ctx context.Context, next string) error {
 			if stateErr != nil {
 				errs = append(errs, stateErr)
 			}
-			if stopErr == nil && imageErr == nil && restoreErr == nil && markerErr == nil && stateErr == nil {
+			if stopErr == nil && imageErr == nil && payloadErr == nil && restoreErr == nil && markerErr == nil && stateErr == nil {
 				return fmt.Errorf("upgrade failed; previous image and state were restored: %w", err)
 			}
 			return errors.Join(errs...)
@@ -572,6 +607,13 @@ func (c *Controller) Rollback(ctx context.Context, confirmed bool) error {
 		if err := requireNonEmptyFile(checkpoint); err != nil {
 			return fmt.Errorf("rollback checkpoint is missing: %w", err)
 		}
+		payloadUpdate, err := c.prepareDeploymentPayload(ctx, current, previous)
+		if err != nil {
+			return fmt.Errorf("prepare previous deployment payload: %w", err)
+		}
+		if payloadUpdate != nil {
+			defer payloadUpdate.Close()
+		}
 		wasRunning, err := c.isRunning(ctx)
 		if err != nil {
 			return err
@@ -604,19 +646,43 @@ func (c *Controller) Rollback(ctx context.Context, confirmed bool) error {
 			}
 			return fmt.Errorf("rollback failed; pre-rollback image and state were reinstated: %w", err)
 		}
+		if payloadUpdate != nil {
+			if err := payloadUpdate.Apply(); err != nil {
+				_ = c.setImage(current)
+				payloadErr := payloadUpdate.Rollback()
+				restoreErr := c.restoreArchive(ctx, before)
+				stateErr := c.restoreServiceState(ctx, wasRunning)
+				return errors.Join(fmt.Errorf("rollback deployment payload failed: %w", err), payloadErr, restoreErr, stateErr)
+			}
+		}
 		if err := c.startUnlocked(ctx); err != nil {
 			_ = c.stop(ctx, 30)
 			_ = c.setImage(current)
+			payloadErr := rollbackDeploymentPayload(payloadUpdate)
 			if restoreErr := c.restoreArchive(ctx, before); restoreErr != nil {
-				return errors.Join(fmt.Errorf("rollback health check failed"), err, fmt.Errorf("reinstate pre-rollback state: %w", restoreErr))
+				return errors.Join(fmt.Errorf("rollback health check failed"), err, payloadErr, fmt.Errorf("reinstate pre-rollback state: %w", restoreErr))
 			}
 			if wasRunning {
 				_ = c.startUnlocked(ctx)
 			}
-			return fmt.Errorf("rollback failed health checks; pre-rollback image and state were reinstated: %w", err)
+			return errors.Join(fmt.Errorf("rollback failed health checks; pre-rollback image and state were reinstated: %w", err), payloadErr)
 		}
 		return nil
 	})
+}
+
+func (c *Controller) prepareDeploymentPayload(ctx context.Context, current, next string) (DeploymentPayloadUpdate, error) {
+	if c.deploymentPayloads == nil {
+		return nil, nil
+	}
+	return c.deploymentPayloads.Prepare(ctx, current, next)
+}
+
+func rollbackDeploymentPayload(update DeploymentPayloadUpdate) error {
+	if update == nil {
+		return nil
+	}
+	return update.Rollback()
 }
 
 func (c *Controller) captureInitialCredentials(ctx context.Context) error {

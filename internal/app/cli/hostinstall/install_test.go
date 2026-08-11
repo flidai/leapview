@@ -227,6 +227,79 @@ func TestInstallRejectsSymlinkTargets(t *testing.T) {
 	require.Equal(t, "preserve", string(contents))
 }
 
+func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
+	paths := testPaths(t)
+	writeTestPayload(t, paths.Payload)
+	current := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	next := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	config := Config{
+		SchemaVersion: 1,
+		Domain:        "dash.example.com",
+		AdminEmail:    "admin@example.com",
+		Environment:   "prod",
+		Image:         current,
+		HTTPS:         boolPointer(true),
+	}
+	writeConfig(t, paths.Config, config)
+	lifecycle := &recordingLifecycle{}
+	installer, err := New(Options{
+		Paths: paths,
+		LifecycleFactory: func(string) (Lifecycle, error) {
+			return lifecycle, nil
+		},
+		Run: func(context.Context, string, ...string) error { return nil },
+	})
+	require.NoError(t, err)
+	require.NoError(t, installer.Install(t.Context()))
+
+	currentCaddy := "caddy@sha256:" + strings.Repeat("c", 64)
+	nextCaddy := "caddy@sha256:" + strings.Repeat("d", 64)
+	currentEnvironment := "LEAPVIEW_IMAGE=" + current + "\nCADDY_IMAGE=" + currentCaddy + "\nCOMPOSE_HTTPS=1\n"
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Root, "deployment.env"), []byte(currentEnvironment), 0o600))
+	nextPayload := map[string][]byte{}
+	for _, file := range requiredPayloadFiles {
+		nextPayload[file.Source] = []byte("next-" + file.Source + "\n")
+	}
+	nextPayload["deployment.env.example"] = []byte(
+		"LEAPVIEW_IMAGE=example.invalid/leapview@sha256:" + strings.Repeat("e", 64) +
+			"\nCADDY_IMAGE=" + nextCaddy + "\nCOMPOSE_HTTPS=1\n",
+	)
+	manager, err := NewDeploymentPayloadManager(DeploymentPayloadManagerOptions{
+		Paths: paths,
+		Load: func(context.Context, string) (map[string][]byte, error) {
+			return nextPayload, nil
+		},
+		Run: func(context.Context, string, ...string) error { return nil },
+	})
+	require.NoError(t, err)
+	update, err := manager.Prepare(t.Context(), current, next)
+	require.NoError(t, err)
+	require.NotNil(t, update)
+	t.Cleanup(func() { require.NoError(t, update.Close()) })
+
+	require.NoError(t, update.Apply())
+	contents, err := os.ReadFile(filepath.Join(paths.Root, "compose.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "next-compose.yaml\n", string(contents))
+	environment, err := os.ReadFile(filepath.Join(paths.Root, "deployment.env"))
+	require.NoError(t, err)
+	require.Equal(t, "LEAPVIEW_IMAGE="+next+"\nCADDY_IMAGE="+nextCaddy+"\nCOMPOSE_HTTPS=1\n", string(environment))
+	installed, err := readMarker(filepath.Join(paths.Root, installMarkerName))
+	require.NoError(t, err)
+	require.Equal(t, next, installed.Image)
+
+	require.NoError(t, update.Rollback())
+	contents, err = os.ReadFile(filepath.Join(paths.Root, "compose.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "compose.yaml\n", string(contents))
+	environment, err = os.ReadFile(filepath.Join(paths.Root, "deployment.env"))
+	require.NoError(t, err)
+	require.Equal(t, currentEnvironment, string(environment))
+	installed, err = readMarker(filepath.Join(paths.Root, installMarkerName))
+	require.NoError(t, err)
+	require.Equal(t, current, installed.Image)
+}
+
 func testPaths(t *testing.T) Paths {
 	t.Helper()
 	base := t.TempDir()
