@@ -65,6 +65,11 @@ func cloneDocumentForEmit(doc ir.Document) ir.Document {
 		}
 		if endpoint.Command != nil {
 			command := *endpoint.Command
+			if endpoint.Command.Audit.Payload != nil {
+				payload := *endpoint.Command.Audit.Payload
+				payload.Fields = append([]ir.AuditField(nil), endpoint.Command.Audit.Payload.Fields...)
+				command.Audit.Payload = &payload
+			}
 			command.Failures = make([]ir.CommandFailure, len(endpoint.Command.Failures))
 			copy(command.Failures, endpoint.Command.Failures)
 			if endpoint.Command.Execution != nil {
@@ -204,6 +209,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("\t\"time\"\n\n")
 	}
 	b.WriteString("\tapigenchi \"github.com/Yacobolo/toolbelt/apigen/runtime/chi\"\n")
+	b.WriteString("\tapigenaudit \"github.com/Yacobolo/toolbelt/apigen/runtime/audit\"\n")
 	b.WriteString("\tapigencommand \"github.com/Yacobolo/toolbelt/apigen/runtime/command\"\n")
 	b.WriteString("\tapigenfailure \"github.com/Yacobolo/toolbelt/apigen/runtime/failure\"\n")
 	if hasTools {
@@ -259,7 +265,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	}
 	b.WriteString("type GenOperationSurface string\n\n")
 	b.WriteString("const (\n\tGenOperationSurfaceUI GenOperationSurface = \"ui\"\n\tGenOperationSurfaceAgent GenOperationSurface = \"agent\"\n\tGenOperationSurfaceAutomation GenOperationSurface = \"automation\"\n)\n\n")
-	b.WriteString("type GenAuditPolicy struct {\n\tRequired bool\n\tSuccessAction string\n\tGuarantee string\n}\n\n")
+	b.WriteString("type GenAuditField struct {\n\tName string\n\tSensitivity string\n}\n\n")
+	b.WriteString("type GenAuditPayloadContract struct {\n\tSchema string\n\tSchemaVersion int\n\tRetention string\n\tFields []GenAuditField\n}\n\n")
+	b.WriteString("type GenAuditPolicy struct {\n\tRequired bool\n\tSuccessAction string\n\tGuarantee string\n\tPayload *GenAuditPayloadContract\n}\n\n")
 	b.WriteString("type GenAsyncExecutionContract struct {\n\tMode string\n\tGuarantee string\n\tJobKind string\n\tResourceKind string\n\tInitialEvent string\n\tInitialState string\n\tStatusOperation string\n\tEventsOperation string\n\tCancellation string\n}\n\n")
 	b.WriteString("type GenCommandFailure struct {\n\tKind string\n\tStatusCode int\n\tCode string\n\tPublicDetail string\n}\n\n")
 	b.WriteString("type GenOperationTarget struct {\n\tParameter string\n\tType string\n}\n\n")
@@ -329,8 +337,24 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("\tif !ok || contract.Command == nil || !contract.Command.Audit.Required { return apigencommand.Contract{}, false }\n")
 	b.WriteString("\tvar execution *apigencommand.AsyncExecutionContract\n")
 	b.WriteString("\tif contract.Command.Execution != nil { source := contract.Command.Execution; execution = &apigencommand.AsyncExecutionContract{Mode: source.Mode, Guarantee: source.Guarantee, JobKind: source.JobKind, ResourceKind: source.ResourceKind, InitialEvent: source.InitialEvent, InitialState: source.InitialState, StatusOperation: source.StatusOperation, EventsOperation: source.EventsOperation, Cancellation: source.Cancellation} }\n")
-	b.WriteString("\treturn apigencommand.Contract{OperationID: contract.OperationID, Owner: contract.Command.Owner, AuditAction: contract.Command.Audit.SuccessAction, Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee), Execution: execution}, true\n")
+	b.WriteString("\tvar auditPayload *apigenaudit.Contract\n")
+	b.WriteString("\tif contract.Command.Audit.Payload != nil { source := contract.Command.Audit.Payload; fields := make([]apigenaudit.FieldContract, len(source.Fields)); for index, field := range source.Fields { fields[index] = apigenaudit.FieldContract{Name: field.Name, Sensitivity: apigenaudit.Sensitivity(field.Sensitivity)} }; auditPayload = &apigenaudit.Contract{Schema: source.Schema, SchemaVersion: source.SchemaVersion, Retention: apigenaudit.Retention(source.Retention), Fields: fields} }\n")
+	b.WriteString("\treturn apigencommand.Contract{OperationID: contract.OperationID, Owner: contract.Command.Owner, AuditAction: contract.Command.Audit.SuccessAction, Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee), AuditPayload: auditPayload, Execution: execution}, true\n")
 	b.WriteString("}\n\n")
+	for _, endpoint := range doc.Endpoints {
+		if endpoint.Command == nil || endpoint.Command.Audit.Payload == nil {
+			continue
+		}
+		schemaName, ok := ir.NormalizedSchemaRefName(endpoint.Command.Audit.Payload.Schema)
+		if !ok {
+			continue
+		}
+		operationName := exportedName(endpoint.OperationID)
+		fmt.Fprintf(&b, "// EncodeGen%sAuditPayload validates and serializes the typed durable audit payload.\n", operationName)
+		fmt.Fprintf(&b, "func EncodeGen%sAuditPayload(payload GenSchema%s) (string, error) { contract, _ := GetAPIGenCommandRuntimeContract(%q); return apigenaudit.EncodeForAudit(*contract.AuditPayload, payload) }\n\n", operationName, schemaName, endpoint.OperationID)
+		fmt.Fprintf(&b, "// EncodeGen%sAuditPayloadForLog validates and serializes a redacted log-safe payload.\n", operationName)
+		fmt.Fprintf(&b, "func EncodeGen%sAuditPayloadForLog(payload GenSchema%s) (string, error) { contract, _ := GetAPIGenCommandRuntimeContract(%q); return apigenaudit.EncodeForLog(*contract.AuditPayload, payload) }\n\n", operationName, schemaName, endpoint.OperationID)
+	}
 	b.WriteString("// GetAPIGenCommandFailureContracts returns the generated domain-failure vocabulary for a command.\n")
 	b.WriteString("func GetAPIGenCommandFailureContracts(operationID GenCommandOperationID) ([]apigenfailure.Contract, bool) {\n")
 	b.WriteString("\tcontract, ok := genOperationContracts[operationID.APIGenOperationID()]\n")
@@ -356,7 +380,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("func cloneAPIGenOperationContract(contract GenOperationContract) GenOperationContract {\n")
 	b.WriteString("\tcontract.Tags = append([]string(nil), contract.Tags...)\n")
 	b.WriteString("\tcontract.DocumentedStatusCodes = append([]int(nil), contract.DocumentedStatusCodes...)\n")
-	b.WriteString("\tif contract.Command != nil { command := *contract.Command; command.Failures = make([]GenCommandFailure, len(contract.Command.Failures)); copy(command.Failures, contract.Command.Failures); command.AdditionalExposures = append([]GenOperationSurface(nil), contract.Command.AdditionalExposures...); if contract.Command.Target != nil { target := *contract.Command.Target; command.Target = &target }; if contract.Command.Execution != nil { execution := *contract.Command.Execution; command.Execution = &execution }; contract.Command = &command }\n")
+	b.WriteString("\tif contract.Command != nil { command := *contract.Command; command.Failures = make([]GenCommandFailure, len(contract.Command.Failures)); copy(command.Failures, contract.Command.Failures); command.AdditionalExposures = append([]GenOperationSurface(nil), contract.Command.AdditionalExposures...); if contract.Command.Audit.Payload != nil { payload := *contract.Command.Audit.Payload; payload.Fields = append([]GenAuditField(nil), contract.Command.Audit.Payload.Fields...); command.Audit.Payload = &payload }; if contract.Command.Target != nil { target := *contract.Command.Target; command.Target = &target }; if contract.Command.Execution != nil { execution := *contract.Command.Execution; command.Execution = &execution }; contract.Command = &command }\n")
 	b.WriteString("\tcontract.Extensions = cloneAPIGenAnyMap(contract.Extensions)\n")
 	b.WriteString("\treturn contract\n")
 	b.WriteString("}\n\n")
@@ -1455,6 +1479,20 @@ func renderGenCommandContract(command *ir.Command) string {
 			command.Execution.Mode, command.Execution.Guarantee, command.Execution.JobKind, command.Execution.ResourceKind, command.Execution.InitialEvent,
 			command.Execution.InitialState, command.Execution.StatusOperation, command.Execution.EventsOperation, command.Execution.Cancellation)
 	}
+	auditPayload := "nil"
+	if command.Audit.Payload != nil {
+		var fields strings.Builder
+		fields.WriteString("[]GenAuditField{")
+		for index, field := range command.Audit.Payload.Fields {
+			if index > 0 {
+				fields.WriteString(", ")
+			}
+			fmt.Fprintf(&fields, "{Name: %q, Sensitivity: %q}", field.Name, field.Sensitivity)
+		}
+		fields.WriteString("}")
+		schemaName, _ := ir.NormalizedSchemaRefName(command.Audit.Payload.Schema)
+		auditPayload = fmt.Sprintf("&GenAuditPayloadContract{Schema: %q, SchemaVersion: %d, Retention: %q, Fields: %s}", schemaName, command.Audit.Payload.SchemaVersion, command.Audit.Payload.Retention, fields.String())
+	}
 	var failures strings.Builder
 	if len(command.Failures) == 0 {
 		failures.WriteString("[]GenCommandFailure{}")
@@ -1469,11 +1507,12 @@ func renderGenCommandContract(command *ir.Command) string {
 		failures.WriteString("}")
 	}
 	return fmt.Sprintf(
-		"&GenCommandContract{Owner: %q, Audit: GenAuditPolicy{Required: %t, SuccessAction: %q, Guarantee: %q}, Execution: %s, Failures: %s, AdditionalExposures: %s, Target: %s, Idempotency: %q, Concurrency: %q, AuthzMode: %q, Privilege: %q}",
+		"&GenCommandContract{Owner: %q, Audit: GenAuditPolicy{Required: %t, SuccessAction: %q, Guarantee: %q, Payload: %s}, Execution: %s, Failures: %s, AdditionalExposures: %s, Target: %s, Idempotency: %q, Concurrency: %q, AuthzMode: %q, Privilege: %q}",
 		command.Owner,
 		command.Audit.Required,
 		command.Audit.SuccessAction,
 		command.Audit.Guarantee,
+		auditPayload,
 		execution,
 		failures.String(),
 		exposures.String(),

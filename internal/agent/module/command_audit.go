@@ -11,7 +11,8 @@ import (
 )
 
 func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.CommandAuditInput) error {
-	contract, ok := agentgen.GetAPIGenOperationContract(strings.TrimSpace(input.OperationID))
+	operationID := strings.TrimSpace(input.OperationID)
+	contract, ok := agentgen.GetAPIGenOperationContract(operationID)
 	if !ok || contract.Command == nil {
 		return fmt.Errorf("generated agent command contract %q is unavailable", input.OperationID)
 	}
@@ -30,6 +31,20 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 	if command.Target != nil {
 		targetType = strings.TrimSpace(command.Target.Type)
 	}
+	surface := strings.TrimSpace(input.Surface)
+	if surface == "" {
+		surface = "api"
+	}
+	metadata, err := encodeAgentCommandAuditPayload(operationID, agentgen.GenSchemaAgentCommandAuditPayload{
+		OperationId: operationID,
+		WorkspaceId: strings.TrimSpace(input.Scope.WorkspaceID),
+		TargetType:  targetType,
+		TargetId:    strings.TrimSpace(input.TargetID),
+		Surface:     surface,
+	})
+	if err != nil {
+		return err
+	}
 	return m.recordAudit(ctx, access.AuditEventInput{
 		WorkspaceID:   strings.TrimSpace(input.Scope.WorkspaceID),
 		PrincipalID:   strings.TrimSpace(input.Scope.PrincipalID),
@@ -40,5 +55,23 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 		Status:        "success",
 		RequestID:     strings.TrimSpace(input.RequestID),
 		CorrelationID: strings.TrimSpace(input.CorrelationID),
+		MetadataJSON:  metadata,
 	})
+}
+
+func encodeAgentCommandAuditPayload(operationID string, payload agentgen.GenSchemaAgentCommandAuditPayload) (string, error) {
+	switch operationID {
+	case string(agentgen.GenOperationCreateAgentConversation):
+		return agentgen.EncodeGenCreateAgentConversationAuditPayload(payload)
+	case string(agentgen.GenOperationArchiveAgentConversation):
+		return agentgen.EncodeGenArchiveAgentConversationAuditPayload(payload)
+	case string(agentgen.GenOperationUpdateAgentConversation):
+		return agentgen.EncodeGenUpdateAgentConversationAuditPayload(payload)
+	case string(agentgen.GenOperationCreateAgentRun):
+		return agentgen.EncodeGenCreateAgentRunAuditPayload(payload)
+	case string(agentgen.GenOperationCancelAgentRun):
+		return agentgen.EncodeGenCancelAgentRunAuditPayload(payload)
+	default:
+		return "", fmt.Errorf("generated agent command audit payload %q is unavailable", operationID)
+	}
 }

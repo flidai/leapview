@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -69,13 +68,23 @@ func buildManagedDataCommandAuditRecorder(
 		if !ok {
 			return fmt.Errorf("managed-data operation %q has no command audit contract", input.OperationID)
 		}
-		metadata, err := json.Marshal(map[string]string{
-			"operationId":  input.OperationID,
-			"owner":        contract.owner,
-			"projectId":    input.ProjectID,
-			"connectionId": input.ConnectionID,
-			"surface":      input.Surface,
-		})
+		var metadata string
+		var err error
+		if input.OperationID == string(manageddatagen.GenOperationCreateManagedDataS3MultipartUpload) ||
+			input.OperationID == string(manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload) ||
+			input.OperationID == string(manageddatagen.GenOperationAbortManagedDataS3MultipartUpload) {
+			metadata, err = encodeManagedDataS3MultipartAuditPayload(input.OperationID, manageddatagen.GenSchemaManagedDataS3MultipartAuditPayload{
+				OperationId: input.OperationID, Owner: contract.owner,
+				ProjectId: input.ProjectID, ConnectionId: input.ConnectionID,
+				Surface: input.Surface,
+			})
+		} else {
+			metadata, err = encodeManagedDataCommandAuditPayload(input.OperationID, manageddatagen.GenSchemaManagedDataCommandAuditPayload{
+				OperationId: input.OperationID, Owner: contract.owner,
+				ProjectId: input.ProjectID, ConnectionId: input.ConnectionID,
+				Surface: input.Surface,
+			})
+		}
 		if err != nil {
 			return err
 		}
@@ -87,7 +96,33 @@ func buildManagedDataCommandAuditRecorder(
 			Action:      contract.action, TargetType: input.TargetType, TargetID: input.TargetID,
 			Privilege: contract.privilege, Status: "success",
 			RequestID: input.RequestID, CorrelationID: input.CorrelationID,
-			MetadataJSON: string(metadata),
+			MetadataJSON: metadata,
 		})
 	}, nil
+}
+
+func encodeManagedDataCommandAuditPayload(operationID string, payload manageddatagen.GenSchemaManagedDataCommandAuditPayload) (string, error) {
+	switch operationID {
+	case string(manageddatagen.GenOperationCreateManagedDataUploadSession):
+		return manageddatagen.EncodeGenCreateManagedDataUploadSessionAuditPayload(payload)
+	case string(manageddatagen.GenOperationCancelManagedDataUploadSession):
+		return manageddatagen.EncodeGenCancelManagedDataUploadSessionAuditPayload(payload)
+	case string(manageddatagen.GenOperationFinalizeManagedDataUploadSession):
+		return manageddatagen.EncodeGenFinalizeManagedDataUploadSessionAuditPayload(payload)
+	default:
+		return "", fmt.Errorf("generated managed-data command audit payload %q is unavailable", operationID)
+	}
+}
+
+func encodeManagedDataS3MultipartAuditPayload(operationID string, payload manageddatagen.GenSchemaManagedDataS3MultipartAuditPayload) (string, error) {
+	switch operationID {
+	case string(manageddatagen.GenOperationCreateManagedDataS3MultipartUpload):
+		return manageddatagen.EncodeGenCreateManagedDataS3MultipartUploadAuditPayload(payload)
+	case string(manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload):
+		return manageddatagen.EncodeGenCompleteManagedDataS3MultipartUploadAuditPayload(payload)
+	case string(manageddatagen.GenOperationAbortManagedDataS3MultipartUpload):
+		return manageddatagen.EncodeGenAbortManagedDataS3MultipartUploadAuditPayload(payload)
+	default:
+		return "", fmt.Errorf("generated managed-data multipart audit payload %q is unavailable", operationID)
+	}
 }

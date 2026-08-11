@@ -30,6 +30,36 @@ model RefreshRunListResponse {
   page: PageInfo;
 }
 
+model RefreshQueuedAuditPayload {
+  @apigen.sensitivity("internal")
+  id: string;
+  @apigen.sensitivity("internal")
+  workspaceId: string;
+  @apigen.sensitivity("internal")
+  pipelineId: string;
+  @apigen.sensitivity("internal")
+  semanticModel: string;
+  @apigen.sensitivity("public")
+  trigger: string;
+  @apigen.sensitivity("internal")
+  retryOf: string;
+  @apigen.sensitivity("public")
+  status: string;
+}
+
+model RefreshCancelledAuditPayload {
+  @apigen.sensitivity("internal")
+  id: string;
+  @apigen.sensitivity("internal")
+  workspaceId: string;
+  @apigen.sensitivity("internal")
+  pipelineId: string;
+  @apigen.sensitivity("public")
+  status: string;
+  @apigen.sensitivity("public")
+  trigger: string;
+}
+
 alias ListRefreshRunsOK = OkJson<RefreshRunListResponse>;
 alias CreateRefreshRunAccepted = AcceptedJson<RefreshRunResponse>;
 alias GetRefreshRunOK = OkJson<RefreshRunResponse>;
@@ -66,6 +96,7 @@ interface RefreshRuns {
       cancellation: "supported",
     },
   })
+  @apigen.auditPayload(RefreshQueuedAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createRefreshRun")
   createRefreshRun(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RefreshRunCreateRequest): CreateRefreshRunAccepted | CommonErrors;
 
@@ -97,6 +128,7 @@ interface RefreshRuns {
     ],
     targetParameter: "workspace",
   })
+  @apigen.auditPayload(RefreshCancelledAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("cancelRefreshRun")
   cancelRefreshRun(@path workspace: string, @path run: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<RefreshRunResponse> | CommonErrors;
 }

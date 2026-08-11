@@ -160,6 +160,21 @@ func activationWorkflow(
 	approval deployment.Approval,
 	idempotencyKey string,
 ) jobs.WorkflowIntent {
+	workflow, _ := activationWorkflowForOperation(string(deploymentgen.GenOperationCreateDeployment), execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey)
+	return workflow
+}
+
+func activationWorkflowForOperation(
+	operationID string,
+	execution apigencommand.AsyncExecutionContract,
+	enqueue bool,
+	project,
+	deploymentID,
+	releaseID string,
+	actor deployment.ApprovalActor,
+	approval deployment.Approval,
+	idempotencyKey string,
+) (jobs.WorkflowIntent, error) {
 	payload, _ := json.Marshal(ActivateJob{
 		Project: project, Deployment: deploymentID,
 		Actor: actor.PrincipalID, Credential: actor,
@@ -167,12 +182,29 @@ func activationWorkflow(
 		ApprovalRevision: approval.Revision,
 		IdempotencyKey:   idempotencyKey,
 	})
-	event, _ := json.Marshal(map[string]any{
-		"deploymentId": deploymentID,
-		"projectId":    project,
-		"releaseId":    releaseID,
-		"status":       execution.InitialState,
-	})
+	queuedPayload := deploymentgen.GenSchemaDeploymentQueuedAuditPayload{
+		DeploymentId: deploymentID, ProjectId: project, ReleaseId: releaseID, Status: execution.InitialState,
+	}
+	var eventString string
+	var eventErr error
+	switch operationID {
+	case string(deploymentgen.GenOperationCreateDeployment):
+		eventString, eventErr = deploymentgen.EncodeGenCreateDeploymentAuditPayload(queuedPayload)
+	case string(deploymentgen.GenOperationRetryDeployment):
+		eventString, eventErr = deploymentgen.EncodeGenRetryDeploymentAuditPayload(queuedPayload)
+	case string(deploymentgen.GenOperationRollbackDeployment):
+		eventString, eventErr = deploymentgen.EncodeGenRollbackDeploymentAuditPayload(queuedPayload)
+	case string(deploymentgen.GenOperationActivateDeployment):
+		eventString, eventErr = deploymentgen.EncodeGenActivateDeploymentAuditPayload(queuedPayload)
+	case string(deploymentgen.GenOperationPublishProjectCandidate):
+		eventString, eventErr = deploymentgen.EncodeGenPublishProjectCandidateAuditPayload(queuedPayload)
+	default:
+		return jobs.WorkflowIntent{}, fmt.Errorf("deployment operation %q has no queued audit payload encoder", operationID)
+	}
+	if eventErr != nil {
+		return jobs.WorkflowIntent{}, eventErr
+	}
+	event := []byte(eventString)
 	workflow := jobs.WorkflowIntent{
 		Event: jobs.EventInput{
 			Key:          execution.InitialEvent,
@@ -189,7 +221,7 @@ func activationWorkflow(
 			Payload: payload,
 		}
 	}
-	return workflow
+	return workflow, nil
 }
 
 func (m *Module) appendEvent(ctx context.Context, deploymentID, event, status string) {

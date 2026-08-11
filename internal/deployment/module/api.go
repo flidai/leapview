@@ -129,9 +129,8 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		Project: project, Environment: m.handlerEnvironment(), Targets: targets, Actor: principal.ID, IdempotencyKey: idempotencyKey,
 		ReleaseID: releaseID, Evidence: evidence, RollbackOf: rollbackOf,
 	}
-	createRequest.Workflow = func(deploymentID string) jobs.WorkflowIntent {
-		return activationWorkflow(
-			execution,
+	createRequest.Workflow = func(deploymentID string) (jobs.WorkflowIntent, error) {
+		return activationWorkflowForOperation(operationIDValue, execution,
 			!m.protected,
 			project,
 			deploymentID,
@@ -497,8 +496,7 @@ func (m *Module) ActivateDeployment(
 		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), err)
 		return
 	}
-	workflow := activationWorkflow(
-		execution,
+	workflow, err := activationWorkflowForOperation(string(deploymentgen.GenOperationActivateDeployment), execution,
 		true,
 		project,
 		deploymentID,
@@ -507,6 +505,10 @@ func (m *Module) ActivateDeployment(
 		approval,
 		idempotencyKey,
 	)
+	if err != nil {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), err)
+		return
+	}
 	if m.api.Committer == nil {
 		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.New("queue_unavailable", "Deployment activation queue is unavailable"))
 		return
@@ -835,6 +837,14 @@ func (m *Module) appendAPIEvent(ctx context.Context, deploymentID, eventType str
 	return err
 }
 
+func (m *Module) appendEncodedAPIEvent(ctx context.Context, deploymentID, eventType, data string) error {
+	if m == nil || m.api.Jobs == nil {
+		return errors.New("deployment event store is unavailable")
+	}
+	_, err := m.api.Jobs.AppendEvent(ctx, "deployment", deploymentID, eventType, []byte(data))
+	return err
+}
+
 func (m *Module) recordBestEffortAPIEvent(
 	ctx context.Context,
 	operationID, deploymentID, eventType string,
@@ -854,7 +864,11 @@ func (m *Module) recordBestEffortAPIEvent(
 			if eventType != contract.AuditAction {
 				return fmt.Errorf("deployment audit action %q does not match generated action %q", eventType, contract.AuditAction)
 			}
-			return m.appendAPIEvent(ctx, deploymentID, contract.AuditAction, data)
+			encoded, err := encodeDeploymentAuditPayload(operationID, data)
+			if err != nil {
+				return err
+			}
+			return m.appendEncodedAPIEvent(ctx, deploymentID, contract.AuditAction, encoded)
 		},
 		LogMessage: "deployment audit failed",
 		LogAttributes: []slog.Attr{
@@ -863,6 +877,40 @@ func (m *Module) recordBestEffortAPIEvent(
 	})
 	if err != nil {
 		logger.ErrorContext(ctx, "deployment command contract execution failed", "operation_id", operationID, "error", err)
+	}
+}
+
+func encodeDeploymentAuditPayload(operationID string, data any) (string, error) {
+	values, ok := data.(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("deployment audit payload has type %T", data)
+	}
+	str := func(key string) string { value, _ := values[key].(string); return value }
+	int64Value := func(key string) int64 {
+		switch value := values[key].(type) {
+		case int64:
+			return value
+		case int:
+			return int64(value)
+		case float64:
+			return int64(value)
+		default:
+			return 0
+		}
+	}
+	switch operationID {
+	case string(deploymentgen.GenOperationCancelDeployment):
+		return deploymentgen.EncodeGenCancelDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentCancelledAuditPayload{DeploymentId: str("deploymentId"), Status: str("status")})
+	case string(deploymentgen.GenOperationRequestDeploymentApproval):
+		return deploymentgen.EncodeGenRequestDeploymentApprovalAuditPayload(deploymentgen.GenSchemaDeploymentApprovalRequestedAuditPayload{DeploymentId: str("deploymentId"), ApprovalId: str("approvalId")})
+	case string(deploymentgen.GenOperationApproveDeployment):
+		return deploymentgen.EncodeGenApproveDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentApprovalDecisionAuditPayload{DeploymentId: str("deploymentId"), ApprovalId: str("approvalId"), ApprovalRevision: int64Value("approvalRevision")})
+	case string(deploymentgen.GenOperationDenyDeploymentApproval):
+		return deploymentgen.EncodeGenDenyDeploymentApprovalAuditPayload(deploymentgen.GenSchemaDeploymentApprovalDecisionAuditPayload{DeploymentId: str("deploymentId"), ApprovalId: str("approvalId"), ApprovalRevision: int64Value("approvalRevision")})
+	case string(deploymentgen.GenOperationRevokeDeploymentApproval):
+		return deploymentgen.EncodeGenRevokeDeploymentApprovalAuditPayload(deploymentgen.GenSchemaDeploymentApprovalDecisionAuditPayload{DeploymentId: str("deploymentId"), ApprovalId: str("approvalId"), ApprovalRevision: int64Value("approvalRevision")})
+	default:
+		return "", fmt.Errorf("deployment operation %q has no map audit payload encoder", operationID)
 	}
 }
 

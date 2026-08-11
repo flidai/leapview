@@ -131,12 +131,17 @@ describe("APIGen TypeSpec emitter", () => {
       @service(#{ title: "Command API" })
       namespace CommandAPI;
 
+      model RoleBindingAuditPayload {
+        @apigen.sensitivity("internal") operationId: string;
+      }
+
       @tag("Access")
       @route("/workspaces/{workspace}/role-bindings")
       interface RoleBindings {
         @post
         @operationId("createRoleBinding")
         @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+        @apigen.auditPayload(RoleBindingAuditPayload, #{ schemaVersion: 1, retention: "security" })
         @apigen.command(#{
           audit: #{ required: true, successAction: "role_binding.created", guarantee: "best-effort" },
           failures: #[],
@@ -168,6 +173,49 @@ describe("APIGen TypeSpec emitter", () => {
     });
   });
 
+  it("emits a typed versioned audit payload with field sensitivity", async () => {
+    const doc = await compileSource(`
+      using Http;
+      using OpenAPI;
+
+      @service(#{ title: "Audit API" })
+      namespace AuditAPI;
+
+      model RoleBindingCreatedAuditPayload {
+        @apigen.sensitivity("internal") operationId: string;
+        @apigen.sensitivity("pii") subjectId: string;
+        @apigen.sensitivity("secret") credential: string;
+      }
+
+      @route("/bindings")
+      @post
+      @operationId("createRoleBinding")
+      @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+      @apigen.auditPayload(RoleBindingCreatedAuditPayload, #{ schemaVersion: 1, retention: "security" })
+      @apigen.command(#{
+        audit: #{
+          required: true,
+          successAction: "role_binding.created",
+          guarantee: "transactional",
+        },
+        failures: #[],
+      })
+      op createRoleBinding(@header("Idempotency-Key") idempotencyKey: string): string;
+    `);
+
+    expect(doc.endpoints[0].command.audit.payload).toEqual({
+      schema: { ref: "RoleBindingCreatedAuditPayload" },
+      schema_version: 1,
+      retention: "security",
+      fields: [
+        { name: "credential", sensitivity: "secret" },
+        { name: "operationId", sensitivity: "internal" },
+        { name: "subjectId", sensitivity: "pii" },
+      ],
+    });
+    expect(doc.schemas.RoleBindingCreatedAuditPayload.required).toEqual(["operationId", "subjectId", "credential"]);
+  });
+
   it("emits a typed async execution contract", async () => {
     const doc = await compileSource(`
       using Http;
@@ -194,6 +242,7 @@ describe("APIGen TypeSpec emitter", () => {
       @route("/releases/{release}/finalize")
       @post
       @operationId("finalizeRelease")
+      @apigen.auditPayload(ReleaseAuditPayload, #{ schemaVersion: 1, retention: "security" })
       @apigen.command(#{
         audit: #{ required: true, successAction: "release.validating", guarantee: "transactional" },
         failures: #[],
@@ -213,9 +262,13 @@ describe("APIGen TypeSpec emitter", () => {
         @path release: string,
         @header("Idempotency-Key") idempotencyKey: string,
       ): Accepted;
+
+      model ReleaseAuditPayload {
+        @apigen.sensitivity("internal") releaseId: string;
+      }
     `);
 
-    expect(doc.endpoints.find((endpoint) => endpoint.operation_id === "finalizeRelease")).toMatchObject({
+    expect(doc.endpoints.find((endpoint: any) => endpoint.operation_id === "finalizeRelease")).toMatchObject({
       kind: "command",
       responses: [{ status_code: 202 }],
       command: {
@@ -268,6 +321,15 @@ describe("APIGen TypeSpec emitter", () => {
   it("rejects invalid command contracts before writing IR", async () => {
     const cases = [
       {
+        message: "required audit must declare @apigen.auditPayload",
+        operation: `
+          @post
+          @operationId("createWidget")
+          @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" }, failures: #[] })
+          op create(@header("Idempotency-Key") key: string): string;
+        `,
+      },
+      {
         message: "explicit @operationId is required",
         operation: `
           @post
@@ -310,6 +372,28 @@ describe("APIGen TypeSpec emitter", () => {
           @operationId("deleteWidget")
           @apigen.command(#{ audit: #{ required: true, successAction: "Widget Deleted" }, failures: #[] })
           op delete(): string;
+        `,
+      },
+      {
+        message: "requires @apigen.sensitivity",
+        operation: `
+          model WidgetAuditPayload { widgetId: string; }
+          @post
+          @operationId("createWidget")
+          @apigen.auditPayload(WidgetAuditPayload, #{ schemaVersion: 1, retention: "security" })
+          @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" }, failures: #[] })
+          op create(@header("Idempotency-Key") key: string): string;
+        `,
+      },
+      {
+        message: "must be required",
+        operation: `
+          model WidgetAuditPayload { @apigen.sensitivity("internal") widgetId?: string; }
+          @post
+          @operationId("createWidget")
+          @apigen.auditPayload(WidgetAuditPayload, #{ schemaVersion: 1, retention: "security" })
+          @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" }, failures: #[] })
+          op create(@header("Idempotency-Key") key: string): string;
         `,
       },
       {

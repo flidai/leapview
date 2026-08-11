@@ -27,6 +27,7 @@ type CommandAuditInput struct {
 	TargetID      string
 	RequestID     string
 	CorrelationID string
+	Surface       string
 }
 
 func (h *Handler) recordCommandAudit(
@@ -45,6 +46,10 @@ func (h *Handler) recordCommandAudit(
 	if correlationID == "" {
 		correlationID = requestID
 	}
+	surface := "api"
+	if strings.EqualFold(firstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client"), "cli") {
+		surface = "cli"
+	}
 	logger := h.options.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -59,7 +64,7 @@ func (h *Handler) recordCommandAudit(
 			return h.options.RecordCommandAudit(ctx, CommandAuditInput{
 				OperationID: operationIDValue, Scope: scope,
 				TargetType: strings.TrimSpace(targetType), TargetID: strings.TrimSpace(targetID),
-				RequestID: requestID, CorrelationID: correlationID,
+				RequestID: requestID, CorrelationID: correlationID, Surface: surface,
 			})
 		},
 		LogMessage: "best-effort agent command audit failed",

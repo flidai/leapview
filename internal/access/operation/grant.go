@@ -2,7 +2,6 @@ package operation
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -103,7 +102,7 @@ func (c *GrantCommands) execute(
 		if err := mutation(repository); err != nil {
 			return access.AuditEventInput{}, err
 		}
-		return grantAuditInput(descriptor, invocation, result()), nil
+		return grantAuditInput(descriptor, invocation, result())
 	}
 	transactional, ok := repository.(access.AuditedMutationRepository)
 	if !ok {
@@ -126,23 +125,23 @@ func (c *GrantCommands) execute(
 	})
 }
 
-func grantAuditInput(descriptor access.OperationDescriptor, invocation access.GrantInvocation, row access.Grant) access.AuditEventInput {
-	metadataValues := map[string]string{
-		"operationId": string(descriptor.ID),
-		"objectId":    row.ObjectID,
-		"objectType":  string(row.ObjectType),
-		"subjectId":   row.SubjectID,
-		"subjectType": string(row.SubjectType),
-		"privilege":   string(row.Privilege),
-		"surface":     string(invocation.Surface),
+func grantAuditInput(descriptor access.OperationDescriptor, invocation access.GrantInvocation, row access.Grant) (access.AuditEventInput, error) {
+	payload := accessgen.GenSchemaGrantAuditPayload{
+		OperationId: string(descriptor.ID), ObjectId: row.ObjectID,
+		ObjectType: string(row.ObjectType), SubjectId: row.SubjectID,
+		SubjectType: string(row.SubjectType), Privilege: string(row.Privilege),
+		Surface: string(invocation.Surface),
 	}
 	workspaceID := row.WorkspaceID
 	if row.ObjectType == access.SecurableProjectEnvironment {
 		workspaceID = ""
-		metadataValues["projectId"] = row.WorkspaceID
-		metadataValues["environment"] = row.ObjectID
+		payload.ProjectId = row.WorkspaceID
+		payload.Environment = row.ObjectID
 	}
-	metadata, _ := json.Marshal(metadataValues)
+	metadata, err := encodeGrantAuditPayload(descriptor.ID, payload)
+	if err != nil {
+		return access.AuditEventInput{}, err
+	}
 	correlationID := strings.TrimSpace(invocation.CorrelationID)
 	if correlationID == "" {
 		correlationID = strings.TrimSpace(invocation.RequestID)
@@ -152,6 +151,17 @@ func grantAuditInput(descriptor access.OperationDescriptor, invocation access.Gr
 		Action: descriptor.AuditEvent, TargetType: "grant", TargetID: row.ID,
 		Privilege: descriptor.Privilege, Status: "success",
 		RequestID: strings.TrimSpace(invocation.RequestID), CorrelationID: correlationID,
-		MetadataJSON: string(metadata),
+		MetadataJSON: metadata,
+	}, nil
+}
+
+func encodeGrantAuditPayload(operationID access.OperationID, payload accessgen.GenSchemaGrantAuditPayload) (string, error) {
+	switch operationID {
+	case access.OperationCreateGrant:
+		return accessgen.EncodeGenCreateGrantAuditPayload(payload)
+	case access.OperationUpdateGrant:
+		return accessgen.EncodeGenUpdateGrantAuditPayload(payload)
+	default:
+		return accessgen.EncodeGenDeleteGrantAuditPayload(payload)
 	}
 }

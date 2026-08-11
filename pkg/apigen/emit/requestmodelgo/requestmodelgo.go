@@ -422,6 +422,15 @@ func schemaRoots(doc ir.Document) ([]string, error) {
 	for _, name := range safeResponseSchemaRoots(doc) {
 		seen[name] = struct{}{}
 	}
+	for _, endpoint := range doc.Endpoints {
+		if endpoint.Command == nil || endpoint.Command.Audit.Payload == nil {
+			continue
+		}
+		name, ok := ir.NormalizedSchemaRefName(endpoint.Command.Audit.Payload.Schema)
+		if ok {
+			seen[name] = struct{}{}
+		}
+	}
 
 	rootNames := make([]string, 0, len(seen))
 	for name := range seen {

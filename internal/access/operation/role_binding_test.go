@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 )
 
 type roleBindingRepository struct {
@@ -19,6 +21,30 @@ type roleBindingRepository struct {
 type nonTransactionalRoleBindingRepository struct {
 	access.Repository
 	mutations int
+}
+
+func TestCreateRoleBindingAuditPayloadSensitivityIsGenerated(t *testing.T) {
+	payload := accessgen.GenSchemaRoleBindingCreatedAuditPayload{
+		OperationId: "createRoleBinding",
+		Role:        "viewer",
+		SubjectId:   "principal-sensitive",
+		SubjectType: "principal",
+		Surface:     "ui",
+	}
+	encoded, err := accessgen.EncodeGenCreateRoleBindingAuditPayloadForLog(payload)
+	if err != nil {
+		t.Fatalf("encode safe audit log: %v", err)
+	}
+	if strings.Contains(encoded, payload.OperationId) || strings.Contains(encoded, payload.Role) || strings.Contains(encoded, payload.SubjectId) || strings.Contains(encoded, payload.SubjectType) {
+		t.Fatalf("safe audit log leaked classified data: %s", encoded)
+	}
+	if !strings.Contains(encoded, `"surface":"ui"`) || !strings.Contains(encoded, `"subjectId":"[REDACTED]"`) {
+		t.Fatalf("safe audit log = %s", encoded)
+	}
+	contract, ok := accessgen.GetAPIGenCommandRuntimeContract("createRoleBinding")
+	if !ok || contract.AuditPayload == nil || contract.AuditPayload.SchemaVersion != 1 || contract.AuditPayload.Retention != "security" {
+		t.Fatalf("generated audit contract = %#v, %t", contract.AuditPayload, ok)
+	}
 }
 
 func (r *nonTransactionalRoleBindingRepository) CreateRoleBinding(_ context.Context, _ access.RoleBindingInput) (access.RoleBinding, error) {
@@ -228,7 +254,15 @@ func assertRoleBindingAudit(t *testing.T, input access.AuditEventInput, operatio
 	if err := json.Unmarshal([]byte(input.MetadataJSON), &metadata); err != nil {
 		t.Fatalf("decode audit metadata: %v", err)
 	}
-	if metadata["operationId"] != string(operation) || metadata["surface"] != string(surface) {
-		t.Fatalf("audit metadata = %#v", metadata)
+	wantSchema := "RoleBindingAuditPayload"
+	if operation == access.OperationCreateRoleBinding {
+		wantSchema = "RoleBindingCreatedAuditPayload"
+	}
+	if metadata["schemaVersion"] != float64(1) || metadata["retention"] != "security" || metadata["payloadSchema"] != wantSchema {
+		t.Fatalf("audit envelope = %#v", metadata)
+	}
+	payload, ok := metadata["payload"].(map[string]any)
+	if !ok || payload["operationId"] != string(operation) || payload["surface"] != string(surface) || payload["subjectId"] != "principal-viewer" {
+		t.Fatalf("audit payload = %#v", metadata["payload"])
 	}
 }

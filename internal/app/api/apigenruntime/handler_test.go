@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	apigenaudit "github.com/Yacobolo/toolbelt/apigen/runtime/audit"
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 )
 
@@ -35,7 +36,13 @@ func commandLookup(operationID string) (apigencommand.Contract, bool) {
 	if operationID != "createWidget" {
 		return apigencommand.Contract{}, false
 	}
-	return apigencommand.Contract{OperationID: operationID, Owner: "Widgets", AuditAction: "widget.created", Guarantee: apigencommand.GuaranteeBestEffort}, true
+	return apigencommand.Contract{
+		OperationID: operationID, Owner: "Widgets", AuditAction: "widget.created", Guarantee: apigencommand.GuaranteeBestEffort,
+		AuditPayload: &apigenaudit.Contract{
+			Schema: "WidgetCreatedAuditPayload", SchemaVersion: 1, Retention: apigenaudit.RetentionSecurity,
+			Fields: []apigenaudit.FieldContract{{Name: "widgetId", Sensitivity: apigenaudit.SensitivityInternal}},
+		},
+	}, true
 }
 
 func TestGeneratedCommandBoundaryRejectsSuccessfulBypass(t *testing.T) {

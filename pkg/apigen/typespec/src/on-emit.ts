@@ -46,12 +46,14 @@ import {
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
 import {
   getAuthz,
+  getAuditPayload,
   getCLI,
   getCommand,
   getContracts,
   getMetadata,
   getPackages,
   getResponseShape,
+  getSensitivity,
   getTool,
   getTransportErrors,
   isManual,
@@ -120,7 +122,17 @@ interface Endpoint {
 
 interface Command {
   owner: string;
-  audit: { required: boolean; success_action?: string; guarantee?: "transactional" | "best-effort" };
+  audit: {
+    required: boolean;
+    success_action?: string;
+    guarantee?: "transactional" | "best-effort";
+    payload?: {
+      schema: SchemaRef;
+      schema_version: number;
+      retention: "short" | "standard" | "security";
+      fields: Array<{ name: string; sensitivity: "public" | "internal" | "pii" | "secret" }>;
+    };
+  };
   execution?: {
     mode: "async";
     guarantee: "transactional";
@@ -949,6 +961,7 @@ function validateSharedRouteMetadata(
   const canonicalNamespace = namespaceName(canonical.operation.namespace);
   const canonicalCLI = stableJSONString(cliMetadata(program, canonical));
   const canonicalCommand = stableJSONString(getCommand({ program }, canonical.operation));
+  const canonicalAuditPayload = stableJSONString(auditPayloadIdentity(program, canonical.operation));
   const canonicalQuery = isQuery({ program }, canonical.operation);
   const canonicalTool = stableJSONString(toolMetadata(program, canonical));
   const canonicalAuthz = stableJSONString(getAuthz({ program }, canonical.operation));
@@ -963,6 +976,9 @@ function validateSharedRouteMetadata(
     }
     if (stableJSONString(getCommand({ program }, operation.operation)) !== canonicalCommand) {
       builder.unsupportedSharedRoute(operation.operation, "incompatible command metadata");
+    }
+    if (stableJSONString(auditPayloadIdentity(program, operation.operation)) !== canonicalAuditPayload) {
+      builder.unsupportedSharedRoute(operation.operation, "incompatible audit payload metadata");
     }
     if (isQuery({ program }, operation.operation) !== canonicalQuery) {
       builder.unsupportedSharedRoute(operation.operation, "incompatible query metadata");
@@ -1050,6 +1066,44 @@ function commandMetadata(
       `audit.successAction ${JSON.stringify(successAction)} must be a stable dotted lower_snake_case name`,
       operation.operation,
     );
+  }
+
+  let auditPayload: NonNullable<Command["audit"]["payload"]> | undefined;
+  const authoredAuditPayload = getAuditPayload({ program }, operation.operation);
+  if (options.audit.required && !authoredAuditPayload) {
+    builder.invalidCommand("required audit must declare @apigen.auditPayload", operation.operation);
+  }
+  if (authoredAuditPayload) {
+    const authored = authoredAuditPayload;
+    const schema = authored.schema;
+    if (!schema.name) {
+      builder.invalidCommand("audit.payload.schema must be a named model", operation.operation);
+    }
+    if (authored.schemaVersion < 1 || !Number.isInteger(authored.schemaVersion)) {
+      builder.invalidCommand("audit.payload.schemaVersion must be a positive integer", operation.operation);
+    }
+    if (schema.baseModel) {
+      builder.invalidCommand("audit.payload.schema must not inherit fields", operation.operation);
+    }
+    const fields: NonNullable<Command["audit"]["payload"]>["fields"] = [];
+    for (const property of schema.properties.values()) {
+      if (property.optional) {
+        builder.invalidCommand(`audit payload field ${JSON.stringify(property.name)} must be required`, operation.operation);
+      }
+      const sensitivity = getSensitivity({ program }, property);
+      if (!sensitivity) {
+        builder.invalidCommand(`audit payload field ${JSON.stringify(property.name)} requires @apigen.sensitivity`, operation.operation);
+        continue;
+      }
+      fields.push({ name: property.name, sensitivity });
+    }
+    fields.sort((left, right) => left.name.localeCompare(right.name));
+    auditPayload = {
+      schema: builder.namedSchemaRef(schema, `audit payload for ${operation.operation.name}`),
+      schema_version: authored.schemaVersion,
+      retention: authored.retention,
+      fields,
+    };
   }
 
   let execution: Command["execution"];
@@ -1162,7 +1216,7 @@ function commandMetadata(
   const privilege = typeof authz?.privilege === "string" ? authz.privilege : undefined;
   return prune({
     owner: namespaceName(operation.operation.namespace) ?? "",
-    audit: prune({ required: options.audit.required, success_action: successAction, guarantee }),
+    audit: prune({ required: options.audit.required, success_action: successAction, guarantee, payload: auditPayload }),
     execution,
     failures,
     additional_exposures: additionalExposures.length > 0 ? additionalExposures : undefined,
@@ -1172,6 +1226,18 @@ function commandMetadata(
     authz_mode: authzMode,
     privilege,
   }) as Command;
+}
+
+function auditPayloadIdentity(program: Program, operation: Operation): unknown {
+  const payload = getAuditPayload({ program }, operation);
+  if (!payload) {
+    return undefined;
+  }
+  return {
+    schema: `${namespaceName(payload.schema.namespace) ?? ""}.${payload.schema.name}`,
+    schemaVersion: payload.schemaVersion,
+    retention: payload.retention,
+  };
 }
 
 function stableJSONString(value: unknown): string {

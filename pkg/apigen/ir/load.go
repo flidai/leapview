@@ -118,7 +118,7 @@ func Validate(doc Document) error {
 			return err
 		}
 		if endpoint.Command != nil {
-			if err := validateCommand(endpoint); err != nil {
+			if err := validateCommand(doc, endpoint); err != nil {
 				return err
 			}
 		}
@@ -254,7 +254,7 @@ func Validate(doc Document) error {
 	return nil
 }
 
-func validateCommand(endpoint Endpoint) error {
+func validateCommand(doc Document, endpoint Endpoint) error {
 	command := endpoint.Command
 	context := fmt.Sprintf("endpoint %q command", endpoint.OperationID)
 	if strings.TrimSpace(command.Owner) == "" {
@@ -269,6 +269,52 @@ func validateCommand(endpoint Endpoint) error {
 	}
 	if guarantee := strings.TrimSpace(command.Audit.Guarantee); guarantee != "" && guarantee != "transactional" && guarantee != "best-effort" {
 		return fmt.Errorf("%s audit has unsupported guarantee %q", context, guarantee)
+	}
+	if command.Audit.Required && command.Audit.Payload == nil {
+		return fmt.Errorf("%s required audit must declare a typed payload", context)
+	}
+	if payload := command.Audit.Payload; payload != nil {
+		name, ok := NormalizedSchemaRefName(payload.Schema)
+		if !ok {
+			return fmt.Errorf("%s audit payload requires a named schema", context)
+		}
+		schema, ok := doc.Schemas[name]
+		if !ok || schema.Type != "object" {
+			return fmt.Errorf("%s audit payload schema %q must be a declared object", context, name)
+		}
+		if payload.SchemaVersion < 1 {
+			return fmt.Errorf("%s audit payload schema_version must be positive", context)
+		}
+		switch payload.Retention {
+		case "short", "standard", "security":
+		default:
+			return fmt.Errorf("%s audit payload has unsupported retention %q", context, payload.Retention)
+		}
+		required := make(map[string]struct{}, len(schema.Required))
+		for _, field := range schema.Required {
+			required[field] = struct{}{}
+		}
+		if len(required) != len(schema.Properties) {
+			return fmt.Errorf("%s audit payload schema %q requires every field to be required", context, name)
+		}
+		seen := make(map[string]struct{}, len(payload.Fields))
+		for _, field := range payload.Fields {
+			if _, ok := schema.Properties[field.Name]; !ok {
+				return fmt.Errorf("%s audit payload field %q is absent from schema %q", context, field.Name, name)
+			}
+			switch field.Sensitivity {
+			case "public", "internal", "pii", "secret":
+			default:
+				return fmt.Errorf("%s audit payload field %q has unsupported sensitivity %q", context, field.Name, field.Sensitivity)
+			}
+			if _, exists := seen[field.Name]; exists {
+				return fmt.Errorf("%s audit payload field %q is duplicated", context, field.Name)
+			}
+			seen[field.Name] = struct{}{}
+		}
+		if len(seen) != len(schema.Properties) {
+			return fmt.Errorf("%s audit payload schema %q requires sensitivity for every field", context, name)
+		}
 	}
 	if command.Failures == nil {
 		return fmt.Errorf("%s failures declaration is required; use an empty array when the command has no operation-owned failures", context)

@@ -1,5 +1,8 @@
+import { reportDiagnostic } from "./lib.js";
 const cliKey = Symbol.for("@yacobolo/apigen.cli");
 const commandKey = Symbol.for("@yacobolo/apigen.command");
+const auditPayloadKey = Symbol.for("@yacobolo/apigen.auditPayload");
+const sensitivityKey = Symbol.for("@yacobolo/apigen.sensitivity");
 const queryKey = Symbol.for("@yacobolo/apigen.query");
 const authzKey = Symbol.for("@yacobolo/apigen.authz");
 const manualKey = Symbol.for("@yacobolo/apigen.manual");
@@ -14,6 +17,30 @@ export function $cli(context, target, options) {
 }
 export function $command(context, target, options) {
     context.program.stateMap(commandKey).set(target, options);
+}
+export function $auditPayload(context, target, schema, options) {
+    const definitions = context.program.stateMap(auditPayloadKey);
+    if (definitions.has(target)) {
+        reportDiagnostic(context.program, {
+            code: "invalid-command",
+            format: { reason: "@apigen.auditPayload must not be applied more than once" },
+            target,
+        });
+        return;
+    }
+    definitions.set(target, { schema, ...options });
+}
+export function $sensitivity(context, target, classification) {
+    const classifications = context.program.stateMap(sensitivityKey);
+    if (classifications.has(target)) {
+        reportDiagnostic(context.program, {
+            code: "invalid-command",
+            format: { reason: "@apigen.sensitivity must not be applied more than once per field" },
+            target,
+        });
+        return;
+    }
+    classifications.set(target, classification);
 }
 export function $query(context, target) {
     context.program.stateSet(queryKey).add(target);
@@ -46,6 +73,8 @@ export const $decorators = {
     apigen: {
         cli: $cli,
         command: $command,
+        auditPayload: $auditPayload,
+        sensitivity: $sensitivity,
         query: $query,
         authz: $authz,
         manual: $manual,
@@ -62,6 +91,12 @@ export function getCLI(context, target) {
 }
 export function getCommand(context, target) {
     return context.program.stateMap(commandKey).get(target);
+}
+export function getAuditPayload(context, target) {
+    return context.program.stateMap(auditPayloadKey).get(target);
+}
+export function getSensitivity(context, target) {
+    return context.program.stateMap(sensitivityKey).get(target);
 }
 export function isQuery(context, target) {
     return context.program.stateSet(queryKey).has(target);

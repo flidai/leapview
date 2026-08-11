@@ -4,6 +4,23 @@ using LeapViewAPI.Protocol;
 
 namespace LeapViewAPI.Agent;
 
+model AgentCommandAuditPayload {
+  @apigen.sensitivity("internal")
+  operationId: string;
+
+  @apigen.sensitivity("internal")
+  workspaceId: string;
+
+  @apigen.sensitivity("public")
+  targetType: string;
+
+  @apigen.sensitivity("internal")
+  targetId: string;
+
+  @apigen.sensitivity("public")
+  surface: string;
+}
+
 model AgentConversationCreateRequest {
   title?: string;
 }
@@ -101,6 +118,7 @@ interface AgentConversations {
     ],
     additionalExposures: #["ui"],
   })
+  @apigen.auditPayload(AgentCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createAgentConversation")
   createAgentConversation(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AgentConversationCreateRequest): CreateAgentConversationCreated | CommonErrors;
 
@@ -114,6 +132,7 @@ interface AgentConversations {
       #{ kind: "not_found", statusCode: 404, code: "AGENT_CONVERSATION_NOT_FOUND", publicDetail: "Agent conversation not found." },
     ],
   })
+  @apigen.auditPayload(AgentCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("archiveAgentConversation")
   archiveAgentConversation(@path conversation: string): EmptyResponse | CommonErrors;
 
@@ -135,6 +154,7 @@ interface AgentConversations {
       #{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_CONVERSATION", publicDetail: "The agent conversation request is invalid." },
     ],
   })
+  @apigen.auditPayload(AgentCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("updateAgentConversation")
   updateAgentConversation(@path conversation: string, @header("If-Match") ifMatch: string, @body body: AgentConversationPatchRequest): UpdateAgentConversationOK | CommonErrors;
 
@@ -191,6 +211,7 @@ interface AgentConversations {
       cancellation: "supported",
     },
   })
+  @apigen.auditPayload(AgentCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("createAgentRun")
   createAgentRun(@path conversation: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AgentRunCreateRequest): AcceptedJson<AgentRunResponse> | CommonErrors;
 
@@ -208,6 +229,7 @@ interface AgentConversations {
     ],
     targetParameter: "conversation",
   })
+  @apigen.auditPayload(AgentCommandAuditPayload, #{ schemaVersion: 1, retention: "security" })
   @operationId("cancelAgentRun")
   cancelAgentRun(@path conversation: string, @path run: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<AgentRunResponse> | CommonErrors;
 }

@@ -195,10 +195,15 @@ func TestCandidateSourceBlobUploadPersistsGeneratedCommandAuditExactlyOnce(t *te
 	if err := json.Unmarshal([]byte(event.MetadataJSON), &metadata); err != nil {
 		t.Fatalf("decode audit metadata: %v", err)
 	}
-	if metadata["operationId"] != "uploadProjectCandidateSourceBlob" ||
-		metadata["surface"] != "cli" || metadata["digest"] != blobDigest ||
-		metadata["sizeBytes"] != float64(len("blob")) {
+	if metadata["schemaVersion"] != float64(1) || metadata["retention"] != "security" ||
+		metadata["payloadSchema"] != "CandidateSourceBlobAuditPayload" {
 		t.Fatalf("candidate source blob audit metadata = %#v", metadata)
+	}
+	payload, ok := metadata["payload"].(map[string]any)
+	if !ok || payload["operationId"] != "uploadProjectCandidateSourceBlob" ||
+		payload["surface"] != "cli" || payload["digest"] != blobDigest ||
+		payload["sizeBytes"] != float64(len("blob")) {
+		t.Fatalf("candidate source blob audit payload = %#v", payload)
 	}
 }
 

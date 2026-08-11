@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	platformdb "github.com/flidai/leapview/internal/access/internal/db"
 )
 
@@ -352,10 +353,7 @@ func (r *Repository) RevokeAuthoringSession(ctx context.Context, principalID, se
 	if affected == 0 {
 		return access.ErrInvalidAuthoringCredential
 	}
-	if err := txRepo.RecordAuditEvent(ctx, access.AuditEventInput{
-		PrincipalID: principalID, Action: "authoring.session.revoked", TargetType: "authoring_session",
-		TargetID: sessionID, Status: "success", MetadataJSON: "{}",
-	}); err != nil {
+	if err := txRepo.RecordAuditEvent(ctx, authoringSessionAudit("authoring.session.revoked", access.AuthoringSession{ID: sessionID, PrincipalID: principalID}, "success")); err != nil {
 		return fmt.Errorf("%w: %v", access.ErrAuditTransaction, err)
 	}
 	return tx.Commit()
@@ -392,11 +390,24 @@ func (r *Repository) RevokeAuthoringSessionByAccessTokenHash(ctx context.Context
 }
 
 func authoringDeviceAudit(action string, record access.DeviceAuthorization, principalID, status string) access.AuditEventInput {
-	metadata, _ := json.Marshal(map[string]any{
+	metadataValues := map[string]any{
 		"clientId": record.ClientID, "targetId": record.Scope.TargetID,
 		"projectId": record.Scope.ProjectID, "privileges": record.Scope.Privileges,
 		"decision": string(record.Status),
-	})
+	}
+	metadata, _ := json.Marshal(metadataValues)
+	if action == "authoring.device.decided" {
+		privileges := make([]string, len(record.Scope.Privileges))
+		for index, privilege := range record.Scope.Privileges {
+			privileges[index] = string(privilege)
+		}
+		if encoded, encodeErr := accessgen.EncodeGenDecideDeviceAuthorizationAuditPayload(accessgen.GenSchemaDeviceAuthorizationDecidedAuditPayload{
+			ClientId: record.ClientID, TargetId: record.Scope.TargetID, ProjectId: record.Scope.ProjectID,
+			Privileges: privileges, Decision: string(record.Status),
+		}); encodeErr == nil {
+			metadata = []byte(encoded)
+		}
+	}
 	return access.AuditEventInput{
 		PrincipalID: principalID, Action: action, TargetType: "device_authorization",
 		TargetID: record.ID, Status: status, MetadataJSON: string(metadata),
@@ -404,10 +415,23 @@ func authoringDeviceAudit(action string, record access.DeviceAuthorization, prin
 }
 
 func authoringSessionAudit(action string, session access.AuthoringSession, status string) access.AuditEventInput {
-	metadata, _ := json.Marshal(map[string]any{
+	metadataValues := map[string]any{
 		"kind": session.Kind, "clientId": session.ClientID, "targetId": session.Scope.TargetID,
 		"projectId": session.Scope.ProjectID, "privileges": session.Scope.Privileges,
-	})
+	}
+	metadata, _ := json.Marshal(metadataValues)
+	if action == "authoring.session.revoked" {
+		privileges := make([]string, len(session.Scope.Privileges))
+		for index, privilege := range session.Scope.Privileges {
+			privileges[index] = string(privilege)
+		}
+		if encoded, err := accessgen.EncodeGenRevokeCurrentAuthoringSessionAuditPayload(accessgen.GenSchemaAuthoringSessionRevokedAuditPayload{
+			Kind: string(session.Kind), ClientId: session.ClientID, TargetId: session.Scope.TargetID,
+			ProjectId: session.Scope.ProjectID, Privileges: privileges,
+		}); err == nil {
+			metadata = []byte(encoded)
+		}
+	}
 	return access.AuditEventInput{
 		PrincipalID: session.PrincipalID, Action: action, TargetType: "authoring_session",
 		TargetID: session.ID, Status: status, MetadataJSON: string(metadata),

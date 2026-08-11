@@ -208,6 +208,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
+		Schemas:       map[string]ir.Schema{"WidgetAuditPayload": {Type: "object", Properties: map[string]ir.SchemaProperty{"operationId": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"operationId"}}},
 		Endpoints: []ir.Endpoint{
 			{
 				Method:      "get",
@@ -221,7 +222,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 				Responses: []ir.Response{{StatusCode: 200, Description: "ok"}, {StatusCode: 409, Description: "conflict"}},
 				Command: &ir.Command{
 					Owner:               "WidgetAPI",
-					Audit:               ir.AuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort"},
+					Audit:               ir.AuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort", Payload: &ir.AuditPayload{Schema: ir.SchemaRef{Ref: "WidgetAuditPayload"}, SchemaVersion: 1, Retention: "security", Fields: []ir.AuditField{{Name: "operationId", Sensitivity: "internal"}}}},
 					Failures:            []ir.CommandFailure{{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."}},
 					AdditionalExposures: []string{"ui"},
 					Target:              &ir.OperationTarget{Parameter: "workspace", Type: "workspace"},
@@ -246,7 +247,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 	content := string(b)
 	require.Contains(t, content, "Extensions map[string]any")
 	require.Contains(t, content, `Namespace: "WidgetAPI"`)
-	require.Contains(t, content, `Command: &GenCommandContract{Owner: "WidgetAPI", Audit: GenAuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort"}, Execution: nil, Failures: []GenCommandFailure{{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."}}, AdditionalExposures: []GenOperationSurface{"ui"}, Target: &GenOperationTarget{Parameter: "workspace", Type: "workspace"}`)
+	require.Contains(t, content, `Command: &GenCommandContract{Owner: "WidgetAPI", Audit: GenAuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort", Payload: &GenAuditPayloadContract{Schema: "WidgetAuditPayload", SchemaVersion: 1, Retention: "security", Fields: []GenAuditField{{Name: "operationId", Sensitivity: "internal"}}}}, Execution: nil, Failures: []GenCommandFailure{{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."}}, AdditionalExposures: []GenOperationSurface{"ui"}, Target: &GenOperationTarget{Parameter: "workspace", Type: "workspace"}`)
 	require.Contains(t, content, `func GetAPIGenCommandRuntimeContract(operationID string) (apigencommand.Contract, bool)`)
 	require.Contains(t, content, `type GenCommandOperationID struct { value string }`)
 	require.Contains(t, content, `func GenCommandOperationListWidgets() GenCommandOperationID { return GenCommandOperationID{value: "listWidgets"} }`)
@@ -271,6 +272,10 @@ import "testing"
 type Error struct {
 	Code int32
 	Message string
+}
+
+type GenSchemaWidgetAuditPayload struct {
+	OperationId string
 }
 
 func TestExtensionDefensiveCopies(t *testing.T) {
@@ -315,6 +320,44 @@ func TestExtensionDefensiveCopies(t *testing.T) {
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
+}
+
+func TestEmit_GeneratesTypedAuditPayloadEncoder(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: "v4",
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"WidgetCreatedAuditPayload": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"widgetId": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"widgetId"},
+			},
+		},
+		Endpoints: []ir.Endpoint{{
+			Method: "post", Path: "/widgets", OperationID: "createWidget", Namespace: "WidgetAPI",
+			Parameters: []ir.Parameter{{Name: "Idempotency-Key", In: "header", Required: true, Schema: ir.SchemaRef{Type: "string"}}},
+			Responses:  []ir.Response{{StatusCode: 201, Description: "created"}},
+			Command: &ir.Command{
+				Owner: "WidgetAPI", Idempotency: "required",
+				Audit: ir.AuditPolicy{Required: true, SuccessAction: "widget.created", Guarantee: "transactional", Payload: &ir.AuditPayload{
+					Schema: ir.SchemaRef{Ref: "WidgetCreatedAuditPayload"}, SchemaVersion: 1, Retention: "security",
+					Fields: []ir.AuditField{{Name: "widgetId", Sensitivity: "internal"}},
+				}},
+				Failures: []ir.CommandFailure{},
+			},
+		}},
+	}
+
+	b, err := Emit(doc, Options{PackageName: "gen"})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, `Payload: &GenAuditPayloadContract{Schema: "WidgetCreatedAuditPayload", SchemaVersion: 1, Retention: "security", Fields: []GenAuditField{{Name: "widgetId", Sensitivity: "internal"}}}`)
+	require.Contains(t, content, `func EncodeGenCreateWidgetAuditPayload(payload GenSchemaWidgetCreatedAuditPayload) (string, error)`)
+	require.Contains(t, content, `return apigenaudit.EncodeForAudit(*contract.AuditPayload, payload)`)
+	require.Contains(t, content, `func EncodeGenCreateWidgetAuditPayloadForLog(payload GenSchemaWidgetCreatedAuditPayload) (string, error)`)
 }
 
 func TestEmit_RejectsInvalidExtensionValues(t *testing.T) {
