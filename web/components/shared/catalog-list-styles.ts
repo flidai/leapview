@@ -7,7 +7,7 @@ export const catalogListStyles = css`
     overflow: hidden;
     margin: 0;
     border-radius: var(--lv-radius-default);
-    background: var(--lv-bg-panel);
+    background: var(--lv-bg-page);
     box-shadow: inset 0 0 0 var(--borderWidth-default) var(--lv-line-muted);
     padding: 0;
     list-style: none;
@@ -82,16 +82,14 @@ export const catalogListStyles = css`
   }
 
   .catalog-title {
-    font-size: var(--lv-font-size-body-sm);
-    font-weight: var(--lv-font-weight-strong);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-body-compact);
+    font-weight: var(--base-text-weight-semibold);
   }
 
   .catalog-description,
   .catalog-meta {
     color: var(--lv-fg-muted);
-    font-size: var(--lv-font-size-caption);
-    line-height: var(--lv-line-height-tight);
+    font: var(--lv-type-caption);
   }
 
   .catalog-trailing {

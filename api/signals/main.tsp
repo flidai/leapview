@@ -62,6 +62,17 @@ model AdminMetricSignal {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model AdminProfileSignal {
+  `displayName`: string;
+  `email`: string;
+  `id`: string;
+  `profilePictureUrl`?: string;
+  `title`: string;
+  `username`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminPublicationSignal {
   `workspaceId`: string;
   `name`: string;
@@ -88,6 +99,37 @@ model AdminPublicationCommand {
   `action`: string;
 }
 
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model AdminDirectoryListItemSignal {
+  `email`: string;
+  `groupCount`: int64;
+  `href`: string;
+  `id`: string;
+  `joinedAt`: string;
+  `kind`: string;
+  `name`: string;
+  `role`: string;
+  `status`: string;
+  `username`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model AdminDirectoryListGroupSignal {
+  `id`: string;
+  `items`: AdminDirectoryListItemSignal[];
+  `label`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model AdminDirectoryListSignal {
+  `filterLabel`: string;
+  `groups`: AdminDirectoryListGroupSignal[];
+  `searchPlaceholder`: string;
+}
+
 @apigen.contract(#{ kind: "ui-envelope", tags: #["admin", "envelope"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "admin" })
 model AdminPageEnvelope {
@@ -104,16 +146,20 @@ model AdminPageEnvelope {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminPageSignal {
-  `active`: string;
-  `agent`?: AdminAgentSignal;
-  `empty`?: string;
-  `headerDetail`: string;
-  `headerTitle`: string;
-  `kind`: RouteKind;
-  `metrics`?: AdminMetricSignal[];
-  `publications`?: AdminPublicationSignal[];
+	`active`: string;
+	`agent`?: AdminAgentSignal;
+	`directoryList`?: AdminDirectoryListSignal;
+	`empty`?: string;
+	`headerDetail`: string;
+	`headerTitle`: string;
+	`kind`: RouteKind;
+	`listFilter`?: string;
+	`listFilterOptions`?: string[];
+	`listQuery`?: string;
+	`metrics`?: AdminMetricSignal[];
+	`profile`?: AdminProfileSignal;
+	`publications`?: AdminPublicationSignal[];
   `sections`?: AdminContentSectionSignal[];
-  `sidebar`: SubSidebarSignal;
   `storage`?: AdminStorageSignal;
   `title`: string;
 }
@@ -405,10 +451,12 @@ model CatalogPageEnvelope {
 @apigen.contract(#{ kind: "ui-signal", tags: #["catalog", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "catalog" })
 model CatalogPageSignal {
-  `dashboards`: CatalogDashboardSignal[];
-  `description`: string;
-  `kind`: RouteKind;
-  `title`: string;
+	`dashboards`: CatalogDashboardSignal[];
+	`description`: string;
+	`kind`: RouteKind;
+	`listFilter`?: string;
+	`listQuery`?: string;
+	`title`: string;
 }
 
 model ChatArtifactSignal {
@@ -1484,6 +1532,7 @@ model SidebarItemSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "shared" })
 model SidebarSignal {
   `active`: string;
+  `admin`?: boolean;
   `compact`: boolean;
   `dashboardId`?: string;
   `dashboardTitle`: string;
@@ -1726,11 +1775,13 @@ model WorkspacePageEnvelope {
 @apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
 model WorkspacePageSignal {
-  `assetList`?: WorkspaceAssetListSignal;
-  `description`?: string;
-  `environment`?: string;
-  `kind`: RouteKind;
-  `title`: string;
+	`assetList`?: WorkspaceAssetListSignal;
+	`description`?: string;
+	`environment`?: string;
+	`kind`: RouteKind;
+	`listFilter`?: string;
+	`listQuery`?: string;
+	`title`: string;
   `workspaceId`?: string;
   `workspaces`?: WorkspaceCatalogItemSignal[];
 }

@@ -70,7 +70,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	mux.Group(func(r chi.Router) {
 		r.Use(csrf)
 		r.With(policy.rateLimits.Updates()).Get("/updates", runtime.pageStreams.ServeHTTP)
-		r.Get("/", routes.accessModule.ProtectViewItem(routes.workspaceModule.Home))
+		r.Get("/", routes.accessModule.ProtectAnyWorkspace(accessmodule.PrivilegeViewItem, routes.workspaceModule.Home))
 		r.Get("/candidates/{candidate}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
 			candidatePreview(candidates, w, request)
 		}))

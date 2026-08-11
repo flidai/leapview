@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
 let baseURL = ''
@@ -126,7 +127,7 @@ test('code editor initializes Monaco, syncs values, emits changes, and disposes'
 
     expect(state.hasMonacoSurface).toBe(true)
     expect(state.monacoBackground).toBe('rgb(255, 255, 255)')
-    expect(state.monacoFontSize).toBe('14px')
+    expect(state.monacoFontSize).toBe('13px')
     expect(state.gutterWidth).toBeGreaterThanOrEqual(32)
     expect(state.gutterWidth).toBeLessThanOrEqual(46)
     expect(state.cursorBackground).toBe('rgb(4, 66, 137)')
@@ -199,7 +200,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { --fontStack-system: system-ui; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-accent-muted: #ddf4ff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-icon-muted: #57606a; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --base-size-8: 8px; --base-size-16: 16px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 14px; --lv-font-weight-medium: 500; --lv-line-height-relaxed: 1.55; }
+          body { ${typographyTestTokens} --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-accent-muted: #ddf4ff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-icon-muted: #57606a; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --base-size-8: 8px; --base-size-16: 16px; }
           [data-color-mode='dark'] { --lv-bg-panel: #0d1117; }
           lv-code-editor { display: block; width: 760px; margin: 24px; }
         </style>

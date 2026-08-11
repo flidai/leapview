@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
@@ -287,11 +288,41 @@ func (m *Module) Home(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	if err := ui.CatalogPageForCatalogs(m.CatalogsForVisibleWorkspaces(r), providers...).Render(w); err != nil {
+	csrfToken := ""
+	if m.handler.CSRFToken != nil {
+		csrfToken = m.handler.CSRFToken(r)
+	}
+	if err := ui.CatalogPageForCatalogsQueryWithCSRF(m.CatalogsForVisibleWorkspaces(r), strings.TrimSpace(r.URL.Query().Get("q")), csrfToken, providers...).Render(w); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (m *Module) CatalogBootstrapSignals(r *http.Request, provider webpage.Provider) map[string]any {
-	return ui.CatalogBootstrapSignalsForCatalogs(m.CatalogsForVisibleWorkspaces(r), provider)
+func (m *Module) CatalogBootstrapSignals(r *http.Request, provider webpage.Provider) (map[string]any, error) {
+	var signals struct {
+		Query  *string `json:"entityListQuery"`
+		Filter *string `json:"entityListFilter"`
+	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		return nil, err
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if signals.Query != nil {
+		query = strings.TrimSpace(*signals.Query)
+	}
+	return ui.CatalogBootstrapSignalsForCatalogsQuery(m.CatalogsForVisibleWorkspaces(r), query, provider), nil
+}
+
+func (m *Module) CatalogSearch(w http.ResponseWriter, r *http.Request) {
+	var signals struct {
+		Query *string `json:"entityListQuery"`
+	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	query := ""
+	if signals.Query != nil {
+		query = strings.TrimSpace(*signals.Query)
+	}
+	_ = pagestream.PatchResponse(w, r, ui.CatalogListPatchForCatalogsQuery(m.CatalogsForVisibleWorkspaces(r), query))
 }

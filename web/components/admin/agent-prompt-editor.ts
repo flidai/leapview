@@ -20,9 +20,9 @@ class AgentPromptEditor extends LitElement {
       display: block;
       min-width: 0;
       color: var(--lv-fg-default);
-      --lv-agent-prompt-font-size: var(--lv-font-size-caption);
-      --lv-agent-prompt-line-height: var(--lv-line-height-snug);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      --lv-agent-prompt-font-size: var(--text-codeBlock-size);
+      --lv-agent-prompt-line-height: var(--base-text-lineHeight-snug);
+      font-family: var(--fontStack-system);
     }
 
     .prompt-editor {
@@ -36,9 +36,7 @@ class AgentPromptEditor extends LitElement {
 
     .prompt-status {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
-      line-height: var(--lv-line-height-tight);
+      font: var(--lv-type-caption);
     }
 
     .prompt-control-row {
@@ -77,10 +75,8 @@ class AgentPromptEditor extends LitElement {
     .save-button {
       border: 0;
       border-radius: calc(var(--lv-radius-default) - 2px);
-      font: inherit;
-      font-size: var(--lv-font-size-body-sm);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-compact);
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-medium);
       cursor: pointer;
     }
 

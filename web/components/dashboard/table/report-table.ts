@@ -329,10 +329,9 @@ export class ReportTable extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
-      line-height: var(--lv-line-height-compact);
     }
 
     .visual-options {
@@ -356,9 +355,8 @@ export class ReportTable extends LitElement {
       background: var(--lv-button-invisible-bg-rest, var(--control-transparent-bgColor-rest, var(--lv-bg-panel)));
       color: var(--lv-button-invisible-icon-rest, var(--lv-fg-muted));
       cursor: pointer;
-      font-size: var(--lv-font-size-body-lg);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: var(--lv-line-height-none);
+      font: var(--lv-type-body-large);
+      line-height: 1;
       list-style: none;
     }
 
@@ -407,9 +405,8 @@ export class ReportTable extends LitElement {
       color: var(--lv-button-invisible-fg-rest, var(--lv-fg-default));
       cursor: pointer;
       padding: 0 var(--lv-button-padding-inline-xs, var(--control-xsmall-paddingInline-normal));
-      font: inherit;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
       text-align: left;
     }
 
@@ -457,8 +454,7 @@ export class ReportTable extends LitElement {
     .column-menu > span {
       padding: var(--base-size-2) var(--base-size-6);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
       text-transform: uppercase;
     }
 
@@ -470,8 +466,7 @@ export class ReportTable extends LitElement {
       border-radius: var(--lv-radius-tight);
       cursor: pointer;
       padding: 0 var(--base-size-6);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
     }
 
     .column-menu label:hover {
@@ -487,8 +482,7 @@ export class ReportTable extends LitElement {
       background: var(--lv-bg-danger-muted);
       color: var(--lv-fg-danger);
       padding: var(--base-size-8) var(--base-size-12);
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body);
     }
 
     .head,
@@ -520,8 +514,7 @@ export class ReportTable extends LitElement {
       padding: 0 var(--base-size-8);
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
       letter-spacing: 0;
       text-transform: uppercase;
     }
@@ -656,9 +649,7 @@ export class ReportTable extends LitElement {
       color: var(--lv-button-invisible-fg-rest, inherit);
       cursor: pointer;
       padding: 0 var(--base-size-8);
-      font: inherit;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-caption);
       letter-spacing: 0;
       text-align: left;
       text-transform: uppercase;
@@ -679,7 +670,7 @@ export class ReportTable extends LitElement {
       min-width: var(--base-size-20);
       place-items: center;
       color: var(--lv-fg-link);
-      font-size: var(--lv-font-size-body-md);
+      font: var(--lv-type-body);
       opacity: 0;
     }
 
@@ -841,19 +832,18 @@ export class ReportTable extends LitElement {
       cursor: default;
       font: inherit;
       padding: 0 var(--base-size-8);
-      font-size: var(--lv-font-size-body-md);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body);
       text-align: left;
     }
 
     .density-compact .cell {
       padding: 0 var(--base-size-6);
-      font-size: var(--lv-font-size-caption);
+      font: var(--lv-type-caption);
     }
 
     .density-spacious .cell {
       padding: 0 var(--base-size-12);
-      font-size: var(--lv-font-size-body-lg);
+      font: var(--lv-type-body-large);
     }
 
     .grid-columns .cell,
@@ -905,9 +895,8 @@ export class ReportTable extends LitElement {
       padding: 1px 7px;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-strong);
-      line-height: 1.45;
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .cell-badge.tone-success {
@@ -939,7 +928,7 @@ export class ReportTable extends LitElement {
     .conditional-cue {
       display: inline-block;
       margin-inline-end: var(--base-size-4);
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .conditional-cue-label {
@@ -990,8 +979,7 @@ export class ReportTable extends LitElement {
       min-height: 240px;
       place-items: center;
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-body-lg);
-      font-weight: var(--lv-font-weight-strong);
+      font: var(--lv-type-body-large);
     }
 
     .loading {
@@ -1023,8 +1011,7 @@ export class ReportTable extends LitElement {
       background: var(--lv-bg-panel-muted);
       padding: var(--base-size-6) var(--control-small-paddingInline-normal);
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-caption);
-      font-weight: var(--lv-font-weight-medium);
+      font: var(--lv-type-caption);
     }
 
     .footer span {
@@ -1042,7 +1029,7 @@ export class ReportTable extends LitElement {
 
     .footer strong {
       color: var(--lv-fg-default);
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-medium);
     }
 
     @keyframes load {

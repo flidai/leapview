@@ -21,7 +21,7 @@ class LeapViewDrawer extends LitElement {
   static styles = css`
     :host {
       color: var(--lv-fg-default);
-      font-family: var(--lv-font-family-ui, var(--fontStack-system));
+      font-family: var(--fontStack-system);
     }
 
     button {

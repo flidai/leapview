@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
 let browser: Browser
@@ -39,7 +40,7 @@ beforeAll(async () => {
             :root {
               --lv-chart-surface: rgb(1, 2, 3);
               --lv-border-default: 2px solid rgb(4, 5, 6);
-              --fontStack-system: system-ui;
+              ${typographyTestTokens}
               --fontStack-monospace: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	              --lv-bg-app: rgb(11, 12, 13);
               --lv-bg-page: #fff;
@@ -59,15 +60,15 @@ beforeAll(async () => {
               --base-size-16: 16px;
               --base-size-20: 20px;
               --lv-space-sm: 8px;
-              --lv-font-size-caption: 12px;
-              --lv-font-size-body-sm: 14px;
-              --lv-font-size-body-md: 16px;
-              --lv-font-size-title-sm: 18px;
-              --lv-font-size-title-md: 22px;
-              --lv-font-weight-strong: 600;
-              --lv-line-height-compact: 1.3;
-              --lv-line-height-normal: 1.5;
-              --lv-line-height-relaxed: 1.55;
+
+
+
+
+
+
+
+
+
               --lv-chat-thread-padding: 16px;
               --lv-chat-stack-width: 760px;
               --lv-chat-stack-gap: 16px;

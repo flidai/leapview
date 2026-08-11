@@ -34,7 +34,7 @@ export const adapter: RendererAdapter = {
     installMapLibreChromeStyles(frame)
     const surface = document.createElement('div'); surface.style.cssText = 'position:absolute;inset:0'
     const attribution = document.createElement('div'); attribution.dataset.mapAttribution = ''; attribution.setAttribute('role', 'note'); attribution.setAttribute('aria-label', 'Map attribution')
-    attribution.style.cssText = 'position:absolute;right:6px;bottom:6px;z-index:1;max-width:calc(100% - 12px);padding:2px 5px;border-radius:4px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 88%,transparent);color:var(--lv-fg-muted,#57606a);font:10px/1.3 var(--lv-font-family-ui,system-ui);pointer-events:none;text-align:right'
+    attribution.style.cssText = 'position:absolute;right:6px;bottom:6px;z-index:1;max-width:calc(100% - 12px);padding:2px 5px;border-radius:4px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 88%,transparent);color:var(--lv-fg-muted,#57606a);font:var(--lv-type-caption);pointer-events:none;text-align:right'
     frame.append(surface, attribution); container.replaceChildren(frame)
     const pointerOptions = mapPointerOptions(envelope)
     const backgroundColor = getComputedStyle(frame).backgroundColor || '#f6f8fa'
@@ -116,15 +116,15 @@ class MapLibreHandle implements RendererHandle {
     this.tooltip = document.createElement('div')
     this.tooltip.setAttribute('role', 'tooltip')
     this.tooltip.hidden = true
-    this.tooltip.style.cssText = 'position:absolute;z-index:4;max-width:280px;padding:8px 10px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 96%,transparent);box-shadow:var(--lv-shadow-floating,0 8px 24px rgba(140,149,159,.2));color:var(--lv-fg-default,#1f2328);font:12px/1.45 var(--lv-font-family-ui,system-ui);pointer-events:none'
+    this.tooltip.style.cssText = 'position:absolute;z-index:4;max-width:280px;padding:8px 10px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 96%,transparent);box-shadow:var(--lv-shadow-floating,0 8px 24px rgba(140,149,159,.2));color:var(--lv-fg-default,#1f2328);font:var(--lv-type-caption);pointer-events:none'
     this.legend = document.createElement('div')
     this.legend.setAttribute('role', 'note')
     this.legend.dataset.mapLegend = ''
     this.legend.hidden = true
-    this.legend.style.cssText = 'position:absolute;z-index:3;right:10px;bottom:28px;min-width:132px;max-width:220px;padding:8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 94%,transparent);color:var(--lv-fg-default,#1f2328);font:11px/1.35 var(--lv-font-family-ui,system-ui)'
+    this.legend.style.cssText = 'position:absolute;z-index:3;right:10px;bottom:28px;min-width:132px;max-width:220px;padding:8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 94%,transparent);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary)'
     this.accessibleTable = document.createElement('details')
     this.accessibleTable.dataset.mapDataTable = ''
-    this.accessibleTable.style.cssText = 'position:absolute;z-index:3;left:10px;bottom:28px;max-width:min(520px,calc(100% - 20px));max-height:55%;overflow:auto;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 96%,transparent);color:var(--lv-fg-default,#1f2328);font:11px/1.35 var(--lv-font-family-ui,system-ui);box-shadow:0 1px 3px rgba(31,35,40,.12)'
+    this.accessibleTable.style.cssText = 'position:absolute;z-index:3;left:10px;bottom:28px;max-width:min(520px,calc(100% - 20px));max-height:55%;overflow:auto;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 96%,transparent);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);box-shadow:0 1px 3px rgba(31,35,40,.12)'
     this.frame.append(this.tooltip, this.legend, this.accessibleTable)
     this.map.on('click', this.handleClick)
     this.map.on('mousemove', this.handlePointerMove)
@@ -371,7 +371,7 @@ class MapLibreHandle implements RendererHandle {
     for (const entry of entries) {
       const row = document.createElement('div'); row.style.cssText = 'display:grid;grid-template-columns:minmax(64px,auto) minmax(0,1fr);gap:10px'
       const label = document.createElement('span'); label.style.color = 'var(--lv-fg-muted,#57606a)'; label.textContent = entry.label
-      const value = document.createElement('strong'); value.style.cssText = 'font-weight:600;text-align:right;overflow-wrap:anywhere'; value.textContent = entry.value
+      const value = document.createElement('strong'); value.style.cssText = 'font-weight:var(--base-text-weight-semibold);text-align:right;overflow-wrap:anywhere'; value.textContent = entry.value
       row.append(label, value); fragment.append(row)
     }
     this.tooltip.replaceChildren(fragment)
@@ -390,7 +390,7 @@ class MapLibreHandle implements RendererHandle {
     if (controls.reset) {
       const button = document.createElement('button')
       button.type = 'button'; button.className = 'lv-map-reset'; button.textContent = 'Reset view'; button.setAttribute('aria-label', 'Reset map view')
-      button.style.cssText = 'position:absolute;z-index:3;top:10px;right:50px;padding:5px 8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:4px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:600 11px/1.2 var(--lv-font-family-ui,system-ui);cursor:pointer;box-shadow:0 1px 2px rgba(31,35,40,.08)'
+      button.style.cssText = 'position:absolute;z-index:3;top:10px;right:50px;padding:5px 8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:4px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-caption);font-weight:var(--base-text-weight-medium);cursor:pointer;box-shadow:0 1px 2px rgba(31,35,40,.08)'
       button.addEventListener('click', () => { if (this.homeCamera) resetMapToHome(this.map, this.homeCamera) })
       this.frame.append(button); this.resetButton = button
     }
@@ -429,7 +429,7 @@ class MapLibreHandle implements RendererHandle {
     const data = mapAccessibleData(envelope, 100, this.context)
     const summary = document.createElement('summary')
     summary.textContent = `View map data (${data.rows.length}${data.totalRows > data.rows.length ? ` of ${data.totalRows}` : ''} rows)`
-    summary.style.cssText = 'padding:6px 8px;cursor:pointer;font-weight:600;white-space:nowrap'
+    summary.style.cssText = 'padding:6px 8px;cursor:pointer;font-weight:var(--base-text-weight-medium);white-space:nowrap'
     const table = document.createElement('table')
     table.style.cssText = 'border-collapse:collapse;min-width:100%;background:var(--lv-bg-panel,#fff)'
     const caption = document.createElement('caption')

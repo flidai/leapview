@@ -45,6 +45,37 @@ func TestDemoUsesCanonicalOlistShowcase(t *testing.T) {
 	require.NotContains(t, project, "kind: quack")
 }
 
+func TestDemoSharedLoginIsDashboardOnly(t *testing.T) {
+	root := filepath.Join("..", "..")
+	compiled, err := projectcompiler.CompileProject(
+		filepath.Join(root, "dashboards", "leapview.yaml"),
+		projectcompiler.Options{ServingStateID: workspace.ServingStateID("hosted-demo-access-test")},
+	)
+	require.NoError(t, err)
+
+	for _, workspaceID := range []string{"operations", "sales", "visuals"} {
+		compiledWorkspace, ok := compiled.Workspace(workspaceID)
+		require.True(t, ok, "compiled demo workspace %q", workspaceID)
+
+		var privileges []string
+		for _, grant := range compiledWorkspace.Manifest().Access.Grants {
+			if grant.Subject.Email != "demo@leapview.dev" {
+				continue
+			}
+			require.Equal(t, "principal", grant.Subject.Kind)
+			require.Equal(t, "workspace", grant.Object.Type)
+			require.Empty(t, grant.Object.ID)
+			privileges = append(privileges, grant.Privilege)
+		}
+		require.ElementsMatch(t, []string{"USE_WORKSPACE", "VIEW_ITEM", "QUERY_DATA"}, privileges)
+
+		for _, binding := range compiledWorkspace.Manifest().Access.RoleBindings {
+			require.NotEqual(t, "demo@leapview.dev", binding.Subject.Email,
+				"shared demo login must not inherit a role that enables chat or mutations")
+		}
+	}
+}
+
 func TestDemoDeploymentIsAutomaticAndDigestPinned(t *testing.T) {
 	root := filepath.Join("..", "..")
 	workflow := read(t, filepath.Join(root, ".github", "workflows", "demo-deploy.yml"))
@@ -101,6 +132,26 @@ func TestDemoDeploymentIsAutomaticAndDigestPinned(t *testing.T) {
 	require.NotEqual(t, -1, configGeneration, "demo deployment must generate ignored config sources")
 	require.NotEqual(t, -1, olistBootstrap, "demo deployment must bootstrap Olist")
 	require.Less(t, configGeneration, olistBootstrap, "config generation must precede Olist compilation")
+}
+
+func TestDemoHumanCredentialsStayOutOfDeploymentAutomation(t *testing.T) {
+	root := filepath.Join("..", "..")
+	workflow := read(t, filepath.Join(root, ".github", "workflows", "demo-deploy.yml"))
+	require.NotContains(t, workflow, "/demo/access")
+	require.NotContains(t, workflow, "DEMO_ADMIN_PASSWORD")
+	require.NotContains(t, workflow, "DEMO_VIEWER_PASSWORD")
+
+	runbook := read(t, filepath.Join(root, "deploy", "demo", "README.md"))
+	for _, required := range []string{
+		"prod:/demo/access",
+		"DEMO_ADMIN_EMAIL",
+		"DEMO_ADMIN_PASSWORD",
+		"DEMO_VIEWER_EMAIL",
+		"DEMO_VIEWER_PASSWORD",
+		"revoke every existing session",
+	} {
+		require.Contains(t, runbook, required)
+	}
 }
 
 func TestDemoDeploymentRejectsMutableImagesBeforeChangingInfrastructure(t *testing.T) {

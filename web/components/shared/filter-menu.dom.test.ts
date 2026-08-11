@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
 let baseURL = ''
@@ -126,7 +127,7 @@ function testDocument(): string {
     <html>
       <head>
         <style>
-          body { --fontStack-system: system-ui; --lv-bg-panel: #fff; --lv-bg-app: #fff; --lv-bg-input: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-danger: #d1242f; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-border-muted: 1px solid #d8dee4; --lv-border-accent: #0969da; --lv-radius-default: 6px; --lv-radius-small: 6px; --base-size-4: 4px; --base-size-6: 6px; --base-size-7: 7px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-24: 24px; --base-size-32: 32px; --control-medium-size: 32px; --control-small-size: 28px; --lv-font-size-caption: 12px; --lv-font-size-body-sm: 14px; --lv-line-height-compact: 1.3; }
+          body { ${typographyTestTokens} --lv-bg-panel: #fff; --lv-bg-app: #fff; --lv-bg-input: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-danger: #d1242f; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-border-muted: 1px solid #d8dee4; --lv-border-accent: #0969da; --lv-radius-default: 6px; --lv-radius-small: 6px; --base-size-4: 4px; --base-size-6: 6px; --base-size-7: 7px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-24: 24px; --base-size-32: 32px; --control-medium-size: 32px; --control-small-size: 28px; }
         </style>
       </head>
       <body>

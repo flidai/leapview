@@ -122,7 +122,7 @@ export class DatastarInspector extends LitElement {
       color: var(--ds-accent-fg);
       cursor: pointer;
       font-size: 12px;
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
       line-height: 1;
       box-shadow: 0 10px 28px rgb(0 0 0 / 38%), 0 0 0 1px rgb(255 255 255 / 8%) inset;
@@ -191,7 +191,7 @@ export class DatastarInspector extends LitElement {
       background: var(--ds-accent);
       color: var(--ds-accent-fg);
       font-size: 11px;
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
       line-height: 1;
     }
 
@@ -340,7 +340,7 @@ export class DatastarInspector extends LitElement {
 
     .key {
       color: color-mix(in srgb, var(--ds-muted), var(--ds-fg) 18%);
-      font-weight: var(--lv-font-weight-regular);
+      font-weight: var(--base-text-weight-normal);
     }
 
     .separator,
@@ -368,7 +368,7 @@ export class DatastarInspector extends LitElement {
       background: var(--ds-panel-muted);
       color: var(--ds-muted);
       font-size: 10px;
-      font-weight: var(--lv-font-weight-regular);
+      font-weight: var(--base-text-weight-normal);
       line-height: 16px;
       padding: 0 6px;
     }
@@ -428,7 +428,7 @@ export class DatastarInspector extends LitElement {
       color: var(--ds-fg);
       font-family: var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
       font-size: 12px;
-      font-weight: var(--lv-font-weight-strong);
+      font-weight: var(--base-text-weight-semibold);
       overflow-wrap: anywhere;
     }
 
