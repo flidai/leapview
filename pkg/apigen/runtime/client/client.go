@@ -34,6 +34,69 @@ type Response struct {
 	ContentType string
 }
 
+// ProblemFieldError is one field-level RFC 9457 extension returned by an API.
+type ProblemFieldError struct {
+	Field  string `json:"field"`
+	Code   string `json:"code"`
+	Detail string `json:"detail"`
+}
+
+// ProblemDetails is APIGen's transport-neutral structured HTTP failure.
+type ProblemDetails struct {
+	Type      string              `json:"type"`
+	Title     string              `json:"title"`
+	Status    int                 `json:"status"`
+	Detail    string              `json:"detail"`
+	Instance  string              `json:"instance"`
+	Code      string              `json:"code"`
+	RequestID string              `json:"requestId"`
+	Errors    []ProblemFieldError `json:"errors"`
+}
+
+// ProblemError preserves a non-success HTTP response and its decoded problem.
+type ProblemError struct {
+	OperationID string
+	Response    Response
+	Problem     ProblemDetails
+}
+
+func (failure *ProblemError) Error() string {
+	if failure == nil {
+		return "API problem"
+	}
+	if failure.Problem.Detail != "" {
+		return failure.Problem.Detail
+	}
+	if failure.Problem.Title != "" {
+		return failure.Problem.Title
+	}
+	return fmt.Sprintf("API problem (HTTP %d)", failure.Response.StatusCode)
+}
+
+// UnexpectedProblemError is a valid problem response not declared by the
+// generated operation failure vocabulary.
+type UnexpectedProblemError struct {
+	ProblemError *ProblemError
+	Violation    string
+}
+
+func (failure *UnexpectedProblemError) Error() string {
+	if failure == nil || failure.ProblemError == nil {
+		return "unexpected API problem"
+	}
+	if failure.Violation == "" {
+		return "unexpected API problem: " + failure.ProblemError.Error()
+	}
+	return "unexpected API problem: " + failure.Violation + ": " + failure.ProblemError.Error()
+}
+
+func (failure *UnexpectedProblemError) Unwrap() error {
+	if failure == nil {
+		return nil
+	}
+	return failure.ProblemError
+}
+
 // Transport executes a generated request and decodes a successful response
 // into response. A nil response denotes a bodyless success contract.
 type Transport interface {

@@ -65,10 +65,23 @@ func TestEmit_GeneratesTypedClientOverGenericTransport(t *testing.T) {
 				Method:      "delete",
 				Path:        "/widgets/{widget}",
 				OperationID: "deleteWidget",
+				Kind:        "command",
 				Parameters: []ir.Parameter{{
 					Name: "widget", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"},
 				}},
-				Responses: []ir.Response{{StatusCode: 204, Description: "deleted"}},
+				Responses: []ir.Response{
+					{StatusCode: 204, Description: "deleted"},
+					{StatusCode: 404, Description: "not found"},
+					{StatusCode: 409, Description: "conflict"},
+				},
+				Command: &ir.Command{
+					Owner: "WidgetAPI",
+					Audit: ir.AuditPolicy{Required: true, SuccessAction: "widget.deleted", Guarantee: "best-effort"},
+					Failures: []ir.CommandFailure{
+						{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."},
+						{Kind: "not_found", StatusCode: 404, Code: "WIDGET_NOT_FOUND", PublicDetail: "Widget not found."},
+					},
+				},
 			},
 		},
 	}
@@ -96,7 +109,13 @@ func TestEmit_GeneratesTypedClientOverGenericTransport(t *testing.T) {
 	require.Contains(t, generated, "Body: request.Body")
 	require.Contains(t, generated, `Accept: "application/json"`)
 	require.Contains(t, generated, "type GenDeleteWidgetClientResponse struct {")
+	require.Contains(t, generated, "type GenDeleteWidgetFailure interface {")
+	require.Contains(t, generated, "Problem() apigenclient.ProblemDetails")
+	require.Contains(t, generated, "func MatchGenDeleteWidgetFailure[T any](failure GenDeleteWidgetFailure, onConflict func(apigenclient.ProblemDetails) T, onNotFound func(apigenclient.ProblemDetails) T) T")
+	require.Contains(t, generated, `case "WIDGET_NOT_FOUND":`)
+	require.Contains(t, generated, `if problem.Response.StatusCode != 404`)
 	require.Contains(t, generated, "func (client *GenClient) DeleteWidget(ctx context.Context, request GenDeleteWidgetClientRequest) (GenDeleteWidgetClientResponse, error)")
+	require.Contains(t, generated, "err = genDeleteWidgetFailureFromError(err)")
 	require.NotContains(t, generated, "internal/app")
 }
 

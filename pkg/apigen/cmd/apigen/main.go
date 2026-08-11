@@ -20,6 +20,7 @@ import (
 	clientgoemit "github.com/Yacobolo/toolbelt/apigen/emit/clientgo"
 	cligoemit "github.com/Yacobolo/toolbelt/apigen/emit/cligo"
 	"github.com/Yacobolo/toolbelt/apigen/emit/contractimport"
+	failuretsemit "github.com/Yacobolo/toolbelt/apigen/emit/failurets"
 	jsonschemaemit "github.com/Yacobolo/toolbelt/apigen/emit/jsonschema"
 	modelgoemit "github.com/Yacobolo/toolbelt/apigen/emit/modelgo"
 	modeltsemit "github.com/Yacobolo/toolbelt/apigen/emit/modelts"
@@ -51,6 +52,7 @@ type commandConfig struct {
 	GoModelsOut          string
 	GoModelsPackage      string
 	TSOut                string
+	FailureTSOut         string
 	JSONSchemaOut        string
 	ContractImports      map[string]contractImportSpec
 	GoPackagePlan        *goPackagePlan
@@ -116,6 +118,7 @@ type targetSpec struct {
 	GoModelsOut          string                        `yaml:"go_models_out"`
 	GoModelsPackage      string                        `yaml:"go_models_package"`
 	TSOut                string                        `yaml:"ts_out"`
+	FailureTSOut         string                        `yaml:"failure_ts_out"`
 	JSONSchemaOut        string                        `yaml:"json_schema_out"`
 	ContractImports      map[string]contractImportSpec `yaml:"contract_imports"`
 }
@@ -158,6 +161,7 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 		GoModelsOut          string                        `yaml:"go_models_out"`
 		GoModelsPackage      string                        `yaml:"go_models_package"`
 		TSOut                string                        `yaml:"ts_out"`
+		FailureTSOut         string                        `yaml:"failure_ts_out"`
 		JSONSchemaOut        string                        `yaml:"json_schema_out"`
 		ContractImports      map[string]contractImportSpec `yaml:"contract_imports"`
 	}
@@ -187,6 +191,7 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 		GoModelsOut:          raw.GoModelsOut,
 		GoModelsPackage:      raw.GoModelsPackage,
 		TSOut:                raw.TSOut,
+		FailureTSOut:         raw.FailureTSOut,
 		JSONSchemaOut:        raw.JSONSchemaOut,
 		ContractImports:      raw.ContractImports,
 	}
@@ -252,6 +257,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	goModelsOut := fs.String("go-models-out", "", "output data-contract Go models path")
 	goModelsPackage := fs.String("go-models-package", "contracts", "generated data-contract Go package name")
 	tsOut := fs.String("ts-out", "", "output data-contract TypeScript path")
+	failureTSOut := fs.String("failure-ts-out", "", "output HTTP command failure TypeScript path")
 	jsonSchemaOut := fs.String("json-schema-out", "", "output data-contract JSON Schema path")
 	if err := fs.Parse(args[1:]); err != nil {
 		if err == flag.ErrHelp {
@@ -278,6 +284,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		GoModelsOut:          *goModelsOut,
 		GoModelsPackage:      *goModelsPackage,
 		TSOut:                *tsOut,
+		FailureTSOut:         *failureTSOut,
 		JSONSchemaOut:        *jsonSchemaOut,
 	})
 	if err != nil {
@@ -345,6 +352,11 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 				}
 			}
 		}
+		if config.FailureTSOut != "" {
+			if err := generateFailureTypeScript(doc, config.FailureTSOut); err != nil {
+				return failf(stderr, "generate TypeScript failures: %v", err)
+			}
+		}
 	default:
 		return failf(stderr, "unsupported command %q\n\n%s", command, topLevelUsage())
 	}
@@ -374,6 +386,7 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 	config.GoModelsOut = target.GoModelsOut
 	config.GoModelsPackage = coalesceString(target.GoModelsPackage, defaults.GoModelsPackage)
 	config.TSOut = target.TSOut
+	config.FailureTSOut = target.FailureTSOut
 	config.JSONSchemaOut = target.JSONSchemaOut
 	config.ContractImports = target.ContractImports
 	if config.Kind == "http" && target.GoOut.usesSinglePackageForm() {
@@ -466,6 +479,7 @@ func resolveTargetPaths(target targetSpec, baseDir string) targetSpec {
 	target.OpenAPIOut = resolveManifestPath(baseDir, target.OpenAPIOut)
 	target.GoModelsOut = resolveManifestPath(baseDir, target.GoModelsOut)
 	target.TSOut = resolveManifestPath(baseDir, target.TSOut)
+	target.FailureTSOut = resolveManifestPath(baseDir, target.FailureTSOut)
 	target.JSONSchemaOut = resolveManifestPath(baseDir, target.JSONSchemaOut)
 	return target
 }
@@ -1098,6 +1112,17 @@ func generateCLI(doc ir.Document, outPath string, packageName string) error {
 		return fmt.Errorf("format cli go output: %w", err)
 	}
 	if err := writeFile(outPath, formatted); err != nil {
+		return err
+	}
+	return nil
+}
+
+func generateFailureTypeScript(doc ir.Document, outPath string) error {
+	b, err := failuretsemit.Emit(doc)
+	if err != nil {
+		return fmt.Errorf("emit TypeScript failures: %w", err)
+	}
+	if err := writeFile(outPath, b); err != nil {
 		return err
 	}
 	return nil
