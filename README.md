@@ -1,7 +1,7 @@
 # LeapView
 
 [![CI](https://github.com/flidai/leapview/actions/workflows/ci.yml/badge.svg)](https://github.com/flidai/leapview/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 LeapView is an open-source, agent-native BI platform. Build governed semantic
 models and dashboards as code, review every change in Git, and explore the
@@ -88,4 +88,4 @@ for bugs and feature proposals.
 
 ## License
 
-LeapView is available under the [MIT License](LICENSE).
+LeapView is available under the [Apache License 2.0](LICENSE).

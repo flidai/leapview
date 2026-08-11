@@ -121,7 +121,7 @@ func sitePage(metadata sitePageMetadata) g.Node {
 					),
 				),
 				h.Div(h.Class("site-proof-strip"),
-					siteProofItem("blocks", "Open source", "MIT licensed"),
+					siteProofItem("blocks", "Open source", "Apache-2.0 licensed"),
 					siteProofItem("git-branch", "Version controlled", "Review every change"),
 					siteProofItem("dashboard", "Dashboards + agents", "Two native interfaces"),
 					siteProofItem("server", "Self-hosted", "Run it yourself"),
