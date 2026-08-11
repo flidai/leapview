@@ -38,10 +38,11 @@ adds desktop tests, static and selected race analysis, route QA, and deployment 
 compatibility alias for the full current-machine contract.
 
 GitHub Actions distributes those same Taskfile units across clean runners. Pull requests run
-`task ci:lane:go` and `task ci:lane:frontend` concurrently after each runner executes
-`task ci:prepare`. The merge queue adds `task ci:full:extras`, and the daily schedule also runs
-`task ci:nightly:extras`. Local composition remains available through the tier targets; the
-workflow does not duplicate the test commands or introduce a runner-specific container wrapper.
+the non-application Go packages, sharded application tests, and frontend validation concurrently
+after each runner executes `task ci:prepare`. The merge queue adds `task ci:full:extras`, and the
+daily schedule also runs `task ci:nightly:extras`. Local composition remains available through
+the tier targets; the workflow does not duplicate individual test commands or introduce a
+runner-specific container wrapper.
 
 ## Toolchain and caches
 
@@ -60,7 +61,9 @@ The setup action uses separate GitHub Actions cache entries for:
 Production and public-site image builds export BuildKit layers to independently scoped
 GitHub Actions caches. LeapView does not cache `node_modules`, `/var/lib/docker`, mutable
 worktrees, or application data. Exact keys are immutable, restore prefixes may seed a new
-dependency set, and the package manager or build tool always validates restored content.
+dependency set, and the package manager or build tool always validates restored content. The
+main artifact workflow populates the default-branch Bun download cache so new pull requests do
+not inherit an empty cache entry from image qualification.
 
 The repository currently works within GitHub's default 10 GB cache allowance. The intended
 operating limit is 50 GB or more so the independent Go, Bun, browser, Terraform, and BuildKit
@@ -69,9 +72,9 @@ change validation behavior.
 
 ## Workflow tiers
 
-The pull-request workflow runs Go and frontend validation on independent four-vCPU runners and
-reports the stable required `CI gate` check. This prevents browser timeouts caused by Go build
-contention and shortens wall-clock feedback without increasing per-job machine size.
+The pull-request workflow runs Go package, Go application, and frontend validation on independent
+four-vCPU runners and reports the stable required `CI gate` check. This prevents browser and Go
+test contention and shortens wall-clock feedback without increasing per-job machine size.
 
 For a native GitHub pull-request stack, only the top pull request runs those validation lanes.
 Lower layers report a successful `CI gate` with a summary that validation is deferred to the

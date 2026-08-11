@@ -2565,20 +2565,24 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"types: [opened, synchronize, reopened, ready_for_review, stacked]",
 		"workflow_dispatch:",
 		"group: ci-${{ github.workflow }}-${{ github.event.pull_request.stack.id || github.ref }}",
-		"go-validation:",
-		"name: Go tests (PR)",
+		"go-packages-validation:",
+		"name: Go package tests (PR)",
+		"go-application-validation:",
+		"name: Go application tests (PR)",
 		"frontend-validation:",
 		"name: Frontend tests (PR)",
 		"runs-on: ubuntu-24.04",
 		"uses: ./.github/actions/setup-ci",
 		"run: task ci:prepare",
-		"run: task ci:lane:go",
+		"run: task ci:lane:go:packages",
+		"run: task ci:lane:go:application",
 		"run: task ci:lane:frontend",
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
-		"needs: [go-validation, frontend-validation]",
-		"GO_RESULT: ${{ needs.go-validation.result }}",
+		"needs: [go-packages-validation, go-application-validation, frontend-validation]",
+		"GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}",
+		"GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}",
 		"FRONTEND_RESULT: ${{ needs.frontend-validation.result }}",
 		"Validation is deferred to the top of this stack.",
 	} {
@@ -2586,11 +2590,13 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 			t.Fatalf("CI workflow missing GitHub-hosted fragment %q", want)
 		}
 	}
-	goCI := workflowJobBlock(t, text, "go-validation")
+	goPackagesCI := workflowJobBlock(t, text, "go-packages-validation")
+	goApplicationCI := workflowJobBlock(t, text, "go-application-validation")
 	frontendCI := workflowJobBlock(t, text, "frontend-validation")
 	for name, block := range map[string]string{
-		"go-validation":       goCI,
-		"frontend-validation": frontendCI,
+		"go-packages-validation":    goPackagesCI,
+		"go-application-validation": goApplicationCI,
+		"frontend-validation":       frontendCI,
 	} {
 		for _, want := range []string{
 			"github.event_name == 'workflow_dispatch'",
@@ -2620,18 +2626,20 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"merge_group:",
 		"types: [checks_requested]",
 		"group: merge-validation-${{ github.ref }}",
-		"go-validation:",
-		"name: Go tests (merge queue)",
+		"go-packages-validation:",
+		"name: Go package tests (merge queue)",
+		"go-application-validation:",
+		"name: Go application tests (merge queue)",
 		"frontend-validation:",
 		"name: Frontend tests (merge queue)",
 		"full-validation:",
 		"name: Full merge validation",
 		"runs-on: ubuntu-24.04",
 		"uses: ./.github/actions/setup-ci",
-		"needs: [go-validation, frontend-validation]",
+		"needs: [go-packages-validation, go-application-validation, frontend-validation]",
 		"run: task ci:full:extras",
 		"name: CI gate",
-		"needs: [go-validation, frontend-validation, full-validation]",
+		"needs: [go-packages-validation, go-application-validation, frontend-validation, full-validation]",
 	} {
 		if !strings.Contains(mergeText, want) {
 			t.Fatalf("merge validation workflow missing %q", want)
@@ -2694,13 +2702,19 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		block string
 		want  string
 	}{
-		{block: goCI, want: "task ci:lane:go"},
+		{block: goPackagesCI, want: "task ci:lane:go:packages"},
+		{block: goApplicationCI, want: "task ci:lane:go:application"},
 		{block: frontendCI, want: "task ci:lane:frontend"},
 	} {
-		for _, want := range []string{"uses: ./.github/actions/setup-ci", "task ci:prepare", contract.want, "task generated:check"} {
+		for _, want := range []string{"uses: ./.github/actions/setup-ci", "task ci:prepare", contract.want} {
 			if !strings.Contains(contract.block, want) {
 				t.Fatalf("GitHub-hosted validation lane missing %q", want)
 			}
+		}
+	}
+	for name, block := range map[string]string{"go package": goPackagesCI, "frontend": frontendCI} {
+		if !strings.Contains(block, "task generated:check") {
+			t.Fatalf("%s validation lane must verify generated artifacts", name)
 		}
 	}
 	for _, retired := range []string{"autback.json", "Dockerfile.autback", filepath.Join(".github", "workflows", "autback.yml")} {
@@ -2883,7 +2897,13 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		t.Fatal("ci:local must remain a compatibility alias for the full current-machine contract")
 	}
 
-	for _, want := range []string{"run: task ci:prepare", "run: task ci:lane:go", "run: task ci:lane:frontend", "run: task generated:check"} {
+	for _, want := range []string{
+		"run: task ci:prepare",
+		"run: task ci:lane:go:packages",
+		"run: task ci:lane:go:application",
+		"run: task ci:lane:frontend",
+		"run: task generated:check",
+	} {
 		if !strings.Contains(prWorkflow, want) {
 			t.Fatalf("pull-request workflow missing split fast-tier command %q", want)
 		}
@@ -2891,7 +2911,13 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	if strings.Contains(prWorkflow, "\n        run: task ci:pr\n") || strings.Contains(prWorkflow, "\n        run: task ci:full\n") {
 		t.Fatal("pull-request workflow must distribute the fast tier across independent runners")
 	}
-	for _, want := range []string{"merge_group:", "run: task ci:lane:go", "run: task ci:lane:frontend", "run: task ci:full:extras"} {
+	for _, want := range []string{
+		"merge_group:",
+		"run: task ci:lane:go:packages",
+		"run: task ci:lane:go:application",
+		"run: task ci:lane:frontend",
+		"run: task ci:full:extras",
+	} {
 		if !strings.Contains(mergeWorkflow, want) {
 			t.Fatalf("merge queue must run the split full tier against the exact merge group: missing %q", want)
 		}
@@ -2901,7 +2927,8 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"schedule:",
 		"cron: '17 2 * * *'",
 		"workflow_dispatch:",
-		"run: task ci:lane:go",
+		"run: task ci:lane:go:packages",
+		"run: task ci:lane:go:application",
 		"run: task ci:lane:frontend",
 		"run: task ci:full:extras",
 		"run: task ci:nightly:extras",
@@ -2909,6 +2936,57 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		if !strings.Contains(nightlyWorkflow, want) {
 			t.Fatalf("nightly workflow missing %q", want)
 		}
+	}
+}
+
+func TestGitHubHostedCISplitsGoWorkAndWarmsReusableBunCache(t *testing.T) {
+	root := repoRoot(t)
+	read := func(path ...string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(append([]string{root}, path...)...))
+		if err != nil {
+			t.Fatalf("read %s: %v", filepath.Join(path...), err)
+		}
+		return string(data)
+	}
+
+	for _, workflow := range []string{"ci.yml", "merge-validation.yml", "nightly.yml"} {
+		text := read(".github", "workflows", workflow)
+		for _, want := range []string{
+			"go-packages-validation:",
+			"run: task ci:lane:go:packages",
+			"go-application-validation:",
+			"run: task ci:lane:go:application",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s must split CPU-heavy Go work across runners: missing %q", workflow, want)
+			}
+		}
+	}
+
+	taskfile := read("Taskfile.yml")
+	for _, want := range []string{
+		"ci:lane:go:packages:",
+		"- task: apigen:test",
+		"- task: test:go:packages",
+		"ci:lane:go:application:",
+		"- task: test:go:app:shards",
+		"- task: test:go:external",
+	} {
+		if !strings.Contains(taskfile, want) {
+			t.Fatalf("Taskfile missing split Go lane fragment %q", want)
+		}
+	}
+
+	setup := read(".github", "actions", "setup-ci", "action.yml")
+	if !strings.Contains(setup, "key: bun-v2-") {
+		t.Fatal("Bun cache key must be rolled after the incomplete default-branch cache")
+	}
+	artifacts := read(".github", "workflows", "artifacts.yml")
+	setupAt := strings.Index(artifacts, "uses: ./.github/actions/setup-ci")
+	populateAt := strings.Index(artifacts, "name: Populate main-branch Bun cache")
+	if setupAt < 0 || populateAt < setupAt {
+		t.Fatal("main artifact qualification must populate Bun downloads before the cache save hook")
 	}
 }
 

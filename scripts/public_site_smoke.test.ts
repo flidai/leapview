@@ -81,6 +81,25 @@ function startSite(
 }
 
 describe('public site adoption smoke', () => {
+  test('bounds stalled requests so CI cannot hang indefinitely', async () => {
+    const stalledFetch = ((_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+      })) as typeof fetch
+
+    await expect(
+      verifyPublicSite({
+        baseURL: 'http://127.0.0.1',
+        expectedRelease: release,
+        expectedDesktopRelease: desktopRelease,
+        allowHTTP: true,
+        verifyArtifacts: false,
+        fetch: stalledFetch,
+        requestTimeoutMs: 20,
+      }),
+    ).rejects.toThrow('request failed')
+  })
+
   test('accepts a healthy site whose manifest, installation page, and immutable links agree', async () => {
     const required = [
       release.version,

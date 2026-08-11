@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  go-validation:
-    name: Go tests (merge queue)
+  go-packages-validation:
+    name: Go package tests (merge queue)
     if: github.repository == 'flidai/leapview'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -34,11 +34,36 @@ jobs:
       - name: Prepare generated and embedded assets
         run: task ci:prepare
 
-      - name: Run Go validation
-        run: task ci:lane:go
+      - name: Run Go package validation
+        run: task ci:lane:go:packages
 
       - name: Verify generated artifacts
         run: task generated:check
+
+  go-application-validation:
+    name: Go application tests (merge queue)
+    if: github.repository == 'flidai/leapview'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out merge group
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Prepare generated and embedded assets
+        run: task ci:prepare
+
+      - name: Run Go application validation
+        run: task ci:lane:go:application
 
   frontend-validation:
     name: Frontend tests (merge queue)
@@ -71,7 +96,7 @@ jobs:
   full-validation:
     name: Full merge validation
     if: github.repository == 'flidai/leapview'
-    needs: [go-validation, frontend-validation]
+    needs: [go-packages-validation, go-application-validation, frontend-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -98,18 +123,23 @@ jobs:
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [go-validation, frontend-validation, full-validation]
+    needs: [go-packages-validation, go-application-validation, frontend-validation, full-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require full merge validation
         env:
-          GO_RESULT: ${{ needs.go-validation.result }}
+          GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}
+          GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
           FULL_VALIDATION_RESULT: ${{ needs.full-validation.result }}
         run: |
-          test "${GO_RESULT}" = success || {
-            printf 'Go validation: %s\n' "${GO_RESULT}" >&2
+          test "${GO_PACKAGES_RESULT}" = success || {
+            printf 'Go package validation: %s\n' "${GO_PACKAGES_RESULT}" >&2
+            exit 1
+          }
+          test "${GO_APPLICATION_RESULT}" = success || {
+            printf 'Go application validation: %s\n' "${GO_APPLICATION_RESULT}" >&2
             exit 1
           }
           test "${FRONTEND_RESULT}" = success || {

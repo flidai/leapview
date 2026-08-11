@@ -2411,6 +2411,14 @@
       "x-lifecycle": "development",
       "x-scope": "dashboard performance QA"
     },
+    "LEAPVIEW_PLAYWRIGHT_READY": {
+      "default": "false",
+      "description": "Signals that CI already provisioned the pinned Playwright browser and dependencies.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "browser test setup"
+    },
     "LEAPVIEW_PRODUCTION": {
       "default": "false",
       "description": "Enable production serving and validation behavior.",

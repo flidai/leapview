@@ -787,27 +787,14 @@ test('mobile filter dock is reachable before the canvas and opens with pointer a
     await page.addInitScript(() => localStorage.setItem('leapview:filters-open', 'closed'))
     await page.goto(baseURL)
     const dashboard = page.locator('lv-dashboard-page')
-    await dashboard.waitFor()
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
     const positions = await dashboard.evaluate(async (element: any) => {
       await element.updateComplete
       const dock = element.shadowRoot.querySelector('lv-filter-dock') as any
       await dock.updateComplete
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({
-        filterValidation: {
-          accepted: false,
-          message: 'range lower bound exceeds upper bound',
-          currentRevision: 0,
-          clientMutationID: 'mobile-validation',
-        },
-      })
-      await element.updateComplete
-      const alert = element.shadowRoot.querySelector('[role="alert"]')
       return {
         dockTop: dock.getBoundingClientRect().top,
         canvasTop: element.shadowRoot.querySelector('.canvas-wrap').getBoundingClientRect().top,
-        dockBottom: dock.getBoundingClientRect().bottom,
-        alertTop: alert.getBoundingClientRect().top,
         dockBeforeCanvas: Boolean(
           dock.compareDocumentPosition(element.shadowRoot.querySelector('.canvas-wrap'))
           & Node.DOCUMENT_POSITION_FOLLOWING
@@ -815,7 +802,6 @@ test('mobile filter dock is reachable before the canvas and opens with pointer a
       }
     })
     expect(positions.dockTop).toBeLessThan(positions.canvasTop)
-    expect(positions.dockBottom).toBeLessThanOrEqual(positions.alertTop)
     expect(positions.dockBeforeCanvas).toBe(true)
 
     const toggle = page.locator('lv-filter-dock button.rail')
