@@ -182,7 +182,20 @@ func TestPlanChanges(t *testing.T) {
 				ProductionImage:     true,
 				DeploymentContracts: true,
 			},
-			reason: "compose deployment",
+			reason: "production deployment",
+		},
+		{
+			name:  "host deployment",
+			input: Input{Event: "pull_request", PullRequestNumber: 1},
+			changes: []Change{{
+				Status: "M",
+				Paths:  []string{"deploy/host/bootstrap-ubuntu.sh"},
+			}},
+			want: Jobs{
+				ProductionImage:     true,
+				DeploymentContracts: true,
+			},
+			reason: "production deployment",
 		},
 		{
 			name:  "runtime project",

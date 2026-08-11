@@ -2,7 +2,6 @@ package hetzner_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -12,7 +11,7 @@ import (
 func TestTerraformProductionContracts(t *testing.T) {
 	variables := readFile(t, "variables.tf")
 	main := readFile(t, "main.tf")
-	cloudInit := readFile(t, "cloud-init.yaml.tftpl")
+	cloudInit := readFile(t, filepath.Join("..", "host", "cloud-init.yaml.tftpl"))
 	requireContains(t, variables, `variable "leapview_image"`)
 	requireContains(t, variables, `@sha256:`)
 	requireContains(t, variables, `variable "ssh_allowed_cidrs"`)
@@ -34,48 +33,31 @@ func TestTerraformProductionContracts(t *testing.T) {
 
 func TestHetznerConsumesGenericComposeLifecycle(t *testing.T) {
 	main := readFile(t, "main.tf")
-	cloudInit := readFile(t, "cloud-init.yaml.tftpl")
-	provision := readFile(t, filepath.Join("files", "provision.sh.tftpl"))
 	for _, fragment := range []string{
-		`${path.module}/../compose/compose.yaml`,
-		`${path.module}/../compose/compose.https.yaml`,
-		`${path.module}/../compose/deployment.env.example`,
+		`${path.module}/../host/cloud-init.yaml.tftpl`,
+		`${path.module}/../host/bootstrap-ubuntu.sh`,
+		`jsonencode({`,
+		`schemaVersion = 1`,
 	} {
 		requireContains(t, main, fragment)
 	}
-	for _, fragment := range []string{"compose_https_b64", "deployment_example_b64", "leapviewctl_wrapper_b64", "backup_hook_b64"} {
-		requireContains(t, cloudInit, fragment)
-	}
-	requireContains(t, provision, `docker cp "$controller_container:/usr/local/libexec/leapviewctl" /opt/leapview/leapviewctl`)
-	extract := strings.Index(provision, `docker cp "$controller_container:/usr/local/libexec/leapviewctl"`)
-	initialize := strings.Index(provision, `leapviewctl init`)
-	start := strings.Index(provision, `leapviewctl start`)
-	if extract < 0 || initialize < 0 || start < 0 || extract > initialize || initialize > start {
-		t.Fatal("generic offline initialization must complete before start")
-	}
-	for _, forbidden := range []string{"/api/v1/me/api-tokens", "/api/v1/principals", "admin bootstrap", "docker compose"} {
-		if strings.Contains(provision, forbidden) {
-			t.Fatalf("provider provisioning maintains a separate lifecycle path %q", forbidden)
+	for _, forbidden := range []string{
+		"compose_b64", "compose_https_b64", "caddyfile_b64", "leapviewctl_wrapper_b64",
+		"backup_hook_b64", "provision_b64", "docker compose", "leapviewctl init", "leapviewctl start",
+	} {
+		if strings.Contains(main, forbidden) {
+			t.Fatalf("provider provisioning maintains lifecycle fragment %q", forbidden)
 		}
 	}
 }
 
 func TestProviderScriptsAreSmallValidLayers(t *testing.T) {
-	for _, script := range []string{
-		filepath.Join("files", "leapviewctl-wrapper"),
-		filepath.Join("files", "leapview-backup-hook"),
-		filepath.Join("files", "provision.sh.tftpl"),
-	} {
-		if output, err := exec.Command("bash", "-n", script).CombinedOutput(); err != nil {
-			t.Fatalf("bash -n %s: %v\n%s", script, err, output)
-		}
+	entries, err := os.ReadDir("files")
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
 	}
-	wrapper := readFile(t, filepath.Join("files", "leapviewctl-wrapper"))
-	requireContains(t, wrapper, "LEAPVIEWCTL_ROOT=/opt/leapview")
-	requireContains(t, wrapper, "exec /opt/leapview/leapviewctl")
-	hook := readFile(t, filepath.Join("files", "leapview-backup-hook"))
-	for _, fragment := range []string{"restic backup", "--keep-daily 7", "--keep-weekly 4", "--keep-monthly 12", "rm -f"} {
-		requireContains(t, hook, fragment)
+	if len(entries) != 0 {
+		t.Fatalf("provider directory contains host implementation files: %v", entries)
 	}
 }
 

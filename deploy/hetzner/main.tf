@@ -76,20 +76,16 @@ resource "hcloud_server" "leapview" {
     ipv6_enabled = true
   }
 
-  user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    compose_b64             = base64encode(file("${path.module}/../compose/compose.yaml"))
-    compose_https_b64       = base64encode(file("${path.module}/../compose/compose.https.yaml"))
-    caddyfile_b64           = base64encode(file("${path.module}/../compose/Caddyfile"))
-    deployment_example_b64  = base64encode(file("${path.module}/../compose/deployment.env.example"))
-    leapviewctl_wrapper_b64 = base64encode(file("${path.module}/files/leapviewctl-wrapper"))
-    backup_hook_b64         = base64encode(file("${path.module}/files/leapview-backup-hook"))
-    backup_service_b64      = base64encode(file("${path.module}/files/leapview-backup.service"))
-    backup_timer_b64        = base64encode(file("${path.module}/files/leapview-backup.timer"))
-    provision_b64 = base64encode(templatefile("${path.module}/files/provision.sh.tftpl", {
-      domain         = jsonencode(local.domain)
-      admin_email    = jsonencode(var.admin_email)
-      leapview_image = jsonencode(var.leapview_image)
-      caddy_image    = jsonencode(var.caddy_image)
+  user_data = templatefile("${path.module}/../host/cloud-init.yaml.tftpl", {
+    bootstrap_b64 = base64encode(file("${path.module}/../host/bootstrap-ubuntu.sh"))
+    config_b64 = base64encode(jsonencode({
+      schemaVersion = 1
+      domain        = local.domain
+      adminEmail    = var.admin_email
+      environment   = "prod"
+      image         = var.leapview_image
+      https         = true
     }))
+    image_b64 = base64encode("${var.leapview_image}\n")
   })
 }

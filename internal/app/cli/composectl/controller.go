@@ -127,33 +127,11 @@ func New(options Options) (*Controller, error) {
 }
 
 func (c *Controller) Initialize(ctx context.Context, options InitOptions) error {
-	options.AdminEmail = strings.TrimSpace(options.AdminEmail)
-	options.Domain = strings.TrimSpace(options.Domain)
-	options.Environment = strings.TrimSpace(options.Environment)
-	options.Image = strings.TrimSpace(options.Image)
-	if options.AdminEmail == "" {
-		return fmt.Errorf("init requires --admin-email")
-	}
-	if options.Domain == "" {
-		return fmt.Errorf("init requires --domain (the public host, including with an external proxy)")
-	}
-	if options.Environment == "" {
-		options.Environment = defaultEnvironment
-	}
-	for label, value := range map[string]string{
-		"admin email": options.AdminEmail,
-		"domain":      options.Domain,
-		"environment": options.Environment,
-	} {
-		if err := validateEnvLineValue(label, value); err != nil {
-			return err
-		}
-	}
-	domain, err := canonicalPublicDomain(options.Domain)
+	var err error
+	options, err = NormalizeInitOptions(options)
 	if err != nil {
 		return err
 	}
-	options.Domain = domain
 	if err := c.ensureDeploymentEnvironment(); err != nil {
 		return err
 	}
@@ -253,6 +231,45 @@ func (c *Controller) Initialize(ctx context.Context, options InitOptions) error 
 	}
 	_, err = fmt.Fprintf(c.stdout, "initialized environment %s; run ./leapviewctl start\n", options.Environment)
 	return err
+}
+
+// NormalizeInitOptions validates and canonicalizes initialization input without
+// touching instance state. Host installers use it before creating any files so
+// malformed bootstrap configuration cannot leave a partial installation.
+func NormalizeInitOptions(options InitOptions) (InitOptions, error) {
+	options.AdminEmail = strings.TrimSpace(options.AdminEmail)
+	options.Domain = strings.TrimSpace(options.Domain)
+	options.Environment = strings.TrimSpace(options.Environment)
+	options.Image = strings.TrimSpace(options.Image)
+	if options.AdminEmail == "" {
+		return InitOptions{}, fmt.Errorf("init requires --admin-email")
+	}
+	if options.Domain == "" {
+		return InitOptions{}, fmt.Errorf("init requires --domain (the public host, including with an external proxy)")
+	}
+	if options.Environment == "" {
+		options.Environment = defaultEnvironment
+	}
+	for label, value := range map[string]string{
+		"admin email": options.AdminEmail,
+		"domain":      options.Domain,
+		"environment": options.Environment,
+	} {
+		if err := validateEnvLineValue(label, value); err != nil {
+			return InitOptions{}, err
+		}
+	}
+	domain, err := canonicalPublicDomain(options.Domain)
+	if err != nil {
+		return InitOptions{}, err
+	}
+	options.Domain = domain
+	if options.Image != "" {
+		if err := requireDigest(options.Image); err != nil {
+			return InitOptions{}, err
+		}
+	}
+	return options, nil
 }
 
 func (c *Controller) Start(ctx context.Context) error {

@@ -35,6 +35,14 @@ Initialization derives `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host,
 
 The controller is optional if an existing container platform already provides equivalent secret management, health checks, graceful shutdown, backup validation, and image-and-state rollback. Those contracts remain required even when Compose is not used.
 
+## Generic VPS host contract
+
+LeapView's provider adapters share one Ubuntu 24.04 LTS host bootstrap. It installs Docker Compose and the host prerequisites, pulls the immutable application image, extracts the image's matching deployment payload, and delegates all installation behavior to `leapviewctl host install`. The typed Go installer validates configuration before mutation, installs the operational files atomically, initializes the instance once, starts it, and enables the common backup timer.
+
+This boundary keeps server creation, IPs, firewalls, DNS, and optional provider snapshots in thin provider adapters. Compose configuration, proxy defaults, initialization, backup retention, upgrades, and rollback remain provider-neutral. After bootstrap, operators use the same `leapviewctl` commands on every supported VPS provider.
+
+Provider independence does not expand the guest operating-system matrix: the automated host contract supports Ubuntu 24.04 LTS with systemd on `linux/amd64` and `linux/arm64`. Other Docker hosts can continue to use the generic Compose package directly.
+
 ## Persistent and external storage
 
 The named state volume contains the control database, DuckLake catalog and Parquet data, deployed artifacts, runtime state, and local managed objects. Backups stop the application briefly and archive that complete boundary.

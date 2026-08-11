@@ -30,9 +30,12 @@ Set three values in `terraform.tfvars`: `admin_email`, `leapview_image`, and
 `ssh_allowed_cidrs`. Use your public address with a `/32` suffix for SSH. The
 module deliberately rejects world-open SSH and mutable image tags.
 
-Provisioning extracts the matching Go `leapviewctl` binary from the immutable
-multi-architecture application image. The provider then uses the same Compose
-lifecycle controller and files as the generic self-hosting package.
+Provisioning renders the provider-neutral Ubuntu host bootstrap with the
+domain, administrator email, environment, and immutable image digest. The
+bootstrap pulls that image, extracts its matching deployment payload, and
+delegates installation to the Go `leapviewctl host install` command. The
+Hetzner module contains no separate Compose, initialization, backup-retention,
+upgrade, or rollback implementation.
 
 When `domain` is empty, the deployment uses an HTTPS `sslip.io` hostname. That
 is useful for evaluation. Set a domain you control for a durable installation.

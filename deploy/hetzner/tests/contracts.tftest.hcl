@@ -47,13 +47,3 @@ run "reject_mutable_application_image" {
 
   expect_failures = [var.leapview_image]
 }
-
-run "reject_mutable_proxy_image" {
-  command = plan
-
-  variables {
-    caddy_image = "caddy:2"
-  }
-
-  expect_failures = [var.caddy_image]
-}
