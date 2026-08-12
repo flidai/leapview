@@ -39,6 +39,88 @@ func TestRepositoryChecksGrantPrivileges(t *testing.T) {
 	}
 }
 
+func TestDeletePrincipalRejectsOwnedSecurablesWithoutPartialCleanup(t *testing.T) {
+	ctx := context.Background()
+	_, repo := openAccessRepo(t, ctx)
+	principal, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{
+		ID: "owner-to-delete", Kind: access.PrincipalKindUser, Email: "owner-to-delete@example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := access.ItemObject(access.SecurableDashboard, "test", "owned-dashboard")
+	if _, err := repo.UpsertSecurableObject(ctx, object, principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGrant(ctx, access.GrantInput{
+		Object: object, SubjectType: access.SubjectPrincipal, SubjectID: principal.ID, Privilege: access.PrivilegeViewItem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeletePrincipal(ctx, principal.ID); !errors.Is(err, access.ErrPrincipalOwnsSecurableObject) {
+		t.Fatalf("delete owner error = %v, want ownership conflict", err)
+	}
+	if _, err := repo.PrincipalByID(ctx, principal.ID); err != nil {
+		t.Fatalf("owner principal was partially deleted: %v", err)
+	}
+	stored, err := repo.GetSecurableObject(ctx, object)
+	if err != nil || stored.OwnerPrincipalID != principal.ID {
+		t.Fatalf("owned object after rejected delete = %#v, %v", stored, err)
+	}
+	grants, err := repo.ListGrants(ctx, object)
+	if err != nil || len(grants) != 1 || grants[0].SubjectID != principal.ID {
+		t.Fatalf("grants were partially cleaned on ownership conflict: %#v, %v", grants, err)
+	}
+}
+
+func TestDeletePrincipalRemovesDirectGrantsBeforeStableIDCanBeRecreated(t *testing.T) {
+	ctx := access.WithAuthorizationCache(context.Background())
+	_, repo := openAccessRepo(t, ctx)
+	const principalID = "stable-principal-id"
+	principal, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{
+		ID: principalID, Kind: access.PrincipalKindUser, Email: "before@example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := access.ItemObject(access.SecurableDashboard, "test", "shared-dashboard")
+	if _, err := repo.UpsertSecurableObject(ctx, object, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGrant(ctx, access.GrantInput{
+		Object: object, SubjectType: access.SubjectPrincipal, SubjectID: principal.ID, Privilege: access.PrivilegeViewItem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := repo.Authorize(ctx, principal.ID, access.PrivilegeViewItem, object)
+	if err != nil || !decision.Allowed {
+		t.Fatalf("initial authorization = %#v, %v", decision, err)
+	}
+	if err := repo.DeletePrincipal(ctx, principal.ID); err != nil {
+		t.Fatalf("delete principal: %v", err)
+	}
+	recreated, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{
+		ID: principalID, Kind: access.PrincipalKindUser, Email: "after@example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err = repo.Authorize(ctx, recreated.ID, access.PrivilegeViewItem, object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Allowed {
+		t.Fatalf("recreated principal inherited stale grant: %#v", decision)
+	}
+	grants, err := repo.ListGrants(ctx, object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grants) != 0 {
+		t.Fatalf("direct grants remain after deletion: %#v", grants)
+	}
+}
+
 func TestAdversarialGroupParentAndWorkspaceValidation(t *testing.T) {
 	ctx := context.Background()
 	store, repo := openAccessRepo(t, ctx)
@@ -291,6 +373,53 @@ func TestRepositoryInitializeInstanceRollsBackWhenCredentialPreparationFails(t *
 	}
 	if len(events) != 0 {
 		t.Fatalf("audit events = %#v, want none", events)
+	}
+}
+
+func TestListPrincipalsDerivesLatestHumanActivity(t *testing.T) {
+	ctx := context.Background()
+	store, repo := openAccessRepo(t, ctx)
+	for _, input := range []access.PrincipalInput{
+		{ID: "active-user", Kind: access.PrincipalKindUser, Email: "active@example.test", DisplayName: "Active User"},
+		{ID: "never-user", Kind: access.PrincipalKindUser, Email: "never@example.test", DisplayName: "Never User"},
+		{ID: "automation", Kind: access.PrincipalKindServicePrincipal, Email: "automation@example.test", DisplayName: "Automation"},
+	} {
+		if _, err := repo.UpsertPrincipal(ctx, input); err != nil {
+			t.Fatalf("upsert principal %s: %v", input.ID, err)
+		}
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+INSERT INTO sessions (id, principal_id, token_fingerprint, token_verifier, expires_at, created_at, last_seen_at)
+VALUES ('browser-session', 'active-user', 'browser-fingerprint', 'browser-verifier', '2026-09-01T00:00:00Z', '2026-08-01T00:00:00Z', '2026-08-08T12:00:00Z')`); err != nil {
+		t.Fatalf("insert browser session: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+INSERT INTO oauth_authoring_sessions (id, kind, client_id, principal_id, target_id, project_id, privileges_json, created_at, last_used_at, expires_at)
+VALUES ('cli-session', 'human_cli', 'leapview-cli', 'active-user', 'target', 'project', '[]', '2026-08-02T00:00:00Z', '2026-08-09T15:30:00Z', '2026-09-01T00:00:00Z')`); err != nil {
+		t.Fatalf("insert CLI session: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+INSERT INTO oauth_authoring_sessions (id, kind, client_id, principal_id, target_id, project_id, privileges_json, created_at, last_used_at, expires_at)
+VALUES ('workload-session', 'workload', 'automation-client', 'automation', 'target', 'project', '[]', '2026-08-03T00:00:00Z', '2026-08-10T18:00:00Z', '2026-09-01T00:00:00Z')`); err != nil {
+		t.Fatalf("insert workload session: %v", err)
+	}
+
+	principals, err := repo.ListPrincipalsWithActivity(ctx, access.PrincipalFilter{})
+	if err != nil {
+		t.Fatalf("list principals: %v", err)
+	}
+	byID := make(map[string]access.Principal, len(principals))
+	for _, principal := range principals {
+		byID[principal.ID] = principal
+	}
+	if got := byID["active-user"].LastSeenAt; got != "2026-08-09T15:30:00Z" {
+		t.Fatalf("active user last seen = %q, want latest CLI activity", got)
+	}
+	if got := byID["never-user"].LastSeenAt; got != "" {
+		t.Fatalf("never user last seen = %q, want empty", got)
+	}
+	if _, exists := byID["automation"]; exists {
+		t.Fatal("administration people directory included a service principal")
 	}
 }
 

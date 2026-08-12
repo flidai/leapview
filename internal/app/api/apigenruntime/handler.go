@@ -180,6 +180,11 @@ func requestHasBody(r *http.Request) (bool, error) {
 }
 
 func expectedRequestContentType(operationID, method string) (string, bool) {
+	if operationID == "uploadCurrentAvatar" || operationID == "uploadProductLogo" {
+		// Avatar uploads accept a small allowlist of image media types. The
+		// access handler validates that allowlist and the decoded bytes.
+		return "", false
+	}
 	switch operationID {
 	case "uploadProjectCandidateSourceBlob", "uploadReleaseArtifact":
 		return "application/octet-stream", true

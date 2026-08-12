@@ -12,6 +12,10 @@ type AdminReader struct {
 	repository access.Repository
 }
 
+type principalActivityReader interface {
+	ListPrincipalsWithActivity(context.Context, access.PrincipalFilter) ([]access.Principal, error)
+}
+
 func (m *Module) AdminReader() *AdminReader {
 	if m == nil {
 		return nil
@@ -24,6 +28,9 @@ func (m *Module) AdminReader() *AdminReader {
 }
 
 func (r *AdminReader) ListPrincipals(ctx context.Context, filter access.PrincipalFilter) ([]access.Principal, error) {
+	if reader, ok := r.repository.(principalActivityReader); ok {
+		return reader.ListPrincipalsWithActivity(ctx, filter)
+	}
 	return r.repository.ListPrincipals(ctx, filter)
 }
 
@@ -41,6 +48,10 @@ func (r *AdminReader) ListRoles(ctx context.Context) ([]access.Role, error) {
 
 func (r *AdminReader) ListAllRoleBindings(ctx context.Context) ([]access.RoleBinding, error) {
 	return r.repository.ListAllRoleBindings(ctx)
+}
+
+func (r *AdminReader) GetSecurableObject(ctx context.Context, object access.ObjectRef) (access.SecurableObject, error) {
+	return r.repository.GetSecurableObject(ctx, object)
 }
 
 func (r *AdminReader) Authorize(ctx context.Context, principalID string, privilege access.Privilege, object access.ObjectRef) (access.AuthorizationDecision, error) {

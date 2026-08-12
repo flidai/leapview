@@ -45,6 +45,42 @@ LEFT JOIN assets a
  AND a.logical_asset_id = 'catalog:' || w.id
 WHERE w.id = ?;
 
+-- name: GetWorkspaceAdministration :one
+SELECT
+  w.id,
+  CAST(CASE WHEN catalog.title IS NOT NULL AND catalog.title <> '' THEN catalog.title ELSE w.title END AS TEXT) AS title,
+  CAST(CASE WHEN catalog.description IS NOT NULL THEN catalog.description ELSE w.description END AS TEXT) AS description,
+  COALESCE(active.serving_state_id, '') AS active_serving_state_id,
+  w.created_at,
+  w.updated_at,
+  COALESCE(serving.status, '') AS active_serving_state_status,
+  COALESCE(serving.activated_at, '') AS active_serving_state_since,
+  COALESCE(serving.project_id, '') AS project_id,
+  COALESCE(deployment.id, '') AS current_deployment_id,
+  COALESCE(deployment.status, '') AS current_deployment_status,
+  COALESCE(deployment.activated_at, '') AS current_deployment_since,
+  COALESCE(link.release_id, '') AS current_release_id
+FROM workspaces w
+LEFT JOIN workspace_active_serving_states active
+  ON active.workspace_id = w.id AND active.environment = sqlc.arg(environment)
+LEFT JOIN serving_states serving ON serving.id = active.serving_state_id
+LEFT JOIN assets catalog
+  ON catalog.serving_state_id = active.serving_state_id
+ AND catalog.asset_type = 'catalog'
+ AND catalog.logical_asset_id = 'catalog:' || w.id
+LEFT JOIN project_deployment_targets target
+  ON target.serving_state_id = active.serving_state_id
+ AND target.workspace_id = w.id
+ AND target.status = 'active'
+LEFT JOIN project_deployments deployment
+  ON deployment.id = target.deployment_id
+ AND deployment.environment = sqlc.arg(environment)
+ AND deployment.status = 'active'
+LEFT JOIN api_deployment_releases link ON link.deployment_id = deployment.id
+WHERE w.id = sqlc.arg(id)
+ORDER BY deployment.activated_at DESC, deployment.id DESC
+LIMIT 1;
+
 -- Workspace-owned catalog projection over the active serving generation.
 
 -- name: GetActiveServingState :one

@@ -18,11 +18,12 @@ func (operation testCommandOperationID) APIGenOperationID() string { return oper
 func TestWriteJSONNormalizesTimestampsAndRequiredCollections(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	WriteJSON(recorder, 200, map[string]any{
-		"createdAt":  "2026-01-02 03:04:05",
-		"items":      nil,
-		"bindings":   nil,
-		"workspaces": nil,
-		"optional":   nil,
+		"createdAt":               "2026-01-02 03:04:05",
+		"activeServingStateSince": "2026-01-02T05:04:05+02:00",
+		"items":                   nil,
+		"bindings":                nil,
+		"workspaces":              nil,
+		"optional":                nil,
 	})
 	var body map[string]any
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
@@ -30,6 +31,9 @@ func TestWriteJSONNormalizesTimestampsAndRequiredCollections(t *testing.T) {
 	}
 	if body["createdAt"] != "2026-01-02T03:04:05Z" {
 		t.Fatalf("createdAt = %#v", body["createdAt"])
+	}
+	if body["activeServingStateSince"] != "2026-01-02T03:04:05Z" {
+		t.Fatalf("activeServingStateSince = %#v", body["activeServingStateSince"])
 	}
 	if items, ok := body["items"].([]any); !ok || items == nil {
 		t.Fatalf("items = %#v, want empty array", body["items"])

@@ -66,8 +66,9 @@ func TestUIRequestsCannotBypassTypedCommandHelpers(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 	nonCommandAllowlist := map[string]map[string]int{
 		filepath.Clean("internal/admin/ui/page.go"): {
-			"uiactions.QueryPost(": 2, "uiactions.EventPost(": 1, "uiactions.UncontractedMutationPatch(": 1,
+			"uiactions.QueryPost(": 2, "uiactions.EventPost(": 1, "uiactions.UncontractedMutationPost(": 3, "uiactions.UncontractedMutationPatch(": 1,
 		},
+		filepath.Clean("internal/admin/personalsettings/ui.go"):  {"uiactions.UncontractedMutationPost(": 6},
 		filepath.Clean("internal/workspace/ui/page.go"):          {"uiactions.QueryPost(": 1},
 		filepath.Clean("internal/workspace/ui/workspace.go"):     {"uiactions.QueryPost(": 3, "uiactions.UncontractedMutationPost(": 1},
 		filepath.Clean("internal/workspace/ui/data_explorer.go"): {"uiactions.EventPost(": 1},

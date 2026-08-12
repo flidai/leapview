@@ -21,6 +21,10 @@ func (h workspaceAPIGenHandler) GetWorkspace(w http.ResponseWriter, r *http.Requ
 	h.module.GetWorkspace(w, r, workspaceID)
 }
 
+func (h workspaceAPIGenHandler) GetWorkspaceAdministration(w http.ResponseWriter, r *http.Request, workspaceID string) {
+	h.module.GetWorkspaceAdministration(w, r, workspaceID)
+}
+
 func (h workspaceAPIGenHandler) GetWorkspaceActiveAssetGraph(w http.ResponseWriter, r *http.Request) {
 	h.module.HTTP().ActiveDeploymentGraph(w, r)
 }

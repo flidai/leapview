@@ -138,11 +138,33 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     }
 
     .route {
+      position: relative;
       display: grid;
       min-height: 100svh;
       grid-template-columns: auto minmax(0, 1fr) 0px;
       background: var(--lv-bg-app);
       transition: grid-template-columns var(--lv-duration-fast) var(--motion-easing-move);
+    }
+
+    .publication-attribution {
+      position: fixed;
+      right: var(--base-size-12);
+      bottom: var(--base-size-12);
+      z-index: 4;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-full);
+      background: var(--lv-bg-panel);
+      color: var(--lv-fg-muted);
+      padding: var(--base-size-4) var(--base-size-8);
+      text-decoration: none;
+      box-shadow: var(--shadow-resting-small);
+      font: var(--lv-type-caption);
+    }
+
+    .publication-attribution:hover,
+    .publication-attribution:focus-visible {
+      color: var(--lv-fg-default);
+      text-decoration: underline;
     }
 
     :host([presentation='embed']) .header,
@@ -689,6 +711,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 					@lv-chat-new=${this.handleAgentNew}
 					@lv-agent-references-change=${this.handleAgentReferencesChanged}
 				></lv-chat-drawer>` : nothing}
+        ${this.presentation !== 'app' ? html`
+          <a class="publication-attribution" href="https://leapview.dev" target="_blank" rel="noreferrer">Powered by LeapView</a>
+        ` : nothing}
       </div>
       <lv-visual-modal></lv-visual-modal>
     `

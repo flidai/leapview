@@ -170,6 +170,34 @@ test('login theme toggle cycles shadow DOM icon and dispatches theme change', as
   }
 })
 
+test('login theme toggle preserves an accessibility theme until the user changes it', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'dark_colorblind'))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-login-page').evaluate((element: any) => {
+      const toggle = element.shadowRoot.querySelector('[data-theme-toggle]') as HTMLButtonElement
+      const visibleThemeIcon = element.shadowRoot.querySelector('[data-theme-icon]:not([hidden])') as HTMLElement | null
+      return {
+        mode: toggle.dataset.themeMode,
+        label: toggle.getAttribute('aria-label'),
+        visibleThemeIcon: visibleThemeIcon?.dataset.themeIcon,
+      }
+    })
+
+    expect(state).toEqual({
+      mode: 'dark_colorblind',
+      label: 'Dark protanopia and deuteranopia. Switch to System theme.',
+      visibleThemeIcon: 'dark',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   const page = {
     kind: 'login',

@@ -7,21 +7,32 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
 
 type ThemeMode = 'system' | 'light' | 'dark'
+type ThemePreference = ThemeMode | 'dark_dimmed' | 'light_colorblind' | 'dark_colorblind' | 'light_tritanopia' | 'dark_tritanopia'
 
-const nextThemeMode: Record<ThemeMode, ThemeMode> = {
+const nextThemeMode: Record<ThemePreference, ThemeMode> = {
   system: 'light',
   light: 'dark',
   dark: 'system',
+  dark_dimmed: 'system',
+  light_colorblind: 'system',
+  dark_colorblind: 'system',
+  light_tritanopia: 'system',
+  dark_tritanopia: 'system',
 }
 
-const themeLabels: Record<ThemeMode, string> = {
+const themeLabels: Record<ThemePreference, string> = {
   system: 'System theme',
-  light: 'Light theme',
-  dark: 'Dark theme',
+  light: 'Light default',
+  dark: 'Dark default',
+  dark_dimmed: 'Soft dark',
+  light_colorblind: 'Light protanopia and deuteranopia',
+  dark_colorblind: 'Dark protanopia and deuteranopia',
+  light_tritanopia: 'Light tritanopia',
+  dark_tritanopia: 'Dark tritanopia',
 }
 
 class LeapViewLoginPage extends DatastarLit(LitElement) {
-  private themeMode: ThemeMode = currentThemeMode()
+  private themeMode: ThemePreference = currentThemeMode()
   private readonly handleThemeApplied = (event: Event) => {
     const detail = (event as CustomEvent<{ mode?: string }>).detail
     this.themeMode = normalizeThemeMode(detail?.mode)
@@ -272,8 +283,8 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
         @click=${this.toggleTheme}
       >
         <span data-theme-icon="system" ?hidden=${this.themeMode !== 'system'}>${lucideIcon(Monitor)}</span>
-        <span data-theme-icon="light" ?hidden=${this.themeMode !== 'light'}>${lucideIcon(Sun)}</span>
-        <span data-theme-icon="dark" ?hidden=${this.themeMode !== 'dark'}>${lucideIcon(Moon)}</span>
+        <span data-theme-icon="light" ?hidden=${!isLightTheme(this.themeMode)}>${lucideIcon(Sun)}</span>
+        <span data-theme-icon="dark" ?hidden=${!isDarkTheme(this.themeMode)}>${lucideIcon(Moon)}</span>
       </button>
       <section class="panel" aria-label="${leapViewBrandName} login">
         <div class="brand-lockup">
@@ -332,7 +343,7 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
 
 if (!customElements.get('lv-login-page')) customElements.define('lv-login-page', LeapViewLoginPage)
 
-function currentThemeMode(): ThemeMode {
+function currentThemeMode(): ThemePreference {
   try {
     return normalizeThemeMode(localStorage.getItem('leapview-color-mode'))
   } catch {
@@ -345,6 +356,26 @@ function csrfToken(): string {
   return document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content.trim() ?? ''
 }
 
-function normalizeThemeMode(mode: string | null | undefined): ThemeMode {
-  return mode === 'light' || mode === 'dark' || mode === 'system' ? mode : 'system'
+function normalizeThemeMode(mode: string | null | undefined): ThemePreference {
+  switch (mode) {
+    case 'system':
+    case 'light':
+    case 'dark':
+    case 'dark_dimmed':
+    case 'light_colorblind':
+    case 'dark_colorblind':
+    case 'light_tritanopia':
+    case 'dark_tritanopia':
+      return mode
+    default:
+      return 'system'
+  }
+}
+
+function isLightTheme(mode: ThemePreference): boolean {
+  return mode === 'light' || mode === 'light_colorblind' || mode === 'light_tritanopia'
+}
+
+function isDarkTheme(mode: ThemePreference): boolean {
+  return mode === 'dark' || mode === 'dark_dimmed' || mode === 'dark_colorblind' || mode === 'dark_tritanopia'
 }

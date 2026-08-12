@@ -35,6 +35,20 @@ func (d *APIGenDispatcher) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdh
 	d.handler.GetCurrentPrincipal(w, r)
 }
 
+func (d *APIGenDispatcher) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, headers accessgen.GenUpdateCurrentPrincipalHeaders) {
+	r.Header.Set("If-Match", headers.IfMatch)
+	d.handler.UpdateCurrentPrincipal(w, r)
+}
+
+func (d *APIGenDispatcher) ChangeCurrentPassword(w stdhttp.ResponseWriter, r *stdhttp.Request, headers accessgen.GenChangeCurrentPasswordHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	d.handler.ChangeCurrentPassword(w, r)
+}
+
+func (d *APIGenDispatcher) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListPlatformAuditEventsParams) {
+	d.handler.ListPlatformAuditEvents(w, r)
+}
+
 func (d *APIGenDispatcher) DecideDeviceAuthorization(w stdhttp.ResponseWriter, r *stdhttp.Request, headers accessgen.GenDecideDeviceAuthorizationHeaders) {
 	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
 	d.handler.DecideDeviceAuthorization(w, r)
@@ -70,6 +84,26 @@ func (d *APIGenDispatcher) ListCurrentSessions(w stdhttp.ResponseWriter, r *stdh
 
 func (d *APIGenDispatcher) RevokeCurrentSession(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
 	d.handler.RevokeCurrentSession(w, r)
+}
+
+func (d *APIGenDispatcher) UploadCurrentAvatar(w stdhttp.ResponseWriter, r *stdhttp.Request, headers accessgen.GenUploadCurrentAvatarHeaders) {
+	d.handler.UploadCurrentAvatar(w, r, headers.ContentType)
+}
+
+func (d *APIGenDispatcher) DeleteCurrentAvatar(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	d.handler.DeleteCurrentAvatar(w, r)
+}
+
+func (d *APIGenDispatcher) GetPrincipalAvatar(w stdhttp.ResponseWriter, r *stdhttp.Request, principal, digest string) {
+	d.handler.GetPrincipalAvatar(w, r, principal, digest)
+}
+
+func (d *APIGenDispatcher) DisablePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenDisablePrincipalHeaders) {
+	d.handler.DisablePrincipal(w, r)
+}
+
+func (d *APIGenDispatcher) EnablePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenEnablePrincipalHeaders) {
+	d.handler.EnablePrincipal(w, r)
 }
 
 func (d *APIGenDispatcher) ListPrincipals(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListPrincipalsParams) {

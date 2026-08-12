@@ -53,6 +53,8 @@ func (h *recordingAPIGenHandler) Search(_ stdhttp.ResponseWriter, _ *stdhttp.Req
 
 func (*recordingAPIGenHandler) ListWorkspaces(stdhttp.ResponseWriter, *stdhttp.Request)       {}
 func (*recordingAPIGenHandler) GetWorkspace(stdhttp.ResponseWriter, *stdhttp.Request, string) {}
+func (*recordingAPIGenHandler) GetWorkspaceAdministration(stdhttp.ResponseWriter, *stdhttp.Request, string) {
+}
 func (*recordingAPIGenHandler) GetWorkspaceActiveAssetGraph(stdhttp.ResponseWriter, *stdhttp.Request) {
 }
 func (*recordingAPIGenHandler) ListWorkspaceAssetEdges(stdhttp.ResponseWriter, *stdhttp.Request) {}

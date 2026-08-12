@@ -237,16 +237,10 @@ func (r *Repository) DisableSCIMUser(ctx context.Context, principalID string) (a
 	if err != nil {
 		return access.SCIMUser{}, err
 	}
-	if err := r.q.DisablePrincipal(ctx, principalID); err != nil {
+	if _, err := r.DisablePrincipal(ctx, principalID); err != nil {
 		return access.SCIMUser{}, err
 	}
 	if err := r.q.DeleteSCIMGroupMembersByPrincipal(ctx, principalID); err != nil {
-		return access.SCIMUser{}, err
-	}
-	if err := r.q.RevokeSessionsByPrincipal(ctx, principalID); err != nil {
-		return access.SCIMUser{}, err
-	}
-	if err := r.q.RevokeAPITokensByPrincipal(ctx, principalID); err != nil {
 		return access.SCIMUser{}, err
 	}
 	row, err := r.q.GetPrincipal(ctx, principalID)

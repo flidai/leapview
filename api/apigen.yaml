@@ -16,6 +16,7 @@ targets:
           dir: ../internal/app/api/gen
           package: gen
           import_path: github.com/flidai/leapview/internal/app/api/gen
+          client_file: client.apigen.gen.go
         LeapViewAPI.Access:
           dir: ../internal/access/api/gen
           package: gen

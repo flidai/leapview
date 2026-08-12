@@ -10,6 +10,7 @@ import (
 	"time"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/app/config"
@@ -126,10 +127,23 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	cleanup.Push("analytics", func(context.Context) error { return analyticsModule.Close() })
 	analyticsWorkspaceFactory := analyticsModule.WorkspaceRuntimeFactory()
 	var workspaceDirectory workspacemodule.Directory
+	avatarBlobs, err := profileImageBlobStore(ctx, cfg)
+	if err != nil {
+		return fail(err)
+	}
+	productLogoBlobs, err := productLogoBlobStore(ctx, cfg)
+	if err != nil {
+		return fail(err)
+	}
+	productService, err := adminmodule.NewProductService(store.SQLDB(), productLogoBlobs)
+	if err != nil {
+		return fail(err)
+	}
 	accessModule, err := accessmodule.Build(ctx, accessmodule.Config{
 		Database: store.SQLDB(), Auth: accessAuthConfig(cfg, production, cookieSecure),
 		WorkspaceID: config.DefaultWorkspaceID,
 		Assets:      assets,
+		AvatarBlobs: avatarBlobs,
 		PublicURL:   publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL,
 		WorkspaceIDs: func(ctx context.Context) ([]string, error) {
 			if workspaceDirectory == nil {
@@ -420,6 +434,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			AnalyticsModule: analyticsModule, DashboardAssets: dashboardAssets,
 			ReleaseModule: releaseModule, JobModule: jobModule,
 			AccessModule: accessModule, ManagedDataModule: managedDataModule,
+			Product: productService, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), identity),
 		},
 		workflowAssemblyInputs{
 			AgentSettings: store,

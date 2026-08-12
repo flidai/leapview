@@ -38,6 +38,7 @@ type Presentation struct {
 type Layout struct {
 	Presentation Presentation
 	Assets       staticasset.Resolver
+	ColorMode    string
 	Signal       any
 	Scripts      []string
 	Mount        func(g.Node, ...g.Node) g.Node
@@ -75,10 +76,7 @@ func WithSignal(layout Layout, signals map[string]any) map[string]any {
 }
 
 func Render(layout Layout, spec Spec) g.Node {
-	title := strings.TrimSpace(spec.Title)
-	if title == "" {
-		title = strings.TrimSpace(layout.Presentation.ProductName)
-	}
+	title := documentTitle(spec.Title, layout.Presentation.ProductName)
 	head := make([]g.Node, 0, 8+len(layout.Scripts)+len(spec.Stylesheets)+len(spec.Scripts)+len(spec.Head))
 	if favicon := strings.TrimSpace(layout.Presentation.FaviconPath); favicon != "" {
 		head = append(head, h.Link(h.Rel("icon"), h.Href(layout.Assets.URL(favicon)), h.Type("image/svg+xml")))
@@ -110,10 +108,14 @@ func Render(layout Layout, spec Spec) g.Node {
 	body = append(body, inspectorElement(layout.Assets))
 	htmlAttrs := spec.HTMLAttrs
 	if len(htmlAttrs) == 0 {
+		theme := themeAttributes(layout.ColorMode)
 		htmlAttrs = []g.Node{
-			g.Attr("data-color-mode", "auto"),
-			g.Attr("data-light-theme", "light"),
-			g.Attr("data-dark-theme", "dark"),
+			g.Attr("data-color-mode", theme.colorMode),
+			g.Attr("data-light-theme", theme.lightTheme),
+			g.Attr("data-dark-theme", theme.darkTheme),
+		}
+		if theme.preference != "" {
+			htmlAttrs = append(htmlAttrs, g.Attr("data-theme-preference", theme.preference))
 		}
 	}
 	mainAttrs := spec.MainAttrs
@@ -125,6 +127,51 @@ func Render(layout Layout, spec Spec) g.Node {
 		HTMLAttrs: htmlAttrs, Head: head, MainAttrs: mainAttrs,
 		UpdatesURL: spec.UpdatesURL, Body: body,
 	})
+}
+
+func documentTitle(pageTitle, productName string) string {
+	pageTitle = strings.TrimSpace(pageTitle)
+	productName = strings.TrimSpace(productName)
+	if pageTitle == "" {
+		return productName
+	}
+	if productName == "" || strings.Contains(pageTitle, productName) {
+		return pageTitle
+	}
+	if productName != "LeapView" && strings.Contains(pageTitle, "LeapView") {
+		return strings.Replace(pageTitle, "LeapView", productName, 1)
+	}
+	return pageTitle + " · " + productName
+}
+
+type documentTheme struct {
+	colorMode  string
+	preference string
+	lightTheme string
+	darkTheme  string
+}
+
+func themeAttributes(value string) documentTheme {
+	switch strings.TrimSpace(value) {
+	case "light":
+		return documentTheme{colorMode: "light", preference: "light", lightTheme: "light", darkTheme: "dark"}
+	case "dark":
+		return documentTheme{colorMode: "dark", preference: "dark", lightTheme: "light", darkTheme: "dark"}
+	case "dark_dimmed":
+		return documentTheme{colorMode: "dark", preference: "dark_dimmed", lightTheme: "light", darkTheme: "dark_dimmed"}
+	case "light_colorblind":
+		return documentTheme{colorMode: "light", preference: "light_colorblind", lightTheme: "light_colorblind", darkTheme: "dark"}
+	case "dark_colorblind":
+		return documentTheme{colorMode: "dark", preference: "dark_colorblind", lightTheme: "light", darkTheme: "dark_colorblind"}
+	case "light_tritanopia":
+		return documentTheme{colorMode: "light", preference: "light_tritanopia", lightTheme: "light_tritanopia", darkTheme: "dark"}
+	case "dark_tritanopia":
+		return documentTheme{colorMode: "dark", preference: "dark_tritanopia", lightTheme: "light", darkTheme: "dark_tritanopia"}
+	case "system":
+		return documentTheme{colorMode: "auto", preference: "system", lightTheme: "light", darkTheme: "dark"}
+	default:
+		return documentTheme{colorMode: "auto", lightTheme: "light", darkTheme: "dark"}
+	}
 }
 
 func csrfMeta(token string) g.Node {

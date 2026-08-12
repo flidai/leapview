@@ -23,7 +23,7 @@ import (
 func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy) http.Handler {
 	mux := chi.NewRouter()
 	candidates := candidateRouteDependencies{
-		access: routes.accessModule, agent: routes.agentModule, assets: platform.assets,
+		access: routes.accessModule, agent: routes.agentModule, product: routes.product, assets: platform.assets,
 		dashboards: routes.dashboardModule, deployments: routes.deploymentModule,
 		runtimeHost: runtime.runtimeHostModule, candidateMetrics: runtime.candidateMetrics,
 	}
@@ -91,6 +91,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		})
 		routes.agentModule.MountAuthenticated(r, agentmodule.RouteGuard{
 			Protect: routes.accessModule.Protect, ProtectGlobal: routes.accessModule.ProtectGlobal,
+			ProtectPlatform: routes.accessModule.ProtectPlatform,
 		})
 		r.Get("/chat", redirectLegacyChat)
 		r.Get("/chat/updates", http.NotFound)
@@ -98,6 +99,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		r.Post("/chat/turns", redirectLegacyChat)
 		routes.adminModule.MountAuthenticated(r, adminmodule.RouteGuard{
 			Protect: routes.accessModule.Protect, ProtectGlobal: routes.accessModule.ProtectGlobal,
+			ProtectPlatform:     routes.accessModule.ProtectPlatform,
 			ProtectAnyWorkspace: routes.accessModule.ProtectAnyWorkspace,
 		})
 		routes.dashboardModule.MountAuthenticated(r, dashboardmodule.RouteGuard{

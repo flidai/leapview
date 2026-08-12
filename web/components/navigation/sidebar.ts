@@ -12,14 +12,12 @@ import {
   Menu,
   MessagesSquare,
 	Monitor,
-	Moon,
 	PanelLeftClose,
 	PanelLeftOpen,
 	Plus,
 	Plug,
 	Search,
 	Settings,
-  Sun,
   TableProperties,
 	Users,
 	UsersRound,
@@ -30,6 +28,7 @@ import {
 import { lucideIcon } from '../shared/lucide-icons'
 import { leapViewBrandName } from '../shared/brand-mark'
 import '../shared/loading-spinner'
+import '../shared/user-avatar'
 
 type NavItem = {
   id: string
@@ -48,6 +47,8 @@ type NavGroup = {
 type SidebarConfig = {
   active: string
   admin?: boolean
+  productLogoUrl?: string
+  productName?: string
   workspaceTitle?: string
   dashboardTitle?: string
   pageTitle?: string
@@ -58,6 +59,8 @@ type SidebarConfig = {
   compact?: boolean
   primaryAction?: SidebarAction
   history?: SidebarHistory
+  userAvatarUrl?: string
+  userName?: string
   groups: NavGroup[]
 }
 
@@ -87,8 +90,6 @@ type SidebarStatus = {
   error?: string
 }
 
-type ThemeMode = 'system' | 'light' | 'dark'
-
 type IconName =
   | 'catalog'
   | 'back'
@@ -103,8 +104,6 @@ type IconName =
   | 'cache'
   | 'settings'
   | 'system'
-  | 'sun'
-  | 'moon'
   | 'activity'
   | 'users'
   | 'users-round'
@@ -123,6 +122,12 @@ const defaultConfig: SidebarConfig = {
     { label: 'Workspace', items: [{ id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' }] },
   ],
 }
+
+const SIDEBAR_MIN_WIDTH = 160
+const SIDEBAR_MAX_WIDTH = 384
+const SIDEBAR_RESIZE_STEP = 8
+const SIDEBAR_DEFAULT_WIDTH = 248
+const ADMIN_SIDEBAR_DEFAULT_WIDTH = 192
 
 const configConverter = {
   fromAttribute(value: string | null): SidebarConfig {
@@ -155,19 +160,28 @@ const statusConverter = {
 class LeapViewSidebar extends LitElement {
   @property({ attribute: 'config', converter: configConverter }) config: SidebarConfig = defaultConfig
   @property({ attribute: 'status', converter: statusConverter }) status: SidebarStatus = {}
-  @state() private mode: ThemeMode = storedThemeMode()
   @state() private collapsed = storedCollapsed()
   @state() private mobileOpen = false
   @state() private searchQuery = ''
+  @state() private liveUserAvatarUrl: string | undefined
+  @state() private sidebarWidth = SIDEBAR_DEFAULT_WIDTH
   private collapseStateInitialized = false
+  private loadedWidthStorageKey = ''
   private mobileMediaQuery?: MediaQueryList
+  private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
 
   static styles = css`
     :host {
-      --lv-sidebar-width: var(--lv-sidebar-width-expanded);
+      --lv-sidebar-width-default: var(--lv-sidebar-width-expanded);
+      --lv-sidebar-width: var(--lv-sidebar-resized-width, var(--lv-sidebar-width-default));
+      box-sizing: border-box;
       display: block;
       width: var(--lv-sidebar-width);
-      min-height: 100svh;
+      height: 100svh;
+      min-height: 0;
+      max-height: 100svh;
+      position: sticky;
+      top: 0;
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);
       transition: width var(--motion-transition-stateChange);
@@ -177,15 +191,80 @@ class LeapViewSidebar extends LitElement {
       --lv-sidebar-width: var(--lv-sidebar-width-collapsed);
     }
 
+    :host([data-admin]) {
+      --lv-sidebar-width-default: var(--lv-admin-sidebar-width-expanded);
+    }
+
+    :host([data-resizing]),
+    :host([data-resizing]) aside {
+      transition: none;
+      user-select: none;
+    }
+
+    :host([data-admin]) .brand {
+      gap: var(--base-size-8);
+      padding: var(--base-size-8);
+    }
+
+    :host([data-admin]) .brand-back,
+    :host([data-admin]) .nav-item {
+      min-height: var(--control-small-size);
+      font: var(--lv-type-body-compact);
+    }
+
+    :host([data-admin]) .nav-text strong,
+    :host([data-admin]) .sidebar-search input {
+      font: var(--lv-type-body-compact);
+    }
+
+    :host([data-admin]) .sidebar-search input {
+      min-height: var(--control-small-size);
+    }
+
     aside {
-      position: sticky;
-      top: 0;
+      position: relative;
       display: grid;
-      width: var(--lv-sidebar-width);
-      min-height: 100svh;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      max-height: 100%;
       grid-template-rows: auto minmax(0, 1fr) auto;
       background: var(--lv-sidebar-bg);
       transition: width var(--motion-transition-stateChange);
+    }
+
+    .resize-handle {
+      position: absolute;
+      z-index: calc(var(--zIndex-default) + 1);
+      top: 0;
+      right: calc(var(--base-size-4) * -1);
+      bottom: 0;
+      width: var(--base-size-8);
+      border: 0;
+      cursor: col-resize;
+      outline: none;
+      touch-action: none;
+    }
+
+    .resize-handle::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: calc(50% - var(--borderWidth-thin));
+      width: var(--borderWidth-thin);
+      background: transparent;
+      transition: background var(--motion-transition-stateChange);
+    }
+
+    .resize-handle:hover::after,
+    .resize-handle:focus-visible::after,
+    :host([data-resizing]) .resize-handle::after {
+      background: var(--borderColor-accent-emphasis);
+    }
+
+    :host([data-collapsed]) .resize-handle {
+      display: none;
     }
 
     .brand {
@@ -249,6 +328,38 @@ class LeapViewSidebar extends LitElement {
       font: var(--lv-type-body-large);
       font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0;
+    }
+
+    .brand-identity {
+      display: grid;
+      min-width: 0;
+      flex: 1 1 auto;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      column-gap: var(--base-size-8);
+    }
+
+    .product-logo {
+      width: var(--control-small-size);
+      height: var(--control-small-size);
+      grid-row: 1 / span 2;
+      border-radius: var(--lv-radius-small);
+      object-fit: contain;
+    }
+
+    .powered-by {
+      overflow: hidden;
+      color: var(--lv-fg-muted);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-decoration: none;
+      font: var(--lv-type-caption);
+    }
+
+    .powered-by:hover,
+    .powered-by:focus-visible {
+      color: var(--lv-fg-default);
+      text-decoration: underline;
     }
 
     .collapse-button {
@@ -337,9 +448,31 @@ class LeapViewSidebar extends LitElement {
       align-content: start;
       gap: var(--base-size-8);
       min-height: 0;
-      overflow: auto;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
       padding: var(--base-size-8);
       border-bottom: var(--lv-border-muted);
+      scrollbar-color: var(--lv-scrollbar-thumb) transparent;
+      scrollbar-gutter: stable;
+      scrollbar-width: thin;
+    }
+
+    nav::-webkit-scrollbar {
+      width: var(--base-size-6);
+    }
+
+    nav::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    nav::-webkit-scrollbar-thumb {
+      border-radius: var(--lv-radius-full);
+      background: var(--lv-scrollbar-thumb);
+    }
+
+    nav::-webkit-scrollbar-thumb:hover {
+      background: var(--lv-scrollbar-thumb-hover);
     }
 
     .nav-group {
@@ -525,7 +658,7 @@ class LeapViewSidebar extends LitElement {
 
     .footer {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr);
       gap: var(--base-size-6);
       align-items: center;
       padding: var(--base-size-8);
@@ -546,19 +679,6 @@ class LeapViewSidebar extends LitElement {
 
     .user-card:hover {
       background: var(--control-bgColor-hover);
-    }
-
-    .avatar {
-      display: grid;
-      width: var(--control-xsmall-size);
-      height: var(--control-xsmall-size);
-      place-items: center;
-      border-radius: 50%;
-      background: var(--bgColor-neutral-muted);
-      color: var(--lv-fg-default);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
-      letter-spacing: 0;
     }
 
     .user-text {
@@ -584,46 +704,6 @@ class LeapViewSidebar extends LitElement {
       font: var(--lv-type-caption);
     }
 
-    .actions {
-      display: flex;
-      gap: var(--base-size-4);
-      align-items: center;
-      justify-content: end;
-    }
-
-    .theme-button {
-      display: inline-flex;
-      width: var(--lv-button-height);
-      height: var(--lv-button-height);
-      min-height: var(--lv-button-height);
-      align-items: center;
-      justify-content: center;
-      gap: var(--base-size-8);
-      border: var(--borderWidth-default) solid var(--lv-button-border-rest);
-      border-radius: var(--lv-button-radius);
-      background: var(--lv-button-bg-rest);
-      color: var(--lv-button-fg-rest);
-      cursor: pointer;
-      padding: 0;
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
-    }
-
-    .theme-button:hover,
-    .theme-button:focus-visible {
-      border-color: var(--lv-button-border-hover);
-      background: var(--lv-button-bg-hover);
-      color: var(--lv-fg-default);
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
-    }
-
-    .theme-button {
-      border-color: var(--lv-button-border-rest);
-      background: var(--lv-button-bg-rest);
-      color: var(--lv-button-fg-rest);
-    }
-
     :host([data-collapsed]) .brand {
       justify-items: center;
       gap: 0;
@@ -637,11 +717,18 @@ class LeapViewSidebar extends LitElement {
     }
 
     :host([data-collapsed]) .name,
+    :host([data-collapsed]) .powered-by,
     :host([data-collapsed]) .nav-group-label,
     :host([data-collapsed]) .nav-text,
     :host([data-collapsed]) .history,
     :host([data-collapsed]) .user-text {
       display: none;
+    }
+
+    :host([data-collapsed]) .brand-identity {
+      display: grid;
+      flex: none;
+      grid-template-columns: auto;
     }
 
     :host([data-collapsed]) .collapse-button {
@@ -681,19 +768,6 @@ class LeapViewSidebar extends LitElement {
       padding: var(--base-size-8) var(--base-size-4);
     }
 
-    :host([data-collapsed]) .actions {
-      display: grid;
-      justify-content: center;
-      justify-items: center;
-    }
-
-    :host([data-collapsed]) .theme-button {
-      width: calc(var(--lv-button-height) + var(--base-size-2));
-      min-height: calc(var(--lv-button-height) + var(--base-size-2));
-      height: calc(var(--lv-button-height) + var(--base-size-2));
-      padding: 0;
-    }
-
     :host([data-collapsed]) .user-card {
       grid-template-columns: 1fr;
       justify-items: center;
@@ -704,15 +778,23 @@ class LeapViewSidebar extends LitElement {
       :host,
       :host([data-collapsed]) {
         --lv-sidebar-width: 100%;
+        position: relative;
+        top: auto;
         width: 100%;
+        height: auto;
         min-height: var(--control-large-size);
+        max-height: none;
+        overflow: visible;
       }
 
       aside {
         position: relative;
         display: block;
         width: 100%;
+        height: auto;
         min-height: var(--control-large-size);
+        max-height: none;
+        overflow: visible;
       }
 
       .brand {
@@ -766,7 +848,8 @@ class LeapViewSidebar extends LitElement {
       }
 
       .collapse-button,
-      :host([data-collapsed]) .collapse-button {
+      :host([data-collapsed]) .collapse-button,
+      .resize-handle {
         display: none;
       }
 
@@ -796,6 +879,7 @@ class LeapViewSidebar extends LitElement {
         min-height: 100svh;
         align-content: start;
         overflow-y: auto;
+        overscroll-behavior: contain;
         border: 0;
         border-right: var(--lv-border-default);
         background: var(--lv-sidebar-bg);
@@ -805,6 +889,7 @@ class LeapViewSidebar extends LitElement {
         transform: translateX(-100%);
         transition: transform var(--motion-transition-stateChange), visibility var(--motion-transition-stateChange);
         visibility: hidden;
+        scrollbar-gutter: auto;
       }
 
       aside[data-mobile-open] nav {
@@ -878,32 +963,19 @@ class LeapViewSidebar extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback()
-    document.addEventListener('leapview-theme-applied', this.onThemeApplied as EventListener)
     document.addEventListener('keydown', this.onKeyDown)
+    document.addEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
     this.mobileMediaQuery = window.matchMedia('(max-width: 640px)')
     this.mobileMediaQuery.addEventListener('change', this.onMobileViewportChange)
-    this.mode = storedThemeMode()
     this.syncCollapsedState()
   }
 
   disconnectedCallback(): void {
-    document.removeEventListener('leapview-theme-applied', this.onThemeApplied as EventListener)
     document.removeEventListener('keydown', this.onKeyDown)
+    document.removeEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
     this.mobileMediaQuery?.removeEventListener('change', this.onMobileViewportChange)
     this.mobileMediaQuery = undefined
     super.disconnectedCallback()
-  }
-
-  private onThemeApplied = (event: CustomEvent<{ mode: ThemeMode }>): void => {
-    this.mode = normalizeThemeMode(event.detail?.mode)
-  }
-
-  private changeTheme(mode: ThemeMode): void {
-    this.dispatchEvent(new CustomEvent('leapview-theme-change', {
-      detail: { mode },
-      bubbles: true,
-      composed: true,
-    }))
   }
 
   protected willUpdate(changedProperties: PropertyValues<this>): void {
@@ -914,9 +986,11 @@ class LeapViewSidebar extends LitElement {
       this.collapsed = this.config.admin ? false : storedCollapsed(this.config.compact)
       this.collapseStateInitialized = true
     }
+    if (changedProperties.has('config')) this.syncSidebarWidth()
   }
 
   protected updated(): void {
+    this.toggleAttribute('data-admin', Boolean(this.config.admin))
     this.syncCollapsedState()
   }
 
@@ -976,8 +1050,30 @@ class LeapViewSidebar extends LitElement {
     const collapsed = this.effectiveCollapsed
     const mobileNavigationClosed = this.isMobileViewport && !this.mobileOpen
     const groups = this.filteredGroups()
+    const userName = this.config.userName?.trim() || 'Local user'
+    const userAvatarUrl = this.liveUserAvatarUrl ?? this.config.userAvatarUrl?.trim()
+    const productName = this.config.productName?.trim() || leapViewBrandName
+    const productLogoUrl = this.config.productLogoUrl?.trim()
+    const hasCustomIdentity = productName !== leapViewBrandName || Boolean(productLogoUrl)
     return html`
-      <aside aria-label="${leapViewBrandName} workspace" ?data-mobile-open=${this.mobileOpen}>
+      <aside aria-label="${productName} workspace" ?data-mobile-open=${this.mobileOpen}>
+        <span
+          class="resize-handle"
+          role="separator"
+          tabindex="0"
+          aria-label="Resize navigation sidebar"
+          aria-orientation="vertical"
+          aria-valuemin=${SIDEBAR_MIN_WIDTH}
+          aria-valuemax=${SIDEBAR_MAX_WIDTH}
+          aria-valuenow=${this.sidebarWidth}
+          title="Drag to resize. Double-click to reset."
+          @keydown=${this.resizeSidebarByKeyboard}
+          @pointerdown=${this.beginSidebarResize}
+          @pointermove=${this.continueSidebarResize}
+          @pointerup=${this.endSidebarResize}
+          @pointercancel=${this.endSidebarResize}
+          @dblclick=${this.resetSidebarWidth}
+        ></span>
         <header class="brand">
           <div class="brand-row">
             ${this.config.admin && this.config.primaryAction ? html`
@@ -991,7 +1087,13 @@ class LeapViewSidebar extends LitElement {
                 <span class="brand-back-icon">${icon(this.config.primaryAction.icon)}</span>
                 <span class="brand-back-text">${this.config.primaryAction.label}</span>
               </a>
-            ` : html`<span class="name">${leapViewBrandName}</span>`}
+            ` : html`
+              <span class="brand-identity">
+                ${productLogoUrl ? html`<img class="product-logo" src=${productLogoUrl} alt="">` : null}
+                <span class="name">${productName}</span>
+                ${hasCustomIdentity ? html`<a class="powered-by" href="https://leapview.dev" target="_blank" rel="noreferrer">Powered by LeapView</a>` : null}
+              </span>
+            `}
             ${this.config.admin ? null : html`
               <button
                 class="collapse-button"
@@ -1020,7 +1122,7 @@ class LeapViewSidebar extends LitElement {
               <span class="brand-back-icon">${icon(this.config.primaryAction.icon)}</span>
               <span class="brand-back-text">${this.config.primaryAction.label}</span>
             </a>
-          ` : html`<strong class="mobile-header-title">${leapViewBrandName}</strong>`}
+          ` : html`<strong class="mobile-header-title">${productName}</strong>`}
           <button
             class="mobile-menu-button"
             type="button"
@@ -1050,7 +1152,7 @@ class LeapViewSidebar extends LitElement {
                 <span class="brand-back-icon">${icon(this.config.primaryAction.icon)}</span>
                 <span class="brand-back-text">${this.config.primaryAction.label}</span>
               </a>
-            ` : html`<strong class="mobile-drawer-title">${leapViewBrandName}</strong>`}
+            ` : html`<strong class="mobile-drawer-title">${productName}</strong>`}
             <button class="mobile-close-button" type="button" aria-label="Close navigation" title="Close navigation" @click=${() => this.closeMobileNavigation(true)}>
               ${icon('close')}
             </button>
@@ -1076,21 +1178,101 @@ class LeapViewSidebar extends LitElement {
         </nav>
 
         <footer class="footer">
-          <div class="user-card" title="Jacob Nielsen">
-            <span class="avatar" aria-hidden="true">JN</span>
+          <div class="user-card" title=${userName}>
+            <lv-user-avatar .name=${userName} .imageUrl=${userAvatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>
             <span class="user-text">
-              <strong class="user-name">Jacob Nielsen</strong>
+              <strong class="user-name">${userName}</strong>
               <span class="user-role">${this.config.userRole ?? 'Local workspace'}</span>
             </span>
-          </div>
-          <div class="actions">
-            <button class="theme-button" type="button" aria-label=${this.themeLabel()} title=${this.themeTitle()} @click=${() => this.changeTheme(this.nextTheme())}>
-              ${icon(this.themeIcon())}
-            </button>
           </div>
         </footer>
       </aside>
     `
+  }
+
+  private onAvatarChange = (event: CustomEvent<{ url?: string }>): void => {
+    this.liveUserAvatarUrl = event.detail?.url?.trim() || ''
+  }
+
+  private get widthStorageKey(): string {
+    return this.config.admin ? 'leapview-admin-sidebar-width' : 'leapview-sidebar-width'
+  }
+
+  private get defaultSidebarWidth(): number {
+    return this.config.admin ? ADMIN_SIDEBAR_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH
+  }
+
+  private syncSidebarWidth(): void {
+    const storageKey = this.widthStorageKey
+    if (storageKey === this.loadedWidthStorageKey) return
+    this.loadedWidthStorageKey = storageKey
+    const storedWidth = storedSidebarWidth(storageKey)
+    this.sidebarWidth = storedWidth ?? this.defaultSidebarWidth
+    if (storedWidth === undefined) {
+      this.style.removeProperty('--lv-sidebar-resized-width')
+    } else {
+      this.style.setProperty('--lv-sidebar-resized-width', `${storedWidth}px`)
+    }
+  }
+
+  private applySidebarWidth(width: number, persist: boolean): void {
+    const nextWidth = Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width)))
+    this.sidebarWidth = nextWidth
+    this.style.setProperty('--lv-sidebar-resized-width', `${nextWidth}px`)
+    if (!persist) return
+    try {
+      localStorage.setItem(this.widthStorageKey, String(nextWidth))
+    } catch {
+      // Ignore storage failures; the current session state still updates.
+    }
+  }
+
+  private beginSidebarResize = (event: PointerEvent): void => {
+    if (event.button !== 0 || this.isMobileViewport || this.effectiveCollapsed) return
+    event.preventDefault()
+    const handle = event.currentTarget as HTMLElement
+    this.resizeDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: this.getBoundingClientRect().width,
+    }
+    handle.setPointerCapture?.(event.pointerId)
+    this.toggleAttribute('data-resizing', true)
+  }
+
+  private continueSidebarResize = (event: PointerEvent): void => {
+    if (!this.resizeDrag || event.pointerId !== this.resizeDrag.pointerId) return
+    this.applySidebarWidth(this.resizeDrag.startWidth + event.clientX - this.resizeDrag.startX, false)
+  }
+
+  private endSidebarResize = (event: PointerEvent): void => {
+    if (!this.resizeDrag || event.pointerId !== this.resizeDrag.pointerId) return
+    const handle = event.currentTarget as HTMLElement
+    if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture(event.pointerId)
+    this.resizeDrag = undefined
+    this.toggleAttribute('data-resizing', false)
+    this.applySidebarWidth(this.sidebarWidth, true)
+  }
+
+  private resizeSidebarByKeyboard = (event: KeyboardEvent): void => {
+    let nextWidth: number | undefined
+    if (event.key === 'ArrowLeft') nextWidth = this.sidebarWidth - SIDEBAR_RESIZE_STEP
+    if (event.key === 'ArrowRight') nextWidth = this.sidebarWidth + SIDEBAR_RESIZE_STEP
+    if (event.key === 'Home') nextWidth = SIDEBAR_MIN_WIDTH
+    if (event.key === 'End') nextWidth = SIDEBAR_MAX_WIDTH
+    if (nextWidth === undefined) return
+    event.preventDefault()
+    this.applySidebarWidth(nextWidth, true)
+  }
+
+  private resetSidebarWidth = (): void => {
+    try {
+      localStorage.removeItem(this.widthStorageKey)
+    } catch {
+      // Ignore storage failures; the current session state still updates.
+    }
+    this.sidebarWidth = this.defaultSidebarWidth
+    this.style.removeProperty('--lv-sidebar-resized-width')
   }
 
   private get effectiveCollapsed(): boolean {
@@ -1125,30 +1307,6 @@ class LeapViewSidebar extends LitElement {
       const items = groupMatches ? group.items : group.items.filter((item) => item.label.toLocaleLowerCase().includes(query))
       return items.length > 0 ? [{ ...group, items }] : []
     })
-  }
-
-  private nextTheme(): ThemeMode {
-    if (this.mode === 'system') return 'light'
-    if (this.mode === 'light') return 'dark'
-    return 'system'
-  }
-
-  private themeLabel(): string {
-    if (this.mode === 'system') return 'System'
-    if (this.mode === 'light') return 'Light'
-    return 'Dark'
-  }
-
-  private themeTitle(): string {
-    const next = this.nextTheme()
-    const nextLabel = next === 'system' ? 'System preference' : next === 'light' ? 'Light mode' : 'Dark mode'
-    return `${this.themeLabel()} theme. Switch to ${nextLabel}.`
-  }
-
-  private themeIcon(): IconName {
-    if (this.mode === 'system') return 'system'
-    if (this.mode === 'light') return 'sun'
-    return 'moon'
   }
 
   private renderLink(item: NavItem) {
@@ -1223,8 +1381,6 @@ function icon(name: string) {
     cache: TableProperties,
     settings: Settings,
     system: Monitor,
-    sun: Sun,
-    moon: Moon,
     activity: Activity,
     back: ArrowLeft,
     users: Users,
@@ -1252,17 +1408,14 @@ function storedCollapsed(fallback = false): boolean {
   return fallback
 }
 
-function storedThemeMode(): ThemeMode {
+function storedSidebarWidth(storageKey: string): number | undefined {
   try {
-    return normalizeThemeMode(localStorage.getItem('leapview-color-mode') || document.documentElement.dataset.colorMode)
+    const width = Number(localStorage.getItem(storageKey))
+    if (Number.isFinite(width) && width >= SIDEBAR_MIN_WIDTH && width <= SIDEBAR_MAX_WIDTH) return Math.round(width)
   } catch {
-    return normalizeThemeMode(document.documentElement.dataset.colorMode)
+    // Ignore storage failures and use the route's default width.
   }
-}
-
-function normalizeThemeMode(mode: string | null | undefined): ThemeMode {
-  if (mode === 'light' || mode === 'dark') return mode
-  return 'system'
+  return undefined
 }
 
 customElements.define('lv-sidebar', LeapViewSidebar)

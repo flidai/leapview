@@ -113,6 +113,37 @@ func TestAdministratorListsPrincipalSessionsWithoutCredentialMaterial(t *testing
 	}
 }
 
+func TestCurrentSessionListMarksOnlyTheCredentialUsedForTheRequest(t *testing.T) {
+	repository := &sessionLifecycleRepository{sessions: []access.Session{
+		{ID: "session_current", PrincipalID: "principal_me", Kind: access.SessionKindBrowser, CreatedAt: "2026-07-29T10:00:00Z", ExpiresAt: "2026-07-29T18:00:00Z"},
+		{ID: "session_other", PrincipalID: "principal_me", Kind: access.SessionKindDesktop, CreatedAt: "2026-07-28T10:00:00Z", ExpiresAt: "2026-07-28T18:00:00Z"},
+	}}
+	handler := Handler{
+		Repository: func() (access.Repository, error) { return repository, nil },
+		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: "principal_me"}, true
+		},
+		CurrentSession: func(*stdhttp.Request) (string, bool) { return "session_current", true },
+	}
+	response := httptest.NewRecorder()
+	handler.ListCurrentSessions(response, httptest.NewRequest(stdhttp.MethodGet, "/api/v1/me/sessions", nil))
+	if response.Code != stdhttp.StatusOK {
+		t.Fatalf("response = %d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Items []struct {
+			ID      string `json:"id"`
+			Current bool   `json:"current"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 2 || !body.Items[0].Current || body.Items[1].Current {
+		t.Fatalf("sessions = %#v", body.Items)
+	}
+}
+
 func TestAdministratorRevokesOnlyTheTargetPrincipalsSession(t *testing.T) {
 	repository := &sessionLifecycleRepository{}
 	handler := Handler{

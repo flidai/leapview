@@ -37,7 +37,13 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 				return routes.accessModule.ProtectNamed("VIEW_AGENT", next), true
 			case routeAdmin:
 				switch strings.TrimSpace(section) {
-				case "queries":
+				case "profile", "security", "api-tokens":
+					return routes.accessModule.ProtectNamed("", next), true
+				case "general", "service-accounts", "authentication", "storage", "agent", "system":
+					return routes.accessModule.ProtectPlatformNamed("MANAGE_PLATFORM", next), true
+				case "workspaces-admin":
+					return routes.accessModule.ProtectGlobalNamed("MANAGE_WORKSPACE", next), true
+				case "queries", "audit":
 					return routes.accessModule.ProtectGlobalNamed("VIEW_AUDIT", next), true
 				case "publications":
 					return routes.accessModule.ProtectAnyWorkspaceNamed("MANAGE_PUBLICATIONS", next), true
@@ -73,7 +79,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 				_ = uitransport.PatchOnce(runtime.pageStreamTrace, w, r, routes.accessModule.LoginBootstrapSignals(r))
 			}),
 			routeCatalog: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				signals, err := routes.workspaceModule.CatalogBootstrapSignals(r, applicationLayout(routes.accessModule, routes.agentModule, platform.assets, r))
+				signals, err := routes.workspaceModule.CatalogBootstrapSignals(r, applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r))
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return

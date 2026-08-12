@@ -9,10 +9,17 @@ import (
 
 func TestGeneratedAccessMutationContractsAreComplete(t *testing.T) {
 	expected := map[string]struct {
-		audit  string
-		target string
-		ui     bool
+		audit     string
+		target    string
+		guarantee string
+		ui        bool
 	}{
+		"updateCurrentPrincipal":        {audit: "principal.profile.updated"},
+		"changeCurrentPassword":         {audit: "password.changed"},
+		"uploadCurrentAvatar":           {audit: "principal.avatar.updated", guarantee: "best-effort"},
+		"deleteCurrentAvatar":           {audit: "principal.avatar.deleted", guarantee: "best-effort"},
+		"disablePrincipal":              {audit: "principal.disabled", target: "principal"},
+		"enablePrincipal":               {audit: "principal.enabled", target: "principal"},
 		"decideDeviceAuthorization":     {audit: "authoring.device.decided"},
 		"revokeCurrentAuthoringSession": {audit: "authoring.session.revoked", target: "session"},
 		"createPrincipal":               {audit: "principal.local_user.created"},
@@ -58,8 +65,12 @@ func TestGeneratedAccessMutationContractsAreComplete(t *testing.T) {
 			continue
 		}
 		command := contract.Command
-		if !command.Audit.Required || command.Audit.SuccessAction != want.audit || command.Audit.Guarantee != "transactional" {
-			t.Errorf("%s audit = %#v, want required transactional action %q", operationID, command.Audit, want.audit)
+		wantGuarantee := want.guarantee
+		if wantGuarantee == "" {
+			wantGuarantee = "transactional"
+		}
+		if !command.Audit.Required || command.Audit.SuccessAction != want.audit || command.Audit.Guarantee != wantGuarantee {
+			t.Errorf("%s audit = %#v, want required %s action %q", operationID, command.Audit, wantGuarantee, want.audit)
 		}
 		if command.Audit.Payload == nil || command.Audit.Payload.Schema == "" || command.Audit.Payload.SchemaVersion != 1 || command.Audit.Payload.Retention != "security" {
 			t.Errorf("%s audit payload = %#v, want versioned security payload", operationID, command.Audit.Payload)

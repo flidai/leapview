@@ -358,8 +358,19 @@ func (r *Repository) UpdateServicePrincipal(ctx context.Context, id string, inpu
 
 func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) error {
 	access.ClearAuthorizationCache(ctx)
-	if strings.TrimSpace(id) == "" {
+	id = strings.TrimSpace(id)
+	if id == "" {
 		return fmt.Errorf("service principal id is required")
+	}
+	principal, err := r.PrincipalByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if principal.Kind != access.PrincipalKindServicePrincipal {
+		return sql.ErrNoRows
+	}
+	if err := r.preparePrincipalDeletion(ctx, id); err != nil {
+		return err
 	}
 	return r.q.DeleteServicePrincipal(ctx, id)
 }

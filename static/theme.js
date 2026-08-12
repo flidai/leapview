@@ -2,7 +2,26 @@ const storageKey = 'leapview-color-mode';
 const root = document.documentElement;
 const media = window.matchMedia?.('(prefers-color-scheme: dark)');
 const nextModes = { system: 'light', light: 'dark', dark: 'system' };
-const modeLabels = { system: 'System theme', light: 'Light theme', dark: 'Dark theme' };
+const themes = {
+  system: { colorMode: 'auto', lightTheme: 'light', darkTheme: 'dark' },
+  light: { colorMode: 'light', lightTheme: 'light', darkTheme: 'dark' },
+  dark: { colorMode: 'dark', lightTheme: 'light', darkTheme: 'dark' },
+  dark_dimmed: { colorMode: 'dark', lightTheme: 'light', darkTheme: 'dark_dimmed' },
+  light_colorblind: { colorMode: 'light', lightTheme: 'light_colorblind', darkTheme: 'dark' },
+  dark_colorblind: { colorMode: 'dark', lightTheme: 'light', darkTheme: 'dark_colorblind' },
+  light_tritanopia: { colorMode: 'light', lightTheme: 'light_tritanopia', darkTheme: 'dark' },
+  dark_tritanopia: { colorMode: 'dark', lightTheme: 'light', darkTheme: 'dark_tritanopia' },
+};
+const modeLabels = {
+  system: 'System theme',
+  light: 'Light default',
+  dark: 'Dark default',
+  dark_dimmed: 'Soft dark',
+  light_colorblind: 'Light protanopia and deuteranopia',
+  dark_colorblind: 'Dark protanopia and deuteranopia',
+  light_tritanopia: 'Light tritanopia',
+  dark_tritanopia: 'Dark tritanopia',
+};
 let lastAppliedEvent = 0;
 
 window.addEventListener('unhandledrejection', (event) => {
@@ -18,17 +37,21 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 function storedMode() {
+  const preference = root.dataset.themePreference;
+  if (Object.hasOwn(themes, preference)) return preference;
   const saved = localStorage.getItem(storageKey);
-  if (saved === 'system' || saved === 'light' || saved === 'dark') return saved;
+  if (Object.hasOwn(themes, saved)) return saved;
   return 'system';
 }
 
 function setMode(mode, options = {}) {
-  const next = mode === 'light' || mode === 'dark' ? mode : 'system';
-  const resolved = next === 'system' ? (media?.matches ? 'dark' : 'light') : next;
-  root.dataset.colorMode = next === 'system' ? 'auto' : next;
-  root.dataset.lightTheme = 'light';
-  root.dataset.darkTheme = 'dark';
+  const next = Object.hasOwn(themes, mode) ? mode : 'system';
+  const theme = themes[next];
+  const resolved = theme.colorMode === 'auto' ? (media?.matches ? 'dark' : 'light') : theme.colorMode;
+  root.dataset.colorMode = theme.colorMode;
+  root.dataset.themePreference = next;
+  root.dataset.lightTheme = theme.lightTheme;
+  root.dataset.darkTheme = theme.darkTheme;
   root.style.colorScheme = resolved;
   localStorage.setItem(storageKey, next);
   for (const button of document.querySelectorAll('[data-theme-value]')) {

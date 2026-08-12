@@ -7,6 +7,7 @@ import '../navigation/sidebar'
 const emptyChrome: ChromeSignal = {
   sidebar: {
     workspaceTitle: '',
+    productName: 'LeapView',
     active: '',
     dashboardId: '',
     dashboardTitle: '',
@@ -87,11 +88,14 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
   private followSidebarLinkFromHost = (event: MouseEvent): void => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-    if (event.composedPath().some((node) => node instanceof HTMLAnchorElement)) return
 
     const sidebar = this.shadowRoot?.querySelector('lv-sidebar') as HTMLElement | null
     const root = sidebar?.shadowRoot
     if (!sidebar || !root) return
+
+    const path = event.composedPath()
+    if (event.target !== this && !path.includes(sidebar)) return
+    if (path.some((node) => node instanceof HTMLAnchorElement)) return
 
     const sidebarRect = sidebar.getBoundingClientRect()
     if (event.clientX < sidebarRect.left || event.clientX > sidebarRect.right || event.clientY < sidebarRect.top || event.clientY > sidebarRect.bottom) return
