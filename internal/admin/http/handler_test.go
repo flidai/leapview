@@ -70,6 +70,19 @@ func TestProfileRendersAdminOwnedPageAdapter(t *testing.T) {
 	}
 }
 
+func TestPersonalSettingsRejectAuthoringCredentials(t *testing.T) {
+	handler := Handler{ReadModel: ReadModel{}, CurrentCredential: func(*http.Request) (access.APICredential, bool) {
+		return access.APICredential{Authoring: &access.AuthoringSession{ID: "authoring-1"}}, true
+	}}
+	for _, path := range []string{"/admin/profile", "/admin/security", "/admin/api-tokens"} {
+		recorder := httptest.NewRecorder()
+		handler.Profile(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d, want %d", path, recorder.Code, http.StatusForbidden)
+		}
+	}
+}
+
 func TestBuildAdminPrincipalsKeepsEmailDuplicatesIDDistinct(t *testing.T) {
 	principals := []ui.AdminPrincipal{
 		{ID: "principal-old", Email: "analyst@example.com", DisplayName: "Sales Analyst", CreatedAt: "2026-08-06T00:00:00Z"},

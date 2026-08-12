@@ -21,22 +21,20 @@ import {
   type IconNode,
 } from 'lucide'
 import { lucideIcon } from './lucide-icons'
+import './user-avatar'
 
 export type EntityListItem = {
   id: string
   title: string
   description?: string
   href: string
+  avatarUrl?: string
   icon?: string
   meta?: string
   category?: string
-  group?: string
   columns?: Record<string, string | number>
-}
-
-export type EntityListGroup = {
-  id: string
-  label: string
+  columnTitles?: Record<string, string>
+  sortValues?: Record<string, string | number>
 }
 
 export type EntityListColumn = {
@@ -180,19 +178,6 @@ const entityListStyles = `
     font: var(--lv-type-caption);
   }
 
-  .entity-list-group-row th {
-    height: var(--control-medium-size);
-    border-radius: var(--lv-radius-default);
-    background: var(--lv-bg-panel-muted);
-    color: var(--lv-fg-muted);
-    padding-inline: var(--base-size-8);
-    font: var(--lv-type-caption);
-  }
-
-  .entity-list-group-count {
-    margin-left: var(--base-size-4);
-  }
-
   .entity-list-sort-button {
     display: inline-flex;
     max-width: 100%;
@@ -280,16 +265,10 @@ const entityListStyles = `
     color: var(--lv-asset-source-accent, var(--lv-fg-muted));
   }
 
-  .entity-list-icon-user,
   .entity-list-icon-application {
     width: var(--base-size-24);
     height: var(--base-size-24);
     border-radius: var(--lv-radius-full);
-  }
-
-  .entity-list-icon-user {
-    background: var(--lv-bg-accent-muted);
-    color: var(--lv-fg-accent);
   }
 
   .entity-list-identity {
@@ -378,13 +357,13 @@ class EntityList extends LitElement {
   @property({ attribute: false }) items: EntityListItem[] = []
   @property({ attribute: false }) columns: EntityListColumn[] = []
   @property({ attribute: false }) filters: EntityListFilter[] = []
-  @property({ attribute: false }) groups: EntityListGroup[] = []
   @property({ attribute: 'list-label' }) listLabel = 'List'
   @property({ attribute: 'export-filename' }) exportFilename = ''
   @property({ attribute: 'search-placeholder' }) searchPlaceholder = 'Search'
   @property({ attribute: 'empty-text' }) emptyText = 'No results found.'
   @property({ attribute: 'initial-query' }) initialQuery = ''
   @property({ attribute: 'active-filter' }) activeFilter = ''
+  @property({ type: Boolean, attribute: 'client-filter' }) clientFilter = false
   @state() private query = ''
   @state() private filter = ''
   @state() private sortColumnId = ''
@@ -476,7 +455,7 @@ class EntityList extends LitElement {
                   })}
                 </tr>
               </thead>
-              ${this.renderBodies(items, columns)}
+              <tbody>${items.map((item) => this.renderItem(item, columns))}</tbody>
             </table>
           </div>
         ` : html`<div class="entity-list-empty" role="status">${this.query.trim() ? 'No results match your search.' : this.emptyText}</div>`}
@@ -487,14 +466,28 @@ class EntityList extends LitElement {
   private visibleItems(): EntityListItem[] {
     // Query and filter state are server-driven. Keep rendering the last
     // authoritative payload while the debounced page-stream request is in
-    // flight instead of applying a second, client-side filter here.
-    const visible = this.items
+    // flight instead of applying a second, client-side filter here. Small,
+    // already-complete registries can opt into local filtering explicitly.
+    let visible = this.items
+    if (this.clientFilter) {
+      const query = this.query.trim().toLocaleLowerCase()
+      const filter = this.filter.trim().toLocaleLowerCase()
+      visible = visible.filter((item) => {
+        if (filter && filter !== 'all' && item.category?.toLocaleLowerCase() !== filter) return false
+        if (!query) return true
+        const searchable = [item.title, item.description, item.meta, ...Object.values(item.columns ?? {})]
+          .filter((value) => value != null)
+          .join(' ')
+          .toLocaleLowerCase()
+        return searchable.includes(query)
+      })
+    }
     const column = this.resolvedColumns().find((candidate) => candidate.id === this.sortColumnId)
     if (!column || column.sortable === false) return visible
     return visible
       .map((item, index) => ({ item, index }))
       .sort((left, right) => {
-        const result = compareEntityValues(this.itemValue(left.item, column), this.itemValue(right.item, column), this.sortDirection)
+        const result = compareEntityValues(this.sortValue(left.item, column), this.sortValue(right.item, column), this.sortDirection)
         return result || left.index - right.index
       })
       .map(({ item }) => item)
@@ -508,20 +501,8 @@ class EntityList extends LitElement {
     return column.id === 'name' ? item.title : item.columns?.[column.id] ?? ''
   }
 
-  private renderBodies(items: EntityListItem[], columns: EntityListColumn[]) {
-    if (!this.groups.length) return html`<tbody>${items.map((item) => this.renderItem(item, columns))}</tbody>`
-    return this.groups.map((group) => {
-      const groupedItems = items.filter((item) => item.group === group.id)
-      if (!groupedItems.length) return ''
-      return html`
-        <tbody aria-label=${`${group.label} ${groupedItems.length}`}>
-          <tr class="entity-list-group-row">
-            <th colspan=${columns.length} scope="colgroup">${group.label}<span class="entity-list-group-count">${groupedItems.length}</span></th>
-          </tr>
-          ${groupedItems.map((item) => this.renderItem(item, columns))}
-        </tbody>
-      `
-    })
+  private sortValue(item: EntityListItem, column: EntityListColumn): string | number {
+    return item.sortValues?.[column.id] ?? this.itemValue(item, column)
   }
 
   private renderItem(item: EntityListItem, columns: EntityListColumn[]) {
@@ -529,9 +510,9 @@ class EntityList extends LitElement {
       <tr class="entity-list-table-row">
         <th scope="row">
           <a class="entity-list-identity" href=${item.href}>
-            <span class=${`entity-list-icon entity-list-icon-${item.icon || 'default'}`} aria-hidden="true">
-              ${lucideIcon(entityIcon(item.icon))}
-            </span>
+            ${item.icon === 'user'
+              ? html`<lv-user-avatar .name=${item.title} .imageUrl=${item.avatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>`
+              : html`<span class=${`entity-list-icon entity-list-icon-${item.icon || 'default'}`} aria-hidden="true">${lucideIcon(entityIcon(item.icon))}</span>`}
             <span class="entity-list-copy">
               <span class="entity-list-title">${item.title}</span>
               ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
@@ -540,7 +521,8 @@ class EntityList extends LitElement {
         </th>
         ${columns.slice(1).map((column) => {
           const value = item.columns?.[column.id]
-          return html`<td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''}`} title=${String(value ?? '')}>${value == null || value === '' ? '—' : value}</td>`
+          const title = item.columnTitles?.[column.id] ?? String(value ?? '')
+          return html`<td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''}`} title=${title}>${value == null || value === '' ? '—' : value}</td>`
         })}
       </tr>
     `

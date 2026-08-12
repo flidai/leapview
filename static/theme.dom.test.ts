@@ -16,6 +16,11 @@ beforeAll(async () => {
       response.end(testDocument())
       return
     }
+    if (url.pathname === '/saved-theme') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument('dark'))
+      return
+    }
     if (url.pathname === '/theme.js') {
       response.setHeader('content-type', 'text/javascript')
       response.end(await readFile(join(process.cwd(), 'static/theme.js'), 'utf8'))
@@ -68,23 +73,83 @@ test('explicit theme changes still emit applied event', async () => {
     await page.waitForFunction(() => (window as any).themeBooted === true)
     await page.evaluate(() => {
       ;(window as any).themeAppliedEvents = []
-      document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: 'dark' } }))
+      document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: 'dark_dimmed' } }))
     })
     await page.waitForFunction(() => (window as any).themeAppliedEvents.length === 1)
 
     const state = await page.evaluate(() => ({
       events: (window as any).themeAppliedEvents,
       colorMode: document.documentElement.dataset.colorMode,
+      darkTheme: document.documentElement.dataset.darkTheme,
       colorScheme: document.documentElement.style.colorScheme,
       storedMode: localStorage.getItem('leapview-color-mode'),
     }))
 
     expect(state).toEqual({
-      events: [{ mode: 'dark', resolvedMode: 'dark' }],
+      events: [{ mode: 'dark_dimmed', resolvedMode: 'dark' }],
       colorMode: 'dark',
+      darkTheme: 'dark_dimmed',
       colorScheme: 'dark',
-      storedMode: 'dark',
+      storedMode: 'dark_dimmed',
     })
+  } finally {
+    await page.close()
+  }
+})
+
+test('supported Primer themes apply their native color mode and theme identifiers', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).themeBooted === true)
+    const states = await page.evaluate(async () => {
+      const preferences = [
+        'light',
+        'dark',
+        'dark_dimmed',
+        'light_colorblind',
+        'dark_colorblind',
+        'light_tritanopia',
+        'dark_tritanopia',
+      ]
+      const results = []
+      for (const mode of preferences) {
+        document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode } }))
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+        results.push({
+          mode,
+          colorMode: document.documentElement.dataset.colorMode,
+          lightTheme: document.documentElement.dataset.lightTheme,
+          darkTheme: document.documentElement.dataset.darkTheme,
+        })
+      }
+      return results
+    })
+
+    expect(states).toEqual([
+      { mode: 'light', colorMode: 'light', lightTheme: 'light', darkTheme: 'dark' },
+      { mode: 'dark', colorMode: 'dark', lightTheme: 'light', darkTheme: 'dark' },
+      { mode: 'dark_dimmed', colorMode: 'dark', lightTheme: 'light', darkTheme: 'dark_dimmed' },
+      { mode: 'light_colorblind', colorMode: 'light', lightTheme: 'light_colorblind', darkTheme: 'dark' },
+      { mode: 'dark_colorblind', colorMode: 'dark', lightTheme: 'light', darkTheme: 'dark_colorblind' },
+      { mode: 'light_tritanopia', colorMode: 'light', lightTheme: 'light_tritanopia', darkTheme: 'dark' },
+      { mode: 'dark_tritanopia', colorMode: 'dark', lightTheme: 'light', darkTheme: 'dark_tritanopia' },
+    ])
+  } finally {
+    await page.close()
+  }
+})
+
+test('authenticated saved theme overrides stale browser storage', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/saved-theme`)
+    await page.waitForFunction(() => (window as any).themeBooted === true)
+    const state = await page.evaluate(() => ({
+      colorMode: document.documentElement.dataset.colorMode,
+      storedMode: localStorage.getItem('leapview-color-mode'),
+    }))
+    expect(state).toEqual({ colorMode: 'dark', storedMode: 'dark' })
   } finally {
     await page.close()
   }
@@ -115,10 +180,10 @@ test('view transition abort rejections are treated as progressive enhancement mi
   }
 })
 
-function testDocument(): string {
+function testDocument(savedTheme = ''): string {
   return `
     <!doctype html>
-    <html data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">
+    <html data-color-mode="auto" data-light-theme="light" data-dark-theme="dark"${savedTheme ? ` data-theme-preference="${savedTheme}"` : ''}>
       <head>
         <script>
           localStorage.setItem('leapview-color-mode', 'light');

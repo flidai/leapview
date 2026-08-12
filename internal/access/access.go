@@ -13,6 +13,7 @@ import (
 
 var ErrAuditTransaction = apigenfailure.New("audit_transaction", "audit transaction failed")
 var ErrPrincipalAlreadyExists = apigenfailure.New("conflict", "principal already exists")
+var ErrPrincipalOwnsSecurableObject = apigenfailure.New("conflict", "principal owns a securable object; transfer ownership before deletion")
 
 type Privilege string
 
@@ -300,6 +301,51 @@ type Principal struct {
 	DisabledAt  string
 	CreatedAt   string
 	UpdatedAt   string
+	LastSeenAt  string
+}
+
+type ThemeMode string
+
+const (
+	ThemeSystem          ThemeMode = "system"
+	ThemeLight           ThemeMode = "light"
+	ThemeDark            ThemeMode = "dark"
+	ThemeDarkDimmed      ThemeMode = "dark_dimmed"
+	ThemeLightColorblind ThemeMode = "light_colorblind"
+	ThemeDarkColorblind  ThemeMode = "dark_colorblind"
+	ThemeLightTritanopia ThemeMode = "light_tritanopia"
+	ThemeDarkTritanopia  ThemeMode = "dark_tritanopia"
+)
+
+func ParseThemeMode(value string) (ThemeMode, bool) {
+	theme := ThemeMode(strings.TrimSpace(value))
+	switch theme {
+	case ThemeSystem, ThemeLight, ThemeDark, ThemeDarkDimmed,
+		ThemeLightColorblind, ThemeDarkColorblind,
+		ThemeLightTritanopia, ThemeDarkTritanopia:
+		return theme, true
+	default:
+		return "", false
+	}
+}
+
+type PrincipalPreferences struct {
+	PrincipalID string
+	Theme       ThemeMode
+	UpdatedAt   string
+}
+
+type PrincipalPreferencesReader interface {
+	PrincipalPreferences(context.Context, string) (PrincipalPreferences, error)
+}
+
+type PrincipalPreferencesWriter interface {
+	SetPrincipalTheme(context.Context, string, ThemeMode) (PrincipalPreferences, error)
+}
+
+type AuditedPrincipalPreferences interface {
+	PrincipalPreferencesReader
+	SetPrincipalThemeAudited(context.Context, string, ThemeMode) error
 }
 
 type Role struct {
@@ -535,6 +581,29 @@ type LocalCredential struct {
 	CreatedAt          string
 	UpdatedAt          string
 	PasswordChangedAt  string
+}
+
+type IdentityManagementSource string
+
+const (
+	IdentityManagementLocal    IdentityManagementSource = "local"
+	IdentityManagementExternal IdentityManagementSource = "external"
+	IdentityManagementSystem   IdentityManagementSource = "system"
+)
+
+// PrincipalIdentityManagement describes which subsystem owns profile fields
+// and whether a separate local credential exists. A principal can have both an
+// external identity and a local credential; in that case the external provider
+// still owns synchronized profile fields while the local password remains
+// changeable when local authentication is enabled.
+type PrincipalIdentityManagement struct {
+	Source           IdentityManagementSource
+	Provider         string
+	HasLocalPassword bool
+}
+
+type PrincipalIdentityManagementRepository interface {
+	PrincipalIdentityManagement(context.Context, string) (PrincipalIdentityManagement, error)
 }
 
 type PrincipalFilter struct {
@@ -799,6 +868,7 @@ type Repository interface {
 	EffectivePrivileges(ctx context.Context, principalID string, object ObjectRef) ([]Privilege, error)
 	EffectiveAccess(ctx context.Context, principalID string, object ObjectRef) ([]AuthorizationDecision, error)
 	UpsertSecurableObject(ctx context.Context, object ObjectRef, ownerPrincipalID string) (SecurableObject, error)
+	GetSecurableObject(ctx context.Context, object ObjectRef) (SecurableObject, error)
 	CreateGrant(ctx context.Context, input GrantInput) (Grant, error)
 	GetGrant(ctx context.Context, workspaceID, id string) (Grant, error)
 	DeleteGrant(ctx context.Context, workspaceID, id string) error

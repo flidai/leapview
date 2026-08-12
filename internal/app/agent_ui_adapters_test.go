@@ -2,11 +2,49 @@ package app
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	agentui "github.com/flidai/leapview/internal/agent/ui"
+	appshell "github.com/flidai/leapview/internal/app/shell"
+	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/staticasset"
 )
+
+func TestApplicationLayoutUsesCurrentPrincipalIdentity(t *testing.T) {
+	auth := accessmodule.NewAuth(nil, "", accessmodule.AuthConfig{DevBypass: true})
+	access, err := accessmodule.Build(t.Context(), accessmodule.Config{ExistingAuth: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/admin/profile", nil)
+	request = request.WithContext(accessmodule.WithPrincipal(request.Context(), accessmodule.LocalDeveloperPrincipal()))
+	layout := applicationLayout(access, nil, nil, staticasset.Resolver{}, request)(webpage.Context{Active: "admin", PageID: "profile"})
+	chrome := layout.Signal.(appshell.Chrome)
+	if chrome.Sidebar.UserName == nil || *chrome.Sidebar.UserName != "Local Developer" {
+		t.Fatalf("sidebar user name = %v, want Local Developer", chrome.Sidebar.UserName)
+	}
+}
+
+func TestAdminLayoutRequestRecognizesDocumentsAndAdminStreams(t *testing.T) {
+	tests := map[string]bool{
+		"/admin/profile":                     true,
+		"/connections":                       true,
+		"/connections/warehouse":             true,
+		"/updates?route=admin&section=audit": true,
+		"/workspaces":                        false,
+		"/updates?route=workspace":           false,
+	}
+	for target, want := range tests {
+		request := httptest.NewRequest("GET", target, nil)
+		if got := adminLayoutRequest(request); got != want {
+			t.Errorf("adminLayoutRequest(%q) = %t, want %t", target, got, want)
+		}
+	}
+}
 
 func TestDashboardChatAdapterPreservesBrowserContract(t *testing.T) {
 	source := agentui.ChatSignal{

@@ -15,8 +15,31 @@ ON CONFLICT(id) DO NOTHING;
 -- name: GetPrincipal :one
 SELECT * FROM principals WHERE id = ?;
 
+-- name: GetPrincipalPreferences :one
+SELECT principal_id, theme, updated_at
+FROM principal_preferences
+WHERE principal_id = ?;
+
+-- name: UpsertPrincipalTheme :one
+INSERT INTO principal_preferences (principal_id, theme, updated_at)
+VALUES (sqlc.arg(principal_id), sqlc.arg(theme), CURRENT_TIMESTAMP)
+ON CONFLICT(principal_id) DO UPDATE SET
+  theme = excluded.theme,
+  updated_at = CURRENT_TIMESTAMP
+RETURNING principal_id, theme, updated_at;
+
 -- name: DeletePrincipalByID :execresult
 DELETE FROM principals WHERE id = sqlc.arg(id);
+
+-- name: PrincipalOwnsSecurableObject :one
+SELECT EXISTS(
+  SELECT 1 FROM securable_objects WHERE owner_principal_id = sqlc.arg(principal_id)
+);
+
+-- name: DeleteDirectPrincipalGrants :exec
+DELETE FROM grants
+WHERE subject_type IN ('principal', 'service_principal')
+  AND subject_id = sqlc.arg(principal_id);
 
 -- name: GetPrincipalByEmail :one
 SELECT * FROM principals WHERE lower(email) = lower(?) AND email <> '' LIMIT 1;
@@ -396,6 +419,12 @@ UPDATE api_tokens
 SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
 WHERE principal_id = ? AND revoked_at IS NULL;
 
+-- name: DeactivateOAuthSessionsByPrincipal :exec
+UPDATE oauth_sessions
+SET active = 0
+WHERE active = 1
+  AND json_extract(request_json, '$.session.subject') = sqlc.arg(principal_id);
+
 -- name: CreateServicePrincipalSecret :exec
 INSERT INTO service_principal_secrets (id, service_principal_id, name, secret_fingerprint, secret_verifier, expires_at)
 VALUES (?, ?, ?, ?, ?, ?);
@@ -450,6 +479,32 @@ SELECT principals.id, principals.email, principals.display_name,
        principals.created_at, principals.updated_at, principals.kind, principals.disabled_at
 FROM principals CROSS JOIN params
 WHERE (params.email = '' OR lower(principals.email) = lower(params.email))
+  AND (params.search = '' OR lower(principals.email) LIKE '%' || lower(params.search) || '%'
+       OR lower(display_name) LIKE '%' || lower(params.search) || '%')
+ORDER BY principals.email, principals.id;
+
+-- name: ListPrincipalsWithActivity :many
+WITH params AS (
+  SELECT CAST(sqlc.arg(email) AS TEXT) AS email, CAST(sqlc.arg(search) AS TEXT) AS search
+), human_activity AS (
+  SELECT principal_id, datetime(last_seen_at) AS seen_at
+  FROM sessions
+  UNION ALL
+  SELECT principal_id, datetime(last_used_at) AS seen_at
+  FROM oauth_authoring_sessions
+  WHERE kind = 'human_cli' AND last_used_at IS NOT NULL
+), latest_human_activity AS (
+  SELECT principal_id, strftime('%Y-%m-%dT%H:%M:%SZ', MAX(seen_at)) AS last_seen_at
+  FROM human_activity
+  GROUP BY principal_id
+)
+SELECT principals.id, principals.email, principals.display_name,
+       principals.created_at, principals.updated_at, principals.kind, principals.disabled_at,
+       CASE WHEN principals.kind = 'user' THEN COALESCE(latest_human_activity.last_seen_at, '') ELSE '' END AS last_seen_at
+FROM principals CROSS JOIN params
+LEFT JOIN latest_human_activity ON latest_human_activity.principal_id = principals.id
+WHERE (params.email = '' OR lower(principals.email) = lower(params.email))
+  AND principals.kind = 'user'
   AND (params.search = '' OR lower(principals.email) LIKE '%' || lower(params.search) || '%'
        OR lower(display_name) LIKE '%' || lower(params.search) || '%')
 ORDER BY principals.email, principals.id;
@@ -831,6 +886,22 @@ WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id);
 UPDATE oauth_authoring_sessions
 SET revoked_at = COALESCE(revoked_at, sqlc.arg(revoked_at))
 WHERE id = sqlc.arg(id);
+
+-- name: RevokeAuthoringSessionsByPrincipal :exec
+UPDATE oauth_authoring_sessions
+SET revoked_at = COALESCE(revoked_at, sqlc.arg(revoked_at))
+WHERE principal_id = sqlc.arg(principal_id) AND revoked_at IS NULL;
+
+-- name: DeactivateAuthoringCredentialsByPrincipal :exec
+UPDATE oauth_authoring_credentials
+SET active = 0,
+    replaced_at = COALESCE(replaced_at, sqlc.arg(replaced_at))
+WHERE active = 1
+  AND session_id IN (
+    SELECT id
+    FROM oauth_authoring_sessions
+    WHERE principal_id = sqlc.arg(principal_id)
+  );
 
 -- name: ListAuthoringSessions :many
 SELECT id, kind, client_id, principal_id, target_id, project_id, privileges_json,

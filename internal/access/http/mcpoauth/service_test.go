@@ -128,6 +128,82 @@ func TestAuthorizationCodePKCERefreshAndRevocation(t *testing.T) {
 	}
 }
 
+func TestPrincipalDisableThenEnableDoesNotReviveMCPOAuthTokens(t *testing.T) {
+	ctx := context.Background()
+	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repo := accesssqlite.NewRepository(store.SQLDB())
+	principal, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{
+		Email: "disabled-mcp@example.com", DisplayName: "Disabled MCP User",
+	})
+	if err != nil {
+		t.Fatalf("create principal: %v", err)
+	}
+	service, err := mcpoauth.New(store.SQLDB(), repo, mcpoauth.Config{
+		IssuerURL: testIssuer, ResourceURL: testResource,
+		Secret: []byte("0123456789abcdef0123456789abcdef"),
+	})
+	if err != nil {
+		t.Fatalf("new OAuth service: %v", err)
+	}
+
+	registered := registerClient(t, service)
+	verifier := "abcdefghijklmnopqrstuvwxyz-._~ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	challengeBytes := sha256.Sum256([]byte(verifier))
+	authorizeURL := testIssuer + "/oauth/authorize?" + url.Values{
+		"response_type": {"code"}, "client_id": {registered.ClientID},
+		"redirect_uri": {testRedirect}, "scope": {"mcp:use offline_access"},
+		"state": {"disable-state"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(challengeBytes[:])},
+		"code_challenge_method": {"S256"}, "resource": {testResource},
+	}.Encode()
+	authorizeResponse := httptest.NewRecorder()
+	service.Authorize(authorizeResponse, httptest.NewRequest(http.MethodPost, authorizeURL, nil), principal.ID, true)
+	if authorizeResponse.Code != http.StatusSeeOther {
+		t.Fatalf("authorize status = %d body=%s", authorizeResponse.Code, authorizeResponse.Body.String())
+	}
+	callback, err := url.Parse(authorizeResponse.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := exchangeCode(t, service, registered.ClientID, callback.Query().Get("code"), verifier)
+	if token.AccessToken == "" || token.RefreshToken == "" {
+		t.Fatalf("token response = %#v", token)
+	}
+	if _, err := service.Authenticate(ctx, token.AccessToken); err != nil {
+		t.Fatalf("authenticate before disable: %v", err)
+	}
+
+	if _, err := repo.DisablePrincipal(ctx, principal.ID); err != nil {
+		t.Fatalf("disable principal: %v", err)
+	}
+	if _, err := repo.EnablePrincipal(ctx, principal.ID); err != nil {
+		t.Fatalf("enable principal: %v", err)
+	}
+	if _, err := service.Authenticate(ctx, token.AccessToken); err == nil {
+		t.Fatal("pre-disable MCP access token revived after enable")
+	}
+	assertOAuthError(t, http.StatusBadRequest, func(rec *httptest.ResponseRecorder) {
+		service.Token(rec, formRequest("/oauth/token", url.Values{
+			"grant_type": {"refresh_token"}, "client_id": {registered.ClientID},
+			"refresh_token": {token.RefreshToken}, "resource": {testResource},
+		}))
+	})
+	var active int
+	if err := store.SQLDB().QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM oauth_sessions
+WHERE active = 1
+  AND json_extract(request_json, '$.session.subject') = ?`, principal.ID).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 0 {
+		t.Fatalf("active MCP OAuth sessions after enable = %d, want 0", active)
+	}
+}
+
 func TestRejectsMissingPKCEAndWrongResource(t *testing.T) {
 	service := testService(t)
 	registered := registerClient(t, service)

@@ -13,6 +13,63 @@ type WorkspaceResponse struct {
 	UpdatedAt            string `json:"updatedAt"`
 }
 
+type WorkspaceAdministrationSubjectResponse struct {
+	SubjectType string `json:"subjectType"`
+	SubjectID   string `json:"subjectId"`
+	Email       string `json:"email,omitempty"`
+	DisplayName string `json:"displayName"`
+	Role        string `json:"role,omitempty"`
+}
+
+type WorkspaceAdministrationRuntimeResponse struct {
+	Environment              string `json:"environment"`
+	ActiveServingStateID     string `json:"activeServingStateId,omitempty"`
+	ActiveServingStateStatus string `json:"activeServingStateStatus,omitempty"`
+	ActiveServingStateSince  string `json:"activeServingStateSince,omitempty"`
+	ProjectID                string `json:"projectId,omitempty"`
+	CurrentDeploymentID      string `json:"currentDeploymentId,omitempty"`
+	CurrentDeploymentStatus  string `json:"currentDeploymentStatus,omitempty"`
+	CurrentDeploymentSince   string `json:"currentDeploymentSince,omitempty"`
+	CurrentReleaseID         string `json:"currentReleaseId,omitempty"`
+}
+
+type WorkspaceAdministrationCapabilitiesResponse struct {
+	ManageWorkspace    bool `json:"manageWorkspace"`
+	ManageAccess       bool `json:"manageAccess"`
+	ManagePublications bool `json:"managePublications"`
+	ManageConnections  bool `json:"manageConnections"`
+	ViewManagedData    bool `json:"viewManagedData"`
+	IngestManagedData  bool `json:"ingestManagedData"`
+	PublishReleases    bool `json:"publishReleases"`
+	RequestDeployments bool `json:"requestDeployments"`
+	ViewDeployments    bool `json:"viewDeployments"`
+	UseAgent           bool `json:"useAgent"`
+	ViewAgent          bool `json:"viewAgent"`
+}
+
+type WorkspaceAdministrationLinksResponse struct {
+	Self               string `json:"self"`
+	Workspace          string `json:"workspace"`
+	Groups             string `json:"groups,omitempty"`
+	Roles              string `json:"roles,omitempty"`
+	RoleBindings       string `json:"roleBindings,omitempty"`
+	Grants             string `json:"grants,omitempty"`
+	Publications       string `json:"publications,omitempty"`
+	ManagedConnections string `json:"managedConnections,omitempty"`
+	Releases           string `json:"releases,omitempty"`
+	Deployments        string `json:"deployments,omitempty"`
+	AgentConversations string `json:"agentConversations,omitempty"`
+}
+
+type WorkspaceAdministrationResponse struct {
+	Workspace      WorkspaceResponse                           `json:"workspace"`
+	Owner          *WorkspaceAdministrationSubjectResponse     `json:"owner,omitempty"`
+	Administrators []WorkspaceAdministrationSubjectResponse    `json:"administrators"`
+	Runtime        WorkspaceAdministrationRuntimeResponse      `json:"runtime"`
+	Capabilities   WorkspaceAdministrationCapabilitiesResponse `json:"capabilities"`
+	Links          WorkspaceAdministrationLinksResponse        `json:"links"`
+}
+
 type SearchParams struct {
 	Query            *string
 	Workspaces       *[]string

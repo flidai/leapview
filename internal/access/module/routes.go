@@ -38,6 +38,13 @@ func (m *Module) MountAuthenticatedBrowser(r chi.Router) {
 	r.Method(http.MethodPost, "/device", deviceAuthorization)
 	r.Post("/auth/logout", m.Logout)
 	r.Post("/auth/local/password", m.LocalPassword)
+	r.Method(http.MethodPut, "/profile/avatar", m.ProtectHandler("", http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		m.handler.UploadCurrentAvatar(w, request, request.Header.Get("Content-Type"))
+	})))
+	r.Method(http.MethodDelete, "/profile/avatar", m.ProtectHandler("", http.HandlerFunc(m.handler.DeleteCurrentAvatar)))
+	r.Method(http.MethodGet, "/profile/avatars/{principal}/{digest}", m.ProtectHandler("", http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		m.handler.GetPrincipalAvatar(w, request, chi.URLParam(request, "principal"), chi.URLParam(request, "digest"))
+	})))
 }
 
 func (m *Module) MountLocalLogin(r chi.Router) {

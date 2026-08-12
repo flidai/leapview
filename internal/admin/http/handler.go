@@ -6,6 +6,10 @@ import (
 	"strings"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
+	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/admin/personalsettings"
+	"github.com/flidai/leapview/internal/admin/productsettings"
+	adminsettings "github.com/flidai/leapview/internal/admin/settings"
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
@@ -21,6 +25,13 @@ type Handler struct {
 	EnsureClientID      func(nethttp.ResponseWriter, *nethttp.Request)
 	Broker              *pagestream.Broker
 	PublicationMutation func(*nethttp.Request, uisignals.AdminPublicationCommand) error
+	PersonalSettings    *personalsettings.Handler
+	ProductSettings     *productsettings.Handler
+	SettingsRepository  adminsettings.Repository
+	WorkspaceSettings   adminsettings.WorkspaceAdministrationReader
+	WorkspaceAccess     access.WorkspaceAccessService
+	SettingsEnvironment string
+	CurrentCredential   func(*nethttp.Request) (access.APICredential, bool)
 }
 
 type storageCommandSignals struct {
@@ -29,6 +40,15 @@ type storageCommandSignals struct {
 
 type publicationCommandSignals struct {
 	AdminPublicationCommand uisignals.AdminPublicationCommand `json:"adminPublicationCommand"`
+}
+
+type serviceAccountCommandSignals struct {
+	Command adminsettings.ServiceAccountCommand `json:"adminServiceAccountCommand"`
+}
+
+type auditLogCommandSignals struct {
+	Command adminsettings.AuditLogCommand `json:"adminAuditLogCommand"`
+	Current adminsettings.AuditLogSignal  `json:"adminAuditLog"`
 }
 
 type entityListSignals struct {
@@ -41,8 +61,36 @@ func (h Handler) AdminRoot(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h Handler) Profile(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
 	h.renderPage(w, r, "profile")
 }
+
+func (h Handler) Security(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	h.renderPage(w, r, "security")
+}
+func (h Handler) APITokens(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	h.renderPage(w, r, "api-tokens")
+}
+func (h Handler) General(w nethttp.ResponseWriter, r *nethttp.Request) { h.renderPage(w, r, "general") }
+func (h Handler) Workspaces(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.renderPage(w, r, "workspaces-admin")
+}
+func (h Handler) ServiceAccounts(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.renderPage(w, r, "service-accounts")
+}
+func (h Handler) Authentication(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.renderPage(w, r, "authentication")
+}
+func (h Handler) Audit(w nethttp.ResponseWriter, r *nethttp.Request)  { h.renderPage(w, r, "audit") }
+func (h Handler) System(w nethttp.ResponseWriter, r *nethttp.Request) { h.renderPage(w, r, "system") }
 
 func (h Handler) Principals(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "principals")
@@ -165,10 +213,94 @@ func (h Handler) PublicationCommand(w nethttp.ResponseWriter, r *nethttp.Request
 	_ = pagestream.Redirect(w, r, "/admin/publications")
 }
 
+func (h Handler) PersonalSettingsCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	if h.PersonalSettings == nil {
+		nethttp.Error(w, "personal settings are unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	h.PersonalSettings.Command(w, r)
+}
+
+func (h Handler) ProductSettingsCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.ProductSettings == nil {
+		nethttp.Error(w, "product settings are unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	h.ProductSettings.Command(w, r)
+}
+
+func (h Handler) ServiceAccountCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.SettingsRepository == nil {
+		nethttp.Error(w, "service accounts are unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	var request serviceAccountCommandSignals
+	if err := pagestream.ReadSignals(r, &request); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(request.Command.Action) == "select" {
+		state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, request.Command.AccountID)
+		if err != nil {
+			nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+			return
+		}
+		_ = pagestream.PatchResponse(w, r, map[string]any{"adminServiceAccounts": state})
+		return
+	}
+	actorID := ""
+	if h.ReadModel.CurrentPrincipal != nil {
+		if principal, ok := h.ReadModel.CurrentPrincipal(r); ok {
+			actorID = principal.ID
+		}
+	}
+	secret, err := adminsettings.ApplyServiceAccountCommandAudited(r.Context(), h.SettingsRepository, actorID, request.Command)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, request.Command.AccountID)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	state.CreatedSecret = secret
+	_ = pagestream.PatchResponse(w, r, map[string]any{"adminServiceAccounts": state})
+}
+
+func (h Handler) AuditLogCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.SettingsRepository == nil {
+		nethttp.Error(w, "audit log is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	var request auditLogCommandSignals
+	if err := pagestream.ReadSignals(r, &request); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	command := adminsettings.NormalizeAuditLogCommand(request.Command)
+	state, err := adminsettings.LoadAuditLog(r.Context(), h.SettingsRepository, command.Filters, command.PageToken, command.Limit)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	if command.Action == "load_more" {
+		state.Items = append(append([]adminsettings.AuditEventSignal{}, request.Current.Items...), state.Items...)
+		state.LoadedCount = len(state.Items)
+	}
+	_ = pagestream.PatchResponse(w, r, map[string]any{"adminAuditLog": state})
+}
+
 func (h Handler) BootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	active := strings.TrimSpace(r.URL.Query().Get("section"))
-	if active == "" || active == "general" {
+	if active == "" {
 		active = "profile"
+	}
+	if (active == "profile" || active == "security" || active == "api-tokens") && h.rejectAuthoringCredential(w, r) {
+		return
 	}
 	var listState entityListSignals
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -214,7 +346,80 @@ func (h Handler) BootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) 
 	}
 	data.ListQuery = query
 	data.ListFilter = filter
-	h.patchAndWait(w, r, ui.AdminBootstrapSignals(active, data, h.layout(r)))
+	signals := ui.AdminBootstrapSignals(active, data, h.layout(r))
+	if err := h.addSettingsSignals(r, active, signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	h.patchAndWait(w, r, signals)
+}
+
+func (h Handler) rejectAuthoringCredential(w nethttp.ResponseWriter, r *nethttp.Request) bool {
+	if h.CurrentCredential == nil {
+		return false
+	}
+	credential, ok := h.CurrentCredential(r)
+	if !ok || credential.Authoring == nil {
+		return false
+	}
+	nethttp.Error(w, "personal settings require a browser session or personal API token", nethttp.StatusForbidden)
+	return true
+}
+
+func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals map[string]any) error {
+	switch active {
+	case "profile", "security", "api-tokens":
+		if h.PersonalSettings == nil {
+			return nil
+		}
+		state, err := h.PersonalSettings.State(r)
+		if err != nil {
+			return err
+		}
+		for key, value := range personalsettings.BootstrapSignals(state) {
+			signals[key] = value
+		}
+	case "general", "authentication", "system":
+		if h.ProductSettings == nil {
+			return nil
+		}
+		state, err := h.ProductSettings.Bootstrap(r, active)
+		if err != nil {
+			return err
+		}
+		signals["productSettings"] = productsettings.Payload(state)
+		signals["productSettingsCommand"] = map[string]any{}
+	case "workspaces-admin":
+		if h.WorkspaceSettings == nil {
+			return nil
+		}
+		state, err := adminsettings.LoadWorkspaceRegistry(r.Context(), h.WorkspaceSettings, h.WorkspaceAccess, h.SettingsEnvironment)
+		if err != nil {
+			return err
+		}
+		signals["adminWorkspaces"] = state
+	case "service-accounts":
+		if h.SettingsRepository == nil {
+			return nil
+		}
+		state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, "")
+		if err != nil {
+			return err
+		}
+		signals["adminServiceAccounts"] = state
+		signals["adminServiceAccountCommand"] = adminsettings.ServiceAccountCommand{}
+	case "audit":
+		if h.SettingsRepository == nil {
+			return nil
+		}
+		state, err := adminsettings.LoadAuditLog(r.Context(), h.SettingsRepository, adminsettings.AuditLogFilters{}, "", 50)
+		if err != nil {
+			return err
+		}
+		signals["adminAuditLog"] = state
+		signals["adminAuditLogCommand"] = adminsettings.AuditLogCommand{Action: "reset", Limit: 50}
+	}
+	return nil
 }
 
 func (h Handler) QueryUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -298,6 +503,8 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 		return h.readModel().PrincipalsListData(r)
 	case "groups":
 		return h.readModel().GroupsListData(r)
+	case "profile", "security", "api-tokens", "general", "workspaces-admin", "service-accounts", "authentication", "audit", "system":
+		return h.readModel().SettingsData(r)
 	}
 	data, err := h.adminData(r)
 	if err != nil {

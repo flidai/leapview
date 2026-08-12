@@ -212,6 +212,17 @@ func (r *Repository) UpsertSecurableObject(ctx context.Context, object access.Ob
 	return r.securableObjectByID(ctx, objectID)
 }
 
+func (r *Repository) GetSecurableObject(ctx context.Context, object access.ObjectRef) (access.SecurableObject, error) {
+	objectID, exists, err := r.lookupSecurableObjectID(ctx, object)
+	if err != nil {
+		return access.SecurableObject{}, err
+	}
+	if !exists {
+		return access.SecurableObject{}, sql.ErrNoRows
+	}
+	return r.securableObjectByID(ctx, objectID)
+}
+
 func (r *Repository) CreateGrant(ctx context.Context, input access.GrantInput) (access.Grant, error) {
 	access.ClearAuthorizationCache(ctx)
 	id, err := newID("grant")

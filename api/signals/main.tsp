@@ -1,5 +1,8 @@
 import "@yacobolo/apigen";
 import "../visualization/main.tsp";
+import "./personal-settings.tsp";
+import "./product_settings.tsp";
+import "./settings.tsp";
 
 @apigen.`package`(#{
   title: "LeapView UI Signal Contracts",
@@ -62,17 +65,6 @@ model AdminMetricSignal {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
-model AdminProfileSignal {
-  `displayName`: string;
-  `email`: string;
-  `id`: string;
-  `profilePictureUrl`?: string;
-  `title`: string;
-  `username`: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminPublicationSignal {
   `workspaceId`: string;
   `name`: string;
@@ -102,31 +94,23 @@ model AdminPublicationCommand {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminDirectoryListItemSignal {
+  `avatarUrl`?: string;
   `email`: string;
   `groupCount`: int64;
   `href`: string;
   `id`: string;
   `joinedAt`: string;
-  `kind`: string;
+  `lastSeenAt`: string;
   `name`: string;
-  `role`: string;
   `status`: string;
   `username`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
-model AdminDirectoryListGroupSignal {
-  `id`: string;
-  `items`: AdminDirectoryListItemSignal[];
-  `label`: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminDirectoryListSignal {
   `filterLabel`: string;
-  `groups`: AdminDirectoryListGroupSignal[];
+  `items`: AdminDirectoryListItemSignal[];
   `searchPlaceholder`: string;
 }
 
@@ -157,7 +141,6 @@ model AdminPageSignal {
 	`listFilterOptions`?: string[];
 	`listQuery`?: string;
 	`metrics`?: AdminMetricSignal[];
-	`profile`?: AdminProfileSignal;
 	`publications`?: AdminPublicationSignal[];
   `sections`?: AdminContentSectionSignal[];
   `storage`?: AdminStorageSignal;
@@ -1542,6 +1525,10 @@ model SidebarSignal {
   `modelTitle`?: string;
   `pageTitle`: string;
   `primaryAction`?: SidebarActionSignal;
+  `productLogoUrl`?: string;
+  `productName`: string;
+  `userAvatarUrl`?: string;
+  `userName`?: string;
   `userRole`?: string;
   `workspaceTitle`: string;
 }

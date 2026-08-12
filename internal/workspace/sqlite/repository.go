@@ -104,6 +104,31 @@ func (r *Repository) ByIDWithActiveMetadata(ctx context.Context, id workspace.Wo
 	return mapWorkspaceWithActiveMetadata(row.ID, queryText(row.Title), queryText(row.Description), row.ActiveServingStateID, row.CreatedAt, row.UpdatedAt), nil
 }
 
+func (r *Repository) AdministrationByID(ctx context.Context, id workspace.WorkspaceID, environment string) (workspace.AdministrationState, error) {
+	environment = normalizedEnvironment(environment)
+	row, err := r.q.GetWorkspaceAdministration(ctx, platformdb.GetWorkspaceAdministrationParams{
+		Environment: environment,
+		ID:          string(id),
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return workspace.AdministrationState{}, workspace.ErrNotFound
+		}
+		return workspace.AdministrationState{}, err
+	}
+	return workspace.AdministrationState{
+		Workspace: workspace.Summary{
+			ID: workspace.WorkspaceID(row.ID), Title: row.Title, Description: row.Description,
+			ActiveServingStateID: workspace.ServingStateID(row.ActiveServingStateID),
+			CreatedAt:            row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		},
+		Environment: environment, ActiveServingStateStatus: row.ActiveServingStateStatus,
+		ActiveServingStateSince: row.ActiveServingStateSince, ProjectID: row.ProjectID,
+		CurrentDeploymentID: row.CurrentDeploymentID, CurrentDeploymentStatus: row.CurrentDeploymentStatus,
+		CurrentDeploymentSince: row.CurrentDeploymentSince, CurrentReleaseID: row.CurrentReleaseID,
+	}, nil
+}
+
 func (r *Repository) ActiveServingStateGraph(ctx context.Context, id workspace.WorkspaceID, environment string) (workspace.AssetGraph, bool, error) {
 	activeServingState, err := r.q.GetActiveServingState(ctx, platformdb.GetActiveServingStateParams{
 		WorkspaceID: string(id),

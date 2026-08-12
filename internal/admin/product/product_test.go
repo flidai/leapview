@@ -1,0 +1,164 @@
+package product
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"path/filepath"
+	"testing"
+
+	"github.com/flidai/leapview/internal/platform"
+)
+
+func TestServicePersistsIdentityLogoAndAtomicAudit(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO principals (id, email, display_name) VALUES ('principal_admin', 'admin@example.test', 'Admin')`); err != nil {
+		t.Fatal(err)
+	}
+	blobs := &memoryBlobs{values: map[string][]byte{}}
+	service, err := New(store.SQLDB(), blobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	initial, err := service.Get(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.DisplayName != "LeapView" || initial.Revision != 1 || initial.Logo != nil {
+		t.Fatalf("initial identity = %#v", initial)
+	}
+
+	updated, err := service.SetDisplayName(t.Context(), initial.Revision, "  Acme Analytics  ", Mutation{PrincipalID: "principal_admin", RequestID: "req_1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName != "Acme Analytics" || updated.Revision != 2 {
+		t.Fatalf("updated identity = %#v", updated)
+	}
+
+	logoBytes := testPNG(t, 80, 40)
+	withLogo, err := service.UploadLogo(t.Context(), updated.Revision, "image/png", bytes.NewReader(logoBytes), Mutation{PrincipalID: "principal_admin", RequestID: "req_2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withLogo.Logo == nil || withLogo.Logo.Width != 80 || withLogo.Logo.Height != 40 || withLogo.Revision != 3 {
+		t.Fatalf("identity with logo = %#v", withLogo)
+	}
+	wantDigest := sha256.Sum256(logoBytes)
+	if withLogo.Logo.SHA256 != hex.EncodeToString(wantDigest[:]) {
+		t.Fatalf("logo digest = %q", withLogo.Logo.SHA256)
+	}
+
+	reader, logo, err := service.OpenLogo(t.Context(), withLogo.Logo.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(reader)
+	_ = reader.Close()
+	if !bytes.Equal(got, logoBytes) || logo != *withLogo.Logo {
+		t.Fatalf("opened logo metadata=%#v bytes=%d", logo, len(got))
+	}
+
+	var auditCount int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE target_type = 'product' AND target_id = 'instance' AND principal_id = 'principal_admin'`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 2 {
+		t.Fatalf("product audit events = %d, want 2", auditCount)
+	}
+
+	reset, err := service.ResetIdentity(t.Context(), withLogo.Revision, Mutation{PrincipalID: "principal_admin", RequestID: "req_3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset.DisplayName != DefaultDisplayName || reset.Logo != nil || reset.Revision != 4 {
+		t.Fatalf("reset identity = %#v", reset)
+	}
+	var resetAction string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT action FROM audit_events WHERE request_id = 'req_3'`).Scan(&resetAction); err != nil {
+		t.Fatal(err)
+	}
+	if resetAction != "product.identity.reset" {
+		t.Fatalf("reset audit action = %q", resetAction)
+	}
+}
+
+func TestServiceRejectsStaleRevisionAndInvalidLogoWithoutAudit(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	blobs := &memoryBlobs{values: map[string][]byte{}}
+	service, err := New(store.SQLDB(), blobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.SetDisplayName(t.Context(), 99, "Stale", Mutation{}); err != ErrPrecondition {
+		t.Fatalf("stale update error = %v", err)
+	}
+	if _, err := service.UploadLogo(t.Context(), 99, "image/png", bytes.NewReader(testPNG(t, 2, 2)), Mutation{}); err != ErrPrecondition {
+		t.Fatalf("stale logo error = %v", err)
+	}
+	if len(blobs.values) != 0 {
+		t.Fatalf("stale logo persisted %d blobs", len(blobs.values))
+	}
+	if _, err := service.UploadLogo(t.Context(), 1, "image/svg+xml", bytes.NewBufferString("<svg/>"), Mutation{}); err == nil {
+		t.Fatal("SVG logo upload succeeded")
+	}
+	if _, err := service.UploadLogo(t.Context(), 1, "image/jpeg", bytes.NewReader(testPNG(t, 2, 2)), Mutation{}); err == nil {
+		t.Fatal("mismatched logo Content-Type succeeded")
+	}
+	var auditCount int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE target_type = 'product'`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 0 {
+		t.Fatalf("failed mutations wrote %d audit events", auditCount)
+	}
+}
+
+func testPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+	value := image.NewNRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			value.Set(x, y, color.NRGBA{R: 20, G: 80, B: 140, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, value); err != nil {
+		t.Fatal(err)
+	}
+	return encoded.Bytes()
+}
+
+type memoryBlobs struct{ values map[string][]byte }
+
+func (s *memoryBlobs) Put(_ context.Context, expected Blob, body io.Reader) (Blob, error) {
+	value, err := io.ReadAll(body)
+	if err != nil {
+		return Blob{}, err
+	}
+	s.values[expected.SHA256] = value
+	return expected, nil
+}
+
+func (s *memoryBlobs) Open(_ context.Context, digest string) (io.ReadCloser, error) {
+	value, ok := s.values[digest]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return io.NopCloser(bytes.NewReader(value)), nil
+}

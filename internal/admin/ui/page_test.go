@@ -25,7 +25,6 @@ func TestAdminBootstrapSignalsUseAdminOwnedContracts(t *testing.T) {
 			AuthConfigured:    true,
 			AccessConfigured:  true,
 			AccessStatusLabel: "Configured",
-			Profile:           AdminProfile{Email: "owner@example.com", DisplayName: "Owner", Username: "owner"},
 		}, provider,
 	)
 
@@ -33,11 +32,11 @@ func TestAdminBootstrapSignalsUseAdminOwnedContracts(t *testing.T) {
 	if !ok {
 		t.Fatalf("chrome = %T, want admin signal contract", signals["chrome"])
 	}
-	if chrome.Sidebar.Active != "profile" || !chrome.Sidebar.Compact || chrome.Sidebar.History != nil || len(chrome.Sidebar.Groups) != 4 {
+	if chrome.Sidebar.Active != "profile" || !chrome.Sidebar.Compact || chrome.Sidebar.History != nil || len(chrome.Sidebar.Groups) != 5 {
 		t.Fatalf("chrome = %#v", chrome)
 	}
 	page, ok := signals["page"].(uisignals.AdminPageSignal)
-	if !ok || page.Kind != uisignals.RouteAdmin || page.Active != "profile" || page.Profile == nil || page.Profile.Email != "owner@example.com" {
+	if !ok || page.Kind != uisignals.RouteAdmin || page.Active != "profile" || page.HeaderDetail != "Manage your photo and display name." {
 		t.Fatalf("page = %#v", signals["page"])
 	}
 	runtime, ok := signals["runtime"].(uisignals.RouteRuntimeSignal)
@@ -82,6 +81,35 @@ func TestAdminListResultPatchesDoNotEchoSearchState(t *testing.T) {
 	}
 }
 
+func TestAdminDirectoryUsesPrincipalAvatarURL(t *testing.T) {
+	signal := adminDirectoryList([]AdminPrincipal{{
+		ID: "principal-1", DisplayName: "Ada Lovelace",
+		ProfilePictureURL: "/profile/avatars/principal-1/avatar-digest",
+		LastSeenAt:        "2026-08-09T15:30:00Z",
+	}}, "")
+	if len(signal.Items) != 1 {
+		t.Fatalf("directory signal = %#v", signal)
+	}
+	avatarURL := signal.Items[0].AvatarURL
+	if avatarURL == nil || *avatarURL != "/profile/avatars/principal-1/avatar-digest" {
+		t.Fatalf("avatar URL = %v", avatarURL)
+	}
+	if got := signal.Items[0].LastSeenAt; got != "2026-08-09T15:30:00Z" {
+		t.Fatalf("last seen = %q", got)
+	}
+}
+
+func TestAdminDirectoryExcludesMachinePrincipals(t *testing.T) {
+	signal := adminDirectoryList([]AdminPrincipal{
+		{ID: "person", Kind: "user", DisplayName: "Person"},
+		{ID: "service", Kind: "service_principal", DisplayName: "Service"},
+		{ID: "publication", Kind: "dashboard_publication", DisplayName: "Publication"},
+	}, "")
+	if len(signal.Items) != 1 || signal.Items[0].ID != "person" {
+		t.Fatalf("directory items = %#v, want only human principal", signal.Items)
+	}
+}
+
 func TestAdminPageRendersAdminRouteShell(t *testing.T) {
 	var output strings.Builder
 	provider := appshell.Provider(appshell.Config{Presentation: webpage.Presentation{ProductName: "LeapView"}})
@@ -90,7 +118,7 @@ func TestAdminPageRendersAdminRouteShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := output.String()
-	for _, expected := range []string{"<lv-app-shell", "<lv-admin-page", `section="profile"`, "/updates?route=admin&amp;section=profile", "/static/admin-page.js"} {
+	for _, expected := range []string{"<lv-app-shell", "<lv-admin-page", `section="general"`, "/updates?route=admin&amp;section=general", "/static/admin-page.js"} {
 		if !strings.Contains(html, expected) {
 			t.Fatalf("admin page is missing %q:\n%s", expected, html)
 		}

@@ -16,6 +16,7 @@ type APIGenHandler interface {
 	Search(stdhttp.ResponseWriter, *stdhttp.Request, APIGenSearchParams)
 	ListWorkspaces(stdhttp.ResponseWriter, *stdhttp.Request)
 	GetWorkspace(stdhttp.ResponseWriter, *stdhttp.Request, string)
+	GetWorkspaceAdministration(stdhttp.ResponseWriter, *stdhttp.Request, string)
 	GetWorkspaceActiveAssetGraph(stdhttp.ResponseWriter, *stdhttp.Request)
 	ListWorkspaceAssetEdges(stdhttp.ResponseWriter, *stdhttp.Request)
 	ListWorkspaceAssets(stdhttp.ResponseWriter, *stdhttp.Request)
@@ -51,6 +52,10 @@ func (d *APIGenDispatcher) ListWorkspaces(w stdhttp.ResponseWriter, r *stdhttp.R
 
 func (d *APIGenDispatcher) GetWorkspace(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string) {
 	d.handler.GetWorkspace(w, r, workspace)
+}
+
+func (d *APIGenDispatcher) GetWorkspaceAdministration(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string) {
+	d.handler.GetWorkspaceAdministration(w, r, workspace)
 }
 
 func (d *APIGenDispatcher) GetWorkspaceActiveAssetGraph(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {

@@ -9,6 +9,7 @@ model PrincipalResponse {
   kind: string;
   email: string;
   displayName: string;
+  disabledAt?: utcDateTime;
   createdAt: utcDateTime;
   updatedAt: utcDateTime;
 }
@@ -430,6 +431,7 @@ model DeviceAuthorizationApprovalRequest {
 model AuthoringSessionResponse {
   id: string;
   kind: string;
+  current: boolean;
   clientId: string;
   targetId: string;
   projectId: string;
@@ -468,14 +470,14 @@ op decideDeviceAuthorization(@header("Idempotency-Key") idempotencyKey: Idempote
 interface CurrentAuthoringSessions {
   @summary("List current CLI and workload sessions")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @operationId("listCurrentAuthoringSessions")
   listCurrentAuthoringSessions(@query limit?: ListLimit, @query pageToken?: PageToken): OkJson<AuthoringSessionListResponse> | CommonErrors;
 
   @summary("Revoke a current CLI or workload session")
   @route("/{session}")
   @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{
     audit: #{ required: true, successAction: "authoring.session.revoked", guarantee: "transactional" },
     failures: #[
@@ -553,6 +555,7 @@ interface Principals {
     failures: #[
       #{ kind: "not_found", statusCode: 404, code: "PRINCIPAL_NOT_FOUND", publicDetail: "Principal not found." },
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be deleted by this operation." },
+      #{ kind: "conflict", statusCode: 409, code: "PRINCIPAL_OWNS_OBJECTS", publicDetail: "Transfer owned objects before deleting this principal." },
     ],
   })
   @apigen.auditPayload(PrincipalDeletedAuditPayload)
@@ -573,6 +576,40 @@ interface Principals {
   @apigen.auditPayload(PrincipalPasswordResetAuditPayload)
   @operationId("resetPrincipalPassword")
   resetPrincipalPassword(@path principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): ResetPrincipalPasswordOK | CommonErrors;
+
+  @summary("Disable a principal and reject its credentials")
+  @route("/{principal}/disable")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @extension("x-leapview-object-scope", "grant-management")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "principal.disabled", guarantee: "transactional" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "PRINCIPAL_NOT_FOUND", publicDetail: "Principal not found." },
+      #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be disabled by this operation." },
+    ],
+    targetParameter: "principal",
+  })
+  @apigen.auditPayload(PrincipalUpdatedAuditPayload)
+  @operationId("disablePrincipal")
+  disablePrincipal(@path principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
+
+  @summary("Re-enable a disabled principal")
+  @route("/{principal}/enable")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @extension("x-leapview-object-scope", "grant-management")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "principal.enabled", guarantee: "transactional" },
+    failures: #[
+      #{ kind: "not_found", statusCode: 404, code: "PRINCIPAL_NOT_FOUND", publicDetail: "Principal not found." },
+      #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be enabled by this operation." },
+    ],
+    targetParameter: "principal",
+  })
+  @apigen.auditPayload(PrincipalUpdatedAuditPayload)
+  @operationId("enablePrincipal")
+  enablePrincipal(@path principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
 
   @summary("List a principal's sessions")
   @route("/{principal}/sessions")
@@ -641,6 +678,7 @@ interface ServicePrincipals {
     audit: #{ required: true, successAction: "service_principal.updated", guarantee: "transactional" },
     failures: #[
       #{ kind: "not_found", statusCode: 404, code: "SERVICE_PRINCIPAL_NOT_FOUND", publicDetail: "Service principal not found." },
+      #{ kind: "conflict", statusCode: 409, code: "SERVICE_PRINCIPAL_OWNS_OBJECTS", publicDetail: "Transfer owned objects before deleting this service principal." },
     ],
   })
   @apigen.auditPayload(ServicePrincipalAuditPayload)

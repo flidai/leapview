@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/admin/personalsettings"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	adminview "github.com/flidai/leapview/internal/admin/view"
 	"github.com/flidai/leapview/internal/dashboard"
@@ -78,15 +79,17 @@ type AdminAgentTool struct {
 }
 
 type AdminPrincipal struct {
-	ID          string
-	Kind        string
-	Email       string
-	DisplayName string
-	DisabledAt  string
-	CreatedAt   string
-	UpdatedAt   string
-	DirectRoles []string
-	Groups      []AdminGroupRef
+	ID                string
+	Kind              string
+	Email             string
+	DisplayName       string
+	ProfilePictureURL string
+	DisabledAt        string
+	CreatedAt         string
+	UpdatedAt         string
+	LastSeenAt        string
+	DirectRoles       []string
+	Groups            []AdminGroupRef
 }
 
 type AdminGroupRef struct {
@@ -190,6 +193,24 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			g.Attr("data-on:lv-storage-table-select", "$adminStorageCommand = evt.detail; "+uiactions.EventPost("/admin/storage/select-table")),
 		)
 	}
+	if active == "profile" || active == "security" || active == "api-tokens" {
+		adminAttrs = append(adminAttrs, personalsettings.CommandAttributes("/admin/personal-settings/command?section="+url.QueryEscape(active))...)
+	}
+	if active == "general" || active == "authentication" || active == "system" {
+		adminAttrs = append(adminAttrs,
+			g.Attr("data-on:lv-product-settings-command", "$productSettingsCommand = evt.detail; "+uiactions.UncontractedMutationPost("/admin/product-settings/command?section="+url.QueryEscape(active), "productSettingsCommand")),
+		)
+	}
+	if active == "service-accounts" {
+		adminAttrs = append(adminAttrs,
+			g.Attr("data-on:lv-service-account-command", "$adminServiceAccountCommand = evt.detail; "+uiactions.UncontractedMutationPost("/admin/service-accounts/command", "adminServiceAccountCommand")),
+		)
+	}
+	if active == "audit" {
+		adminAttrs = append(adminAttrs,
+			g.Attr("data-on:lv-audit-log-command", "$adminAuditLogCommand = evt.detail; "+uiactions.UncontractedMutationPost("/admin/audit/command", "adminAuditLogCommand", "adminAuditLog")),
+		)
+	}
 	if active == "agent" {
 		adminAttrs = append(adminAttrs,
 			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.UncontractedMutationPatch("/admin/agent/config")),
@@ -250,12 +271,12 @@ func AdminListResultsPatch(active string, data AdminData) map[string]any {
 	page := adminPageSignal(active, data)
 	switch normalizeAdminSection(active) {
 	case "principals":
-		groups := []uisignals.AdminDirectoryListGroupSignal{}
+		items := []uisignals.AdminDirectoryListItemSignal{}
 		if page.DirectoryList != nil {
-			groups = page.DirectoryList.Groups
+			items = page.DirectoryList.Items
 		}
 		return map[string]any{"page": map[string]any{
-			"directoryList": map[string]any{"groups": groups},
+			"directoryList": map[string]any{"items": items},
 		}}
 	case "groups":
 		return map[string]any{"page": map[string]any{"sections": uisignals.ValueOrZero(page.Sections)}}
@@ -300,11 +321,24 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 	}
 	switch active {
 	case "principals":
-		page.HeaderTitle = "Members"
+		page.HeaderTitle = "Principals"
+		page.HeaderDetail = "Manage users and their account status."
 		page.DirectoryList = uisignals.Pointer(adminDirectoryList(data.Principals, data.ListFilter))
 	case "profile":
 		page.HeaderTitle = "Profile"
-		page.Profile = uisignals.Pointer(adminProfileSignal(data.Profile))
+		page.HeaderDetail = "Manage your photo and display name."
+	case "security":
+		page.HeaderTitle = "Security & sessions"
+		page.HeaderDetail = "Change your password and review signed-in devices."
+	case "api-tokens":
+		page.HeaderTitle = "API tokens"
+		page.HeaderDetail = "Manage personal API and CLI credentials."
+	case "general":
+		page.HeaderTitle = "General"
+		page.HeaderDetail = "Configure product identity and view instance details."
+	case "workspaces-admin":
+		page.HeaderTitle = "Workspaces"
+		page.HeaderDetail = "Review workspaces, ownership, and deployment state."
 	case "principal-detail":
 		page.HeaderTitle = "Principals"
 		page.HeaderDetail = "Read-only principal access."
@@ -327,9 +361,15 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Groups", Table: uisignals.Pointer(adminPrincipalGroupsGrid(principal, data.Groups))}})
 	case "groups":
 		page.HeaderTitle = "Groups"
-		page.HeaderDetail = "Workspace groups and their read-only membership summaries."
+		page.HeaderDetail = "Organize users and assign access collectively."
 		page.ListFilterOptions = uisignals.OptionalSlice(adminGroupProviders(data.Groups))
 		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Groups", Table: uisignals.Pointer(adminGroupsGrid(filterAdminGroups(data.Groups, data.ListQuery, data.ListFilter)))}})
+	case "service-accounts":
+		page.HeaderTitle = "Service accounts"
+		page.HeaderDetail = "Manage machine identities and credentials."
+	case "authentication":
+		page.HeaderTitle = "Authentication"
+		page.HeaderDetail = "Review login and provisioning configuration."
 	case "group-detail":
 		page.HeaderTitle = "Groups"
 		page.HeaderDetail = "Read-only group membership."
@@ -351,7 +391,7 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Members", Table: uisignals.Pointer(adminGroupMembersGrid(group, data.Principals))}})
 	case "agent":
 		page.HeaderTitle = "Agent"
-		page.HeaderDetail = "Platform agent prompt and read-only tool inventory."
+		page.HeaderDetail = "Review agent availability and configuration."
 		page.Agent = uisignals.Pointer(adminAgentSignal(data.Agent))
 		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{
 			{Label: "Status", Value: configuredLabel(data.Agent.Enabled)},
@@ -360,7 +400,7 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		})
 	case "storage":
 		page.HeaderTitle = "Storage"
-		page.HeaderDetail = "Read-only DuckLake catalog and table metadata."
+		page.HeaderDetail = "Review managed data capacity and health."
 		page.Storage = uisignals.Pointer(AdminStorageSignalFromData(data.Storage, AdminStorageCommand{}))
 		if data.Storage.Status != "" {
 			page.Empty = uisignals.Pointer(data.Storage.Status)
@@ -372,18 +412,23 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 			{Label: "Tables", Value: fmt.Sprint(data.Storage.TableCount)},
 		})
 	case "queries":
-		page.HeaderTitle = "Query History"
-		page.HeaderDetail = "Product query audit across dashboards, API, agents, and Data Explorer."
+		page.HeaderTitle = "Query history"
+		page.HeaderDetail = "Inspect query activity, performance, and failures."
+	case "audit":
+		page.HeaderTitle = "Audit log"
+		page.HeaderDetail = "Review security and administrative changes."
+	case "system":
+		page.HeaderTitle = "System"
+		page.HeaderDetail = "View health, version, limits, and runtime configuration."
 	case "publications":
 		page.HeaderTitle = "Publications"
-		page.HeaderDetail = "Public dashboard URLs, embedding policy, and immediate lifecycle controls. Configuration remains YAML-only."
+		page.HeaderDetail = "Control publicly shared dashboards."
 		page.Publications = uisignals.OptionalSlice(adminPublicationSignals(data.Publications))
 		if len(data.Publications) == 0 {
 			page.Empty = uisignals.Pointer("No dashboard publications have been configured.")
 		}
 	default:
 		page.HeaderTitle = "Profile"
-		page.Profile = uisignals.Pointer(adminProfileSignal(data.Profile))
 	}
 	return page
 }
@@ -529,17 +574,6 @@ func adminAgentSignal(data AdminAgentData) uisignals.AdminAgentSignal {
 	}
 }
 
-func adminProfileSignal(data AdminProfile) uisignals.AdminProfileSignal {
-	return uisignals.AdminProfileSignal{
-		ID:                data.ID,
-		Email:             data.Email,
-		DisplayName:       data.DisplayName,
-		Title:             data.Title,
-		Username:          data.Username,
-		ProfilePictureURL: uisignals.Optional(data.ProfilePictureURL),
-	}
-}
-
 func adminPrincipalsGrid(principals []AdminPrincipal) adminRecordTable {
 	rows := make([]map[string]any, 0, len(principals))
 	for _, principal := range principals {
@@ -569,72 +603,39 @@ func adminPrincipalsGrid(principals []AdminPrincipal) adminRecordTable {
 }
 
 func adminDirectoryList(principals []AdminPrincipal, filter string) uisignals.AdminDirectoryListSignal {
-	groupOrder := []struct {
-		id    string
-		label string
-	}{
-		{id: "active", label: "Active"},
-		{id: "application", label: "Application"},
-		{id: "inactive", label: "Inactive"},
-	}
-	itemsByGroup := make(map[string][]uisignals.AdminDirectoryListItemSignal, len(groupOrder))
+	items := make([]uisignals.AdminDirectoryListItemSignal, 0, len(principals))
 	for _, principal := range principals {
-		groupID := "active"
-		kind := "person"
+		if kind := strings.TrimSpace(principal.Kind); kind != "" && kind != "user" {
+			continue
+		}
 		status := "active"
-		role := firstRoleLabel(principal.DirectRoles)
 		if strings.TrimSpace(principal.DisabledAt) != "" {
-			groupID = "inactive"
 			status = "inactive"
-			role = "Suspended"
-		} else if principal.Kind == "service_principal" || principal.Kind == "dashboard_publication" {
-			groupID = "application"
-			kind = "application"
-			role = "Application"
 		}
-		if role == "" {
-			role = "Member"
-		}
-		if !adminDirectoryFilterMatches(filter, groupID, kind) {
+		if !adminDirectoryFilterMatches(filter, status) {
 			continue
 		}
-		itemsByGroup[groupID] = append(itemsByGroup[groupID], uisignals.AdminDirectoryListItemSignal{
-			ID:         principal.ID,
-			Name:       adminDisplayLabel(principal.DisplayName, principal.Email, principal.ID),
-			Username:   adminPrincipalUsername(principal),
-			Email:      principal.Email,
-			Href:       adminPrincipalHref(principal.ID),
-			Kind:       kind,
-			Status:     status,
-			Role:       role,
-			GroupCount: int64(len(principal.Groups)),
-			JoinedAt:   principal.CreatedAt,
+		items = append(items, uisignals.AdminDirectoryListItemSignal{
+			ID: principal.ID, AvatarURL: uisignals.Optional(principal.ProfilePictureURL),
+			Name:     adminDisplayLabel(principal.DisplayName, principal.Email, principal.ID),
+			Username: adminPrincipalUsername(principal), Email: principal.Email,
+			Href: adminPrincipalHref(principal.ID), Status: status,
+			GroupCount: int64(len(principal.Groups)), JoinedAt: principal.CreatedAt, LastSeenAt: principal.LastSeenAt,
 		})
-	}
-
-	groups := make([]uisignals.AdminDirectoryListGroupSignal, 0, len(groupOrder))
-	for _, group := range groupOrder {
-		items := itemsByGroup[group.id]
-		if len(items) == 0 {
-			continue
-		}
-		groups = append(groups, uisignals.AdminDirectoryListGroupSignal{ID: group.id, Label: group.label, Items: items})
 	}
 	return uisignals.AdminDirectoryListSignal{
 		SearchPlaceholder: "Search by name or email",
 		FilterLabel:       "Filter members",
-		Groups:            groups,
+		Items:             items,
 	}
 }
 
-func adminDirectoryFilterMatches(filter, groupID, kind string) bool {
+func adminDirectoryFilterMatches(filter, status string) bool {
 	switch strings.ToLower(strings.TrimSpace(filter)) {
-	case "people":
-		return groupID == "active" && kind == "person"
-	case "applications":
-		return groupID == "application"
+	case "active":
+		return status == "active"
 	case "inactive":
-		return groupID == "inactive"
+		return status == "inactive"
 	default:
 		return true
 	}
@@ -673,17 +674,6 @@ func adminGroupProviders(groups []AdminGroup) []string {
 	}
 	sort.Strings(providers)
 	return providers
-}
-
-func firstRoleLabel(roles []string) string {
-	if len(roles) == 0 {
-		return ""
-	}
-	role := strings.TrimSpace(roles[0])
-	if role == "" {
-		return ""
-	}
-	return strings.ToUpper(role[:1]) + role[1:]
 }
 
 func adminPrincipalUsername(principal AdminPrincipal) string {
@@ -956,6 +946,14 @@ func adminPrincipalHref(principalID string) string {
 
 func adminPageTitle(active string) string {
 	switch active {
+	case "api-tokens":
+		return "API tokens"
+	case "security":
+		return "Security & sessions"
+	case "general":
+		return "General"
+	case "workspaces-admin":
+		return "Workspaces"
 	case "principals":
 		return "Principals"
 	case "profile":
@@ -966,12 +964,20 @@ func adminPageTitle(active string) string {
 		return "Groups"
 	case "group-detail":
 		return "Group"
+	case "service-accounts":
+		return "Service accounts"
+	case "authentication":
+		return "Authentication"
 	case "agent":
 		return "Agent"
 	case "storage":
 		return "Storage"
 	case "queries":
-		return "Query History"
+		return "Query history"
+	case "audit":
+		return "Audit log"
+	case "system":
+		return "System"
 	case "publications":
 		return "Publications"
 	default:
@@ -981,7 +987,7 @@ func adminPageTitle(active string) string {
 
 func normalizeAdminSection(active string) string {
 	switch strings.TrimSpace(active) {
-	case "profile", "principals", "principal-detail", "groups", "group-detail", "agent", "storage", "queries", "publications":
+	case "profile", "security", "api-tokens", "general", "workspaces-admin", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "queries", "audit", "system", "publications":
 		return strings.TrimSpace(active)
 	default:
 		return "profile"

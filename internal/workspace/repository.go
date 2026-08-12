@@ -16,6 +16,26 @@ type Summary struct {
 	UpdatedAt            string
 }
 
+// AdministrationState is the workspace-owned operational projection used by
+// administration clients. Deployments and releases remain owned by their
+// respective domains; this projection only identifies the currently active
+// resources so clients can follow their canonical API links.
+type AdministrationState struct {
+	Workspace                Summary
+	Environment              string
+	ActiveServingStateStatus string
+	ActiveServingStateSince  string
+	ProjectID                string
+	CurrentDeploymentID      string
+	CurrentDeploymentStatus  string
+	CurrentDeploymentSince   string
+	CurrentReleaseID         string
+}
+
+type AdministrationReadModel interface {
+	AdministrationByID(ctx context.Context, id WorkspaceID, environment string) (AdministrationState, error)
+}
+
 type AssetVersion struct {
 	ServingStateID ServingStateID
 	WorkspaceID    WorkspaceID

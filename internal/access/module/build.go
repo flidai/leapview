@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/access/avatar"
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
@@ -28,6 +29,7 @@ type Config struct {
 	MCPIssuerURL string
 	Presentation webpage.Presentation
 	Assets       staticasset.Resolver
+	AvatarBlobs  avatar.BlobStore
 }
 
 func newRepository(database *sql.DB) access.Repository { return accesssqlite.NewRepository(database) }
@@ -54,6 +56,18 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return nil, err
 	}
 	repository := newRepository(config.Database)
+	var avatarService *avatar.Service
+	if config.AvatarBlobs != nil {
+		avatarRepository, ok := repository.(avatar.Repository)
+		if !ok {
+			return nil, fmt.Errorf("access repository does not support avatar metadata")
+		}
+		var err error
+		avatarService, err = avatar.New(avatarRepository, config.AvatarBlobs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	publicURL := strings.TrimSuffix(strings.TrimSpace(config.PublicURL), "/")
 	if publicURL == "" {
 		publicURL = "http://localhost:8080"
@@ -86,6 +100,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		Repository: func() (access.Repository, error) { return repository, nil },
 		Auth:       auth, WorkspaceIDs: config.WorkspaceIDs,
 		AuthoringAuth:      authoringAuth,
+		Avatar:             avatarService,
 		Presentation:       config.Presentation,
 		Assets:             config.Assets,
 		DefaultWorkspaceID: config.WorkspaceID,

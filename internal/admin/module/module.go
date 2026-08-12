@@ -8,7 +8,12 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/access/avatar"
 	adminhttp "github.com/flidai/leapview/internal/admin/http"
+	"github.com/flidai/leapview/internal/admin/personalsettings"
+	"github.com/flidai/leapview/internal/admin/product"
+	"github.com/flidai/leapview/internal/admin/productsettings"
+	adminsettings "github.com/flidai/leapview/internal/admin/settings"
 	adminstorage "github.com/flidai/leapview/internal/admin/storage"
 	"github.com/flidai/leapview/internal/agent/api"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
@@ -18,6 +23,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/flidai/leapview/internal/workspace"
 )
 
 type PublicationService interface {
@@ -49,6 +55,27 @@ type AccessReader interface {
 	Authorize(context.Context, string, access.Privilege, access.ObjectRef) (access.AuthorizationDecision, error)
 }
 
+type SettingsAccess interface {
+	access.Repository
+	access.AuditedPrincipalPreferences
+	adminsettings.ServicePrincipalSecretReader
+	personalsettings.IdentityManagementReader
+}
+
+type WorkspaceSettings interface {
+	workspace.ReadModel
+	workspace.AdministrationReadModel
+}
+
+type PersonalAvatar interface {
+	Current(context.Context, string) (avatar.Metadata, error)
+}
+
+type AuthoringSessions interface {
+	ListSessions(context.Context, string) ([]access.AuthoringSession, error)
+	RevokeSession(context.Context, string, string) error
+}
+
 type QueryAuditReaderProvider func() (queryaudit.Reader, error)
 
 type StorageConfig struct {
@@ -75,11 +102,23 @@ type Config struct {
 	PublicationCommands   map[string]uicommand.Binding
 	DefaultWorkspaceID    string
 	AuthConfigured        bool
+	LocalPasswordEnabled  bool
 	AccessConfigured      bool
 	Storage               StorageConfig
 	Layout                func(*http.Request) webpage.Provider
 	EnsureClientID        func(http.ResponseWriter, *http.Request)
 	Broker                *pagestream.Broker
+	Product               *product.Service
+	ProductCommands       product.CommandExecutor
+	ProductCommandFailure product.CommandFailureWriter
+	ProductStatus         product.Status
+	SettingsAccess        SettingsAccess
+	PersonalAvatar        PersonalAvatar
+	AuthoringSessions     AuthoringSessions
+	CurrentSession        func(*http.Request) (string, bool)
+	WorkspaceSettings     WorkspaceSettings
+	WorkspaceAccess       access.WorkspaceAccessService
+	SettingsEnvironment   string
 }
 
 type Module struct {
@@ -89,6 +128,7 @@ type Module struct {
 	currentCredential     func(*http.Request) (access.APICredential, bool)
 	authorizeAnyWorkspace func(context.Context, string, *access.APICredential, access.Privilege) (bool, error)
 	publications          PublicationService
+	product               *product.Handler
 	publicationCommands   map[string]uicommand.Binding
 }
 
@@ -99,7 +139,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		publications: config.Publications, publicationCommands: config.PublicationCommands,
 	}
 	readModel := adminhttp.ReadModel{
-		Access: config.Access, AgentDetails: config.AgentDetails,
+		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
 		StorageService: adminstorage.Service{
 			CatalogPath: config.Storage.CatalogPath, DataPath: config.Storage.DataPath,
 			Environment: config.Storage.Environment, ControlPlane: config.Storage.ControlPlane,
@@ -124,6 +164,62 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		ReadModel: readModel, Layout: config.Layout,
 		EnsureClientID: config.EnsureClientID, Broker: config.Broker,
 		PublicationMutation: m.mutatePublication,
+		SettingsRepository:  config.SettingsAccess, WorkspaceSettings: config.WorkspaceSettings,
+		WorkspaceAccess: config.WorkspaceAccess, SettingsEnvironment: config.SettingsEnvironment,
+		CurrentCredential: config.CurrentCredential,
+	}
+	if config.SettingsAccess != nil {
+		personalService := &personalsettings.Service{
+			Repository: config.SettingsAccess, IdentityManagement: config.SettingsAccess,
+			Preferences: config.SettingsAccess,
+			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
+			Workspaces:           config.WorkspaceSettings,
+			LocalPasswordEnabled: config.LocalPasswordEnabled,
+		}
+		m.handler.PersonalSettings = &personalsettings.Handler{
+			Service: personalService, CurrentSession: config.CurrentSession,
+			CurrentPrincipal: func(r *http.Request) (string, bool) {
+				if config.CurrentPrincipal == nil {
+					return "", false
+				}
+				principal, ok := config.CurrentPrincipal(r)
+				return principal.ID, ok
+			},
+		}
+	}
+	if config.Product != nil {
+		config.Product.ConfigureCommandExecutor(config.ProductCommands)
+		settingsHandler, err := productsettings.NewHandler(productsettings.HTTPConfig{
+			ReadModel: productsettings.ReadModel{Service: config.Product, Status: config.ProductStatus, ControlPlane: config.Storage.ControlPlane},
+			CurrentPrincipal: func(r *http.Request) (product.Principal, bool) {
+				if config.CurrentPrincipal == nil {
+					return product.Principal{}, false
+				}
+				principal, ok := config.CurrentPrincipal(r)
+				return product.Principal{ID: principal.ID}, ok
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		m.handler.ProductSettings = settingsHandler
+	}
+	if config.Product != nil {
+		var err error
+		m.product, err = product.NewHandler(product.HTTPConfig{
+			Service: config.Product, Status: config.ProductStatus,
+			CommandFailure: config.ProductCommandFailure,
+			CurrentPrincipal: func(r *http.Request) (product.Principal, bool) {
+				if config.CurrentPrincipal == nil {
+					return product.Principal{}, false
+				}
+				principal, ok := config.CurrentPrincipal(r)
+				return product.Principal{ID: principal.ID}, ok
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	return m, nil
 }

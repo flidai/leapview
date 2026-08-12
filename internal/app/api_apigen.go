@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	apigenapi "github.com/flidai/leapview/internal/app/api/gen"
@@ -52,6 +53,7 @@ func accessAPIGenOperationContracts() map[string]accessmodule.APIGenOperationCon
 
 type apiGenDispatcher struct {
 	managedDataModule  *manageddatamodule.Module
+	productAPI         *adminmodule.Module
 	defaultEnvironment string
 	instanceID         string
 	canonicalOrigin    string
@@ -64,4 +66,40 @@ func (a apiGenDispatcher) GetInstance(w http.ResponseWriter, _ *http.Request) {
 	apitransport.WriteJSON(w, http.StatusOK, apigenapi.InstanceResponse{
 		Id: a.instanceID, CanonicalOrigin: a.canonicalOrigin, Environment: a.defaultEnvironment,
 	})
+}
+
+func (a apiGenDispatcher) GetProductSettings(w http.ResponseWriter, r *http.Request) {
+	a.productAPI.GetProductSettings(w, r)
+}
+
+func (a apiGenDispatcher) UpdateProductSettings(w http.ResponseWriter, r *http.Request, headers apigenapi.GenUpdateProductSettingsHeaders) {
+	r.Header.Set("If-Match", headers.IfMatch)
+	a.productAPI.UpdateProductSettings(w, r)
+}
+
+func (a apiGenDispatcher) UploadProductLogo(w http.ResponseWriter, r *http.Request, headers apigenapi.GenUploadProductLogoHeaders) {
+	r.Header.Set("If-Match", headers.IfMatch)
+	r.Header.Set("Content-Type", headers.ContentType)
+	a.productAPI.UploadProductLogo(w, r)
+}
+
+func (a apiGenDispatcher) DeleteProductLogo(w http.ResponseWriter, r *http.Request, headers apigenapi.GenDeleteProductLogoHeaders) {
+	r.Header.Set("If-Match", headers.IfMatch)
+	a.productAPI.DeleteProductLogo(w, r)
+}
+
+func (a apiGenDispatcher) GetProductLogo(w http.ResponseWriter, r *http.Request, _ string) {
+	a.productAPI.GetProductLogo(w, r)
+}
+
+func (a apiGenDispatcher) GetProductAuthenticationStatus(w http.ResponseWriter, r *http.Request) {
+	a.productAPI.GetProductAuthenticationStatus(w, r)
+}
+
+func (a apiGenDispatcher) GetProductSystemStatus(w http.ResponseWriter, r *http.Request) {
+	a.productAPI.GetProductSystemStatus(w, r)
+}
+
+func (a apiGenDispatcher) GetProductAPIStatus(w http.ResponseWriter, r *http.Request) {
+	a.productAPI.GetProductAPIStatus(w, r)
 }
