@@ -363,6 +363,7 @@ class EntityList extends LitElement {
   @property({ attribute: 'empty-text' }) emptyText = 'No results found.'
   @property({ attribute: 'initial-query' }) initialQuery = ''
   @property({ attribute: 'active-filter' }) activeFilter = ''
+  @property({ type: Boolean, attribute: 'client-filter' }) clientFilter = false
   @state() private query = ''
   @state() private filter = ''
   @state() private sortColumnId = ''
@@ -465,8 +466,22 @@ class EntityList extends LitElement {
   private visibleItems(): EntityListItem[] {
     // Query and filter state are server-driven. Keep rendering the last
     // authoritative payload while the debounced page-stream request is in
-    // flight instead of applying a second, client-side filter here.
-    const visible = this.items
+    // flight instead of applying a second, client-side filter here. Small,
+    // already-complete registries can opt into local filtering explicitly.
+    let visible = this.items
+    if (this.clientFilter) {
+      const query = this.query.trim().toLocaleLowerCase()
+      const filter = this.filter.trim().toLocaleLowerCase()
+      visible = visible.filter((item) => {
+        if (filter && filter !== 'all' && item.category?.toLocaleLowerCase() !== filter) return false
+        if (!query) return true
+        const searchable = [item.title, item.description, item.meta, ...Object.values(item.columns ?? {})]
+          .filter((value) => value != null)
+          .join(' ')
+          .toLocaleLowerCase()
+        return searchable.includes(query)
+      })
+    }
     const column = this.resolvedColumns().find((candidate) => candidate.id === this.sortColumnId)
     if (!column || column.sortable === false) return visible
     return visible

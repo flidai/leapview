@@ -646,7 +646,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     const mainClass = [
       'main',
       page.active === 'storage' ? 'main-storage' : '',
-      page.active === 'principals' || page.active === 'groups' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'workspaces-admin' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
     ].filter(Boolean).join(' ')
     return html`

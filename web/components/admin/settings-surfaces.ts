@@ -1,6 +1,8 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { DatastarLit } from '../shared/datastar-lit'
 import type { AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, WorkspaceRegistrySignal } from '../../generated/signals'
+import '../shared/entity-list'
+import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
 
 const tableStyles = css`
   :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); font-family: var(--fontStack-system); }
@@ -32,21 +34,70 @@ class LeapViewWorkspaceRegistry extends DatastarLit(LitElement) {
   render() {
     const signal = this.registry
     return html`<section class="surface" aria-label="Workspaces">
-      <h2>Workspaces</h2>
       ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
       ${signal.loading ? html`<p class="muted" aria-live="polite">Loading workspaces…</p>` : nothing}
-      ${signal.items?.length ? html`<div class="table-wrap"><table>
-        <thead><tr><th>Name</th><th>Owner</th><th>Administrators</th><th>Deployment</th><th>Links</th></tr></thead>
-        <tbody>${signal.items.map((item) => html`<tr>
-          <td><a href=${item.href}>${item.title || item.id}</a>${item.description ? html`<div class="muted">${item.description}</div>` : nothing}<div class="muted">${item.environment || '—'}</div></td>
-          <td>${item.owner ? html`${item.owner.displayName}${item.owner.email ? html`<div class="muted">${item.owner.email}</div>` : nothing}` : html`<span class="muted">Unassigned</span>`}</td>
-          <td>${item.administrators?.length ? item.administrators.map((admin) => html`<div>${admin.displayName}<span class="muted"> · ${admin.role || 'admin'}</span></div>`) : html`<span class="muted">None</span>`}</td>
-          <td><span class="badge">${item.deploymentStatus || item.servingStateStatus || 'Not deployed'}</span>${item.currentDeploymentId ? html`<div class="muted">${item.currentDeploymentId}</div>` : nothing}</td>
-          <td class="actions"><a href=${item.links.workspace}>Open</a>${item.links.connections ? html`<a href=${item.links.connections}>Connections</a>` : nothing}${item.links.publications ? html`<a href=${item.links.publications}>Publications</a>` : nothing}</td>
-        </tr>`)}</tbody>
-      </table></div>` : html`<p class="empty">${signal.empty || 'No workspaces are available.'}</p>`}
+      <lv-entity-list
+        .items=${workspaceListItems(signal)}
+        .columns=${workspaceListColumns()}
+        client-filter
+        search-placeholder="Search workspaces by name, owner, or environment"
+        list-label="Workspaces"
+        empty-text=${signal.empty || 'No workspaces are available.'}
+      ></lv-entity-list>
     </section>`
   }
+}
+
+function workspaceListItems(signal: WorkspaceRegistrySignal): EntityListItem[] {
+  return (signal.items ?? []).map((item) => {
+    const administrators = (item.administrators ?? []).map((administrator) => administrator.displayName).filter(Boolean)
+    const deployment = item.deploymentStatus || item.servingStateStatus || 'Not deployed'
+    return {
+      id: item.id,
+      title: item.title || item.id,
+      description: item.description,
+      href: item.href || item.links.workspace,
+      icon: 'workspace',
+      columns: {
+        owner: item.owner?.displayName || 'Unassigned',
+        administrators: administrators.length ? administrators.join(', ') : 'None',
+        environment: item.environment || '—',
+        deployment,
+        updated: formatWorkspaceDate(item.updatedAt),
+      },
+      columnTitles: {
+        owner: item.owner?.email || item.owner?.displayName || '',
+        administrators: administrators.join(', '),
+        deployment: item.currentDeploymentId || deployment,
+        updated: item.updatedAt || '',
+      },
+      sortValues: {
+        updated: workspaceTimestamp(item.updatedAt),
+      },
+    }
+  })
+}
+
+function workspaceListColumns(): EntityListColumn[] {
+  return [
+    { id: 'name', label: 'Name', width: '27%' },
+    { id: 'owner', label: 'Owner', width: '18%' },
+    { id: 'administrators', label: 'Administrators', width: '18%' },
+    { id: 'environment', label: 'Environment', width: '13%' },
+    { id: 'deployment', label: 'Deployment', width: '13%' },
+    { id: 'updated', label: 'Updated', width: '11%' },
+  ]
+}
+
+function formatWorkspaceDate(value = ''): string {
+  const timestamp = workspaceTimestamp(value)
+  if (!timestamp) return '—'
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(timestamp)
+}
+
+function workspaceTimestamp(value = ''): number {
+  const timestamp = Date.parse(value)
+  return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
 class LeapViewServiceAccounts extends DatastarLit(LitElement) {
