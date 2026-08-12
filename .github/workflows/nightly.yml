@@ -86,7 +86,7 @@ jobs:
     name: Frontend tests (nightly)
     if: github.repository == 'flidai/leapview'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -100,10 +100,10 @@ jobs:
           browser: "true"
 
       - name: Prepare generated and embedded assets
-        run: task ci:prepare
+        run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
 
       - name: Run frontend validation
-        run: task ci:lane:frontend
+        run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend
 
       - name: Verify generated artifacts
         run: task generated:check

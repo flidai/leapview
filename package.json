@@ -2,7 +2,7 @@
   "name": "leapview",
   "version": "0.2.0-rc.1",
   "private": true,
-  "packageManager": "bun@1.3.7",
+  "packageManager": "bun@1.3.14",
   "type": "module",
   "scripts": {
     "browser:ensure": "bun scripts/ensure_playwright.ts",

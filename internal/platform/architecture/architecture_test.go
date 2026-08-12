@@ -2240,7 +2240,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"go run ./internal/app/tools/schemadocgen",
 		"go run ./internal/app/tools/openapidocgen",
 		"go run ./internal/app/tools/docsitegen",
-		"FROM oven/bun:1.3.7@sha256:",
+		"FROM oven/bun:1.3.14@sha256:",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
 		"COPY --from=sourcegen /src/web/generated ./web/generated",
@@ -2348,7 +2348,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 		"FROM golang:1.25-bookworm@sha256:",
 		"./scripts/generate_build_sources.sh",
 		"go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
-		"FROM oven/bun:1.3.7@sha256:",
+		"FROM oven/bun:1.3.14@sha256:",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
 		"COPY --from=sourcegen /src/web/generated ./web/generated",
@@ -2579,7 +2579,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: task ci:lane:frontend",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
@@ -2918,7 +2918,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"run: task ci:prepare",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: task ci:lane:frontend",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		"run: task generated:check",
 	} {
 		if !strings.Contains(prWorkflow, want) {
@@ -2933,7 +2933,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: task ci:lane:frontend",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		"run: task ci:full:extras",
 	} {
 		if !strings.Contains(mergeWorkflow, want) {
@@ -2948,7 +2948,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: task ci:lane:frontend",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		"run: task ci:full:extras",
 		"run: task ci:nightly:extras",
 	} {
@@ -3009,6 +3009,31 @@ func TestGitHubHostedCISplitsGoWorkAndWarmsReusableBunCache(t *testing.T) {
 	populateAt := strings.Index(artifacts, "name: Populate main-branch Bun cache")
 	if setupAt < 0 || populateAt < setupAt {
 		t.Fatal("main artifact qualification must populate Bun downloads before the cache save hook")
+	}
+}
+
+func TestGitHubHostedFrontendCIRecoversFromHungBunProcesses(t *testing.T) {
+	root := repoRoot(t)
+	for _, workflow := range []string{"ci.yml", "merge-validation.yml", "nightly.yml"} {
+		data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
+		require.NoError(t, err)
+		frontend := workflowJobBlock(t, string(data), "frontend-validation")
+		for _, want := range []string{
+			"timeout-minutes: 20",
+			"node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
+			"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
+		} {
+			if !strings.Contains(frontend, want) {
+				t.Fatalf("%s frontend lane does not bound and retry hung Bun work: missing %q", workflow, want)
+			}
+		}
+	}
+
+	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
+	require.NoError(t, err)
+	frontendCore := taskfileTaskBlock(t, string(taskfile), "ci:test:frontend:core")
+	if !strings.Contains(frontendCore, "node --test scripts/ci_watchdog.test.mjs") {
+		t.Fatal("frontend core contract must exercise the Node watchdog independently of Bun")
 	}
 }
 
@@ -3083,7 +3108,7 @@ func TestGitHubHostedWorkflowsUseEphemeralRunnersAndBoundedCaches(t *testing.T) 
 		"actions/setup-node@",
 		`node-version: "24"`,
 		"oven-sh/setup-bun@",
-		"bun-version: 1.3.7",
+		"bun-version: 1.3.14",
 		"hashicorp/setup-terraform@",
 		"terraform_version: 1.13.5",
 		"actions/cache@",
@@ -3168,7 +3193,7 @@ func TestLeapViewDeclaresGitHubHostedCIContract(t *testing.T) {
 	for _, want := range []string{
 		"go-version-file: go.mod",
 		`node-version: "24"`,
-		"bun-version: 1.3.7",
+		"bun-version: 1.3.14",
 		"terraform_version: 1.13.5",
 		"github.com/go-task/task/v3/cmd/task@v3.50.0",
 		"github.com/bufbuild/buf/cmd/buf@v1.57.2",
