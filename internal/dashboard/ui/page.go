@@ -315,7 +315,7 @@ func PublicBootstrapSignals(clientID, streamInstanceID, publicID, presentation s
 
 func dashboardLayoutContext(catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, activePage dashboard.Page) webpage.Context {
 	context := webpage.Context{
-		Active: "workspaces", ScopeID: catalog.Workspace.ID, ScopeTitle: catalog.Workspace.Title,
+		Active: "dashboards", ScopeID: catalog.Workspace.ID, ScopeTitle: catalog.Workspace.Title,
 		SectionID: report.ID, SectionTitle: report.Title,
 		PageID: activePage.ID, PageTitle: activePage.Title, Compact: true,
 	}
