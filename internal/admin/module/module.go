@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	adminhttp "github.com/flidai/leapview/internal/admin/http"
@@ -15,6 +16,7 @@ import (
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -23,7 +25,7 @@ type PublicationService interface {
 	AllPublications(context.Context) ([]publication.Publication, error)
 	PublicationEvents(context.Context, string) ([]publication.Event, error)
 	PublicationDTO(publication.Publication) dashboardapi.PublicationResponse
-	MutatePublication(context.Context, string, string, string, publication.Action) (publication.Publication, error)
+	MutatePublicationWithInvocation(context.Context, string, string, string, publication.Action, apigencommand.Invocation) (publication.Publication, error)
 }
 
 // Principal is the authenticated identity information needed by platform
@@ -70,6 +72,7 @@ type Config struct {
 	CurrentCredential     func(*http.Request) (access.APICredential, bool)
 	AuthorizeAnyWorkspace func(context.Context, string, *access.APICredential, access.Privilege) (bool, error)
 	Publications          PublicationService
+	PublicationCommands   map[string]uicommand.Binding
 	DefaultWorkspaceID    string
 	AuthConfigured        bool
 	AccessConfigured      bool
@@ -86,13 +89,14 @@ type Module struct {
 	currentCredential     func(*http.Request) (access.APICredential, bool)
 	authorizeAnyWorkspace func(context.Context, string, *access.APICredential, access.Privilege) (bool, error)
 	publications          PublicationService
+	publicationCommands   map[string]uicommand.Binding
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		access: config.Access, currentPrincipal: config.CurrentPrincipal,
 		currentCredential: config.CurrentCredential, authorizeAnyWorkspace: config.AuthorizeAnyWorkspace,
-		publications: config.Publications,
+		publications: config.Publications, publicationCommands: config.PublicationCommands,
 	}
 	readModel := adminhttp.ReadModel{
 		Access: config.Access, AgentDetails: config.AgentDetails,
@@ -111,8 +115,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				ID: principal.ID, Email: principal.Email, DisplayName: principal.DisplayName, DevBypass: principal.DevBypass,
 			}, ok
 		},
-		Publications:       m.adminPublications,
-		DefaultWorkspaceID: config.DefaultWorkspaceID, AuthConfigured: config.AuthConfigured,
+		Publications:        m.adminPublications,
+		PublicationCommands: config.PublicationCommands,
+		DefaultWorkspaceID:  config.DefaultWorkspaceID, AuthConfigured: config.AuthConfigured,
 		AccessConfigured: config.AccessConfigured,
 	}
 	m.handler = adminhttp.Handler{

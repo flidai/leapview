@@ -8,6 +8,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 type GrantCommands struct {
@@ -37,7 +38,7 @@ func (c *GrantCommands) DescribeOperation(operationID access.OperationID) (acces
 
 func (c *GrantCommands) CreateGrant(ctx context.Context, invocation access.GrantInvocation, input access.GrantInput) (access.Grant, error) {
 	var row access.Grant
-	err := c.execute(ctx, access.OperationCreateGrant, invocation, func(repository access.Repository) error {
+	err := c.execute(ctx, access.OperationCreateGrant, invocation, input.Object.WorkspaceID, nil, func(repository access.Repository) error {
 		var err error
 		row, err = repository.CreateGrant(ctx, input)
 		return err
@@ -47,7 +48,13 @@ func (c *GrantCommands) CreateGrant(ctx context.Context, invocation access.Grant
 
 func (c *GrantCommands) UpdateGrant(ctx context.Context, invocation access.GrantInvocation, workspaceID, grantID string, input access.GrantInput) (access.Grant, error) {
 	var row access.Grant
-	err := c.execute(ctx, access.OperationUpdateGrant, invocation, func(repository access.Repository) error {
+	err := c.execute(ctx, access.OperationUpdateGrant, invocation, workspaceID, func(repository access.Repository) (string, error) {
+		current, err := repository.GetGrant(ctx, workspaceID, grantID)
+		if err != nil {
+			return "", err
+		}
+		return access.GrantRevision(current)
+	}, func(repository access.Repository) error {
 		updater, ok := repository.(interface {
 			UpdateGrant(context.Context, string, string, access.GrantInput) (access.Grant, error)
 		})
@@ -63,7 +70,7 @@ func (c *GrantCommands) UpdateGrant(ctx context.Context, invocation access.Grant
 
 func (c *GrantCommands) DeleteGrant(ctx context.Context, invocation access.GrantInvocation, workspaceID, grantID string) (access.Grant, error) {
 	var row access.Grant
-	err := c.execute(ctx, access.OperationDeleteGrant, invocation, func(repository access.Repository) error {
+	err := c.execute(ctx, access.OperationDeleteGrant, invocation, workspaceID, nil, func(repository access.Repository) error {
 		var err error
 		row, err = repository.GetGrant(ctx, workspaceID, grantID)
 		if err != nil {
@@ -78,6 +85,8 @@ func (c *GrantCommands) execute(
 	ctx context.Context,
 	operationID access.OperationID,
 	invocation access.GrantInvocation,
+	targetValue string,
+	currentRevision func(access.Repository) (string, error),
 	mutation func(access.Repository) error,
 	result func() access.Grant,
 ) error {
@@ -87,6 +96,11 @@ func (c *GrantCommands) execute(
 	}
 	if !descriptor.Exposes(invocation.Surface) {
 		return fmt.Errorf("operation %q is not exposed to surface %q", operationID, invocation.Surface)
+	}
+	if invocation.Surface == access.OperationSurfaceUI {
+		if err := uicommand.VerifyClaim(invocation.OperationClaims, string(operationID)); err != nil {
+			return err
+		}
 	}
 	if c == nil || c.repository == nil {
 		return fmt.Errorf("operation %q repository is required", operationID)
@@ -112,9 +126,37 @@ func (c *GrantCommands) execute(
 	if err != nil {
 		return err
 	}
+	if _, generated := apigencommand.OperationID(ctx); !generated {
+		contract, ok := accessgen.GetAPIGenCommandRuntimeContract(string(operationID))
+		if !ok {
+			return fmt.Errorf("generated command contract %q is unavailable", operationID)
+		}
+		ctx, _, err = apigencommand.BeginInvocation(ctx, contract, apigencommand.Invocation{
+			OperationID:    string(operationID),
+			Surface:        apigencommand.Surface(invocation.Surface),
+			TargetValues:   map[string]string{descriptor.Target.Parameter: targetValue},
+			IdempotencyKey: invocation.IdempotencyKey, ConcurrencyToken: invocation.ConcurrencyToken,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+		})
+		if err != nil {
+			return err
+		}
+	}
 	return executor.Execute(ctx, string(operationID), apigencommand.Execution{
 		Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
 			return transactional.RunAuditedMutation(ctx, func(repository access.Repository) (access.AuditEventInput, error) {
+				if contract.Concurrency == apigencommand.ConcurrencyIfMatch {
+					if currentRevision == nil {
+						return access.AuditEventInput{}, fmt.Errorf("operation %q concurrency revision source is unavailable", operationID)
+					}
+					current, revisionErr := currentRevision(repository)
+					if revisionErr != nil {
+						return access.AuditEventInput{}, revisionErr
+					}
+					if revisionErr := executor.CheckConcurrency(ctx, string(operationID), invocation.ConcurrencyToken, current); revisionErr != nil {
+						return access.AuditEventInput{}, revisionErr
+					}
+				}
 				input, mutationErr := audited(repository)
 				if mutationErr == nil && input.Action != contract.AuditAction {
 					return access.AuditEventInput{}, fmt.Errorf("generated audit action %q does not match mutation action %q", contract.AuditAction, input.Action)

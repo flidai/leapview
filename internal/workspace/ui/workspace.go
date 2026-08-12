@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	workspaceview "github.com/flidai/leapview/internal/workspace"
 	"github.com/flidai/leapview/internal/workspace/assetnav"
 	catalog "github.com/flidai/leapview/internal/workspace/navigation"
@@ -35,7 +36,7 @@ func WorkspacesPageForEnvironmentQuery(catalog catalog.Catalog, workspaces []wor
 	return workspaceRouteDocument("Workspaces", catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspace,
 		g.El("lv-workspace-page",
 			g.Attr("slot", "page"),
-			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Post("/workspaces/search", "entityListQuery", "entityListFilter")),
+			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.QueryPost("/workspaces/search", "entityListQuery", "entityListFilter")),
 		),
 		workspaceDocumentExtras{CSRFToken: csrfToken},
 		chromeOptions,
@@ -63,16 +64,16 @@ func WorkspacesListResultsPatch(workspaces []workspaceview.WorkspaceView) map[st
 	}}
 }
 
-func WorkspacePage(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, assets []workspaceview.AssetView, activeType, query, roleLabel string, access WorkspaceAccessResponse, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
-	return WorkspacePageForEnvironment(catalog, workspace, assets, activeType, query, "", roleLabel, access, csrfToken, chromeOptions...)
+func WorkspacePage(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, assets []workspaceview.AssetView, activeType, query, roleLabel string, access WorkspaceAccessResponse, csrfToken string, commands AccessCommandBindings, chromeOptions ...webpage.Provider) g.Node {
+	return WorkspacePageForEnvironment(catalog, workspace, assets, activeType, query, "", roleLabel, access, csrfToken, commands, chromeOptions...)
 }
 
-func WorkspacePageForEnvironment(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, assets []workspaceview.AssetView, activeType, query, environment, roleLabel string, access WorkspaceAccessResponse, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
+func WorkspacePageForEnvironment(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, assets []workspaceview.AssetView, activeType, query, environment, roleLabel string, access WorkspaceAccessResponse, csrfToken string, commands AccessCommandBindings, chromeOptions ...webpage.Provider) g.Node {
 	page := workspacePageSignal(workspace, assets, nil, activeType, query, environment)
 	attrs := []g.Node{
 		g.Attr("slot", "page"),
 	}
-	accessAttrs, extras := workspaceAccessRouteBridge(workspace.ID, access, csrfToken)
+	accessAttrs, extras := workspaceAccessRouteBridge(workspace.ID, access, csrfToken, commands)
 	extras.CSRFToken = csrfToken
 	attrs = append(attrs, accessAttrs...)
 	attrs = append(attrs, workspaceAssetFilterRouteBridge(workspace.ID, environment)...)
@@ -115,7 +116,7 @@ func ConnectionsPageForEnvironment(catalog catalog.Catalog, workspaceID string, 
 	return workspaceRouteDocument("Connections", catalog, "connections", roleLabel, page, uisignals.RouteConnections,
 		g.El("lv-connections-page",
 			g.Attr("slot", "page"),
-			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Post("/connections/search", "entityListQuery", "entityListFilter")),
+			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.QueryPost("/connections/search", "entityListQuery", "entityListFilter")),
 		),
 		workspaceDocumentExtras{CSRFToken: csrfToken},
 		chromeOptions,
@@ -164,14 +165,35 @@ type workspaceDocumentExtras struct {
 	AssetWorkspaceID string
 }
 
-func workspaceAccessRouteBridge(workspaceID string, access WorkspaceAccessResponse, csrfToken string) ([]g.Node, workspaceDocumentExtras) {
+// AccessCommandBindings is supplied by the composition root so workspace UI
+// can invoke access-owned commands without importing an access adapter.
+type AccessCommandBindings struct {
+	CreateRoleBinding uicommand.Binding
+	UpdateRoleBinding uicommand.Binding
+	DeleteRoleBinding uicommand.Binding
+	CreateGrant       uicommand.Binding
+	DeleteGrant       uicommand.Binding
+}
+
+func workspaceAccessRouteBridge(workspaceID string, access WorkspaceAccessResponse, csrfToken string, commands AccessCommandBindings) ([]g.Node, workspaceDocumentExtras) {
 	if !access.CanManage {
 		return nil, workspaceDocumentExtras{}
 	}
 	accessSignal := WorkspaceAccessSignals(access)
 	search := "$workspaceAccess.search = evt.detail.search; $workspaceAccess.searchStatus = {loading: true, error: ''}; $workspaceAccess.status = {loading: false, error: '', message: ''}; " + uiactions.Get("/workspaces/"+workspaceID+"/access/search")
-	upsert := "$workspaceAccess.status = {loading: true, error: '', message: ''}; $workspaceAccess.command = evt.detail; " + uiactions.Post("/workspaces/"+workspaceID+"/access/upsert")
-	remove := "$workspaceAccess.status = {loading: true, error: '', message: ''}; $workspaceAccess.command = evt.detail; " + uiactions.Post("/workspaces/"+workspaceID+"/access/remove")
+	var upsertCommand, removeCommand string
+	if strings.TrimSpace(access.ObjectType) != "" {
+		upsertCommand = uiactions.CommandPost(commands.CreateGrant, "/workspaces/"+workspaceID+"/access/upsert")
+		removeCommand = uiactions.CommandPost(commands.DeleteGrant, "/workspaces/"+workspaceID+"/access/remove")
+	} else {
+		upsertCommand = uiactions.CommandPostSwitch("$workspaceAccess.command.bindingId ? 'update' : 'create'", map[string]uicommand.Binding{
+			"create": commands.CreateRoleBinding,
+			"update": commands.UpdateRoleBinding,
+		}, "/workspaces/"+workspaceID+"/access/upsert")
+		removeCommand = uiactions.CommandPost(commands.DeleteRoleBinding, "/workspaces/"+workspaceID+"/access/remove")
+	}
+	upsert := "$workspaceAccess.status = {loading: true, error: '', message: ''}; $workspaceAccess.command = evt.detail; " + upsertCommand
+	remove := "$workspaceAccess.status = {loading: true, error: '', message: ''}; $workspaceAccess.command = evt.detail; " + removeCommand
 	return []g.Node{
 			g.Attr("data-on:lv-workspace-access-search__debounce.200ms", search),
 			g.Attr("data-on:lv-workspace-access-upsert", upsert),
@@ -183,7 +205,7 @@ func workspaceAccessRouteBridge(workspaceID string, access WorkspaceAccessRespon
 }
 
 func workspaceAssetFilterRouteBridge(workspaceID, environment string) []g.Node {
-	filter := "$workspaceAssetType = evt.detail.type; $workspaceAssetQuery = evt.detail.query; " + uiactions.Post("/workspaces/"+workspaceID+"/search", "workspaceAssetType", "workspaceAssetQuery")
+	filter := "$workspaceAssetType = evt.detail.type; $workspaceAssetQuery = evt.detail.query; " + uiactions.QueryPost("/workspaces/"+workspaceID+"/search", "workspaceAssetType", "workspaceAssetQuery")
 	return []g.Node{g.Attr("data-on:lv-workspace-asset-filter__debounce.200ms", filter)}
 }
 
@@ -563,7 +585,7 @@ func WorkspaceAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Cata
 		refreshPath := "/workspaces/" + workspace.ID + "/assets/" + asset.ID + "/refresh"
 		extras.CSRFToken = refresh.CSRFToken
 		attrs = append(attrs,
-			g.Attr("data-on:lv-run-refresh-pipeline", uiactions.Post(refreshPath)),
+			g.Attr("data-on:lv-run-refresh-pipeline", uiactions.UncontractedMutationPost(refreshPath)),
 		)
 		if activeSection == "versions" {
 			return workspaceAssetRouteDocument(asset, catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspaceAsset, g.El("lv-workspace-asset-page", attrs...), extras, activeSection, chromeOptions)
@@ -704,7 +726,7 @@ func workspaceStaticAssetURL(providers []webpage.Provider, path string) string {
 	return layout.Assets.URL(path)
 }
 
-func WorkspacePermissionsPage(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, bindings []workspaceview.RoleBindingView, roles []workspaceview.RoleView, csrfToken, roleLabel string) g.Node {
+func WorkspacePermissionsPage(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, bindings []workspaceview.RoleBindingView, roles []workspaceview.RoleView, csrfToken, roleLabel string, commands AccessCommandBindings) g.Node {
 	page := uisignals.WorkspacePageSignal{
 		Kind:        uisignals.RouteWorkspace,
 		Title:       workspace.Title,
@@ -720,7 +742,7 @@ func WorkspacePermissionsPage(catalog catalog.Catalog, workspace workspaceview.W
 	attrs := []g.Node{
 		g.Attr("slot", "page"),
 	}
-	accessAttrs, extras := workspaceAccessRouteBridge(workspace.ID, access, csrfToken)
+	accessAttrs, extras := workspaceAccessRouteBridge(workspace.ID, access, csrfToken, commands)
 	attrs = append(attrs, accessAttrs...)
 	return workspaceRouteDocument("Workspace permissions", catalog, "settings", roleLabel, page, uisignals.RouteWorkspace,
 		g.El("lv-workspace-page", attrs...),

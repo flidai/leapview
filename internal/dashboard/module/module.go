@@ -83,6 +83,7 @@ type HTTPConfig struct {
 	DataRefreshedAt     func(context.Context, string, string, string) string
 	QueryFreshness      func(context.Context, string, string, string) (api.QueryFreshness, bool)
 	AgentBootstrap      func(*http.Request, string) dashboardui.AgentBootstrap
+	AgentCommands       dashboardui.AgentCommandBindings
 	Presentation        dashboardui.Presentation
 	Assets              staticasset.Resolver
 }
@@ -105,6 +106,7 @@ type Presentation = dashboardui.Presentation
 type HTTP = dashboardhttp.Handler
 type QueryFreshness = api.QueryFreshness
 type AgentBootstrap = dashboardui.AgentBootstrap
+type AgentCommandBindings = dashboardui.AgentCommandBindings
 type ChatSignal = dashboardsignals.ChatSignal
 type ChatConversationSummary = dashboardsignals.ChatConversationSummary
 type ChatTranscriptItemSignal = dashboardsignals.ChatTranscriptItemSignal
@@ -202,6 +204,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		Environment:  config.HTTP.Environment, DataRefreshedAt: config.HTTP.DataRefreshedAt,
 		QueryFreshness: config.HTTP.QueryFreshness,
 		AgentBootstrap: config.HTTP.AgentBootstrap,
+		AgentCommands:  config.HTTP.AgentCommands,
 	}
 	handler.SessionKey = func(r *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) dashboardsession.Key {
 		workspaceID := chi.URLParam(r, "workspace")

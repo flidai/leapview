@@ -187,6 +187,48 @@ func (r *Repository) UpdateConversation(ctx context.Context, input agent.Convers
 	return mapConversation(row), nil
 }
 
+// UpdateConversationAtomic serializes the revision check and title mutation
+// in one SQLite transaction. The no-op UPDATE acquires SQLite's writer lock
+// before reading the current row, so another writer cannot advance the
+// conversation between the check and the mutation.
+func (r *Repository) UpdateConversationAtomic(ctx context.Context, input agent.ConversationUpdate, check func(agent.Conversation) error) (agent.Conversation, error) {
+	if r == nil || r.db == nil {
+		return agent.Conversation{}, fmt.Errorf("agent repository database is required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return agent.Conversation{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	txQueries := r.q.WithTx(tx)
+	if err := txQueries.AcquireAgentConversationMutationLock(ctx, platformdb.AcquireAgentConversationMutationLockParams{
+		ConversationID: input.ConversationID,
+		PrincipalID:    input.PrincipalID,
+	}); err != nil {
+		return agent.Conversation{}, err
+	}
+	// The transaction-bound sqlc handle owns all reads/writes below; retain
+	// the root DB only for the repository's non-query capability field.
+	txRepo := &Repository{db: r.db, q: txQueries, events: r.events, workflow: r.workflow}
+	current, err := txRepo.GetConversation(ctx, input.PrincipalID, input.ConversationID)
+	if err != nil {
+		return agent.Conversation{}, err
+	}
+	if check != nil {
+		if err := check(current); err != nil {
+			return agent.Conversation{}, err
+		}
+	}
+	updated, err := txRepo.UpdateConversation(ctx, input)
+	if err != nil {
+		return agent.Conversation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return agent.Conversation{}, err
+	}
+	return updated, nil
+}
+
 func (r *Repository) ArchiveConversation(ctx context.Context, principalID, conversationID string) (agent.Conversation, error) {
 	principalID, err := agentPrincipalID(principalID)
 	if err != nil {

@@ -82,7 +82,7 @@ func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSign
 		UpdatesURL: catalogUpdatesURL,
 		Content: g.El("lv-catalog-page",
 			g.Attr("slot", "page"),
-			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Post("/catalog/search", "entityListQuery", "entityListFilter")),
+			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.QueryPost("/catalog/search", "entityListQuery", "entityListFilter")),
 		),
 	})
 }

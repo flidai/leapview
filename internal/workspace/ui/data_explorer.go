@@ -18,7 +18,7 @@ func DataExplorerPage(catalog catalog.Catalog, page uisignals.DataExplorerPageSi
 		UpdatesURL: explorerUpdatesURL,
 		Content: g.El("lv-data-explorer",
 			g.Attr("slot", "page"),
-			g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.Post("/data/command")),
+			g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost("/data/command")),
 		),
 	})
 }

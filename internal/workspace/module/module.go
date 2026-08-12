@@ -63,6 +63,8 @@ func (f AssetRefreshFunc) RefreshAsset(ctx context.Context, input AssetRefreshIn
 	return f(ctx, input)
 }
 
+type AccessCommandBindings = ui.AccessCommandBindings
+
 type Config struct {
 	Database            *sql.DB
 	Directory           Directory
@@ -73,6 +75,7 @@ type Config struct {
 	AccessService       access.WorkspaceAccessService
 	RoleBindingCommands access.RoleBindingOperations
 	GrantCommands       access.GrantOperations
+	AccessCommands      ui.AccessCommandBindings
 	AssetCatalog        workspace.AssetCatalogReader
 	MetricsForWorkspace func(string) (queryruntime.Metrics, bool)
 	RootMetrics         queryruntime.Metrics
@@ -182,6 +185,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		CSRFToken: config.CSRFToken, CurrentRoleLabel: config.CurrentRoleLabel, Layout: config.Layout,
 		RoleBindingCommands: config.RoleBindingCommands,
 		GrantCommands:       config.GrantCommands,
+		AccessCommands:      config.AccessCommands,
 	}
 	m.search = buildSearch(config.Database, config.AuthorizeObject)
 	return m, nil

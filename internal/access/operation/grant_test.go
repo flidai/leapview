@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 )
 
@@ -81,7 +82,8 @@ func TestGrantCommandsEnforceGeneratedSurfaceAndAuditContract(t *testing.T) {
 	}
 	invocation := access.GrantInvocation{
 		PrincipalID: "principal-admin", Surface: access.OperationSurfaceUI,
-		RequestID: "request-1", CorrelationID: "correlation-1",
+		RequestID: "request-1", CorrelationID: "correlation-1", IdempotencyKey: "grant-1",
+		OperationClaims: []string{string(access.OperationCreateGrant)},
 	}
 	input := access.GrantInput{
 		Object:      access.ObjectRef{Type: access.SecurableDashboard, WorkspaceID: "sales", ObjectID: "executive"},
@@ -103,6 +105,10 @@ func TestGrantCommandsEnforceGeneratedSurfaceAndAuditContract(t *testing.T) {
 	}
 
 	invocation.Surface = access.OperationSurfaceAPI
+	invocation.ConcurrencyToken, err = access.GrantRevision(created)
+	if err != nil {
+		t.Fatalf("grant revision: %v", err)
+	}
 	updated, err := commands.UpdateGrant(t.Context(), invocation, "sales", created.ID, input)
 	if err != nil {
 		t.Fatalf("update grant: %v", err)
@@ -113,6 +119,7 @@ func TestGrantCommandsEnforceGeneratedSurfaceAndAuditContract(t *testing.T) {
 	assertGrantAudit(t, repo.audits[1], access.OperationUpdateGrant, "grant.updated", access.OperationSurfaceAPI, "sales")
 
 	invocation.Surface = access.OperationSurfaceUI
+	invocation.OperationClaims = []string{string(access.OperationDeleteGrant)}
 	deleted, err := commands.DeleteGrant(t.Context(), invocation, "sales", created.ID)
 	if err != nil {
 		t.Fatalf("delete grant: %v", err)
@@ -138,6 +145,32 @@ func TestGrantCommandsRollBackMutationWhenRequiredAuditFails(t *testing.T) {
 	}
 	if len(repo.grants) != 0 {
 		t.Fatalf("mutation was not rolled back: %#v", repo.grants)
+	}
+}
+
+func TestGrantUpdateRejectsStaleRevisionInsideAuditTransaction(t *testing.T) {
+	repo := &grantRepository{grants: map[string]access.Grant{
+		"grant-1": {ID: "grant-1", ObjectID: "dashboard-1", ObjectType: access.SecurableDashboard,
+			WorkspaceID: "sales", SubjectType: access.SubjectPrincipal, SubjectID: "viewer", Privilege: access.PrivilegeViewItem},
+	}}
+	commands, err := NewGrantCommands(func() (access.Repository, error) { return repo, nil }, grantTestCatalog(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = commands.UpdateGrant(t.Context(), access.GrantInvocation{
+		Surface: access.OperationSurfaceAPI, ConcurrencyToken: `"stale"`,
+	}, "sales", "grant-1", access.GrantInput{
+		Object:      access.ObjectRef{Type: access.SecurableDashboard, WorkspaceID: "sales", ObjectID: "dashboard-1"},
+		SubjectType: access.SubjectPrincipal, SubjectID: "viewer", Privilege: access.PrivilegeQueryData,
+	})
+	if !errors.Is(err, apigencommand.ErrPreconditionFailed) {
+		t.Fatalf("update error = %v", err)
+	}
+	if got := repo.grants["grant-1"].Privilege; got != access.PrivilegeViewItem {
+		t.Fatalf("stale update committed privilege %q", got)
+	}
+	if len(repo.audits) != 0 {
+		t.Fatalf("stale update wrote audit: %#v", repo.audits)
 	}
 }
 

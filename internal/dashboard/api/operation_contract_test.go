@@ -28,7 +28,7 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 		if command.Target == nil || command.Target.Parameter != "workspace" || command.Target.Type != "workspace" {
 			t.Errorf("%s target = %#v", operationID, command.Target)
 		}
-		if command.Idempotency != "required" || command.Concurrency != "" || len(command.AdditionalExposures) != 0 {
+		if command.Idempotency != "required" || command.Concurrency != "" || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" {
 			t.Errorf("%s policies/exposures = %#v", operationID, command)
 		}
 		if command.Execution != nil {

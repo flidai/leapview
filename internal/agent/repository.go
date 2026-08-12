@@ -193,6 +193,9 @@ type Repository interface {
 	ListConversationsPage(ctx context.Context, principalID string, page Page) ([]Conversation, error)
 	GetConversation(ctx context.Context, principalID, conversationID string) (Conversation, error)
 	UpdateConversation(ctx context.Context, input ConversationUpdate) (Conversation, error)
+	// UpdateConversationAtomic evaluates the revision check after acquiring
+	// the mutation lock and commits the check and update as one lifecycle.
+	UpdateConversationAtomic(ctx context.Context, input ConversationUpdate, check func(Conversation) error) (Conversation, error)
 	ArchiveConversation(ctx context.Context, principalID, conversationID string) (Conversation, error)
 	UpdateDefaultConversationTitle(ctx context.Context, principalID, conversationID, title string) (Conversation, error)
 	UpdateConversationTranscript(ctx context.Context, principalID, conversationID, transcriptJSON string) (Conversation, error)

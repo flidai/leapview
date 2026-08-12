@@ -2,23 +2,90 @@ package actions
 
 import (
 	"regexp"
+	"sort"
 	"strings"
+
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 func Get(path string, signalPaths ...string) string {
-	return request("get", path, signalPaths)
+	return request("get", path, signalPaths, "")
 }
 
-func Post(path string, signalPaths ...string) string {
-	return request("post", path, signalPaths)
+// QueryPost is an explicitly non-mutating POST used for signal-backed search
+// and read-model commands whose payload is too rich for a query string.
+func QueryPost(path string, signalPaths ...string) string {
+	return request("post", path, signalPaths, "")
 }
 
-func Patch(path string, signalPaths ...string) string {
-	return request("patch", path, signalPaths)
+// EventPost dispatches a transient UI state event. Durable application
+// mutations must use CommandPost so they carry a generated operation ID.
+func EventPost(path string, signalPaths ...string) string {
+	return request("post", path, signalPaths, "")
 }
 
-func request(method, path string, signalPaths []string) string {
-	options := "headers: window.LeapViewCommand.headers()"
+// UncontractedMutationPatch is the migration boundary for remaining legacy UI
+// mutations that do not yet have an APIGen command contract. New
+// callers are rejected by the architecture test.
+func UncontractedMutationPatch(path string, signalPaths ...string) string {
+	return request("patch", path, signalPaths, "")
+}
+
+func UncontractedMutationPost(path string, signalPaths ...string) string {
+	return request("post", path, signalPaths, "")
+}
+
+func CommandPost(binding uicommand.Binding, path string, signalPaths ...string) string {
+	return request("post", path, signalPaths, jsString(binding.OperationID()))
+}
+
+// CommandPostSwitch chooses one typed command from a closed server-shared set.
+// selectorExpression is a Datastar expression such as "evt.detail.action".
+func CommandPostSwitch(selectorExpression string, bindings map[string]uicommand.Binding, path string, signalPaths ...string) string {
+	keys := make([]string, 0, len(bindings))
+	for key := range bindings {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	entries := make([]string, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, jsString(key)+": "+jsString(bindings[key].OperationID()))
+	}
+	operationExpression := "({" + strings.Join(entries, ", ") + "})[" + strings.TrimSpace(selectorExpression) + "]"
+	return request("post", path, signalPaths, operationExpression)
+}
+
+// CommandPostSequence declares an explicit composed UI workflow. Every
+// dispatched mutation still verifies its individual generated operation ID.
+func CommandPostSequence(bindings []uicommand.Binding, path string, signalPaths ...string) string {
+	return request("post", path, signalPaths, operationArrayExpression(bindings))
+}
+
+func CommandPostConditional(conditionExpression string, ifTrue, ifFalse []uicommand.Binding, path string, signalPaths ...string) string {
+	operationExpression := "(" + strings.TrimSpace(conditionExpression) + " ? " + operationArrayExpression(ifTrue) + " : " + operationArrayExpression(ifFalse) + ")"
+	return request("post", path, signalPaths, operationExpression)
+}
+
+func operationArrayExpression(bindings []uicommand.Binding) string {
+	operations := make([]string, 0, len(bindings))
+	seen := map[string]struct{}{}
+	for _, binding := range bindings {
+		operationID := binding.OperationID()
+		if _, exists := seen[operationID]; exists {
+			continue
+		}
+		seen[operationID] = struct{}{}
+		operations = append(operations, jsString(operationID))
+	}
+	return "[" + strings.Join(operations, ", ") + "]"
+}
+
+func request(method, path string, signalPaths []string, operationExpression string) string {
+	headers := "window.LeapViewCommand.headers()"
+	if strings.TrimSpace(operationExpression) != "" {
+		headers = "window.LeapViewCommand.headers(" + operationExpression + ")"
+	}
+	options := "headers: " + headers
 	if len(signalPaths) > 0 {
 		patterns := make([]string, 0, len(signalPaths))
 		for _, signalPath := range signalPaths {
@@ -32,4 +99,8 @@ func request(method, path string, signalPaths []string) string {
 
 func jsSingleQuoted(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `'`, `\'`, "\n", `\n`, "\r", `\r`).Replace(value)
+}
+
+func jsString(value string) string {
+	return "'" + jsSingleQuoted(value) + "'"
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
+	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	g "maragu.dev/gomponents"
@@ -12,6 +13,10 @@ import (
 
 func ChatPage(workspaceID, csrfToken, view string, state ChatViewState, providers ...webpage.Provider) g.Node {
 	layout := webpage.Resolve(firstProvider(providers), chatLayoutContext(workspaceID, view, state.Agent.ActiveConversationID))
+	turnCommand := uiactions.CommandPost(agentuiaction.CreateRun, "/chats/turns", "agent", "agentContext")
+	if strings.TrimSpace(state.Agent.ActiveConversationID) == "" {
+		turnCommand = uiactions.CommandPostSequence(agentuiaction.Bindings(), "/chats/turns", "agent", "agentContext")
+	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: "Chat", CSRFToken: csrfToken, Scripts: []string{"/static/chat-page.js"},
 		UpdatesURL: chatUpdatesURL(workspaceID, view, state.Agent.ActiveConversationID),
@@ -23,7 +28,7 @@ func ChatPage(workspaceID, csrfToken, view string, state ChatViewState, provider
 			g.Attr("workspace-id", workspaceID),
 			g.Attr("view", view),
 			g.Attr("data-indicator", "agentTurnPending"),
-			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; "+uiactions.Post("/chats/turns", "agent", "agentContext")),
+			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; "+turnCommand),
 		),
 	})
 }

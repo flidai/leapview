@@ -17,6 +17,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	accessuiaction "github.com/flidai/leapview/internal/access/uiaction"
 	"github.com/flidai/leapview/internal/agent"
 	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -1498,6 +1499,7 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 
 	signals := `{"workspaceAccess":{"command":{"email":"","role":"data_deployer","subjectType":"principal","subjectId":"` + analyst.ID + `"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(signals))
+	claimUICommands(req, accessuiaction.CreateRoleBinding)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
@@ -1539,6 +1541,7 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 	}
 	updateSignals := `{"workspaceAccess":{"command":{"bindingId":"` + bindingID + `","role":"editor","subjectType":"principal","subjectId":"` + analyst.ID + `"}}}`
 	updateReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(updateSignals))
+	claimUICommands(updateReq, accessuiaction.UpdateRoleBinding)
 	updateReq.Header.Set("Authorization", "Bearer "+token)
 	updateRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(updateRec, updateReq)
@@ -1547,6 +1550,7 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 	}
 	removeSignals := `{"workspaceAccess":{"command":{"bindingId":"` + bindingID + `"}}}`
 	removeReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/remove", bytes.NewBufferString(removeSignals))
+	claimUICommands(removeReq, accessuiaction.DeleteRoleBinding)
 	removeReq.Header.Set("Authorization", "Bearer "+token)
 	removeRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(removeRec, removeReq)
@@ -1662,6 +1666,7 @@ func TestWorkspaceAssetAccessCommandCreatesAndRemovesGrant(t *testing.T) {
 
 	signals := `{"workspaceAccess":{"command":{"email":"analyst@example.com","role":"VIEW_ITEM"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/assets/semantic_model:test.sales/access/upsert", bytes.NewBufferString(signals))
+	claimUICommands(req, accessuiaction.CreateGrant)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
@@ -1677,6 +1682,7 @@ func TestWorkspaceAssetAccessCommandCreatesAndRemovesGrant(t *testing.T) {
 
 	groupSignals := `{"workspaceAccess":{"command":{"subjectType":"group","subjectId":"` + group.ID + `","privilege":"QUERY_DATA"}}}`
 	groupReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/assets/semantic_model:test.sales/access/upsert", bytes.NewBufferString(groupSignals))
+	claimUICommands(groupReq, accessuiaction.CreateGrant)
 	groupReq.Header.Set("Authorization", "Bearer "+token)
 	groupRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(groupRec, groupReq)
@@ -1689,6 +1695,7 @@ func TestWorkspaceAssetAccessCommandCreatesAndRemovesGrant(t *testing.T) {
 
 	servicePrincipalSignals := `{"workspaceAccess":{"command":{"subjectType":"service_principal","subjectId":"` + servicePrincipal.ID + `","privilege":"DEPLOY"}}}`
 	servicePrincipalReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/assets/semantic_model:test.sales/access/upsert", bytes.NewBufferString(servicePrincipalSignals))
+	claimUICommands(servicePrincipalReq, accessuiaction.CreateGrant)
 	servicePrincipalReq.Header.Set("Authorization", "Bearer "+token)
 	servicePrincipalRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(servicePrincipalRec, servicePrincipalReq)
@@ -1729,6 +1736,7 @@ func TestWorkspaceAssetAccessCommandCreatesAndRemovesGrant(t *testing.T) {
 
 	removeSignals := `{"workspaceAccess":{"command":{"bindingId":"` + grantID + `"}}}`
 	removeReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/assets/semantic_model:test.sales/access/remove", bytes.NewBufferString(removeSignals))
+	claimUICommands(removeReq, accessuiaction.DeleteGrant)
 	removeReq.Header.Set("Authorization", "Bearer "+token)
 	removeRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(removeRec, removeReq)
@@ -1759,6 +1767,7 @@ func TestWorkspaceAccessCommandRejectsViewer(t *testing.T) {
 
 	signals := `{"workspaceAccess":{"command":{"email":"analyst@example.com","role":"viewer"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(signals))
+	claimUICommands(req, accessuiaction.CreateRoleBinding)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
@@ -1778,6 +1787,7 @@ func TestWorkspaceAccessCommandPatchesInvalidInput(t *testing.T) {
 
 	signals := `{"workspaceAccess":{"command":{"email":"","role":"viewer"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(signals))
+	claimUICommands(req, accessuiaction.CreateRoleBinding)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)

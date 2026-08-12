@@ -33,19 +33,40 @@ func (m *Module) PublicationByPublicID(ctx context.Context, publicID string) (pu
 	return m.publications.GetByPublicID(ctx, publicID)
 }
 
-func (m *Module) MutatePublication(ctx context.Context, workspaceID, name, actorID string, action publication.Action) (publication.Publication, error) {
+// MutatePublicationWithInvocation is the transport-neutral UI adapter used by
+// the admin surface. It validates the generated cross-surface policy before
+// mutating state, then executes the generated audit contract with the same
+// request identity.
+func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceID, name, actorID string, action publication.Action, invocation apigencommand.Invocation) (publication.Publication, error) {
 	if m == nil || m.publicationService == nil || m.recordPublicationCommandAudit == nil {
 		return publication.Publication{}, publication.ErrNotFound
+	}
+	operationID, ok := publicationOperationID(action)
+	if !ok {
+		return publication.Publication{}, publication.ErrConflict
+	}
+	operationIDValue := operationID.APIGenOperationID()
+	contract, ok := dashboardgen.GetAPIGenCommandRuntimeContract(operationIDValue)
+	if !ok {
+		return publication.Publication{}, errPublicationCommandAuditUnavailable
+	}
+	if invocation.Surface == "" {
+		invocation.Surface = apigencommand.SurfaceUI
+	}
+	if invocation.TargetValues == nil {
+		invocation.TargetValues = map[string]string{}
+	}
+	if strings.TrimSpace(invocation.TargetValues["workspace"]) == "" {
+		invocation.TargetValues["workspace"] = strings.TrimSpace(workspaceID)
+	}
+	ctx, _, err := apigencommand.BeginInvocation(ctx, contract, invocation)
+	if err != nil {
+		return publication.Publication{}, err
 	}
 	row, err := m.publicationService.Mutate(ctx, workspaceID, name, actorID, action)
 	if err != nil {
 		return row, err
 	}
-	operationID, ok := publicationOperationID(action)
-	if !ok {
-		return row, publication.ErrConflict
-	}
-	operationIDValue := operationID.APIGenOperationID()
 	executor, err := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, m.logger)
 	if err != nil {
 		return row, err
@@ -54,7 +75,8 @@ func (m *Module) MutatePublication(ctx context.Context, workspaceID, name, actor
 		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
 			return m.recordPublicationCommandAudit(ctx, publicationCommandAuditInput{
 				operationID: operationIDValue, workspaceID: strings.TrimSpace(workspaceID), principalID: strings.TrimSpace(actorID),
-				targetID: strings.TrimSpace(row.ID), surface: "ui",
+				targetID: strings.TrimSpace(row.ID), requestID: strings.TrimSpace(invocation.RequestID),
+				correlationID: strings.TrimSpace(invocation.CorrelationID), surface: string(invocation.Surface),
 			})
 		},
 		LogMessage: "best-effort dashboard publication command audit failed",

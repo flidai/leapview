@@ -194,6 +194,13 @@ func (s *Service) UpdateConversation(ctx context.Context, scope Scope, conversat
 	})
 }
 
+// UpdateConversationWithRevision evaluates check against the current
+// conversation inside the repository's required atomic mutation boundary.
+func (s *Service) UpdateConversationWithRevision(ctx context.Context, scope Scope, conversationID, title string, check func(Conversation) error) (Conversation, error) {
+	input := ConversationUpdate{PrincipalID: scope.PrincipalID, ConversationID: conversationID, Title: title}
+	return s.repo.UpdateConversationAtomic(ctx, input, check)
+}
+
 func (s *Service) ArchiveConversation(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
 	return s.repo.ArchiveConversation(ctx, scope.PrincipalID, conversationID)
 }

@@ -390,6 +390,9 @@ func (h Handler) GetPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
+	if revision, revisionErr := access.PrincipalRevision(principal); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(principal))
 }
 
@@ -483,14 +486,17 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)))
 		return
 	}
-	if !requireIfMatch(w, r, resourceETag(principalDTO(existing))) {
-		return
-	}
 	if strings.TrimSpace(input.DisplayName) != "" {
 		existing.DisplayName = input.DisplayName
 	}
 	var principal access.Principal
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+	err = runAuditedMutationWithConcurrency(r, repo, accessgen.GenCommandOperationUpdatePrincipal(), func(txRepo access.Repository) (string, error) {
+		current, err := txRepo.PrincipalByID(r.Context(), existing.ID)
+		if err != nil {
+			return "", err
+		}
+		return access.PrincipalRevision(current)
+	}, func(txRepo access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
 		principal, mutationErr = txRepo.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: existing.ID, Kind: existing.Kind, Email: existing.Email, DisplayName: existing.DisplayName})
 		return commandAccessAuditInput(r, "principal.updated", h.currentPrincipalID(r), "", "principal", principal.ID, access.PrivilegeManageGrants, "success", map[string]any{
@@ -500,6 +506,9 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if err != nil {
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err, stdhttp.StatusBadRequest)
 		return
+	}
+	if revision, revisionErr := access.PrincipalRevision(principal); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(principal))
 }
@@ -602,6 +611,9 @@ func (h Handler) GetServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
 		return
 	}
+	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
 }
 
@@ -659,11 +671,14 @@ func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), apigenfailure.Wrap("not_found", sql.ErrNoRows))
 		return
 	}
-	if !requireIfMatch(w, r, resourceETag(principalDTO(existing))) {
-		return
-	}
 	var row access.Principal
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+	err = runAuditedMutationWithConcurrency(r, repo, accessgen.GenCommandOperationUpdateServicePrincipal(), func(txRepo access.Repository) (string, error) {
+		current, err := txRepo.PrincipalByID(r.Context(), existing.ID)
+		if err != nil {
+			return "", err
+		}
+		return access.PrincipalRevision(current)
+	}, func(txRepo access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
 		row, mutationErr = txRepo.UpdateServicePrincipal(r.Context(), chi.URLParam(r, "servicePrincipal"), access.ServicePrincipalInput{DisplayName: input.DisplayName})
 		return commandAccessAuditInput(r, "service_principal.updated", principal.ID, "", "service_principal", row.ID, access.PrivilegeManagePlatform, "success", nil, mutationErr)
@@ -671,6 +686,9 @@ func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 	if err != nil {
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err, statusForNotFound(err))
 		return
+	}
+	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
 }
@@ -849,6 +867,9 @@ func (h Handler) GetGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !ok {
 		return
 	}
+	if revision, revisionErr := access.GroupRevision(group); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
 	writeJSON(w, stdhttp.StatusOK, groupDTO(group))
 }
 
@@ -864,16 +885,24 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !ok {
 		return
 	}
-	if !requireIfMatch(w, r, resourceETag(groupDTO(group))) {
-		return
-	}
 	repo, err := h.repository()
 	if err != nil {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGroup(), err)
 		return
 	}
 	var updated access.Group
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+	err = runAuditedMutationWithConcurrency(r, repo, accessgen.GenCommandOperationUpdateGroup(), func(txRepo access.Repository) (string, error) {
+		rows, err := txRepo.ListGroups(r.Context(), group.WorkspaceID)
+		if err != nil {
+			return "", err
+		}
+		for _, current := range rows {
+			if current.ID == group.ID {
+				return access.GroupRevision(current)
+			}
+		}
+		return "", sql.ErrNoRows
+	}, func(txRepo access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
 		updated, mutationErr = txRepo.UpsertGroup(r.Context(), access.GroupInput{ID: group.ID, WorkspaceID: group.WorkspaceID, Provider: group.Provider, ExternalID: group.ExternalID, Name: firstNonEmpty(input.DisplayName, group.Name)})
 		return commandAccessAuditInput(r, "group.updated", h.currentPrincipalID(r), updated.WorkspaceID, "group", updated.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(updated), mutationErr)
@@ -881,6 +910,9 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if err != nil {
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateGroup(), err, stdhttp.StatusBadRequest)
 		return
+	}
+	if revision, revisionErr := access.GroupRevision(updated); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusOK, groupDTO(updated))
 }
@@ -1014,6 +1046,9 @@ func (h Handler) GetRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
+	}
+	if revision, revisionErr := access.RoleBindingRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusOK, apiRoleBindingDTO(row))
 }
@@ -1159,7 +1194,9 @@ func (h Handler) GetGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	dto := grantDTO(row)
-	w.Header().Set("ETag", resourceETag(dto))
+	if revision, revisionErr := access.GrantRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
 	writeJSON(w, stdhttp.StatusOK, dto)
 }
 
@@ -1181,9 +1218,6 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromGrant(current)) {
-		return
-	}
-	if !requireIfMatch(w, r, resourceETag(grantDTO(current))) {
 		return
 	}
 	var input struct {
@@ -1219,7 +1253,9 @@ func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	dto := grantDTO(updated)
-	w.Header().Set("ETag", resourceETag(dto))
+	if revision, revisionErr := access.GrantRevision(updated); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
 	writeJSON(w, stdhttp.StatusOK, dto)
 }
 
@@ -1357,7 +1393,9 @@ func (h Handler) GetDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	dto := dataPolicyDTO(row)
-	w.Header().Set("ETag", resourceETag(dto))
+	if revision, revisionErr := access.DataPolicyRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
 	writeJSON(w, stdhttp.StatusOK, dto)
 }
 
@@ -1380,9 +1418,6 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return
 	}
 	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromCanonical(current.WorkspaceID, current.ObjectID)) {
-		return
-	}
-	if !requireIfMatch(w, r, resourceETag(dataPolicyDTO(current))) {
 		return
 	}
 	var input struct {
@@ -1416,7 +1451,13 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return
 	}
 	var updated access.DataPolicy
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+	err = runAuditedMutationWithConcurrency(r, repo, accessgen.GenCommandOperationUpdateDataPolicy(), func(txRepo access.Repository) (string, error) {
+		current, err := txRepo.GetDataPolicy(r.Context(), workspaceID, id)
+		if err != nil {
+			return "", err
+		}
+		return access.DataPolicyRevision(current)
+	}, func(txRepo access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
 		updated, mutationErr = txRepo.UpsertDataPolicy(r.Context(), access.DataPolicyInput{ID: id, Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, PolicyType: input.PolicyType, ExpressionJSON: string(expression)})
 		return commandAccessAuditInput(r, "data_policy.updated", principal.ID, updated.WorkspaceID, "data_policy", updated.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": updated.ObjectID, "policyType": updated.PolicyType}, mutationErr)
@@ -1426,7 +1467,9 @@ func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return
 	}
 	dto := dataPolicyDTO(updated)
-	w.Header().Set("ETag", resourceETag(dto))
+	if revision, revisionErr := access.DataPolicyRevision(updated); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
 	writeJSON(w, stdhttp.StatusOK, dto)
 }
 
@@ -1549,24 +1592,6 @@ func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request)
 }
 
 func (h Handler) UpdateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateRoleBinding(), err)
-		return
-	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	current, err := repo.GetRoleBinding(r.Context(), workspaceID, chi.URLParam(r, "binding"))
-	if err != nil {
-		status := statusForNotFound(err)
-		if status == stdhttp.StatusNotFound {
-			err = apigenfailure.Wrap("not_found", err)
-		}
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateRoleBinding(), err)
-		return
-	}
-	if !requireIfMatch(w, r, resourceETag(apiRoleBindingDTO(current))) {
-		return
-	}
 	input, ok := decodeRoleBindingInput(w, r, accessgen.GenCommandOperationUpdateRoleBinding())
 	if !ok {
 		return
@@ -1580,6 +1605,9 @@ func (h Handler) UpdateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	if err != nil {
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateRoleBinding(), err, stdhttp.StatusBadRequest)
 		return
+	}
+	if revision, revisionErr := access.RoleBindingRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusOK, apiRoleBindingDTO(row))
 }
@@ -1611,6 +1639,8 @@ func (h Handler) roleBindingInvocation(r *stdhttp.Request) access.RoleBindingInv
 	return access.RoleBindingInvocation{
 		PrincipalID: h.currentPrincipalID(r), Surface: surface,
 		RequestID: requestIDFromRequest(r), CorrelationID: correlationIDFromRequest(r),
+		IdempotencyKey:   strings.TrimSpace(r.Header.Get("Idempotency-Key")),
+		ConcurrencyToken: strings.TrimSpace(r.Header.Get("If-Match")),
 	}
 }
 
@@ -2028,11 +2058,60 @@ func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation fun
 	})
 }
 
+// runAuditedMutationWithConcurrency keeps the revision read and comparison in
+// the same repository transaction as the mutation and required audit write.
+// The generated executor owns If-Match parsing and PRECONDITION_FAILED
+// semantics; this helper only supplies the domain revision source.
+func runAuditedMutationWithConcurrency(
+	r *stdhttp.Request,
+	repo access.Repository,
+	operationID accessgen.GenCommandOperationID,
+	currentRevision func(access.Repository) (string, error),
+	mutation func(access.Repository) (access.AuditEventInput, error),
+) error {
+	transactional, ok := repo.(access.AuditedMutationRepository)
+	if !ok {
+		return fmt.Errorf("%w: access repository does not support transactional auditing", access.ErrAuditTransaction)
+	}
+	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	operation := operationID.APIGenOperationID()
+	return executor.Execute(r.Context(), operation, apigencommand.Execution{
+		Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
+			return transactional.RunAuditedMutation(ctx, func(txRepo access.Repository) (access.AuditEventInput, error) {
+				if contract.Concurrency == apigencommand.ConcurrencyIfMatch {
+					if currentRevision == nil {
+						return access.AuditEventInput{}, fmt.Errorf("operation %q concurrency revision source is unavailable", operation)
+					}
+					current, revisionErr := currentRevision(txRepo)
+					if revisionErr != nil {
+						return access.AuditEventInput{}, revisionErr
+					}
+					if revisionErr := executor.CheckConcurrency(ctx, operation, r.Header.Get("If-Match"), current); revisionErr != nil {
+						return access.AuditEventInput{}, revisionErr
+					}
+				}
+				input, mutationErr := mutation(txRepo)
+				if mutationErr == nil && input.Action != contract.AuditAction {
+					return access.AuditEventInput{}, fmt.Errorf("generated audit action %q does not match mutation action %q", contract.AuditAction, input.Action)
+				}
+				return input, mutationErr
+			})
+		},
+	})
+}
+
 func writeCommandFailure(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID, err error) {
 	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, accessgen.GetAPIGenCommandFailureContracts, err)
 }
 
 func writeAuditedMutationError(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID, err error, mutationStatus int) {
+	if errors.Is(err, apigencommand.ErrPreconditionRequired) || errors.Is(err, apigencommand.ErrPreconditionFailed) {
+		apitransport.WriteProblem(w, r, stdhttp.StatusPreconditionFailed, "PRECONDITION_FAILED", "The command revision does not match the current resource.", nil)
+		return
+	}
 	if mutationStatus == stdhttp.StatusNotFound && errors.Is(err, sql.ErrNoRows) {
 		err = apigenfailure.Wrap("not_found", err)
 	}
@@ -2616,16 +2695,6 @@ func decodeStrictJSON(r *stdhttp.Request, target any) error {
 func resourceETag(value any) string {
 	encoded, _ := apitransport.CanonicalJSON(value)
 	return apitransport.StrongETag(string(encoded))
-}
-
-func requireIfMatch(w stdhttp.ResponseWriter, r *stdhttp.Request, current string) bool {
-	value := strings.TrimSpace(r.Header.Get("If-Match"))
-	if value == "*" || value == current {
-		return true
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	writeJSONError(w, fmt.Errorf("If-Match does not match the current resource"), stdhttp.StatusPreconditionFailed)
-	return false
 }
 
 func statusForNotFound(err error) int {

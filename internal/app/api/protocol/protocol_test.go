@@ -191,7 +191,7 @@ func TestAdversarialIdempotencyCanonicalizesEquivalentBearerHeaders(t *testing.T
 		_, _ = w.Write([]byte(`{"id":"created"}`))
 	})
 	request := func(authorization string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"x"}`))
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/groups", strings.NewReader(`{"name":"x"}`))
 		r.Header.Set("Authorization", authorization)
 		r.Header.Set("Idempotency-Key", "canonical-bearer")
 		rec := httptest.NewRecorder()
@@ -314,7 +314,7 @@ func testLeaseProtocol(store idempotencyStore, lease, renewEvery time.Duration) 
 }
 
 func invokeIdempotentProtocol(p *Protocol, next http.Handler, key string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"x"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/groups", strings.NewReader(`{"name":"x"}`))
 	request.Header.Set("Authorization", "Bearer credential")
 	request.Header.Set("Idempotency-Key", key)
 	recorder := httptest.NewRecorder()

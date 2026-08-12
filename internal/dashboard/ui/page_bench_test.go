@@ -81,11 +81,11 @@ func benchmarkDatastarLitDashboardRoot(catalog catalog.Catalog, report reportdef
 
 func benchmarkDashboardCommandAttrs(catalog catalog.Catalog, report reportdef.Dashboard, model *semanticmodel.Model) []g.Node {
 	return []g.Node{
-		g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.Post("/workspaces/"+catalog.Workspace.ID+"/commands/filter", "runtime", "filterCommand")),
-		g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.Post("/workspaces/"+catalog.Workspace.ID+"/commands/filter-options", "runtime", "filterOptionRequest")),
-		g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.Post("/workspaces/"+catalog.Workspace.ID+"/commands/clear-selection", "runtime")),
-		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.Post("/workspaces/"+catalog.Workspace.ID+"/commands/select", "runtime", "interactionCommand")),
-		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.Post("/workspaces/"+catalog.Workspace.ID+"/commands/visual-window", "runtime", "visualWindowCommand")),
+		g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/filter", "runtime", "filterCommand")),
+		g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/filter-options", "runtime", "filterOptionRequest")),
+		g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/clear-selection", "runtime")),
+		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/select", "runtime", "interactionCommand")),
+		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/visual-window", "runtime", "visualWindowCommand")),
 	}
 }
 

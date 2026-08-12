@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
@@ -113,6 +114,39 @@ func TestDashboardPublicationCommandsRejectMissingAuditSinkBeforeMutation(t *tes
 	module.SuspendDashboardPublication(response, request, "sales", "executive")
 	if response.Code != http.StatusServiceUnavailable || repository.calls != 0 {
 		t.Fatalf("status=%d mutations=%d body=%s", response.Code, repository.calls, response.Body.String())
+	}
+}
+
+func TestDashboardPublicationUIInvocationUsesGeneratedExposureAndRequestIdentity(t *testing.T) {
+	repository := &publicationCommandRepository{row: publication.Publication{
+		ID: "publication-ui", WorkspaceID: "sales", Name: "executive", Configured: true,
+	}}
+	var persisted []access.AuditEventInput
+	recorder, err := buildPublicationCommandAuditRecorder(func(_ context.Context, input access.AuditEventInput) error {
+		persisted = append(persisted, input)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := &Module{publicationService: publication.NewService(repository, nil), recordPublicationCommandAudit: recorder}
+
+	_, err = module.MutatePublicationWithInvocation(context.Background(), "sales", "executive", "principal-ui", publication.ActionSuspend, apigencommand.Invocation{
+		Surface: apigencommand.SurfaceUI, TargetValues: map[string]string{"workspace": "sales"},
+		IdempotencyKey: "ui-request-1", RequestID: "ui-request-1", CorrelationID: "ui-correlation-1",
+	})
+	if err != nil || repository.calls != 1 || len(persisted) != 1 {
+		t.Fatalf("ui mutation err=%v calls=%d audits=%d", err, repository.calls, len(persisted))
+	}
+	if persisted[0].RequestID != "ui-request-1" || persisted[0].CorrelationID != "ui-correlation-1" {
+		t.Fatalf("ui audit identity = %#v", persisted[0])
+	}
+
+	_, err = module.MutatePublicationWithInvocation(context.Background(), "sales", "executive", "principal-ui", publication.ActionSuspend, apigencommand.Invocation{
+		Surface: apigencommand.SurfaceUI, TargetValues: map[string]string{"workspace": "sales"},
+	})
+	if !errors.Is(err, apigencommand.ErrIdempotencyRequired) || repository.calls != 1 {
+		t.Fatalf("missing UI idempotency err=%v calls=%d", err, repository.calls)
 	}
 }
 

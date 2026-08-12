@@ -32,8 +32,14 @@ func accessAPIGenOperationContracts() map[string]accessmodule.APIGenOperationCon
 		var command *accessmodule.APIGenCommandContract
 		if contract.Command != nil {
 			command = &accessmodule.APIGenCommandContract{
-				AuthzMode: contract.Command.AuthzMode,
-				Privilege: contract.Command.Privilege,
+				Owner:       contract.Command.Owner,
+				AuthzMode:   contract.Command.AuthzMode,
+				Privilege:   contract.Command.Privilege,
+				Idempotency: contract.Command.Idempotency,
+				Concurrency: contract.Command.Concurrency,
+			}
+			if contract.Command.Target != nil {
+				command.Target = &accessmodule.APIGenCommandTarget{Parameter: contract.Command.Target.Parameter, Type: contract.Command.Target.Type}
 			}
 		}
 		contracts[operationID] = accessmodule.APIGenOperationContract{

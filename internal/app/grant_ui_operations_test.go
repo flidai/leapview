@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accessuiaction "github.com/flidai/leapview/internal/access/uiaction"
 )
 
 func TestWorkspaceAssetGrantUIUsesCommandContractAndAudits(t *testing.T) {
@@ -25,6 +26,7 @@ func TestWorkspaceAssetGrantUIUsesCommandContractAndAudits(t *testing.T) {
 		`{"workspaceAccess":{"command":{"email":"analyst@example.com","privilege":"VIEW_ITEM"}}}`,
 	))
 	upsert.Header.Set("Authorization", "Bearer "+token)
+	claimUICommands(upsert, accessuiaction.CreateGrant)
 	upsert.Header.Set("X-Request-ID", "req-grant-create-ui")
 	upsertRecorder := httptest.NewRecorder()
 	server.Routes().ServeHTTP(upsertRecorder, upsert)
@@ -49,6 +51,7 @@ func TestWorkspaceAssetGrantUIUsesCommandContractAndAudits(t *testing.T) {
 		`{"workspaceAccess":{"command":{"bindingId":"`+grants[0].ID+`"}}}`,
 	))
 	remove.Header.Set("Authorization", "Bearer "+token)
+	claimUICommands(remove, accessuiaction.DeleteGrant)
 	remove.Header.Set("X-Request-ID", "req-grant-delete-ui")
 	removeRecorder := httptest.NewRecorder()
 	server.Routes().ServeHTTP(removeRecorder, remove)
@@ -76,6 +79,7 @@ func TestWorkspaceAssetGrantUIRejectsViewerWithoutMutationOrAudit(t *testing.T) 
 		`{"workspaceAccess":{"command":{"email":"analyst@example.com","privilege":"VIEW_ITEM"}}}`,
 	))
 	request.Header.Set("Authorization", "Bearer "+token)
+	claimUICommands(request, accessuiaction.CreateGrant)
 	recorder := httptest.NewRecorder()
 	server.Routes().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusForbidden {

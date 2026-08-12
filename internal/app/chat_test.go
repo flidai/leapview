@@ -20,12 +20,14 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/agent/api"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workspace"
@@ -1355,6 +1357,19 @@ func chatSignalsRequest(method, path, token string, signals map[string]any) *htt
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	if method == http.MethodPost && strings.HasSuffix(path, "/turns") {
+		bindings := agentuiaction.Bindings()
+		if agentSignal, ok := signals["agent"].(map[string]any); ok {
+			if activeID, _ := agentSignal["activeConversationId"].(string); strings.TrimSpace(activeID) != "" {
+				bindings = []uicommand.Binding{agentuiaction.CreateRun}
+			}
+		}
+		operations := make([]string, 0, len(bindings))
+		for _, binding := range bindings {
+			operations = append(operations, binding.OperationID())
+		}
+		req.Header.Set(uicommand.HeaderOperationID, strings.Join(operations, ","))
+	}
 	return req
 }
 

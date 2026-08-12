@@ -18,6 +18,7 @@ import (
 	accessapi "github.com/flidai/leapview/internal/access/api"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/internal/workspace"
 	"github.com/flidai/leapview/internal/workspace/api"
 	"github.com/flidai/leapview/internal/workspace/assetnav"
@@ -39,6 +40,7 @@ type Handler struct {
 	CurrentRoleLabel    func(*nethttp.Request) string
 	RoleBindingCommands access.RoleBindingCommander
 	GrantCommands       access.GrantOperations
+	AccessCommands      ui.AccessCommandBindings
 	Layout              func(*nethttp.Request) webpage.Provider
 }
 
@@ -186,7 +188,7 @@ func (h Handler) WorkspaceAssets(w nethttp.ResponseWriter, r *nethttp.Request) {
 	access := h.workspaceAccess(r, workspaceView, h.canManageAccess(r, workspaceID), ui.WorkspaceAccessStatus{})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.WorkspacePageForEnvironment(h.catalogForWorkspace(workspaceID), workspaceView, filtered, r.URL.Query().Get("type"), r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), access, h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
+	if err := ui.WorkspacePageForEnvironment(h.catalogForWorkspace(workspaceID), workspaceView, filtered, r.URL.Query().Get("type"), r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), access, h.csrfToken(r), h.AccessCommands, h.chromeOptions(r)...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }
@@ -721,7 +723,22 @@ func (h Handler) AccessUpsert(w nethttp.ResponseWriter, r *nethttp.Request) {
 			if h.RoleBindingCommands == nil {
 				err = fmt.Errorf("role binding commands are unavailable")
 			} else if strings.TrimSpace(command.BindingID) != "" {
-				_, err = h.RoleBindingCommands.UpdateRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, command.BindingID, input)
+				invocation := h.roleBindingInvocation(r)
+				bindings, revisionErr := repo.ListRoleBindings(r.Context(), workspaceID)
+				if revisionErr == nil {
+					for _, binding := range bindings {
+						if binding.ID != command.BindingID {
+							continue
+						}
+						invocation.ConcurrencyToken, revisionErr = access.RoleBindingRevision(binding)
+						break
+					}
+				}
+				if revisionErr != nil {
+					err = revisionErr
+				} else {
+					_, err = h.RoleBindingCommands.UpdateRoleBinding(r.Context(), invocation, workspaceID, command.BindingID, input)
+				}
 			} else {
 				_, err = h.RoleBindingCommands.CreateRoleBinding(r.Context(), h.roleBindingInvocation(r), input)
 			}
@@ -813,10 +830,15 @@ func (h Handler) AccessRemove(w nethttp.ResponseWriter, r *nethttp.Request) {
 func (h Handler) roleBindingInvocation(r *nethttp.Request) access.RoleBindingInvocation {
 	principal, _ := h.ReadModel.currentPrincipal(r)
 	requestID := firstNonEmpty(r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID"))
+	if requestID == "" {
+		requestID = httptransport.NewRequestID()
+		r.Header.Set("X-Request-ID", requestID)
+	}
 	return access.RoleBindingInvocation{
 		PrincipalID: principal.ID, Surface: access.OperationSurfaceUI,
-		RequestID:     requestID,
-		CorrelationID: firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), requestID),
+		RequestID: requestID, IdempotencyKey: requestID,
+		CorrelationID:   firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), requestID),
+		OperationClaims: uicommand.OperationClaims(r),
 	}
 }
 

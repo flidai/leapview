@@ -105,6 +105,7 @@ type Handler struct {
 	OptionCursorSecret   []byte
 	OptionCache          *dashboardfilter.OptionCache
 	AgentBootstrap       func(*nethttp.Request, string) reportui.AgentBootstrap
+	AgentCommands        reportui.AgentCommandBindings
 	RouteScope           reportui.RouteScope
 	StreamNamespace      string
 }
@@ -247,7 +248,7 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 	if h.Layout != nil {
 		providers = []webpage.Provider{h.Layout(r)}
 	}
-	if err := reportui.PageWithRouteScope(h.Presentation, h.RouteScope, clientID, csrfToken, metrics.Catalog(), reportDefinition, model, pages, activePage, initialFilters, providers...).Render(w); err != nil {
+	if err := reportui.PageWithRouteScopeAndAgentCommands(h.Presentation, h.RouteScope, clientID, csrfToken, metrics.Catalog(), reportDefinition, model, pages, activePage, initialFilters, h.AgentCommands, providers...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }

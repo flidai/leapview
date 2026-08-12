@@ -253,6 +253,12 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 	require.Contains(t, content, `func GenCommandOperationListWidgets() GenCommandOperationID { return GenCommandOperationID{value: "listWidgets"} }`)
 	require.Contains(t, content, `func GetAPIGenCommandFailureContracts(operationID GenCommandOperationID) ([]apigenfailure.Contract, bool)`)
 	require.Contains(t, content, `Guarantee: apigencommand.Guarantee(contract.Command.Audit.Guarantee)`)
+	require.Contains(t, content, `Method: contract.Method, Path: contract.Path, Target: target`)
+	require.Contains(t, content, `Idempotency: apigencommand.IdempotencyPolicy(contract.Command.Idempotency)`)
+	require.Contains(t, content, `Concurrency: apigencommand.ConcurrencyPolicy(contract.Command.Concurrency)`)
+	require.Contains(t, content, `AuthzMode: contract.Command.AuthzMode, Privilege: contract.Command.Privilege`)
+	require.Contains(t, content, `func GetAPIGenOperationContractForRequest(method, path string) (GenOperationContract, bool)`)
+	require.Contains(t, content, `func GetAPIGenCommandRuntimeContracts() map[string]apigencommand.Contract`)
 	require.Contains(t, content, `Extensions: map[string]any{"x-downstream": map[string]any{`)
 
 	dir := t.TempDir()
