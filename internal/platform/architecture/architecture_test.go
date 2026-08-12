@@ -2575,7 +2575,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Frontend tests (PR)",
 		"runs-on: ubuntu-24.04",
 		"uses: ./.github/actions/setup-ci",
-		"run: task ci:prepare",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
@@ -2915,7 +2915,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 
 	for _, want := range []string{
 		"run: task ci:lane:go:apigen",
-		"run: task ci:prepare",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
 		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
@@ -3012,15 +3012,28 @@ func TestGitHubHostedCISplitsGoWorkAndWarmsReusableBunCache(t *testing.T) {
 	}
 }
 
-func TestGitHubHostedFrontendCIRecoversFromHungBunProcesses(t *testing.T) {
+func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	root := repoRoot(t)
-	for _, workflow := range []string{"ci.yml", "merge-validation.yml", "nightly.yml"} {
+	const prepareWatchdog = "node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare"
+	for workflow, wantPrepareCount := range map[string]int{
+		"ci.yml":               3,
+		"merge-validation.yml": 4,
+		"nightly.yml":          4,
+	} {
 		data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
 		require.NoError(t, err)
-		frontend := workflowJobBlock(t, string(data), "frontend-validation")
+		text := string(data)
+		if strings.Contains(text, "run: task ci:prepare") {
+			t.Fatalf("%s contains repository preparation without the Bun hang watchdog", workflow)
+		}
+		if got := strings.Count(text, prepareWatchdog); got != wantPrepareCount {
+			t.Fatalf("%s wraps %d preparation steps, want %d", workflow, got, wantPrepareCount)
+		}
+
+		frontend := workflowJobBlock(t, text, "frontend-validation")
 		for _, want := range []string{
 			"timeout-minutes: 20",
-			"node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
+			prepareWatchdog,
 			"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		} {
 			if !strings.Contains(frontend, want) {
