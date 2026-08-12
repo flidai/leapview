@@ -105,3 +105,50 @@ func TestOptionEngineSharesBoundedCacheAcrossRequests(t *testing.T) {
 		t.Fatalf("query calls = %d, want one shared-cache load", calls)
 	}
 }
+
+func TestOptionEngineReusesCacheAcrossUnrelatedFilterRevisions(t *testing.T) {
+	cache := NewOptionCache(8)
+	calls := 0
+	query := func(context.Context, OptionQuery) (OptionResult, error) {
+		calls++
+		return OptionResult{Items: []OptionItem{{Value: Value{Kind: ValueString, Value: "WA"}}}, Complete: true}, nil
+	}
+	optionContext := OptionContext{
+		ServingStateID: "ss", PolicyIdentity: "policy",
+		State: State{Revision: 2, AppliedControls: map[string]AppliedState{
+			"fb_year": {Expression: Expression{Kind: ExpressionComparison, Operator: OperatorEquals, Value: &Value{Kind: ValueInteger, Value: "2025"}}},
+		}},
+		Binding:          Binding{Key: "fb", OptionDependencies: []BindingRef{{Scope: ScopePage, ID: "year"}}},
+		BindingKeysByRef: map[BindingRef]string{{Scope: ScopePage, ID: "year"}: "fb_year"},
+		Definition: Definition{
+			ValueKind: ValueString, Options: OptionSource{Kind: OptionSourceDistinct},
+		},
+	}
+	engine := NewOptionEngineWithCache([]byte("01234567890123456789012345678901"), cache, query)
+	if _, err := engine.Page(context.Background(), optionContext, OptionRequest{
+		BindingKey: "fb", ServingStateID: "ss", FilterRevision: 2, Limit: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	optionContext.State.Revision = 3
+	if _, err := engine.Page(context.Background(), optionContext, OptionRequest{
+		BindingKey: "fb", ServingStateID: "ss", FilterRevision: 3, Limit: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("query calls = %d, want one load when effective dependencies are unchanged", calls)
+	}
+	optionContext.State.Revision = 4
+	optionContext.State.AppliedControls["fb_year"] = AppliedState{Expression: Expression{
+		Kind: ExpressionComparison, Operator: OperatorEquals, Value: &Value{Kind: ValueInteger, Value: "2026"},
+	}}
+	if _, err := engine.Page(context.Background(), optionContext, OptionRequest{
+		BindingKey: "fb", ServingStateID: "ss", FilterRevision: 4, Limit: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("query calls = %d, want a new load when an effective dependency changes", calls)
+	}
+}

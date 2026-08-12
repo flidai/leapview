@@ -353,6 +353,9 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 					break
 				}
 			}
+			if compatible && !p.factSupportsInferredFilters(request.Filters, fact) {
+				compatible = false
+			}
 			if compatible {
 				factSet[fact] = struct{}{}
 			}
@@ -384,6 +387,47 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 		}
 	}
 	return resolved, nil
+}
+
+// Dimension-only aggregates infer their participating facts from the selected
+// dimensions. Unscoped semantic filters must participate in that inference as
+// well: a conformed filter cannot be applied to a fact that has no binding for
+// it. Queries with selected measures keep their measure-owned fact set and are
+// validated normally, so a missing conformed binding remains an error there.
+func (p *Planner) factSupportsInferredFilters(filters []Filter, fact string) bool {
+	var supports func(Filter) bool
+	supports = func(filter Filter) bool {
+		if filter.Field != "" && filter.Fact == "" {
+			if dimension, ok := p.Model.Dimensions[filter.Field]; ok {
+				if _, bound := dimension.Bindings[fact]; !bound {
+					return false
+				}
+			}
+		}
+		if filter.Spatial != nil && filter.Spatial.Fact == "" {
+			for _, field := range []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField} {
+				if dimension, ok := p.Model.Dimensions[field]; ok {
+					if _, bound := dimension.Bindings[fact]; !bound {
+						return false
+					}
+				}
+			}
+		}
+		for _, group := range filter.Groups {
+			for _, child := range group.Filters {
+				if !supports(child) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	for _, filter := range filters {
+		if !supports(filter) {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolution, fact string, factIndex int, measureColumns map[string]string) (string, []any, []string, error) {

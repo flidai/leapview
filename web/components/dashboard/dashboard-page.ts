@@ -4,6 +4,7 @@ import type {
   AgentContextSignal,
   AgentReferenceSignal,
   DashboardComponentSignal,
+  DashboardCompiledFilterBinding,
   DashboardFilterContract,
   DashboardFilterOptionPage,
   DashboardFilterState,
@@ -119,6 +120,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   private pendingPageID = ''
   private navigationRequested = false
   private readonly filterOptionGenerations = new Map<string, number>()
+  private readonly filterOptionRequestContexts = new Map<string, Map<number, string>>()
+  private readonly filterOptionInFlight = new Map<string, { context: string, generation: number, startedAt: number }>()
+  private readonly retainedFilterOptionPages = new Map<string, DashboardFilterOptionPage>()
+  private retainedFilterOptionServingStateID = ''
   private readonly filterController = new DashboardFilterController((command) => {
     this.dispatchEvent(new CustomEvent('lv-filter-command', {
       bubbles: true, composed: true, detail: command,
@@ -602,12 +607,64 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private get currentFilterOptionPages(): Record<string, DashboardFilterOptionPage> {
     const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' })
-    return Object.fromEntries(Object.entries(this.filterOptionPages).filter(([key, page]) =>
-      page.bindingKey === key
-      && page.servingStateID === (runtime.servingStateId ?? '')
-      && page.streamGeneration === this.status.generation
-      && page.filterRevision === this.canonicalFilterState.revision
-      && page.requestGeneration === (this.filterOptionGenerations.get(key) ?? page.requestGeneration)))
+    const servingStateID = runtime.servingStateId ?? ''
+    if (this.retainedFilterOptionServingStateID !== servingStateID) {
+      this.retainedFilterOptionServingStateID = servingStateID
+      this.retainedFilterOptionPages.clear()
+      this.filterOptionRequestContexts.clear()
+      this.filterOptionInFlight.clear()
+    }
+    for (const [key, page] of Object.entries(this.filterOptionPages)) {
+      if (page.bindingKey !== key || page.servingStateID !== servingStateID) continue
+      const binding = this.filterContract.bindings[key]
+      if (!binding) continue
+      const requestContext = this.filterOptionRequestContexts.get(key)?.get(page.requestGeneration)
+      const currentContext = this.filterOptionContext(binding)
+      const currentLegacyPage = requestContext === undefined
+        && page.filterRevision === this.canonicalFilterState.revision
+        && page.streamGeneration === this.status.generation
+      if (requestContext === currentContext || currentLegacyPage) {
+        this.retainedFilterOptionPages.set(key, page)
+        const inFlight = this.filterOptionInFlight.get(key)
+        if (inFlight && page.requestGeneration >= inFlight.generation) {
+          this.filterOptionInFlight.delete(key)
+        }
+      }
+    }
+    return Object.fromEntries([...this.retainedFilterOptionPages].filter(([key, page]) =>
+      page.servingStateID === servingStateID && Boolean(this.filterContract.bindings[key])))
+  }
+
+  private get filterOptionsReady(): boolean {
+    const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' })
+    return Boolean(runtime.servingStateId) && this.canonicalFilterState.revision > 0
+  }
+
+  private filterOptionContext(binding: DashboardCompiledFilterBinding): string {
+    const pageID = this.page?.pageId ?? ''
+    const bindings = Object.values(this.filterContract.bindings)
+    const dependencies = binding.optionDependencies.flatMap((reference) => {
+      const dependency = bindings.find((candidate) =>
+        candidate.scope === reference.scope
+        && candidate.id === reference.id
+        && (candidate.scope === 'report' || candidate.pageID === pageID))
+      if (!dependency) return []
+      const applied = this.canonicalFilterState.appliedControls[dependency.key]
+      if (!applied) return []
+      const expression = applied.resolvedExpression?.kind
+        ? applied.resolvedExpression
+        : applied.expression
+      if (expression.kind === 'unfiltered') return []
+      return [[dependency.key, expression] as const]
+    }).sort(([left], [right]) => left.localeCompare(right))
+    return JSON.stringify({ pageID, dependencies })
+  }
+
+  private get filterOptionContexts(): Record<string, string> {
+    return Object.fromEntries(Object.values(this.filterContract.bindings).map((binding) => [
+      binding.key,
+      this.filterOptionContext(binding),
+    ]))
   }
 
   private get interactionSelections(): DashboardInteractionSelection[] {
@@ -878,8 +935,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       .expression=${expression}
       .options=${snapshot?.filterOptionPages[binding.key]}
       .presentation=${component.presentation}
-      .pending=${this.filterController.pending}
-      .stale=${(snapshot?.status.loading ?? false)}
+      .optionContext=${this.filterOptionContext(binding)}
+      .optionRequestReady=${this.filterOptionsReady}
+      .pending=${this.filterController.pendingFor(binding.key)}
+      .stale=${false}
     ></lv-slicer>`
   }
 
@@ -918,6 +977,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         .contract=${this.renderSnapshot?.filterContract ?? this.filterContract}
         .filterState=${this.renderSnapshot?.filterState ?? this.canonicalFilterState}
         .optionPages=${this.renderSnapshot?.filterOptionPages ?? this.filterOptionPages}
+        .optionContexts=${this.filterOptionContexts}
+        .optionRequestReady=${this.filterOptionsReady}
+        .pendingBindingKeys=${this.filterController.pendingBindingKeys}
         .pageId=${(this.renderSnapshot?.page ?? this.page)?.pageId ?? ''}
         @lv-filter-clear=${this.handleFilterClear}
         @lv-filter-reset-binding=${this.handleFilterResetBinding}
@@ -1106,8 +1168,20 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const detail = event.detail
     if (!detail?.bindingKey) return
     event.stopPropagation()
+    const binding = this.filterContract.bindings[detail.bindingKey]
+    if (!binding) return
+    const context = this.filterOptionContext(binding)
+    const inFlight = this.filterOptionInFlight.get(detail.bindingKey)
+    if (inFlight?.context === context && Date.now() - inFlight.startedAt < 250) return
     const generation = (this.filterOptionGenerations.get(detail.bindingKey) ?? 0) + 1
     this.filterOptionGenerations.set(detail.bindingKey, generation)
+    this.filterOptionInFlight.set(detail.bindingKey, { context, generation, startedAt: Date.now() })
+    const contexts = this.filterOptionRequestContexts.get(detail.bindingKey) ?? new Map<number, string>()
+    contexts.set(generation, context)
+    for (const existingGeneration of contexts.keys()) {
+      if (existingGeneration < generation - 4) contexts.delete(existingGeneration)
+    }
+    this.filterOptionRequestContexts.set(detail.bindingKey, contexts)
     const runtime = this.signal<{ servingStateId?: string }>('runtime', {})
     this.dispatchEvent(new CustomEvent('lv-filter-options-request', {
       bubbles: true, composed: true,
