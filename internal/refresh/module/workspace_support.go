@@ -117,13 +117,13 @@ func refreshPipelineModelID(asset workspace.AssetView) string {
 
 func (s WorkspaceSupport) queueAssetRefreshWithPatches(r *nethttp.Request, workspaceID string, asset workspace.AssetView, assets []workspace.AssetView, edges []workspace.AssetEdgeView) error {
 	operationID := refreshgen.GenCommandOperationCreateRefreshRun()
-	contract, ok := refreshgen.GetAPIGenCommandRuntimeContract(operationID.APIGenOperationID())
-	if !ok {
-		return apigencommand.ErrContractNotFound
+	if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), operationID.APIGenOperationID()); err != nil {
+		return err
 	}
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-	ctx, _, err := uicommand.BeginInvocation(r, refreshgen.GenUIActionCreateRefreshRun(), contract, apigencommand.Invocation{
-		TargetValues:   map[string]string{"workspace": strings.TrimSpace(workspaceID)},
+	ctx, _, err := refreshgen.BeginGenCreateRefreshRunCommand(r.Context(), refreshgen.GenCreateRefreshRunCommandInvocation{
+		Surface:        apigencommand.SurfaceUI,
+		Workspace:      strings.TrimSpace(workspaceID),
 		IdempotencyKey: "ui:" + operationID.APIGenOperationID() + ":" + requestID,
 		RequestID:      requestID,
 		CorrelationID:  strings.TrimSpace(r.Header.Get("X-Correlation-ID")),

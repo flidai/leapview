@@ -227,6 +227,38 @@ func TestBeginInvocationRejectsMissingGeneratedPolicyInputs(t *testing.T) {
 	}
 }
 
+func TestExecuteInvocationBeginsOrReusesMatchingTransportInvocation(t *testing.T) {
+	contract, _ := testLookup(GuaranteeTransactional)("createWidget")
+	executor, err := NewExecutor(testLookup(GuaranteeTransactional), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation := Invocation{Surface: SurfaceCLI, IdempotencyKey: "key"}
+	execution := Execution{Transactional: func(ctx context.Context, received Contract) error {
+		if operationID, ok := OperationID(ctx); !ok || operationID != received.OperationID {
+			t.Fatalf("execution context operation = %q/%v", operationID, ok)
+		}
+		return nil
+	}}
+	if err := ExecuteInvocation(t.Context(), executor, contract, invocation, execution); err != nil {
+		t.Fatal(err)
+	}
+
+	started, _, err := BeginInvocation(t.Context(), contract, invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ExecuteInvocation(started, executor, contract, Invocation{}, execution); err != nil {
+		t.Fatal(err)
+	}
+
+	other := contract
+	other.OperationID = "deleteWidget"
+	if err := ExecuteInvocation(started, executor, other, Invocation{}, execution); !errors.Is(err, ErrOperationMismatch) {
+		t.Fatalf("mismatched transport operation error = %v", err)
+	}
+}
+
 func TestValidateDependenciesFailsClosed(t *testing.T) {
 	contract, _ := testLookup(GuaranteeTransactional)("createWidget")
 	contracts := map[string]Contract{contract.OperationID: contract}

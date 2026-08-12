@@ -131,8 +131,8 @@ func TestDashboardPublicationUIInvocationUsesGeneratedExposureAndRequestIdentity
 	}
 	module := &Module{publicationService: publication.NewService(repository, nil), recordPublicationCommandAudit: recorder}
 
-	_, err = module.MutatePublicationWithInvocation(context.Background(), "sales", "executive", "principal-ui", publication.ActionSuspend, apigencommand.Invocation{
-		Surface: apigencommand.SurfaceUI, TargetValues: map[string]string{"workspace": "sales"},
+	_, err = module.MutatePublicationWithInvocation(context.Background(), "sales", "executive", "principal-ui", publication.ActionSuspend, publication.CommandInvocation{
+		Surface:        string(apigencommand.SurfaceUI),
 		IdempotencyKey: "ui-request-1", RequestID: "ui-request-1", CorrelationID: "ui-correlation-1",
 	})
 	if err != nil || repository.calls != 1 || len(persisted) != 1 {
@@ -142,8 +142,8 @@ func TestDashboardPublicationUIInvocationUsesGeneratedExposureAndRequestIdentity
 		t.Fatalf("ui audit identity = %#v", persisted[0])
 	}
 
-	_, err = module.MutatePublicationWithInvocation(context.Background(), "sales", "executive", "principal-ui", publication.ActionSuspend, apigencommand.Invocation{
-		Surface: apigencommand.SurfaceUI, TargetValues: map[string]string{"workspace": "sales"},
+	_, err = module.MutatePublicationWithInvocation(context.Background(), "sales", "executive", "principal-ui", publication.ActionSuspend, publication.CommandInvocation{
+		Surface: string(apigencommand.SurfaceUI),
 	})
 	if !errors.Is(err, apigencommand.ErrIdempotencyRequired) || repository.calls != 1 {
 		t.Fatalf("missing UI idempotency err=%v calls=%d", err, repository.calls)

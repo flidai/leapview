@@ -61,19 +61,11 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		principal, ok := config.CurrentPrincipal(r)
 		return accesshttp.Principal{ID: principal.ID, Kind: principal.Kind, Email: principal.Email, DisplayName: principal.DisplayName, CreatedAt: principal.CreatedAt, UpdatedAt: principal.UpdatedAt}, ok
 	}
-	catalog, err := generatedRoleBindingCatalog()
+	roleBindingCommands, err := accessoperation.NewRoleBindingCommands(accessoperation.RepositoryProvider(config.Repository))
 	if err != nil {
 		return nil, err
 	}
-	roleBindingCommands, err := accessoperation.NewRoleBindingCommands(accessoperation.RepositoryProvider(config.Repository), catalog)
-	if err != nil {
-		return nil, err
-	}
-	grantCatalog, err := generatedGrantCatalog()
-	if err != nil {
-		return nil, err
-	}
-	grantCommands, err := accessoperation.NewGrantCommands(accessoperation.RepositoryProvider(config.Repository), grantCatalog)
+	grantCommands, err := accessoperation.NewGrantCommands(accessoperation.RepositoryProvider(config.Repository))
 	if err != nil {
 		return nil, err
 	}

@@ -22,6 +22,7 @@
     "test:site": "bun run build:site && bun run test:site:prepared",
     "test:site:prepared": "bun run browser:ensure && bun test scripts/build_site.test.ts site/site.dom.test.ts site/web/visual-example-highlights.test.ts",
     "test:datastar-lit": "bun test web/components/shared/datastar-lit.test.ts web/components/shared/signal-contract.test.ts",
+    "test:ui-command-boundaries": "bun test scripts/check_ui_command_boundaries.test.ts && bun scripts/check_ui_command_boundaries.ts",
     "test:visualization-ir": "bun test web/components/dashboard/visualization/ir-contract.test.ts web/components/dashboard/visualization/host.test.ts web/components/dashboard/visualization/format.test.ts web/components/dashboard/visualization/conditional-format.test.ts web/components/dashboard/visualization/metadata.test.ts web/components/dashboard/visualization/interaction-command.test.ts web/components/dashboard/visualization/signal-envelope.test.ts web/components/dashboard/visualization/layout.test.ts web/components/dashboard/visualization/adapters/*.test.ts web/components/dashboard/visualization/adapters/maplibre/spatial-selection.test.ts web/components/dashboard/table/format.test.ts web/components/dashboard/table/conditional-formatting.test.ts",
     "test:app-shell": "bun run browser:ensure && bun scripts/build_test_assets.ts app-shell && bun test web/components/app/app-shell.dom.test.ts",
     "test:table-selection": "bun test web/components/dashboard/table/block-source.test.ts web/components/dashboard/table/selection.test.ts",

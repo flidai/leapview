@@ -1,10 +1,13 @@
 package app
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"net/http"
-	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -60,78 +63,101 @@ func TestUICommandBindingsAreExhaustiveAndGenerated(t *testing.T) {
 
 func TestUIRequestsCannotBypassTypedCommandHelpers(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
-	nonCommandAllowlist := map[string]map[string]int{
-		filepath.Clean("internal/admin/ui/page.go"): {
-			"uiactions.QueryPost(": 2, "uiactions.EventPost(": 1,
-		},
-		filepath.Clean("internal/workspace/ui/page.go"):          {"uiactions.QueryPost(": 1},
-		filepath.Clean("internal/workspace/ui/workspace.go"):     {"uiactions.QueryPost(": 3},
-		filepath.Clean("internal/workspace/ui/data_explorer.go"): {"uiactions.EventPost(": 1},
-		filepath.Clean("internal/dashboard/ui/page.go"):          {"uiactions.EventPost(": 16},
+	nonCommandAllowlist := map[string]map[string]bool{
+		filepath.Clean("internal/admin/ui/page.go"):              {"QueryPost": true, "EventPost": true},
+		filepath.Clean("internal/workspace/ui/page.go"):          {"QueryPost": true},
+		filepath.Clean("internal/workspace/ui/workspace.go"):     {"QueryPost": true},
+		filepath.Clean("internal/workspace/ui/data_explorer.go"): {"EventPost": true},
+		filepath.Clean("internal/dashboard/ui/page.go"):          {"EventPost": true},
 	}
-	nonCommandHelpers := []string{"uiactions.QueryPost(", "uiactions.EventPost("}
-	seenNonCommands := map[string]bool{}
+	fset := token.NewFileSet()
 	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		relative, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		contents, err := os.ReadFile(path)
+		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			return err
 		}
-		source := string(contents)
-		if strings.Contains(source, `"github.com/Yacobolo/toolbelt/apigen/runtime/ui"`) &&
-			!strings.HasSuffix(relative, ".apigen.gen.go") &&
-			filepath.Clean(relative) != filepath.Clean("internal/platform/web/uicommand/binding.go") {
-			t.Errorf("%s imports the low-level APIGen UI action constructor; consume a generated GenUIAction function", relative)
-		}
-		for _, forbidden := range []string{"uiactions.Post(", "uiactions.Patch(", "UncontractedMutation"} {
-			if strings.Contains(source, forbidden) {
-				t.Errorf("%s uses untyped UI mutation helper %s", relative, forbidden)
-			}
-		}
-		if filepath.Clean(relative) != filepath.Clean("internal/platform/web/actions/actions.go") {
-			for _, forbidden := range []string{"@post(", "@patch(", "window.LeapViewCommand.headers("} {
-				if strings.Contains(source, forbidden) {
-					t.Errorf("%s authors browser mutation transport directly with %q; use a classified UI action helper", relative, forbidden)
-				}
-			}
-		}
-		classified := false
-		for _, helper := range nonCommandHelpers {
-			if strings.Contains(source, helper) {
-				classified = true
-			}
-		}
-		if classified {
-			allowed, ok := nonCommandAllowlist[filepath.Clean(relative)]
-			if !ok {
-				t.Errorf("%s adds an unbound UI POST; use a typed generated command or update the reviewed classification", relative)
-				return nil
-			}
-			for _, helper := range nonCommandHelpers {
-				want := allowed[helper]
-				if got := strings.Count(source, helper); got != want {
-					t.Errorf("%s has %d uses of %s, want reviewed count %d", relative, got, helper, want)
-				}
-			}
-			seenNonCommands[filepath.Clean(relative)] = true
-		}
+		inspectUICommandBoundaryAST(t, filepath.Clean(relative), file, nonCommandAllowlist)
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for path := range nonCommandAllowlist {
-		if !seenNonCommands[path] {
-			t.Errorf("reviewed non-command UI boundary %s changed; remove or update its classification", path)
+}
+
+func inspectUICommandBoundaryAST(t *testing.T, relative string, file *ast.File, nonCommandAllowlist map[string]map[string]bool) {
+	t.Helper()
+	actionPackages := map[string]bool{}
+	commandPackages := map[string]bool{}
+	for _, imported := range file.Imports {
+		path, err := strconv.Unquote(imported.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := filepath.Base(path)
+		if imported.Name != nil {
+			name = imported.Name.Name
+		}
+		if path == "github.com/flidai/leapview/internal/platform/web/actions" {
+			actionPackages[name] = true
+		}
+		if path == "github.com/Yacobolo/toolbelt/apigen/runtime/command" {
+			commandPackages[name] = true
+		}
+		if path == "github.com/Yacobolo/toolbelt/apigen/runtime/ui" &&
+			!strings.HasSuffix(relative, ".apigen.gen.go") && relative != filepath.Clean("internal/platform/web/uicommand/binding.go") {
+			t.Errorf("%s imports the low-level APIGen UI action constructor; consume a generated GenUIAction function", relative)
 		}
 	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.CallExpr:
+			selector, ok := value.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			owner, ok := selector.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if commandPackages[owner.Name] && selector.Sel.Name == "BeginInvocation" &&
+				!strings.HasSuffix(relative, ".apigen.gen.go") && relative != filepath.Clean("internal/app/api/apigenruntime/handler.go") {
+				t.Errorf("%s assembles a generic command invocation; use the operation-specific generated BeginGen or ExecuteGen entry point", relative)
+			}
+			if !actionPackages[owner.Name] {
+				return true
+			}
+			switch selector.Sel.Name {
+			case "Post", "Patch", "UncontractedMutation":
+				t.Errorf("%s uses untyped UI mutation helper uiactions.%s", relative, selector.Sel.Name)
+			case "QueryPost", "EventPost":
+				if !nonCommandAllowlist[relative][selector.Sel.Name] {
+					t.Errorf("%s uses unbound UI helper uiactions.%s; use a generated command or add a reviewed semantic classification", relative, selector.Sel.Name)
+				}
+			}
+		case *ast.BasicLit:
+			if value.Kind != token.STRING || relative == filepath.Clean("internal/platform/web/actions/actions.go") {
+				return true
+			}
+			literal, err := strconv.Unquote(value.Value)
+			if err != nil {
+				return true
+			}
+			for _, forbidden := range []string{"@post(", "@patch(", "window.LeapViewCommand.headers("} {
+				if strings.Contains(literal, forbidden) {
+					t.Errorf("%s authors browser mutation transport directly with %q; use a classified UI action helper", relative, forbidden)
+				}
+			}
+		}
+		return true
+	})
 }

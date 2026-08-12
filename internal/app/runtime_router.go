@@ -604,6 +604,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		refreshSupport := workspaceRefreshSupport(refreshDeps)
 		accessUICommands := routes.accessModule.UICommandBindings()
+		accessCommandPrivileges, privilegeErr := routes.accessModule.WorkspaceCommandPrivileges()
+		if privilegeErr != nil {
+			return fmt.Errorf("resolve generated access command privileges: %w", privilegeErr)
+		}
 		var err error
 		routes.workspaceModule, err = workspacemodule.Build(ctx, workspacemodule.Config{
 			Database:            database,
@@ -612,6 +616,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			AccessService:       routes.accessModule.WorkspaceAccessService(),
 			RoleBindingCommands: routes.accessModule.RoleBindingCommands(),
 			GrantCommands:       routes.accessModule.GrantCommands(),
+			CommandPrivileges:   accessCommandPrivileges,
 			AccessCommands: workspacemodule.AccessCommandBindings{
 				CreateRoleBinding: accessUICommands.CreateRoleBinding,
 				UpdateRoleBinding: accessUICommands.UpdateRoleBinding,

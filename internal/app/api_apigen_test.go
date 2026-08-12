@@ -1247,17 +1247,17 @@ func TestAPIGenAsyncExecutionContractsAreGeneratedEndToEnd(t *testing.T) {
 
 func TestRoleBindingOperationsPublishTransportNeutralCommandContract(t *testing.T) {
 	contracts := accessgen.GetAPIGenOperationContracts()
-	expected := map[access.OperationID]struct {
+	expected := map[string]struct {
 		audit       string
 		idempotency string
 		concurrency string
 	}{
-		access.OperationCreateRoleBinding: {audit: "role_binding.created", idempotency: "required"},
-		access.OperationUpdateRoleBinding: {audit: "role_binding.updated", concurrency: "if-match"},
-		access.OperationDeleteRoleBinding: {audit: "role_binding.deleted"},
+		accessgen.GenCommandOperationCreateRoleBinding().APIGenOperationID(): {audit: "role_binding.created", idempotency: "required"},
+		accessgen.GenCommandOperationUpdateRoleBinding().APIGenOperationID(): {audit: "role_binding.updated", concurrency: "if-match"},
+		accessgen.GenCommandOperationDeleteRoleBinding().APIGenOperationID(): {audit: "role_binding.deleted"},
 	}
 	for operationID, want := range expected {
-		contract, ok := contracts[string(operationID)]
+		contract, ok := contracts[operationID]
 		if !ok {
 			t.Fatalf("operation %q is not generated", operationID)
 		}

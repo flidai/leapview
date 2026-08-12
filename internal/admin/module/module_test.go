@@ -63,13 +63,13 @@ func TestAdminPublicationMutationPassesUIInvocationIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.invocation.Surface != apigencommand.SurfaceUI || service.invocation.RequestID != "ui-request-1" || service.invocation.IdempotencyKey != "ui-request-1" || service.invocation.TargetValues["workspace"] != "sales" {
+	if service.invocation.Surface != string(apigencommand.SurfaceUI) || service.invocation.RequestID != "ui-request-1" || service.invocation.IdempotencyKey != "ui-request-1" {
 		t.Fatalf("invocation = %#v", service.invocation)
 	}
 }
 
 type adminPublicationInvocationService struct {
-	invocation apigencommand.Invocation
+	invocation publication.CommandInvocation
 }
 
 func (*adminPublicationInvocationService) PublicationsConfigured() bool { return true }
@@ -85,7 +85,7 @@ func (*adminPublicationInvocationService) PublicationDTO(publication.Publication
 func (*adminPublicationInvocationService) MutatePublication(context.Context, string, string, string, publication.Action) (publication.Publication, error) {
 	return publication.Publication{}, nil
 }
-func (s *adminPublicationInvocationService) MutatePublicationWithInvocation(_ context.Context, _ string, _ string, _ string, _ publication.Action, invocation apigencommand.Invocation) (publication.Publication, error) {
+func (s *adminPublicationInvocationService) MutatePublicationWithInvocation(_ context.Context, _ string, _ string, _ string, _ publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
 	s.invocation = invocation
 	return publication.Publication{}, nil
 }

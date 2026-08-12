@@ -164,7 +164,12 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	hasFileBodies := docUsesFileBodies(doc)
 	usesFmt := hasFileBodies
 	hasTools := len(toolContracts) > 0
+	hasCommands := false
 	for _, endpoint := range doc.Endpoints {
+		if endpoint.Command != nil {
+			hasCommands = true
+			usesFmt = true
+		}
 		if endpoint.OperationID != "getHealth" {
 			hasStrictOperations = true
 		}
@@ -261,6 +266,14 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		}
 		fmt.Fprintf(&b, "// GenCommandOperation%s returns the generated identity for %s.\n", exportedName(endpoint.OperationID), endpoint.OperationID)
 		fmt.Fprintf(&b, "func GenCommandOperation%s() GenCommandOperationID { return GenCommandOperationID{value: %q} }\n\n", exportedName(endpoint.OperationID), endpoint.OperationID)
+	}
+	if hasCommands {
+		for _, endpoint := range doc.Endpoints {
+			if endpoint.Command == nil {
+				continue
+			}
+			emitCommandExecutionEntryPoints(&b, endpoint)
+		}
 	}
 	b.WriteString("// GetAPIGenUIActions returns every generated UI action binding in this package.\n")
 	b.WriteString("func GetAPIGenUIActions() []apigenui.Action {\n")
@@ -2226,4 +2239,67 @@ func packageName(opts Options) string {
 		return "api"
 	}
 	return opts.PackageName
+}
+
+func emitCommandExecutionEntryPoints(b *strings.Builder, endpoint ir.Endpoint) {
+	name := exportedName(endpoint.OperationID)
+	targetField := ""
+	if endpoint.Command.Target != nil {
+		targetField = exportedName(endpoint.Command.Target.Parameter)
+		switch targetField {
+		case "Surface", "IdempotencyKey", "ConcurrencyToken", "RequestID", "CorrelationID":
+			targetField += "Target"
+		}
+	}
+
+	fmt.Fprintf(b, "// Gen%sCommandInvocation is the typed cross-surface invocation for %s.\n", name, endpoint.OperationID)
+	fmt.Fprintf(b, "type Gen%sCommandInvocation struct {\n", name)
+	b.WriteString("\tSurface apigencommand.Surface\n")
+	if targetField != "" {
+		fmt.Fprintf(b, "\t%s string\n", targetField)
+	}
+	if endpoint.Command.Idempotency == "required" {
+		b.WriteString("\tIdempotencyKey string\n")
+	}
+	if endpoint.Command.Concurrency == "if-match" {
+		b.WriteString("\tConcurrencyToken string\n")
+	}
+	b.WriteString("\tRequestID string\n")
+	b.WriteString("\tCorrelationID string\n")
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "func (invocation Gen%sCommandInvocation) apigenInvocation() apigencommand.Invocation {\n", name)
+	fmt.Fprintf(b, "\treturn apigencommand.Invocation{OperationID: %q, Surface: invocation.Surface, ", endpoint.OperationID)
+	if endpoint.Command.Target != nil {
+		fmt.Fprintf(b, "TargetValues: map[string]string{%q: invocation.%s}, ", endpoint.Command.Target.Parameter, targetField)
+	}
+	if endpoint.Command.Idempotency == "required" {
+		b.WriteString("IdempotencyKey: invocation.IdempotencyKey, ")
+	}
+	if endpoint.Command.Concurrency == "if-match" {
+		b.WriteString("ConcurrencyToken: invocation.ConcurrencyToken, ")
+	}
+	b.WriteString("RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID}\n")
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "// BeginGen%sCommand validates and begins %s from its generated contract.\n", name, endpoint.OperationID)
+	fmt.Fprintf(b, "func BeginGen%sCommand(ctx context.Context, invocation Gen%sCommandInvocation) (context.Context, *apigencommand.Guard, error) {\n", name, name)
+	fmt.Fprintf(b, "\tcontract, ok := GetAPIGenCommandRuntimeContract(%q)\n", endpoint.OperationID)
+	fmt.Fprintf(b, "\tif !ok { return ctx, nil, fmt.Errorf(\"%%w: %%q\", apigencommand.ErrContractNotFound, %q) }\n", endpoint.OperationID)
+	b.WriteString("\treturn apigencommand.BeginInvocation(ctx, contract, invocation.apigenInvocation())\n")
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "// ExecuteGen%sCommand applies %s's generated invocation and execution policy.\n", name, endpoint.OperationID)
+	fmt.Fprintf(b, "func ExecuteGen%sCommand(ctx context.Context, executor *apigencommand.Executor, invocation Gen%sCommandInvocation, execution apigencommand.Execution) error {\n", name, name)
+	fmt.Fprintf(b, "\tcontract, ok := GetAPIGenCommandRuntimeContract(%q)\n", endpoint.OperationID)
+	fmt.Fprintf(b, "\tif !ok { return fmt.Errorf(\"%%w: %%q\", apigencommand.ErrContractNotFound, %q) }\n", endpoint.OperationID)
+	b.WriteString("\treturn apigencommand.ExecuteInvocation(ctx, executor, contract, invocation.apigenInvocation(), execution)\n")
+	b.WriteString("}\n\n")
+
+	if endpoint.Command.Concurrency == "if-match" {
+		fmt.Fprintf(b, "// CheckGen%sCommandConcurrency applies %s's generated concurrency policy.\n", name, endpoint.OperationID)
+		fmt.Fprintf(b, "func CheckGen%sCommandConcurrency(ctx context.Context, executor *apigencommand.Executor, presented, current string) error {\n", name)
+		fmt.Fprintf(b, "\treturn executor.CheckConcurrency(ctx, %q, presented, current)\n", endpoint.OperationID)
+		b.WriteString("}\n\n")
+	}
 }
