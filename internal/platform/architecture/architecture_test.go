@@ -2240,7 +2240,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"go run ./internal/app/tools/schemadocgen",
 		"go run ./internal/app/tools/openapidocgen",
 		"go run ./internal/app/tools/docsitegen",
-		"FROM oven/bun:1.3.7@sha256:",
+		"FROM oven/bun:1.3.14@sha256:",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
 		"COPY --from=sourcegen /src/web/generated ./web/generated",
@@ -2348,7 +2348,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 		"FROM golang:1.25-bookworm@sha256:",
 		"./scripts/generate_build_sources.sh",
 		"go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
-		"FROM oven/bun:1.3.7@sha256:",
+		"FROM oven/bun:1.3.14@sha256:",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
 		"COPY --from=sourcegen /src/web/generated ./web/generated",
@@ -2575,11 +2575,11 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Frontend tests (PR)",
 		"runs-on: ubuntu-24.04",
 		"uses: ./.github/actions/setup-ci",
-		"run: task ci:prepare",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: task ci:lane:frontend",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
@@ -2915,10 +2915,10 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 
 	for _, want := range []string{
 		"run: task ci:lane:go:apigen",
-		"run: task ci:prepare",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: task ci:lane:frontend",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		"run: task generated:check",
 	} {
 		if !strings.Contains(prWorkflow, want) {
@@ -2933,7 +2933,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: task ci:lane:frontend",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		"run: task ci:full:extras",
 	} {
 		if !strings.Contains(mergeWorkflow, want) {
@@ -2948,7 +2948,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: task ci:lane:frontend",
+		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		"run: task ci:full:extras",
 		"run: task ci:nightly:extras",
 	} {
@@ -3009,6 +3009,57 @@ func TestGitHubHostedCISplitsGoWorkAndWarmsReusableBunCache(t *testing.T) {
 	populateAt := strings.Index(artifacts, "name: Populate main-branch Bun cache")
 	if setupAt < 0 || populateAt < setupAt {
 		t.Fatal("main artifact qualification must populate Bun downloads before the cache save hook")
+	}
+}
+
+func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
+	root := repoRoot(t)
+	const prepareWatchdog = "node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare"
+	for workflow, wantPrepareCount := range map[string]int{
+		"ci.yml":               3,
+		"merge-validation.yml": 4,
+		"nightly.yml":          4,
+	} {
+		data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
+		require.NoError(t, err)
+		text := string(data)
+		if strings.Contains(text, "run: task ci:prepare") {
+			t.Fatalf("%s contains repository preparation without the Bun hang watchdog", workflow)
+		}
+		if got := strings.Count(text, prepareWatchdog); got != wantPrepareCount {
+			t.Fatalf("%s wraps %d preparation steps, want %d", workflow, got, wantPrepareCount)
+		}
+
+		frontend := workflowJobBlock(t, text, "frontend-validation")
+		for _, want := range []string{
+			"timeout-minutes: 20",
+			prepareWatchdog,
+			"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
+		} {
+			if !strings.Contains(frontend, want) {
+				t.Fatalf("%s frontend lane does not bound and retry hung Bun work: missing %q", workflow, want)
+			}
+		}
+	}
+
+	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
+	require.NoError(t, err)
+	frontendCore := taskfileTaskBlock(t, string(taskfile), "ci:test:frontend:core")
+	if !strings.Contains(frontendCore, "node --test scripts/ci_watchdog.test.mjs") {
+		t.Fatal("frontend core contract must exercise the Node watchdog independently of Bun")
+	}
+
+	nodeDeps := taskfileTaskBlock(t, string(taskfile), "node:deps")
+	for _, want := range []string{"method: checksum", "package.json", "bun.lock", "node_modules/.bin/esbuild"} {
+		if !strings.Contains(nodeDeps, want) {
+			t.Errorf("node:deps must cache a verified install across nested preparation tasks: missing %q", want)
+		}
+	}
+
+	setup, err := os.ReadFile(filepath.Join(root, ".github", "actions", "setup-ci", "action.yml"))
+	require.NoError(t, err)
+	if !strings.Contains(string(setup), "BUN_FEATURE_FLAG_NO_ORPHANS=1") {
+		t.Fatal("hosted CI must enable Bun's inherited kernel-backed orphan cleanup")
 	}
 }
 
@@ -3083,7 +3134,7 @@ func TestGitHubHostedWorkflowsUseEphemeralRunnersAndBoundedCaches(t *testing.T) 
 		"actions/setup-node@",
 		`node-version: "24"`,
 		"oven-sh/setup-bun@",
-		"bun-version: 1.3.7",
+		"bun-version: 1.3.14",
 		"hashicorp/setup-terraform@",
 		"terraform_version: 1.13.5",
 		"actions/cache@",
@@ -3168,7 +3219,7 @@ func TestLeapViewDeclaresGitHubHostedCIContract(t *testing.T) {
 	for _, want := range []string{
 		"go-version-file: go.mod",
 		`node-version: "24"`,
-		"bun-version: 1.3.7",
+		"bun-version: 1.3.14",
 		"terraform_version: 1.13.5",
 		"github.com/go-task/task/v3/cmd/task@v3.50.0",
 		"github.com/bufbuild/buf/cmd/buf@v1.57.2",
@@ -3247,12 +3298,15 @@ func TestFrontendScriptsDoNotRepeatedlyInstallPlaywright(t *testing.T) {
 	if err := json.Unmarshal(packageJSON, &manifest); err != nil {
 		t.Fatalf("decode package manifest: %v", err)
 	}
-	if got := manifest.Scripts["browser:ensure"]; got != "bun scripts/ensure_playwright.ts" {
+	if got := manifest.Scripts["browser:ensure"]; got != "node scripts/ensure_playwright.mjs" {
 		t.Fatalf("browser:ensure must use the filesystem-first Playwright provisioner, got %q", got)
 	}
 	for name, command := range manifest.Scripts {
 		if strings.Contains(command, "playwright install chromium") {
 			t.Errorf("script %q repeatedly provisions Chromium instead of using browser:ensure", name)
+		}
+		if name != "browser:ensure" && strings.Contains(command, "bun run browser:ensure") {
+			t.Errorf("script %q launches a redundant nested Bun process for Playwright readiness", name)
 		}
 	}
 }

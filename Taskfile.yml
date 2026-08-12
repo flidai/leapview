@@ -98,6 +98,12 @@ tasks:
 
   node:deps:
     desc: Install JavaScript dependencies with Bun
+    method: checksum
+    sources:
+      - package.json
+      - bun.lock
+    generates:
+      - node_modules/.bin/esbuild
     cmds:
       - bun install --frozen-lockfile
 
@@ -186,6 +192,7 @@ tasks:
   ci:test:frontend:core:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
+      - node --test scripts/ci_watchdog.test.mjs
       - bun test scripts/ensure_playwright.test.ts
       - bun run test:primer-primitives
       - bun run test:primer-alignment
