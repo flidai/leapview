@@ -2305,7 +2305,10 @@ test('dashboard agent restores its open state and active conversation after relo
         // This browser fixture has no dashboard command backend. Keep the test
         // focused on persistence and prevent Datastar from following the
         // synthetic restore command while assertions are running.
-        event.stopPropagation()
+        // Datastar also listens on window. Stop later listeners on the same
+        // target so the synthetic restore cannot race these assertions with a
+        // navigation.
+        event.stopImmediatePropagation()
       }, { capture: true })
     })
     await page.goto(baseURL)
