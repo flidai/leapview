@@ -124,3 +124,58 @@ test('runWithWatchdog sends diagnostics to descendants before force-killing the 
   assert.equal(result.code, 124)
   assert.equal(result.timedOut, true)
 })
+
+test('runWithWatchdog force-kills descendants when the process-group leader exits during diagnostics', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX process-group signals are required by the GitHub-hosted runner watchdog')
+    return
+  }
+
+  const directory = await mkdtemp(path.join(tmpdir(), 'leapview-ci-watchdog-orphan-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const grandchildPIDPath = path.join(directory, 'grandchild-pid')
+  const grandchild = String.raw`
+    process.on('SIGQUIT', () => {});
+    setInterval(() => {}, 1_000);
+  `
+  const parent = String.raw`
+    const fs = require('node:fs');
+    const { spawn } = require('node:child_process');
+    const child = spawn(process.execPath, ['-e', process.argv[1]], { stdio: 'ignore' });
+    fs.writeFileSync(process.argv[2], String(child.pid));
+    setInterval(() => {}, 1_000);
+  `
+
+  const result = await runWithWatchdog({
+    attempts: 1,
+    command: process.execPath,
+    commandArguments: ['-e', parent, grandchild, grandchildPIDPath],
+    graceMilliseconds: 500,
+    timeoutMilliseconds: 2_000,
+  })
+
+  const grandchildPID = Number(await readFile(grandchildPIDPath, 'utf8'))
+  t.after(() => {
+    try {
+      process.kill(grandchildPID, 'SIGKILL')
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error
+    }
+  })
+  assert.equal(result.code, 124)
+  assert.equal(result.timedOut, true)
+  await assertProcessExited(grandchildPID)
+})
+
+async function assertProcessExited(pid) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      process.kill(pid, 0)
+    } catch (error) {
+      if (error?.code === 'ESRCH') return
+      throw error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  assert.fail(`process ${pid} survived watchdog cleanup`)
+}

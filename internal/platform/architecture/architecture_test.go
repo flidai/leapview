@@ -3048,6 +3048,19 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	if !strings.Contains(frontendCore, "node --test scripts/ci_watchdog.test.mjs") {
 		t.Fatal("frontend core contract must exercise the Node watchdog independently of Bun")
 	}
+
+	nodeDeps := taskfileTaskBlock(t, string(taskfile), "node:deps")
+	for _, want := range []string{"method: checksum", "package.json", "bun.lock", "node_modules/.bin/esbuild"} {
+		if !strings.Contains(nodeDeps, want) {
+			t.Errorf("node:deps must cache a verified install across nested preparation tasks: missing %q", want)
+		}
+	}
+
+	setup, err := os.ReadFile(filepath.Join(root, ".github", "actions", "setup-ci", "action.yml"))
+	require.NoError(t, err)
+	if !strings.Contains(string(setup), "BUN_FEATURE_FLAG_NO_ORPHANS=1") {
+		t.Fatal("hosted CI must enable Bun's inherited kernel-backed orphan cleanup")
+	}
 }
 
 func TestGitHubHostedCIRunsAPIGenAsAnIndependentLeanLane(t *testing.T) {
@@ -3285,12 +3298,15 @@ func TestFrontendScriptsDoNotRepeatedlyInstallPlaywright(t *testing.T) {
 	if err := json.Unmarshal(packageJSON, &manifest); err != nil {
 		t.Fatalf("decode package manifest: %v", err)
 	}
-	if got := manifest.Scripts["browser:ensure"]; got != "bun scripts/ensure_playwright.ts" {
+	if got := manifest.Scripts["browser:ensure"]; got != "node scripts/ensure_playwright.mjs" {
 		t.Fatalf("browser:ensure must use the filesystem-first Playwright provisioner, got %q", got)
 	}
 	for name, command := range manifest.Scripts {
 		if strings.Contains(command, "playwright install chromium") {
 			t.Errorf("script %q repeatedly provisions Chromium instead of using browser:ensure", name)
+		}
+		if name != "browser:ensure" && strings.Contains(command, "bun run browser:ensure") {
+			t.Errorf("script %q launches a redundant nested Bun process for Playwright readiness", name)
 		}
 	}
 }

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
 const timeoutExitCode = 124
@@ -65,36 +65,47 @@ async function runAttempt(options, attempt, spawnProcess, diagnostic) {
     detached: useProcessGroup,
     stdio: 'inherit',
   })
+  const processGroupID = child.pid
 
   return await new Promise((resolve) => {
     let forceKillTimer
+    let closeResult
+    let cleanupComplete = false
     let settled = false
     let timedOut = false
 
-    const timeoutTimer = setTimeout(() => {
-      timedOut = true
-      diagnostic(
-        `[ci-watchdog] attempt ${attempt}/${options.attempts} exceeded ${formatDuration(options.timeoutMilliseconds)}; sending SIGQUIT for diagnostics`,
-      )
-      signalChild(child, 'SIGQUIT', useProcessGroup)
-      forceKillTimer = setTimeout(() => {
-        diagnostic(`[ci-watchdog] process group did not exit within ${formatDuration(options.graceMilliseconds)}; sending SIGKILL`)
-        signalChild(child, 'SIGKILL', useProcessGroup)
-      }, options.graceMilliseconds)
-    }, options.timeoutMilliseconds)
-
-    const finish = (code, signal, error) => {
+    const settle = (result) => {
       if (settled) return
       settled = true
       clearTimeout(timeoutTimer)
       clearTimeout(forceKillTimer)
       resolve({
         attempt,
-        code: timedOut ? timeoutExitCode : (code ?? 1),
-        error,
-        signal,
+        code: timedOut ? timeoutExitCode : (result.code ?? 1),
+        error: result.error,
+        signal: result.signal,
         timedOut,
       })
+    }
+
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true
+      diagnostic(
+        `[ci-watchdog] attempt ${attempt}/${options.attempts} exceeded ${formatDuration(options.timeoutMilliseconds)}; sending SIGQUIT for diagnostics`,
+      )
+      snapshotProcessGroup(processGroupID, diagnostic)
+      signalProcess(child, processGroupID, 'SIGQUIT', useProcessGroup)
+      forceKillTimer = setTimeout(() => {
+        diagnostic(`[ci-watchdog] diagnostic grace period ended after ${formatDuration(options.graceMilliseconds)}; sending SIGKILL to the process group`)
+        signalProcess(child, processGroupID, 'SIGKILL', useProcessGroup)
+        cleanupComplete = true
+        if (closeResult) settle(closeResult)
+      }, options.graceMilliseconds)
+    }, options.timeoutMilliseconds)
+
+    const finish = (code, signal, error) => {
+      closeResult = { code, error, signal }
+      if (!timedOut || cleanupComplete) settle(closeResult)
     }
 
     child.once('error', (error) => finish(1, null, error))
@@ -102,13 +113,33 @@ async function runAttempt(options, attempt, spawnProcess, diagnostic) {
   })
 }
 
-function signalChild(child, signal, useProcessGroup) {
+function signalProcess(child, processGroupID, signal, useProcessGroup) {
   try {
-    if (useProcessGroup) process.kill(-child.pid, signal)
+    if (useProcessGroup) process.kill(-processGroupID, signal)
     else child.kill(signal)
   } catch (error) {
     if (error?.code !== 'ESRCH') throw error
   }
+}
+
+function snapshotProcessGroup(processGroupID, diagnostic) {
+  if (process.platform === 'win32') return
+
+  const result = spawnSync('ps', ['-axo', 'pid=,ppid=,pgid=,stat=,etime=,pcpu=,pmem=,comm='], {
+    encoding: 'utf8',
+    timeout: 2_000,
+  })
+  if (result.error) {
+    diagnostic(`[ci-watchdog] could not capture process-group diagnostics: ${result.error.message}`)
+    return
+  }
+
+  const processes = result.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => Number(line.split(/\s+/, 4)[2]) === processGroupID)
+  diagnostic(`[ci-watchdog] process group ${processGroupID} before termination:`)
+  for (const processLine of processes) diagnostic(`[ci-watchdog]   ${processLine}`)
 }
 
 function positiveInteger(option, rawValue) {

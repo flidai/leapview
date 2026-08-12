@@ -36,6 +36,7 @@ runs:
         mkdir -p "${HOME}/.bun/install/cache" "${HOME}/.cache/ms-playwright" "${HOME}/.cache/terraform"
         {
           echo "BUN_INSTALL_CACHE_DIR=${HOME}/.bun/install/cache"
+          echo "BUN_FEATURE_FLAG_NO_ORPHANS=1"
           echo "PLAYWRIGHT_BROWSERS_PATH=${HOME}/.cache/ms-playwright"
           echo "TF_PLUGIN_CACHE_DIR=${HOME}/.cache/terraform"
         } >> "${GITHUB_ENV}"

@@ -98,6 +98,12 @@ tasks:
 
   node:deps:
     desc: Install JavaScript dependencies with Bun
+    method: checksum
+    sources:
+      - package.json
+      - bun.lock
+    generates:
+      - node_modules/.bin/esbuild
     cmds:
       - bun install --frozen-lockfile
 
