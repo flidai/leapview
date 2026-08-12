@@ -2300,6 +2300,12 @@ test('dashboard agent restores its open state and active conversation after relo
   try {
     await page.addInitScript(() => {
       ;(window as any).__agentRestoreRequests = []
+      if (localStorage.getItem('leapview-dashboard-agent-state') === null) {
+        localStorage.setItem('leapview-dashboard-agent-state', JSON.stringify({
+          open: true,
+          conversationId: 'agentconv_saved',
+        }))
+      }
       window.addEventListener('lv-chat-restore', (event: Event) => {
         ;(window as any).__agentRestoreRequests.push((event as CustomEvent).detail)
         // This browser fixture has no dashboard command backend. Keep the test
@@ -2312,13 +2318,6 @@ test('dashboard agent restores its open state and active conversation after relo
       }, { capture: true })
     })
     await page.goto(baseURL)
-    await page.evaluate(() => {
-      localStorage.setItem('leapview-dashboard-agent-state', JSON.stringify({
-        open: true,
-        conversationId: 'agentconv_saved',
-      }))
-    })
-    await page.reload()
     await page.waitForLoadState('networkidle')
     await page.waitForFunction(() => (
       customElements.get('lv-dashboard-page')
