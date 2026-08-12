@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -39,9 +42,36 @@ func (m *Module) MountAuthenticatedBrowser(r chi.Router) {
 	r.Post("/auth/logout", m.Logout)
 	r.Post("/auth/local/password", m.LocalPassword)
 	r.Method(http.MethodPut, "/profile/avatar", m.ProtectHandler("", http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		started, _, err := accessgen.BeginGenUploadCurrentAvatarCommand(request.Context(), accessgen.GenUploadCurrentAvatarCommandInvocation{
+			Surface: apigencommand.SurfaceUI, RequestID: strings.TrimSpace(request.Header.Get("X-Request-ID")),
+			CorrelationID: strings.TrimSpace(request.Header.Get("X-Correlation-ID")),
+		})
+		if claimErr := uicommand.VerifyClaim(uicommand.OperationClaims(request), accessgen.GenUIActionUploadCurrentAvatar().OperationID()); claimErr != nil {
+			http.Error(w, claimErr.Error(), http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		request = request.WithContext(started)
 		m.handler.UploadCurrentAvatar(w, request, request.Header.Get("Content-Type"))
 	})))
-	r.Method(http.MethodDelete, "/profile/avatar", m.ProtectHandler("", http.HandlerFunc(m.handler.DeleteCurrentAvatar)))
+	r.Method(http.MethodDelete, "/profile/avatar", m.ProtectHandler("", http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if err := uicommand.VerifyClaim(uicommand.OperationClaims(request), accessgen.GenUIActionDeleteCurrentAvatar().OperationID()); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		started, _, err := accessgen.BeginGenDeleteCurrentAvatarCommand(request.Context(), accessgen.GenDeleteCurrentAvatarCommandInvocation{
+			Surface: apigencommand.SurfaceUI, RequestID: strings.TrimSpace(request.Header.Get("X-Request-ID")),
+			CorrelationID: strings.TrimSpace(request.Header.Get("X-Correlation-ID")),
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m.handler.DeleteCurrentAvatar(w, request.WithContext(started))
+	})))
 	r.Method(http.MethodGet, "/profile/avatars/{principal}/{digest}", m.ProtectHandler("", http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		m.handler.GetPrincipalAvatar(w, request, chi.URLParam(request, "principal"), chi.URLParam(request, "digest"))
 	})))

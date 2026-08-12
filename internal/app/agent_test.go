@@ -194,6 +194,50 @@ func TestAdminAgentConfigurationIsNotPublicAPI(t *testing.T) {
 	}
 }
 
+func TestAgentConfigurationCommandUsesGeneratedPublicContract(t *testing.T) {
+	ctx := t.Context()
+	store := testStore(t)
+	owner := testPrincipal(t, ctx, store, "owner@example.com", "Owner", "owner")
+	token := testAPIToken(t, ctx, store, owner.ID, "agent-config")
+	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+
+	getReq := authedJSONRequest(http.MethodGet, "/api/v1/agent/config", token, "")
+	getRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK || getRec.Header().Get("ETag") == "" {
+		t.Fatalf("get status=%d etag=%q body=%s", getRec.Code, getRec.Header().Get("ETag"), getRec.Body.String())
+	}
+	req := authedJSONRequest(http.MethodPatch, "/api/v1/agent/config", token, `{"systemPrompt":"Use verified sources."}`)
+	req.Header.Set("If-Match", getRec.Header().Get("ETag"))
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Use verified sources.") {
+		t.Fatalf("update status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	prompt, err := store.GetSetting(ctx, agentconfig.SystemPromptSettingKey)
+	if err != nil || prompt != "Use verified sources." {
+		t.Fatalf("stored prompt=%q err=%v", prompt, err)
+	}
+	staleReq := authedJSONRequest(http.MethodPatch, "/api/v1/agent/config", token, `{"systemPrompt":"Overwrite stale state."}`)
+	staleReq.Header.Set("If-Match", getRec.Header().Get("ETag"))
+	staleRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(staleRec, staleReq)
+	if staleRec.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale update status=%d body=%s", staleRec.Code, staleRec.Body.String())
+	}
+	prompt, err = store.GetSetting(ctx, agentconfig.SystemPromptSettingKey)
+	if err != nil || prompt != "Use verified sources." {
+		t.Fatalf("prompt after stale update=%q err=%v", prompt, err)
+	}
+	events, err := testAccessRepository(store).ListAuditEvents(ctx, access.AuditEventFilter{
+		WorkspaceID: "test", PrincipalID: owner.ID, Action: "agent.config.updated",
+	})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("agent config audits=%d err=%v", len(events), err)
+	}
+}
+
 func TestAgentAPISupportsConversationAndRunReads(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)

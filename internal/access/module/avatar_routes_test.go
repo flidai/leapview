@@ -9,8 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/access/avatar"
 	accesshttp "github.com/flidai/leapview/internal/access/http"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -30,6 +32,8 @@ func TestAuthenticatedBrowserAvatarRoutesUseProtectedPrincipal(t *testing.T) {
 
 	upload := httptest.NewRequest(http.MethodPut, "/profile/avatar", bytes.NewBufferString("raw"))
 	upload.Header.Set("Content-Type", "image/png")
+	upload.Header.Set(uicommand.HeaderOperationID, accessgen.GenUIActionUploadCurrentAvatar().OperationID())
+	upload.Header.Set("X-Request-ID", "request-avatar-upload")
 	uploadRecorder := httptest.NewRecorder()
 	router.ServeHTTP(uploadRecorder, upload)
 	if uploadRecorder.Code != http.StatusOK || service.uploadedPrincipal != "dev" {

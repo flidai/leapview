@@ -1,11 +1,15 @@
 package personalsettings
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/Yacobolo/toolbelt/pagestream"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 type PrincipalProvider func(*http.Request) (string, bool)
@@ -61,6 +65,12 @@ func (h Handler) Command(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err, http.StatusBadRequest)
 		return
 	}
+	started, err := beginPersonalSettingsInvocation(r, signals)
+	if err != nil {
+		h.writeError(w, r, err, http.StatusBadRequest)
+		return
+	}
+	r = started
 	var commandErr error
 	var newToken *string
 	switch {
@@ -98,6 +108,78 @@ func (h Handler) Command(w http.ResponseWriter, r *http.Request) {
 		state.Tokens.NewToken = newToken
 	}
 	_ = pagestream.PatchResponse(w, r, BootstrapSignals(state))
+}
+
+func beginPersonalSettingsInvocation(r *http.Request, signals commandSignals) (*http.Request, error) {
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+	idempotencyKey := "ui:" + requestID
+	claims := uicommand.OperationClaims(r)
+	begin := func(binding uicommand.Binding, start func() (context.Context, error)) (*http.Request, error) {
+		if err := uicommand.VerifyClaim(claims, binding.OperationID()); err != nil {
+			return r, err
+		}
+		ctx, err := start()
+		if err != nil {
+			return r, err
+		}
+		return r.WithContext(ctx), nil
+	}
+	switch {
+	case signals.Profile.Action == "refresh":
+		return r, nil
+	case signals.Profile.Action != "":
+		return begin(accessgen.GenUIActionUpdateCurrentPrincipal(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenUpdateCurrentPrincipalCommand(r.Context(), accessgen.GenUpdateCurrentPrincipalCommandInvocation{
+				Surface: apigencommand.SurfaceUI, ConcurrencyToken: "*", RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case signals.Theme.Action != "":
+		return begin(accessgen.GenUIActionUpdateCurrentTheme(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenUpdateCurrentThemeCommand(r.Context(), accessgen.GenUpdateCurrentThemeCommandInvocation{
+				Surface: apigencommand.SurfaceUI, RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case signals.Password.CurrentPassword != "" || signals.Password.NewPassword != "":
+		return begin(accessgen.GenUIActionChangeCurrentPassword(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenChangeCurrentPasswordCommand(r.Context(), accessgen.GenChangeCurrentPasswordCommandInvocation{
+				Surface: apigencommand.SurfaceUI, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case signals.Session.Action != "":
+		return begin(accessgen.GenUIActionRevokeCurrentSession(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRevokeCurrentSessionCommand(r.Context(), accessgen.GenRevokeCurrentSessionCommandInvocation{
+				Surface: apigencommand.SurfaceUI, Session: strings.TrimSpace(signals.Session.SessionID), RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case signals.AuthoringSession.Action != "":
+		return begin(accessgen.GenUIActionRevokeCurrentAuthoringSession(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRevokeCurrentAuthoringSessionCommand(r.Context(), accessgen.GenRevokeCurrentAuthoringSessionCommandInvocation{
+				Surface: apigencommand.SurfaceUI, Session: strings.TrimSpace(signals.AuthoringSession.SessionID), RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case signals.Token.Action == "create":
+		return begin(accessgen.GenUIActionCreateCurrentAPIToken(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenCreateCurrentAPITokenCommand(r.Context(), accessgen.GenCreateCurrentAPITokenCommandInvocation{
+				Surface: apigencommand.SurfaceUI, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case signals.Token.Action == "revoke":
+		return begin(accessgen.GenUIActionRevokeCurrentAPIToken(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRevokeCurrentAPITokenCommand(r.Context(), accessgen.GenRevokeCurrentAPITokenCommandInvocation{
+				Surface: apigencommand.SurfaceUI, Token: strings.TrimSpace(signals.Token.TokenID), RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	default:
+		return r, ErrCommandInvalid
+	}
 }
 
 func (h Handler) currentPrincipal(r *http.Request) (string, bool) {

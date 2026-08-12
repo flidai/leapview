@@ -585,7 +585,7 @@ func WorkspaceAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Cata
 		refreshPath := "/workspaces/" + workspace.ID + "/assets/" + asset.ID + "/refresh"
 		extras.CSRFToken = refresh.CSRFToken
 		attrs = append(attrs,
-			g.Attr("data-on:lv-run-refresh-pipeline", uiactions.UncontractedMutationPost(refreshPath)),
+			g.Attr("data-on:lv-run-refresh-pipeline", uiactions.CommandPost(refresh.RunCommand, refreshPath)),
 		)
 		if activeSection == "versions" {
 			return workspaceAssetRouteDocument(asset, catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspaceAsset, g.El("lv-workspace-asset-page", attrs...), extras, activeSection, chromeOptions)
@@ -852,6 +852,7 @@ func ValidWorkspaceAssetSection(section string) bool {
 
 type AssetRefreshState struct {
 	CSRFToken        string
+	RunCommand       uicommand.Binding
 	Runs             []AssetRefreshRun
 	Latest           AssetRefreshRun
 	LatestSuccessful AssetRefreshRun

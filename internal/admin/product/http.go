@@ -158,6 +158,19 @@ func (h *Handler) PatchSettings(w http.ResponseWriter, r *http.Request) {
 	h.writeIdentity(w, http.StatusOK, identity)
 }
 
+func (h *Handler) ResetSettings(w http.ResponseWriter, r *http.Request) {
+	expected, ok := h.requireRevision(w, r)
+	if !ok {
+		return
+	}
+	identity, err := h.config.Service.ResetIdentity(r.Context(), expected, h.mutation(r))
+	if err != nil {
+		h.problem(w, r, err)
+		return
+	}
+	h.writeIdentity(w, http.StatusOK, identity)
+}
+
 func (h *Handler) UploadLogo(w http.ResponseWriter, r *http.Request) {
 	expected, ok := h.requireRevision(w, r)
 	if !ok {

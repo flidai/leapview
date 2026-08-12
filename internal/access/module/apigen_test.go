@@ -144,6 +144,7 @@ func TestAPIGenAuthorizationContractCoverage(t *testing.T) {
 		"revokeCurrentAuthoringSession": true,
 		"revokeCurrentSession":          true,
 		"updateCurrentPrincipal":        true,
+		"updateCurrentTheme":            true,
 		"uploadCurrentAvatar":           true,
 	}
 	for operationID, contract := range contracts {

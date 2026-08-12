@@ -2,14 +2,13 @@
 package uicommand
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenui "github.com/Yacobolo/toolbelt/apigen/runtime/ui"
 )
 
 const HeaderOperationID = "X-LeapView-Operation-ID"
@@ -20,38 +19,8 @@ var (
 	ErrOperationMismatch = errors.New("UI command operation identity does not match the dispatched command")
 )
 
-// OperationID is implemented by APIGen's generated command operation IDs.
-// Requiring this interface prevents UI bindings from being authored with raw
-// strings that can drift away from the generated command registry.
-type OperationID interface {
-	APIGenOperationID() string
-}
-
-// Binding gives one stable browser action exactly one generated command.
-type Binding struct {
-	actionID    string
-	operationID string
-}
-
-func New(actionID string, operation OperationID) (Binding, error) {
-	actionID = strings.TrimSpace(actionID)
-	if actionID == "" || operation == nil || strings.TrimSpace(operation.APIGenOperationID()) == "" {
-		return Binding{}, fmt.Errorf("%w: action and generated operation IDs are required", ErrInvalidBinding)
-	}
-	return Binding{actionID: actionID, operationID: strings.TrimSpace(operation.APIGenOperationID())}, nil
-}
-
-func Must(actionID string, operation OperationID) Binding {
-	binding, err := New(actionID, operation)
-	if err != nil {
-		panic(err)
-	}
-	return binding
-}
-
-func (b Binding) ActionID() string    { return b.actionID }
-func (b Binding) OperationID() string { return b.operationID }
-func (b Binding) Valid() bool         { return b.actionID != "" && b.operationID != "" }
+// Binding is APIGen's generated transport-neutral browser action binding.
+type Binding = apigenui.Action
 
 // OperationClaims returns the generated operation identities claimed by a
 // browser request. Multiple values are supported only for an explicitly
@@ -118,64 +87,4 @@ func VerifyWorkflowClaims(claims []string, bindings []Binding) error {
 		}
 	}
 	return nil
-}
-
-// BeginWorkflowInvocation is the explicit exception for a browser event that
-// composes multiple generated mutations. It verifies the complete closed set
-// and then begins exactly one typed step from that set.
-func BeginWorkflowInvocation(
-	r *http.Request,
-	workflow []Binding,
-	binding Binding,
-	contract apigencommand.Contract,
-	invocation apigencommand.Invocation,
-) (context.Context, *apigencommand.Guard, error) {
-	if r == nil {
-		return nil, nil, fmt.Errorf("%w: request is required", ErrInvalidBinding)
-	}
-	if binding.OperationID() == "" || binding.OperationID() != contract.OperationID {
-		return r.Context(), nil, fmt.Errorf("%w: binding %q uses %q but contract is %q", ErrInvalidBinding, binding.ActionID(), binding.OperationID(), contract.OperationID)
-	}
-	found := false
-	for _, candidate := range workflow {
-		if candidate.ActionID() == binding.ActionID() && candidate.OperationID() == binding.OperationID() {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return r.Context(), nil, fmt.Errorf("%w: action %q is not a workflow step", ErrInvalidBinding, binding.ActionID())
-	}
-	if err := VerifyWorkflowClaims(OperationClaims(r), workflow); err != nil {
-		return r.Context(), nil, err
-	}
-	invocation.OperationID = binding.OperationID()
-	invocation.Surface = apigencommand.SurfaceUI
-	return apigencommand.BeginInvocation(r.Context(), contract, invocation)
-}
-
-// BeginInvocation verifies browser identity and then delegates all generated
-// surface, target, idempotency, and concurrency policy to APIGen.
-func BeginInvocation(
-	r *http.Request,
-	binding Binding,
-	contract apigencommand.Contract,
-	invocation apigencommand.Invocation,
-) (context.Context, *apigencommand.Guard, error) {
-	if r == nil {
-		return nil, nil, fmt.Errorf("%w: request is required", ErrInvalidBinding)
-	}
-	if binding.OperationID() == "" || binding.OperationID() != contract.OperationID {
-		return r.Context(), nil, fmt.Errorf("%w: binding %q uses %q but contract is %q", ErrInvalidBinding, binding.ActionID(), binding.OperationID(), contract.OperationID)
-	}
-	if err := VerifyClaim(OperationClaims(r), contract.OperationID); err != nil {
-		return r.Context(), nil, err
-	}
-	invocation.OperationID = binding.OperationID()
-	invocation.Surface = apigencommand.SurfaceUI
-	ctx, guard, err := apigencommand.BeginInvocation(r.Context(), contract, invocation)
-	if err != nil {
-		return r.Context(), nil, err
-	}
-	return ctx, guard, nil
 }

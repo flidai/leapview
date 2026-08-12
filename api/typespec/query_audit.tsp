@@ -40,5 +40,4 @@ alias ListQueryEventsOK = OkJson<QueryEventListResponse>;
 @route("/workspaces/{workspace}/query-events")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AUDIT" })
-@operationId("listQueryEvents")
 op listQueryEvents(@path workspace: string, @query principal?: string, @query surface?: string, @query operation?: string, @query kind?: string, @query modelId?: string, @query target?: string, @query status?: string, @query search?: string, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListQueryEventsOK | CommonErrors;

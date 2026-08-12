@@ -1,12 +1,16 @@
 package http
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	nethttp "net/http"
 	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/admin/personalsettings"
 	"github.com/flidai/leapview/internal/admin/productsettings"
 	adminsettings "github.com/flidai/leapview/internal/admin/settings"
@@ -14,6 +18,7 @@ import (
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -251,6 +256,12 @@ func (h Handler) ServiceAccountCommand(w nethttp.ResponseWriter, r *nethttp.Requ
 		_ = pagestream.PatchResponse(w, r, map[string]any{"adminServiceAccounts": state})
 		return
 	}
+	started, err := beginServiceAccountInvocation(r, request.Command)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	r = started
 	actorID := ""
 	if h.ReadModel.CurrentPrincipal != nil {
 		if principal, ok := h.ReadModel.CurrentPrincipal(r); ok {
@@ -269,6 +280,55 @@ func (h Handler) ServiceAccountCommand(w nethttp.ResponseWriter, r *nethttp.Requ
 	}
 	state.CreatedSecret = secret
 	_ = pagestream.PatchResponse(w, r, map[string]any{"adminServiceAccounts": state})
+}
+
+func beginServiceAccountInvocation(r *nethttp.Request, command adminsettings.ServiceAccountCommand) (*nethttp.Request, error) {
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+	idempotencyKey := "ui:" + requestID
+	begin := func(binding uicommand.Binding, start func() (context.Context, error)) (*nethttp.Request, error) {
+		if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), binding.OperationID()); err != nil {
+			return r, err
+		}
+		ctx, err := start()
+		if err != nil {
+			return r, err
+		}
+		return r.WithContext(ctx), nil
+	}
+	switch strings.TrimSpace(command.Action) {
+	case "create":
+		return begin(accessgen.GenUIActionCreateServicePrincipal(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenCreateServicePrincipalCommand(r.Context(), accessgen.GenCreateServicePrincipalCommandInvocation{
+				Surface: apigencommand.SurfaceUI, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case "delete":
+		return begin(accessgen.GenUIActionDeleteServicePrincipal(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenDeleteServicePrincipalCommand(r.Context(), accessgen.GenDeleteServicePrincipalCommandInvocation{
+				Surface: apigencommand.SurfaceUI, ServicePrincipal: strings.TrimSpace(command.AccountID), RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case "create_secret":
+		return begin(accessgen.GenUIActionCreateServicePrincipalSecret(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenCreateServicePrincipalSecretCommand(r.Context(), accessgen.GenCreateServicePrincipalSecretCommandInvocation{
+				Surface: apigencommand.SurfaceUI, ServicePrincipal: strings.TrimSpace(command.AccountID), IdempotencyKey: idempotencyKey,
+				RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case "revoke_secret":
+		return begin(accessgen.GenUIActionRevokeServicePrincipalSecret(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRevokeServicePrincipalSecretCommand(r.Context(), accessgen.GenRevokeServicePrincipalSecretCommandInvocation{
+				Surface: apigencommand.SurfaceUI, ServicePrincipal: strings.TrimSpace(command.AccountID), RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	default:
+		return r, errors.New("unknown service account command")
+	}
 }
 
 func (h Handler) AuditLogCommand(w nethttp.ResponseWriter, r *nethttp.Request) {

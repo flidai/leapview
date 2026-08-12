@@ -2,8 +2,11 @@ package module
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/admin/productsettings"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -36,7 +39,26 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Post("/admin/service-accounts/command", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.ServiceAccountCommand))
 	r.Get("/admin/authentication", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.Authentication))
 	r.Post("/admin/product-settings/command", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.ProductSettingsCommand))
-	r.Put("/admin/product-logo", guard.ProtectPlatform(access.PrivilegeManagePlatform, m.UploadProductLogo))
+	r.Put("/admin/product-logo", guard.ProtectPlatform(access.PrivilegeManagePlatform, func(w http.ResponseWriter, request *http.Request) {
+		binding, err := m.productCommands.Binding(productsettings.CommandUploadLogo)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if err := uicommand.VerifyClaim(uicommand.OperationClaims(request), binding.OperationID()); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		started, err := m.productCommands.BeginInvocation(request.Context(), productsettings.CommandUploadLogo, productsettings.CommandInvocation{
+			ConcurrencyToken: strings.TrimSpace(request.Header.Get("If-Match")),
+			RequestID:        strings.TrimSpace(request.Header.Get("X-Request-ID")), CorrelationID: strings.TrimSpace(request.Header.Get("X-Correlation-ID")),
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m.UploadProductLogo(w, request.WithContext(started))
+	}))
 	r.Get("/product/logo/{digest}", guard.Protect("", m.GetProductLogo))
 	r.Get("/admin/agent", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.Agent))
 	r.Get("/admin/storage", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.Storage))

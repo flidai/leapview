@@ -93,19 +93,11 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		}
 		return session.ID, true
 	}
-	catalog, err := generatedRoleBindingCatalog()
+	roleBindingCommands, err := accessoperation.NewRoleBindingCommands(accessoperation.RepositoryProvider(config.Repository))
 	if err != nil {
 		return nil, err
 	}
-	roleBindingCommands, err := accessoperation.NewRoleBindingCommands(accessoperation.RepositoryProvider(config.Repository), catalog)
-	if err != nil {
-		return nil, err
-	}
-	grantCatalog, err := generatedGrantCatalog()
-	if err != nil {
-		return nil, err
-	}
-	grantCommands, err := accessoperation.NewGrantCommands(accessoperation.RepositoryProvider(config.Repository), grantCatalog)
+	grantCommands, err := accessoperation.NewGrantCommands(accessoperation.RepositoryProvider(config.Repository))
 	if err != nil {
 		return nil, err
 	}

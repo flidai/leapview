@@ -1,7 +1,9 @@
 package personalsettings
 
 import (
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	g "maragu.dev/gomponents"
 )
 
@@ -15,13 +17,17 @@ func Component() g.Node {
 // are represented as typed signals; the component itself never performs a
 // settings GET request.
 func CommandAttributes(path string) []g.Node {
+	profileMutation := uiactions.CommandPost(accessgen.GenUIActionUpdateCurrentPrincipal(), path, "personalProfileCommand")
+	profileRefresh := uiactions.QueryPost(path, "personalProfileCommand")
 	return []g.Node{
-		g.Attr("data-on:lv-personal-profile-command", "$personalProfileCommand = evt.detail; "+uiactions.UncontractedMutationPost(path, "personalProfileCommand")),
-		g.Attr("data-on:lv-personal-theme-command", "$personalThemeCommand = evt.detail; "+uiactions.UncontractedMutationPost(path, "personalThemeCommand")),
-		g.Attr("data-on:lv-personal-password-command", "$personalPasswordCommand = evt.detail; "+uiactions.UncontractedMutationPost(path, "personalPasswordCommand")),
-		g.Attr("data-on:lv-personal-session-command", "$personalSessionCommand = evt.detail; "+uiactions.UncontractedMutationPost(path, "personalSessionCommand")),
-		g.Attr("data-on:lv-personal-authoring-session-command", "$personalAuthoringSessionCommand = evt.detail; "+uiactions.UncontractedMutationPost(path, "personalAuthoringSessionCommand")),
-		g.Attr("data-on:lv-personal-token-command", "$personalTokenCommand = evt.detail; "+uiactions.UncontractedMutationPost(path, "personalTokenCommand")),
+		g.Attr("data-on:lv-personal-profile-command", "$personalProfileCommand = evt.detail; evt.detail.action == 'refresh' ? ("+profileRefresh+") : ("+profileMutation+")"),
+		g.Attr("data-on:lv-personal-theme-command", "$personalThemeCommand = evt.detail; "+uiactions.CommandPost(accessgen.GenUIActionUpdateCurrentTheme(), path, "personalThemeCommand")),
+		g.Attr("data-on:lv-personal-password-command", "$personalPasswordCommand = evt.detail; "+uiactions.CommandPost(accessgen.GenUIActionChangeCurrentPassword(), path, "personalPasswordCommand")),
+		g.Attr("data-on:lv-personal-session-command", "$personalSessionCommand = evt.detail; "+uiactions.CommandPost(accessgen.GenUIActionRevokeCurrentSession(), path, "personalSessionCommand")),
+		g.Attr("data-on:lv-personal-authoring-session-command", "$personalAuthoringSessionCommand = evt.detail; "+uiactions.CommandPost(accessgen.GenUIActionRevokeCurrentAuthoringSession(), path, "personalAuthoringSessionCommand")),
+		g.Attr("data-on:lv-personal-token-command", "$personalTokenCommand = evt.detail; "+uiactions.CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{
+			"create": accessgen.GenUIActionCreateCurrentAPIToken(), "revoke": accessgen.GenUIActionRevokeCurrentAPIToken(),
+		}, path, "personalTokenCommand")),
 	}
 }
 

@@ -63,6 +63,30 @@ model SessionListResponse {
   page: PageInfo;
 }
 
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 400, code: "API_TOKEN_INVALID", publicDetail: "The API token request is invalid." })
+model APITokenInvalidFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "API_TOKEN_NOT_FOUND", publicDetail: "API token not found." })
+model APITokenNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "SESSION_NOT_FOUND", publicDetail: "Session not found." })
+model SessionNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_PROFILE_NOT_MUTABLE", publicDetail: "The current principal profile cannot be modified." })
+model PrincipalProfileNotMutableFailure {}
+
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 400, code: "PASSWORD_CHANGE_INVALID", publicDetail: "The password change request is invalid." })
+model PasswordChangeInvalidFailure {}
+
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 422, code: "INVALID_AVATAR_IMAGE", publicDetail: "The avatar image is invalid." })
+model InvalidAvatarImageFailure {}
+
+@apigen.failureDefinition(#{ kind: "unsupported_media_type", statusCode: 415, code: "UNSUPPORTED_AVATAR_MEDIA_TYPE", publicDetail: "The avatar media type is unsupported." })
+model UnsupportedAvatarMediaTypeFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "AVATAR_NOT_FOUND", publicDetail: "The current principal has no avatar." })
+model AvatarNotFoundFailure {}
+
 model AvatarResponse {
   principalId: string;
   sha256: string;
@@ -119,6 +143,10 @@ model CurrentPasswordChangeRequest {
   newPassword: string;
 }
 
+model CurrentThemeUpdateRequest {
+  theme: string;
+}
+
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model CurrentPrincipalUpdatedAuditPayload {
   @apigen.auditPii
@@ -149,6 +177,12 @@ model CurrentAvatarDeletedAuditPayload {
   principalId: string;
 }
 
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "standard" })
+model CurrentThemeUpdatedAuditPayload {
+  @apigen.auditPublic
+  theme: string;
+}
+
 alias GetCurrentPrincipalOK = OkJson<CurrentPrincipalResponse>;
 
 @tag("Current User")
@@ -157,7 +191,6 @@ alias GetCurrentPrincipalOK = OkJson<CurrentPrincipalResponse>;
 @get
 @apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "principal")
-@operationId("getCurrentPrincipal")
 op getCurrentPrincipal(): GetCurrentPrincipalOK | CommonErrors;
 
 alias UpdateCurrentPrincipalOK = OkJson<CurrentPrincipalResponse>;
@@ -168,14 +201,10 @@ alias UpdateCurrentPrincipalOK = OkJson<CurrentPrincipalResponse>;
 @patch
 @apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "principal")
-@apigen.command(#{
-    audit: #{ required: true, successAction: "principal.profile.updated", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_PROFILE_NOT_MUTABLE", publicDetail: "The current principal profile cannot be modified." },
-    ],
-})
+@apigen.command(#{ auditAction: "principal.profile.updated", guarantee: "transactional" })
+@apigen.failsWith(PrincipalProfileNotMutableFailure)
 @apigen.auditPayload(CurrentPrincipalUpdatedAuditPayload)
-@operationId("updateCurrentPrincipal")
+@apigen.ui("current-user.profile.update")
 op updateCurrentPrincipal(@header("If-Match") ifMatch: string, @body body: CurrentPrincipalPatchRequest): UpdateCurrentPrincipalOK | CommonErrors;
 
 @tag("Current User")
@@ -184,57 +213,55 @@ op updateCurrentPrincipal(@header("If-Match") ifMatch: string, @body body: Curre
 @post
 @apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "principal")
-@apigen.command(#{
-    audit: #{ required: true, successAction: "password.changed", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "PASSWORD_CHANGE_INVALID", publicDetail: "The password change request is invalid." },
-    ],
-})
+@apigen.command(#{ auditAction: "password.changed", guarantee: "transactional" })
+@apigen.failsWith(PasswordChangeInvalidFailure)
 @apigen.auditPayload(CurrentPasswordChangedAuditPayload)
-@operationId("changeCurrentPassword")
+@apigen.ui("current-user.password.change")
 op changeCurrentPassword(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CurrentPasswordChangeRequest): EmptyResponse | CommonErrors;
+
+@tag("Current User")
+@summary("Update the current user's display theme")
+@route("/me/theme")
+@put
+@apigen.authz(#{ mode: "authenticated" })
+@extension("x-leapview-object-scope", "principal")
+@apigen.command(#{ auditAction: "principal.theme.updated", guarantee: "transactional", failures: #[
+  #{ kind: "invalid", statusCode: 422, code: "INVALID_THEME", publicDetail: "The selected theme is invalid." },
+] })
+@apigen.auditPayload(CurrentThemeUpdatedAuditPayload)
+@apigen.ui("current-user.theme.update")
+op updateCurrentTheme(@body body: CurrentThemeUpdateRequest): EmptyResponse | CommonErrors;
 
 alias ListCurrentAPITokensOK = OkJson<APITokenListResponse>;
 alias CreateCurrentAPITokenCreated = CreatedJson<APITokenCreateResponse>;
 
 @tag("Current User")
 @route("/me/api-tokens")
+@apigen.authz(#{ mode: "authenticated" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
+@apigen.auditPayload(APITokenAuditPayload)
 interface CurrentAPITokens {
   @summary("List current API tokens")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "principal")
-  @operationId("listCurrentAPITokens")
   listCurrentAPITokens(@query limit?: ListLimit, @query pageToken?: PageToken): ListCurrentAPITokensOK | CommonErrors;
 
   @summary("Create current API token")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "principal")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "api_token.created", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "API_TOKEN_INVALID", publicDetail: "The API token request is invalid." },
-    ],
-  })
-  @apigen.auditPayload(APITokenAuditPayload)
-  @operationId("createCurrentAPIToken")
+  @apigen.failsWith(APITokenInvalidFailure)
+  @apigen.command(#{ auditAction: "api_token.created" })
+  @apigen.ui("current-user.api-token.create")
   createCurrentAPIToken(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: APITokenCreateRequest): CreateCurrentAPITokenCreated | CommonErrors;
 
   @summary("Revoke current API token")
   @route("/{token}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "principal")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "api_token.revoked", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "API_TOKEN_NOT_FOUND", publicDetail: "API token not found." },
-    ],
-  })
-  @apigen.auditPayload(APITokenAuditPayload)
-  @operationId("revokeCurrentAPIToken")
-  revokeCurrentAPIToken(@path token: string): EmptyResponse | CommonErrors;
+  @apigen.failsWith(APITokenNotFoundFailure)
+  @apigen.command(#{ auditAction: "api_token.revoked" })
+  @apigen.ui("current-user.api-token.revoke")
+  revokeCurrentAPIToken(@path @apigen.target token: string): EmptyResponse | CommonErrors;
 }
 
 alias ListCurrentEffectivePrivilegesOK = OkJson<EffectivePrivilegesResponse>;
@@ -245,35 +272,28 @@ alias ListCurrentEffectivePrivilegesOK = OkJson<EffectivePrivilegesResponse>;
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
 @extension("x-leapview-object-scope", "principal")
-@operationId("listCurrentEffectivePrivileges")
 op listCurrentEffectivePrivileges(@query workspace?: string): ListCurrentEffectivePrivilegesOK | CommonErrors;
 
 alias ListCurrentSessionsOK = OkJson<SessionListResponse>;
 
 @tag("Current User")
 @route("/me/sessions")
+@apigen.authz(#{ mode: "authenticated" })
 interface CurrentSessions {
   @summary("List current sessions")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "principal")
-  @operationId("listCurrentSessions")
   listCurrentSessions(@query limit?: ListLimit, @query pageToken?: PageToken): ListCurrentSessionsOK | CommonErrors;
 
   @summary("Revoke current session")
   @route("/{session}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "principal")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "session.revoked", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "SESSION_NOT_FOUND", publicDetail: "Session not found." },
-    ],
-  })
+  @apigen.failsWith(SessionNotFoundFailure)
+  @apigen.command(#{ auditAction: "session.revoked", guarantee: "transactional" })
   @apigen.auditPayload(CurrentSessionRevokedAuditPayload)
-  @operationId("revokeCurrentSession")
-  revokeCurrentSession(@path session: string): EmptyResponse | CommonErrors;
+  @apigen.ui("current-user.session.revoke")
+  revokeCurrentSession(@path @apigen.target session: string): EmptyResponse | CommonErrors;
 }
 
 @tag("Current User")
@@ -282,15 +302,11 @@ interface CurrentSessions {
 @put
 @apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "principal")
-@apigen.command(#{
-    audit: #{ required: true, successAction: "principal.avatar.updated", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 422, code: "INVALID_AVATAR_IMAGE", publicDetail: "The avatar image is invalid." },
-      #{ kind: "unsupported_media_type", statusCode: 415, code: "UNSUPPORTED_AVATAR_MEDIA_TYPE", publicDetail: "The avatar media type is unsupported." },
-    ],
-})
+@apigen.command(#{ auditAction: "principal.avatar.updated", guarantee: "best-effort" })
+@apigen.failsWith(InvalidAvatarImageFailure)
+@apigen.failsWith(UnsupportedAvatarMediaTypeFailure)
 @apigen.auditPayload(CurrentAvatarUploadedAuditPayload)
-@operationId("uploadCurrentAvatar")
+@apigen.ui("current-user.avatar.upload")
 op uploadCurrentAvatar(@header contentType: string, @body body: bytes): OkJson<AvatarResponse> | CommonErrors;
 
 @tag("Current User")
@@ -299,14 +315,10 @@ op uploadCurrentAvatar(@header contentType: string, @body body: bytes): OkJson<A
 @delete
 @apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "principal")
-@apigen.command(#{
-    audit: #{ required: true, successAction: "principal.avatar.deleted", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "AVATAR_NOT_FOUND", publicDetail: "The current principal has no avatar." },
-    ],
-})
+@apigen.command(#{ auditAction: "principal.avatar.deleted", guarantee: "best-effort" })
+@apigen.failsWith(AvatarNotFoundFailure)
 @apigen.auditPayload(CurrentAvatarDeletedAuditPayload)
-@operationId("deleteCurrentAvatar")
+@apigen.ui("current-user.avatar.delete")
 op deleteCurrentAvatar(): EmptyResponse | CommonErrors;
 
 @tag("Current User")
@@ -315,5 +327,4 @@ op deleteCurrentAvatar(): EmptyResponse | CommonErrors;
 @get
 @apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "principal")
-@operationId("getPrincipalAvatar")
 op getPrincipalAvatar(@path principal: string, @path digest: string): AvatarImageResponse | CommonErrors;

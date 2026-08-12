@@ -9,8 +9,8 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	dashboarduiaction "github.com/flidai/leapview/internal/dashboard/uiaction"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
@@ -46,26 +46,30 @@ func TestRoleLabelDistinguishesLocalAndConfiguredAccess(t *testing.T) {
 func TestAdminPublicationMutationPassesUIInvocationIdentity(t *testing.T) {
 	service := &adminPublicationInvocationService{}
 	m := &Module{
-		publications:        service,
-		publicationCommands: dashboarduiaction.PublicationActions(),
+		publications: service,
+		publicationCommands: map[string]uicommand.Binding{
+			"suspend": dashboardgen.GenUIActionSuspendDashboardPublication(),
+			"resume":  dashboardgen.GenUIActionResumeDashboardPublication(),
+			"rotate":  dashboardgen.GenUIActionRotateDashboardPublication(),
+		},
 		currentPrincipal: func(*http.Request) (Principal, bool) {
 			return Principal{ID: "principal-ui", DevBypass: true}, true
 		},
 	}
 	r := httptest.NewRequest(http.MethodPost, "/admin/publications/command", nil)
 	r.Header.Set("X-Request-ID", "ui-request-1")
-	r.Header.Set(uicommand.HeaderOperationID, dashboarduiaction.SuspendPublication.OperationID())
+	r.Header.Set(uicommand.HeaderOperationID, dashboardgen.GenUIActionSuspendDashboardPublication().OperationID())
 	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{WorkspaceID: "sales", Publication: "executive", Action: "suspend"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.invocation.Surface != apigencommand.SurfaceUI || service.invocation.RequestID != "ui-request-1" || service.invocation.IdempotencyKey != "ui-request-1" || service.invocation.TargetValues["workspace"] != "sales" {
+	if service.invocation.Surface != string(apigencommand.SurfaceUI) || service.invocation.RequestID != "ui-request-1" || service.invocation.IdempotencyKey != "ui-request-1" {
 		t.Fatalf("invocation = %#v", service.invocation)
 	}
 }
 
 type adminPublicationInvocationService struct {
-	invocation apigencommand.Invocation
+	invocation publication.CommandInvocation
 }
 
 func (*adminPublicationInvocationService) PublicationsConfigured() bool { return true }
@@ -81,7 +85,7 @@ func (*adminPublicationInvocationService) PublicationDTO(publication.Publication
 func (*adminPublicationInvocationService) MutatePublication(context.Context, string, string, string, publication.Action) (publication.Publication, error) {
 	return publication.Publication{}, nil
 }
-func (s *adminPublicationInvocationService) MutatePublicationWithInvocation(_ context.Context, _ string, _ string, _ string, _ publication.Action, invocation apigencommand.Invocation) (publication.Publication, error) {
+func (s *adminPublicationInvocationService) MutatePublicationWithInvocation(_ context.Context, _ string, _ string, _ string, _ publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
 	s.invocation = invocation
 	return publication.Publication{}, nil
 }

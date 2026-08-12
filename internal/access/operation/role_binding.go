@@ -15,42 +15,42 @@ type RepositoryProvider func() (access.Repository, error)
 
 type RoleBindingCommands struct {
 	repository RepositoryProvider
-	catalog    access.OperationCatalog
 }
 
-func NewRoleBindingCommands(repository RepositoryProvider, catalog access.OperationCatalog) (*RoleBindingCommands, error) {
-	for _, operationID := range []access.OperationID{
-		access.OperationCreateRoleBinding,
-		access.OperationUpdateRoleBinding,
-		access.OperationDeleteRoleBinding,
-	} {
-		if _, ok := catalog.DescribeOperation(operationID); !ok {
-			return nil, fmt.Errorf("role binding operation %q is required", operationID)
-		}
-	}
-	return &RoleBindingCommands{repository: repository, catalog: catalog}, nil
-}
-
-func (c *RoleBindingCommands) DescribeOperation(operationID access.OperationID) (access.OperationDescriptor, bool) {
-	if c == nil {
-		return access.OperationDescriptor{}, false
-	}
-	return c.catalog.DescribeOperation(operationID)
+func NewRoleBindingCommands(repository RepositoryProvider) (*RoleBindingCommands, error) {
+	return &RoleBindingCommands{repository: repository}, nil
 }
 
 func (c *RoleBindingCommands) CreateRoleBinding(ctx context.Context, invocation access.RoleBindingInvocation, input access.RoleBindingInput) (access.RoleBinding, error) {
 	var row access.RoleBinding
-	err := c.execute(ctx, access.OperationCreateRoleBinding, invocation, input.WorkspaceID, func(repository access.Repository) error {
+	operationID := accessgen.GenCommandOperationCreateRoleBinding().APIGenOperationID()
+	err := c.execute(ctx, operationID, invocation, func(executor *apigencommand.Executor, execution apigencommand.Execution) error {
+		return accessgen.ExecuteGenCreateRoleBindingCommand(ctx, executor, accessgen.GenCreateRoleBindingCommandInvocation{
+			Surface: invocation.Surface, Workspace: input.WorkspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+		}, execution)
+	}, func(repository access.Repository) error {
 		var err error
 		row, err = repository.CreateRoleBinding(ctx, input)
 		return err
-	}, nil, func() access.RoleBinding { return row })
+	}, nil, nil, func() access.RoleBinding { return row }, func(operationID string, invocation access.RoleBindingInvocation, row access.RoleBinding) (string, error) {
+		return accessgen.EncodeGenCreateRoleBindingAuditPayload(accessgen.GenSchemaRoleBindingCreatedAuditPayload{
+			OperationId: operationID, Role: row.Role, SubjectId: row.SubjectID,
+			SubjectType: string(row.SubjectType), Surface: string(invocation.Surface),
+		})
+	})
 	return row, err
 }
 
 func (c *RoleBindingCommands) UpdateRoleBinding(ctx context.Context, invocation access.RoleBindingInvocation, workspaceID, bindingID string, input access.RoleBindingInput) (access.RoleBinding, error) {
 	var row access.RoleBinding
-	err := c.execute(ctx, access.OperationUpdateRoleBinding, invocation, workspaceID, func(repository access.Repository) error {
+	operationID := accessgen.GenCommandOperationUpdateRoleBinding().APIGenOperationID()
+	err := c.execute(ctx, operationID, invocation, func(executor *apigencommand.Executor, execution apigencommand.Execution) error {
+		return accessgen.ExecuteGenUpdateRoleBindingCommand(ctx, executor, accessgen.GenUpdateRoleBindingCommandInvocation{
+			Surface: invocation.Surface, Workspace: workspaceID, ConcurrencyToken: invocation.ConcurrencyToken,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+		}, execution)
+	}, func(repository access.Repository) error {
 		var err error
 		row, err = repository.UpdateRoleBinding(ctx, workspaceID, bindingID, input)
 		return err
@@ -60,41 +60,44 @@ func (c *RoleBindingCommands) UpdateRoleBinding(ctx context.Context, invocation 
 			return "", err
 		}
 		return access.RoleBindingRevision(current)
-	}, func() access.RoleBinding { return row })
+	}, func(ctx context.Context, executor *apigencommand.Executor, presented, current string) error {
+		return accessgen.CheckGenUpdateRoleBindingCommandConcurrency(ctx, executor, presented, current)
+	}, func() access.RoleBinding { return row }, roleBindingAuditEncoder(accessgen.EncodeGenUpdateRoleBindingAuditPayload))
 	return row, err
 }
 
 func (c *RoleBindingCommands) DeleteRoleBinding(ctx context.Context, invocation access.RoleBindingInvocation, workspaceID, bindingID string) (access.RoleBinding, error) {
 	var row access.RoleBinding
-	err := c.execute(ctx, access.OperationDeleteRoleBinding, invocation, workspaceID, func(repository access.Repository) error {
+	operationID := accessgen.GenCommandOperationDeleteRoleBinding().APIGenOperationID()
+	err := c.execute(ctx, operationID, invocation, func(executor *apigencommand.Executor, execution apigencommand.Execution) error {
+		return accessgen.ExecuteGenDeleteRoleBindingCommand(ctx, executor, accessgen.GenDeleteRoleBindingCommandInvocation{
+			Surface: invocation.Surface, Workspace: workspaceID,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+		}, execution)
+	}, func(repository access.Repository) error {
 		var err error
 		row, err = repository.GetRoleBinding(ctx, workspaceID, bindingID)
 		if err != nil {
 			return err
 		}
 		return repository.DeleteRoleBinding(ctx, workspaceID, bindingID)
-	}, nil, func() access.RoleBinding { return row })
+	}, nil, nil, func() access.RoleBinding { return row }, roleBindingAuditEncoder(accessgen.EncodeGenDeleteRoleBindingAuditPayload))
 	return row, err
 }
 
 func (c *RoleBindingCommands) execute(
 	ctx context.Context,
-	operationID access.OperationID,
+	operationID string,
 	invocation access.RoleBindingInvocation,
-	targetValue string,
+	executeGenerated func(*apigencommand.Executor, apigencommand.Execution) error,
 	mutation func(access.Repository) error,
 	currentRevision func(access.Repository) (string, error),
+	checkConcurrency func(context.Context, *apigencommand.Executor, string, string) error,
 	result func() access.RoleBinding,
+	encodeAuditPayload func(string, access.RoleBindingInvocation, access.RoleBinding) (string, error),
 ) error {
-	descriptor, ok := c.DescribeOperation(operationID)
-	if !ok {
-		return fmt.Errorf("unknown operation %q", operationID)
-	}
-	if !descriptor.Exposes(invocation.Surface) {
-		return fmt.Errorf("operation %q is not exposed to surface %q", operationID, invocation.Surface)
-	}
 	if invocation.Surface == access.OperationSurfaceUI {
-		if err := uicommand.VerifyClaim(invocation.OperationClaims, string(operationID)); err != nil {
+		if err := uicommand.VerifyClaim(invocation.OperationClaims, operationID); err != nil {
 			return err
 		}
 	}
@@ -108,12 +111,6 @@ func (c *RoleBindingCommands) execute(
 	if repository == nil {
 		return fmt.Errorf("operation %q repository is required", operationID)
 	}
-	audited := func(repository access.Repository) (access.AuditEventInput, error) {
-		if err := mutation(repository); err != nil {
-			return access.AuditEventInput{}, err
-		}
-		return roleBindingAuditInput(descriptor, invocation, result())
-	}
 	transactional, ok := repository.(access.AuditedMutationRepository)
 	if !ok {
 		return fmt.Errorf("%w: role binding repository does not support transactional auditing", access.ErrAuditTransaction)
@@ -122,68 +119,47 @@ func (c *RoleBindingCommands) execute(
 	if err != nil {
 		return err
 	}
-	if _, generated := apigencommand.OperationID(ctx); !generated {
-		contract, ok := accessgen.GetAPIGenCommandRuntimeContract(string(operationID))
-		if !ok {
-			return fmt.Errorf("generated command contract %q is unavailable", operationID)
-		}
-		ctx, _, err = apigencommand.BeginInvocation(ctx, contract, apigencommand.Invocation{
-			OperationID: string(operationID),
-			Surface:     apigencommand.Surface(invocation.Surface), TargetValues: map[string]string{descriptor.Target.Parameter: targetValue},
-			IdempotencyKey: invocation.IdempotencyKey, ConcurrencyToken: invocation.ConcurrencyToken,
-			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
-		})
-		if err != nil {
-			return err
-		}
-	}
-	return executor.Execute(ctx, string(operationID), apigencommand.Execution{
+	return executeGenerated(executor, apigencommand.Execution{
 		Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
 			return transactional.RunAuditedMutation(ctx, func(repository access.Repository) (access.AuditEventInput, error) {
 				if contract.Concurrency == apigencommand.ConcurrencyIfMatch {
-					if currentRevision == nil {
+					if currentRevision == nil || checkConcurrency == nil {
 						return access.AuditEventInput{}, fmt.Errorf("operation %q concurrency revision source is unavailable", operationID)
 					}
 					current, revisionErr := currentRevision(repository)
 					if revisionErr != nil {
 						return access.AuditEventInput{}, revisionErr
 					}
-					if revisionErr := executor.CheckConcurrency(ctx, string(operationID), invocation.ConcurrencyToken, current); revisionErr != nil {
+					if revisionErr := checkConcurrency(ctx, executor, invocation.ConcurrencyToken, current); revisionErr != nil {
 						return access.AuditEventInput{}, revisionErr
 					}
 				}
-				input, mutationErr := audited(repository)
-				if mutationErr == nil && input.Action != contract.AuditAction {
-					return access.AuditEventInput{}, fmt.Errorf("generated audit action %q does not match mutation action %q", contract.AuditAction, input.Action)
+				if mutationErr := mutation(repository); mutationErr != nil {
+					return access.AuditEventInput{}, mutationErr
 				}
-				return input, mutationErr
+				return roleBindingAuditInput(contract, operationID, invocation, result(), encodeAuditPayload)
 			})
 		},
 	})
 }
 
-func roleBindingAuditInput(descriptor access.OperationDescriptor, invocation access.RoleBindingInvocation, row access.RoleBinding) (access.AuditEventInput, error) {
-	var metadata string
-	payload := accessgen.GenSchemaRoleBindingAuditPayload{
-		OperationId: string(descriptor.ID), Role: row.Role, SubjectId: row.SubjectID,
-		SubjectType: string(row.SubjectType), Surface: string(invocation.Surface),
-	}
-	var err error
-	if descriptor.ID == access.OperationCreateRoleBinding {
-		metadata, err = accessgen.EncodeGenCreateRoleBindingAuditPayload(accessgen.GenSchemaRoleBindingCreatedAuditPayload{
-			OperationId: string(descriptor.ID),
-			Role:        row.Role,
-			SubjectId:   row.SubjectID,
-			SubjectType: string(row.SubjectType),
-			Surface:     string(invocation.Surface),
+func roleBindingAuditEncoder(encode func(accessgen.GenSchemaRoleBindingAuditPayload) (string, error)) func(string, access.RoleBindingInvocation, access.RoleBinding) (string, error) {
+	return func(operationID string, invocation access.RoleBindingInvocation, row access.RoleBinding) (string, error) {
+		return encode(accessgen.GenSchemaRoleBindingAuditPayload{
+			OperationId: operationID, Role: row.Role, SubjectId: row.SubjectID,
+			SubjectType: string(row.SubjectType), Surface: string(invocation.Surface),
 		})
-	} else if descriptor.ID == access.OperationUpdateRoleBinding {
-		metadata, err = accessgen.EncodeGenUpdateRoleBindingAuditPayload(payload)
-	} else {
-		metadata, err = accessgen.EncodeGenDeleteRoleBindingAuditPayload(payload)
 	}
+}
+
+func roleBindingAuditInput(contract apigencommand.Contract, operationID string, invocation access.RoleBindingInvocation, row access.RoleBinding, encodeAuditPayload func(string, access.RoleBindingInvocation, access.RoleBinding) (string, error)) (access.AuditEventInput, error) {
+	metadata, err := encodeAuditPayload(operationID, invocation, row)
 	if err != nil {
 		return access.AuditEventInput{}, err
+	}
+	privilege, ok := access.ParsePrivilege(contract.Privilege)
+	if !ok {
+		return access.AuditEventInput{}, fmt.Errorf("generated operation %q has invalid privilege %q", operationID, contract.Privilege)
 	}
 	correlationID := strings.TrimSpace(invocation.CorrelationID)
 	if correlationID == "" {
@@ -191,8 +167,8 @@ func roleBindingAuditInput(descriptor access.OperationDescriptor, invocation acc
 	}
 	return access.AuditEventInput{
 		WorkspaceID: row.WorkspaceID, PrincipalID: invocation.PrincipalID,
-		Action: descriptor.AuditEvent, TargetType: "role_binding", TargetID: row.ID,
-		Privilege: descriptor.Privilege, Status: "success",
+		Action: contract.AuditAction, TargetType: "role_binding", TargetID: row.ID,
+		Privilege: privilege, Status: "success",
 		RequestID: strings.TrimSpace(invocation.RequestID), CorrelationID: correlationID,
 		MetadataJSON: metadata,
 	}, nil

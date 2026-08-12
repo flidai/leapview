@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/admin/personalsettings"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	adminview "github.com/flidai/leapview/internal/admin/view"
@@ -36,7 +37,9 @@ type AdminData struct {
 	QueryHistory          AdminQueryHistoryData
 	Publications          []AdminPublication
 	CanManagePublications bool
+	AgentConfigCommand    uicommand.Binding
 	PublicationCommands   map[string]uicommand.Binding
+	ProductCommands       map[string]uicommand.Binding
 	Profile               AdminProfile
 	ListFilter            string
 	ListQuery             string
@@ -63,6 +66,7 @@ type AdminAgentData struct {
 	Enabled      bool
 	Model        string
 	SystemPrompt string
+	Revision     string
 	CanWrite     bool
 	CSRFToken    string
 	UpdatePath   string
@@ -197,23 +201,41 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 		adminAttrs = append(adminAttrs, personalsettings.CommandAttributes("/admin/personal-settings/command?section="+url.QueryEscape(active))...)
 	}
 	if active == "general" || active == "authentication" || active == "system" {
+		productCommands := map[string]uicommand.Binding{
+			"save_display_name": data.ProductCommands["update_identity"],
+			"remove_logo":       data.ProductCommands["delete_logo"],
+			"reset_identity":    data.ProductCommands["reset_identity"],
+		}
+		productMutation := uiactions.CommandPostSwitchWithRevision(
+			"evt.detail.action", productCommands, "/admin/product-settings/command?section="+url.QueryEscape(active),
+			`'"product-' + $productSettings.general.revision + '"'`, "productSettingsCommand",
+		)
+		productRefresh := uiactions.QueryPost("/admin/product-settings/command?section="+url.QueryEscape(active), "productSettingsCommand")
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-product-settings-command", "$productSettingsCommand = evt.detail; "+uiactions.UncontractedMutationPost("/admin/product-settings/command?section="+url.QueryEscape(active), "productSettingsCommand")),
+			g.Attr("data-on:lv-product-settings-command", "$productSettingsCommand = evt.detail; evt.detail.action == 'refresh' ? ("+productRefresh+") : ("+productMutation+")"),
 		)
 	}
 	if active == "service-accounts" {
+		serviceAccountCommands := map[string]uicommand.Binding{
+			"create":        accessgen.GenUIActionCreateServicePrincipal(),
+			"delete":        accessgen.GenUIActionDeleteServicePrincipal(),
+			"create_secret": accessgen.GenUIActionCreateServicePrincipalSecret(),
+			"revoke_secret": accessgen.GenUIActionRevokeServicePrincipalSecret(),
+		}
+		serviceAccountMutation := uiactions.CommandPostSwitch("evt.detail.action", serviceAccountCommands, "/admin/service-accounts/command", "adminServiceAccountCommand")
+		serviceAccountSelect := uiactions.QueryPost("/admin/service-accounts/command", "adminServiceAccountCommand")
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-service-account-command", "$adminServiceAccountCommand = evt.detail; "+uiactions.UncontractedMutationPost("/admin/service-accounts/command", "adminServiceAccountCommand")),
+			g.Attr("data-on:lv-service-account-command", "$adminServiceAccountCommand = evt.detail; evt.detail.action == 'select' ? ("+serviceAccountSelect+") : ("+serviceAccountMutation+")"),
 		)
 	}
 	if active == "audit" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-audit-log-command", "$adminAuditLogCommand = evt.detail; "+uiactions.UncontractedMutationPost("/admin/audit/command", "adminAuditLogCommand", "adminAuditLog")),
+			g.Attr("data-on:lv-audit-log-command", "$adminAuditLogCommand = evt.detail; "+uiactions.QueryPost("/admin/audit/command", "adminAuditLogCommand", "adminAuditLog")),
 		)
 	}
 	if active == "agent" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.UncontractedMutationPatch("/admin/agent/config")),
+			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.CommandPatch(data.AgentConfigCommand, "/admin/agent/config", data.Agent.Revision)),
 		)
 	}
 	if active == "queries" {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/flidai/leapview/internal/admin/product"
+	"github.com/flidai/leapview/internal/admin/productsettings"
 )
 
 // Product aliases keep process composition on the admin module surface while
@@ -22,6 +23,15 @@ type ProductAPIStatus = product.APIStatus
 type ProductSystemStatus = product.SystemStatus
 type ProductAgentStatus = product.AgentStatus
 type ProductLimits = product.Limits
+type ProductUICommandContract = productsettings.CommandContract
+type ProductUICommandInvocation = productsettings.CommandInvocation
+
+const (
+	ProductCommandUpdateIdentity = productsettings.CommandUpdateIdentity
+	ProductCommandResetIdentity  = productsettings.CommandResetIdentity
+	ProductCommandDeleteLogo     = productsettings.CommandDeleteLogo
+	ProductCommandUploadLogo     = productsettings.CommandUploadLogo
+)
 
 var ErrProductLogoNotFound = product.ErrNotFound
 
@@ -43,6 +53,14 @@ func (m *Module) UpdateProductSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.product.PatchSettings(w, r)
+}
+
+func (m *Module) ResetProductSettings(w http.ResponseWriter, r *http.Request) {
+	if m == nil || m.product == nil {
+		http.NotFound(w, r)
+		return
+	}
+	m.product.ResetSettings(w, r)
 }
 
 func (m *Module) UploadProductLogo(w http.ResponseWriter, r *http.Request) {

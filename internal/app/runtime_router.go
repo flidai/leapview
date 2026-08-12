@@ -614,6 +614,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		refreshSupport := workspaceRefreshSupport(refreshDeps)
 		accessUICommands := routes.accessModule.UICommandBindings()
+		accessCommandPrivileges, privilegeErr := routes.accessModule.WorkspaceCommandPrivileges()
+		if privilegeErr != nil {
+			return fmt.Errorf("resolve generated access command privileges: %w", privilegeErr)
+		}
 		var err error
 		routes.workspaceModule, err = workspacemodule.Build(ctx, workspacemodule.Config{
 			Database:            database,
@@ -622,6 +626,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			AccessService:       routes.accessModule.WorkspaceAccessService(),
 			RoleBindingCommands: routes.accessModule.RoleBindingCommands(),
 			GrantCommands:       routes.accessModule.GrantCommands(),
+			CommandPrivileges:   accessCommandPrivileges,
 			AccessCommands: workspacemodule.AccessCommandBindings{
 				CreateRoleBinding: accessUICommands.CreateRoleBinding,
 				UpdateRoleBinding: accessUICommands.UpdateRoleBinding,
@@ -1055,6 +1060,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			AuthorizeAnyWorkspace: routes.accessModule.AuthorizeAnyWorkspace,
 			Publications:          routes.dashboardModule,
+			AgentConfigCommand:    routes.agentModule.UICommandBindings().UpdateConfig,
 			PublicationCommands:   routes.dashboardModule.PublicationCommandBindings(),
 			DefaultWorkspaceID:    policy.defaultWorkspaceID,
 			AuthConfigured:        platform.auth != nil,
@@ -1073,6 +1079,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			Broker:  runtime.broker,
 			Product: persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
+			ProductUICommands:   productUICommandContract(),
 			SettingsAccess:      settingsAccess,
 			PersonalAvatar:      routes.accessModule.PersonalAvatar(),
 			AuthoringSessions:   routes.accessModule.AuthoringSessions(),

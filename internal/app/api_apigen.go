@@ -77,6 +77,12 @@ func (a apiGenDispatcher) UpdateProductSettings(w http.ResponseWriter, r *http.R
 	a.productAPI.UpdateProductSettings(w, r)
 }
 
+func (a apiGenDispatcher) ResetProductSettings(w http.ResponseWriter, r *http.Request, headers apigenapi.GenResetProductSettingsHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	r.Header.Set("If-Match", headers.IfMatch)
+	a.productAPI.ResetProductSettings(w, r)
+}
+
 func (a apiGenDispatcher) UploadProductLogo(w http.ResponseWriter, r *http.Request, headers apigenapi.GenUploadProductLogoHeaders) {
 	r.Header.Set("If-Match", headers.IfMatch)
 	r.Header.Set("Content-Type", headers.ContentType)

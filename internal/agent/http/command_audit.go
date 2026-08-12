@@ -11,11 +11,11 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/agent"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
-	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 var (
+	updateAgentConfigOperation        = agentgen.GenCommandOperationUpdateAgentConfig()
 	createAgentConversationOperation  = agentgen.GenCommandOperationCreateAgentConversation()
 	archiveAgentConversationOperation = agentgen.GenCommandOperationArchiveAgentConversation()
 	updateAgentConversationOperation  = agentgen.GenCommandOperationUpdateAgentConversation()
@@ -113,10 +113,6 @@ func uiRequestIdentity(r *stdhttp.Request, input string) string {
 // audit execution so the Guard can prove command completion.
 func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, workflow []uicommand.Binding, target, input, identity string) (context.Context, error) {
 	operationID := binding.OperationID()
-	contract, ok := agentgen.GetAPIGenCommandRuntimeContract(operationID)
-	if !ok {
-		return r.Context(), apigencommand.ErrContractNotFound
-	}
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		identity = uiRequestIdentity(r, input)
@@ -131,30 +127,48 @@ func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, wor
 	if idempotencyKey == "" {
 		idempotencyKey = "ui:" + operationID + ":" + identity
 	}
-	invocation := apigencommand.Invocation{
-		TargetValues: map[string]string{
-			"conversation": strings.TrimSpace(target),
-		},
-		IdempotencyKey: idempotencyKey,
-		RequestID:      identity,
-		CorrelationID:  firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID"),
-	}
-	var ctx context.Context
-	var err error
 	if len(workflow) > 0 {
-		ctx, _, err = uicommand.BeginWorkflowInvocation(r, workflow, binding, contract, invocation)
+		if err := uicommand.VerifyWorkflowClaims(uicommand.OperationClaims(r), workflow); err != nil {
+			return r.Context(), err
+		}
 	} else {
-		ctx, _, err = uicommand.BeginInvocation(r, binding, contract, invocation)
+		if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), operationID); err != nil {
+			return r.Context(), err
+		}
 	}
-	return ctx, err
+	correlationID := firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	switch operationID {
+	case updateAgentConfigOperation.APIGenOperationID():
+		ctx, _, err := agentgen.BeginGenUpdateAgentConfigCommand(r.Context(), agentgen.GenUpdateAgentConfigCommandInvocation{
+			Surface: apigencommand.SurfaceUI, ConcurrencyToken: firstNonEmptyHeader(r, "If-Match"),
+			RequestID: identity, CorrelationID: correlationID,
+		})
+		return ctx, err
+	case createAgentConversationOperation.APIGenOperationID():
+		ctx, _, err := agentgen.BeginGenCreateAgentConversationCommand(r.Context(), agentgen.GenCreateAgentConversationCommandInvocation{
+			Surface: apigencommand.SurfaceUI, IdempotencyKey: idempotencyKey,
+			RequestID: identity, CorrelationID: correlationID,
+		})
+		return ctx, err
+	case createAgentRunOperation.APIGenOperationID():
+		ctx, _, err := agentgen.BeginGenCreateAgentRunCommand(r.Context(), agentgen.GenCreateAgentRunCommandInvocation{
+			Surface: apigencommand.SurfaceUI, Conversation: strings.TrimSpace(target), IdempotencyKey: idempotencyKey,
+			RequestID: identity, CorrelationID: correlationID,
+		})
+		return ctx, err
+	default:
+		return r.Context(), apigencommand.ErrContractNotFound
+	}
 }
 
 func agentUIBinding(operationID agentgen.GenCommandOperationID) uicommand.Binding {
 	switch operationID.APIGenOperationID() {
+	case updateAgentConfigOperation.APIGenOperationID():
+		return agentgen.GenUIActionUpdateAgentConfig()
 	case createAgentConversationOperation.APIGenOperationID():
-		return agentuiaction.CreateConversation
+		return agentgen.GenUIActionCreateAgentConversation()
 	case createAgentRunOperation.APIGenOperationID():
-		return agentuiaction.CreateRun
+		return agentgen.GenUIActionCreateAgentRun()
 	default:
 		return uicommand.Binding{}
 	}
