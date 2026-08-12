@@ -654,7 +654,6 @@ model DashboardFilterOptionListResponse {
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @apigen.cli(#{ command: #["dashboards", "list"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }], output: #{ mode: "raw" } })
-@operationId("listDashboards")
 op listDashboards(@path workspace: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DashboardListResponse> | CommonErrors;
 
 @tag("BI")
@@ -664,7 +663,6 @@ op listDashboards(@path workspace: string, @query limit?: ListLimit, @query page
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "describe"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "dashboard", displayName: "dashboard" }], output: #{ mode: "raw" } })
-@operationId("getDashboard")
 op getDashboard(@path workspace: string, @path dashboard: string): OkJson<DashboardManifestResponse> | CommonErrors;
 
 @tag("BI")
@@ -674,7 +672,6 @@ op getDashboard(@path workspace: string, @path dashboard: string): OkJson<Dashbo
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "page"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "dashboard", displayName: "dashboard" }, #{ source: "path", name: "page", displayName: "page" }], output: #{ mode: "raw" } })
-@operationId("getDashboardPage")
 op getDashboardPage(@path workspace: string, @path dashboard: string, @path page: string): OkJson<DashboardPageResponse> | CommonErrors;
 
 @tag("BI")
@@ -684,7 +681,6 @@ op getDashboardPage(@path workspace: string, @path dashboard: string, @path page
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "visual"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "dashboard", displayName: "dashboard" }, #{ source: "path", name: "page", displayName: "page" }, #{ source: "path", name: "visual", displayName: "visual" }], output: #{ mode: "raw" } })
-@operationId("getDashboardVisual")
 op getDashboardVisual(@path workspace: string, @path dashboard: string, @path page: string, @path visual: string): OkJson<DashboardVisualDescribeResponse> | CommonErrors;
 
 @tag("BI")
@@ -693,7 +689,6 @@ op getDashboardVisual(@path workspace: string, @path dashboard: string, @path pa
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "dashboard")
-@operationId("getDashboardFilter")
 op getDashboardFilter(@path workspace: string, @path dashboard: string, @path page: string, @path filter: string): OkJson<DashboardFilterDescribeResponse> | CommonErrors;
 
 @tag("BI")
@@ -702,7 +697,6 @@ op getDashboardFilter(@path workspace: string, @path dashboard: string, @path pa
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @apigen.cli(#{ command: #["semantic-models", "list"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }], output: #{ mode: "raw" } })
-@operationId("listSemanticModels")
 op listSemanticModels(@path workspace: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticModelListResponse> | CommonErrors;
 
 @tag("BI")
@@ -712,7 +706,6 @@ op listSemanticModels(@path workspace: string, @query limit?: ListLimit, @query 
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "describe"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }], output: #{ mode: "raw" } })
-@operationId("getSemanticModel")
 op getSemanticModel(@path workspace: string, @path("model") modelName: string): OkJson<SemanticModelDescriptionResponse> | CommonErrors;
 
 @tag("BI")
@@ -721,7 +714,6 @@ op getSemanticModel(@path workspace: string, @path("model") modelName: string): 
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "semantic-model")
-@operationId("listSemanticRelationships")
 op listSemanticRelationships(@path workspace: string, @path("model") modelName: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticRelationshipListResponse> | CommonErrors;
 
 @tag("BI")
@@ -730,7 +722,6 @@ op listSemanticRelationships(@path workspace: string, @path("model") modelName: 
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "semantic-model")
-@operationId("listSemanticSources")
 op listSemanticSources(@path workspace: string, @path("model") modelName: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticSourceListResponse> | CommonErrors;
 
 @tag("BI")
@@ -740,7 +731,6 @@ op listSemanticSources(@path workspace: string, @path("model") modelName: string
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "model-fields"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }], output: #{ mode: "raw" } })
-@operationId("listSemanticModelFields")
 op listSemanticModelFields(@path workspace: string, @path("model") modelName: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticFieldListResponse> | CommonErrors;
 
 @tag("BI")
@@ -790,7 +780,6 @@ op listSemanticModelFields(@path workspace: string, @path("model") modelName: st
     cursor: #{ source: "/page/nextCursor" }
   },
 })
-@operationId("querySemanticModel")
 op querySemanticModel(@path workspace: WorkspaceId, @path("model") modelName: string, @header accept?: string, @body body?: SemanticQueryRequest): RowsetResponse<SemanticQueryResponse> | CommonErrors;
 
 @tag("BI")
@@ -801,7 +790,6 @@ op querySemanticModel(@path workspace: WorkspaceId, @path("model") modelName: st
 @apigen.authz(#{ mode: "privilege", privilege: "QUERY_DATA" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "model-explain"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }], output: #{ mode: "raw" } })
-@operationId("explainSemanticModelQuery")
 op explainSemanticModelQuery(@path workspace: string, @path("model") modelName: string, @body body?: SemanticQueryRequest): OkJson<SemanticExplainResponse> | CommonErrors;
 
 @tag("BI")
@@ -811,7 +799,6 @@ op explainSemanticModelQuery(@path workspace: string, @path("model") modelName: 
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "datasets"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }], output: #{ mode: "raw" } })
-@operationId("listSemanticDatasets")
 op listSemanticDatasets(@path workspace: string, @path("model") modelName: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticDatasetListResponse> | CommonErrors;
 
 @tag("BI")
@@ -821,7 +808,6 @@ op listSemanticDatasets(@path workspace: string, @path("model") modelName: strin
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "dataset"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
-@operationId("getSemanticDataset")
 op getSemanticDataset(@path workspace: string, @path("model") modelName: string, @path dataset: string): OkJson<SemanticDatasetResponse> | CommonErrors;
 
 @tag("BI")
@@ -831,7 +817,6 @@ op getSemanticDataset(@path workspace: string, @path("model") modelName: string,
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "fields"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
-@operationId("listSemanticFields")
 op listSemanticFields(@path workspace: string, @path("model") modelName: string, @path dataset: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticFieldListResponse> | CommonErrors;
 
 @tag("BI")
@@ -843,7 +828,6 @@ op listSemanticFields(@path workspace: string, @path("model") modelName: string,
 @extension("x-leapview-object-scope", "semantic-model")
 @extension("x-leapview-response-trailers", #["X-Next-Cursor"])
 @apigen.cli(#{ command: #["semantic-models", "preview"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
-@operationId("previewSemanticDataset")
 op previewSemanticDataset(@path workspace: string, @path("model") modelName: string, @path dataset: string, @header accept?: string, @body body?: SemanticPreviewRequest): RowsetResponse<SemanticQueryResponse> | CommonErrors;
 
 @tag("BI")
@@ -854,7 +838,6 @@ op previewSemanticDataset(@path workspace: string, @path("model") modelName: str
 @apigen.authz(#{ mode: "privilege", privilege: "PREVIEW_DATA" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "explain-preview"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "model", displayName: "model" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
-@operationId("explainSemanticPreview")
 op explainSemanticPreview(@path workspace: string, @path("model") modelName: string, @path dataset: string, @body body?: SemanticPreviewRequest): OkJson<SemanticExplainResponse> | CommonErrors;
 
 @tag("BI")
@@ -865,7 +848,6 @@ op explainSemanticPreview(@path workspace: string, @path("model") modelName: str
 @apigen.authz(#{ mode: "privilege", privilege: "QUERY_DATA" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "query-page"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "dashboard", displayName: "dashboard" }, #{ source: "path", name: "page", displayName: "page" }], output: #{ mode: "raw" } })
-@operationId("queryDashboardPage")
 op queryDashboardPage(@path workspace: string, @path dashboard: string, @path page: string, @body body?: DashboardPageQueryRequest): OkJson<DashboardPageQueryResponse> | CommonErrors;
 
 @tag("BI")
@@ -888,7 +870,6 @@ op queryDashboardPage(@path workspace: string, @path dashboard: string, @path pa
   ] },
   output: #{ mode: "raw" },
 })
-@operationId("queryDashboardVisualData")
 op queryDashboardVisualData(@path workspace: WorkspaceId, @path dashboard: string, @path page: string, @path visual: string, @header accept?: string, @body body?: DashboardVisualQueryRequest): RowsetResponse<LeapViewVisualization.VisualizationEnvelope> | CommonErrors;
 
 @tag("BI")
@@ -899,5 +880,4 @@ op queryDashboardVisualData(@path workspace: WorkspaceId, @path dashboard: strin
 @apigen.authz(#{ mode: "privilege", privilege: "QUERY_DATA" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "filter-options"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "dashboard", displayName: "dashboard" }, #{ source: "path", name: "page", displayName: "page" }, #{ source: "path", name: "filter", displayName: "filter" }], output: #{ mode: "raw" } })
-@operationId("listDashboardFilterValues")
 op listDashboardFilterValues(@path workspace: string, @path dashboard: string, @path page: string, @path filter: string, @query limit?: ListLimit, @query pageToken?: PageToken, @body body?: DashboardPageQueryRequest): OkJson<DashboardFilterOptionListResponse> | CommonErrors;

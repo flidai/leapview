@@ -22,6 +22,33 @@ model AgentCommandAuditPayload {
   surface: string;
 }
 
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_CONFIG", publicDetail: "The agent configuration is invalid." })
+model InvalidAgentConfigFailure {}
+
+@apigen.failureDefinition(#{ kind: "unavailable", statusCode: 503, code: "AGENT_CONFIG_UNAVAILABLE", publicDetail: "Agent configuration is unavailable." })
+model AgentConfigUnavailableFailure {}
+
+@apigen.failureDefinition(#{ kind: "unavailable", statusCode: 503, code: "AGENT_SERVICE_UNAVAILABLE", publicDetail: "Agent service is unavailable." })
+model AgentServiceUnavailableFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "AGENT_CONVERSATION_NOT_FOUND", publicDetail: "Agent conversation not found." })
+model AgentConversationNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_CONVERSATION", publicDetail: "The agent conversation request is invalid." })
+model InvalidAgentConversationFailure {}
+
+@apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "AGENT_RUN_CONFLICT", publicDetail: "The agent conversation already has an active run." })
+model AgentRunConflictFailure {}
+
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_RUN", publicDetail: "The agent run request is invalid." })
+model InvalidAgentRunFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "AGENT_RUN_NOT_FOUND", publicDetail: "Agent run not found." })
+model AgentRunNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_cancellable", statusCode: 409, code: "AGENT_RUN_NOT_CANCELLABLE", publicDetail: "The agent run cannot be cancelled in its current state." })
+model AgentRunNotCancellableFailure {}
+
 model AgentConversationCreateRequest {
   title?: string;
 }
@@ -111,116 +138,88 @@ alias GetAgentConfigOK = OkJson<AgentConfigResponse>;
 @tag("Agent")
 @doc("Platform-wide agent configuration. The update command is shared by API and administration UI invocations.")
 @route("/agent/config")
+@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+@apigen.commandDefaults(#{ guarantee: "best-effort" })
+@apigen.auditPayload(AgentCommandAuditPayload)
 interface AgentConfiguration {
   @summary("Get the agent configuration")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("getAgentConfig")
   getAgentConfig(): GetAgentConfigOK | CommonErrors;
 
   @summary("Update the agent configuration")
   @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.ui("agent.config.update")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "agent.config.updated", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_CONFIG", publicDetail: "The agent configuration is invalid." },
-      #{ kind: "unavailable", statusCode: 503, code: "AGENT_CONFIG_UNAVAILABLE", publicDetail: "Agent configuration is unavailable." },
-    ],
-  })
-  @apigen.auditPayload(AgentCommandAuditPayload)
-  @operationId("updateAgentConfig")
+  @apigen.failsWith(InvalidAgentConfigFailure)
+  @apigen.failsWith(AgentConfigUnavailableFailure)
+  @apigen.command(#{ auditAction: "agent.config.updated" })
   updateAgentConfig(@header("If-Match") ifMatch: string, @body body: AgentConfigUpdateRequest): UpdateAgentConfigOK | CommonErrors;
 }
 
 @tag("Agent")
 @doc("Agent conversation and run lifecycle. GET operations and event streams are queries; create, update, archive, start, and cancel operations mutate durable agent state.")
 @route("/agent/conversations")
+@apigen.commandDefaults(#{ guarantee: "best-effort" })
+@apigen.auditPayload(AgentCommandAuditPayload)
 interface AgentConversations {
   @summary("List agent conversations")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
   @apigen.cli(#{ command: #["agent", "conversations"], output: #{ mode: "raw" } })
-  @operationId("listAgentConversations")
   listAgentConversations(@query limit?: ListLimit, @query pageToken?: PageToken): ListAgentConversationsOK | CommonErrors;
 
   @summary("Create an agent conversation")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
   @apigen.ui("agent.conversation.create")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "agent.conversation.created", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "unavailable", statusCode: 503, code: "AGENT_SERVICE_UNAVAILABLE", publicDetail: "Agent service is unavailable." },
-    ],
-  })
-  @apigen.auditPayload(AgentCommandAuditPayload)
-  @operationId("createAgentConversation")
+  @apigen.failsWith(AgentServiceUnavailableFailure)
+  @apigen.command(#{ auditAction: "agent.conversation.created" })
   createAgentConversation(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AgentConversationCreateRequest): CreateAgentConversationCreated | CommonErrors;
 
   @summary("Archive an agent conversation")
   @route("/{conversation}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "agent.conversation.archived", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "AGENT_CONVERSATION_NOT_FOUND", publicDetail: "Agent conversation not found." },
-    ],
-  })
-  @apigen.auditPayload(AgentCommandAuditPayload)
-  @operationId("archiveAgentConversation")
-  archiveAgentConversation(@path conversation: string): EmptyResponse | CommonErrors;
+  @apigen.failsWith(AgentConversationNotFoundFailure)
+  @apigen.command(#{ auditAction: "agent.conversation.archived" })
+  archiveAgentConversation(@path @apigen.target conversation: string): EmptyResponse | CommonErrors;
 
   @summary("Get an agent conversation")
   @route("/{conversation}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
-  @operationId("getAgentConversation")
   getAgentConversation(@path conversation: string): GetAgentConversationOK | CommonErrors;
 
   @summary("Update an agent conversation")
   @route("/{conversation}")
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "agent.conversation.updated", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "AGENT_CONVERSATION_NOT_FOUND", publicDetail: "Agent conversation not found." },
-      #{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_CONVERSATION", publicDetail: "The agent conversation request is invalid." },
-    ],
-  })
-  @apigen.auditPayload(AgentCommandAuditPayload)
-  @operationId("updateAgentConversation")
-  updateAgentConversation(@path conversation: string, @header("If-Match") ifMatch: string, @body body: AgentConversationPatchRequest): UpdateAgentConversationOK | CommonErrors;
+  @apigen.failsWith(AgentConversationNotFoundFailure)
+  @apigen.failsWith(InvalidAgentConversationFailure)
+  @apigen.command(#{ auditAction: "agent.conversation.updated" })
+  updateAgentConversation(@path @apigen.target conversation: string, @header("If-Match") ifMatch: string, @body body: AgentConversationPatchRequest): UpdateAgentConversationOK | CommonErrors;
 
   @summary("List agent messages")
   @route("/{conversation}/messages")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
-  @operationId("listAgentMessages")
   listAgentMessages(@path conversation: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListAgentMessagesOK | CommonErrors;
 
   @summary("List agent runs")
   @route("/{conversation}/runs")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
-  @operationId("listAgentRuns")
   listAgentRuns(@path conversation: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListAgentRunsOK | CommonErrors;
 
   @summary("Get an agent run")
   @route("/{conversation}/runs/{run}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
-  @operationId("getAgentRun")
   getAgentRun(@path conversation: string, @path run: string): GetAgentRunOK | CommonErrors;
 
   @summary("List agent run events")
   @route("/{conversation}/runs/{run}/events")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
-  @operationId("listAgentEvents")
   listAgentEvents(@path conversation: string, @path run: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 
   @summary("Create an asynchronous agent run")
@@ -228,45 +227,29 @@ interface AgentConversations {
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
   @apigen.ui("agent.run.create")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "agent.run.created", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "AGENT_CONVERSATION_NOT_FOUND", publicDetail: "Agent conversation not found." },
-      #{ kind: "conflict", statusCode: 409, code: "AGENT_RUN_CONFLICT", publicDetail: "The agent conversation already has an active run." },
-      #{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_RUN", publicDetail: "The agent run request is invalid." },
-      #{ kind: "unavailable", statusCode: 503, code: "AGENT_SERVICE_UNAVAILABLE", publicDetail: "Agent service is unavailable." },
-    ],
-    execution: #{
-      mode: "async",
-      guarantee: "transactional",
-      jobKind: "agent.run",
-      resourceKind: "agent_run",
-      initialEvent: "agent_run.queued",
-      initialState: "running",
-      statusOperation: "getAgentRun",
-      eventsOperation: "listAgentEvents",
-      cancellation: "supported",
-    },
+  @apigen.failsWith(AgentConversationNotFoundFailure)
+  @apigen.failsWith(AgentRunConflictFailure)
+  @apigen.failsWith(InvalidAgentRunFailure)
+  @apigen.failsWith(AgentServiceUnavailableFailure)
+  @apigen.asyncExecution(AgentConversations.getAgentRun, AgentConversations.listAgentEvents, #{
+    guarantee: "transactional",
+    jobKind: "agent.run",
+    resourceKind: "agent_run",
+    initialEvent: "agent_run.queued",
+    initialState: "running",
+    cancellation: "supported",
   })
-  @apigen.auditPayload(AgentCommandAuditPayload)
-  @operationId("createAgentRun")
-  createAgentRun(@path conversation: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AgentRunCreateRequest): AcceptedJson<AgentRunResponse> | CommonErrors;
+  @apigen.command(#{ auditAction: "agent.run.created" })
+  createAgentRun(@path @apigen.target conversation: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AgentRunCreateRequest): AcceptedJson<AgentRunResponse> | CommonErrors;
 
   @summary("Cancel an agent run")
   @doc("Cancels an existing run and its queued work synchronously. The 202 response reports the resulting run state; this operation does not create a new asynchronous execution.")
   @route("/{conversation}/runs/{run}/cancel")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "agent.run.cancelled", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "AGENT_RUN_NOT_FOUND", publicDetail: "Agent run not found." },
-      #{ kind: "not_cancellable", statusCode: 409, code: "AGENT_RUN_NOT_CANCELLABLE", publicDetail: "The agent run cannot be cancelled in its current state." },
-      #{ kind: "unavailable", statusCode: 503, code: "AGENT_SERVICE_UNAVAILABLE", publicDetail: "Agent service is unavailable." },
-    ],
-    targetParameter: "conversation",
-  })
-  @apigen.auditPayload(AgentCommandAuditPayload)
-  @operationId("cancelAgentRun")
-  cancelAgentRun(@path conversation: string, @path run: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<AgentRunResponse> | CommonErrors;
+  @apigen.failsWith(AgentRunNotFoundFailure)
+  @apigen.failsWith(AgentRunNotCancellableFailure)
+  @apigen.failsWith(AgentServiceUnavailableFailure)
+  @apigen.command(#{ auditAction: "agent.run.cancelled" })
+  cancelAgentRun(@path @apigen.target conversation: string, @path run: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<AgentRunResponse> | CommonErrors;
 }

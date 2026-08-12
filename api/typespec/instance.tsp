@@ -18,5 +18,4 @@ alias PublicInstanceErrors = BadRequest | RateLimited | InternalServerError | Se
 @route("/instance")
 @get
 @apigen.authz(#{ mode: "none" })
-@operationId("getInstance")
 op getInstance(): OkJson<InstanceResponse> | PublicInstanceErrors;

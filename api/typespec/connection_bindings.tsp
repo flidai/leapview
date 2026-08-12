@@ -34,6 +34,30 @@ model TargetConnectionRotationAuditPayload {
   targetId: string;
 }
 
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." })
+model InvalidConnectionBindingFailure {}
+
+@apigen.failureDefinition(#{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." })
+model ForbiddenConnectionOperationFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." })
+model ConnectionBindingNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." })
+model ConnectionBindingConflictFailure {}
+
+@apigen.failureDefinition(#{ kind: "credential_invalid", statusCode: 422, code: "CONNECTION_TEST_FAILED", publicDetail: "Connection validation failed." })
+model ConnectionTestFailedFailure {}
+
+@apigen.failureDefinition(#{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." })
+model ConnectionProviderUnavailableFailure {}
+
+@apigen.failureDefinition(#{ kind: "disabled", statusCode: 409, code: "CONNECTION_BINDING_DISABLED", publicDetail: "Connection binding is disabled." })
+model ConnectionBindingDisabledFailure {}
+
+@apigen.failureDefinition(#{ kind: "confirmation_required", statusCode: 412, code: "CONFIRMATION_REQUIRED", publicDetail: "Dependency confirmation is required." })
+model ConfirmationRequiredFailure {}
+
 @minLength(1)
 @maxLength(128)
 @pattern("^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -160,11 +184,11 @@ model TargetConnectionBindingHealthResponse {
 
 @route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings")
 @tag("Connections")
+@apigen.commandDefaults(#{ guarantee: "best-effort" })
 interface TargetConnectionBindings {
   @summary("List target connection bindings")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
-  @operationId("listTargetConnectionBindings")
   listTargetConnectionBindings(
     @path workspace: string,
     @path target: TargetConnectionIdentifier,
@@ -174,23 +198,19 @@ interface TargetConnectionBindings {
   @summary("Create a target connection binding")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.failsWith(InvalidConnectionBindingFailure)
+  @apigen.failsWith(ForbiddenConnectionOperationFailure)
+  @apigen.failsWith(ConnectionBindingNotFoundFailure)
+  @apigen.failsWith(ConnectionBindingConflictFailure)
+  @apigen.failsWith(ConnectionTestFailedFailure)
+  @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.command(#{
-    audit: #{ required: true, successAction: "connection.binding.created", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
-      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
-      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
-      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
-      #{ kind: "credential_invalid", statusCode: 422, code: "CONNECTION_TEST_FAILED", publicDetail: "Connection validation failed." },
-      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
-      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
-    ],
-    targetParameter: "workspace",
+    auditAction: "connection.binding.created",
+    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
-  @operationId("createTargetConnectionBinding")
   createTargetConnectionBinding(
-    @path workspace: string,
+    @path @apigen.target workspace: string,
     @path target: TargetConnectionIdentifier,
     @path environment: TargetConnectionIdentifier,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
@@ -201,7 +221,6 @@ interface TargetConnectionBindings {
   @route("/{connection}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
-  @operationId("getTargetConnectionBinding")
   getTargetConnectionBinding(
     @path workspace: string,
     @path target: TargetConnectionIdentifier,
@@ -215,7 +234,6 @@ interface TargetConnectionBindings {
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
   @apigen.query
-  @operationId("planTargetConnectionBindingChange")
   planTargetConnectionBindingChange(
     @path workspace: string,
     @path target: TargetConnectionIdentifier,
@@ -228,24 +246,20 @@ interface TargetConnectionBindings {
   @route("/{connection}")
   @put
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.failsWith(InvalidConnectionBindingFailure)
+  @apigen.failsWith(ForbiddenConnectionOperationFailure)
+  @apigen.failsWith(ConnectionBindingNotFoundFailure)
+  @apigen.failsWith(ConnectionBindingConflictFailure)
+  @apigen.failsWith(ConnectionBindingDisabledFailure)
+  @apigen.failsWith(ConfirmationRequiredFailure)
+  @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.command(#{
-    audit: #{ required: true, successAction: "connection.binding.updated", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
-      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
-      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
-      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
-      #{ kind: "disabled", statusCode: 409, code: "CONNECTION_BINDING_DISABLED", publicDetail: "Connection binding is disabled." },
-      #{ kind: "confirmation_required", statusCode: 412, code: "CONFIRMATION_REQUIRED", publicDetail: "Dependency confirmation is required." },
-      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
-      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
-    ],
-    targetParameter: "workspace",
+    auditAction: "connection.binding.updated",
+    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
-  @operationId("updateTargetConnectionBinding")
   updateTargetConnectionBinding(
-    @path workspace: string,
+    @path @apigen.target workspace: string,
     @path target: TargetConnectionIdentifier,
     @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
@@ -257,24 +271,20 @@ interface TargetConnectionBindings {
   @route("/{connection}/test")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "TEST_CONNECTION" })
+  @apigen.failsWith(InvalidConnectionBindingFailure)
+  @apigen.failsWith(ForbiddenConnectionOperationFailure)
+  @apigen.failsWith(ConnectionBindingNotFoundFailure)
+  @apigen.failsWith(ConnectionBindingConflictFailure)
+  @apigen.failsWith(ConnectionBindingDisabledFailure)
+  @apigen.failsWith(ConnectionTestFailedFailure)
+  @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.command(#{
-    audit: #{ required: true, successAction: "credential.test.requested", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
-      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
-      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
-      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
-      #{ kind: "disabled", statusCode: 409, code: "CONNECTION_BINDING_DISABLED", publicDetail: "Connection binding is disabled." },
-      #{ kind: "credential_invalid", statusCode: 422, code: "CONNECTION_TEST_FAILED", publicDetail: "Connection validation failed." },
-      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
-      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
-    ],
-    targetParameter: "workspace",
+    auditAction: "credential.test.requested",
+    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })
   @apigen.auditPayload(TargetConnectionRotationAuditPayload)
-  @operationId("testTargetConnectionBinding")
   testTargetConnectionBinding(
-    @path workspace: string,
+    @path @apigen.target workspace: string,
     @path target: TargetConnectionIdentifier,
     @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
@@ -285,24 +295,20 @@ interface TargetConnectionBindings {
   @route("/{connection}/refresh")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "TEST_CONNECTION" })
+  @apigen.failsWith(InvalidConnectionBindingFailure)
+  @apigen.failsWith(ForbiddenConnectionOperationFailure)
+  @apigen.failsWith(ConnectionBindingNotFoundFailure)
+  @apigen.failsWith(ConnectionBindingConflictFailure)
+  @apigen.failsWith(ConnectionBindingDisabledFailure)
+  @apigen.failsWith(ConnectionTestFailedFailure)
+  @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.command(#{
-    audit: #{ required: true, successAction: "credential.refresh.requested", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
-      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
-      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
-      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
-      #{ kind: "disabled", statusCode: 409, code: "CONNECTION_BINDING_DISABLED", publicDetail: "Connection binding is disabled." },
-      #{ kind: "credential_invalid", statusCode: 422, code: "CONNECTION_TEST_FAILED", publicDetail: "Connection validation failed." },
-      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
-      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
-    ],
-    targetParameter: "workspace",
+    auditAction: "credential.refresh.requested",
+    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })
   @apigen.auditPayload(TargetConnectionRotationAuditPayload)
-  @operationId("refreshTargetConnectionBinding")
   refreshTargetConnectionBinding(
-    @path workspace: string,
+    @path @apigen.target workspace: string,
     @path target: TargetConnectionIdentifier,
     @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
@@ -313,22 +319,18 @@ interface TargetConnectionBindings {
   @route("/{connection}/enable")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.failsWith(InvalidConnectionBindingFailure)
+  @apigen.failsWith(ForbiddenConnectionOperationFailure)
+  @apigen.failsWith(ConnectionBindingNotFoundFailure)
+  @apigen.failsWith(ConnectionBindingConflictFailure)
+  @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.command(#{
-    audit: #{ required: true, successAction: "connection.binding.enabled", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
-      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
-      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
-      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
-      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
-      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
-    ],
-    targetParameter: "workspace",
+    auditAction: "connection.binding.enabled",
+    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
-  @operationId("enableTargetConnectionBinding")
   enableTargetConnectionBinding(
-    @path workspace: string,
+    @path @apigen.target workspace: string,
     @path target: TargetConnectionIdentifier,
     @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
@@ -339,23 +341,19 @@ interface TargetConnectionBindings {
   @route("/{connection}/disable")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.failsWith(InvalidConnectionBindingFailure)
+  @apigen.failsWith(ForbiddenConnectionOperationFailure)
+  @apigen.failsWith(ConnectionBindingNotFoundFailure)
+  @apigen.failsWith(ConnectionBindingConflictFailure)
+  @apigen.failsWith(ConnectionBindingDisabledFailure)
+  @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.command(#{
-    audit: #{ required: true, successAction: "connection.binding.disabled", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "INVALID_CONNECTION_BINDING", publicDetail: "Connection binding is invalid." },
-      #{ kind: "unauthorized", statusCode: 403, code: "FORBIDDEN", publicDetail: "Connection operation is forbidden." },
-      #{ kind: "not_found", statusCode: 404, code: "CONNECTION_BINDING_NOT_FOUND", publicDetail: "Connection binding was not found." },
-      #{ kind: "conflict", statusCode: 409, code: "CONNECTION_BINDING_CONFLICT", publicDetail: "Connection binding changed concurrently or is incompatible." },
-      #{ kind: "disabled", statusCode: 409, code: "CONNECTION_BINDING_DISABLED", publicDetail: "Connection binding is disabled." },
-      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." },
-      #{ kind: "provider_unavailable", statusCode: 503, code: "CONNECTION_PROVIDER_UNAVAILABLE", publicDetail: "Connection provider is unavailable." },
-    ],
-    targetParameter: "workspace",
+    auditAction: "connection.binding.disabled",
+    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
-  @operationId("disableTargetConnectionBinding")
   disableTargetConnectionBinding(
-    @path workspace: string,
+    @path @apigen.target workspace: string,
     @path target: TargetConnectionIdentifier,
     @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
@@ -366,7 +364,6 @@ interface TargetConnectionBindings {
   @route("/{connection}/health")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_CONNECTION_HEALTH" })
-  @operationId("getTargetConnectionBindingHealth")
   getTargetConnectionBindingHealth(
     @path workspace: string,
     @path target: TargetConnectionIdentifier,

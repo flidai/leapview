@@ -22,6 +22,36 @@ model ManagedDataCommandAuditPayload {
   surface: string;
 }
 
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." })
+model ManagedDataUploadInvalidFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." })
+model ManagedDataUploadNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." })
+model ManagedDataUploadConflictFailure {}
+
+@apigen.failureDefinition(#{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." })
+model ManagedDataUploadIncompleteFailure {}
+
+@apigen.failureDefinition(#{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." })
+model ManagedDataUploadExpiredFailure {}
+
+@apigen.failureDefinition(#{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." })
+model ManagedDataUploadIntegrityFailure {}
+
+@apigen.failureDefinition(#{ kind: "too_large", statusCode: 413, code: "MANAGED_DATA_UPLOAD_TOO_LARGE", publicDetail: "Managed-data upload request is too large." })
+model ManagedDataUploadTooLargeFailure {}
+
+@apigen.failureDefinition(#{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." })
+model ManagedDataBackendUnavailableFailure {}
+
+@apigen.failureDefinition(#{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." })
+model ManagedDataUploadUnavailableFailure {}
+
+@apigen.failureDefinition(#{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." })
+model ManagedDataUploadInternalFailure {}
+
 model ManagedConnectionResponse {
   id: string;
   projectId: string;
@@ -43,7 +73,6 @@ interface ManagedConnections {
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
-  @operationId("listManagedConnections")
   listManagedConnections(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ManagedConnectionListResponse> | CommonErrors;
 
   @summary("Describe a project managed connection")
@@ -51,7 +80,6 @@ interface ManagedConnections {
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
-  @operationId("getManagedConnection")
   getManagedConnection(@path project: string, @path connection: string): OkJson<ManagedConnectionResponse> | CommonErrors;
 }
 
@@ -274,11 +302,12 @@ model ManagedDataUploadSessionListResponse {
 @tag("Managed Data")
 @doc("Managed-data revision queries and upload-session lifecycle commands. Revision reads, session reads, and event streaming do not mutate durable domain state.")
 @route("/projects/{project}/connections/{connection}")
+@apigen.commandDefaults(#{ guarantee: "best-effort" })
+@apigen.auditPayload(ManagedDataCommandAuditPayload)
 interface ManagedDataLifecycle {
   @summary("Get the active managed-data revision")
   @route("/active-revision")
   @get
-  @operationId("getActiveManagedDataRevision")
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
   getActiveManagedDataRevision(
@@ -289,7 +318,6 @@ interface ManagedDataLifecycle {
   @summary("List immutable managed-data revisions")
   @route("/revisions")
   @get
-  @operationId("listManagedDataRevisions")
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
   listManagedDataRevisions(
@@ -302,7 +330,6 @@ interface ManagedDataLifecycle {
   @summary("Get an immutable managed-data revision")
   @route("/revisions/{revision}")
   @get
-  @operationId("getManagedDataRevision")
   @apigen.authz(#{ mode: "privilege", privilege: "VIEW_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
   getManagedDataRevision(
@@ -314,28 +341,21 @@ interface ManagedDataLifecycle {
   @summary("Create a managed-data upload session from a canonical manifest")
   @route("/upload-sessions")
   @post
-  @operationId("createManagedDataUploadSession")
   @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "managed_data.upload_session.created", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." },
-      #{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." },
-      #{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." },
-      #{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." },
-      #{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." },
-      #{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." },
-      #{ kind: "too_large", statusCode: 413, code: "MANAGED_DATA_UPLOAD_TOO_LARGE", publicDetail: "Managed-data upload request is too large." },
-      #{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." },
-      #{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." },
-      #{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." },
-    ],
-    targetParameter: "project",
-  })
-  @apigen.auditPayload(ManagedDataCommandAuditPayload)
+  @apigen.failsWith(ManagedDataUploadInvalidFailure)
+  @apigen.failsWith(ManagedDataUploadNotFoundFailure)
+  @apigen.failsWith(ManagedDataUploadConflictFailure)
+  @apigen.failsWith(ManagedDataUploadIncompleteFailure)
+  @apigen.failsWith(ManagedDataUploadExpiredFailure)
+  @apigen.failsWith(ManagedDataUploadIntegrityFailure)
+  @apigen.failsWith(ManagedDataUploadTooLargeFailure)
+  @apigen.failsWith(ManagedDataBackendUnavailableFailure)
+  @apigen.failsWith(ManagedDataUploadUnavailableFailure)
+  @apigen.failsWith(ManagedDataUploadInternalFailure)
+  @apigen.command(#{ auditAction: "managed_data.upload_session.created" })
   createManagedDataUploadSession(
-    @path project: ManagedDataProjectId,
+    @path @apigen.target project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
     @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
     @body body: ManagedDataUploadSessionCreateRequest,
@@ -344,7 +364,6 @@ interface ManagedDataLifecycle {
   @summary("List managed-data upload sessions")
   @route("/upload-sessions")
   @get
-  @operationId("listManagedDataUploadSessions")
   @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
   listManagedDataUploadSessions(
@@ -357,7 +376,6 @@ interface ManagedDataLifecycle {
   @summary("Get a managed-data upload session")
   @route("/upload-sessions/{uploadSession}")
   @get
-  @operationId("getManagedDataUploadSession")
   @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
   getManagedDataUploadSession(
@@ -369,28 +387,21 @@ interface ManagedDataLifecycle {
   @summary("Cancel a managed-data upload session")
   @route("/upload-sessions/{uploadSession}/cancel")
   @post
-  @operationId("cancelManagedDataUploadSession")
   @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "managed_data.upload_session.cancelled", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." },
-      #{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." },
-      #{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." },
-      #{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." },
-      #{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." },
-      #{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." },
-      #{ kind: "too_large", statusCode: 413, code: "MANAGED_DATA_UPLOAD_TOO_LARGE", publicDetail: "Managed-data upload request is too large." },
-      #{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." },
-      #{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." },
-      #{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." },
-    ],
-    targetParameter: "project",
-  })
-  @apigen.auditPayload(ManagedDataCommandAuditPayload)
+  @apigen.failsWith(ManagedDataUploadInvalidFailure)
+  @apigen.failsWith(ManagedDataUploadNotFoundFailure)
+  @apigen.failsWith(ManagedDataUploadConflictFailure)
+  @apigen.failsWith(ManagedDataUploadIncompleteFailure)
+  @apigen.failsWith(ManagedDataUploadExpiredFailure)
+  @apigen.failsWith(ManagedDataUploadIntegrityFailure)
+  @apigen.failsWith(ManagedDataUploadTooLargeFailure)
+  @apigen.failsWith(ManagedDataBackendUnavailableFailure)
+  @apigen.failsWith(ManagedDataUploadUnavailableFailure)
+  @apigen.failsWith(ManagedDataUploadInternalFailure)
+  @apigen.command(#{ auditAction: "managed_data.upload_session.cancelled" })
   cancelManagedDataUploadSession(
-    @path project: ManagedDataProjectId,
+    @path @apigen.target project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
     @path uploadSession: ManagedDataUploadSessionId,
     @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
@@ -399,39 +410,29 @@ interface ManagedDataLifecycle {
   @summary("Finalize a managed-data upload session")
   @route("/upload-sessions/{uploadSession}/finalize")
   @post
-  @operationId("finalizeManagedDataUploadSession")
   @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "managed_data.upload_session.finalization_requested", guarantee: "best-effort" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "MANAGED_DATA_UPLOAD_INVALID", publicDetail: "The managed-data upload request is invalid." },
-      #{ kind: "not_found", statusCode: 404, code: "MANAGED_DATA_UPLOAD_NOT_FOUND", publicDetail: "Managed-data upload resource not found." },
-      #{ kind: "conflict", statusCode: 409, code: "MANAGED_DATA_UPLOAD_CONFLICT", publicDetail: "Managed-data upload conflicts with its current state." },
-      #{ kind: "incomplete", statusCode: 409, code: "UPLOAD_INCOMPLETE", publicDetail: "Managed-data upload is incomplete." },
-      #{ kind: "expired", statusCode: 409, code: "UPLOAD_EXPIRED", publicDetail: "Managed-data upload has expired." },
-      #{ kind: "integrity", statusCode: 409, code: "UPLOAD_INTEGRITY_FAILED", publicDetail: "Managed-data upload failed integrity verification." },
-      #{ kind: "too_large", statusCode: 413, code: "MANAGED_DATA_UPLOAD_TOO_LARGE", publicDetail: "Managed-data upload request is too large." },
-      #{ kind: "backend", statusCode: 502, code: "BACKEND_UNAVAILABLE", publicDetail: "Managed-data storage is unavailable." },
-      #{ kind: "unavailable", statusCode: 503, code: "MANAGED_DATA_UPLOAD_SERVICE_UNAVAILABLE", publicDetail: "Managed-data upload service is unavailable." },
-      #{ kind: "internal", statusCode: 500, code: "MANAGED_DATA_UPLOAD_INTERNAL_ERROR", publicDetail: "Managed-data upload could not be completed." },
-    ],
-    execution: #{
-      mode: "async",
-      guarantee: "transactional",
-      jobKind: "upload.finalize",
-      resourceKind: "upload",
-      initialEvent: "upload_session.finalizing",
-      initialState: "finalizing",
-      statusOperation: "getManagedDataUploadSession",
-      eventsOperation: "listManagedDataUploadSessionEvents",
-      cancellation: "unsupported",
-    },
-    targetParameter: "project",
+  @apigen.failsWith(ManagedDataUploadInvalidFailure)
+  @apigen.failsWith(ManagedDataUploadNotFoundFailure)
+  @apigen.failsWith(ManagedDataUploadConflictFailure)
+  @apigen.failsWith(ManagedDataUploadIncompleteFailure)
+  @apigen.failsWith(ManagedDataUploadExpiredFailure)
+  @apigen.failsWith(ManagedDataUploadIntegrityFailure)
+  @apigen.failsWith(ManagedDataUploadTooLargeFailure)
+  @apigen.failsWith(ManagedDataBackendUnavailableFailure)
+  @apigen.failsWith(ManagedDataUploadUnavailableFailure)
+  @apigen.failsWith(ManagedDataUploadInternalFailure)
+  @apigen.asyncExecution(ManagedDataLifecycle.getManagedDataUploadSession, ManagedDataLifecycle.listManagedDataUploadSessionEvents, #{
+    guarantee: "transactional",
+    jobKind: "upload.finalize",
+    resourceKind: "upload",
+    initialEvent: "upload_session.finalizing",
+    initialState: "finalizing",
+    cancellation: "unsupported",
   })
-  @apigen.auditPayload(ManagedDataCommandAuditPayload)
+  @apigen.command(#{ auditAction: "managed_data.upload_session.finalization_requested" })
   finalizeManagedDataUploadSession(
-    @path project: ManagedDataProjectId,
+    @path @apigen.target project: ManagedDataProjectId,
     @path connection: ManagedDataConnectionId,
     @path uploadSession: ManagedDataUploadSessionId,
     @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
@@ -440,7 +441,6 @@ interface ManagedDataLifecycle {
   @summary("List or stream upload-session events")
   @route("/upload-sessions/{uploadSession}/events")
   @get
-  @operationId("listManagedDataUploadSessionEvents")
   @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
   @extension("x-leapview-object-scope", "project-environment")
   listManagedDataUploadSessionEvents(

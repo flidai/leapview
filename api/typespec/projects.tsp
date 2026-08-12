@@ -36,7 +36,6 @@ model ProjectWorkspaceListResponse {
 @route("/projects")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
-@operationId("listProjects")
 op listProjects(@query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ProjectListResponse> | CommonErrors;
 
 @tag("Projects")
@@ -45,7 +44,6 @@ op listProjects(@query limit?: ListLimit, @query pageToken?: PageToken): OkJson<
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
 @extension("x-leapview-object-scope", "project-environment")
-@operationId("getProject")
 op getProject(@path project: string): OkJson<ProjectResponse> | CommonErrors;
 
 @tag("Projects")
@@ -54,5 +52,4 @@ op getProject(@path project: string): OkJson<ProjectResponse> | CommonErrors;
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "project-environment")
-@operationId("listProjectWorkspaces")
 op listProjectWorkspaces(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ProjectWorkspaceListResponse> | CommonErrors;
