@@ -89,6 +89,14 @@ model AgentRunCreateRequest {
   correlationId?: string;
 }
 
+model AgentConfigUpdateRequest {
+  systemPrompt: string;
+}
+
+model AgentConfigResponse {
+  systemPrompt: string;
+}
+
 alias ListAgentConversationsOK = OkJson<AgentConversationListResponse>;
 alias CreateAgentConversationCreated = CreatedJson<AgentConversationResponse>;
 alias GetAgentConversationOK = OkJson<AgentConversationResponse>;
@@ -97,6 +105,34 @@ alias ListAgentMessagesOK = OkJson<AgentMessageListResponse>;
 alias ListAgentRunsOK = OkJson<AgentRunListResponse>;
 alias GetAgentRunOK = OkJson<AgentRunResponse>;
 alias ListAgentEventsOK = OkJson<AsyncEventListResponse>;
+alias UpdateAgentConfigOK = OkJson<AgentConfigResponse>;
+alias GetAgentConfigOK = OkJson<AgentConfigResponse>;
+
+@tag("Agent")
+@doc("Platform-wide agent configuration. The update command is shared by API and administration UI invocations.")
+@route("/agent/config")
+interface AgentConfiguration {
+  @summary("Get the agent configuration")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @operationId("getAgentConfig")
+  getAgentConfig(): GetAgentConfigOK | CommonErrors;
+
+  @summary("Update the agent configuration")
+  @patch
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @apigen.ui("agent.config.update")
+  @apigen.command(#{
+    audit: #{ required: true, successAction: "agent.config.updated", guarantee: "best-effort" },
+    failures: #[
+      #{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_CONFIG", publicDetail: "The agent configuration is invalid." },
+      #{ kind: "unavailable", statusCode: 503, code: "AGENT_CONFIG_UNAVAILABLE", publicDetail: "Agent configuration is unavailable." },
+    ],
+  })
+  @apigen.auditPayload(AgentCommandAuditPayload)
+  @operationId("updateAgentConfig")
+  updateAgentConfig(@header("If-Match") ifMatch: string, @body body: AgentConfigUpdateRequest): UpdateAgentConfigOK | CommonErrors;
+}
 
 @tag("Agent")
 @doc("Agent conversation and run lifecycle. GET operations and event streams are queries; create, update, archive, start, and cancel operations mutate durable agent state.")

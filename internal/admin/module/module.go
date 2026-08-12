@@ -72,6 +72,7 @@ type Config struct {
 	CurrentCredential     func(*http.Request) (access.APICredential, bool)
 	AuthorizeAnyWorkspace func(context.Context, string, *access.APICredential, access.Privilege) (bool, error)
 	Publications          PublicationService
+	AgentConfigCommand    uicommand.Binding
 	PublicationCommands   map[string]uicommand.Binding
 	DefaultWorkspaceID    string
 	AuthConfigured        bool
@@ -116,6 +117,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			}, ok
 		},
 		Publications:        m.adminPublications,
+		AgentConfigCommand:  config.AgentConfigCommand,
 		PublicationCommands: config.PublicationCommands,
 		DefaultWorkspaceID:  config.DefaultWorkspaceID, AuthConfigured: config.AuthConfigured,
 		AccessConfigured: config.AccessConfigured,

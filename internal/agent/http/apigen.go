@@ -31,6 +31,15 @@ func (responder APIGenTransportErrorResponder) RespondTransportError(ctx context
 	})
 }
 
+func (d *APIGenDispatcher) UpdateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, headers agentgen.GenUpdateAgentConfigHeaders) {
+	r.Header.Set("If-Match", headers.IfMatch)
+	d.handler.UpdateAgentConfig(w, r)
+}
+
+func (d *APIGenDispatcher) GetAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	d.handler.GetAgentConfig(w, r)
+}
+
 func (d *APIGenDispatcher) ListAgentConversations(w stdhttp.ResponseWriter, r *stdhttp.Request, _ agentgen.GenListAgentConversationsParams) {
 	d.handler.ListConversations(w, r)
 }

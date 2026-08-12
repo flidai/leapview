@@ -42,10 +42,12 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 	"github.com/flidai/leapview/internal/project/manifest"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 	servingstatevalidation "github.com/flidai/leapview/internal/servingstate/validation"
@@ -601,6 +603,8 @@ func (h *harness) postAuthenticated(t *testing.T, path string) int {
 		t.Fatalf("create POST %s request: %v", path, err)
 	}
 	req.Header.Set("Authorization", "Bearer dev")
+	req.Header.Set(uicommand.HeaderOperationID, string(refreshgen.GenOperationCreateRefreshRun))
+	req.Header.Set("X-Request-ID", "integration-refresh")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", path, err)

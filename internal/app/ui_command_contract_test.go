@@ -62,14 +62,14 @@ func TestUIRequestsCannotBypassTypedCommandHelpers(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 	nonCommandAllowlist := map[string]map[string]int{
 		filepath.Clean("internal/admin/ui/page.go"): {
-			"uiactions.QueryPost(": 2, "uiactions.EventPost(": 1, "uiactions.UncontractedMutationPatch(": 1,
+			"uiactions.QueryPost(": 2, "uiactions.EventPost(": 1,
 		},
 		filepath.Clean("internal/workspace/ui/page.go"):          {"uiactions.QueryPost(": 1},
-		filepath.Clean("internal/workspace/ui/workspace.go"):     {"uiactions.QueryPost(": 3, "uiactions.UncontractedMutationPost(": 1},
+		filepath.Clean("internal/workspace/ui/workspace.go"):     {"uiactions.QueryPost(": 3},
 		filepath.Clean("internal/workspace/ui/data_explorer.go"): {"uiactions.EventPost(": 1},
 		filepath.Clean("internal/dashboard/ui/page.go"):          {"uiactions.EventPost(": 16},
 	}
-	nonCommandHelpers := []string{"uiactions.QueryPost(", "uiactions.EventPost(", "uiactions.UncontractedMutationPost(", "uiactions.UncontractedMutationPatch("}
+	nonCommandHelpers := []string{"uiactions.QueryPost(", "uiactions.EventPost("}
 	seenNonCommands := map[string]bool{}
 	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -92,7 +92,7 @@ func TestUIRequestsCannotBypassTypedCommandHelpers(t *testing.T) {
 			filepath.Clean(relative) != filepath.Clean("internal/platform/web/uicommand/binding.go") {
 			t.Errorf("%s imports the low-level APIGen UI action constructor; consume a generated GenUIAction function", relative)
 		}
-		for _, forbidden := range []string{"uiactions.Post(", "uiactions.Patch("} {
+		for _, forbidden := range []string{"uiactions.Post(", "uiactions.Patch(", "UncontractedMutation"} {
 			if strings.Contains(source, forbidden) {
 				t.Errorf("%s uses untyped UI mutation helper %s", relative, forbidden)
 			}

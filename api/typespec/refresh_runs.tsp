@@ -77,7 +77,8 @@ interface RefreshRuns {
 
   @summary("Create a refresh run")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "REFRESH_DATA" })
+  @apigen.ui("workspace.refresh.run")
   @apigen.command(#{
     audit: #{ required: true, successAction: "refresh.queued", guarantee: "best-effort" },
     failures: #[

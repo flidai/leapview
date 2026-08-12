@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/admin/storage"
 	"github.com/flidai/leapview/internal/admin/ui"
@@ -45,6 +46,7 @@ type ReadModel struct {
 	CSRFToken           CSRFTokenProvider
 	CurrentPrincipal    CurrentPrincipalProvider
 	Publications        PublicationProvider
+	AgentConfigCommand  uicommand.Binding
 	PublicationCommands map[string]uicommand.Binding
 	DefaultWorkspaceID  string
 	AuthConfigured      bool
@@ -93,6 +95,7 @@ func (m ReadModel) baseData(r *http.Request) ui.AdminData {
 		AuthConfigured:      m.AuthConfigured,
 		AccessConfigured:    m.AccessConfigured,
 		AccessStatusLabel:   "Configured",
+		AgentConfigCommand:  m.AgentConfigCommand,
 		PublicationCommands: m.PublicationCommands,
 	}
 	if principal, ok := m.currentPrincipal(r); ok {
@@ -177,6 +180,10 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		CSRFToken:    m.csrfToken(r),
 		UpdatePath:   "/admin/agent/config",
 		CanWrite:     true,
+	}
+	data.Revision, err = apigencommand.RevisionToken(details)
+	if err != nil {
+		return ui.AdminAgentData{}, err
 	}
 	for _, tool := range details.Tools {
 		data.Tools = append(data.Tools, ui.AdminAgentTool{

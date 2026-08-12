@@ -7,7 +7,10 @@ import (
 	"strings"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/Yacobolo/toolbelt/pagestream"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	refreshpresentation "github.com/flidai/leapview/internal/refresh/presentation"
 	refresh "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -34,6 +37,7 @@ type WorkspaceRefreshPresentation interface {
 type WorkspaceSupport struct {
 	Runs           func() (RunReader, error)
 	QueuePipeline  func(context.Context, refresh.QueuePipelineInput) (refresh.QueueAssetResult, error)
+	RunCreated     func(context.Context, refresh.RunRecord) error
 	Environment    func(*nethttp.Request) servingstate.Environment
 	PrincipalID    func(*nethttp.Request) string
 	DispatchQueued func()
@@ -66,7 +70,10 @@ func (s WorkspaceSupport) AssetRefreshState(ctx context.Context, workspaceID, en
 	if err != nil {
 		return refreshpresentation.AssetRefreshState{}, err
 	}
-	state := refreshpresentation.AssetRefreshState{Runs: uiRefreshRuns(runs)}
+	state := refreshpresentation.AssetRefreshState{
+		RunCommand: refreshgen.GenUIActionCreateRefreshRun(),
+		Runs:       uiRefreshRuns(runs),
+	}
 	pipelineID := strings.TrimPrefix(asset.Key, workspaceID+".")
 	if s.DataVersions != nil {
 		nextRun, ok, err := s.DataVersions.NextRun(ctx, workspaceID, environment, pipelineID)
@@ -109,22 +116,44 @@ func refreshPipelineModelID(asset workspace.AssetView) string {
 }
 
 func (s WorkspaceSupport) queueAssetRefreshWithPatches(r *nethttp.Request, workspaceID string, asset workspace.AssetView, assets []workspace.AssetView, edges []workspace.AssetEdgeView) error {
-	ctx := r.Context()
+	operationID := refreshgen.GenCommandOperationCreateRefreshRun()
+	contract, ok := refreshgen.GetAPIGenCommandRuntimeContract(operationID.APIGenOperationID())
+	if !ok {
+		return apigencommand.ErrContractNotFound
+	}
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	ctx, _, err := uicommand.BeginInvocation(r, refreshgen.GenUIActionCreateRefreshRun(), contract, apigencommand.Invocation{
+		TargetValues:   map[string]string{"workspace": strings.TrimSpace(workspaceID)},
+		IdempotencyKey: "ui:" + operationID.APIGenOperationID() + ":" + requestID,
+		RequestID:      requestID,
+		CorrelationID:  strings.TrimSpace(r.Header.Get("X-Correlation-ID")),
+	})
+	if err != nil {
+		return err
+	}
+	r = r.WithContext(ctx)
 	if s.QueuePipeline == nil {
 		return errors.New("workspace refresh service is required")
+	}
+	if s.RunCreated == nil {
+		return errors.New("generated refresh lifecycle completion is required")
 	}
 	environment := servingstate.DefaultEnvironment
 	if s.Environment != nil {
 		environment = s.Environment(r)
 	}
 	pipelineID := strings.TrimPrefix(asset.Key, workspaceID+".")
-	if _, err := s.QueuePipeline(ctx, refresh.QueuePipelineInput{
+	result, err := s.QueuePipeline(ctx, refresh.QueuePipelineInput{
 		WorkspaceID: workspaceID,
 		Environment: environment,
 		PrincipalID: s.principalID(r),
 		PipelineID:  pipelineID,
 		TriggerType: refresh.TriggerManual,
-	}); err != nil {
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.RunCreated(ctx, result.Run); err != nil {
 		return err
 	}
 	if s.DispatchQueued != nil {

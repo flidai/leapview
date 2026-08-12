@@ -578,45 +578,79 @@ func (h *Handler) GetAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	writeJSON(w, stdhttp.StatusOK, details)
 }
 
-func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	current, err := h.AdminDetails(r.Context())
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	if !etagMatches(r.Header.Get("If-Match"), agentResourceETag(current)) {
-		writeJSONError(w, fmt.Errorf("If-Match does not match the current agent configuration"), stdhttp.StatusPreconditionFailed)
-		return
-	}
-	var signals adminAgentCommandSignals
-	if err := pagestream.ReadSignals(r, &signals); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
-		return
-	}
-	systemPrompt := signals.SystemPrompt
-	if systemPrompt == "" {
-		systemPrompt = signals.AdminAgentCommand.SystemPrompt
-	}
-	prompt, err := agentconfig.NormalizeSystemPrompt(systemPrompt)
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
-		return
-	}
-	if h.options.Settings == nil {
-		writeJSONError(w, agent.ErrDisabled, stdhttp.StatusServiceUnavailable)
-		return
-	}
-	if err := h.options.Settings.UpsertSetting(r.Context(), agentconfig.SystemPromptSettingKey, prompt); err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
+func (h *Handler) GetAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	details, err := h.AdminDetails(r.Context())
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("ETag", agentResourceETag(details))
-	writeJSON(w, stdhttp.StatusOK, details)
+	writeJSON(w, stdhttp.StatusOK, agentgen.GenSchemaAgentConfigResponse{SystemPrompt: details.SystemPrompt})
+}
+
+func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var signals adminAgentCommandSignals
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
+		return
+	}
+	systemPrompt := signals.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = signals.AdminAgentCommand.SystemPrompt
+	}
+	ctx, err := beginUICommandInvocation(r, agentgen.GenUIActionUpdateAgentConfig(), nil, "", systemPrompt, "")
+	if err != nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
+		return
+	}
+	h.updateAgentConfig(w, r.WithContext(ctx), systemPrompt)
+}
+
+func (h *Handler) UpdateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var input api.AdminAgentConfigPatchRequest
+	if err := decodeAgentJSON(r, &input); err != nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
+		return
+	}
+	h.updateAgentConfig(w, r, input.SystemPrompt)
+}
+
+func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, systemPrompt string) {
+	current, err := h.AdminDetails(r.Context())
+	if err != nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", err))
+		return
+	}
+	executor, err := apigencommand.NewExecutor(agentgen.GetAPIGenCommandRuntimeContract, h.options.Logger)
+	if err != nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, err)
+		return
+	}
+	if err := executor.CheckConcurrency(r.Context(), updateAgentConfigOperation.APIGenOperationID(), r.Header.Get("If-Match"), agentResourceETag(current)); err != nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, err)
+		return
+	}
+	prompt, err := agentconfig.NormalizeSystemPrompt(systemPrompt)
+	if err != nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
+		return
+	}
+	if h.options.Settings == nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", agent.ErrDisabled))
+		return
+	}
+	if err := h.options.Settings.UpsertSetting(r.Context(), agentconfig.SystemPromptSettingKey, prompt); err != nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", err))
+		return
+	}
+	details, err := h.AdminDetails(r.Context())
+	if err != nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", err))
+		return
+	}
+	h.recordCommandAudit(r, updateAgentConfigOperation, h.chatScope(r), "agent_config", agentconfig.SystemPromptSettingKey)
+	w.Header().Set("ETag", agentResourceETag(details))
+	writeJSON(w, stdhttp.StatusOK, agentgen.GenSchemaAgentConfigResponse{SystemPrompt: details.SystemPrompt})
 }
 
 func agentResourceETag(value any) string {
@@ -625,16 +659,6 @@ func agentResourceETag(value any) string {
 		return ""
 	}
 	return token
-}
-
-func etagMatches(value, current string) bool {
-	for _, candidate := range strings.Split(value, ",") {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "*" || candidate == current {
-			return true
-		}
-	}
-	return false
 }
 
 func (h *Handler) AdminDetails(ctx context.Context) (api.AdminAgentResponse, error) {

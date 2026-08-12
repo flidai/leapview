@@ -1038,6 +1038,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			AuthorizeAnyWorkspace: routes.accessModule.AuthorizeAnyWorkspace,
 			Publications:          routes.dashboardModule,
+			AgentConfigCommand:    routes.agentModule.UICommandBindings().UpdateConfig,
 			PublicationCommands:   routes.dashboardModule.PublicationCommandBindings(),
 			DefaultWorkspaceID:    policy.defaultWorkspaceID,
 			AuthConfigured:        platform.auth != nil,

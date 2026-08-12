@@ -35,6 +35,7 @@ type AdminData struct {
 	QueryHistory          AdminQueryHistoryData
 	Publications          []AdminPublication
 	CanManagePublications bool
+	AgentConfigCommand    uicommand.Binding
 	PublicationCommands   map[string]uicommand.Binding
 	Profile               AdminProfile
 	ListFilter            string
@@ -62,6 +63,7 @@ type AdminAgentData struct {
 	Enabled      bool
 	Model        string
 	SystemPrompt string
+	Revision     string
 	CanWrite     bool
 	CSRFToken    string
 	UpdatePath   string
@@ -192,7 +194,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	}
 	if active == "agent" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.UncontractedMutationPatch("/admin/agent/config")),
+			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.CommandPatch(data.AgentConfigCommand, "/admin/agent/config", data.Agent.Revision)),
 		)
 	}
 	if active == "queries" {

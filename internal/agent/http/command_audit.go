@@ -15,6 +15,7 @@ import (
 )
 
 var (
+	updateAgentConfigOperation        = agentgen.GenCommandOperationUpdateAgentConfig()
 	createAgentConversationOperation  = agentgen.GenCommandOperationCreateAgentConversation()
 	archiveAgentConversationOperation = agentgen.GenCommandOperationArchiveAgentConversation()
 	updateAgentConversationOperation  = agentgen.GenCommandOperationUpdateAgentConversation()
@@ -134,9 +135,10 @@ func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, wor
 		TargetValues: map[string]string{
 			"conversation": strings.TrimSpace(target),
 		},
-		IdempotencyKey: idempotencyKey,
-		RequestID:      identity,
-		CorrelationID:  firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID"),
+		IdempotencyKey:   idempotencyKey,
+		ConcurrencyToken: firstNonEmptyHeader(r, "If-Match"),
+		RequestID:        identity,
+		CorrelationID:    firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID"),
 	}
 	var ctx context.Context
 	var err error
@@ -150,6 +152,8 @@ func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, wor
 
 func agentUIBinding(operationID agentgen.GenCommandOperationID) uicommand.Binding {
 	switch operationID.APIGenOperationID() {
+	case updateAgentConfigOperation.APIGenOperationID():
+		return agentgen.GenUIActionUpdateAgentConfig()
 	case createAgentConversationOperation.APIGenOperationID():
 		return agentgen.GenUIActionCreateAgentConversation()
 	case createAgentRunOperation.APIGenOperationID():

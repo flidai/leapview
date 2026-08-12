@@ -24,19 +24,12 @@ func EventPost(path string, signalPaths ...string) string {
 	return request("post", path, signalPaths, "")
 }
 
-// UncontractedMutationPatch is the migration boundary for remaining legacy UI
-// mutations that do not yet have an APIGen command contract. New
-// callers are rejected by the architecture test.
-func UncontractedMutationPatch(path string, signalPaths ...string) string {
-	return request("patch", path, signalPaths, "")
-}
-
-func UncontractedMutationPost(path string, signalPaths ...string) string {
-	return request("post", path, signalPaths, "")
-}
-
 func CommandPost(binding uicommand.Binding, path string, signalPaths ...string) string {
 	return request("post", path, signalPaths, jsString(binding.OperationID()))
+}
+
+func CommandPatch(binding uicommand.Binding, path, revision string, signalPaths ...string) string {
+	return requestWithHeaders("patch", path, signalPaths, "window.LeapViewCommand.headers("+jsString(binding.OperationID())+", "+jsString(revision)+")")
 }
 
 // CommandPostSwitch chooses one typed command from a closed server-shared set.
@@ -85,6 +78,10 @@ func request(method, path string, signalPaths []string, operationExpression stri
 	if strings.TrimSpace(operationExpression) != "" {
 		headers = "window.LeapViewCommand.headers(" + operationExpression + ")"
 	}
+	return requestWithHeaders(method, path, signalPaths, headers)
+}
+
+func requestWithHeaders(method, path string, signalPaths []string, headers string) string {
 	options := "headers: " + headers
 	if len(signalPaths) > 0 {
 		patterns := make([]string, 0, len(signalPaths))

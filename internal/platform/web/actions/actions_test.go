@@ -19,15 +19,15 @@ func TestRequestWithoutSignalFilter(t *testing.T) {
 	if got, want := Get("/search"), `@get('/search', {headers: window.LeapViewCommand.headers()})`; got != want {
 		t.Fatalf("Get() = %q, want %q", got, want)
 	}
-	if got, want := UncontractedMutationPatch("/api/config"), `@patch('/api/config', {headers: window.LeapViewCommand.headers()})`; got != want {
-		t.Fatalf("UncontractedMutationPatch() = %q, want %q", got, want)
-	}
 }
 
 func TestCommandRequestsCarryTypedGeneratedOperationIdentity(t *testing.T) {
 	binding := apigenui.MustAction("widget.create", "createWidget")
 	if got, want := CommandPost(binding, "/widgets", "widget"), `@post('/widgets', {filterSignals: {include: /^(?:widget)(?:[.]|$)/}, headers: window.LeapViewCommand.headers('createWidget')})`; got != want {
 		t.Fatalf("CommandPost() = %q, want %q", got, want)
+	}
+	if got, want := CommandPatch(binding, "/widgets", `"revision-1"`, "widget"), `@patch('/widgets', {filterSignals: {include: /^(?:widget)(?:[.]|$)/}, headers: window.LeapViewCommand.headers('createWidget', '"revision-1"')})`; got != want {
+		t.Fatalf("CommandPatch() = %q, want %q", got, want)
 	}
 
 	switchRequest := CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{
