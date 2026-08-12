@@ -132,6 +132,22 @@ model RoleBindingCreatedAuditPayload {
   surface: string;
 }
 
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "ROLE_BINDING_INVALID",
+  publicDetail: "The role binding request is invalid.",
+})
+model RoleBindingInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "ROLE_BINDING_NOT_FOUND",
+  publicDetail: "Role binding not found.",
+})
+model RoleBindingNotFoundFailure {}
+
 // Durable, typed payloads for Access command audit records.  Every field is
 // required so the generated encoder can reject incomplete audit events before
 // they reach the repository.
@@ -815,66 +831,43 @@ alias UpdateRoleBindingOK = OkJson<RoleBindingResponse>;
 
 @tag("Access")
 @route("/workspaces/{workspace}/role-bindings")
+@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
+@apigen.auditPayload(RoleBindingAuditPayload)
 interface RoleBindings {
   @summary("List role bindings")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("listRoleBindings")
   listRoleBindings(@path workspace: string, @query subjectType?: string, @query subjectId?: string, @query role?: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListRoleBindingsOK | CommonErrors;
 
   @summary("Create a role binding")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.ui("workspace.access.role-binding.create")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "role_binding.created", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "ROLE_BINDING_INVALID", publicDetail: "The role binding request is invalid." },
-    ],
-  })
+  @apigen.failsWith(RoleBindingInvalidFailure)
+  @apigen.command(#{ auditAction: "role_binding.created" })
   @apigen.auditPayload(RoleBindingCreatedAuditPayload)
-  @operationId("createRoleBinding")
   createRoleBinding(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingRequest): CreateRoleBindingCreated | CommonErrors;
 
   @summary("Get a workspace role binding")
   @route("/{binding}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("getRoleBinding")
   getRoleBinding(@path workspace: string, @path binding: string): OkJson<RoleBindingResponse> | CommonErrors;
 
   @summary("Delete a role binding")
   @route("/{binding}")
   @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.ui("workspace.access.role-binding.delete")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "role_binding.deleted", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "ROLE_BINDING_NOT_FOUND", publicDetail: "Role binding not found." },
-      #{ kind: "invalid", statusCode: 400, code: "ROLE_BINDING_INVALID", publicDetail: "The role binding request is invalid." },
-    ],
-    targetParameter: "workspace",
-  })
-  @apigen.auditPayload(RoleBindingAuditPayload)
-  @operationId("deleteRoleBinding")
-  deleteRoleBinding(@path workspace: string, @path binding: string): EmptyResponse | CommonErrors;
+  @apigen.failsWith(RoleBindingNotFoundFailure)
+  @apigen.failsWith(RoleBindingInvalidFailure)
+  @apigen.command(#{ auditAction: "role_binding.deleted" })
+  deleteRoleBinding(@path @apigen.target workspace: string, @path binding: string): EmptyResponse | CommonErrors;
 
   @summary("Update a role binding")
   @route("/{binding}")
   @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.ui("workspace.access.role-binding.update")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "role_binding.updated", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "ROLE_BINDING_NOT_FOUND", publicDetail: "Role binding not found." },
-    ],
-    targetParameter: "workspace",
-  })
-  @apigen.auditPayload(RoleBindingAuditPayload)
-  @operationId("updateRoleBinding")
-  updateRoleBinding(@path workspace: string, @path binding: string, @header("If-Match") ifMatch: string, @body body: RoleBindingRequest): UpdateRoleBindingOK | CommonErrors;
+  @apigen.failsWith(RoleBindingNotFoundFailure)
+  @apigen.command(#{ auditAction: "role_binding.updated" })
+  updateRoleBinding(@path @apigen.target workspace: string, @path binding: string, @header("If-Match") ifMatch: string, @body body: RoleBindingRequest): UpdateRoleBindingOK | CommonErrors;
 }
 
 alias ListWorkspaceRolesOK = OkJson<RoleListResponse>;

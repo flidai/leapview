@@ -1,4 +1,4 @@
-import type { DecoratorContext, Enum, Model, ModelProperty, Namespace, Operation } from "@typespec/compiler";
+import type { DecoratorContext, Enum, Interface, Model, ModelProperty, Namespace, Operation } from "@typespec/compiler";
 export interface CLIArg {
     source: "path" | "query" | "body";
     name: string;
@@ -46,6 +46,15 @@ export interface AsyncExecutionOptions {
     eventsOperation: string;
     cancellation: "supported" | "unsupported";
 }
+export interface TypedAsyncExecutionOptions {
+    mode?: "async";
+    guarantee: "transactional";
+    jobKind: string;
+    resourceKind: string;
+    initialEvent: string;
+    initialState: string;
+    cancellation: "supported" | "unsupported";
+}
 export interface CommandFailureOptions {
     kind: string;
     statusCode: number;
@@ -53,11 +62,23 @@ export interface CommandFailureOptions {
     publicDetail: string;
 }
 export interface CommandOptions {
-    audit: AuditOptions;
+    audit?: AuditOptions;
+    auditAction?: string;
+    guarantee?: "transactional" | "best-effort";
     execution?: AsyncExecutionOptions;
-    failures: CommandFailureOptions[];
+    failures?: CommandFailureOptions[];
     additionalExposures?: Array<"ui" | "agent" | "automation">;
     targetParameter?: string;
+}
+export interface CommandDefaultsOptions {
+    guarantee?: "transactional" | "best-effort";
+    failures?: CommandFailureOptions[];
+    additionalExposures?: Array<"ui" | "agent" | "automation">;
+}
+export interface TypedAsyncExecutionDefinition {
+    status: Operation;
+    events: Operation;
+    options: TypedAsyncExecutionOptions;
 }
 export interface ResponseShapeOptions {
     kind: "wrapped_json";
@@ -123,8 +144,10 @@ export interface ToolOptions {
 }
 export declare function $cli(context: DecoratorContext, target: Operation, options: CLIOptions): void;
 export declare function $command(context: DecoratorContext, target: Operation, options: CommandOptions): void;
+export declare function $commandDefaults(context: DecoratorContext, target: Interface, options: CommandDefaultsOptions): void;
+export declare function $unaudited(context: DecoratorContext, target: Operation, reason: string): void;
 export declare function $ui(context: DecoratorContext, target: Operation, actionId: string): void;
-export declare function $auditPayload(context: DecoratorContext, target: Operation, schema: Model, options?: AuditPayloadOptions): void;
+export declare function $auditPayload(context: DecoratorContext, target: Operation | Interface, schema: Model, options?: AuditPayloadOptions): void;
 export declare function $auditSchema(context: DecoratorContext, target: Model, options: AuditPayloadOptions): void;
 export declare function $sensitivity(context: DecoratorContext, target: ModelProperty, classification: AuditSensitivity): void;
 export declare function $auditPublic(context: DecoratorContext, target: ModelProperty): void;
@@ -132,7 +155,11 @@ export declare function $auditInternal(context: DecoratorContext, target: ModelP
 export declare function $auditPii(context: DecoratorContext, target: ModelProperty): void;
 export declare function $auditSecret(context: DecoratorContext, target: ModelProperty): void;
 export declare function $query(context: DecoratorContext, target: Operation): void;
-export declare function $authz(context: DecoratorContext, target: Operation, value: unknown): void;
+export declare function $authz(context: DecoratorContext, target: Operation | Interface, value: unknown): void;
+export declare function $target(context: DecoratorContext, target: ModelProperty): void;
+export declare function $asyncExecution(context: DecoratorContext, target: Operation, status: Operation, events: Operation, options: TypedAsyncExecutionOptions): void;
+export declare function $failureDefinition(context: DecoratorContext, target: Model, options: CommandFailureOptions): void;
+export declare function $failsWith(context: DecoratorContext, target: Operation, definition: Model): void;
 export declare function $manual(context: DecoratorContext, target: Operation): void;
 export declare function $responseShape(context: DecoratorContext, target: Model, options: ResponseShapeOptions): void;
 export declare function $package(context: DecoratorContext, target: Namespace, options: PackageOptions): void;
@@ -144,6 +171,8 @@ export declare const $decorators: {
     apigen: {
         cli: typeof $cli;
         command: typeof $command;
+        commandDefaults: typeof $commandDefaults;
+        unaudited: typeof $unaudited;
         ui: typeof $ui;
         auditPayload: typeof $auditPayload;
         auditSchema: typeof $auditSchema;
@@ -154,6 +183,10 @@ export declare const $decorators: {
         auditSecret: typeof $auditSecret;
         query: typeof $query;
         authz: typeof $authz;
+        target: typeof $target;
+        asyncExecution: typeof $asyncExecution;
+        failureDefinition: typeof $failureDefinition;
+        failsWith: typeof $failsWith;
         manual: typeof $manual;
         responseShape: typeof $responseShape;
         package: typeof $package;
@@ -168,7 +201,19 @@ export declare function getCLI(context: {
 }, target: Operation): CLIOptions | undefined;
 export declare function getCommand(context: {
     program: DecoratorContext["program"];
+}, target: Operation): (CommandOptions & {
+    audit: AuditOptions;
+    failures: CommandFailureOptions[];
+}) | undefined;
+export declare function getAuthoredCommand(context: {
+    program: DecoratorContext["program"];
 }, target: Operation): CommandOptions | undefined;
+export declare function getCommandDefaults(context: {
+    program: DecoratorContext["program"];
+}, target: Interface): CommandDefaultsOptions | undefined;
+export declare function getUnauditedReason(context: {
+    program: DecoratorContext["program"];
+}, target: Operation): string | undefined;
 export declare function getUI(context: {
     program: DecoratorContext["program"];
 }, target: Operation): string | undefined;
@@ -187,6 +232,18 @@ export declare function isQuery(context: {
 export declare function getAuthz(context: {
     program: DecoratorContext["program"];
 }, target: Operation): any;
+export declare function isTarget(context: {
+    program: DecoratorContext["program"];
+}, target: ModelProperty): boolean;
+export declare function getAsyncExecution(context: {
+    program: DecoratorContext["program"];
+}, target: Operation): TypedAsyncExecutionDefinition | undefined;
+export declare function getNamedFailures(context: {
+    program: DecoratorContext["program"];
+}, target: Operation): {
+    model: Model;
+    options: CommandFailureOptions | undefined;
+}[];
 export declare function isManual(context: {
     program: DecoratorContext["program"];
 }, target: Operation): boolean;

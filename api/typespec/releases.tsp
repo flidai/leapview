@@ -231,8 +231,17 @@ interface Releases {
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
   @extension("x-leapview-object-scope", "project-environment")
+  @apigen.asyncExecution(Releases.getRelease, Releases.listReleaseEvents, #{
+    guarantee: "transactional",
+    jobKind: "release.finalize",
+    resourceKind: "release",
+    initialEvent: "release.validating",
+    initialState: "validating",
+    cancellation: "unsupported",
+  })
   @apigen.command(#{
-    audit: #{ required: true, successAction: "release.validating", guarantee: "transactional" },
+    auditAction: "release.validating",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "conflict", statusCode: 409, code: "RELEASE_CONFLICT", publicDetail: "The release conflicts with its current state." },
       #{ kind: "immutable", statusCode: 409, code: "RELEASE_IMMUTABLE", publicDetail: "The release is immutable." },
@@ -240,22 +249,9 @@ interface Releases {
       #{ kind: "not_found", statusCode: 404, code: "RELEASE_NOT_FOUND", publicDetail: "Release not found." },
       #{ kind: "queue_unavailable", statusCode: 503, code: "ASYNC_QUEUE_UNAVAILABLE", publicDetail: "Release finalization could not be queued." },
     ],
-    execution: #{
-      mode: "async",
-      guarantee: "transactional",
-      jobKind: "release.finalize",
-      resourceKind: "release",
-      initialEvent: "release.validating",
-      initialState: "validating",
-      statusOperation: "getRelease",
-      eventsOperation: "listReleaseEvents",
-      cancellation: "unsupported",
-    },
-    targetParameter: "project",
   })
   @apigen.auditPayload(ReleaseValidatingAuditPayload)
-  @operationId("finalizeRelease")
-  finalizeRelease(@path project: string, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
+  finalizeRelease(@path @apigen.target project: string, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
 
   @summary("List or stream release events")
   @route("/{release}/events")
