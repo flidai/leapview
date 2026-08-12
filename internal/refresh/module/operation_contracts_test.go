@@ -26,13 +26,16 @@ func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 			contract.Command.Target == nil ||
 			contract.Command.Target.Parameter != "workspace" ||
 			contract.Command.Target.Type != "workspace" ||
-			contract.Command.Privilege != "USE_WORKSPACE" ||
 			contract.Command.Idempotency != "required" ||
-			len(contract.Command.AdditionalExposures) != 0 {
+			(operationID == "createRefreshRun" && contract.Command.Privilege != "REFRESH_DATA") ||
+			(operationID == "cancelRefreshRun" && contract.Command.Privilege != "USE_WORKSPACE") {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
 	}
 	create := contracts["createRefreshRun"].Command
+	if create.UI == nil || create.UI.ActionID != "workspace.refresh.run" || len(create.AdditionalExposures) != 1 || string(create.AdditionalExposures[0]) != "ui" {
+		t.Errorf("create refresh UI contract = %#v", create)
+	}
 	if create.Execution == nil || create.Execution.Guarantee != "transactional" ||
 		create.Execution.JobKind != "refresh_pipeline" || create.Execution.ResourceKind != "refresh" ||
 		create.Execution.InitialEvent != refreshQueuedAuditAction || create.Execution.InitialState != "queued" ||

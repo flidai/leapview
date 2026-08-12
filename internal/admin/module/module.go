@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"net/http"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
@@ -31,7 +30,7 @@ type PublicationService interface {
 	AllPublications(context.Context) ([]publication.Publication, error)
 	PublicationEvents(context.Context, string) ([]publication.Event, error)
 	PublicationDTO(publication.Publication) dashboardapi.PublicationResponse
-	MutatePublicationWithInvocation(context.Context, string, string, string, publication.Action, apigencommand.Invocation) (publication.Publication, error)
+	MutatePublicationWithInvocation(context.Context, string, string, string, publication.Action, publication.CommandInvocation) (publication.Publication, error)
 }
 
 // Principal is the authenticated identity information needed by platform
@@ -99,6 +98,7 @@ type Config struct {
 	CurrentCredential     func(*http.Request) (access.APICredential, bool)
 	AuthorizeAnyWorkspace func(context.Context, string, *access.APICredential, access.Privilege) (bool, error)
 	Publications          PublicationService
+	AgentConfigCommand    uicommand.Binding
 	PublicationCommands   map[string]uicommand.Binding
 	DefaultWorkspaceID    string
 	AuthConfigured        bool
@@ -110,6 +110,7 @@ type Config struct {
 	Broker                *pagestream.Broker
 	Product               *product.Service
 	ProductCommands       product.CommandExecutor
+	ProductUICommands     productsettings.CommandContract
 	ProductCommandFailure product.CommandFailureWriter
 	ProductStatus         product.Status
 	SettingsAccess        SettingsAccess
@@ -130,13 +131,14 @@ type Module struct {
 	publications          PublicationService
 	product               *product.Handler
 	publicationCommands   map[string]uicommand.Binding
+	productCommands       productsettings.CommandContract
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		access: config.Access, currentPrincipal: config.CurrentPrincipal,
 		currentCredential: config.CurrentCredential, authorizeAnyWorkspace: config.AuthorizeAnyWorkspace,
-		publications: config.Publications, publicationCommands: config.PublicationCommands,
+		publications: config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
 	}
 	readModel := adminhttp.ReadModel{
 		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
@@ -156,7 +158,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			}, ok
 		},
 		Publications:        m.adminPublications,
+		AgentConfigCommand:  config.AgentConfigCommand,
 		PublicationCommands: config.PublicationCommands,
+		ProductCommands:     config.ProductUICommands.Bindings,
 		DefaultWorkspaceID:  config.DefaultWorkspaceID, AuthConfigured: config.AuthConfigured,
 		AccessConfigured: config.AccessConfigured,
 	}
@@ -198,6 +202,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				principal, ok := config.CurrentPrincipal(r)
 				return product.Principal{ID: principal.ID}, ok
 			},
+			Commands: config.ProductUICommands,
 		})
 		if err != nil {
 			return nil, err

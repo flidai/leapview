@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	accessuiaction "github.com/flidai/leapview/internal/access/uiaction"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	workspaceview "github.com/flidai/leapview/internal/workspace"
 	catalog "github.com/flidai/leapview/internal/workspace/navigation"
 	uisignals "github.com/flidai/leapview/internal/workspace/ui/signals"
@@ -1132,11 +1132,11 @@ func testWorkspaceAccess(workspace workspaceview.WorkspaceView, canManage bool) 
 
 func testAccessCommandBindings() AccessCommandBindings {
 	return AccessCommandBindings{
-		CreateRoleBinding: accessuiaction.CreateRoleBinding,
-		UpdateRoleBinding: accessuiaction.UpdateRoleBinding,
-		DeleteRoleBinding: accessuiaction.DeleteRoleBinding,
-		CreateGrant:       accessuiaction.CreateGrant,
-		DeleteGrant:       accessuiaction.DeleteGrant,
+		CreateRoleBinding: accessgen.GenUIActionCreateRoleBinding(),
+		UpdateRoleBinding: accessgen.GenUIActionUpdateRoleBinding(),
+		DeleteRoleBinding: accessgen.GenUIActionDeleteRoleBinding(),
+		CreateGrant:       accessgen.GenUIActionCreateGrant(),
+		DeleteGrant:       accessgen.GenUIActionDeleteGrant(),
 	}
 }
 

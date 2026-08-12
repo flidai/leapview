@@ -315,8 +315,8 @@ namespace Analytics {
 		namespaces[endpoint.OperationID] = endpoint.Namespace
 	}
 	require.Equal(t, map[string]string{
-		"Access_getCurrentPrincipal": "PartitionedAPI.Access",
-		"Reports_listReports":        "PartitionedAPI.Analytics.Reports",
+		"getCurrentPrincipal": "PartitionedAPI.Access",
+		"listReports":         "PartitionedAPI.Analytics.Reports",
 	}, namespaces)
 	require.FileExists(t, openAPIPath)
 }

@@ -110,7 +110,6 @@ alias PublicInstanceErrors = BadRequest | RateLimited | InternalServerError | Se
 @route("/instance")
 @get
 @apigen.authz(#{ mode: "none" })
-@operationId("getInstance")
 op getInstance(): OkJson<InstanceResponse> | PublicInstanceErrors;
 
 @tag("Instance")
@@ -120,7 +119,6 @@ op getInstance(): OkJson<InstanceResponse> | PublicInstanceErrors;
 @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
 @apigen.manual
 @extension("x-leapview-object-scope", "platform")
-@operationId("getProductSettings")
 op getProductSettings(): ProductSettingsOK | CommonErrors;
 
 @tag("Instance")
@@ -130,7 +128,8 @@ op getProductSettings(): ProductSettingsOK | CommonErrors;
 @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
 @apigen.manual
 @apigen.command(#{
-  audit: #{ required: true, successAction: "product.identity.updated", guarantee: "transactional" },
+  auditAction: "product.identity.updated",
+  guarantee: "transactional",
   failures: #[
     #{ kind: "invalid", statusCode: 422, code: "INVALID_PRODUCT_IDENTITY", publicDetail: "The product identity is invalid." },
     #{ kind: "precondition", statusCode: 412, code: "PRODUCT_IDENTITY_PRECONDITION_FAILED", publicDetail: "The product identity changed before this request was applied." },
@@ -138,8 +137,26 @@ op getProductSettings(): ProductSettingsOK | CommonErrors;
 })
 @apigen.auditPayload(ProductIdentityUpdatedAuditPayload)
 @extension("x-leapview-object-scope", "platform")
-@operationId("updateProductSettings")
+@apigen.ui("product-settings.identity.update")
 op updateProductSettings(@header("If-Match") ifMatch: string, @body body: ProductSettingsPatchRequest): ProductSettingsOK | CommonErrors;
+
+@tag("Instance")
+@summary("Reset mutable product identity to its defaults")
+@route("/instance/settings/reset")
+@post
+@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.manual
+@apigen.command(#{
+  auditAction: "product.identity.reset",
+  guarantee: "transactional",
+  failures: #[
+    #{ kind: "precondition", statusCode: 412, code: "PRODUCT_IDENTITY_PRECONDITION_FAILED", publicDetail: "The product identity changed before this request was applied." },
+  ],
+})
+@apigen.auditPayload(ProductIdentityUpdatedAuditPayload)
+@extension("x-leapview-object-scope", "platform")
+@apigen.ui("product-settings.identity.reset")
+op resetProductSettings(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): ProductSettingsOK | CommonErrors;
 
 @tag("Instance")
 @summary("Upload the product logo")
@@ -148,7 +165,8 @@ op updateProductSettings(@header("If-Match") ifMatch: string, @body body: Produc
 @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
 @apigen.manual
 @apigen.command(#{
-  audit: #{ required: true, successAction: "product.logo.updated", guarantee: "transactional" },
+  auditAction: "product.logo.updated",
+  guarantee: "transactional",
   failures: #[
     #{ kind: "invalid", statusCode: 422, code: "INVALID_PRODUCT_LOGO", publicDetail: "The product logo is invalid." },
     #{ kind: "precondition", statusCode: 412, code: "PRODUCT_IDENTITY_PRECONDITION_FAILED", publicDetail: "The product identity changed before this request was applied." },
@@ -156,7 +174,7 @@ op updateProductSettings(@header("If-Match") ifMatch: string, @body body: Produc
 })
 @apigen.auditPayload(ProductLogoUpdatedAuditPayload)
 @extension("x-leapview-object-scope", "platform")
-@operationId("uploadProductLogo")
+@apigen.ui("product-settings.logo.upload")
 op uploadProductLogo(@header("If-Match") ifMatch: string, @header contentType: string, @body body: bytes): ProductSettingsOK | CommonErrors;
 
 @tag("Instance")
@@ -166,14 +184,15 @@ op uploadProductLogo(@header("If-Match") ifMatch: string, @header contentType: s
 @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
 @apigen.manual
 @apigen.command(#{
-  audit: #{ required: true, successAction: "product.logo.deleted", guarantee: "transactional" },
+  auditAction: "product.logo.deleted",
+  guarantee: "transactional",
   failures: #[
     #{ kind: "precondition", statusCode: 412, code: "PRODUCT_IDENTITY_PRECONDITION_FAILED", publicDetail: "The product identity changed before this request was applied." },
   ],
 })
 @apigen.auditPayload(ProductLogoDeletedAuditPayload)
 @extension("x-leapview-object-scope", "platform")
-@operationId("deleteProductLogo")
+@apigen.ui("product-settings.logo.delete")
 op deleteProductLogo(@header("If-Match") ifMatch: string): ProductSettingsOK | CommonErrors;
 
 @tag("Instance")
@@ -183,7 +202,6 @@ op deleteProductLogo(@header("If-Match") ifMatch: string): ProductSettingsOK | C
 @apigen.authz(#{ mode: "authenticated" })
 @apigen.manual
 @extension("x-leapview-object-scope", "platform")
-@operationId("getProductLogo")
 op getProductLogo(@path digest: string): ProductLogoImageResponse | CommonErrors;
 
 @tag("Instance")
@@ -193,7 +211,6 @@ op getProductLogo(@path digest: string): ProductLogoImageResponse | CommonErrors
 @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
 @apigen.manual
 @extension("x-leapview-object-scope", "platform")
-@operationId("getProductAuthenticationStatus")
 op getProductAuthenticationStatus(): OkJson<ProductAuthenticationStatusResponse> | CommonErrors;
 
 @tag("Instance")
@@ -203,7 +220,6 @@ op getProductAuthenticationStatus(): OkJson<ProductAuthenticationStatusResponse>
 @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
 @apigen.manual
 @extension("x-leapview-object-scope", "platform")
-@operationId("getProductSystemStatus")
 op getProductSystemStatus(): OkJson<ProductSystemStatusResponse> | CommonErrors;
 
 @tag("Instance")
@@ -213,5 +229,4 @@ op getProductSystemStatus(): OkJson<ProductSystemStatusResponse> | CommonErrors;
 @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
 @apigen.manual
 @extension("x-leapview-object-scope", "platform")
-@operationId("getProductAPIStatus")
 op getProductAPIStatus(): OkJson<ProductAPIStatusResponse> | CommonErrors;

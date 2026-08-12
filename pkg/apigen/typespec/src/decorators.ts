@@ -1,4 +1,4 @@
-import type { DecoratorContext, Enum, Model, ModelProperty, Namespace, Operation } from "@typespec/compiler";
+import type { DecoratorContext, Enum, Interface, Model, ModelProperty, Namespace, Operation } from "@typespec/compiler";
 
 import { reportDiagnostic } from "./lib.js";
 
@@ -58,6 +58,16 @@ export interface AsyncExecutionOptions {
   cancellation: "supported" | "unsupported";
 }
 
+export interface TypedAsyncExecutionOptions {
+  mode?: "async";
+  guarantee: "transactional";
+  jobKind: string;
+  resourceKind: string;
+  initialEvent: string;
+  initialState: string;
+  cancellation: "supported" | "unsupported";
+}
+
 export interface CommandFailureOptions {
   kind: string;
   statusCode: number;
@@ -66,11 +76,25 @@ export interface CommandFailureOptions {
 }
 
 export interface CommandOptions {
-  audit: AuditOptions;
+  audit?: AuditOptions;
+  auditAction?: string;
+  guarantee?: "transactional" | "best-effort";
   execution?: AsyncExecutionOptions;
-  failures: CommandFailureOptions[];
+  failures?: CommandFailureOptions[];
   additionalExposures?: Array<"ui" | "agent" | "automation">;
   targetParameter?: string;
+}
+
+export interface CommandDefaultsOptions {
+  guarantee?: "transactional" | "best-effort";
+  failures?: CommandFailureOptions[];
+  additionalExposures?: Array<"ui" | "agent" | "automation">;
+}
+
+export interface TypedAsyncExecutionDefinition {
+  status: Operation;
+  events: Operation;
+  options: TypedAsyncExecutionOptions;
 }
 
 export interface ResponseShapeOptions {
@@ -135,11 +159,18 @@ export interface ToolOptions {
 
 const cliKey = Symbol.for("@yacobolo/apigen.cli");
 const commandKey = Symbol.for("@yacobolo/apigen.command");
+const commandDefaultsKey = Symbol.for("@yacobolo/apigen.commandDefaults");
+const unauditedKey = Symbol.for("@yacobolo/apigen.unaudited");
+const uiKey = Symbol.for("@yacobolo/apigen.ui");
 const auditPayloadKey = Symbol.for("@yacobolo/apigen.auditPayload");
 const auditSchemaKey = Symbol.for("@yacobolo/apigen.auditSchema");
 const sensitivityKey = Symbol.for("@yacobolo/apigen.sensitivity");
 const queryKey = Symbol.for("@yacobolo/apigen.query");
 const authzKey = Symbol.for("@yacobolo/apigen.authz");
+const targetKey = Symbol.for("@yacobolo/apigen.target");
+const asyncExecutionKey = Symbol.for("@yacobolo/apigen.asyncExecution");
+const failureDefinitionKey = Symbol.for("@yacobolo/apigen.failureDefinition");
+const failsWithKey = Symbol.for("@yacobolo/apigen.failsWith");
 const manualKey = Symbol.for("@yacobolo/apigen.manual");
 const responseShapeKey = Symbol.for("@yacobolo/apigen.responseShape");
 const packageKey = Symbol.for("@yacobolo/apigen.package");
@@ -153,12 +184,45 @@ export function $cli(context: DecoratorContext, target: Operation, options: CLIO
 }
 
 export function $command(context: DecoratorContext, target: Operation, options: CommandOptions) {
+  if (options.audit && (options.auditAction !== undefined || options.guarantee !== undefined)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-command",
+      format: { reason: "use legacy audit or concise auditAction/guarantee syntax, not both" },
+      target,
+    });
+    return;
+  }
   context.program.stateMap(commandKey).set(target, options);
+}
+
+export function $commandDefaults(
+  context: DecoratorContext,
+  target: Interface,
+  options: CommandDefaultsOptions,
+) {
+  context.program.stateMap(commandDefaultsKey).set(target, options);
+}
+
+export function $unaudited(context: DecoratorContext, target: Operation, reason: string) {
+  context.program.stateMap(unauditedKey).set(target, reason);
+}
+
+export function $ui(context: DecoratorContext, target: Operation, actionId: string) {
+  const actions = context.program.stateMap(uiKey);
+  if (actions.has(target)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-command",
+      format: { reason: "@apigen.ui must not be applied more than once" },
+      target,
+    });
+    return;
+  }
+  actions.set(target, actionId);
 }
 
 export function $auditPayload(
   context: DecoratorContext,
-  target: Operation,
+  target: Operation | Interface,
   schema: Model,
   options?: AuditPayloadOptions,
 ) {
@@ -236,8 +300,61 @@ export function $query(context: DecoratorContext, target: Operation) {
   context.program.stateSet(queryKey).add(target);
 }
 
-export function $authz(context: DecoratorContext, target: Operation, value: unknown) {
+export function $authz(context: DecoratorContext, target: Operation | Interface, value: unknown) {
   context.program.stateMap(authzKey).set(target, value);
+}
+
+export function $target(context: DecoratorContext, target: ModelProperty) {
+  context.program.stateSet(targetKey).add(target);
+}
+
+export function $asyncExecution(
+  context: DecoratorContext,
+  target: Operation,
+  status: Operation,
+  events: Operation,
+  options: TypedAsyncExecutionOptions,
+) {
+  context.program.stateMap(asyncExecutionKey).set(target, { status, events, options });
+}
+
+export function $failureDefinition(
+  context: DecoratorContext,
+  target: Model,
+  options: CommandFailureOptions,
+) {
+  const definitions = context.program.stateMap(failureDefinitionKey);
+  if (definitions.has(target)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-command",
+      format: { reason: "@apigen.failureDefinition must not be applied more than once" },
+      target,
+    });
+    return;
+  }
+  for (const [model, authored] of definitions.entries() as Iterable<[Model, CommandFailureOptions]>) {
+    if (authored.code === options.code && (
+      authored.kind !== options.kind ||
+      authored.statusCode !== options.statusCode ||
+      authored.publicDetail !== options.publicDetail
+    )) {
+      reportDiagnostic(context.program, {
+        code: "invalid-command",
+        format: {
+          reason: `failure code ${JSON.stringify(options.code)} conflicts with definition ${JSON.stringify(model.name)}`,
+        },
+        target,
+      });
+      return;
+    }
+  }
+  definitions.set(target, options);
+}
+
+export function $failsWith(context: DecoratorContext, target: Operation, definition: Model) {
+  const definitions = context.program.stateMap(failsWithKey);
+  const current = (definitions.get(target) as Model[] | undefined) ?? [];
+  definitions.set(target, [...current, definition]);
 }
 
 export function $manual(context: DecoratorContext, target: Operation) {
@@ -289,6 +406,9 @@ export const $decorators = {
   apigen: {
     cli: $cli,
     command: $command,
+    commandDefaults: $commandDefaults,
+    unaudited: $unaudited,
+    ui: $ui,
     auditPayload: $auditPayload,
     auditSchema: $auditSchema,
     sensitivity: $sensitivity,
@@ -298,6 +418,10 @@ export const $decorators = {
     auditSecret: $auditSecret,
     query: $query,
     authz: $authz,
+    target: $target,
+    asyncExecution: $asyncExecution,
+    failureDefinition: $failureDefinition,
+    failsWith: $failsWith,
     manual: $manual,
     responseShape: $responseShape,
     package: $package,
@@ -313,11 +437,55 @@ export function getCLI(context: { program: DecoratorContext["program"] }, target
 }
 
 export function getCommand(context: { program: DecoratorContext["program"] }, target: Operation) {
+  const authored = context.program.stateMap(commandKey).get(target) as CommandOptions | undefined;
+  if (!authored) {
+    return undefined;
+  }
+  const defaults = target.interface
+    ? context.program.stateMap(commandDefaultsKey).get(target.interface) as CommandDefaultsOptions | undefined
+    : undefined;
+  const audit = authored.audit ?? {
+    required: context.program.stateMap(unauditedKey).has(target) ? false : true,
+    successAction: authored.auditAction,
+    guarantee: authored.guarantee ?? defaults?.guarantee,
+  };
+  return {
+    ...authored,
+    audit: {
+      ...audit,
+      guarantee: audit.guarantee ?? defaults?.guarantee,
+    },
+    failures: authored.failures ?? defaults?.failures ?? [],
+    additionalExposures: authored.additionalExposures ?? defaults?.additionalExposures,
+  } as CommandOptions & { audit: AuditOptions; failures: CommandFailureOptions[] };
+}
+
+export function getAuthoredCommand(context: { program: DecoratorContext["program"] }, target: Operation) {
   return context.program.stateMap(commandKey).get(target) as CommandOptions | undefined;
 }
 
+export function getCommandDefaults(
+  context: { program: DecoratorContext["program"] },
+  target: Interface,
+) {
+  return context.program.stateMap(commandDefaultsKey).get(target) as CommandDefaultsOptions | undefined;
+}
+
+export function getUnauditedReason(
+  context: { program: DecoratorContext["program"] },
+  target: Operation,
+) {
+  return context.program.stateMap(unauditedKey).get(target) as string | undefined;
+}
+
+export function getUI(context: { program: DecoratorContext["program"] }, target: Operation) {
+  return context.program.stateMap(uiKey).get(target) as string | undefined;
+}
+
 export function getAuditPayload(context: { program: DecoratorContext["program"] }, target: Operation) {
-  return context.program.stateMap(auditPayloadKey).get(target) as AuditPayloadDefinition | undefined;
+  return (context.program.stateMap(auditPayloadKey).get(target) ??
+    (target.interface ? context.program.stateMap(auditPayloadKey).get(target.interface) : undefined)) as
+    AuditPayloadDefinition | undefined;
 }
 
 export function getAuditSchema(context: { program: DecoratorContext["program"] }, target: Model) {
@@ -336,7 +504,30 @@ export function isQuery(context: { program: DecoratorContext["program"] }, targe
 }
 
 export function getAuthz(context: { program: DecoratorContext["program"] }, target: Operation) {
-  return context.program.stateMap(authzKey).get(target);
+  return context.program.stateMap(authzKey).get(target) ??
+    (target.interface ? context.program.stateMap(authzKey).get(target.interface) : undefined);
+}
+
+export function isTarget(context: { program: DecoratorContext["program"] }, target: ModelProperty) {
+  return context.program.stateSet(targetKey).has(target);
+}
+
+export function getAsyncExecution(
+  context: { program: DecoratorContext["program"] },
+  target: Operation,
+) {
+  return context.program.stateMap(asyncExecutionKey).get(target) as TypedAsyncExecutionDefinition | undefined;
+}
+
+export function getNamedFailures(
+  context: { program: DecoratorContext["program"] },
+  target: Operation,
+) {
+  const models = context.program.stateMap(failsWithKey).get(target) as Model[] | undefined;
+  return (models ?? []).map((model) => ({
+    model,
+    options: context.program.stateMap(failureDefinitionKey).get(model) as CommandFailureOptions | undefined,
+  }));
 }
 
 export function isManual(context: { program: DecoratorContext["program"] }, target: Operation) {

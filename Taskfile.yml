@@ -198,6 +198,7 @@ tasks:
       - bun run test:primer-alignment
       - bun run test:theme
       - bun run test:datastar-lit
+      - bun run test:ui-command-boundaries
       - bun run test:app-shell
       - bun run typecheck:app
       - bun run typecheck:contracts

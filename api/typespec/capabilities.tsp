@@ -70,5 +70,4 @@ model CapabilitiesResponse {
 @route("/capabilities")
 @get
 @apigen.authz(#{ mode: "authenticated" })
-@operationId("getCapabilities")
 op getCapabilities(): OkJson<CapabilitiesResponse> | CommonErrors;

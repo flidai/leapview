@@ -19,8 +19,8 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/agent/api"
+	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -1358,10 +1358,10 @@ func chatSignalsRequest(method, path, token string, signals map[string]any) *htt
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	if method == http.MethodPost && strings.HasSuffix(path, "/turns") {
-		bindings := agentuiaction.Bindings()
+		bindings := []uicommand.Binding{agentgen.GenUIActionCreateAgentConversation(), agentgen.GenUIActionCreateAgentRun()}
 		if agentSignal, ok := signals["agent"].(map[string]any); ok {
 			if activeID, _ := agentSignal["activeConversationId"].(string); strings.TrimSpace(activeID) != "" {
-				bindings = []uicommand.Binding{agentuiaction.CreateRun}
+				bindings = []uicommand.Binding{agentgen.GenUIActionCreateAgentRun()}
 			}
 		}
 		operations := make([]string, 0, len(bindings))

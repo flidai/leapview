@@ -84,6 +84,7 @@ type Config struct {
 	AccessService        access.WorkspaceAccessService
 	RoleBindingCommands  access.RoleBindingOperations
 	GrantCommands        access.GrantOperations
+	CommandPrivileges    access.WorkspaceCommandPrivileges
 	AccessCommands       ui.AccessCommandBindings
 	AssetCatalog         workspace.AssetCatalogReader
 	MetricsForWorkspace  func(string) (queryruntime.Metrics, bool)
@@ -106,11 +107,11 @@ type Config struct {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
-	roleBindingUpsert, roleBindingDelete, err := roleBindingRoutePrivileges(config.RoleBindingCommands)
+	roleBindingUpsert, roleBindingDelete, err := roleBindingRoutePrivileges(config.RoleBindingCommands, config.CommandPrivileges)
 	if err != nil {
 		return nil, err
 	}
-	grantUpsert, grantDelete, err := grantRoutePrivileges(config.GrantCommands)
+	grantUpsert, grantDelete, err := grantRoutePrivileges(config.GrantCommands, config.CommandPrivileges)
 	if err != nil {
 		return nil, err
 	}
@@ -209,49 +210,24 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	return m, nil
 }
 
-func grantRoutePrivileges(operations access.GrantOperations) (access.Privilege, access.Privilege, error) {
+func grantRoutePrivileges(operations access.GrantOperations, privileges access.WorkspaceCommandPrivileges) (access.Privilege, access.Privilege, error) {
 	if operations == nil {
 		return "", "", nil
 	}
-	descriptors := make(map[access.OperationID]access.OperationDescriptor, 2)
-	for _, operationID := range []access.OperationID{access.OperationCreateGrant, access.OperationDeleteGrant} {
-		descriptor, ok := operations.DescribeOperation(operationID)
-		if !ok {
-			return "", "", fmt.Errorf("workspace UI operation %q is not configured", operationID)
-		}
-		if !descriptor.Exposes(access.OperationSurfaceUI) || descriptor.Target.Type != access.SecurableWorkspace {
-			return "", "", fmt.Errorf("workspace UI operation %q has an incompatible generated contract", operationID)
-		}
-		descriptors[operationID] = descriptor
+	if privileges.GrantUpsert == "" || privileges.GrantDelete == "" {
+		return "", "", fmt.Errorf("workspace grant command privileges are required")
 	}
-	return descriptors[access.OperationCreateGrant].Privilege, descriptors[access.OperationDeleteGrant].Privilege, nil
+	return privileges.GrantUpsert, privileges.GrantDelete, nil
 }
 
-func roleBindingRoutePrivileges(operations access.RoleBindingOperations) (access.Privilege, access.Privilege, error) {
+func roleBindingRoutePrivileges(operations access.RoleBindingOperations, privileges access.WorkspaceCommandPrivileges) (access.Privilege, access.Privilege, error) {
 	if operations == nil {
 		return "", "", nil
 	}
-	descriptors := make(map[access.OperationID]access.OperationDescriptor, 3)
-	for _, operationID := range []access.OperationID{
-		access.OperationCreateRoleBinding,
-		access.OperationUpdateRoleBinding,
-		access.OperationDeleteRoleBinding,
-	} {
-		descriptor, ok := operations.DescribeOperation(operationID)
-		if !ok {
-			return "", "", fmt.Errorf("workspace UI operation %q is not configured", operationID)
-		}
-		if !descriptor.Exposes(access.OperationSurfaceUI) || descriptor.Target.Type != access.SecurableWorkspace {
-			return "", "", fmt.Errorf("workspace UI operation %q has an incompatible generated contract", operationID)
-		}
-		descriptors[operationID] = descriptor
+	if privileges.RoleBindingUpsert == "" || privileges.RoleBindingDelete == "" {
+		return "", "", fmt.Errorf("workspace role binding command privileges are required")
 	}
-	create := descriptors[access.OperationCreateRoleBinding]
-	update := descriptors[access.OperationUpdateRoleBinding]
-	if create.Privilege != update.Privilege {
-		return "", "", fmt.Errorf("workspace role binding upsert operations require different privileges")
-	}
-	return create.Privilege, descriptors[access.OperationDeleteRoleBinding].Privilege, nil
+	return privileges.RoleBindingUpsert, privileges.RoleBindingDelete, nil
 }
 
 func navigationCatalog(source dashboardcatalog.Catalog) catalog.Catalog {

@@ -280,9 +280,8 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
         method: 'PUT',
         credentials: 'same-origin',
         headers: {
+          ...window.LeapViewCommand.headers('uploadProductLogo', productETag(settings.general.revision)),
           'Content-Type': file.type,
-          'If-Match': productETag(settings.general.revision),
-          'X-CSRF-Token': csrfToken(),
         },
         body: file,
       })
@@ -314,10 +313,6 @@ function formatLimit(value: number): string {
 
 function productETag(revision: number): string {
   return `"product-${revision}"`
-}
-
-function csrfToken(): string {
-  return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''
 }
 
 if (!customElements.get('lv-product-settings')) customElements.define('lv-product-settings', LeapViewProductSettings)

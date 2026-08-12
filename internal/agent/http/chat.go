@@ -10,9 +10,10 @@ import (
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/agent"
+	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	"github.com/flidai/leapview/internal/agent/ui"
-	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -225,7 +226,10 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 	identity := uiRequestIdentity(r, input)
-	workflow := agentuiaction.Bindings()
+	workflow := []uicommand.Binding{
+		agentgen.GenUIActionCreateAgentConversation(),
+		agentgen.GenUIActionCreateAgentRun(),
+	}
 	createCtx, err := beginUICommandInvocation(r, agentUIBinding(createAgentConversationOperation), workflow, "", input, identity)
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusForbidden)

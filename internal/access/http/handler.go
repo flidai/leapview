@@ -218,6 +218,44 @@ func (h Handler) ChangeCurrentPassword(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
+func (h Handler) UpdateCurrentTheme(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	principal, ok := h.currentPrincipal(r)
+	if !ok {
+		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		return
+	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	var input struct {
+		Theme string `json:"theme"`
+	}
+	if err := decodeStrictJSON(r, &input); err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), err)
+		return
+	}
+	theme, ok := access.ParseThemeMode(input.Theme)
+	if !ok {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), fmt.Errorf("unsupported theme %q", input.Theme))
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), err)
+		return
+	}
+	preferences, ok := repo.(access.AuditedPrincipalPreferences)
+	if !ok {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), fmt.Errorf("principal preferences are unavailable"))
+		return
+	}
+	if err := preferences.SetPrincipalThemeAudited(r.Context(), principal.ID, theme); err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), err)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
 func (h Handler) ListCurrentEffectivePrivileges(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
@@ -1988,7 +2026,7 @@ func (h Handler) listAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, w
 
 func (h Handler) repository() (access.Repository, error) {
 	if h.Repository == nil {
-		return nil, nil
+		return nil, fmt.Errorf("access repository is unavailable")
 	}
 	return h.Repository()
 }

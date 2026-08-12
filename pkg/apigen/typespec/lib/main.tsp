@@ -55,6 +55,16 @@ model AsyncExecutionOptions {
   cancellation: "supported" | "unsupported";
 }
 
+model TypedAsyncExecutionOptions {
+  mode?: "async";
+  guarantee: "transactional";
+  jobKind: string;
+  resourceKind: string;
+  initialEvent: string;
+  initialState: string;
+  cancellation: "supported" | "unsupported";
+}
+
 model CommandFailureOptions {
   kind: string;
   statusCode: int32;
@@ -63,11 +73,19 @@ model CommandFailureOptions {
 }
 
 model CommandOptions {
-  audit: AuditOptions;
+  audit?: AuditOptions;
+  auditAction?: string;
+  guarantee?: "transactional" | "best-effort";
   execution?: AsyncExecutionOptions;
-  failures: CommandFailureOptions[];
+  failures?: CommandFailureOptions[];
   additionalExposures?: ("ui" | "agent" | "automation")[];
   targetParameter?: string;
+}
+
+model CommandDefaultsOptions {
+  guarantee?: "transactional" | "best-effort";
+  failures?: CommandFailureOptions[];
+  additionalExposures?: ("ui" | "agent" | "automation")[];
 }
 
 model ResponseShapeOptions {
@@ -151,7 +169,10 @@ model ToolOptions {
 
 extern dec cli(target: Operation, options: valueof CLIOptions);
 extern dec command(target: Operation, options: valueof CommandOptions);
-extern dec auditPayload(target: Operation, schema: Model, options?: valueof AuditPayloadOptions);
+extern dec commandDefaults(target: Interface, options: valueof CommandDefaultsOptions);
+extern dec unaudited(target: Operation, reason: valueof string);
+extern dec ui(target: Operation, actionId: valueof string);
+extern dec auditPayload(target: Operation | Interface, schema: Model, options?: valueof AuditPayloadOptions);
 extern dec auditSchema(target: Model, options: valueof AuditPayloadOptions);
 extern dec sensitivity(target: ModelProperty, classification: valueof ("public" | "internal" | "pii" | "secret"));
 extern dec auditPublic(target: ModelProperty);
@@ -159,7 +180,11 @@ extern dec auditInternal(target: ModelProperty);
 extern dec auditPii(target: ModelProperty);
 extern dec auditSecret(target: ModelProperty);
 extern dec query(target: Operation);
-extern dec authz(target: Operation, value: valueof unknown);
+extern dec authz(target: Operation | Interface, value: valueof unknown);
+extern dec target(target: ModelProperty);
+extern dec asyncExecution(target: Operation, status: Operation, events: Operation, options: valueof TypedAsyncExecutionOptions);
+extern dec failureDefinition(target: Model, options: valueof CommandFailureOptions);
+extern dec failsWith(target: Operation, definition: Model);
 extern dec manual(target: Operation);
 extern dec responseShape(target: Model, options: valueof ResponseShapeOptions);
 extern dec `package`(target: Namespace, options: valueof PackageOptions);

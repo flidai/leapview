@@ -1,6 +1,7 @@
 package productsettings
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/admin/product"
 	signals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/platform/http/transport"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 // CommandSignals is the Datastar request envelope. Keeping the root key
@@ -21,6 +23,7 @@ type HTTPConfig struct {
 	ReadModel        ReadModel
 	CanManage        func(*http.Request) bool
 	CurrentPrincipal func(*http.Request) (product.Principal, bool)
+	Commands         CommandContract
 }
 
 type Handler struct{ config HTTPConfig }
@@ -65,7 +68,13 @@ func (h *Handler) Command(w http.ResponseWriter, r *http.Request) {
 		h.writeProblem(w, r, http.StatusPreconditionFailed, "ETAG_MISMATCH", "The product settings revision is required")
 		return
 	}
-	var err error
+	started, err := h.beginProductSettingsInvocation(r, command)
+	if err != nil {
+		h.writeProblem(w, r, http.StatusBadRequest, "INVALID_COMMAND_CONTRACT", "The product settings command contract is invalid")
+		return
+	}
+	r = started
+	err = nil
 	switch strings.TrimSpace(command.Action) {
 	case "save_display_name":
 		if command.DisplayName == nil {
@@ -101,6 +110,60 @@ func (h *Handler) Command(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"productSettings": Payload(Signal(data))})
+}
+
+func (h *Handler) beginProductSettingsInvocation(r *http.Request, command signals.ProductSettingsCommand) (*http.Request, error) {
+	action := strings.TrimSpace(command.Action)
+	if action == "refresh" {
+		return r, nil
+	}
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+	concurrencyToken := strings.TrimSpace(r.Header.Get("If-Match"))
+	begin := func(binding uicommand.Binding, start func() (context.Context, error)) (*http.Request, error) {
+		if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), binding.OperationID()); err != nil {
+			return r, err
+		}
+		ctx, err := start()
+		if err != nil {
+			return r, err
+		}
+		return r.WithContext(ctx), nil
+	}
+	switch action {
+	case "save_display_name":
+		binding, err := h.config.Commands.Binding(CommandUpdateIdentity)
+		if err != nil {
+			return r, err
+		}
+		return begin(binding, func() (context.Context, error) {
+			return h.config.Commands.BeginInvocation(r.Context(), CommandUpdateIdentity, CommandInvocation{
+				ConcurrencyToken: concurrencyToken, RequestID: requestID, CorrelationID: correlationID,
+			})
+		})
+	case "remove_logo":
+		binding, err := h.config.Commands.Binding(CommandDeleteLogo)
+		if err != nil {
+			return r, err
+		}
+		return begin(binding, func() (context.Context, error) {
+			return h.config.Commands.BeginInvocation(r.Context(), CommandDeleteLogo, CommandInvocation{
+				ConcurrencyToken: concurrencyToken, RequestID: requestID, CorrelationID: correlationID,
+			})
+		})
+	case "reset_identity":
+		binding, err := h.config.Commands.Binding(CommandResetIdentity)
+		if err != nil {
+			return r, err
+		}
+		return begin(binding, func() (context.Context, error) {
+			return h.config.Commands.BeginInvocation(r.Context(), CommandResetIdentity, CommandInvocation{
+				IdempotencyKey: "ui:" + requestID, ConcurrencyToken: concurrencyToken, RequestID: requestID, CorrelationID: correlationID,
+			})
+		})
+	default:
+		return r, errors.New("unknown product settings command")
+	}
 }
 
 func (h *Handler) mutation(r *http.Request) product.Mutation {

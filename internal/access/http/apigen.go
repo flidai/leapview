@@ -45,6 +45,10 @@ func (d *APIGenDispatcher) ChangeCurrentPassword(w stdhttp.ResponseWriter, r *st
 	d.handler.ChangeCurrentPassword(w, r)
 }
 
+func (d *APIGenDispatcher) UpdateCurrentTheme(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	d.handler.UpdateCurrentTheme(w, r)
+}
+
 func (d *APIGenDispatcher) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListPlatformAuditEventsParams) {
 	d.handler.ListPlatformAuditEvents(w, r)
 }

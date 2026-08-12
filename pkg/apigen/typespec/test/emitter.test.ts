@@ -63,9 +63,25 @@ describe("APIGen TypeSpec emitter", () => {
       operation_id: endpoint.operation_id,
       namespace: endpoint.namespace,
     }))).toEqual([
-      { operation_id: "Access_getCurrentPrincipal", namespace: "PartitionedAPI.Access" },
-      { operation_id: "Reports_listReports", namespace: "PartitionedAPI.Analytics.Reports" },
+      { operation_id: "getCurrentPrincipal", namespace: "PartitionedAPI.Access" },
+      { operation_id: "listReports", namespace: "PartitionedAPI.Analytics.Reports" },
     ]);
+  });
+
+  it("rejects colliding inferred operation IDs", async () => {
+    await expectCompileFails(`
+      using Http;
+
+      @service(#{ title: "Partitioned API" })
+      namespace PartitionedAPI {
+        namespace Access {
+          @route("/access/me") @get op getCurrentPrincipal(): string;
+        }
+        namespace Admin {
+          @route("/admin/me") @get op getCurrentPrincipal(): string;
+        }
+      }
+    `, "operation ID \"getCurrentPrincipal\" is duplicated");
   });
 
   it("fails when a request body cannot map to a named IR schema", async () => {
@@ -141,11 +157,12 @@ describe("APIGen TypeSpec emitter", () => {
         @post
         @operationId("createRoleBinding")
         @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+        @apigen.ui("workspace.access.role-binding.create")
         @apigen.auditPayload(RoleBindingAuditPayload, #{ schemaVersion: 1, retention: "security" })
         @apigen.command(#{
           audit: #{ required: true, successAction: "role_binding.created", guarantee: "best-effort" },
           failures: #[],
-          additionalExposures: #["ui", "automation"],
+          additionalExposures: #["automation"],
         })
         create(
           @path workspace: string,
@@ -165,11 +182,93 @@ describe("APIGen TypeSpec emitter", () => {
         owner: "CommandAPI",
         audit: { required: true, success_action: "role_binding.created", guarantee: "best-effort" },
         additional_exposures: ["automation", "ui"],
+        ui: { action_id: "workspace.access.role-binding.create" },
         target: { parameter: "workspace", type: "workspace" },
         idempotency: "required",
         authz_mode: "privilege",
         privilege: "MANAGE_GRANTS",
       },
+    });
+  });
+
+  it("expands ergonomic command authoring into the explicit command contract", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Command API" })
+      namespace CommandAPI;
+
+      @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+      model RoleBindingAuditPayload {
+        @apigen.auditInternal bindingId: string;
+      }
+
+      @apigen.failureDefinition(#{
+        kind: "not_found",
+        statusCode: 404,
+        code: "ROLE_BINDING_NOT_FOUND",
+        publicDetail: "Role binding not found.",
+      })
+      model RoleBindingNotFound {}
+
+      @tag("Access")
+      @route("/workspaces/{workspace}/role-bindings")
+      @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+      @apigen.commandDefaults(#{ guarantee: "transactional" })
+      @apigen.auditPayload(RoleBindingAuditPayload)
+      interface RoleBindings {
+        @route("/{binding}")
+        @patch
+        @apigen.ui("workspace.access.role-binding.update")
+        @apigen.failsWith(RoleBindingNotFound)
+        @apigen.command(#{ auditAction: "role_binding.updated" })
+        updateRoleBinding(
+          @path @apigen.target workspace: string,
+          @path binding: string,
+          @header("If-Match") ifMatch: string,
+        ): string;
+      }
+    `);
+
+    expect(doc.endpoints[0]).toMatchObject({
+      operation_id: "updateRoleBinding",
+      kind: "command",
+      command: {
+        audit: {
+          required: true,
+          success_action: "role_binding.updated",
+          guarantee: "transactional",
+        },
+        failures: [{
+          kind: "not_found",
+          status_code: 404,
+          code: "ROLE_BINDING_NOT_FOUND",
+          public_detail: "Role binding not found.",
+        }],
+        target: { parameter: "workspace", type: "workspace" },
+        concurrency: "if-match",
+        authz_mode: "privilege",
+        privilege: "MANAGE_GRANTS",
+      },
+    });
+  });
+
+  it("requires a conspicuous reason for concise unaudited commands", async () => {
+    const doc = await compileSource(`
+      using Http;
+      @service(#{ title: "Ephemeral API" })
+      namespace EphemeralAPI;
+
+      @route("/preview")
+      @post
+      @apigen.unaudited("Only updates request-local preview state.")
+      @apigen.command(#{ failures: #[] })
+      op updatePreview(@header("Idempotency-Key") key: string): string;
+    `);
+
+    expect(doc.endpoints[0]).toMatchObject({
+      operation_id: "updatePreview",
+      command: { audit: { required: false } },
     });
   });
 
@@ -328,6 +427,53 @@ describe("APIGen TypeSpec emitter", () => {
     });
   });
 
+  it("resolves typed async operation references", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Release API" })
+      namespace ReleaseAPI;
+
+      @route("/releases/{release}")
+      @get
+      op getRelease(@path release: string): string;
+
+      @route("/releases/{release}/events")
+      @get
+      op listReleaseEvents(@path release: string): string;
+
+      @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+      model ReleaseAuditPayload { @apigen.auditInternal releaseId: string; }
+
+      @route("/releases/{release}/finalize")
+      @post
+      @apigen.auditPayload(ReleaseAuditPayload)
+      @apigen.asyncExecution(getRelease, listReleaseEvents, #{
+        guarantee: "transactional",
+        jobKind: "release.finalize",
+        resourceKind: "release",
+        initialEvent: "release.validating",
+        initialState: "validating",
+        cancellation: "unsupported",
+      })
+      @apigen.command(#{
+        auditAction: "release.validating",
+        guarantee: "transactional",
+        failures: #[],
+      })
+      op finalizeRelease(
+        @path release: string,
+        @header("Idempotency-Key") idempotencyKey: string,
+      ): string;
+    `);
+
+    expect(doc.endpoints.find((endpoint: any) => endpoint.operation_id === "finalizeRelease").command.execution)
+      .toMatchObject({
+        status_operation: "getRelease",
+        events_operation: "listReleaseEvents",
+      });
+  });
+
   it("requires explicit command/query classification for non-read operations in strict mode", async () => {
     const doc = await compileSource(`
       using Http;
@@ -362,18 +508,48 @@ describe("APIGen TypeSpec emitter", () => {
   it("rejects invalid command contracts before writing IR", async () => {
     const cases = [
       {
-        message: "required audit must declare @apigen.auditPayload",
+        message: "must be a stable dotted lower-kebab-case name",
         operation: `
           @post
           @operationId("createWidget")
-          @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" }, failures: #[] })
+          @apigen.ui("Create Widget")
+          @apigen.command(#{ audit: #{ required: false }, failures: #[] })
           op create(@header("Idempotency-Key") key: string): string;
         `,
       },
       {
-        message: "explicit @operationId is required",
+        message: "@apigen.ui already declares the ui exposure",
         operation: `
           @post
+          @operationId("createWidget")
+          @apigen.ui("workspace.widget.create")
+          @apigen.command(#{ audit: #{ required: false }, failures: #[], additionalExposures: #["ui"] })
+          op create(@header("Idempotency-Key") key: string): string;
+        `,
+      },
+      {
+        message: "ui exposure requires @apigen.ui",
+        operation: `
+          @post
+          @operationId("createWidget")
+          @apigen.command(#{ audit: #{ required: false }, failures: #[], additionalExposures: #["ui"] })
+          op create(@header("Idempotency-Key") key: string): string;
+        `,
+      },
+      {
+        message: "@apigen.ui requires @apigen.command",
+        operation: `
+          @get
+          @operationId("getWidget")
+          @apigen.ui("workspace.widget.get")
+          op get(): string;
+        `,
+      },
+      {
+        message: "required audit must declare @apigen.auditPayload",
+        operation: `
+          @post
+          @operationId("createWidget")
           @apigen.command(#{ audit: #{ required: true, successAction: "widget.created" }, failures: #[] })
           op create(@header("Idempotency-Key") key: string): string;
         `,
@@ -666,7 +842,7 @@ describe("APIGen TypeSpec emitter", () => {
       @operationId("createWidget")
       @apigen.command(#{ audit: #{ required: false } })
       op createWidget(@header("Idempotency-Key") key: string): string;
-    `, "apigen.CommandOptions");
+    `, "every command must declare failures");
   });
 
   it("emits v4 IR for optimized TypeSpec HTTP authoring", async () => {

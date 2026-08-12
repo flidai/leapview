@@ -45,6 +45,7 @@ func (workspaceRefreshPresentationBridge) Signals(
 func workspaceAssetRefreshState(state refreshmodule.AssetRefreshState) workspacemodule.AssetRefreshState {
 	return workspacemodule.AssetRefreshState{
 		CSRFToken:        state.CSRFToken,
+		RunCommand:       state.RunCommand,
 		Runs:             workspaceAssetRefreshRuns(state.Runs),
 		Latest:           workspaceAssetRefreshRun(state.Latest),
 		LatestSuccessful: workspaceAssetRefreshRun(state.LatestSuccessful),
@@ -113,6 +114,13 @@ func workspaceRefreshSupport(deps *workspaceRefreshDependencies) refreshmodule.W
 				return refreshmodule.QueueAssetResult{}, fmt.Errorf("refresh module is required")
 			}
 			return refresh.QueuePipelineRefresh(ctx, input)
+		},
+		RunCreated: func(ctx context.Context, run refreshmodule.RunRecord) error {
+			refresh := deps.refresh()
+			if refresh == nil {
+				return fmt.Errorf("refresh module is required")
+			}
+			return refresh.VerifyRunCreated(ctx, run)
 		},
 		Environment: func(r *http.Request) servingstatemodule.Environment {
 			return requestServingEnvironment(deps.defaultEnvironment, r)

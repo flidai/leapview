@@ -24,24 +24,27 @@ func EventPost(path string, signalPaths ...string) string {
 	return request("post", path, signalPaths, "")
 }
 
-// UncontractedMutationPatch is the migration boundary for remaining legacy UI
-// mutations that do not yet have an APIGen command contract. New
-// callers are rejected by the architecture test.
-func UncontractedMutationPatch(path string, signalPaths ...string) string {
-	return request("patch", path, signalPaths, "")
-}
-
-func UncontractedMutationPost(path string, signalPaths ...string) string {
-	return request("post", path, signalPaths, "")
-}
-
 func CommandPost(binding uicommand.Binding, path string, signalPaths ...string) string {
 	return request("post", path, signalPaths, jsString(binding.OperationID()))
+}
+
+func CommandPatch(binding uicommand.Binding, path, revision string, signalPaths ...string) string {
+	return requestWithHeaders("patch", path, signalPaths, "window.LeapViewCommand.headers("+jsString(binding.OperationID())+", "+jsString(revision)+")")
 }
 
 // CommandPostSwitch chooses one typed command from a closed server-shared set.
 // selectorExpression is a Datastar expression such as "evt.detail.action".
 func CommandPostSwitch(selectorExpression string, bindings map[string]uicommand.Binding, path string, signalPaths ...string) string {
+	return commandPostSwitch(selectorExpression, bindings, path, "", signalPaths...)
+}
+
+// CommandPostSwitchWithRevision chooses a typed command and supplies a
+// browser signal expression as its If-Match value.
+func CommandPostSwitchWithRevision(selectorExpression string, bindings map[string]uicommand.Binding, path, ifMatchExpression string, signalPaths ...string) string {
+	return commandPostSwitch(selectorExpression, bindings, path, strings.TrimSpace(ifMatchExpression), signalPaths...)
+}
+
+func commandPostSwitch(selectorExpression string, bindings map[string]uicommand.Binding, path, ifMatchExpression string, signalPaths ...string) string {
 	keys := make([]string, 0, len(bindings))
 	for key := range bindings {
 		keys = append(keys, key)
@@ -52,6 +55,9 @@ func CommandPostSwitch(selectorExpression string, bindings map[string]uicommand.
 		entries = append(entries, jsString(key)+": "+jsString(bindings[key].OperationID()))
 	}
 	operationExpression := "({" + strings.Join(entries, ", ") + "})[" + strings.TrimSpace(selectorExpression) + "]"
+	if ifMatchExpression != "" {
+		return requestWithHeaders("post", path, signalPaths, "window.LeapViewCommand.headers("+operationExpression+", "+ifMatchExpression+")")
+	}
 	return request("post", path, signalPaths, operationExpression)
 }
 
@@ -85,6 +91,10 @@ func request(method, path string, signalPaths []string, operationExpression stri
 	if strings.TrimSpace(operationExpression) != "" {
 		headers = "window.LeapViewCommand.headers(" + operationExpression + ")"
 	}
+	return requestWithHeaders(method, path, signalPaths, headers)
+}
+
+func requestWithHeaders(method, path string, signalPaths []string, headers string) string {
 	options := "headers: " + headers
 	if len(signalPaths) > 0 {
 		patterns := make([]string, 0, len(signalPaths))

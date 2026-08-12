@@ -133,6 +133,158 @@ model RoleBindingCreatedAuditPayload {
   surface: string;
 }
 
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "ROLE_BINDING_INVALID",
+  publicDetail: "The role binding request is invalid.",
+})
+model RoleBindingInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "ROLE_BINDING_NOT_FOUND",
+  publicDetail: "Role binding not found.",
+})
+model RoleBindingNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "denied",
+  statusCode: 400,
+  code: "DEVICE_AUTHORIZATION_DENIED",
+  publicDetail: "Device authorization was denied.",
+})
+model DeviceAuthorizationDeniedFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "expired",
+  statusCode: 400,
+  code: "DEVICE_AUTHORIZATION_EXPIRED",
+  publicDetail: "Device authorization has expired.",
+})
+model DeviceAuthorizationExpiredFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "invalid_principal",
+  statusCode: 400,
+  code: "INVALID_PRINCIPAL",
+  publicDetail: "The authorizing principal is invalid.",
+})
+model InvalidPrincipalFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "DEVICE_AUTHORIZATION_NOT_FOUND",
+  publicDetail: "Device authorization was not found.",
+})
+model DeviceAuthorizationNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "invalid_credential",
+  statusCode: 400,
+  code: "INVALID_AUTHORING_CREDENTIAL",
+  publicDetail: "The authoring session is invalid.",
+})
+model InvalidAuthoringCredentialFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "AUTHORING_SESSION_NOT_FOUND",
+  publicDetail: "Authoring session not found.",
+})
+model AuthoringSessionNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "conflict",
+  statusCode: 409,
+  code: "PRINCIPAL_ALREADY_EXISTS",
+  publicDetail: "A principal with this email already exists.",
+})
+model PrincipalAlreadyExistsFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "PRINCIPAL_NOT_FOUND",
+  publicDetail: "Principal not found.",
+})
+model PrincipalNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "SERVICE_PRINCIPAL_INVALID",
+  publicDetail: "The service principal request is invalid.",
+})
+model ServicePrincipalInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "SERVICE_PRINCIPAL_NOT_FOUND",
+  publicDetail: "Service principal not found.",
+})
+model ServicePrincipalNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "SERVICE_PRINCIPAL_SECRET_INVALID",
+  publicDetail: "The service principal secret request is invalid.",
+})
+model ServicePrincipalSecretInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "SERVICE_PRINCIPAL_SECRET_NOT_FOUND",
+  publicDetail: "Service principal secret not found.",
+})
+model ServicePrincipalSecretNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "GROUP_INVALID",
+  publicDetail: "The group request is invalid.",
+})
+model GroupInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "GROUP_NOT_FOUND",
+  publicDetail: "Group not found.",
+})
+model GroupNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "GRANT_NOT_FOUND",
+  publicDetail: "Grant not found.",
+})
+model GrantNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "OWNERSHIP_TRANSFER_INVALID",
+  publicDetail: "The ownership transfer request is invalid.",
+})
+model OwnershipTransferInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "DATA_POLICY_NOT_FOUND",
+  publicDetail: "Data policy not found.",
+})
+model DataPolicyNotFoundFailure {}
+
 // Durable, typed payloads for Access command audit records.  Every field is
 // required so the generated encoder can reject incomplete audit events before
 // they reach the repository.
@@ -452,42 +604,32 @@ model AuthoringSessionListResponse {
 @route("/access/device-authorizations/approval")
 @post
 @apigen.authz(#{ mode: "authenticated" })
-@apigen.command(#{
-  audit: #{ required: true, successAction: "authoring.device.decided", guarantee: "transactional" },
-  failures: #[
-    #{ kind: "denied", statusCode: 400, code: "DEVICE_AUTHORIZATION_DENIED", publicDetail: "Device authorization was denied." },
-    #{ kind: "expired", statusCode: 400, code: "DEVICE_AUTHORIZATION_EXPIRED", publicDetail: "Device authorization has expired." },
-    #{ kind: "invalid_principal", statusCode: 400, code: "INVALID_PRINCIPAL", publicDetail: "The authorizing principal is invalid." },
-    #{ kind: "not_found", statusCode: 404, code: "DEVICE_AUTHORIZATION_NOT_FOUND", publicDetail: "Device authorization was not found." },
-  ],
-})
+@apigen.command(#{ auditAction: "authoring.device.decided", guarantee: "transactional" })
+@apigen.failsWith(DeviceAuthorizationDeniedFailure)
+@apigen.failsWith(DeviceAuthorizationExpiredFailure)
+@apigen.failsWith(InvalidPrincipalFailure)
+@apigen.failsWith(DeviceAuthorizationNotFoundFailure)
 @apigen.auditPayload(DeviceAuthorizationDecidedAuditPayload)
-@operationId("decideDeviceAuthorization")
 op decideDeviceAuthorization(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeviceAuthorizationApprovalRequest): OkJson<StatusResponse> | CommonErrors;
 
 @tag("Current User")
 @route("/me/authoring-sessions")
+@apigen.authz(#{ mode: "authenticated" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 interface CurrentAuthoringSessions {
   @summary("List current CLI and workload sessions")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @operationId("listCurrentAuthoringSessions")
   listCurrentAuthoringSessions(@query limit?: ListLimit, @query pageToken?: PageToken): OkJson<AuthoringSessionListResponse> | CommonErrors;
 
   @summary("Revoke a current CLI or workload session")
   @route("/{session}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "authoring.session.revoked", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "invalid_credential", statusCode: 400, code: "INVALID_AUTHORING_CREDENTIAL", publicDetail: "The authoring session is invalid." },
-      #{ kind: "not_found", statusCode: 404, code: "AUTHORING_SESSION_NOT_FOUND", publicDetail: "Authoring session not found." },
-    ],
-  })
+  @apigen.command(#{ auditAction: "authoring.session.revoked" })
+  @apigen.failsWith(InvalidAuthoringCredentialFailure)
+  @apigen.failsWith(AuthoringSessionNotFoundFailure)
   @apigen.auditPayload(AuthoringSessionRevokedAuditPayload)
-  @operationId("revokeCurrentAuthoringSession")
-  revokeCurrentAuthoringSession(@path session: string): OkJson<StatusResponse> | CommonErrors;
+  @apigen.ui("current-user.authoring-session.revoke")
+  revokeCurrentAuthoringSession(@path @apigen.target session: string): OkJson<StatusResponse> | CommonErrors;
 }
 
 alias ListPrincipalsOK = OkJson<PrincipalListResponse>;
@@ -499,26 +641,21 @@ alias ListPrincipalSessionsOK = OkJson<SessionListResponse>;
 
 @tag("Access")
 @route("/principals")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 interface Principals {
   @summary("List principals")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
-  @operationId("listPrincipals")
   listPrincipals(@query email?: string, @query q?: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListPrincipalsOK | CommonErrors;
 
   @summary("Create a local principal")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "principal.local_user.created", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "conflict", statusCode: 409, code: "PRINCIPAL_ALREADY_EXISTS", publicDetail: "A principal with this email already exists." },
-    ],
-  })
+  @apigen.command(#{ auditAction: "principal.local_user.created" })
+  @apigen.failsWith(PrincipalAlreadyExistsFailure)
   @apigen.auditPayload(PrincipalCreatedAuditPayload)
-  @operationId("createPrincipal")
   createPrincipal(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: PrincipalCreateRequest): CreatePrincipalCreated | CommonErrors;
 
   @summary("Get a principal")
@@ -526,7 +663,6 @@ interface Principals {
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
-  @operationId("getPrincipal")
   getPrincipal(@path principal: string): GetPrincipalOK | CommonErrors;
 
   @summary("Update a principal")
@@ -535,14 +671,13 @@ interface Principals {
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
   @apigen.command(#{
-    audit: #{ required: true, successAction: "principal.updated", guarantee: "transactional" },
+    auditAction: "principal.updated",
     failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "PRINCIPAL_NOT_FOUND", publicDetail: "Principal not found." },
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be modified by this operation." },
     ],
   })
+  @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalUpdatedAuditPayload)
-  @operationId("updatePrincipal")
   updatePrincipal(@path principal: string, @header("If-Match") ifMatch: string, @body body: PrincipalPatchRequest): UpdatePrincipalOK | CommonErrors;
 
   @summary("Delete a principal")
@@ -551,15 +686,14 @@ interface Principals {
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
   @apigen.command(#{
-    audit: #{ required: true, successAction: "principal.deleted", guarantee: "transactional" },
+    auditAction: "principal.deleted",
     failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "PRINCIPAL_NOT_FOUND", publicDetail: "Principal not found." },
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be deleted by this operation." },
       #{ kind: "conflict", statusCode: 409, code: "PRINCIPAL_OWNS_OBJECTS", publicDetail: "Transfer owned objects before deleting this principal." },
     ],
   })
+  @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalDeletedAuditPayload)
-  @operationId("deletePrincipal")
   deletePrincipal(@path principal: string): EmptyResponse | CommonErrors;
 
   @summary("Reset a local principal password")
@@ -567,14 +701,9 @@ interface Principals {
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "principal.local_password.reset", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "PRINCIPAL_NOT_FOUND", publicDetail: "Principal not found." },
-    ],
-  })
+  @apigen.command(#{ auditAction: "principal.local_password.reset" })
+  @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalPasswordResetAuditPayload)
-  @operationId("resetPrincipalPassword")
   resetPrincipalPassword(@path principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): ResetPrincipalPasswordOK | CommonErrors;
 
   @summary("Disable a principal and reject its credentials")
@@ -583,16 +712,14 @@ interface Principals {
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
   @apigen.command(#{
-    audit: #{ required: true, successAction: "principal.disabled", guarantee: "transactional" },
+    auditAction: "principal.disabled",
     failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "PRINCIPAL_NOT_FOUND", publicDetail: "Principal not found." },
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be disabled by this operation." },
     ],
-    targetParameter: "principal",
   })
+  @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalUpdatedAuditPayload)
-  @operationId("disablePrincipal")
-  disablePrincipal(@path principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
+  disablePrincipal(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
 
   @summary("Re-enable a disabled principal")
   @route("/{principal}/enable")
@@ -600,23 +727,20 @@ interface Principals {
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
   @apigen.command(#{
-    audit: #{ required: true, successAction: "principal.enabled", guarantee: "transactional" },
+    auditAction: "principal.enabled",
     failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "PRINCIPAL_NOT_FOUND", publicDetail: "Principal not found." },
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be enabled by this operation." },
     ],
-    targetParameter: "principal",
   })
+  @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalUpdatedAuditPayload)
-  @operationId("enablePrincipal")
-  enablePrincipal(@path principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
+  enablePrincipal(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
 
   @summary("List a principal's sessions")
   @route("/{principal}/sessions")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
-  @operationId("listPrincipalSessions")
   listPrincipalSessions(@path principal: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListPrincipalSessionsOK | CommonErrors;
 
   @summary("Revoke a principal's session")
@@ -624,16 +748,10 @@ interface Principals {
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "session.revoked", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "SESSION_NOT_FOUND", publicDetail: "Session not found." },
-    ],
-    targetParameter: "principal",
-  })
+  @apigen.command(#{ auditAction: "session.revoked" })
+  @apigen.failsWith(SessionNotFoundFailure)
   @apigen.auditPayload(PrincipalSessionRevokedAuditPayload)
-  @operationId("revokePrincipalSession")
-  revokePrincipalSession(@path principal: string, @path session: string): EmptyResponse | CommonErrors;
+  revokePrincipalSession(@path @apigen.target principal: string, @path session: string): EmptyResponse | CommonErrors;
 }
 
 alias ListServicePrincipalsOK = OkJson<ServicePrincipalListResponse>;
@@ -643,31 +761,26 @@ alias CreateServicePrincipalSecretCreated = CreatedJson<ServicePrincipalSecretCr
 
 @tag("Access")
 @route("/service-principals")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 interface ServicePrincipals {
   @summary("List service principals")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
-  @operationId("listServicePrincipals")
   listServicePrincipals(@query limit?: ListLimit, @query pageToken?: PageToken): ListServicePrincipalsOK | CommonErrors;
 
   @summary("Create a service principal")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "service_principal.created", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "SERVICE_PRINCIPAL_INVALID", publicDetail: "The service principal request is invalid." },
-    ],
-  })
+  @apigen.command(#{ auditAction: "service_principal.created" })
+  @apigen.failsWith(ServicePrincipalInvalidFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
-  @operationId("createServicePrincipal")
+  @apigen.ui("service-account.create")
   createServicePrincipal(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalCreateRequest): CreateServicePrincipalCreated | CommonErrors;
 
   @summary("Get a service principal")
   @route("/{servicePrincipal}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
-  @operationId("getServicePrincipal")
   getServicePrincipal(@path servicePrincipal: string): OkJson<PrincipalResponse> | CommonErrors;
 
   @summary("Update a service principal")
@@ -675,72 +788,56 @@ interface ServicePrincipals {
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
   @apigen.command(#{
-    audit: #{ required: true, successAction: "service_principal.updated", guarantee: "transactional" },
+    auditAction: "service_principal.updated",
     failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "SERVICE_PRINCIPAL_NOT_FOUND", publicDetail: "Service principal not found." },
       #{ kind: "conflict", statusCode: 409, code: "SERVICE_PRINCIPAL_OWNS_OBJECTS", publicDetail: "Transfer owned objects before deleting this service principal." },
     ],
   })
+  @apigen.failsWith(ServicePrincipalNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
-  @operationId("updateServicePrincipal")
   updateServicePrincipal(@path servicePrincipal: string, @header("If-Match") ifMatch: string, @body body: ServicePrincipalPatchRequest): UpdateServicePrincipalOK | CommonErrors;
 
   @summary("Delete a service principal")
   @route("/{servicePrincipal}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "service_principal.deleted", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "SERVICE_PRINCIPAL_NOT_FOUND", publicDetail: "Service principal not found." },
-    ],
-  })
+  @apigen.command(#{ auditAction: "service_principal.deleted" })
+  @apigen.failsWith(ServicePrincipalNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
-  @operationId("deleteServicePrincipal")
-  deleteServicePrincipal(@path servicePrincipal: string): EmptyResponse | CommonErrors;
+  @apigen.ui("service-account.delete")
+  deleteServicePrincipal(@path @apigen.target servicePrincipal: string): EmptyResponse | CommonErrors;
 
   @summary("Create a service principal secret")
   @route("/{servicePrincipal}/secrets")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "service_principal_secret.created", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "SERVICE_PRINCIPAL_SECRET_INVALID", publicDetail: "The service principal secret request is invalid." },
-    ],
-  })
+  @apigen.command(#{ auditAction: "service_principal_secret.created" })
+  @apigen.failsWith(ServicePrincipalSecretInvalidFailure)
   @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
-  @operationId("createServicePrincipalSecret")
-  createServicePrincipalSecret(@path servicePrincipal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalSecretCreateRequest): CreateServicePrincipalSecretCreated | CommonErrors;
+  @apigen.ui("service-account.secret.create")
+  createServicePrincipalSecret(@path @apigen.target servicePrincipal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalSecretCreateRequest): CreateServicePrincipalSecretCreated | CommonErrors;
 
   @summary("List service-principal secrets")
   @route("/{servicePrincipal}/secrets")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
-  @operationId("listServicePrincipalSecrets")
   listServicePrincipalSecrets(@path servicePrincipal: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ServicePrincipalSecretListResponse> | CommonErrors;
 
   @summary("Get service-principal secret metadata")
   @route("/{servicePrincipal}/secrets/{secret}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
-  @operationId("getServicePrincipalSecret")
   getServicePrincipalSecret(@path servicePrincipal: string, @path secret: string): OkJson<ServicePrincipalSecretResponse> | CommonErrors;
 
   @summary("Revoke a service principal secret")
   @route("/{servicePrincipal}/secrets/{secret}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "service_principal_secret.revoked", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "SERVICE_PRINCIPAL_SECRET_NOT_FOUND", publicDetail: "Service principal secret not found." },
-    ],
-    targetParameter: "servicePrincipal",
-  })
+  @apigen.command(#{ auditAction: "service_principal_secret.revoked" })
+  @apigen.failsWith(ServicePrincipalSecretNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
-  @operationId("revokeServicePrincipalSecret")
-  revokeServicePrincipalSecret(@path servicePrincipal: string, @path secret: string): EmptyResponse | CommonErrors;
+  @apigen.ui("service-account.secret.revoke")
+  revokeServicePrincipalSecret(@path @apigen.target servicePrincipal: string, @path secret: string): EmptyResponse | CommonErrors;
 }
 
 alias ListGroupsOK = OkJson<GroupListResponse>;
@@ -752,68 +849,49 @@ alias AddGroupMemberOK = OkJson<StatusResponse>;
 
 @tag("Access")
 @route("/workspaces/{workspace}/groups")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 interface Groups {
   @summary("List groups")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("listGroups")
   listGroups(@path workspace: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListGroupsOK | CommonErrors;
 
   @summary("Create a group")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "group.created", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "GROUP_INVALID", publicDetail: "The group request is invalid." },
-    ],
-  })
+  @apigen.command(#{ auditAction: "group.created" })
+  @apigen.failsWith(GroupInvalidFailure)
   @apigen.auditPayload(GroupAuditPayload)
-  @operationId("createGroup")
   createGroup(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GroupCreateRequest): CreateGroupCreated | CommonErrors;
 
   @summary("Delete a group")
   @route("/{group}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "group.deleted", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "GROUP_NOT_FOUND", publicDetail: "Group not found." },
-    ],
-    targetParameter: "workspace",
-  })
+  @apigen.command(#{ auditAction: "group.deleted" })
+  @apigen.failsWith(GroupNotFoundFailure)
   @apigen.auditPayload(GroupAuditPayload)
-  @operationId("deleteGroup")
-  deleteGroup(@path workspace: string, @path group: string): EmptyResponse | CommonErrors;
+  deleteGroup(@path @apigen.target workspace: string, @path group: string): EmptyResponse | CommonErrors;
 
   @summary("Get a group")
   @route("/{group}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("getGroup")
   getGroup(@path workspace: string, @path group: string): GetGroupOK | CommonErrors;
 
   @summary("Update a group")
   @route("/{group}")
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "group.updated", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "GROUP_NOT_FOUND", publicDetail: "Group not found." },
-    ],
-    targetParameter: "workspace",
-  })
+  @apigen.command(#{ auditAction: "group.updated" })
+  @apigen.failsWith(GroupNotFoundFailure)
   @apigen.auditPayload(GroupAuditPayload)
-  @operationId("updateGroup")
-  updateGroup(@path workspace: string, @path group: string, @header("If-Match") ifMatch: string, @body body: GroupPatchRequest): UpdateGroupOK | CommonErrors;
+  updateGroup(@path @apigen.target workspace: string, @path group: string, @header("If-Match") ifMatch: string, @body body: GroupPatchRequest): UpdateGroupOK | CommonErrors;
 
   @summary("List group members")
   @route("/{group}/members")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("listGroupMembers")
   listGroupMembers(@path workspace: string, @path group: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListGroupMembersOK | CommonErrors;
 
   @summary("Remove a group member")
@@ -821,30 +899,26 @@ interface Groups {
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.command(#{
-    audit: #{ required: true, successAction: "group.member_removed", guarantee: "transactional" },
+    auditAction: "group.member_removed",
     failures: #[
       #{ kind: "not_found", statusCode: 404, code: "GROUP_MEMBER_NOT_FOUND", publicDetail: "Group member not found." },
     ],
-    targetParameter: "workspace",
   })
   @apigen.auditPayload(GroupMemberAuditPayload)
-  @operationId("removeGroupMember")
-  removeGroupMember(@path workspace: string, @path group: string, @path principal: string): EmptyResponse | CommonErrors;
+  removeGroupMember(@path @apigen.target workspace: string, @path group: string, @path principal: string): EmptyResponse | CommonErrors;
 
   @summary("Add a group member")
   @route("/{group}/members/{principal}")
   @put
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.command(#{
-    audit: #{ required: true, successAction: "group.member_added", guarantee: "transactional" },
+    auditAction: "group.member_added",
     failures: #[
       #{ kind: "not_found", statusCode: 404, code: "GROUP_MEMBER_NOT_FOUND", publicDetail: "Group or principal not found." },
     ],
-    targetParameter: "workspace",
   })
   @apigen.auditPayload(GroupMemberAuditPayload)
-  @operationId("addGroupMember")
-  addGroupMember(@path workspace: string, @path group: string, @path principal: string): AddGroupMemberOK | CommonErrors;
+  addGroupMember(@path @apigen.target workspace: string, @path group: string, @path principal: string): AddGroupMemberOK | CommonErrors;
 }
 
 alias ListRoleBindingsOK = OkJson<RoleBindingListResponse>;
@@ -853,66 +927,43 @@ alias UpdateRoleBindingOK = OkJson<RoleBindingResponse>;
 
 @tag("Access")
 @route("/workspaces/{workspace}/role-bindings")
+@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
+@apigen.auditPayload(RoleBindingAuditPayload)
 interface RoleBindings {
   @summary("List role bindings")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("listRoleBindings")
   listRoleBindings(@path workspace: string, @query subjectType?: string, @query subjectId?: string, @query role?: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListRoleBindingsOK | CommonErrors;
 
   @summary("Create a role binding")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "role_binding.created", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "ROLE_BINDING_INVALID", publicDetail: "The role binding request is invalid." },
-    ],
-    additionalExposures: #["ui"],
-  })
+  @apigen.ui("workspace.access.role-binding.create")
+  @apigen.failsWith(RoleBindingInvalidFailure)
+  @apigen.command(#{ auditAction: "role_binding.created" })
   @apigen.auditPayload(RoleBindingCreatedAuditPayload)
-  @operationId("createRoleBinding")
   createRoleBinding(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingRequest): CreateRoleBindingCreated | CommonErrors;
 
   @summary("Get a workspace role binding")
   @route("/{binding}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("getRoleBinding")
   getRoleBinding(@path workspace: string, @path binding: string): OkJson<RoleBindingResponse> | CommonErrors;
 
   @summary("Delete a role binding")
   @route("/{binding}")
   @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "role_binding.deleted", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "ROLE_BINDING_NOT_FOUND", publicDetail: "Role binding not found." },
-      #{ kind: "invalid", statusCode: 400, code: "ROLE_BINDING_INVALID", publicDetail: "The role binding request is invalid." },
-    ],
-    additionalExposures: #["ui"],
-    targetParameter: "workspace",
-  })
-  @apigen.auditPayload(RoleBindingAuditPayload)
-  @operationId("deleteRoleBinding")
-  deleteRoleBinding(@path workspace: string, @path binding: string): EmptyResponse | CommonErrors;
+  @apigen.ui("workspace.access.role-binding.delete")
+  @apigen.failsWith(RoleBindingNotFoundFailure)
+  @apigen.failsWith(RoleBindingInvalidFailure)
+  @apigen.command(#{ auditAction: "role_binding.deleted" })
+  deleteRoleBinding(@path @apigen.target workspace: string, @path binding: string): EmptyResponse | CommonErrors;
 
   @summary("Update a role binding")
   @route("/{binding}")
   @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "role_binding.updated", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "ROLE_BINDING_NOT_FOUND", publicDetail: "Role binding not found." },
-    ],
-    additionalExposures: #["ui"],
-    targetParameter: "workspace",
-  })
-  @apigen.auditPayload(RoleBindingAuditPayload)
-  @operationId("updateRoleBinding")
-  updateRoleBinding(@path workspace: string, @path binding: string, @header("If-Match") ifMatch: string, @body body: RoleBindingRequest): UpdateRoleBindingOK | CommonErrors;
+  @apigen.ui("workspace.access.role-binding.update")
+  @apigen.failsWith(RoleBindingNotFoundFailure)
+  @apigen.command(#{ auditAction: "role_binding.updated" })
+  updateRoleBinding(@path @apigen.target workspace: string, @path binding: string, @header("If-Match") ifMatch: string, @body body: RoleBindingRequest): UpdateRoleBindingOK | CommonErrors;
 }
 
 alias ListWorkspaceRolesOK = OkJson<RoleListResponse>;
@@ -922,7 +973,6 @@ alias ListWorkspaceRolesOK = OkJson<RoleListResponse>;
 @route("/workspaces/{workspace}/roles")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-@operationId("listWorkspaceRoles")
 op listWorkspaceRoles(@path workspace: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListWorkspaceRolesOK | CommonErrors;
 
 alias ListEffectivePrivilegesOK = OkJson<EffectivePrivilegeListResponse>;
@@ -932,7 +982,6 @@ alias ListEffectivePrivilegesOK = OkJson<EffectivePrivilegeListResponse>;
 @route("/workspaces/{workspace}/effective-privileges")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
-@operationId("listEffectivePrivileges")
 op listEffectivePrivileges(@path workspace: string, @query objectType?: string, @query objectId?: string): ListEffectivePrivilegesOK | CommonErrors;
 
 alias ListGrantsOK = OkJson<GrantListResponse>;
@@ -940,32 +989,30 @@ alias CreateGrantCreated = CreatedJson<GrantResponse>;
 
 @tag("Access")
 @route("/workspaces/{workspace}/grants")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 interface Grants {
   @summary("List grants")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("listGrants")
   listGrants(@path workspace: string, @query objectType?: string, @query objectId?: string, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListGrantsOK | CommonErrors;
 
   @summary("Create a grant")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @apigen.ui("workspace.access.grant.create")
   @apigen.command(#{
-    audit: #{ required: true, successAction: "grant.created", guarantee: "transactional" },
+    auditAction: "grant.created",
     failures: #[
       #{ kind: "invalid", statusCode: 400, code: "GRANT_INVALID", publicDetail: "The grant request is invalid." },
     ],
-    additionalExposures: #["ui"],
   })
   @apigen.auditPayload(GrantAuditPayload)
-  @operationId("createGrant")
   createGrant(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GrantRequest): CreateGrantCreated | CommonErrors;
 
   @summary("Get an object privilege grant")
   @route("/{grant}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("getGrant")
   getGrant(@path workspace: string, @path grant: string): OkJson<GrantResponse> | CommonErrors;
 
   @summary("Update an object privilege grant")
@@ -973,32 +1020,24 @@ interface Grants {
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.command(#{
-    audit: #{ required: true, successAction: "grant.updated", guarantee: "transactional" },
+    auditAction: "grant.updated",
     failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "GRANT_NOT_FOUND", publicDetail: "Grant not found." },
       #{ kind: "invalid", statusCode: 422, code: "GRANT_INVALID", publicDetail: "The grant is invalid." },
     ],
-    targetParameter: "workspace",
   })
+  @apigen.failsWith(GrantNotFoundFailure)
   @apigen.auditPayload(GrantAuditPayload)
-  @operationId("updateGrant")
-  updateGrant(@path workspace: string, @path grant: string, @header("If-Match") ifMatch: string, @body body: GrantRequest): OkJson<GrantResponse> | CommonErrors;
+  updateGrant(@path @apigen.target workspace: string, @path grant: string, @header("If-Match") ifMatch: string, @body body: GrantRequest): OkJson<GrantResponse> | CommonErrors;
 
   @summary("Delete a grant")
   @route("/{grant}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "grant.deleted", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "GRANT_NOT_FOUND", publicDetail: "Grant not found." },
-    ],
-    additionalExposures: #["ui"],
-    targetParameter: "workspace",
-  })
+  @apigen.ui("workspace.access.grant.delete")
+  @apigen.command(#{ auditAction: "grant.deleted" })
+  @apigen.failsWith(GrantNotFoundFailure)
   @apigen.auditPayload(GrantAuditPayload)
-  @operationId("deleteGrant")
-  deleteGrant(@path workspace: string, @path grant: string): EmptyResponse | CommonErrors;
+  deleteGrant(@path @apigen.target workspace: string, @path grant: string): EmptyResponse | CommonErrors;
 }
 
 alias TransferOwnershipOK = OkJson<SecurableObjectResponse>;
@@ -1008,14 +1047,9 @@ alias TransferOwnershipOK = OkJson<SecurableObjectResponse>;
 @route("/workspaces/{workspace}/ownership")
 @post
 @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_ITEM" })
-@apigen.command(#{
-  audit: #{ required: true, successAction: "ownership.transferred", guarantee: "transactional" },
-  failures: #[
-    #{ kind: "invalid", statusCode: 400, code: "OWNERSHIP_TRANSFER_INVALID", publicDetail: "The ownership transfer request is invalid." },
-  ],
-})
+@apigen.command(#{ auditAction: "ownership.transferred", guarantee: "transactional" })
+@apigen.failsWith(OwnershipTransferInvalidFailure)
 @apigen.auditPayload(OwnershipTransferAuditPayload)
-@operationId("transferOwnership")
 op transferOwnership(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: OwnershipTransferRequest): TransferOwnershipOK | CommonErrors;
 
 alias ListDataPoliciesOK = OkJson<DataPolicyListResponse>;
@@ -1023,31 +1057,29 @@ alias CreateDataPolicyCreated = CreatedJson<DataPolicyResponse>;
 
 @tag("Access")
 @route("/workspaces/{workspace}/data-policies")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 interface DataPolicies {
   @summary("List data policies")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("listDataPolicies")
   listDataPolicies(@path workspace: string, @query objectType?: string, @query objectId?: string, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListDataPoliciesOK | CommonErrors;
 
   @summary("Create a data policy")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.command(#{
-    audit: #{ required: true, successAction: "data_policy.created", guarantee: "transactional" },
+    auditAction: "data_policy.created",
     failures: #[
       #{ kind: "invalid", statusCode: 400, code: "DATA_POLICY_INVALID", publicDetail: "The data policy request is invalid." },
     ],
   })
   @apigen.auditPayload(DataPolicyAuditPayload)
-  @operationId("createDataPolicy")
   createDataPolicy(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DataPolicyRequest): CreateDataPolicyCreated | CommonErrors;
 
   @summary("Get a data policy")
   @route("/{policy}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @operationId("getDataPolicy")
   getDataPolicy(@path workspace: string, @path policy: string): OkJson<DataPolicyResponse> | CommonErrors;
 
   @summary("Update a data policy")
@@ -1055,31 +1087,23 @@ interface DataPolicies {
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.command(#{
-    audit: #{ required: true, successAction: "data_policy.updated", guarantee: "transactional" },
+    auditAction: "data_policy.updated",
     failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "DATA_POLICY_NOT_FOUND", publicDetail: "Data policy not found." },
       #{ kind: "invalid", statusCode: 422, code: "DATA_POLICY_INVALID", publicDetail: "The data policy is invalid." },
     ],
-    targetParameter: "workspace",
   })
+  @apigen.failsWith(DataPolicyNotFoundFailure)
   @apigen.auditPayload(DataPolicyAuditPayload)
-  @operationId("updateDataPolicy")
-  updateDataPolicy(@path workspace: string, @path policy: string, @header("If-Match") ifMatch: string, @body body: DataPolicyRequest): OkJson<DataPolicyResponse> | CommonErrors;
+  updateDataPolicy(@path @apigen.target workspace: string, @path policy: string, @header("If-Match") ifMatch: string, @body body: DataPolicyRequest): OkJson<DataPolicyResponse> | CommonErrors;
 
   @summary("Delete a data policy")
   @route("/{policy}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
-  @apigen.command(#{
-    audit: #{ required: true, successAction: "data_policy.deleted", guarantee: "transactional" },
-    failures: #[
-      #{ kind: "not_found", statusCode: 404, code: "DATA_POLICY_NOT_FOUND", publicDetail: "Data policy not found." },
-    ],
-    targetParameter: "workspace",
-  })
+  @apigen.command(#{ auditAction: "data_policy.deleted" })
+  @apigen.failsWith(DataPolicyNotFoundFailure)
   @apigen.auditPayload(DataPolicyAuditPayload)
-  @operationId("deleteDataPolicy")
-  deleteDataPolicy(@path workspace: string, @path policy: string): EmptyResponse | CommonErrors;
+  deleteDataPolicy(@path @apigen.target workspace: string, @path policy: string): EmptyResponse | CommonErrors;
 }
 
 @tag("Access")
@@ -1088,5 +1112,4 @@ interface DataPolicies {
 @post
 @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
 @apigen.query
-@operationId("checkAuthorizationBatch")
 op checkAuthorizationBatch(@path workspace: string, @body body: AuthorizationBatchCheckRequest): OkJson<AuthorizationBatchCheckResponse> | CommonErrors;

@@ -440,7 +440,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.avatarBusy = true
     this.error = ''
     try {
-      const response = await fetch('/profile/avatar', { method: 'PUT', headers: { ...window.LeapViewCommand.headers(), 'Content-Type': file.type }, body: file })
+      const response = await fetch('/profile/avatar', { method: 'PUT', headers: { ...window.LeapViewCommand.headers('uploadCurrentAvatar'), 'Content-Type': file.type }, body: file })
       if (!response.ok) throw new Error('Avatar upload failed')
       const uploaded = await response.json() as { url?: string }
       document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: uploaded.url ?? '' } }))
@@ -454,7 +454,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.avatarBusy = true
     this.error = ''
     try {
-      const response = await fetch('/profile/avatar', { method: 'DELETE', headers: window.LeapViewCommand.headers() })
+      const response = await fetch('/profile/avatar', { method: 'DELETE', headers: window.LeapViewCommand.headers('deleteCurrentAvatar') })
       if (!response.ok) throw new Error('Avatar removal failed')
       document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: '' } }))
       this.send('lv-personal-profile-command', { action: 'refresh', displayName: this.profileName })
