@@ -11,7 +11,6 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/agent"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
-	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
@@ -152,9 +151,9 @@ func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, wor
 func agentUIBinding(operationID agentgen.GenCommandOperationID) uicommand.Binding {
 	switch operationID.APIGenOperationID() {
 	case createAgentConversationOperation.APIGenOperationID():
-		return agentuiaction.CreateConversation
+		return agentgen.GenUIActionCreateAgentConversation()
 	case createAgentRunOperation.APIGenOperationID():
-		return agentuiaction.CreateRun
+		return agentgen.GenUIActionCreateAgentRun()
 	default:
 		return uicommand.Binding{}
 	}

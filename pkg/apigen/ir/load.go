@@ -18,6 +18,7 @@ const CurrentSchemaVersion = "v4"
 var toolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var auditActionPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
 var stableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var uiActionPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*(\.[a-z][a-z0-9]*(-[a-z0-9]+)*)+$`)
 var jobKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 var failureCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
@@ -88,6 +89,7 @@ func Validate(doc Document) error {
 	seenRoute := make(map[string]struct{}, len(doc.Endpoints))
 	seenTool := make(map[string]string, len(doc.Endpoints))
 	seenCLI := make(map[string]string, len(doc.Endpoints))
+	seenUIAction := make(map[string]string, len(doc.Endpoints))
 	commandPaths := make(map[string][]string, len(doc.Endpoints))
 	for _, endpoint := range doc.Endpoints {
 		if strings.TrimSpace(endpoint.Method) == "" {
@@ -120,6 +122,13 @@ func Validate(doc Document) error {
 		if endpoint.Command != nil {
 			if err := validateCommand(doc, endpoint); err != nil {
 				return err
+			}
+			if endpoint.Command.UI != nil {
+				actionID := endpoint.Command.UI.ActionID
+				if operationID, exists := seenUIAction[actionID]; exists {
+					return fmt.Errorf("duplicate ui action_id %q for operations %q and %q", actionID, operationID, endpoint.OperationID)
+				}
+				seenUIAction[actionID] = endpoint.OperationID
 			}
 		}
 		if endpoint.Tool != nil {
@@ -396,6 +405,17 @@ func validateCommand(doc Document, endpoint Endpoint) error {
 			return fmt.Errorf("%s has duplicate additional exposure %q", context, exposure)
 		}
 		seenExposures[exposure] = struct{}{}
+	}
+	if command.UI != nil {
+		actionID := strings.TrimSpace(command.UI.ActionID)
+		if !uiActionPattern.MatchString(actionID) {
+			return fmt.Errorf("%s ui.action_id %q must be a stable dotted lower-kebab-case name", context, actionID)
+		}
+		if _, exposed := seenExposures["ui"]; !exposed {
+			return fmt.Errorf("%s ui metadata requires the ui additional exposure", context)
+		}
+	} else if _, exposed := seenExposures["ui"]; exposed {
+		return fmt.Errorf("%s ui additional exposure requires ui metadata", context)
 	}
 	if command.Target != nil {
 		if strings.TrimSpace(command.Target.Parameter) == "" || strings.TrimSpace(command.Target.Type) == "" {

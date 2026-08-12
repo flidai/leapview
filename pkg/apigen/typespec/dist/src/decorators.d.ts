@@ -123,6 +123,7 @@ export interface ToolOptions {
 }
 export declare function $cli(context: DecoratorContext, target: Operation, options: CLIOptions): void;
 export declare function $command(context: DecoratorContext, target: Operation, options: CommandOptions): void;
+export declare function $ui(context: DecoratorContext, target: Operation, actionId: string): void;
 export declare function $auditPayload(context: DecoratorContext, target: Operation, schema: Model, options?: AuditPayloadOptions): void;
 export declare function $auditSchema(context: DecoratorContext, target: Model, options: AuditPayloadOptions): void;
 export declare function $sensitivity(context: DecoratorContext, target: ModelProperty, classification: AuditSensitivity): void;
@@ -143,6 +144,7 @@ export declare const $decorators: {
     apigen: {
         cli: typeof $cli;
         command: typeof $command;
+        ui: typeof $ui;
         auditPayload: typeof $auditPayload;
         auditSchema: typeof $auditSchema;
         sensitivity: typeof $sensitivity;
@@ -167,6 +169,9 @@ export declare function getCLI(context: {
 export declare function getCommand(context: {
     program: DecoratorContext["program"];
 }, target: Operation): CommandOptions | undefined;
+export declare function getUI(context: {
+    program: DecoratorContext["program"];
+}, target: Operation): string | undefined;
 export declare function getAuditPayload(context: {
     program: DecoratorContext["program"];
 }, target: Operation): AuditPayloadDefinition | undefined;

@@ -9,8 +9,8 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	dashboarduiaction "github.com/flidai/leapview/internal/dashboard/uiaction"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
@@ -46,15 +46,19 @@ func TestRoleLabelDistinguishesLocalAndConfiguredAccess(t *testing.T) {
 func TestAdminPublicationMutationPassesUIInvocationIdentity(t *testing.T) {
 	service := &adminPublicationInvocationService{}
 	m := &Module{
-		publications:        service,
-		publicationCommands: dashboarduiaction.PublicationActions(),
+		publications: service,
+		publicationCommands: map[string]uicommand.Binding{
+			"suspend": dashboardgen.GenUIActionSuspendDashboardPublication(),
+			"resume":  dashboardgen.GenUIActionResumeDashboardPublication(),
+			"rotate":  dashboardgen.GenUIActionRotateDashboardPublication(),
+		},
 		currentPrincipal: func(*http.Request) (Principal, bool) {
 			return Principal{ID: "principal-ui", DevBypass: true}, true
 		},
 	}
 	r := httptest.NewRequest(http.MethodPost, "/admin/publications/command", nil)
 	r.Header.Set("X-Request-ID", "ui-request-1")
-	r.Header.Set(uicommand.HeaderOperationID, dashboarduiaction.SuspendPublication.OperationID())
+	r.Header.Set(uicommand.HeaderOperationID, dashboardgen.GenUIActionSuspendDashboardPublication().OperationID())
 	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{WorkspaceID: "sales", Publication: "executive", Action: "suspend"})
 	if err != nil {
 		t.Fatal(err)

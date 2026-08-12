@@ -1,7 +1,7 @@
 package module
 
 import (
-	accessuiaction "github.com/flidai/leapview/internal/access/uiaction"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
@@ -17,10 +17,10 @@ type UICommandBindings struct {
 
 func (*Module) UICommandBindings() UICommandBindings {
 	return UICommandBindings{
-		CreateRoleBinding: accessuiaction.CreateRoleBinding,
-		UpdateRoleBinding: accessuiaction.UpdateRoleBinding,
-		DeleteRoleBinding: accessuiaction.DeleteRoleBinding,
-		CreateGrant:       accessuiaction.CreateGrant,
-		DeleteGrant:       accessuiaction.DeleteGrant,
+		CreateRoleBinding: accessgen.GenUIActionCreateRoleBinding(),
+		UpdateRoleBinding: accessgen.GenUIActionUpdateRoleBinding(),
+		DeleteRoleBinding: accessgen.GenUIActionDeleteRoleBinding(),
+		CreateGrant:       accessgen.GenUIActionCreateGrant(),
+		DeleteGrant:       accessgen.GenUIActionDeleteGrant(),
 	}
 }

@@ -942,6 +942,8 @@ paths:
             status_code: !!float 503
         idempotency: required
         owner: LeapViewAPI.Agent
+        ui:
+          action_id: agent.conversation.create
         privilege: USE_AGENT
       x-authz:
         mode: privilege
@@ -2745,6 +2747,8 @@ paths:
         target:
           parameter: conversation
           type: conversation
+        ui:
+          action_id: agent.run.create
         privilege: USE_AGENT
       x-authz:
         mode: privilege
@@ -31745,6 +31749,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: dashboard.publication.resume
         privilege: MANAGE_PUBLICATIONS
       x-authz:
         mode: privilege
@@ -32077,6 +32083,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: dashboard.publication.rotate
         privilege: MANAGE_PUBLICATIONS
       x-authz:
         mode: privilege
@@ -32409,6 +32417,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: dashboard.publication.suspend
         privilege: MANAGE_PUBLICATIONS
       x-authz:
         mode: privilege
@@ -37426,6 +37436,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: workspace.access.grant.create
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -37728,6 +37740,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: workspace.access.grant.delete
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -43593,6 +43607,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: workspace.access.role-binding.create
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -43891,6 +43907,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: workspace.access.role-binding.delete
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -44486,6 +44504,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: workspace.access.role-binding.update
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege

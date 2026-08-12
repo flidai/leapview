@@ -141,11 +141,12 @@ describe("APIGen TypeSpec emitter", () => {
         @post
         @operationId("createRoleBinding")
         @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+        @apigen.ui("workspace.access.role-binding.create")
         @apigen.auditPayload(RoleBindingAuditPayload, #{ schemaVersion: 1, retention: "security" })
         @apigen.command(#{
           audit: #{ required: true, successAction: "role_binding.created", guarantee: "best-effort" },
           failures: #[],
-          additionalExposures: #["ui", "automation"],
+          additionalExposures: #["automation"],
         })
         create(
           @path workspace: string,
@@ -165,6 +166,7 @@ describe("APIGen TypeSpec emitter", () => {
         owner: "CommandAPI",
         audit: { required: true, success_action: "role_binding.created", guarantee: "best-effort" },
         additional_exposures: ["automation", "ui"],
+        ui: { action_id: "workspace.access.role-binding.create" },
         target: { parameter: "workspace", type: "workspace" },
         idempotency: "required",
         authz_mode: "privilege",
@@ -361,6 +363,44 @@ describe("APIGen TypeSpec emitter", () => {
 
   it("rejects invalid command contracts before writing IR", async () => {
     const cases = [
+      {
+        message: "must be a stable dotted lower-kebab-case name",
+        operation: `
+          @post
+          @operationId("createWidget")
+          @apigen.ui("Create Widget")
+          @apigen.command(#{ audit: #{ required: false }, failures: #[] })
+          op create(@header("Idempotency-Key") key: string): string;
+        `,
+      },
+      {
+        message: "@apigen.ui already declares the ui exposure",
+        operation: `
+          @post
+          @operationId("createWidget")
+          @apigen.ui("workspace.widget.create")
+          @apigen.command(#{ audit: #{ required: false }, failures: #[], additionalExposures: #["ui"] })
+          op create(@header("Idempotency-Key") key: string): string;
+        `,
+      },
+      {
+        message: "ui exposure requires @apigen.ui",
+        operation: `
+          @post
+          @operationId("createWidget")
+          @apigen.command(#{ audit: #{ required: false }, failures: #[], additionalExposures: #["ui"] })
+          op create(@header("Idempotency-Key") key: string): string;
+        `,
+      },
+      {
+        message: "@apigen.ui requires @apigen.command",
+        operation: `
+          @get
+          @operationId("getWidget")
+          @apigen.ui("workspace.widget.get")
+          op get(): string;
+        `,
+      },
       {
         message: "required audit must declare @apigen.auditPayload",
         operation: `

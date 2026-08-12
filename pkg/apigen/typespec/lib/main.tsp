@@ -151,6 +151,7 @@ model ToolOptions {
 
 extern dec cli(target: Operation, options: valueof CLIOptions);
 extern dec command(target: Operation, options: valueof CommandOptions);
+extern dec ui(target: Operation, actionId: valueof string);
 extern dec auditPayload(target: Operation, schema: Model, options?: valueof AuditPayloadOptions);
 extern dec auditSchema(target: Model, options: valueof AuditPayloadOptions);
 extern dec sensitivity(target: ModelProperty, classification: valueof ("public" | "internal" | "pii" | "secret"));

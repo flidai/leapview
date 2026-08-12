@@ -7,14 +7,11 @@ import (
 
 	apigenaudit "github.com/Yacobolo/toolbelt/apigen/runtime/audit"
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenui "github.com/Yacobolo/toolbelt/apigen/runtime/ui"
 )
 
-type testOperationID string
-
-func (id testOperationID) APIGenOperationID() string { return string(id) }
-
 func TestBeginInvocationVerifiesClaimAndGeneratedContract(t *testing.T) {
-	binding := Must("widget.create", testOperationID("createWidget"))
+	binding := apigenui.MustAction("widget.create", "createWidget")
 	contract := testContract("createWidget")
 	request := httptest.NewRequest("POST", "/widgets", nil)
 	request.Header.Set(HeaderOperationID, "createWidget")
@@ -29,7 +26,7 @@ func TestBeginInvocationVerifiesClaimAndGeneratedContract(t *testing.T) {
 }
 
 func TestBeginInvocationRejectsMissingMismatchedAndUnexposedClaims(t *testing.T) {
-	binding := Must("widget.create", testOperationID("createWidget"))
+	binding := apigenui.MustAction("widget.create", "createWidget")
 	contract := testContract("createWidget")
 
 	missing := httptest.NewRequest("POST", "/widgets", nil)
@@ -56,8 +53,8 @@ func TestComposedClaimsStillVerifyEachIndividualCommand(t *testing.T) {
 	request.Header.Set(HeaderOperationID, "createWidget,runWidget")
 	claims := OperationClaims(request)
 	workflow := []Binding{
-		Must("widget.create", testOperationID("createWidget")),
-		Must("widget.run", testOperationID("runWidget")),
+		apigenui.MustAction("widget.create", "createWidget"),
+		apigenui.MustAction("widget.run", "runWidget"),
 	}
 	if err := VerifyWorkflowClaims(claims, workflow); err != nil {
 		t.Fatalf("verify workflow: %v", err)

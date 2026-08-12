@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenui "github.com/Yacobolo/toolbelt/apigen/runtime/ui"
 )
 
 const HeaderOperationID = "X-LeapView-Operation-ID"
@@ -20,38 +21,8 @@ var (
 	ErrOperationMismatch = errors.New("UI command operation identity does not match the dispatched command")
 )
 
-// OperationID is implemented by APIGen's generated command operation IDs.
-// Requiring this interface prevents UI bindings from being authored with raw
-// strings that can drift away from the generated command registry.
-type OperationID interface {
-	APIGenOperationID() string
-}
-
-// Binding gives one stable browser action exactly one generated command.
-type Binding struct {
-	actionID    string
-	operationID string
-}
-
-func New(actionID string, operation OperationID) (Binding, error) {
-	actionID = strings.TrimSpace(actionID)
-	if actionID == "" || operation == nil || strings.TrimSpace(operation.APIGenOperationID()) == "" {
-		return Binding{}, fmt.Errorf("%w: action and generated operation IDs are required", ErrInvalidBinding)
-	}
-	return Binding{actionID: actionID, operationID: strings.TrimSpace(operation.APIGenOperationID())}, nil
-}
-
-func Must(actionID string, operation OperationID) Binding {
-	binding, err := New(actionID, operation)
-	if err != nil {
-		panic(err)
-	}
-	return binding
-}
-
-func (b Binding) ActionID() string    { return b.actionID }
-func (b Binding) OperationID() string { return b.operationID }
-func (b Binding) Valid() bool         { return b.actionID != "" && b.operationID != "" }
+// Binding is APIGen's generated transport-neutral browser action binding.
+type Binding = apigenui.Action
 
 // OperationClaims returns the generated operation identities claimed by a
 // browser request. Multiple values are supported only for an explicitly
