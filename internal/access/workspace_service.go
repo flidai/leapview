@@ -17,6 +17,7 @@ type WorkspaceAccessService interface {
 	ListRoleBindings(context.Context, string) ([]RoleBinding, error)
 	ListRoles(context.Context) ([]Role, error)
 	Authorize(context.Context, string, Privilege, ObjectRef) (AuthorizationDecision, error)
+	GetSecurableObject(context.Context, ObjectRef) (SecurableObject, error)
 	CreateGrant(context.Context, GrantInput) (Grant, error)
 	DeleteGrant(context.Context, string, string) error
 	ListGrants(context.Context, ObjectRef) ([]Grant, error)

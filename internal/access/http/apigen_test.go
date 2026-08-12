@@ -33,3 +33,18 @@ func TestAPIGenDispatcherPreservesGeneratedIfMatchHeader(t *testing.T) {
 		t.Fatalf("If-Match = %q, want %q", got, want)
 	}
 }
+
+func TestAPIGenDispatcherPreservesCurrentPrincipalIfMatchHeader(t *testing.T) {
+	request := httptest.NewRequest(stdhttp.MethodPatch, "/api/v1/me", strings.NewReader(`{"displayName":"Updated"}`))
+	dispatcher := NewAPIGenDispatcher(Handler{})
+
+	dispatcher.UpdateCurrentPrincipal(
+		httptest.NewRecorder(),
+		request,
+		accessgen.GenUpdateCurrentPrincipalHeaders{IfMatch: `"profile-1"`},
+	)
+
+	if got, want := request.Header.Get("If-Match"), `"profile-1"`; got != want {
+		t.Fatalf("If-Match = %q, want %q", got, want)
+	}
+}

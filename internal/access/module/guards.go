@@ -26,6 +26,12 @@ func (m *Module) ProtectGlobal(privilege access.Privilege, handler http.HandlerF
 	return m.protectAnyWorkspace(privilege, handler).ServeHTTP
 }
 
+func (m *Module) ProtectPlatform(privilege access.Privilege, handler http.HandlerFunc) http.HandlerFunc {
+	return m.ProtectWithObjects(privilege, func(*http.Request, string) []access.ObjectRef {
+		return []access.ObjectRef{access.PlatformObject()}
+	}, handler)
+}
+
 func (m *Module) ProtectHandler(privilege access.Privilege, next http.Handler) http.Handler {
 	return m.ProtectHandlerWithObjects(privilege, nil, next)
 }
@@ -36,6 +42,12 @@ func (m *Module) ProtectNamed(privilege string, next http.Handler) http.Handler 
 
 func (m *Module) ProtectGlobalNamed(privilege string, next http.Handler) http.Handler {
 	return m.protectAnyWorkspace(access.Privilege(privilege), next)
+}
+
+func (m *Module) ProtectPlatformNamed(privilege string, next http.Handler) http.Handler {
+	return m.ProtectHandlerWithObjects(access.Privilege(privilege), func(*http.Request, string) []access.ObjectRef {
+		return []access.ObjectRef{access.PlatformObject()}
+	}, next)
 }
 
 func (m *Module) ProtectAnyWorkspaceNamed(privilege string, next http.Handler) http.Handler {

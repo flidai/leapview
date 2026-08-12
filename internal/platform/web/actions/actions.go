@@ -35,6 +35,16 @@ func CommandPatch(binding uicommand.Binding, path, revision string, signalPaths 
 // CommandPostSwitch chooses one typed command from a closed server-shared set.
 // selectorExpression is a Datastar expression such as "evt.detail.action".
 func CommandPostSwitch(selectorExpression string, bindings map[string]uicommand.Binding, path string, signalPaths ...string) string {
+	return commandPostSwitch(selectorExpression, bindings, path, "", signalPaths...)
+}
+
+// CommandPostSwitchWithRevision chooses a typed command and supplies a
+// browser signal expression as its If-Match value.
+func CommandPostSwitchWithRevision(selectorExpression string, bindings map[string]uicommand.Binding, path, ifMatchExpression string, signalPaths ...string) string {
+	return commandPostSwitch(selectorExpression, bindings, path, strings.TrimSpace(ifMatchExpression), signalPaths...)
+}
+
+func commandPostSwitch(selectorExpression string, bindings map[string]uicommand.Binding, path, ifMatchExpression string, signalPaths ...string) string {
 	keys := make([]string, 0, len(bindings))
 	for key := range bindings {
 		keys = append(keys, key)
@@ -45,6 +55,9 @@ func CommandPostSwitch(selectorExpression string, bindings map[string]uicommand.
 		entries = append(entries, jsString(key)+": "+jsString(bindings[key].OperationID()))
 	}
 	operationExpression := "({" + strings.Join(entries, ", ") + "})[" + strings.TrimSpace(selectorExpression) + "]"
+	if ifMatchExpression != "" {
+		return requestWithHeaders("post", path, signalPaths, "window.LeapViewCommand.headers("+operationExpression+", "+ifMatchExpression+")")
+	}
 	return request("post", path, signalPaths, operationExpression)
 }
 

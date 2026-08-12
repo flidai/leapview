@@ -81,39 +81,293 @@ test('publications admin renders lifecycle controls and emits typed commands', a
   }
 })
 
-test('profile admin renders the signed-in identity with read-only fields', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+test('profile settings renders the signed-in identity and editable local fields', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 760 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ page: {
-        kind: 'admin', title: 'Profile', active: 'profile', headerTitle: 'Profile', headerDetail: '',
-        profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', title: '', username: 'jacob', profilePictureUrl: undefined },
+        kind: 'admin', title: 'Profile', active: 'profile', headerTitle: 'Profile', headerDetail: 'Manage your photo and display name.',
+      }, personalSettings: {
+        active: 'profile',
+        profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', avatarUrl: '/profile/avatar.png', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
+        security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
+        tokens: { items: [], scopes: [] },
       } })
       const element = document.querySelector('lv-admin-page') as any
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await element.updateComplete
       const root = element.shadowRoot!
+      const profile = root.querySelector('lv-personal-settings') as any
+      await profile.updateComplete
+      const profileRoot = profile.shadowRoot as ShadowRoot
+      const main = root.querySelector('.main') as HTMLElement
+      const route = root.querySelector('.route') as HTMLElement
+      const header = root.querySelector('.page-header') as HTMLElement
+      const avatarTrigger = profileRoot.querySelector('.avatar-trigger') as HTMLButtonElement
+      const fieldLabel = profileRoot.querySelector('.settings-label') as HTMLElement
+      avatarTrigger.click()
+      await profile.updateComplete
+      const avatarMenuItems = Array.from(profileRoot.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())
+      const avatarMenuOpen = avatarTrigger.getAttribute('aria-expanded')
+      avatarTrigger.focus()
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      await profile.updateComplete
+      const avatarMenuClosed = !profileRoot.querySelector('[role="menu"]')
+      const avatarTriggerFocused = profileRoot.activeElement === avatarTrigger
+      let themeCommand: unknown = null
+      let appliedTheme: unknown = null
+      profile.addEventListener('lv-personal-theme-command', (event: CustomEvent) => { themeCommand = event.detail }, { once: true })
+      document.addEventListener('leapview-theme-change', (event: CustomEvent) => { appliedTheme = event.detail?.mode }, { once: true })
+      const theme = profileRoot.querySelector('select[name="theme"]') as HTMLSelectElement
+      avatarTrigger.click()
+      await profile.updateComplete
+      theme.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }))
+      await profile.updateComplete
+      const avatarMenuClosedOnOutsidePointer = !profileRoot.querySelector('[role="menu"]')
+      theme.value = 'dark_colorblind'
+      theme.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
-        cardBorderWidth: getComputedStyle(root.querySelector('.profile-card') as HTMLElement).borderTopWidth,
-        rows: Array.from(root.querySelectorAll('.profile-row')).map((row) => row.textContent?.replace(/\s+/g, ' ').trim()),
-        initials: root.querySelector('.profile-avatar')?.textContent?.trim(),
-        editableFields: root.querySelectorAll('input, textarea, select, button').length,
+        text: profileRoot.textContent?.replace(/\s+/g, ' ').trim(),
+        nestedHeadings: profileRoot.querySelectorAll('h2').length,
+        mainCentered: Math.abs((main.getBoundingClientRect().left + main.getBoundingClientRect().width / 2) - (route.getBoundingClientRect().left + route.getBoundingClientRect().width / 2)) <= 1,
+        mainWidth: Math.round(main.getBoundingClientRect().width),
+        headerGap: Math.round(profile.getBoundingClientRect().top - header.getBoundingClientRect().bottom),
+        fieldLabelFontSize: getComputedStyle(fieldLabel).fontSize,
+        avatarMenuItems,
+        avatarMenuOpen,
+        avatarMenuClosed,
+        avatarTriggerFocused,
+        avatarMenuClosedOnOutsidePointer,
+        hasHiddenFileInput: Boolean(profileRoot.querySelector('input[type="file"].avatar-input')),
+        themeOptions: Array.from(profileRoot.querySelectorAll('select[name="theme"] option')).map((option) => option.textContent?.trim()),
+        themeCommand,
+        appliedTheme,
       }
     })
     expect(state.title).toBe('Profile')
-    expect(state.cardBorderWidth).toBe('0px')
-    expect(state.rows).toEqual(expect.arrayContaining([
-      'Profile picture JN',
-      'Email jacob@example.com',
-      'Full name Jacob Nielsen',
-      'Title Your job title or role Not set',
-      'Username One word, like a nickname or first name jacob',
-    ]))
-    expect(state.initials).toBe('JN')
-    expect(state.editableFields).toBe(0)
+    expect(state.text).toContain('Profile picture')
+    expect(state.text).toContain('jacob@example.com')
+    expect(state.text).toContain('Display name')
+    expect(state.text).toContain('Theme')
+    expect(state.themeOptions).toEqual([
+      'System',
+      'Light default',
+      'Dark default',
+      'Soft dark',
+      'Light protanopia and deuteranopia',
+      'Dark protanopia and deuteranopia',
+      'Light tritanopia',
+      'Dark tritanopia',
+    ])
+    expect(state.themeCommand).toEqual({ action: 'save', theme: 'dark_colorblind' })
+    expect(state.appliedTheme).toBe('dark_colorblind')
+    expect(state.nestedHeadings).toBe(0)
+    expect(state.mainCentered).toBe(true)
+    expect(state.mainWidth).toBe(640)
+    expect(state.headerGap).toBeGreaterThanOrEqual(16)
+    expect(state.fieldLabelFontSize).toBe('14px')
+    expect(state.avatarMenuItems).toEqual(['Change avatar', 'Remove avatar'])
+    expect(state.avatarMenuOpen).toBe('true')
+    expect(state.avatarMenuClosed).toBe(true)
+    expect(state.avatarTriggerFocused).toBe(true)
+    expect(state.avatarMenuClosedOnOutsidePointer).toBe(true)
+    expect(state.hasHiddenFileInput).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('personal API tokens use authorized scope and permission selectors', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-personal-settings'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        kind: 'admin', title: 'API tokens', active: 'api-tokens', headerTitle: 'API tokens', headerDetail: 'Manage personal API and CLI credentials.',
+      }, personalSettings: {
+        active: 'api-tokens',
+        profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
+        security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
+        tokens: { items: [], scopes: [
+          { kind: 'workspace', workspaceId: 'sales', label: 'Sales analytics', description: 'Revenue and pipeline reporting.', privileges: [
+            { value: 'USE_WORKSPACE', label: 'Use workspace', description: 'Open and use the workspace.', category: 'Workspace' },
+            { value: 'VIEW_ITEM', label: 'View content', description: 'View dashboards and other workspace content.', category: 'Workspace' },
+            { value: 'EDIT_ITEM', label: 'Edit content', description: 'Create and update workspace content.', category: 'Workspace' },
+            { value: 'MANAGE_ITEM', label: 'Manage content', description: 'Delete and administer workspace content.', category: 'Workspace' },
+            { value: 'QUERY_DATA', label: 'Query data', description: 'Run governed queries against workspace data.', category: 'Data' },
+            { value: 'PREVIEW_DATA', label: 'Preview data', description: 'Preview source and model data.', category: 'Data' },
+            { value: 'REFRESH_DATA', label: 'Refresh data', description: 'Start and manage data refreshes.', category: 'Data' },
+            { value: 'VIEW_DATA', label: 'View managed data', description: 'View managed-data metadata and revisions.', category: 'Data' },
+            { value: 'INGEST_DATA', label: 'Ingest data', description: 'Upload and ingest managed data.', category: 'Data' },
+            { value: 'AUTHOR_PROJECT', label: 'Author project', description: 'Create and synchronize project candidates.', category: 'Projects and releases' },
+            { value: 'PUBLISH_RELEASE', label: 'Publish releases', description: 'Publish project releases.', category: 'Projects and releases' },
+            { value: 'USE_AGENT', label: 'Use agent', description: 'Start and continue agent conversations.', category: 'Agent' },
+            { value: 'MANAGE_PUBLICATIONS', label: 'Manage publications', description: 'Configure and control public dashboards.', category: 'Administration' },
+          ] },
+          { kind: 'workspace', workspaceId: 'operations', label: 'Operations', description: 'Access limited to this workspace.', privileges: [
+            { value: 'USE_WORKSPACE', label: 'Use workspace', description: 'Open and use the workspace.', category: 'Workspace' },
+          ] },
+        ] },
+      } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const admin = document.querySelector('lv-admin-page') as any
+      await admin.updateComplete
+      const personal = admin.shadowRoot.querySelector('lv-personal-settings') as any
+      await personal.updateComplete
+      const root = personal.shadowRoot as ShadowRoot
+      const scope = root.querySelector('#token-scope') as HTMLSelectElement
+      const name = root.querySelector('#token-name') as HTMLInputElement
+      const create = root.querySelector('button[type="submit"]') as HTMLButtonElement
+      const initial = {
+        scopeOptions: Array.from(scope.options).map((option) => option.textContent?.trim()),
+        createDisabled: create.disabled,
+        rawWorkspaceField: Boolean(root.querySelector('input[placeholder*="Workspace ID"]')),
+        rawPrivilegeField: Boolean(root.querySelector('input[placeholder*="Privileges"]')),
+      }
+
+      scope.value = 'workspace:sales'
+      scope.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      name.value = 'Sales automation'
+      name.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await personal.updateComplete
+      const add = root.querySelector('.permission-trigger') as HTMLButtonElement
+      add.click()
+      await personal.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      const menu = root.querySelector('.permission-menu') as HTMLElement
+      const permissionList = root.querySelector('.permission-list') as HTMLElement
+      const menuRect = menu.getBoundingClientRect()
+      const menuLayout = {
+        bottom: Math.round(menuRect.bottom),
+        viewportHeight: innerHeight,
+        listScrollable: permissionList.scrollHeight > permissionList.clientHeight,
+        listOverflowY: getComputedStyle(permissionList).overflowY,
+      }
+      const search = root.querySelector('.permission-search input') as HTMLInputElement
+      const searchFocused = root.activeElement === search
+      search.value = 'query'
+      search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await personal.updateComplete
+      const filteredPermissions = Array.from(root.querySelectorAll('.permission-option .settings-label')).map((label) => label.textContent?.trim())
+      const queryPermission = root.querySelector('input[type="checkbox"][value="QUERY_DATA"]') as HTMLInputElement
+      queryPermission.click()
+      await personal.updateComplete
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      await personal.updateComplete
+      await Promise.resolve()
+      const scopeDescription = root.querySelector('.scope-description')?.textContent?.trim()
+      const selectedPermissions = Array.from(root.querySelectorAll('.selected-permission .settings-label')).map((label) => label.textContent?.trim())
+      const triggerFocused = root.activeElement === add
+
+      let command: unknown = null
+      personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      const form = root.querySelector('.token-form') as HTMLFormElement
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
+      await personal.updateComplete
+      const pending = {
+        name: (root.querySelector('#token-name') as HTMLInputElement).value,
+        selectedPermissions: root.querySelectorAll('.selected-permission').length,
+        buttonText: (root.querySelector('button[type="submit"]') as HTMLButtonElement).textContent?.trim(),
+      }
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: '403' } } }))
+      await personal.updateComplete
+      const failed = {
+        name: (root.querySelector('#token-name') as HTMLInputElement).value,
+        selectedPermissions: root.querySelectorAll('.selected-permission').length,
+        error: root.querySelector('[role="alert"]')?.textContent?.trim(),
+        createDisabled: (root.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
+      }
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
+      mergePatch({ personalSettings: { tokens: { items: [
+        { id: 'token-1', name: 'Sales automation', workspaceId: 'sales', privileges: ['QUERY_DATA'], createdAt: '2026-08-12T06:40:00Z' },
+      ], newToken: 'lv_created_secret' } } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await personal.updateComplete
+      const succeeded = {
+        name: (root.querySelector('#token-name') as HTMLInputElement).value,
+        selectedPermissions: root.querySelectorAll('.selected-permission').length,
+        tokenNames: Array.from(root.querySelectorAll('.card:last-child .settings-label')).map((element) => element.textContent?.trim()),
+        notice: root.querySelector('[role="status"]')?.textContent?.trim(),
+      }
+      return {
+        initial,
+        menuLayout,
+        scopeDescription,
+        filteredPermissions,
+        selectedPermissions,
+        menuClosed: !root.querySelector('.permission-menu'),
+        searchFocused,
+        triggerFocused,
+        command,
+        pending,
+        failed,
+        succeeded,
+      }
+    })
+
+    await page.setViewportSize({ width: 390, height: 700 })
+    const mobile = await page.evaluate(async () => {
+      const admin = document.querySelector('lv-admin-page') as any
+      const personal = admin.shadowRoot.querySelector('lv-personal-settings') as any
+      const root = personal.shadowRoot as ShadowRoot
+      const scope = root.querySelector('#token-scope') as HTMLSelectElement
+      scope.value = 'workspace:sales'
+      scope.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await personal.updateComplete
+      ;(root.querySelector('.permission-trigger') as HTMLButtonElement).click()
+      await personal.updateComplete
+      const menu = root.querySelector('.permission-menu') as HTMLElement
+      const close = root.querySelector('.permission-menu-close') as HTMLButtonElement
+      const rect = menu.getBoundingClientRect()
+      const state = {
+        position: getComputedStyle(menu).position,
+        left: Math.round(rect.left), right: Math.round(rect.right), bottom: Math.round(rect.bottom),
+        viewportWidth: innerWidth, viewportHeight: innerHeight,
+      }
+      close.click()
+      await personal.updateComplete
+      return { ...state, closed: !root.querySelector('.permission-menu') }
+    })
+
+    expect(state.initial).toEqual({
+      scopeOptions: ['Choose a scope', 'Sales analytics', 'Operations'],
+      createDisabled: true,
+      rawWorkspaceField: false,
+      rawPrivilegeField: false,
+    })
+    expect(state.scopeDescription).toBe('Revenue and pipeline reporting.')
+    expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
+    expect(state.menuLayout.listScrollable).toBe(true)
+    expect(state.menuLayout.listOverflowY).toBe('auto')
+    expect(state.filteredPermissions).toEqual(['Query data'])
+    expect(state.selectedPermissions).toEqual(['Query data'])
+    expect(state.menuClosed).toBe(true)
+    expect(state.searchFocused).toBe(true)
+    expect(state.triggerFocused).toBe(true)
+    expect(state.command).toMatchObject({
+      action: 'create', name: 'Sales automation', workspaceId: 'sales', privileges: ['QUERY_DATA'],
+    })
+    expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Creating…' })
+    expect(state.failed).toEqual({
+      name: 'Sales automation', selectedPermissions: 1,
+      error: 'Token creation failed because this page expired. Reload the page and try again.',
+      createDisabled: false,
+    })
+    expect(state.succeeded.name).toBe('')
+    expect(state.succeeded.selectedPermissions).toBe(0)
+    expect(state.succeeded.tokenNames).toContain('Sales automation')
+    expect(state.succeeded.notice).toContain('Copy this token now')
+    expect(mobile.position).toBe('fixed')
+    expect(mobile.left).toBeGreaterThanOrEqual(16)
+    expect(mobile.right).toBeLessThanOrEqual(mobile.viewportWidth - 16)
+    expect(mobile.bottom).toBeLessThanOrEqual(mobile.viewportHeight - 16)
+    expect(mobile.closed).toBe(true)
   } finally {
     await page.close()
   }
@@ -133,9 +387,19 @@ test('members directory list delegates search and filtering to the page stream',
       const rows = () => Array.from(root.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.textContent?.replace(/\s+/g, ' ').trim())
       const initial = {
         title: root.querySelector('table')?.getAttribute('aria-label'),
-        groupLabels: Array.from(root.querySelectorAll('.entity-list-group-row')).map((row) => row.textContent?.replace(/\s+/g, ' ').trim()),
+        avatarSrc: (root.querySelector('lv-user-avatar') as any)?.shadowRoot?.querySelector('img')?.getAttribute('src'),
+        fallbackInitials: (() => {
+          const avatars = Array.from(root.querySelectorAll('lv-user-avatar')) as any[]
+          return avatars.find((avatar) => avatar.name === 'Local Developer')?.shadowRoot?.textContent?.trim()
+        })(),
+        groupRows: root.querySelectorAll('.entity-list-group-row').length,
         rows: rows(),
         headers: Array.from(root.querySelectorAll('thead th .entity-list-sort-button > span:first-child')).map((header) => header.textContent?.trim()),
+        filterOptions: Array.from(root.querySelectorAll('select option')).map((option) => option.textContent?.trim()),
+        lastSeenCells: Array.from(root.querySelectorAll('.entity-list-table-row td:last-child')).map((cell) => ({
+          text: cell.textContent?.trim(),
+          title: cell.getAttribute('title'),
+        })),
       }
       const input = root.querySelector('input[type="search"]') as HTMLInputElement
       input.value = 'analyst'
@@ -143,20 +407,32 @@ test('members directory list delegates search and filtering to the page stream',
       await list.updateComplete
       const filtered = rows()
       const select = root.querySelector('select') as HTMLSelectElement
-      select.value = 'applications'
+      select.value = 'inactive'
       select.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       await list.updateComplete
-      return { initial, filtered, applicationRows: rows() }
+      const inactiveRows = rows()
+      const lastSeenSort = Array.from(root.querySelectorAll<HTMLButtonElement>('.entity-list-sort-button'))
+        .find((button) => button.textContent?.includes('Last seen'))
+      lastSeenSort?.click()
+      await list.updateComplete
+      return { initial, filtered, inactiveRows, sortedRows: rows() }
     })
 
     expect(state.initial.title).toBe('Members')
-    expect(state.initial.groupLabels).toEqual(['Active1'])
-    expect(state.initial.headers).toEqual(['Name', 'Email', 'Status', 'Teams', 'Joined'])
-    expect(state.initial.rows).toHaveLength(1)
+    expect(state.initial.avatarSrc).toBe('/profile/avatars/p1/avatar-digest')
+    expect(state.initial.fallbackInitials).toBe('LD')
+    expect(state.initial.groupRows).toBe(0)
+    expect(state.initial.headers).toEqual(['Name', 'Email', 'Status', 'Teams', 'Joined', 'Last seen'])
+    expect(state.initial.filterOptions).toEqual(['All', 'Active', 'Inactive'])
+    expect(state.initial.lastSeenCells[0]?.text).toMatch(/^5m ago$/)
+    expect(state.initial.lastSeenCells[0]?.title).toContain('UTC')
+    expect(state.initial.lastSeenCells[1]).toEqual({ text: 'Never', title: '' })
+    expect(state.initial.rows).toHaveLength(2)
     // The list emits both changes but keeps the last server payload visible
     // until the page stream sends the filtered groups back.
     expect(state.filtered).toEqual(state.initial.rows)
-    expect(state.applicationRows).toEqual(state.initial.rows)
+    expect(state.inactiveRows).toEqual(state.initial.rows)
+    expect(state.sortedRows[0]).toContain('Local Developer')
   } finally {
     await page.close()
   }
@@ -1768,6 +2044,7 @@ test('admin storage explorer keeps table, schema, and breadcrumb selection coher
 })
 
 function testDocument(): string {
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString()
   const page = {
     kind: 'admin',
     title: 'Principals',
@@ -1793,11 +2070,10 @@ function testDocument(): string {
     directoryList: {
       searchPlaceholder: 'Search by name or email',
       filterLabel: 'Filter members',
-      groups: [{
-        id: 'active',
-        label: 'Active',
-        items: [{ id: 'p1', name: 'Analyst', username: 'analyst', email: 'analyst@example.com', href: '/admin/principals/p1', kind: 'person', status: 'active', role: 'Viewer', groupCount: 1, joinedAt: '2026-07-20' }],
-      }],
+      items: [
+        { id: 'p1', name: 'Analyst', username: 'analyst', avatarUrl: '/profile/avatars/p1/avatar-digest', email: 'analyst@example.com', href: '/admin/principals/p1', status: 'active', groupCount: 1, joinedAt: '2026-07-20', lastSeenAt: fiveMinutesAgo },
+        { id: 'p2', name: 'Local Developer', username: 'dev', email: 'dev@localhost', href: '/admin/principals/p2', status: 'active', groupCount: 0, joinedAt: '2026-07-20', lastSeenAt: '' },
+      ],
     },
   }
   const signals = escapeHTML(JSON.stringify({ page }))
@@ -1807,7 +2083,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #fff; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-bg-accent: #0969da; --lv-bg-accent-muted: #ddf4ff; --lv-sidebar-bg: #f1f3f5; --lv-report-rail-bg: #ffffff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-fg-link: #0969da; --lv-fg-success: #1a7f37; --lv-fg-warning: #9a6700; --lv-fg-danger: #d1242f; --lv-fg-on-accent: #fff; --lv-icon-muted: #57606a; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-workspace-detail-max-width: 72rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --lv-transition-fast: 160ms ease; }
+          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #fff; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-bg-accent: #0969da; --lv-bg-accent-muted: #ddf4ff; --lv-sidebar-bg: #f1f3f5; --lv-report-rail-bg: #ffffff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-fg-link: #0969da; --lv-fg-success: #1a7f37; --lv-fg-warning: #9a6700; --lv-fg-danger: #d1242f; --lv-fg-on-accent: #fff; --lv-icon-muted: #57606a; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-settings-content-max-width: 40rem; --lv-workspace-detail-max-width: 72rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --base-size-32: 32px; --base-size-40: 40px; --base-size-48: 48px; --base-size-64: 64px; --control-large-size: 40px; --lv-transition-fast: 160ms ease; }
           lv-admin-page { min-height: 720px; }
         </style>
       </head>

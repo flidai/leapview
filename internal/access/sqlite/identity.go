@@ -35,6 +35,34 @@ func (r *Repository) ListPrincipals(ctx context.Context, filter access.Principal
 	return out, nil
 }
 
+// ListPrincipalsWithActivity is the administration read model for people
+// directory activity. Generic principal reads avoid paying for this aggregate.
+func (r *Repository) ListPrincipalsWithActivity(ctx context.Context, filter access.PrincipalFilter) ([]access.Principal, error) {
+	if r == nil || r.db == nil {
+		return []access.Principal{}, nil
+	}
+	rows, err := r.q.ListPrincipalsWithActivity(ctx, platformdb.ListPrincipalsWithActivityParams{
+		Email: strings.TrimSpace(filter.Email), Search: strings.TrimSpace(filter.Query),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]access.Principal, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, access.Principal{
+			ID:          row.ID,
+			Kind:        access.PrincipalKind(row.Kind),
+			Email:       row.Email,
+			DisplayName: row.DisplayName,
+			DisabledAt:  nullString(row.DisabledAt),
+			CreatedAt:   row.CreatedAt,
+			UpdatedAt:   row.UpdatedAt,
+			LastSeenAt:  row.LastSeenAt,
+		})
+	}
+	return out, nil
+}
+
 func (r *Repository) SearchPrincipals(ctx context.Context, query string, limit int) ([]access.Principal, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {

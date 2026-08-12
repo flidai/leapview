@@ -18,6 +18,63 @@ model WorkspaceListResponse {
   page: PageInfo;
 }
 
+model WorkspaceAdministrationSubjectResponse {
+  subjectType: string;
+  subjectId: string;
+  email?: string;
+  displayName: string;
+  role?: string;
+}
+
+model WorkspaceAdministrationRuntimeResponse {
+  environment: string;
+  activeServingStateId?: string;
+  activeServingStateStatus?: string;
+  activeServingStateSince?: utcDateTime;
+  projectId?: string;
+  currentDeploymentId?: string;
+  currentDeploymentStatus?: string;
+  currentDeploymentSince?: utcDateTime;
+  currentReleaseId?: string;
+}
+
+model WorkspaceAdministrationCapabilitiesResponse {
+  manageWorkspace: boolean;
+  manageAccess: boolean;
+  managePublications: boolean;
+  manageConnections: boolean;
+  viewManagedData: boolean;
+  ingestManagedData: boolean;
+  publishReleases: boolean;
+  requestDeployments: boolean;
+  viewDeployments: boolean;
+  useAgent: boolean;
+  viewAgent: boolean;
+}
+
+model WorkspaceAdministrationLinksResponse {
+  self: string;
+  workspace: string;
+  groups?: string;
+  roles?: string;
+  roleBindings?: string;
+  grants?: string;
+  publications?: string;
+  managedConnections?: string;
+  releases?: string;
+  deployments?: string;
+  agentConversations?: string;
+}
+
+model WorkspaceAdministrationResponse {
+  workspace: WorkspaceResponse;
+  owner?: WorkspaceAdministrationSubjectResponse;
+  administrators: WorkspaceAdministrationSubjectResponse[];
+  runtime: WorkspaceAdministrationRuntimeResponse;
+  capabilities: WorkspaceAdministrationCapabilitiesResponse;
+  links: WorkspaceAdministrationLinksResponse;
+}
+
 model AssetResponse {
   id: string;
   snapshotId: string;
@@ -112,6 +169,13 @@ op listWorkspaces(@query limit?: ListLimit, @query pageToken?: PageToken): ListW
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 op getWorkspace(@path workspace: string): OkJson<WorkspaceResponse> | CommonErrors;
+
+@tag("Workspaces")
+@summary("Get the workspace administration overview")
+@route("/workspaces/{workspace}/administration")
+@get
+@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_WORKSPACE" })
+op getWorkspaceAdministration(@path workspace: string): OkJson<WorkspaceAdministrationResponse> | CommonErrors;
 
 alias ListWorkspaceAssetEdgesOK = OkJson<AssetEdgeListResponse>;
 

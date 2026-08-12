@@ -41,7 +41,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       go run ./internal/app/tools/mapassets --out .data/map-assets; \
     fi
 
-FROM oven/bun:1.3.7@sha256:6cd5f00020e48b77a253bc8249f6b6dd3d92b3c04c2607f1f5a6d7dbf0a6fca3 AS web
+FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS web
 WORKDIR /src
 
 COPY package.json bun.lock tsconfig.json ./

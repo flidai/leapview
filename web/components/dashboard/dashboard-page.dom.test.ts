@@ -152,6 +152,8 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
         footerVisible: visible('lv-report-footer'),
         hasAgentToggle: Boolean(root.querySelector('.agent-toggle')),
         hasAgentDrawer: Boolean(root.querySelector('lv-chat-drawer')),
+        attribution: root.querySelector('.publication-attribution')?.textContent?.trim(),
+        attributionHref: root.querySelector('.publication-attribution')?.getAttribute('href'),
         agentActionCount: root.querySelectorAll('.ask-visual').length,
         canvasWidth: canvas.getBoundingClientRect().width,
         documentOverflow: document.documentElement.scrollWidth - window.innerWidth,
@@ -163,6 +165,8 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
     expect(state.footerVisible).toBe(false)
     expect(state.hasAgentToggle).toBe(false)
     expect(state.hasAgentDrawer).toBe(false)
+    expect(state.attribution).toBe('Powered by LeapView')
+    expect(state.attributionHref).toBe('https://leapview.dev')
     expect(state.agentActionCount).toBe(0)
     expect(state.canvasWidth).toBeGreaterThan(500)
     expect(state.documentOverflow).toBe(0)

@@ -69,8 +69,12 @@ func (h Handler) ListCurrentAuthoringSessions(w stdhttp.ResponseWriter, r *stdht
 		return
 	}
 	out := make([]map[string]any, 0, len(sessions))
+	currentSessionID := ""
+	if credential, found := h.currentCredential(r); found && credential.Authoring != nil {
+		currentSessionID = credential.Authoring.ID
+	}
 	for _, session := range sessions {
-		out = append(out, authoringSessionDTO(session))
+		out = append(out, authoringSessionDTO(session, session.ID != "" && session.ID == currentSessionID))
 	}
 	_ = writePagedJSON(w, r, out)
 }
@@ -87,6 +91,9 @@ func (h Handler) RevokeCurrentAuthoringSession(w stdhttp.ResponseWriter, r *stdh
 	}
 	sessionID := chi.URLParam(r, "session")
 	if err := service.RevokeSession(r.Context(), principal.ID, sessionID); err != nil {
+		if errors.Is(err, access.ErrInvalidAuthoringCredential) {
+			err = apigenfailure.Wrap("not_found", err)
+		}
 		writeAuthoringCommandError(w, r, accessgen.GenCommandOperationRevokeCurrentAuthoringSession(), err)
 		return
 	}
@@ -104,7 +111,7 @@ func (h Handler) authoringAuthentication(w stdhttp.ResponseWriter) (AuthoringAut
 func authoringTokenDTO(tokens access.AuthoringTokenSet) map[string]any {
 	response := map[string]any{
 		"accessToken": tokens.AccessToken, "tokenType": tokens.TokenType,
-		"expiresIn": tokens.ExpiresIn, "session": authoringSessionDTO(tokens.Session),
+		"expiresIn": tokens.ExpiresIn, "session": authoringSessionDTO(tokens.Session, true),
 	}
 	if tokens.RefreshToken != "" {
 		response["refreshToken"] = tokens.RefreshToken
@@ -112,13 +119,13 @@ func authoringTokenDTO(tokens access.AuthoringTokenSet) map[string]any {
 	return response
 }
 
-func authoringSessionDTO(session access.AuthoringSession) map[string]any {
+func authoringSessionDTO(session access.AuthoringSession, current bool) map[string]any {
 	privileges := make([]string, len(session.Scope.Privileges))
 	for index, privilege := range session.Scope.Privileges {
 		privileges[index] = string(privilege)
 	}
 	response := map[string]any{
-		"id": session.ID, "kind": session.Kind, "clientId": session.ClientID,
+		"id": session.ID, "kind": session.Kind, "current": current, "clientId": session.ClientID,
 		"targetId": session.Scope.TargetID, "projectId": session.Scope.ProjectID,
 		"privileges": privileges, "createdAt": session.CreatedAt.UTC().Format(time.RFC3339),
 		"expiresAt": session.ExpiresAt.UTC().Format(time.RFC3339),

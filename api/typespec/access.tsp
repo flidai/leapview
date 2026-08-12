@@ -9,6 +9,7 @@ model PrincipalResponse {
   kind: string;
   email: string;
   displayName: string;
+  disabledAt?: utcDateTime;
   createdAt: utcDateTime;
   updatedAt: utcDateTime;
 }
@@ -582,6 +583,7 @@ model DeviceAuthorizationApprovalRequest {
 model AuthoringSessionResponse {
   id: string;
   kind: string;
+  current: boolean;
   clientId: string;
   targetId: string;
   projectId: string;
@@ -612,22 +614,22 @@ op decideDeviceAuthorization(@header("Idempotency-Key") idempotencyKey: Idempote
 
 @tag("Current User")
 @route("/me/authoring-sessions")
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface CurrentAuthoringSessions {
   @summary("List current CLI and workload sessions")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
   listCurrentAuthoringSessions(@query limit?: ListLimit, @query pageToken?: PageToken): OkJson<AuthoringSessionListResponse> | CommonErrors;
 
   @summary("Revoke a current CLI or workload session")
   @route("/{session}")
   @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
   @apigen.command(#{ auditAction: "authoring.session.revoked" })
   @apigen.failsWith(InvalidAuthoringCredentialFailure)
   @apigen.failsWith(AuthoringSessionNotFoundFailure)
   @apigen.auditPayload(AuthoringSessionRevokedAuditPayload)
-  revokeCurrentAuthoringSession(@path session: string): OkJson<StatusResponse> | CommonErrors;
+  @apigen.ui("current-user.authoring-session.revoke")
+  revokeCurrentAuthoringSession(@path @apigen.target session: string): OkJson<StatusResponse> | CommonErrors;
 }
 
 alias ListPrincipalsOK = OkJson<PrincipalListResponse>;
@@ -687,6 +689,7 @@ interface Principals {
     auditAction: "principal.deleted",
     failures: #[
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be deleted by this operation." },
+      #{ kind: "conflict", statusCode: 409, code: "PRINCIPAL_OWNS_OBJECTS", publicDetail: "Transfer owned objects before deleting this principal." },
     ],
   })
   @apigen.failsWith(PrincipalNotFoundFailure)
@@ -702,6 +705,36 @@ interface Principals {
   @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalPasswordResetAuditPayload)
   resetPrincipalPassword(@path principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): ResetPrincipalPasswordOK | CommonErrors;
+
+  @summary("Disable a principal and reject its credentials")
+  @route("/{principal}/disable")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @extension("x-leapview-object-scope", "grant-management")
+  @apigen.command(#{
+    auditAction: "principal.disabled",
+    failures: #[
+      #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be disabled by this operation." },
+    ],
+  })
+  @apigen.failsWith(PrincipalNotFoundFailure)
+  @apigen.auditPayload(PrincipalUpdatedAuditPayload)
+  disablePrincipal(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
+
+  @summary("Re-enable a disabled principal")
+  @route("/{principal}/enable")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @extension("x-leapview-object-scope", "grant-management")
+  @apigen.command(#{
+    auditAction: "principal.enabled",
+    failures: #[
+      #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be enabled by this operation." },
+    ],
+  })
+  @apigen.failsWith(PrincipalNotFoundFailure)
+  @apigen.auditPayload(PrincipalUpdatedAuditPayload)
+  enablePrincipal(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
 
   @summary("List a principal's sessions")
   @route("/{principal}/sessions")
@@ -741,6 +774,7 @@ interface ServicePrincipals {
   @apigen.command(#{ auditAction: "service_principal.created" })
   @apigen.failsWith(ServicePrincipalInvalidFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
+  @apigen.ui("service-account.create")
   createServicePrincipal(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalCreateRequest): CreateServicePrincipalCreated | CommonErrors;
 
   @summary("Get a service principal")
@@ -753,7 +787,12 @@ interface ServicePrincipals {
   @route("/{servicePrincipal}")
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
-  @apigen.command(#{ auditAction: "service_principal.updated" })
+  @apigen.command(#{
+    auditAction: "service_principal.updated",
+    failures: #[
+      #{ kind: "conflict", statusCode: 409, code: "SERVICE_PRINCIPAL_OWNS_OBJECTS", publicDetail: "Transfer owned objects before deleting this service principal." },
+    ],
+  })
   @apigen.failsWith(ServicePrincipalNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
   updateServicePrincipal(@path servicePrincipal: string, @header("If-Match") ifMatch: string, @body body: ServicePrincipalPatchRequest): UpdateServicePrincipalOK | CommonErrors;
@@ -765,7 +804,8 @@ interface ServicePrincipals {
   @apigen.command(#{ auditAction: "service_principal.deleted" })
   @apigen.failsWith(ServicePrincipalNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
-  deleteServicePrincipal(@path servicePrincipal: string): EmptyResponse | CommonErrors;
+  @apigen.ui("service-account.delete")
+  deleteServicePrincipal(@path @apigen.target servicePrincipal: string): EmptyResponse | CommonErrors;
 
   @summary("Create a service principal secret")
   @route("/{servicePrincipal}/secrets")
@@ -774,7 +814,8 @@ interface ServicePrincipals {
   @apigen.command(#{ auditAction: "service_principal_secret.created" })
   @apigen.failsWith(ServicePrincipalSecretInvalidFailure)
   @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
-  createServicePrincipalSecret(@path servicePrincipal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalSecretCreateRequest): CreateServicePrincipalSecretCreated | CommonErrors;
+  @apigen.ui("service-account.secret.create")
+  createServicePrincipalSecret(@path @apigen.target servicePrincipal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalSecretCreateRequest): CreateServicePrincipalSecretCreated | CommonErrors;
 
   @summary("List service-principal secrets")
   @route("/{servicePrincipal}/secrets")
@@ -795,6 +836,7 @@ interface ServicePrincipals {
   @apigen.command(#{ auditAction: "service_principal_secret.revoked" })
   @apigen.failsWith(ServicePrincipalSecretNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
+  @apigen.ui("service-account.secret.revoke")
   revokeServicePrincipalSecret(@path @apigen.target servicePrincipal: string, @path secret: string): EmptyResponse | CommonErrors;
 }
 

@@ -8,8 +8,9 @@ import (
 )
 
 type RouteGuard struct {
-	Protect       func(access.Privilege, http.HandlerFunc) http.HandlerFunc
-	ProtectGlobal func(access.Privilege, http.HandlerFunc) http.HandlerFunc
+	Protect         func(access.Privilege, http.HandlerFunc) http.HandlerFunc
+	ProtectGlobal   func(access.Privilege, http.HandlerFunc) http.HandlerFunc
+	ProtectPlatform func(access.Privilege, http.HandlerFunc) http.HandlerFunc
 }
 
 func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
@@ -23,7 +24,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/chats/restore", guard.ProtectGlobal(access.PrivilegeViewAgent, h.ChatRestore))
 	r.Get("/chats/{conversation}", guard.ProtectGlobal(access.PrivilegeViewAgent, h.ChatConversation))
 	r.Post("/chats/turns", guard.ProtectGlobal(access.PrivilegeUseAgent, h.ChatTurn))
-	r.Patch("/admin/agent/config", guard.Protect(access.PrivilegeManageGrants, h.UpdateAdminConfig))
+	r.Patch("/admin/agent/config", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.UpdateAdminConfig))
 }
 
 func (m *Module) MountMCP(r chi.Router) {

@@ -1,5 +1,6 @@
 import ts from 'typescript'
 import { relative, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 export type UICommandBoundaryViolation = {
   file: string
@@ -9,7 +10,7 @@ export type UICommandBoundaryViolation = {
 
 const mutationMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
-export function inspectUICommandSource(file: string, source: string): UICommandBoundaryViolation[] {
+export function inspectUICommandSource(file: string, source: string, generatedUIOperations?: ReadonlySet<string>): UICommandBoundaryViolation[] {
   const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
   const violations: UICommandBoundaryViolation[] = []
   const report = (node: ts.Node, message: string) => {
@@ -27,7 +28,12 @@ export function inspectUICommandSource(file: string, source: string): UICommandB
         if (method) {
 		  const initializer = ts.isPropertyAssignment(method) ? method.initializer : undefined
 		  if (!initializer || !ts.isStringLiteralLike(initializer) || mutationMethods.has(initializer.text.toUpperCase())) {
-            report(method, 'direct mutating fetch bypasses the generated UI command transport')
+			const operationID = generatedOperationHeader(options)
+			if (!operationID) {
+              report(method, 'direct mutating fetch bypasses the generated UI command transport')
+			} else if (generatedUIOperations && !generatedUIOperations.has(operationID)) {
+			  report(method, `direct mutating fetch references non-generated UI operation ${JSON.stringify(operationID)}`)
+			}
           }
         }
       }
@@ -53,8 +59,29 @@ export function inspectUICommandSource(file: string, source: string): UICommandB
 
 export function checkUICommandBoundaries(root = process.cwd()): UICommandBoundaryViolation[] {
   const webRoot = resolve(root, 'web')
+  const ir = JSON.parse(readFileSync(resolve(root, 'api/gen/json-ir.json'), 'utf8')) as {
+	endpoints?: Array<{ operation_id?: string, command?: { ui?: unknown } }>
+  }
+  const generatedUIOperations = new Set((ir.endpoints ?? [])
+	.filter((endpoint) => endpoint.command?.ui != null)
+	.map((endpoint) => endpoint.operation_id ?? '')
+	.filter(Boolean))
   const files = ts.sys.readDirectory(webRoot, ['.ts', '.tsx'], ['**/*.test.ts', '**/*.dom.test.ts', '**/generated/**', '**/benchmarks/**'])
-  return files.flatMap((file) => inspectUICommandSource(relative(root, file), ts.sys.readFile(file) ?? ''))
+  return files.flatMap((file) => inspectUICommandSource(relative(root, file), ts.sys.readFile(file) ?? '', generatedUIOperations))
+}
+
+function generatedOperationHeader(options: ts.ObjectLiteralExpression): string | undefined {
+  let operationID: string | undefined
+  const visit = (node: ts.Node) => {
+	if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+		node.expression.getText() === 'window.LeapViewCommand.headers') {
+	  const operation = node.arguments[0]
+	  if (operation && ts.isStringLiteralLike(operation) && operation.text.trim()) operationID = operation.text.trim()
+	}
+	ts.forEachChild(node, visit)
+  }
+  visit(options)
+  return operationID
 }
 
 if (import.meta.main) {

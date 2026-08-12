@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -22,6 +23,7 @@ type candidatePreviewHandler interface {
 
 type candidateRouteDependencies struct {
 	access           *accessmodule.Module
+	product          *adminmodule.ProductService
 	agent            *agentmodule.Module
 	assets           staticasset.Resolver
 	dashboards       *dashboardmodule.Module
@@ -38,7 +40,7 @@ func candidatePreview(deps candidateRouteDependencies, w http.ResponseWriter, r 
 	if candidate.Status != deploymentmodule.CandidateReady {
 		serveCandidatePreview(
 			deps.deployments, candidate.ID, principalID,
-			applicationLayout(deps.access, deps.agent, deps.assets, r), w, r,
+			applicationLayout(deps.access, deps.agent, deps.product, deps.assets, r), w, r,
 		)
 		return
 	}

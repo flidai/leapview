@@ -55,6 +55,100 @@ func TestRepositoryEnsureRejectsBlankWorkspaceID(t *testing.T) {
 	}
 }
 
+func TestRepositoryAdministrationStateIsWorkspaceAndEnvironmentScoped(t *testing.T) {
+	ctx := context.Background()
+	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	servingRepo := servingstatesqlite.NewRepository(store.SQLDB())
+	for _, input := range []workspace.EnsureInput{
+		{ID: "sales", Title: "Sales", Description: "Sales workspace"},
+		{ID: "other", Title: "Other", Description: "Other workspace"},
+	} {
+		if err := workspaceRepo.Ensure(ctx, input); err != nil {
+			t.Fatalf("ensure workspace %s: %v", input.ID, err)
+		}
+	}
+	salesState := seedVersionDeployment(t, ctx, servingRepo, versionSeed{
+		WorkspaceID: "sales", Environment: "prod", Status: servingstate.StatusActive,
+		Source: servingstate.SourcePublish, VersionKey: "sales",
+	})
+	otherState := seedVersionDeployment(t, ctx, servingRepo, versionSeed{
+		WorkspaceID: "other", Environment: "prod", Status: servingstate.StatusActive,
+		Source: servingstate.SourcePublish, VersionKey: "other",
+	})
+	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE serving_states SET project_id = 'shared-project' WHERE id = ?`, salesState.ID); err != nil {
+		t.Fatalf("scope sales serving state: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE serving_states SET project_id = 'shared-project' WHERE id = ?`, otherState.ID); err != nil {
+		t.Fatalf("scope other serving state: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO api_releases (
+			id, project_id, project_digest, request_digest, idempotency_key, status,
+			manifest_json, created_by, finalized_at
+		) VALUES
+			('release-sales', 'shared-project', 'sha256:sales', 'sha256:sales-request', 'release-sales', 'ready', '{"workspaces":[],"connections":[]}', 'publisher', CURRENT_TIMESTAMP),
+			('release-other', 'shared-project', 'sha256:other', 'sha256:other-request', 'release-other', 'ready', '{"workspaces":[],"connections":[]}', 'publisher', CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatalf("insert releases: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO project_deployments (
+			id, project_id, environment, request_digest, status, created_by, activated_at
+		) VALUES
+			('deployment-sales', 'shared-project', 'prod', 'sha256:sales-deploy', 'active', 'deployer', CURRENT_TIMESTAMP),
+			('deployment-other', 'shared-project', 'prod', 'sha256:other-deploy', 'active', 'deployer', CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatalf("insert deployments: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO project_deployment_targets (
+			deployment_id, workspace_id, serving_state_id, status, activated_at
+		) VALUES
+			('deployment-sales', 'sales', ?, 'active', CURRENT_TIMESTAMP),
+			('deployment-other', 'other', ?, 'active', CURRENT_TIMESTAMP)`, salesState.ID, otherState.ID); err != nil {
+		t.Fatalf("insert deployment targets: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO api_deployment_releases (deployment_id, project_id, release_id)
+		VALUES
+			('deployment-sales', 'shared-project', 'release-sales'),
+			('deployment-other', 'shared-project', 'release-other')`); err != nil {
+		t.Fatalf("link deployment releases: %v", err)
+	}
+
+	state, err := workspaceRepo.AdministrationByID(ctx, "sales", "prod")
+	if err != nil {
+		t.Fatalf("administration state: %v", err)
+	}
+	if state.Workspace.ID != "sales" || state.Workspace.Title != "Sales" || state.Environment != "prod" {
+		t.Fatalf("workspace identity = %#v", state)
+	}
+	if state.Workspace.ActiveServingStateID != workspace.ServingStateID(salesState.ID) || state.ActiveServingStateStatus != "active" {
+		t.Fatalf("active serving state = %#v", state)
+	}
+	if state.ProjectID != "shared-project" || state.CurrentDeploymentID != "deployment-sales" || state.CurrentReleaseID != "release-sales" {
+		t.Fatalf("current release state = %#v", state)
+	}
+	if state.CurrentDeploymentID == "deployment-other" || state.CurrentReleaseID == "release-other" {
+		t.Fatalf("administration state leaked other workspace: %#v", state)
+	}
+
+	devState, err := workspaceRepo.AdministrationByID(ctx, "sales", "dev")
+	if err != nil {
+		t.Fatalf("dev administration state: %v", err)
+	}
+	if devState.Workspace.ActiveServingStateID != "" || devState.ProjectID != "" || devState.CurrentDeploymentID != "" || devState.CurrentReleaseID != "" {
+		t.Fatalf("prod state leaked into dev: %#v", devState)
+	}
+	if _, err := workspaceRepo.AdministrationByID(ctx, "missing", "prod"); !errors.Is(err, workspace.ErrNotFound) {
+		t.Fatalf("missing administration error = %v, want workspace.ErrNotFound", err)
+	}
+}
+
 func TestRepositoryActiveServingStateGraphUsesLogicalAssetIDs(t *testing.T) {
 	ctx := context.Background()
 	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))

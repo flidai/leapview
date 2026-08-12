@@ -129,8 +129,23 @@ func TestAPIGenAuthorizationContractCoverage(t *testing.T) {
 		"getInstance": true,
 	}
 	authenticatedOnly := map[string]bool{
-		"decideDeviceAuthorization": true,
-		"getCapabilities":           true,
+		"changeCurrentPassword":         true,
+		"createCurrentAPIToken":         true,
+		"decideDeviceAuthorization":     true,
+		"deleteCurrentAvatar":           true,
+		"getCapabilities":               true,
+		"getCurrentPrincipal":           true,
+		"getProductLogo":                true,
+		"getPrincipalAvatar":            true,
+		"listCurrentAPITokens":          true,
+		"listCurrentAuthoringSessions":  true,
+		"listCurrentSessions":           true,
+		"revokeCurrentAPIToken":         true,
+		"revokeCurrentAuthoringSession": true,
+		"revokeCurrentSession":          true,
+		"updateCurrentPrincipal":        true,
+		"updateCurrentTheme":            true,
+		"uploadCurrentAvatar":           true,
 	}
 	for operationID, contract := range contracts {
 		if publicAuthoringAuth[operationID] {

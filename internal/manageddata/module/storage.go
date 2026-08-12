@@ -449,6 +449,17 @@ func capacityProtectedTus(next http.Handler, capacity *maintenance.CapacityCheck
 }
 
 func newManagedDataS3Store(ctx context.Context, cfg ProductConfig) (*manageds3.Store, error) {
+	return newS3BlobStore(ctx, cfg, cfg.S3Prefix)
+}
+
+// NewS3BlobStore constructs a content-addressed store that shares the managed
+// data S3 connection settings but uses an independent key prefix. Independent
+// prefixes keep each capability's reachability and garbage collection isolated.
+func NewS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (storage.BlobStore, error) {
+	return newS3BlobStore(ctx, cfg, prefix)
+}
+
+func newS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (*manageds3.Store, error) {
 	loadOptions := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(strings.TrimSpace(cfg.S3Region))}
 	if cfg.S3AccessKeyID != "" {
 		provider := credentials.NewStaticCredentialsProvider(
@@ -470,7 +481,7 @@ func newManagedDataS3Store(ctx context.Context, cfg ProductConfig) (*manageds3.S
 	})
 	return manageds3.New(client, awss3.NewPresignClient(client), manageds3.Config{
 		Bucket: cfg.S3Bucket,
-		Prefix: cfg.S3Prefix,
+		Prefix: prefix,
 	})
 }
 

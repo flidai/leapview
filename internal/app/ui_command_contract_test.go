@@ -65,6 +65,7 @@ func TestUIRequestsCannotBypassTypedCommandHelpers(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 	nonCommandAllowlist := map[string]map[string]bool{
 		filepath.Clean("internal/admin/ui/page.go"):              {"QueryPost": true, "EventPost": true},
+		filepath.Clean("internal/admin/personalsettings/ui.go"):  {"QueryPost": true},
 		filepath.Clean("internal/workspace/ui/page.go"):          {"QueryPost": true},
 		filepath.Clean("internal/workspace/ui/workspace.go"):     {"QueryPost": true},
 		filepath.Clean("internal/workspace/ui/data_explorer.go"): {"EventPost": true},
