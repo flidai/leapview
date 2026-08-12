@@ -112,12 +112,12 @@ interface AgentConversations {
   @summary("Create an agent conversation")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
+  @apigen.ui("agent.conversation.create")
   @apigen.command(#{
     audit: #{ required: true, successAction: "agent.conversation.created", guarantee: "best-effort" },
     failures: #[
       #{ kind: "unavailable", statusCode: 503, code: "AGENT_SERVICE_UNAVAILABLE", publicDetail: "Agent service is unavailable." },
     ],
-    additionalExposures: #["ui"],
   })
   @apigen.auditPayload(AgentCommandAuditPayload)
   @operationId("createAgentConversation")
@@ -191,6 +191,7 @@ interface AgentConversations {
   @route("/{conversation}/runs")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
+  @apigen.ui("agent.run.create")
   @apigen.command(#{
     audit: #{ required: true, successAction: "agent.run.created", guarantee: "best-effort" },
     failures: #[
@@ -199,7 +200,6 @@ interface AgentConversations {
       #{ kind: "invalid", statusCode: 422, code: "INVALID_AGENT_RUN", publicDetail: "The agent run request is invalid." },
       #{ kind: "unavailable", statusCode: 503, code: "AGENT_SERVICE_UNAVAILABLE", publicDetail: "Agent service is unavailable." },
     ],
-    additionalExposures: #["ui"],
     execution: #{
       mode: "async",
       guarantee: "transactional",

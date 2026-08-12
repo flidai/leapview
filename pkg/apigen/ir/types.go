@@ -120,11 +120,17 @@ type Command struct {
 	Execution           *AsyncExecution  `json:"execution,omitempty"`
 	Failures            []CommandFailure `json:"failures"`
 	AdditionalExposures []string         `json:"additional_exposures,omitempty"`
+	UI                  *UIAction        `json:"ui,omitempty"`
 	Target              *OperationTarget `json:"target,omitempty"`
 	Idempotency         string           `json:"idempotency,omitempty"`
 	Concurrency         string           `json:"concurrency,omitempty"`
 	AuthzMode           string           `json:"authz_mode,omitempty"`
 	Privilege           string           `json:"privilege,omitempty"`
+}
+
+// UIAction binds a browser action identity to its transport-neutral command.
+type UIAction struct {
+	ActionID string `json:"action_id"`
 }
 
 // CommandFailure maps a transport-neutral domain failure kind to public behavior.

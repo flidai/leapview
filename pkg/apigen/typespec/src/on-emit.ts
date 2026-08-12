@@ -57,6 +57,7 @@ import {
   getSensitivity,
   getTool,
   getTransportErrors,
+  getUI,
   isManual,
   isQuery,
 } from "./decorators.js";
@@ -147,6 +148,7 @@ interface Command {
   };
   failures?: Array<{ kind: string; status_code: number; code: string; public_detail: string }>;
   additional_exposures?: string[];
+  ui?: { action_id: string };
   target?: { parameter: string; type: string };
   idempotency?: "required";
   concurrency?: "if-match";
@@ -962,6 +964,7 @@ function validateSharedRouteMetadata(
   const canonicalNamespace = namespaceName(canonical.operation.namespace);
   const canonicalCLI = stableJSONString(cliMetadata(program, canonical));
   const canonicalCommand = stableJSONString(getCommand({ program }, canonical.operation));
+  const canonicalUI = stableJSONString(getUI({ program }, canonical.operation));
   const canonicalAuditPayload = stableJSONString(auditPayloadIdentity(program, canonical.operation));
   const canonicalQuery = isQuery({ program }, canonical.operation);
   const canonicalTool = stableJSONString(toolMetadata(program, canonical));
@@ -977,6 +980,9 @@ function validateSharedRouteMetadata(
     }
     if (stableJSONString(getCommand({ program }, operation.operation)) !== canonicalCommand) {
       builder.unsupportedSharedRoute(operation.operation, "incompatible command metadata");
+    }
+    if (stableJSONString(getUI({ program }, operation.operation)) !== canonicalUI) {
+      builder.unsupportedSharedRoute(operation.operation, "incompatible ui metadata");
     }
     if (stableJSONString(auditPayloadIdentity(program, operation.operation)) !== canonicalAuditPayload) {
       builder.unsupportedSharedRoute(operation.operation, "incompatible audit payload metadata");
@@ -1005,6 +1011,7 @@ function operationKind(
   operation: HttpOperation,
 ): "command" | "query" {
   const command = getCommand({ program }, operation.operation);
+  const ui = getUI({ program }, operation.operation);
   const query = isQuery({ program }, operation.operation);
   const method = operation.verb.toLowerCase();
   if (builder.requireExplicitOperationKind && getOperationId(program, operation.operation) === undefined) {
@@ -1013,6 +1020,9 @@ function operationKind(
   if (command && query) {
     builder.invalidOperationKind("@apigen.command and @apigen.query are mutually exclusive", operation.operation);
     return "command";
+  }
+  if (ui !== undefined && !command) {
+    builder.invalidCommand("@apigen.ui requires @apigen.command", operation.operation);
   }
   if (command) {
     if (method === "get" || method === "head") {
@@ -1042,6 +1052,7 @@ const auditActionPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 const stableNamePattern = /^[a-z][a-z0-9_]*$/;
 const jobKindPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/;
 const failureCodePattern = /^[A-Z][A-Z0-9_]*$/;
+const uiActionPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/;
 
 function commandMetadata(
   program: Program,
@@ -1182,7 +1193,27 @@ function commandMetadata(
   }
   failures.sort((left, right) => left.kind.localeCompare(right.kind));
 
+  const authoredUIAction = getUI({ program }, operation.operation);
+  const uiAction = authoredUIAction?.trim();
+  if (authoredUIAction !== undefined && !uiAction) {
+    builder.invalidCommand("@apigen.ui actionId is required", operation.operation);
+  } else if (uiAction && !uiActionPattern.test(uiAction)) {
+    builder.invalidCommand(
+      `@apigen.ui actionId ${JSON.stringify(uiAction)} must be a stable dotted lower-kebab-case name`,
+      operation.operation,
+    );
+  }
+
   const additionalExposures = [...(options.additionalExposures ?? [])];
+  if (uiAction && additionalExposures.includes("ui")) {
+    builder.invalidCommand("@apigen.ui already declares the ui exposure; remove it from additionalExposures", operation.operation);
+  }
+  if (uiAction) {
+    additionalExposures.push("ui");
+  }
+	if (!uiAction && additionalExposures.includes("ui")) {
+		builder.invalidCommand("ui exposure requires @apigen.ui with a stable actionId", operation.operation);
+	}
   if (new Set(additionalExposures).size !== additionalExposures.length) {
     builder.invalidCommand("additionalExposures must not contain duplicates", operation.operation);
   }
@@ -1232,6 +1263,7 @@ function commandMetadata(
     execution,
     failures,
     additional_exposures: additionalExposures.length > 0 ? additionalExposures : undefined,
+    ui: uiAction ? { action_id: uiAction } : undefined,
     target,
     idempotency,
     concurrency,

@@ -225,6 +225,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 					Audit:               ir.AuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort", Payload: &ir.AuditPayload{Schema: ir.SchemaRef{Ref: "WidgetAuditPayload"}, SchemaVersion: 1, Retention: "security", Fields: []ir.AuditField{{Name: "operationId", Sensitivity: "internal"}}}},
 					Failures:            []ir.CommandFailure{{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."}},
 					AdditionalExposures: []string{"ui"},
+					UI:                  &ir.UIAction{ActionID: "workspace.widget.list"},
 					Target:              &ir.OperationTarget{Parameter: "workspace", Type: "workspace"},
 				},
 				Extensions: map[string]any{
@@ -247,7 +248,8 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 	content := string(b)
 	require.Contains(t, content, "Extensions map[string]any")
 	require.Contains(t, content, `Namespace: "WidgetAPI"`)
-	require.Contains(t, content, `Command: &GenCommandContract{Owner: "WidgetAPI", Audit: GenAuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort", Payload: &GenAuditPayloadContract{Schema: "WidgetAuditPayload", SchemaVersion: 1, Retention: "security", Fields: []GenAuditField{{Name: "operationId", Sensitivity: "internal"}}}}, Execution: nil, Failures: []GenCommandFailure{{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."}}, AdditionalExposures: []GenOperationSurface{"ui"}, Target: &GenOperationTarget{Parameter: "workspace", Type: "workspace"}`)
+	require.Contains(t, content, `Command: &GenCommandContract{Owner: "WidgetAPI", Audit: GenAuditPolicy{Required: true, SuccessAction: "widget.listed", Guarantee: "best-effort", Payload: &GenAuditPayloadContract{Schema: "WidgetAuditPayload", SchemaVersion: 1, Retention: "security", Fields: []GenAuditField{{Name: "operationId", Sensitivity: "internal"}}}}, Execution: nil, Failures: []GenCommandFailure{{Kind: "conflict", StatusCode: 409, Code: "WIDGET_CONFLICT", PublicDetail: "Widget conflict."}}, AdditionalExposures: []GenOperationSurface{"ui"}, UI: &GenUIActionContract{ActionID: "workspace.widget.list"}, Target: &GenOperationTarget{Parameter: "workspace", Type: "workspace"}`)
+	require.Contains(t, content, `func GenUIActionListWidgets() apigenui.Action { return apigenui.MustAction("workspace.widget.list", "listWidgets") }`)
 	require.Contains(t, content, `func GetAPIGenCommandRuntimeContract(operationID string) (apigencommand.Contract, bool)`)
 	require.Contains(t, content, `type GenCommandOperationID struct { value string }`)
 	require.Contains(t, content, `func GenCommandOperationListWidgets() GenCommandOperationID { return GenCommandOperationID{value: "listWidgets"} }`)

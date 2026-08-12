@@ -8,11 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	accessuiaction "github.com/flidai/leapview/internal/access/uiaction"
-	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
-	dashboarduiaction "github.com/flidai/leapview/internal/dashboard/uiaction"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
@@ -25,13 +21,11 @@ func claimUICommands(request *http.Request, bindings ...uicommand.Binding) {
 }
 
 func TestUICommandBindingsAreExhaustiveAndGenerated(t *testing.T) {
-	bindings := append([]uicommand.Binding{}, accessuiaction.Bindings()...)
-	bindings = append(bindings, agentuiaction.Bindings()...)
-	bindings = append(bindings, dashboarduiaction.Bindings()...)
+	bindings := apiaggregate.GetAPIGenUIActions()
 
 	actions := map[string]string{}
 	boundOperations := map[string]string{}
-	contracts := apiaggregate.GetAPIGenCommandRuntimeContracts()
+	contracts := apiaggregate.GetAPIGenOperationContracts()
 	for _, binding := range bindings {
 		if previous, exists := actions[binding.ActionID()]; exists {
 			t.Errorf("UI action %q maps to both %q and %q", binding.ActionID(), previous, binding.OperationID())
@@ -47,13 +41,15 @@ func TestUICommandBindingsAreExhaustiveAndGenerated(t *testing.T) {
 			t.Errorf("UI action %q references missing generated command %q", binding.ActionID(), binding.OperationID())
 			continue
 		}
-		if !contract.Exposes(apigencommand.SurfaceUI) {
-			t.Errorf("UI action %q references command %q without UI exposure", binding.ActionID(), binding.OperationID())
+		if contract.Command == nil || contract.Command.UI == nil {
+			t.Errorf("UI action %q references command %q without generated UI metadata", binding.ActionID(), binding.OperationID())
+		} else if contract.Command.UI.ActionID != binding.ActionID() {
+			t.Errorf("UI action %q disagrees with command %q metadata %q", binding.ActionID(), binding.OperationID(), contract.Command.UI.ActionID)
 		}
 	}
 
 	for operationID, contract := range contracts {
-		if !contract.Exposes(apigencommand.SurfaceUI) {
+		if contract.Command == nil || contract.Command.UI == nil {
 			continue
 		}
 		if _, ok := boundOperations[operationID]; !ok {
@@ -91,6 +87,11 @@ func TestUIRequestsCannotBypassTypedCommandHelpers(t *testing.T) {
 			return err
 		}
 		source := string(contents)
+		if strings.Contains(source, `"github.com/Yacobolo/toolbelt/apigen/runtime/ui"`) &&
+			!strings.HasSuffix(relative, ".apigen.gen.go") &&
+			filepath.Clean(relative) != filepath.Clean("internal/platform/web/uicommand/binding.go") {
+			t.Errorf("%s imports the low-level APIGen UI action constructor; consume a generated GenUIAction function", relative)
+		}
 		for _, forbidden := range []string{"uiactions.Post(", "uiactions.Patch("} {
 			if strings.Contains(source, forbidden) {
 				t.Errorf("%s uses untyped UI mutation helper %s", relative, forbidden)

@@ -135,6 +135,7 @@ export interface ToolOptions {
 
 const cliKey = Symbol.for("@yacobolo/apigen.cli");
 const commandKey = Symbol.for("@yacobolo/apigen.command");
+const uiKey = Symbol.for("@yacobolo/apigen.ui");
 const auditPayloadKey = Symbol.for("@yacobolo/apigen.auditPayload");
 const auditSchemaKey = Symbol.for("@yacobolo/apigen.auditSchema");
 const sensitivityKey = Symbol.for("@yacobolo/apigen.sensitivity");
@@ -154,6 +155,19 @@ export function $cli(context: DecoratorContext, target: Operation, options: CLIO
 
 export function $command(context: DecoratorContext, target: Operation, options: CommandOptions) {
   context.program.stateMap(commandKey).set(target, options);
+}
+
+export function $ui(context: DecoratorContext, target: Operation, actionId: string) {
+  const actions = context.program.stateMap(uiKey);
+  if (actions.has(target)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-command",
+      format: { reason: "@apigen.ui must not be applied more than once" },
+      target,
+    });
+    return;
+  }
+  actions.set(target, actionId);
 }
 
 export function $auditPayload(
@@ -289,6 +303,7 @@ export const $decorators = {
   apigen: {
     cli: $cli,
     command: $command,
+    ui: $ui,
     auditPayload: $auditPayload,
     auditSchema: $auditSchema,
     sensitivity: $sensitivity,
@@ -314,6 +329,10 @@ export function getCLI(context: { program: DecoratorContext["program"] }, target
 
 export function getCommand(context: { program: DecoratorContext["program"] }, target: Operation) {
   return context.program.stateMap(commandKey).get(target) as CommandOptions | undefined;
+}
+
+export function getUI(context: { program: DecoratorContext["program"] }, target: Operation) {
+  return context.program.stateMap(uiKey).get(target) as string | undefined;
 }
 
 export function getAuditPayload(context: { program: DecoratorContext["program"] }, target: Operation) {

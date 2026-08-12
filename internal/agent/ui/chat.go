@@ -5,17 +5,22 @@ import (
 	"strings"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
-	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
+	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	g "maragu.dev/gomponents"
 )
 
 func ChatPage(workspaceID, csrfToken, view string, state ChatViewState, providers ...webpage.Provider) g.Node {
 	layout := webpage.Resolve(firstProvider(providers), chatLayoutContext(workspaceID, view, state.Agent.ActiveConversationID))
-	turnCommand := uiactions.CommandPost(agentuiaction.CreateRun, "/chats/turns", "agent", "agentContext")
+	createRun := agentgen.GenUIActionCreateAgentRun()
+	turnCommand := uiactions.CommandPost(createRun, "/chats/turns", "agent", "agentContext")
 	if strings.TrimSpace(state.Agent.ActiveConversationID) == "" {
-		turnCommand = uiactions.CommandPostSequence(agentuiaction.Bindings(), "/chats/turns", "agent", "agentContext")
+		turnCommand = uiactions.CommandPostSequence([]uicommand.Binding{
+			agentgen.GenUIActionCreateAgentConversation(),
+			createRun,
+		}, "/chats/turns", "agent", "agentContext")
 	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: "Chat", CSRFToken: csrfToken, Scripts: []string{"/static/chat-page.js"},

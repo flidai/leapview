@@ -3,12 +3,9 @@ package actions
 import (
 	"testing"
 
+	apigenui "github.com/Yacobolo/toolbelt/apigen/runtime/ui"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
-
-type testOperationID string
-
-func (id testOperationID) APIGenOperationID() string { return string(id) }
 
 func TestRequestEscapesPathAndSignalPatterns(t *testing.T) {
 	got := QueryPost(`/workspaces/it's\here`, "runtime", "filters.controls", "table[0]")
@@ -28,13 +25,13 @@ func TestRequestWithoutSignalFilter(t *testing.T) {
 }
 
 func TestCommandRequestsCarryTypedGeneratedOperationIdentity(t *testing.T) {
-	binding := uicommand.Must("widget.create", testOperationID("createWidget"))
+	binding := apigenui.MustAction("widget.create", "createWidget")
 	if got, want := CommandPost(binding, "/widgets", "widget"), `@post('/widgets', {filterSignals: {include: /^(?:widget)(?:[.]|$)/}, headers: window.LeapViewCommand.headers('createWidget')})`; got != want {
 		t.Fatalf("CommandPost() = %q, want %q", got, want)
 	}
 
 	switchRequest := CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{
-		"update": uicommand.Must("widget.update", testOperationID("updateWidget")),
+		"update": apigenui.MustAction("widget.update", "updateWidget"),
 		"create": binding,
 	}, "/widgets")
 	wantSwitch := `@post('/widgets', {headers: window.LeapViewCommand.headers(({'create': 'createWidget', 'update': 'updateWidget'})[evt.detail.action])})`
@@ -42,13 +39,13 @@ func TestCommandRequestsCarryTypedGeneratedOperationIdentity(t *testing.T) {
 		t.Fatalf("CommandPostSwitch() = %q, want %q", switchRequest, wantSwitch)
 	}
 
-	sequence := CommandPostSequence([]uicommand.Binding{binding, uicommand.Must("widget.run", testOperationID("runWidget"))}, "/widgets")
+	sequence := CommandPostSequence([]uicommand.Binding{binding, apigenui.MustAction("widget.run", "runWidget")}, "/widgets")
 	wantSequence := `@post('/widgets', {headers: window.LeapViewCommand.headers(['createWidget', 'runWidget'])})`
 	if sequence != wantSequence {
 		t.Fatalf("CommandPostSequence() = %q, want %q", sequence, wantSequence)
 	}
 
-	conditional := CommandPostConditional("$widget.id", []uicommand.Binding{uicommand.Must("widget.run", testOperationID("runWidget"))}, []uicommand.Binding{binding, uicommand.Must("widget.run", testOperationID("runWidget"))}, "/widgets")
+	conditional := CommandPostConditional("$widget.id", []uicommand.Binding{apigenui.MustAction("widget.run", "runWidget")}, []uicommand.Binding{binding, apigenui.MustAction("widget.run", "runWidget")}, "/widgets")
 	wantConditional := `@post('/widgets', {headers: window.LeapViewCommand.headers(($widget.id ? ['runWidget'] : ['createWidget', 'runWidget']))})`
 	if conditional != wantConditional {
 		t.Fatalf("CommandPostConditional() = %q, want %q", conditional, wantConditional)

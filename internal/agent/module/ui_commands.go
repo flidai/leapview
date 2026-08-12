@@ -1,7 +1,7 @@
 package module
 
 import (
-	agentuiaction "github.com/flidai/leapview/internal/agent/uiaction"
+	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
@@ -13,7 +13,7 @@ type UICommandBindings struct {
 
 func (*Module) UICommandBindings() UICommandBindings {
 	return UICommandBindings{
-		CreateConversation: agentuiaction.CreateConversation,
-		CreateRun:          agentuiaction.CreateRun,
+		CreateConversation: agentgen.GenUIActionCreateAgentConversation(),
+		CreateRun:          agentgen.GenUIActionCreateAgentRun(),
 	}
 }

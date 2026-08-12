@@ -825,12 +825,12 @@ interface RoleBindings {
   @summary("Create a role binding")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @apigen.ui("workspace.access.role-binding.create")
   @apigen.command(#{
     audit: #{ required: true, successAction: "role_binding.created", guarantee: "transactional" },
     failures: #[
       #{ kind: "invalid", statusCode: 400, code: "ROLE_BINDING_INVALID", publicDetail: "The role binding request is invalid." },
     ],
-    additionalExposures: #["ui"],
   })
   @apigen.auditPayload(RoleBindingCreatedAuditPayload)
   @operationId("createRoleBinding")
@@ -847,13 +847,13 @@ interface RoleBindings {
   @route("/{binding}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @apigen.ui("workspace.access.role-binding.delete")
   @apigen.command(#{
     audit: #{ required: true, successAction: "role_binding.deleted", guarantee: "transactional" },
     failures: #[
       #{ kind: "not_found", statusCode: 404, code: "ROLE_BINDING_NOT_FOUND", publicDetail: "Role binding not found." },
       #{ kind: "invalid", statusCode: 400, code: "ROLE_BINDING_INVALID", publicDetail: "The role binding request is invalid." },
     ],
-    additionalExposures: #["ui"],
     targetParameter: "workspace",
   })
   @apigen.auditPayload(RoleBindingAuditPayload)
@@ -864,12 +864,12 @@ interface RoleBindings {
   @route("/{binding}")
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @apigen.ui("workspace.access.role-binding.update")
   @apigen.command(#{
     audit: #{ required: true, successAction: "role_binding.updated", guarantee: "transactional" },
     failures: #[
       #{ kind: "not_found", statusCode: 404, code: "ROLE_BINDING_NOT_FOUND", publicDetail: "Role binding not found." },
     ],
-    additionalExposures: #["ui"],
     targetParameter: "workspace",
   })
   @apigen.auditPayload(RoleBindingAuditPayload)
@@ -912,12 +912,12 @@ interface Grants {
   @summary("Create a grant")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @apigen.ui("workspace.access.grant.create")
   @apigen.command(#{
     audit: #{ required: true, successAction: "grant.created", guarantee: "transactional" },
     failures: #[
       #{ kind: "invalid", statusCode: 400, code: "GRANT_INVALID", publicDetail: "The grant request is invalid." },
     ],
-    additionalExposures: #["ui"],
   })
   @apigen.auditPayload(GrantAuditPayload)
   @operationId("createGrant")
@@ -950,12 +950,12 @@ interface Grants {
   @route("/{grant}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @apigen.ui("workspace.access.grant.delete")
   @apigen.command(#{
     audit: #{ required: true, successAction: "grant.deleted", guarantee: "transactional" },
     failures: #[
       #{ kind: "not_found", statusCode: 404, code: "GRANT_NOT_FOUND", publicDetail: "Grant not found." },
     ],
-    additionalExposures: #["ui"],
     targetParameter: "workspace",
   })
   @apigen.auditPayload(GrantAuditPayload)
