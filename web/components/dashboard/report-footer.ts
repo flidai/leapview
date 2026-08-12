@@ -1,5 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { property } from 'lit/decorators.js'
+import './report-view-controls'
 
 type FooterStatus = {
   loading?: boolean
@@ -28,6 +29,7 @@ class ReportFooter extends LitElement {
     :host {
       display: block;
       min-width: 0;
+      container-type: inline-size;
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);
     }
@@ -46,13 +48,21 @@ class ReportFooter extends LitElement {
 
     .status {
       display: inline-flex;
+      flex: 1 1 auto;
       min-width: 0;
       align-items: center;
       gap: var(--base-size-8);
+      overflow: hidden;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
       font-weight: var(--base-text-weight-medium);
       white-space: nowrap;
+    }
+
+    .status > span:last-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .dot {
@@ -73,17 +83,40 @@ class ReportFooter extends LitElement {
 
     lv-report-zoom {
       flex: 0 1 auto;
+      min-width: 0;
+    }
+
+    @container (max-width: 800px) {
+      footer {
+        justify-content: flex-end;
+        gap: 0;
+        padding-inline: var(--base-size-8);
+      }
+
+      .status {
+        display: none;
+      }
+
+      lv-report-zoom {
+        max-width: 100%;
+      }
     }
 
     @media (max-width: 560px) {
       footer {
-        height: auto;
+        height: var(--control-medium-size);
         min-height: var(--control-medium-size);
-        align-items: flex-start;
-        flex-direction: column;
-        gap: var(--base-size-8);
-        padding-block: var(--base-size-8);
-        padding-inline: var(--base-size-12);
+        justify-content: flex-end;
+        gap: 0;
+        padding-inline: var(--base-size-8);
+      }
+
+      .status {
+        display: none;
+      }
+
+      lv-report-zoom {
+        max-width: 100%;
       }
     }
   `

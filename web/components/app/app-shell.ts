@@ -47,13 +47,31 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
     @media (max-width: 640px) {
       :host {
+        height: 100svh;
+        min-height: 0;
         grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(0, 1fr);
+        overflow: hidden;
       }
 
       lv-sidebar {
         border-right: 0;
         border-bottom: var(--lv-border-default);
         min-width: 0;
+      }
+
+      main {
+        min-height: 0;
+        overflow-y: auto;
+      }
+
+      ::slotted([slot='page']) {
+        min-height: 100%;
+      }
+
+      ::slotted(lv-dashboard-page[slot='page']) {
+        height: 100%;
+        min-height: 0;
       }
     }
   `
