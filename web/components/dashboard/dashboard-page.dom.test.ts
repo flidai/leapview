@@ -75,6 +75,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
         const kpiValue = kpi?.querySelector('.lv-visualization-kpi') as HTMLElement | null
         const canvas = root.querySelector('lv-report-canvas') as any
         await canvas.updateComplete
+        const canvasViewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
         const assigned = (canvas.shadowRoot.querySelector('slot') as HTMLSlotElement).assignedElements() as HTMLElement[]
         const visualFrame = (id: string) => assigned.find((item) => (item.querySelector('lv-visualization-host') as any)?.envelope?.visualID === id)?.getBoundingClientRect()
         const chart = visualFrame('orders_chart')
@@ -101,6 +102,9 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
             labelSize: kpiLabel ? Number.parseFloat(getComputedStyle(kpiLabel).fontSize) : 0,
           },
           presentationMode: canvas.shadowRoot.querySelector('.surface')?.dataset.presentationMode,
+          canvasScrollbarWidth: getComputedStyle(canvasViewport, '::-webkit-scrollbar').width,
+          canvasScrollbarTrack: getComputedStyle(canvasViewport, '::-webkit-scrollbar-track').backgroundColor,
+          canvasScrollbarThumb: getComputedStyle(canvasViewport, '::-webkit-scrollbar-thumb').backgroundColor,
           chartHeight: chart?.height ?? 0, tableHeight: tableFrame?.height ?? 0,
           tableAfterChart: (tableFrame?.top ?? 0) > (chart?.bottom ?? 0),
         }
@@ -120,19 +124,23 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
       expect(state.kpi).toMatchObject({ tone: 'ink', label: 'Orders', value: '42', note: 'Filtered', display: 'grid' })
       expect(state.kpi.valueSize).toBeGreaterThan(state.kpi.labelSize)
       if (viewport.name === 'mobile') {
-        expect(state.presentationMode).toBe('responsive')
+        expect(state.presentationMode).toBe('mobile')
+        expect(state.canvasScrollbarWidth).toBe('auto')
         expect(state.chartHeight).toBeGreaterThanOrEqual(280)
         expect(state.tableHeight).toBeLessThanOrEqual(700)
         expect(state.tableAfterChart).toBe(true)
       } else {
         expect(state.presentationMode).toBe('fit-width')
+        expect(state.canvasScrollbarWidth).toBe('8px')
+        expect(state.canvasScrollbarTrack).toBe('rgb(234, 238, 242)')
+        expect(state.canvasScrollbarThumb).toBe('rgb(140, 149, 159)')
       }
     } finally { await page.close() }
   })
 }
 
 test('embed presentation keeps page navigation and removes non-navigation chrome', async () => {
-  const page = await browser.newPage({ viewport: { width: 760, height: 620 } })
+  const page = await browser.newPage({ viewport: { width: 863, height: 700 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
@@ -170,6 +178,370 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
     expect(state.agentActionCount).toBe(0)
     expect(state.canvasWidth).toBeGreaterThan(500)
     expect(state.documentOverflow).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('narrow dashboards let viewers preserve the desktop canvas with internal scrollbars', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (
+      customElements.get('lv-dashboard-page')
+        && customElements.get('lv-report-zoom')
+        && (document.querySelector('lv-dashboard-page') as any)?.page
+    ))
+
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const footer = element.shadowRoot.querySelector('lv-report-footer') as any
+      await footer.updateComplete
+      const view = footer.shadowRoot.querySelector('lv-report-zoom') as any
+      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      await Promise.all([view.updateComplete, canvas.updateComplete])
+      const details = view.shadowRoot.querySelector('[data-control="layout"]') as HTMLDetailsElement
+      details.open = true
+      await view.updateComplete
+      const control = view.shadowRoot.querySelector('[data-layout="desktop"]') as HTMLButtonElement
+      control.click()
+      await Promise.all([view.updateComplete, canvas.updateComplete])
+      details.open = true
+      await view.updateComplete
+      ;(view.shadowRoot.querySelector('[data-mode="actual-size"]') as HTMLButtonElement).click()
+      await Promise.all([view.updateComplete, canvas.updateComplete])
+      await new Promise(requestAnimationFrame)
+      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      const viewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
+      const assigned = (canvas.shadowRoot.querySelector('slot') as HTMLSlotElement).assignedElements() as HTMLElement[]
+      const chart = assigned.find((item) => item.dataset.visualType === 'bar')?.getBoundingClientRect()
+      const table = assigned.find((item) => item.dataset.visualType === 'table')?.getBoundingClientRect()
+      return {
+        controlDisplay: getComputedStyle(view).display,
+        controlHeight: Math.round(control.getBoundingClientRect().height),
+        headerControl: Boolean(element.shadowRoot.querySelector('lv-report-view')),
+        bottomControl: Boolean(footer.shadowRoot.querySelector('lv-report-zoom')),
+        layout: surface.dataset.layout,
+        mode: surface.dataset.presentationMode,
+        horizontalScroll: viewport.scrollWidth > viewport.clientWidth,
+        verticalScroll: viewport.scrollHeight > viewport.clientHeight,
+        chartAndTableKeepCanvasPositions: (table?.top ?? 0) > (chart?.top ?? 0) + 300,
+        stored: localStorage.getItem('leapview-report-layout:/'),
+      }
+    })
+
+    expect(result).toEqual({
+      controlDisplay: 'block',
+      controlHeight: 32,
+      headerControl: false,
+      bottomControl: true,
+      layout: 'desktop',
+      mode: 'actual-size',
+      horizontalScroll: true,
+      verticalScroll: true,
+      chartAndTableKeepCanvasPositions: true,
+      stored: 'desktop',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('fit width never exposes a horizontal canvas scrollbar when vertical scrolling is needed', async () => {
+  const page = await browser.newPage({ viewport: { width: 640, height: 620 } })
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem('leapview-report-layout:/', 'desktop')
+      localStorage.setItem('leapview-report-zoom:/', 'actual-size')
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const footer = element.shadowRoot.querySelector('lv-report-footer') as any
+      await footer.updateComplete
+      const toolbar = footer.shadowRoot.querySelector('lv-report-zoom') as any
+      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      await Promise.all([toolbar.updateComplete, canvas.updateComplete])
+      ;(toolbar.shadowRoot.querySelector('[data-mode="fit-width"]') as HTMLButtonElement).click()
+      await Promise.all([toolbar.updateComplete, canvas.updateComplete])
+      await new Promise(requestAnimationFrame)
+      await new Promise(requestAnimationFrame)
+      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      const viewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
+      const frame = canvas.shadowRoot.querySelector('.frame-wrap') as HTMLElement
+      const viewportRect = viewport.getBoundingClientRect()
+      const frameRect = frame.getBoundingClientRect()
+      return {
+        mode: surface.dataset.presentationMode,
+        overflowX: getComputedStyle(viewport).overflowX,
+        scrollbarGutter: getComputedStyle(viewport).scrollbarGutter,
+        horizontalOverflow: viewport.scrollWidth - viewport.clientWidth,
+        verticalScroll: viewport.scrollHeight > viewport.clientHeight,
+        frameWithinViewport: frameRect.right <= viewportRect.right,
+      }
+    })
+
+    expect(result).toEqual({
+      mode: 'fit-width',
+      overflowX: 'hidden',
+      scrollbarGutter: 'stable',
+      horizontalOverflow: 0,
+      verticalScroll: true,
+      frameWithinViewport: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('bottom report toolbar separates layout, fit actions, and zoom presets on compact screens', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      localStorage.removeItem('leapview-report-layout:/')
+      localStorage.removeItem('leapview-report-zoom:/')
+      localStorage.removeItem('leapview-report-zoom-scale:/')
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const footer = element.shadowRoot.querySelector('lv-report-footer') as any
+      await footer.updateComplete
+      const toolbar = footer.shadowRoot.querySelector('lv-report-zoom') as any
+      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      await Promise.all([toolbar.updateComplete, canvas.updateComplete])
+      const root = toolbar.shadowRoot
+      const layoutMenu = root.querySelector('[data-control="layout"]') as HTMLDetailsElement
+      const zoomMenu = root.querySelector('[data-control="zoom-presets"]') as HTMLDetailsElement
+      const slider = root.querySelector('.slider') as HTMLElement
+      const controls = root.querySelector('.zoom') as HTMLElement
+      const initialLayoutTriggerLabel = root.querySelector('[data-control="layout"] summary')?.getAttribute('aria-label')
+      const layoutHasIcon = Boolean(root.querySelector('[data-control="layout"] summary svg'))
+
+      layoutMenu.open = true
+      await toolbar.updateComplete
+      ;(root.querySelector('[data-layout="desktop"]') as HTMLButtonElement).click()
+      await Promise.all([toolbar.updateComplete, canvas.updateComplete])
+
+      ;(root.querySelector('[data-mode="fit-page"]') as HTMLButtonElement).click()
+      await Promise.all([toolbar.updateComplete, canvas.updateComplete])
+      await new Promise(requestAnimationFrame)
+      const fitPageSurface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      const fitPageMode = fitPageSurface.dataset.presentationMode
+      const fitPageScale = Number(fitPageSurface.dataset.scale)
+      const fitPageSelected = root.querySelector('[data-mode="fit-page"]')?.getAttribute('aria-pressed')
+
+      zoomMenu.open = true
+      await toolbar.updateComplete
+      ;(root.querySelector('[data-scale="1.25"]') as HTMLButtonElement).click()
+      await Promise.all([toolbar.updateComplete, canvas.updateComplete])
+      await new Promise(requestAnimationFrame)
+
+      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      return {
+        layoutTriggerLabel: initialLayoutTriggerLabel,
+        layoutHasIcon,
+        layoutOptions: Array.from(root.querySelectorAll('[data-layout]')).map((node: any) => node.dataset.layout),
+        fitActions: Array.from(root.querySelectorAll('.fit-action')).map((node: any) => node.dataset.mode),
+        presetValues: Array.from(root.querySelectorAll('[data-scale]')).map((node: any) => node.dataset.scale),
+        percent: root.querySelector('[data-control="zoom-presets"] summary')?.textContent?.trim(),
+        sliderDisplay: getComputedStyle(slider).display,
+        toolbarOverflow: controls.scrollWidth - controls.clientWidth,
+        fitPageMode,
+        fitPageScale,
+        fitPageSelected,
+        layout: surface.dataset.layout,
+        mode: surface.dataset.presentationMode,
+        scale: Number(surface.dataset.scale),
+        zoomMenuOpen: zoomMenu.open,
+      }
+    })
+
+    expect(result).toEqual({
+      layoutTriggerLabel: 'Layout, Auto, currently Mobile',
+      layoutHasIcon: true,
+      layoutOptions: ['auto', 'desktop', 'mobile'],
+      fitActions: ['fit-width', 'fit-page', 'actual-size'],
+      presetValues: ['0.5', '0.75', '1', '1.25', '1.5', '2'],
+      percent: '125%',
+      sliderDisplay: 'none',
+      toolbarOverflow: 0,
+      fitPageMode: 'fit-page',
+      fitPageScale: expect.any(Number),
+      fitPageSelected: 'true',
+      layout: 'desktop',
+      mode: 'custom',
+      scale: 1.25,
+      zoomMenuOpen: false,
+    })
+    expect(result.fitPageScale).toBeLessThan(0.5)
+  } finally {
+    await page.close()
+  }
+})
+
+test('compact report footers hide refresh status before it can overlap view controls', async () => {
+  const page = await browser.newPage({ viewport: { width: 760, height: 620 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const footerHost = element.shadowRoot.querySelector('lv-report-footer') as any
+      await footerHost.updateComplete
+      const root = footerHost.shadowRoot
+      const footer = root.querySelector('footer') as HTMLElement
+      const status = root.querySelector('.status') as HTMLElement
+      const controls = root.querySelector('lv-report-zoom') as HTMLElement
+      const statusRect = status.getBoundingClientRect()
+      const controlsRect = controls.getBoundingClientRect()
+      return {
+        footerWidth: Math.round(footer.getBoundingClientRect().width),
+        statusDisplay: getComputedStyle(status).display,
+        controlsWithinFooter: controlsRect.right <= footer.getBoundingClientRect().right,
+        overlap: statusRect.width > 0 && statusRect.right > controlsRect.left,
+      }
+    })
+
+    expect(result.footerWidth).toBeLessThanOrEqual(800)
+    expect(result.statusDisplay).toBe('none')
+    expect(result.controlsWithinFooter).toBe(true)
+    expect(result.overlap).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('mobile layout pins the bottom toolbar while the stacked report content scrolls', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 600 } })
+  try {
+    await page.addInitScript(() => localStorage.setItem('leapview-report-layout:/', 'mobile'))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      await canvas.updateComplete
+      await new Promise(requestAnimationFrame)
+      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      const body = element.shadowRoot.querySelector('.body') as HTMLElement
+      const footer = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
+      const footerBottomBefore = footer.getBoundingClientRect().bottom
+      body.scrollTo({ top: body.scrollHeight, behavior: 'instant' })
+      await new Promise(requestAnimationFrame)
+      return {
+        layout: surface.dataset.layout,
+        bodyOverflowY: getComputedStyle(body).overflowY,
+        bodyClientHeight: body.clientHeight,
+        bodyScrollHeight: body.scrollHeight,
+        bodyScrollTop: body.scrollTop,
+        bodyTabIndex: body.tabIndex,
+        bodyLabel: body.getAttribute('aria-label'),
+        footerBottomBefore,
+        footerBottomAfter: footer.getBoundingClientRect().bottom,
+        viewportHeight: window.innerHeight,
+        horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      }
+    })
+
+    expect(result.layout).toBe('mobile')
+    expect(result.bodyOverflowY).toBe('auto')
+    expect(result.bodyScrollHeight).toBeGreaterThan(result.bodyClientHeight)
+    expect(result.bodyScrollTop).toBeGreaterThan(0)
+    expect(result.bodyTabIndex).toBe(0)
+    expect(result.bodyLabel).toBe('Scrollable report content')
+    expect(Math.round(result.footerBottomBefore)).toBe(result.viewportHeight)
+    expect(Math.round(result.footerBottomAfter)).toBe(result.viewportHeight)
+    expect(result.horizontalOverflow).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('the closed filter control follows scrolling in Mobile layout', async () => {
+  const page = await browser.newPage({ viewport: { width: 863, height: 700 } })
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem('leapview-report-layout:/', 'mobile')
+      localStorage.setItem('leapview:filters-open', 'closed')
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const body = root.querySelector('.body') as HTMLElement
+      const dock = root.querySelector('lv-filter-dock') as any
+      await dock.updateComplete
+      const rail = dock.shadowRoot.querySelector('button.rail') as HTMLElement
+      const bodyRect = body.getBoundingClientRect()
+      const before = rail.getBoundingClientRect()
+      const dockPosition = getComputedStyle(dock).position
+      body.scrollTop = body.scrollHeight
+      await new Promise(requestAnimationFrame)
+      const after = rail.getBoundingClientRect()
+      const scrolled = body.scrollTop > 0
+      rail.click()
+      await dock.updateComplete
+      const panel = dock.shadowRoot.querySelector('.panel') as HTMLElement
+      return {
+        dockPosition,
+        bodyTop: Math.round(bodyRect.top),
+        bodyBottom: Math.round(bodyRect.bottom),
+        beforeTop: Math.round(before.top),
+        afterTop: Math.round(after.top),
+        afterBottom: Math.round(after.bottom),
+        scrolled,
+        expanded: rail.getAttribute('aria-expanded'),
+        panelDisplay: getComputedStyle(panel).display,
+      }
+    })
+
+    expect(result.dockPosition).toBe('sticky')
+    expect(result.scrolled).toBe(true)
+    expect(result.afterTop).toBe(result.beforeTop)
+    expect(result.afterTop).toBeGreaterThanOrEqual(result.bodyTop)
+    expect(result.afterBottom).toBeLessThanOrEqual(result.bodyBottom)
+    expect(result.expanded).toBe('true')
+    expect(result.panelDisplay).toBe('grid')
+  } finally {
+    await page.close()
+  }
+})
+
+test('auto layout follows the viewport and does not stack when desktop side panels narrow the canvas', async () => {
+  const page = await browser.newPage({ viewport: { width: 760, height: 620 } })
+  try {
+    await page.addInitScript(() => localStorage.setItem('leapview:filters-open', 'open'))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      await canvas.updateComplete
+      await new Promise(requestAnimationFrame)
+      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      const viewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
+      return {
+        canvasWidth: Math.round(canvas.getBoundingClientRect().width),
+        layout: surface.dataset.layout,
+        mode: surface.dataset.presentationMode,
+        horizontalScroll: viewport.scrollWidth > viewport.clientWidth,
+      }
+    })
+
+    expect(result.canvasWidth).toBeLessThan(640)
+    expect(result.layout).toBe('desktop')
+    expect(result.mode).toBe('fit-width')
+    expect(result.horizontalScroll).toBe(false)
   } finally {
     await page.close()
   }
@@ -734,14 +1106,17 @@ test('collapsed filters and page navigation use the same rail width', async () =
       const pageSidebar = root.querySelector('lv-sub-sidebar') as any
       const filterDock = root.querySelector('lv-filter-dock') as any
       await Promise.all([pageSidebar.updateComplete, filterDock.updateComplete])
+      const filterRail = filterDock.shadowRoot.querySelector('aside') as HTMLElement
       return {
         pageSidebar: Math.round(pageSidebar.getBoundingClientRect().width),
-        filters: Math.round(filterDock.shadowRoot.querySelector('aside').getBoundingClientRect().width),
+        filters: Math.round(filterRail.getBoundingClientRect().width),
+        filterBackground: getComputedStyle(filterRail).backgroundColor,
       }
     })
 
     expect(widths.pageSidebar).toBeGreaterThan(0)
     expect(widths.filters).toBe(widths.pageSidebar)
+    expect(widths.filterBackground).toBe('rgb(246, 248, 250)')
   } finally {
     await page.close()
   }
@@ -758,6 +1133,8 @@ test('opening the desktop filter pane reduces the usable canvas instead of cover
       const root = element.shadowRoot
       const dock = root.querySelector('lv-filter-dock') as any
       const canvas = root.querySelector('.canvas-wrap') as HTMLElement
+      const reportCanvas = root.querySelector('lv-report-canvas') as HTMLElement
+      const footer = root.querySelector('lv-report-footer') as HTMLElement
       await dock.updateComplete
       const before = canvas.getBoundingClientRect()
       ;(dock.shadowRoot.querySelector('.rail') as HTMLButtonElement).click()
@@ -766,6 +1143,9 @@ test('opening the desktop filter pane reduces the usable canvas instead of cover
       await Promise.all(dock.getAnimations().map((animation: Animation) => animation.finished))
       const after = canvas.getBoundingClientRect()
       const pane = dock.getBoundingClientRect()
+      const report = reportCanvas.getBoundingClientRect()
+      const footerRect = footer.getBoundingClientRect()
+      const canvasStyle = getComputedStyle(canvas)
       return {
         beforeWidth: Math.round(before.width),
         afterWidth: Math.round(after.width),
@@ -773,6 +1153,10 @@ test('opening the desktop filter pane reduces the usable canvas instead of cover
         paneLeft: Math.round(pane.left),
         paneWidth: Math.round(pane.width),
         expanded: dock.hasAttribute('data-open'),
+        paddingRight: canvasStyle.paddingRight,
+        paddingBottom: canvasStyle.paddingBottom,
+        scrollbarToFiltersGap: Math.round(pane.left - report.right),
+        scrollbarToFooterGap: Math.round(footerRect.top - report.bottom),
       }
     })
 
@@ -780,35 +1164,104 @@ test('opening the desktop filter pane reduces the usable canvas instead of cover
     expect(result.paneWidth).toBeGreaterThan(240)
     expect(result.afterWidth).toBeLessThan(result.beforeWidth)
     expect(result.canvasRight).toBeLessThanOrEqual(result.paneLeft)
+    expect(result.paddingRight).toBe('0px')
+    expect(result.paddingBottom).toBe('0px')
+    expect(result.scrollbarToFiltersGap).toBe(0)
+    expect(result.scrollbarToFooterGap).toBe(0)
   } finally {
     await page.close()
   }
 })
 
-test('mobile filter dock is reachable before the canvas and opens with pointer activation', async () => {
-  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+test('mobile report header combines page and filter controls without stacked rails', async () => {
+  const page = await browser.newPage({ viewport: { width: 640, height: 820 } })
   try {
     await page.addInitScript(() => localStorage.setItem('leapview:filters-open', 'closed'))
     await page.goto(baseURL)
     const dashboard = page.locator('lv-dashboard-page')
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const positions = await dashboard.evaluate(async (element: any) => {
+    const compact = await dashboard.evaluate(async (element: any) => {
       await element.updateComplete
+      const root = element.shadowRoot
       const dock = element.shadowRoot.querySelector('lv-filter-dock') as any
       await dock.updateComplete
+      const header = root.querySelector('.header') as HTMLElement
+      const pageMenu = root.querySelector('.mobile-page-menu') as HTMLDetailsElement
+      const filterTrigger = root.querySelector('.mobile-filter-toggle') as HTMLButtonElement
+      const agentTrigger = root.querySelector('.agent-toggle') as HTMLButtonElement
+      const dockRail = dock.shadowRoot.querySelector('.rail') as HTMLButtonElement
+      const actions = root.querySelector('.actions') as HTMLElement
+      const actionRects = Array.from(actions.children).map((child: any) => child.getBoundingClientRect())
+      filterTrigger.focus()
+      const filterFocus = getComputedStyle(filterTrigger)
+      const filterFocusStyle = { style: filterFocus.outlineStyle, width: filterFocus.outlineWidth }
+      agentTrigger.focus()
+      const agentFocus = getComputedStyle(agentTrigger)
+      const agentFocusStyle = { style: agentFocus.outlineStyle, width: agentFocus.outlineWidth }
       return {
-        dockTop: dock.getBoundingClientRect().top,
-        canvasTop: element.shadowRoot.querySelector('.canvas-wrap').getBoundingClientRect().top,
-        dockBeforeCanvas: Boolean(
-          dock.compareDocumentPosition(element.shadowRoot.querySelector('.canvas-wrap'))
-          & Node.DOCUMENT_POSITION_FOLLOWING
-        ),
+        sidebarDisplay: getComputedStyle(root.querySelector('lv-sub-sidebar')).display,
+        headerHeight: Math.round(header.getBoundingClientRect().height),
+        pageMenuDisplay: getComputedStyle(pageMenu).display,
+        pageLabel: pageMenu.querySelector('summary')?.textContent?.replace(/\s+/g, ' ').trim(),
+        pageOptions: Array.from(pageMenu.querySelectorAll('a')).map((item: any) => item.textContent.trim()),
+        filterLabel: filterTrigger.getAttribute('aria-label'),
+        dockWidth: Math.round(dock.getBoundingClientRect().width),
+        dockHeight: Math.round(dock.getBoundingClientRect().height),
+        canvasTop: Math.round(root.querySelector('.canvas-wrap').getBoundingClientRect().top),
+        headerBottom: Math.round(header.getBoundingClientRect().bottom),
+        headerOverflow: header.scrollWidth - header.clientWidth,
+        actionsOverlap: actionRects.some((rect, index) => index > 0 && rect.left < actionRects[index - 1].right),
+        filterTextDisplay: getComputedStyle(filterTrigger.querySelector('.mobile-filter-label')).display,
+        askTextDisplay: getComputedStyle(root.querySelector('.agent-toggle span')).display,
+        filterFocusStyle,
+        agentFocusStyle,
+        dockRailDisplay: getComputedStyle(dockRail).display,
+        dockRailTabIndex: dockRail.tabIndex,
+        dockRailAriaHidden: dockRail.getAttribute('aria-hidden'),
+        dockRailInert: dockRail.inert,
       }
     })
-    expect(positions.dockTop).toBeLessThan(positions.canvasTop)
-    expect(positions.dockBeforeCanvas).toBe(true)
+    expect(compact).toMatchObject({
+      sidebarDisplay: 'none',
+      pageMenuDisplay: 'block',
+      pageLabel: 'Overview',
+      pageOptions: ['Overview', 'Details'],
+      filterLabel: 'Filters, 1 active',
+      dockWidth: 0,
+      dockHeight: 0,
+      headerOverflow: 0,
+      actionsOverlap: false,
+      filterTextDisplay: 'none',
+      askTextDisplay: 'none',
+      filterFocusStyle: { style: 'solid', width: '2px' },
+      agentFocusStyle: { style: 'solid', width: '2px' },
+      dockRailDisplay: 'none',
+      dockRailTabIndex: -1,
+      dockRailAriaHidden: 'true',
+      dockRailInert: true,
+    })
+    expect(compact.headerHeight).toBeLessThanOrEqual(64)
+    expect(compact.canvasTop - compact.headerBottom).toBeLessThanOrEqual(16)
 
-    const toggle = page.locator('lv-filter-dock button.rail')
+    const pageMenu = page.locator('lv-dashboard-page .mobile-page-menu')
+    const pageMenuSummary = page.locator('lv-dashboard-page .mobile-page-menu summary')
+    await pageMenuSummary.click()
+    expect(await pageMenu.getAttribute('open')).not.toBeNull()
+    await page.locator('lv-dashboard-page h1').click()
+    expect(await pageMenu.getAttribute('open')).toBeNull()
+
+    await pageMenuSummary.click()
+    await page.keyboard.press('Escape')
+    const dismissedMenu = await dashboard.evaluate((element: any) => {
+      const menu = element.shadowRoot.querySelector('.mobile-page-menu') as HTMLDetailsElement
+      return {
+        open: menu.open,
+        summaryFocused: element.shadowRoot.activeElement === menu.querySelector('summary'),
+      }
+    })
+    expect(dismissedMenu).toEqual({ open: false, summaryFocused: true })
+
+    const toggle = page.locator('lv-dashboard-page button.mobile-filter-toggle')
     await toggle.click()
     const opened = await dashboard.evaluate(async (element: any) => {
       const dock = element.shadowRoot.querySelector('lv-filter-dock') as any
@@ -817,7 +1270,7 @@ test('mobile filter dock is reachable before the canvas and opens with pointer a
       const background = element.shadowRoot.querySelector('.agent-toggle')
       background.focus()
       return {
-        expanded: dock.shadowRoot.querySelector('button.rail').getAttribute('aria-expanded'),
+        expanded: element.shadowRoot.querySelector('.mobile-filter-toggle').getAttribute('aria-expanded'),
         panelDisplay: getComputedStyle(panel).display,
         panelRole: panel.getAttribute('role'),
         panelModal: panel.getAttribute('aria-modal'),
@@ -856,19 +1309,61 @@ test('mobile filter dock is reachable before the canvas and opens with pointer a
     const closed = await dashboard.evaluate(async (element: any) => {
       const dock = element.shadowRoot.querySelector('lv-filter-dock') as any
       await dock.updateComplete
-      const focused = dock.shadowRoot.activeElement?.className
+      await element.updateComplete
+      const trigger = element.shadowRoot.querySelector('.mobile-filter-toggle')
       const background = element.shadowRoot.querySelector('.agent-toggle')
-      background.focus()
       return {
-        expanded: dock.shadowRoot.querySelector('button.rail').getAttribute('aria-expanded'),
-        focused,
-        backgroundFocusRestored: element.shadowRoot.activeElement === background,
+        expanded: trigger.getAttribute('aria-expanded'),
+        triggerFocusRestored: element.shadowRoot.activeElement === trigger,
+        backgroundFocusBlocked: element.shadowRoot.activeElement !== background,
       }
     })
     expect(closed).toEqual({
       expanded: 'false',
-      focused: 'rail',
-      backgroundFocusRestored: true,
+      triggerFocusRestored: true,
+      backgroundFocusBlocked: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('single-page mobile dashboards show page context without an empty menu', async () => {
+  const page = await browser.newPage({ viewport: { width: 320, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({
+        page: {
+          pages: [{ id: 'overview', title: 'Overview', href: '/dashboards/executive-sales/pages/overview', active: true }],
+        },
+      })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const label = root.querySelector('.mobile-page-label') as HTMLElement
+      const header = root.querySelector('.header') as HTMLElement
+      const actionRects = Array.from(root.querySelector('.actions').children)
+        .filter((child: any) => getComputedStyle(child).display !== 'none')
+        .map((child: any) => child.getBoundingClientRect())
+      return {
+        menuCount: root.querySelectorAll('.mobile-page-menu').length,
+        label: label.textContent?.trim(),
+        labelAria: label.getAttribute('aria-label'),
+        labelDisplay: getComputedStyle(label).display,
+        headerOverflow: header.scrollWidth - header.clientWidth,
+        actionsOverlap: actionRects.some((rect, index) => index > 0 && rect.left < actionRects[index - 1].right),
+      }
+    })
+
+    expect(state).toEqual({
+      menuCount: 0,
+      label: 'Overview',
+      labelAria: 'Current page: Overview',
+      labelDisplay: 'block',
+      headerOverflow: 0,
+      actionsOverlap: false,
     })
   } finally {
     await page.close()
@@ -1990,7 +2485,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-chart-surface: #fff; --lv-report-page-bg: #fff; --lv-report-canvas-bg: #eaeef2; --lv-report-rail-bg: #fff; --lv-bg-overlay: #fff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-rail-width-collapsed: 38px; --lv-dashboard-filter-open-width: 320px; --lv-dashboard-agent-width: 420px; --base-size-2: 2px; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --control-medium-size: 32px; --control-xlarge-size: 40px; --zIndex-dropdown: 100; --zIndex-modal: 200; --zIndex-sticky: 50; --shadow-resting-small: 0 1px 2px rgb(0 0 0 / .08); --shadow-floating-small: 0 8px 24px rgb(0 0 0 / .12); --lv-duration-fast: 160ms; --lv-spinner-size-md: 16px; --lv-spinner-duration: 1800ms; --motion-easing-move: ease; --motion-transition-stateChange: 160ms ease; }
+          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-panel-muted: #eaeef2; --lv-bg-control-hover: #f3f4f6; --lv-chart-surface: #fff; --lv-report-page-bg: #fff; --lv-report-canvas-bg: #eaeef2; --lv-report-rail-bg: #fff; --lv-bg-overlay: #fff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-scrollbar-thumb: #8c959f; --lv-scrollbar-thumb-hover: #6e7781; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-rail-width-collapsed: 38px; --lv-dashboard-filter-open-width: 320px; --lv-dashboard-agent-width: 420px; --base-size-2: 2px; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --borderWidth-default: 1px; --control-medium-size: 32px; --control-xlarge-size: 40px; --focus-outline: 2px solid #0969da; --focus-outline-offset: -2px; --zIndex-dropdown: 100; --zIndex-modal: 200; --zIndex-sticky: 50; --shadow-resting-small: 0 1px 2px rgb(0 0 0 / .08); --shadow-floating-small: 0 8px 24px rgb(0 0 0 / .12); --lv-duration-fast: 160ms; --lv-spinner-size-md: 16px; --lv-spinner-duration: 1800ms; --motion-easing-move: ease; --motion-transition-stateChange: 160ms ease; }
           body { --lv-loading-delay-short: 250ms; --lv-loading-delay-long: 500ms; }
           lv-dashboard-page { min-height: 720px; }
         </style>
