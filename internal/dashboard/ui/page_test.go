@@ -34,6 +34,19 @@ func fieldRefs(fields ...string) []reportdef.FieldRef {
 	return refs
 }
 
+func TestDashboardLayoutContextSelectsDashboardsNavigation(t *testing.T) {
+	context := dashboardLayoutContext(
+		dashboard.Catalog{Workspace: dashboard.CatalogWorkspace{ID: "sales", Title: "Sales"}},
+		dashboarddefinition.Definition{ID: "executive-sales", Title: "Executive Sales"},
+		nil,
+		dashboard.Page{ID: "overview", Title: "Overview"},
+	)
+
+	if context.Active != "dashboards" {
+		t.Fatalf("active navigation = %q, want dashboards", context.Active)
+	}
+}
+
 func TestPageInitialSignalsArePageScoped(t *testing.T) {
 	report := reportdef.Dashboard{
 		ID:            "report",

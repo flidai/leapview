@@ -329,6 +329,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
       const sidebarBox = sidebar.getBoundingClientRect()
       const mainBox = main.getBoundingClientRect()
       return {
+        documentOverflow: document.documentElement.scrollHeight - window.innerHeight,
         sidebarWidth: Math.round(sidebarBox.width),
         mainX: Math.round(mainBox.x),
         mainY: Math.round(mainBox.y),
@@ -347,6 +348,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
       }
     })
 
+    expect(state.documentOverflow).toBe(0)
     expect(state.sidebarWidth).toBe(553)
     expect(state.mainX).toBe(0)
     expect(state.mainY).toBe(state.sidebarBottom)
