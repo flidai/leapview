@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	nethttp "net/http"
 	"strings"
+	"time"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/dashboard"
@@ -17,6 +18,7 @@ import (
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
+	"github.com/flidai/leapview/internal/dashboard/usage"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 )
@@ -68,12 +70,14 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	sessionKey := h.dashboardSessionKey(r, reportDefinition, clientID, streamInstanceID)
+	newSession := false
 	if h.SessionStore != nil {
 		key := sessionKey
 		state := dashboardsession.NewState(activePage.ID, dashboardfilter.MachineSnapshot{
 			Version: dashboardfilter.MachineSnapshotVersion, State: filterState,
 		})
 		record, createErr := h.SessionStore.Create(r.Context(), key, state)
+		newSession = createErr == nil
 		if errors.Is(createErr, dashboardsession.ErrConflict) {
 			record, createErr = h.SessionStore.Load(r.Context(), key)
 		}
@@ -82,6 +86,9 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 			return
 		}
 		filterState = record.State.Filters.State
+	}
+	if newSession {
+		h.recordDashboardView(r, metrics.Catalog().Workspace.ID, dashboardID, activePage.ID)
 	}
 	initialFilters.CompiledState = &filterState
 	initialFilters.ServingStateID = sessionKey.ServingStateID
@@ -172,6 +179,28 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	_ = updates.ForwardUpdates(r.Context(), mailbox)
+}
+
+func (h Handler) recordDashboardView(r *nethttp.Request, workspaceID, dashboardID, pageID string) {
+	if h.RecordDashboardView == nil || h.CurrentUsagePrincipal == nil {
+		return
+	}
+	principalID, human := h.CurrentUsagePrincipal(r)
+	if !human || strings.TrimSpace(principalID) == "" {
+		return
+	}
+	view := usage.View{
+		WorkspaceID: workspaceID, DashboardID: dashboardID, PageID: pageID,
+		PrincipalID: principalID, ViewedAt: time.Now().UTC(),
+	}
+	if err := h.RecordDashboardView(r.Context(), view); err != nil {
+		logger := h.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.ErrorContext(r.Context(), "dashboard usage recording failed",
+			"workspace", workspaceID, "dashboard", dashboardID, "page", pageID, "error", err)
+	}
 }
 
 func hasClientAgentState(r *nethttp.Request) bool {

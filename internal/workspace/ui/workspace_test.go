@@ -103,6 +103,48 @@ func TestListResultPatchesOnlyReplaceServerOwnedRows(t *testing.T) {
 	}
 }
 
+func TestCatalogSignalIncludesDashboardListMetadata(t *testing.T) {
+	workspaceCatalog := catalog.Catalog{
+		Workspace:  catalog.Workspace{ID: "sales", Title: "Sales"},
+		Dashboards: []catalog.Dashboard{{ID: "executive", Title: "Executive"}},
+	}
+	dashboardID := workspaceCatalog.Workspace.ID + "." + workspaceCatalog.Dashboards[0].ID
+	page := catalogPageForCatalogs([]catalog.Catalog{workspaceCatalog}, CatalogListOptions{Metadata: map[string]CatalogDashboardMetadata{
+		dashboardID: {Popularity: uisignals.PopularityLevelMedium, LastRefreshedAt: "2026-08-12T09:42:00Z"},
+	}})
+	if len(page.Dashboards) == 0 {
+		t.Fatal("catalog dashboard missing")
+	}
+	dashboard := page.Dashboards[0]
+	if dashboard.Popularity == nil || *dashboard.Popularity != uisignals.PopularityLevelMedium {
+		t.Fatalf("catalog dashboard popularity = %#v", dashboard.Popularity)
+	}
+	if dashboard.LastRefreshedAt == nil || *dashboard.LastRefreshedAt != "2026-08-12T09:42:00Z" {
+		t.Fatalf("catalog dashboard last refreshed = %#v", dashboard.LastRefreshedAt)
+	}
+	if dashboard.Workspace != "Sales" {
+		t.Fatalf("catalog dashboard workspace = %q, want Sales", dashboard.Workspace)
+	}
+}
+
+func TestCatalogSignalFiltersDashboardsByWorkspaceAndKeepsOptions(t *testing.T) {
+	catalogs := []catalog.Catalog{
+		{Workspace: catalog.Workspace{ID: "sales", Title: "Sales"}, Dashboards: []catalog.Dashboard{{ID: "executive", Title: "Executive"}}},
+		{Workspace: catalog.Workspace{ID: "operations", Title: "Operations"}, Dashboards: []catalog.Dashboard{{ID: "fulfillment", Title: "Fulfillment"}}},
+	}
+
+	page := catalogPageForCatalogs(catalogs, CatalogListOptions{WorkspaceFilter: "operations"})
+	if len(page.Dashboards) != 1 || page.Dashboards[0].ID != "operations.fulfillment" {
+		t.Fatalf("filtered dashboards = %#v", page.Dashboards)
+	}
+	if got := uisignals.ValueOrZero(page.ListFilter); got != "operations" {
+		t.Fatalf("list filter = %q", got)
+	}
+	if len(page.WorkspaceFilters) != 2 || page.WorkspaceFilters[0].ID != "sales" || page.WorkspaceFilters[1].ID != "operations" {
+		t.Fatalf("workspace filters = %#v", page.WorkspaceFilters)
+	}
+}
+
 func TestWorkspaceAssetDetailsRenderSharedShapeForSemanticModel(t *testing.T) {
 	workspace, catalog, assets, edges := testWorkspaceAssetFixtures()
 	asset := testAssetByID(t, assets, "model")
