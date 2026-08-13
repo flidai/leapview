@@ -188,7 +188,6 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 			Items: filterItems([]conditionalItem{
 				{allowed: allowed.ViewConnections, item: Item{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "storage", Label: "Storage", Href: "/admin/storage", Icon: "database"}},
-				{allowed: allowed.ManagePlatform, item: Item{ID: "storage-v2", Label: "Storage v2", Href: "/admin/storage-v2", Icon: "data"}},
 				{allowed: allowed.ManagePublications, item: Item{ID: "publications", Label: "Publications", Href: "/admin/publications", Icon: "globe"}},
 			}),
 		},

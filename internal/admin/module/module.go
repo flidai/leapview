@@ -143,7 +143,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
 		StorageService: adminstorage.Service{
 			CatalogPath: config.Storage.CatalogPath, DataPath: config.Storage.DataPath,
-			Environment: config.Storage.Environment, ControlPlane: config.Storage.ControlPlane,
 			Analytics: config.Storage.Analytics, Admitter: config.Storage.Admitter,
 		},
 		QueryAuditReader: adminhttp.QueryAuditReaderProvider(config.QueryAuditReader), CSRFToken: config.CSRFToken,

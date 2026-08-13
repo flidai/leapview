@@ -263,8 +263,7 @@ GET /admin/queries
 GET /admin/security
 GET /admin/service-accounts
 GET /admin/storage
-GET /admin/storage-v2
-GET /admin/storage-v2/tables/{schema}/{table}
+GET /admin/storage/tables/{schema}/{table}
 GET /admin/system
 GET /admin/workspaces
 GET /api/docs
@@ -332,7 +331,6 @@ POST /admin/groups/search
 POST /admin/principals/search
 POST /admin/queries/command
 POST /admin/service-accounts/command
-POST /admin/storage/select-table
 POST /auth/desktop/disconnect
 POST /auth/desktop/redeem
 POST /auth/local/login

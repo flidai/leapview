@@ -1214,154 +1214,7 @@ test('query audit drawer does not block selecting another row', async () => {
   }
 })
 
-test('admin storage route renders storage explorer from typed signal data', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-storage-explorer'))
-
-    const state = await page.evaluate(async () => {
-      const element = document.createElement('lv-admin-page') as any
-      const table = {
-        key: 'ducklake-catalog\u0000model\u0000orders',
-        databaseId: 'ducklake-catalog',
-        databaseName: 'DuckLake catalog',
-        databasePath: '/tmp/leapview/leapview.db',
-        modelId: 'ducklake',
-        modelName: 'DuckLake',
-        schema: 'model',
-        name: 'orders',
-        type: 'table',
-        tableId: 42,
-        tableUuid: 'table-uuid',
-        duckLakePath: 'model/orders/',
-        beginSnapshot: 7,
-        endSnapshot: 0,
-        rowCount: 32000204,
-        rowCountLabel: '32,000,204',
-        columnCount: 1,
-        fileCount: 1,
-        sizeBytes: 12288,
-        sizeLabel: '12 KiB',
-        columns: [{ id: 91, name: 'order_id', type: 'VARCHAR', ordinal: 1, nullable: 'No', default: '', initialDefault: '', defaultValueType: 'literal', defaultValueDialect: 'duckdb', beginSnapshot: 7, containsNull: 'No', containsNan: '-', minValue: 'o_001', maxValue: 'o_999', extraStats: '' }],
-        files: [{ id: 9, path: 'model/orders/file.parquet', format: 'parquet', recordCount: 32000204, recordCountLabel: '32,000,204', sizeBytes: 12288, sizeLabel: '12 KiB', beginSnapshot: 7, endSnapshot: 0 }],
-        history: [{ snapshotId: 7, time: '2026-07-03T10:00:00Z', schemaVersion: 1, source: 'table,data_file', changes: 'tables_inserted_into', author: 'tester', message: 'materialize orders', extraInfo: '{}' }],
-        servingStates: [{ workspaceId: 'sales', environment: 'dev', servingStateId: 'state_1', status: 'active', snapshotId: 7, digest: 'digest', active: true, activatedAt: 'now' }],
-      }
-      const storage = {
-        summary: {
-          catalogPath: '/tmp/leapview/leapview.db',
-          dataPath: '/tmp/leapview/data',
-          catalogSizeLabel: '32 KiB',
-          dataSizeLabel: '12 KiB',
-          totalSizeLabel: '44 KiB',
-          totalDataSizeLabel: '12 KiB',
-          databaseCount: 1,
-          tableCount: 1,
-          snapshotCount: 1,
-          dataFileCount: 1,
-        },
-        status: '',
-        warnings: ['Storage warning'],
-        selectedKey: 'ducklake-catalog\u0000model\u0000orders',
-        tables: [table],
-        snapshots: [{ id: 7, time: '2026-07-03T10:00:00Z', schemaVersion: 1, author: 'tester', message: 'materialize', changes: 'tables_inserted_into', extraInfo: '{}', protected: true, servingStateCount: 1 }],
-        servingStates: [{ workspaceId: 'sales', environment: 'dev', servingStateId: 'state_1', status: 'active', snapshotId: 7, digest: 'digest', active: true, activatedAt: 'now' }],
-        selectedTable: table,
-      }
-      const pageSignal = {
-        kind: 'admin',
-        title: 'Storage',
-        active: 'storage',
-        sidebar: {
-          label: 'Admin',
-          railLabel: 'Admin',
-          ariaLabel: 'Admin navigation',
-          storageKey: 'leapview-admin-sidebar-collapsed',
-          activeId: 'storage',
-          collapsible: false,
-          numbered: false,
-          items: [{ id: 'storage', title: 'Storage', href: '/admin/storage', active: true }],
-        },
-        headerTitle: 'Storage',
-        headerDetail: 'Read-only DuckLake catalog and table metadata.',
-        metrics: [{ label: 'Tables', value: '1' }],
-        storage,
-      }
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: pageSignal, adminStorage: storage })
-      document.body.append(element)
-      await element.updateComplete
-      const explorer = element.shadowRoot.querySelector('lv-storage-explorer') as any
-      await explorer.updateComplete
-      const schemaText = explorer.shadowRoot.textContent
-      const filesTab = Array.from(explorer.shadowRoot.querySelectorAll<HTMLButtonElement>('.storage-tab')).find((button) => button.textContent?.includes('Data files'))
-      filesTab?.click()
-      await explorer.updateComplete
-      const filesText = explorer.shadowRoot.textContent
-      return {
-        hasPageTitle: Boolean(element.shadowRoot.querySelector('h1')),
-        explorerTitle: explorer.shadowRoot.querySelector('h2')?.textContent?.trim(),
-        hasGenericMetrics: Boolean(element.shadowRoot.querySelector('.metrics')),
-        warning: explorer.shadowRoot.textContent?.includes('Storage warning'),
-        hasExplorer: Boolean(explorer),
-        explorerHeight: Math.round(explorer.shadowRoot.querySelector('.storage-explorer')?.getBoundingClientRect().height ?? 0),
-        searchInBrowserMenu: Boolean(explorer.shadowRoot.querySelector('.storage-browser-menu .storage-search input')),
-        searchInPageHeader: Boolean(explorer.shadowRoot.querySelector('.storage-explorer-header .storage-search input')),
-        hasGlobalSummary: Boolean(explorer.shadowRoot.querySelector('.storage-summary')),
-        detailBadges: explorer.shadowRoot.querySelectorAll('.storage-detail-header > span, .storage-columns-header > span').length,
-        databaseTreeBadges: Array.from(explorer.shadowRoot.querySelectorAll('.storage-db > summary em')).map((badge) => badge.textContent?.trim()),
-        schemaTreeBadges: Array.from(explorer.shadowRoot.querySelectorAll('.storage-schema > summary em')).map((badge) => badge.textContent?.trim()),
-        tableListSizes: Array.from(explorer.shadowRoot.querySelectorAll('.storage-table-size')).map((size) => size.textContent?.trim()),
-        searchBorder: getComputedStyle(explorer.shadowRoot.querySelector('.storage-search input')!).border,
-        metricsOverflow: getComputedStyle(explorer.shadowRoot.querySelector('.storage-metrics')!).overflowX,
-        metricsWrap: getComputedStyle(explorer.shadowRoot.querySelector('.storage-metrics')!).flexWrap,
-        explorerText: explorer.shadowRoot.textContent,
-        schemaText,
-        filesText,
-      }
-    })
-
-    expect(state.hasPageTitle).toBe(false)
-    expect(state.explorerTitle).toBe('Storage')
-    expect(state.hasGenericMetrics).toBe(false)
-    expect(state.warning).toBe(true)
-    expect(state.hasExplorer).toBe(true)
-    expect(state.explorerHeight).toBeGreaterThan(500)
-    expect(state.searchInBrowserMenu).toBe(true)
-    expect(state.searchInPageHeader).toBe(false)
-    expect(state.hasGlobalSummary).toBe(true)
-    expect(state.detailBadges).toBe(0)
-    expect(state.databaseTreeBadges).toEqual([])
-    expect(state.schemaTreeBadges).toEqual([])
-    expect(state.tableListSizes).toEqual(['12 KiB'])
-    expect(state.searchBorder).toContain('0px')
-    expect(state.metricsOverflow).toBe('hidden')
-    expect(state.metricsWrap).toBe('wrap')
-    expect(state.explorerText ?? '').toMatch(/orders/)
-    expect(state.explorerText ?? '').toMatch(/DuckLake catalog/)
-    expect(state.explorerText ?? '').toMatch(/\/tmp\/leapview\/leapview\.db/)
-    expect(state.explorerText ?? '').toMatch(/Table UUID/)
-    expect(state.explorerText ?? '').toMatch(/table-uuid/)
-    expect(state.explorerText ?? '').toMatch(/DuckLake path/)
-    expect(state.explorerText ?? '').toMatch(/model\/orders\//)
-    expect(state.schemaText ?? '').toMatch(/Column ID/)
-    expect(state.schemaText ?? '').toMatch(/literal/)
-    expect(state.schemaText ?? '').toMatch(/duckdb/)
-    expect(state.schemaText ?? '').toMatch(/Nulls/)
-    expect(state.schemaText ?? '').toMatch(/o_001/)
-    expect(state.schemaText ?? '').toMatch(/o_999/)
-    expect(state.filesText ?? '').toMatch(/model\/orders\/file\.parquet/)
-    expect(state.explorerText ?? '').toMatch(/32,000,204/)
-    expect(state.explorerText ?? '').not.toMatch(/32000204/)
-    expect(state.explorerText ?? '').not.toMatch(/dep_1/)
-    expect(state.explorerText ?? '').toMatch(/12 KiB/)
-  } finally {
-    await page.close()
-  }
-})
-
-test('storage v2 renders a simple shared table with a schema column', async () => {
+test('storage renders a simple shared table with a schema column', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   await page.route('**/profile/avatars/**', (route) => route.fulfill({ status: 204 }))
   const consoleErrors: string[] = []
@@ -1375,20 +1228,11 @@ test('storage v2 renders a simple shared table with a schema column', async () =
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const table = (schema: string, name: string, rows: number) => ({
-        key: `ducklake-catalog\u0000${schema}\u0000${name}`,
-        databaseId: 'ducklake-catalog',
-        databaseName: 'DuckLake catalog',
-        databasePath: '/tmp/leapview/leapview.db',
-        modelId: 'ducklake',
-        modelName: 'DuckLake',
+        key: `${schema}\u0000${name}`,
         schema,
         name,
         type: 'table',
-        tableId: rows,
-        tableUuid: `${schema}-${name}`,
-        duckLakePath: `${schema}/${name}/`,
         beginSnapshot: 7,
-        endSnapshot: 0,
         rowCount: rows,
         rowCountLabel: rows.toLocaleString('en-US'),
         columnCount: 3,
@@ -1398,14 +1242,14 @@ test('storage v2 renders a simple shared table with a schema column', async () =
       })
       mergePatch({ page: {
         kind: 'admin',
-        title: 'Storage v2',
-        active: 'storage-v2',
-        headerTitle: 'Storage v2',
+        title: 'Storage',
+        active: 'storage',
+        headerTitle: 'Storage',
         headerDetail: 'Browse tables and views across schemas.',
         metrics: [{ label: 'Total data size', value: '36 KiB', detail: '3 active files' }],
         storage: {
-          summary: { catalogPath: '/tmp/leapview/leapview.db', dataPath: '/tmp/leapview/data', catalogSizeLabel: '32 KiB', dataSizeLabel: '36 KiB', totalSizeLabel: '68 KiB', totalDataSizeLabel: '36 KiB', databaseCount: 1, tableCount: 3, snapshotCount: 1, dataFileCount: 3 },
-          status: '', warnings: [], selectedKey: '', snapshots: [], servingStates: [],
+          summary: { totalDataSizeLabel: '36 KiB', tableCount: 3, dataFileCount: 3 },
+          status: '',
           tables: [table('model', 'orders', 32000204), table('model', 'customers', 1200), { ...table('staging', 'events', 800), type: 'view' }],
         },
       } })
@@ -1479,9 +1323,9 @@ test('storage v2 renders a simple shared table with a schema column', async () =
     expect(state.listText).not.toContain('DuckLake catalog')
     expect(state.metricsText).toEqual(['Total data size 36 KiB 3 active files'])
     expect(state.hrefs).toEqual([
-      '/admin/storage-v2/tables/model/orders',
-      '/admin/storage-v2/tables/model/customers',
-      '/admin/storage-v2/tables/staging/events',
+      '/admin/storage/tables/model/orders',
+      '/admin/storage/tables/model/customers',
+      '/admin/storage/tables/staging/events',
     ])
     expect(state.initialIconState.hasRowIcons).toBe(true)
     expect(state.initialIconState.spacerCount).toBe(0)
@@ -1508,7 +1352,7 @@ test('storage v2 renders a simple shared table with a schema column', async () =
   }
 })
 
-test('storage v2 table detail emphasizes physical storage and active files', async () => {
+test('storage table detail emphasizes physical storage and active files', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   await page.route('**/profile/avatars/**', (route) => route.fulfill({ status: 204 }))
   const consoleErrors: string[] = []
@@ -1524,8 +1368,8 @@ test('storage v2 table detail emphasizes physical storage and active files', asy
       mergePatch({ page: {
         kind: 'admin',
         title: 'Storage table',
-        active: 'storage-v2-detail',
-        headerTitle: 'Storage v2 / model.orders',
+        active: 'storage-detail',
+        headerTitle: 'Storage / model.orders',
         headerDetail: 'Physical storage and active data files.',
         metrics: [
           { label: 'Data size', value: '12 MiB' },
@@ -1567,7 +1411,7 @@ test('storage v2 table detail emphasizes physical storage and active files', asy
       await files.updateComplete
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
-        backHref: root.querySelector<HTMLAnchorElement>('.storage-v2-back')?.getAttribute('href'),
+        backHref: root.querySelector<HTMLAnchorElement>('.storage-back')?.getAttribute('href'),
         metricText: Array.from(root.querySelectorAll('.metrics .metric')).map((metric) => metric.textContent?.replace(/\s+/g, ' ').trim()),
         factText: Array.from(root.querySelectorAll('.facts .metric')).map((fact) => fact.textContent?.replace(/\s+/g, ' ').trim()),
         sectionTitles: Array.from(root.querySelectorAll('.section > h2')).map((heading) => heading.textContent?.trim()),
@@ -1576,8 +1420,8 @@ test('storage v2 table detail emphasizes physical storage and active files', asy
       }
     })
 
-    expect(state.title).toBe('Storage v2 / model.orders')
-    expect(state.backHref).toBe('/admin/storage-v2')
+    expect(state.title).toBe('Storage / model.orders')
+    expect(state.backHref).toBe('/admin/storage')
     expect(state.metricText).toEqual(['Data size 12 MiB', 'Active files 1', 'Stored rows 1,000', 'Begin snapshot 7'])
     expect(state.factText).toEqual(['Schema model', 'Object type table', 'DuckLake path model/orders/', 'Table UUID table-uuid'])
     expect(state.sectionTitles).toEqual(['Storage', 'Active files'])
@@ -2121,186 +1965,6 @@ test('agent prompt preview delegates to compact markdown view', async () => {
     expect(state.value).toMatch(/^# Hello darkness/)
     expect(state.emptyText).toBe('No system prompt configured.')
     expect(state.h1Text).toBe('Hello darkness')
-  } finally {
-    await page.close()
-  }
-})
-
-test('admin storage explorer keeps table, schema, and breadcrumb selection coherent', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-storage-explorer'))
-
-    const state = await page.evaluate(async () => {
-      const element = document.createElement('lv-storage-explorer') as any
-      const customers = {
-        key: 'ducklake-catalog\u0000model\u0000customers',
-        databaseId: 'ducklake-catalog',
-        databaseName: 'DuckLake catalog',
-        databasePath: '/tmp/leapview/leapview.db',
-        modelId: 'ducklake',
-        modelName: 'DuckLake',
-        schema: 'model',
-        name: 'customers',
-        type: 'table',
-        tableId: 41,
-        tableUuid: 'customers-uuid',
-        duckLakePath: 'model/customers/',
-        beginSnapshot: 6,
-        endSnapshot: 0,
-        rowCount: 10,
-        rowCountLabel: '10',
-        columnCount: 1,
-        fileCount: 1,
-        sizeBytes: 12288,
-        sizeLabel: '12 KiB',
-        columns: [{ id: 81, name: 'customer_id', type: 'VARCHAR', ordinal: 1, nullable: 'No', default: '', initialDefault: '', defaultValueType: 'literal', defaultValueDialect: 'duckdb', beginSnapshot: 6, containsNull: 'No', containsNan: '-', minValue: 'c_001', maxValue: 'c_999', extraStats: '' }],
-        files: [{ id: 1, path: 'model/customers/file.parquet', format: 'parquet', recordCount: 10, recordCountLabel: '10', sizeBytes: 12288, sizeLabel: '12 KiB', beginSnapshot: 6, endSnapshot: 0 }],
-        history: [{ snapshotId: 6, time: '2026-07-03T10:00:00Z', schemaVersion: 1, source: 'table,data_file', changes: 'tables_inserted_into', author: 'tester', message: 'materialize customers', extraInfo: '{}' }],
-        servingStates: [{ workspaceId: 'olist', environment: 'dev', servingStateId: 'state_1', status: 'active', snapshotId: 6, digest: 'digest', active: true, activatedAt: 'now' }],
-      }
-      const orders = {
-        ...customers,
-        key: 'ducklake-catalog\u0000model\u0000orders',
-        name: 'orders',
-        tableId: 42,
-        tableUuid: 'orders-uuid',
-        duckLakePath: 'model/orders/',
-        rowCount: 20,
-        rowCountLabel: '20',
-        columns: [{ id: 82, name: 'order_id', type: 'VARCHAR', ordinal: 1, nullable: 'No', default: '', initialDefault: '', defaultValueType: 'literal', defaultValueDialect: 'duckdb', beginSnapshot: 6, containsNull: 'No', containsNan: '-', minValue: 'o_001', maxValue: 'o_999', extraStats: '' }],
-        files: [{ id: 2, path: 'model/orders/file.parquet', format: 'parquet', recordCount: 20, recordCountLabel: '20', sizeBytes: 12288, sizeLabel: '12 KiB', beginSnapshot: 6, endSnapshot: 0 }],
-        history: [{ snapshotId: 6, time: '2026-07-03T10:00:00Z', schemaVersion: 1, source: 'table,data_file', changes: 'tables_inserted_into', author: 'tester', message: 'materialize orders', extraInfo: '{}' }],
-      }
-      const storage = {
-        summary: {
-          catalogPath: '/tmp/leapview/leapview.db',
-          dataPath: '/tmp/leapview/data',
-          catalogSizeLabel: '32 KiB',
-          dataSizeLabel: '24 KiB',
-          totalSizeLabel: '56 KiB',
-          totalDataSizeLabel: '24 KiB',
-          databaseCount: 1,
-          tableCount: 2,
-          snapshotCount: 1,
-          dataFileCount: 2,
-        },
-        status: '',
-        warnings: [],
-        selectedKey: customers.key,
-        tables: [customers, orders],
-        snapshots: [{ id: 6, time: '2026-07-03T10:00:00Z', schemaVersion: 1, author: 'tester', message: 'materialize', changes: 'tables_inserted_into', extraInfo: '{}', protected: true, servingStateCount: 1 }],
-        servingStates: [{ workspaceId: 'olist', environment: 'dev', servingStateId: 'state_1', status: 'active', snapshotId: 6, digest: 'digest', active: true, activatedAt: 'now' }],
-        selectedTable: customers,
-      }
-      element.storage = storage
-      const commands: unknown[] = []
-      element.addEventListener('lv-storage-table-select', (event: CustomEvent) => commands.push(event.detail))
-      document.body.append(element)
-      await element.updateComplete
-
-      const root = element.shadowRoot
-      const selectedNames = () => Array.from(root.querySelectorAll('.storage-table-button.is-selected')).map((button) => button.textContent?.trim())
-      const tableSizes = () => Array.from(root.querySelectorAll('.storage-table-size')).map((size) => size.textContent?.trim())
-      const detailText = () => root.querySelector('.storage-detail')?.textContent ?? ''
-      const ordersButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.storage-table-button')).find((button) => button.textContent?.includes('orders'))!
-      const schemaSummary = root.querySelector<HTMLElement>('.storage-schema > summary')!
-
-      ordersButton.click()
-      await element.updateComplete
-      const tabText = (tab: Element | null) => tab?.textContent?.replace(/\s+/g, ' ').trim()
-      const defaultTabLabels = Array.from(root.querySelectorAll('.storage-tab')).map((tab) => tabText(tab))
-      const activeTabBefore = tabText(root.querySelector('.storage-tab.is-active'))
-      const schemaDetail = detailText()
-      const filesTab = Array.from(root.querySelectorAll<HTMLButtonElement>('.storage-tab')).find((button) => button.textContent?.includes('Data files'))!
-      filesTab.click()
-      await element.updateComplete
-      const filesDetail = detailText()
-      const historyTab = Array.from(root.querySelectorAll<HTMLButtonElement>('.storage-tab')).find((button) => button.textContent?.includes('History'))!
-      historyTab.click()
-      await element.updateComplete
-      const historyDetail = detailText()
-      const afterOrders = {
-        selectedNames: selectedNames(),
-        tableSizes: tableSizes(),
-        detail: detailText(),
-        defaultTabLabels,
-        activeTabBefore,
-        schemaDetail,
-        filesDetail,
-        historyDetail,
-        commands: [...commands],
-      }
-
-      schemaSummary.click()
-      await element.updateComplete
-      const afterSchema = {
-        selectedNames: selectedNames(),
-        detail: detailText(),
-      }
-
-      const schemaRowsBeforeBreadcrumb = root.querySelectorAll('lv-record-table tbody tr').length
-      ordersButton.click()
-      await element.updateComplete
-      const schemaBreadcrumb = root.querySelector<HTMLButtonElement>('button[data-breadcrumb-kind="schema"]')!
-      schemaBreadcrumb.click()
-      await element.updateComplete
-      const databaseBreadcrumb = root.querySelector<HTMLButtonElement>('button[data-breadcrumb-kind="database"]')!
-      databaseBreadcrumb.click()
-      await element.updateComplete
-      const catalogTabs = Array.from(root.querySelectorAll('.storage-tab')).map((tab) => tabText(tab))
-      const catalogActiveTab = tabText(root.querySelector('.storage-tab.is-active'))
-      const catalogDefaultDetail = detailText()
-      const catalogServingStatesTab = Array.from(root.querySelectorAll<HTMLButtonElement>('.storage-tab')).find((button) => button.textContent?.includes('Serving states'))!
-      catalogServingStatesTab.click()
-      await element.updateComplete
-      const catalogServingStatesDetail = detailText()
-      const catalogSnapshotsTab = Array.from(root.querySelectorAll<HTMLButtonElement>('.storage-tab')).find((button) => button.textContent?.includes('Snapshots'))!
-      catalogSnapshotsTab.click()
-      await element.updateComplete
-      const catalogSnapshotsDetail = detailText()
-      const afterBreadcrumb = {
-        selectedNames: selectedNames(),
-        detail: detailText(),
-        schemaRows: root.querySelectorAll('lv-record-table tbody tr').length,
-        schemaRowsBeforeBreadcrumb,
-        catalogTabs,
-        catalogActiveTab,
-        catalogDefaultDetail,
-        catalogServingStatesDetail,
-        catalogSnapshotsDetail,
-      }
-
-      return { afterOrders, afterSchema, afterBreadcrumb }
-    })
-
-    expect(state.afterOrders.selectedNames).toHaveLength(1)
-    expect(state.afterOrders.selectedNames[0]).toContain('orders')
-    expect(state.afterOrders.tableSizes).toEqual(['12 KiB', '12 KiB'])
-    expect(state.afterOrders.activeTabBefore).toContain('Schema')
-    expect(state.afterOrders.defaultTabLabels).toEqual(['Schema 1', 'Data files 1', 'History 1'])
-    expect(state.afterOrders.schemaDetail).toContain('order_id')
-    expect(state.afterOrders.filesDetail).toContain('model/orders/file.parquet')
-    expect(state.afterOrders.historyDetail).toContain('materialize orders')
-    expect(state.afterOrders.historyDetail).toContain('tables_inserted_into')
-    expect(state.afterOrders.commands).toEqual([{ databaseId: 'ducklake-catalog', schema: 'model', table: 'orders' }])
-
-    expect(state.afterSchema.selectedNames).toHaveLength(0)
-    expect(state.afterSchema.detail).toContain('Tables')
-    expect(state.afterSchema.detail).toContain('customers')
-    expect(state.afterSchema.detail).toContain('orders')
-
-    expect(state.afterBreadcrumb.selectedNames).toHaveLength(0)
-    expect(state.afterBreadcrumb.catalogActiveTab).toContain('Schemas')
-    expect(state.afterBreadcrumb.catalogTabs).toEqual(['Schemas 1', 'Serving states 1', 'Snapshots 1'])
-    expect(state.afterBreadcrumb.catalogDefaultDetail).toContain('Schemas')
-    expect(state.afterBreadcrumb.catalogDefaultDetail).toContain('model')
-    expect(state.afterBreadcrumb.catalogDefaultDetail).not.toContain('state_1')
-    expect(state.afterBreadcrumb.catalogServingStatesDetail).toContain('state_1')
-    expect(state.afterBreadcrumb.catalogSnapshotsDetail).toContain('materialize')
-    expect(state.afterBreadcrumb.schemaRows).toBe(1)
-    expect(state.afterBreadcrumb.schemaRowsBeforeBreadcrumb).toBe(2)
   } finally {
     await page.close()
   }

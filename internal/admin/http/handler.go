@@ -39,10 +39,6 @@ type Handler struct {
 	CurrentCredential   func(*nethttp.Request) (access.APICredential, bool)
 }
 
-type storageCommandSignals struct {
-	AdminStorageCommand ui.AdminStorageCommand `json:"adminStorageCommand"`
-}
-
 type publicationCommandSignals struct {
 	AdminPublicationCommand uisignals.AdminPublicationCommand `json:"adminPublicationCommand"`
 }
@@ -183,25 +179,20 @@ func (h Handler) Agent(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h Handler) Storage(w nethttp.ResponseWriter, r *nethttp.Request) {
-	h.ensureClientID(w, r)
 	h.renderPage(w, r, "storage")
 }
 
-func (h Handler) StorageV2(w nethttp.ResponseWriter, r *nethttp.Request) {
-	h.renderPage(w, r, "storage-v2")
-}
-
-func (h Handler) StorageV2Table(w nethttp.ResponseWriter, r *nethttp.Request) {
-	data, err := h.adminData(r)
+func (h Handler) StorageTable(w nethttp.ResponseWriter, r *nethttp.Request) {
+	data, err := h.readModel().StorageTableData(r, chi.URLParam(r, "schema"), chi.URLParam(r, "table"))
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			nethttp.NotFound(w, r)
+			return
+		}
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 		return
 	}
-	if !selectStorageV2Table(&data, chi.URLParam(r, "schema"), chi.URLParam(r, "table")) {
-		nethttp.NotFound(w, r)
-		return
-	}
-	h.writePage(w, r, "storage-v2-detail", data)
+	h.writePage(w, r, "storage-detail", data)
 }
 
 func (h Handler) Queries(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -525,52 +516,6 @@ func (h Handler) QueryCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.queryHistoryCommand(w, r)
 }
 
-func (h Handler) StorageSignalUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
-	clientID := pagestream.EnsureClientID(w, r)
-	if h.Broker == nil {
-		nethttp.Error(w, "admin storage broker is not configured", nethttp.StatusInternalServerError)
-		return
-	}
-	streamID := adminStorageStreamID(clientID)
-	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(h.Broker.TraceStore(), streamID, "admin.storage.bootstrap"))
-	data, err := h.adminDataForUpdates(r, "storage")
-	if err != nil {
-		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
-		return
-	}
-	if err := updates.Patch(ui.AdminBootstrapSignals("storage", data, h.layout(r))); err != nil {
-		return
-	}
-	_ = updates.Forward(r.Context(), h.Broker, streamID)
-}
-
-func (h Handler) StorageTableSelect(w nethttp.ResponseWriter, r *nethttp.Request) {
-	clientID := pagestream.EnsureClientID(w, r)
-	signals := storageCommandSignals{}
-	if err := pagestream.ReadSignals(r, &signals); err != nil {
-		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
-		return
-	}
-	command := signals.AdminStorageCommand
-	table, err := h.readModel().StorageService.SelectTable(r.Context(), command.DatabaseID, command.Schema, command.Table)
-	if err != nil {
-		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
-		return
-	}
-	selectedTable := ui.AdminStorageTableSignalFromTable(*table)
-	if h.Broker == nil {
-		nethttp.Error(w, "admin storage broker is not configured", nethttp.StatusInternalServerError)
-		return
-	}
-	h.Broker.Publish(adminStorageStreamID(clientID), map[string]any{
-		"adminStorage": map[string]any{
-			"selectedKey":   selectedTable.Key,
-			"selectedTable": &selectedTable,
-		},
-	})
-	w.WriteHeader(nethttp.StatusNoContent)
-}
-
 func (h Handler) renderPage(w nethttp.ResponseWriter, r *nethttp.Request, active string) {
 	data, err := h.adminDataForUpdates(r, active)
 	if err != nil {
@@ -598,6 +543,10 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 		return h.readModel().PrincipalsListData(r)
 	case "groups":
 		return h.readModel().GroupsListData(r)
+	case "storage":
+		return h.readModel().StorageData(r), nil
+	case "storage-detail":
+		return h.readModel().StorageTableData(r, r.URL.Query().Get("schema"), r.URL.Query().Get("table"))
 	case "profile", "security", "api-tokens", "general", "workspaces-admin", "service-accounts", "authentication", "audit", "system":
 		return h.readModel().SettingsData(r)
 	}
@@ -624,26 +573,9 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 			}
 		}
 		return data, sql.ErrNoRows
-	case "storage-v2-detail":
-		if !selectStorageV2Table(&data, r.URL.Query().Get("schema"), r.URL.Query().Get("table")) {
-			return data, sql.ErrNoRows
-		}
-		return data, nil
 	default:
 		return data, nil
 	}
-}
-
-func selectStorageV2Table(data *ui.AdminData, schema, table string) bool {
-	schema = strings.TrimSpace(schema)
-	table = strings.TrimSpace(table)
-	for _, candidate := range data.Storage.Tables {
-		if candidate.Schema == schema && candidate.Name == table {
-			data.Storage.Tables = []ui.AdminStorageTable{candidate}
-			return true
-		}
-	}
-	return false
 }
 
 func (h Handler) patchAndWait(w nethttp.ResponseWriter, r *nethttp.Request, patch pagestream.SignalPatch) {
@@ -676,11 +608,4 @@ func (h Handler) ensureClientID(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h Handler) readModel() ReadModel {
 	return h.ReadModel
-}
-
-func adminStorageStreamID(clientID string) string {
-	if strings.TrimSpace(clientID) == "" {
-		clientID = "default"
-	}
-	return "admin-storage:" + clientID
 }

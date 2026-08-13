@@ -544,7 +544,7 @@ func TestAdminStorageReflectsDuckLakeAfterCleanup(t *testing.T) {
 		t.Fatalf("write legacy duckdb file: %v", err)
 	}
 	body := h.getAuthenticatedHydrated(t, "/admin/storage")
-	for _, want := range []string{"DuckLake catalog", "model", "orders", "Snapshots", "Tables"} {
+	for _, want := range []string{"Storage", "model", "orders", "Total data size"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("admin storage missing %q:\n%s", want, body)
 		}

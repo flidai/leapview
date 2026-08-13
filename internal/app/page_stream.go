@@ -41,7 +41,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 				switch strings.TrimSpace(section) {
 				case "profile", "security", "api-tokens":
 					return routes.accessModule.ProtectNamed("", next), true
-				case "general", "service-accounts", "authentication", "storage", "storage-v2", "storage-v2-detail", "agent", "system":
+				case "general", "service-accounts", "authentication", "storage", "storage-detail", "agent", "system":
 					return routes.accessModule.ProtectPlatformNamed("MANAGE_PLATFORM", next), true
 				case "workspaces-admin":
 					return routes.accessModule.ProtectGlobalNamed("MANAGE_WORKSPACE", next), true
@@ -62,14 +62,11 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 			routeData:      http.HandlerFunc(routes.workspaceModule.HTTP().DataExplorerUpdates),
 			routeAdmin: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				adminHTTP := routes.adminModule.HTTP()
-				switch strings.TrimSpace(r.URL.Query().Get("section")) {
-				case "queries":
+				if strings.TrimSpace(r.URL.Query().Get("section")) == "queries" {
 					adminHTTP.QueryUpdates(w, r)
-				case "storage":
-					adminHTTP.StorageSignalUpdates(w, r)
-				default:
-					adminHTTP.BootstrapUpdates(w, r)
+					return
 				}
+				adminHTTP.BootstrapUpdates(w, r)
 			}),
 			routeWorkspaceAsset: http.HandlerFunc(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				workspaceAssetUpdates(routes.workspaceModule, runtime.pageStreamTrace, w, r)

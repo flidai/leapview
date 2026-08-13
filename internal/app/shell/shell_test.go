@@ -82,7 +82,7 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 		{label: "Data & sharing", items: []struct {
 			label string
 			icon  string
-		}{{label: "Connections", icon: "data"}, {label: "Storage", icon: "database"}, {label: "Storage v2", icon: "data"}, {label: "Publications", icon: "globe"}}},
+		}{{label: "Connections", icon: "data"}, {label: "Storage", icon: "database"}, {label: "Publications", icon: "globe"}}},
 		{label: "Operations", items: []struct {
 			label string
 			icon  string
@@ -126,7 +126,7 @@ func TestProviderFiltersAdminNavigationByPrivileges(t *testing.T) {
 			t.Fatalf("navigation is missing %q: %#v", id, chrome.Sidebar.Groups)
 		}
 	}
-	for _, id := range []string{"general", "workspaces-admin", "service-accounts", "authentication", "storage", "storage-v2", "publications", "agent", "queries", "audit", "system"} {
+	for _, id := range []string{"general", "workspaces-admin", "service-accounts", "authentication", "storage", "publications", "agent", "queries", "audit", "system"} {
 		if got[id] {
 			t.Fatalf("navigation unexpectedly includes %q: %#v", id, chrome.Sidebar.Groups)
 		}

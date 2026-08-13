@@ -79,8 +79,23 @@ func (m ReadModel) Data(r *http.Request) (ui.AdminData, error) {
 	if err := m.populateAccessDirectory(r, &data, true, true); err != nil {
 		return data, err
 	}
-	data.Storage = m.StorageService.Data(r.Context())
 	data.QueryHistory = m.QueryHistoryData(r, uisignals.AdminQueryHistoryFilters{}, "", 50)
+	return data, nil
+}
+
+func (m ReadModel) StorageData(r *http.Request) ui.AdminData {
+	data := m.baseData(r)
+	data.Storage = m.StorageService.Data(r.Context())
+	return data
+}
+
+func (m ReadModel) StorageTableData(r *http.Request, schema, tableName string) (ui.AdminData, error) {
+	data := m.baseData(r)
+	table, err := m.StorageService.Table(r.Context(), strings.TrimSpace(schema), strings.TrimSpace(tableName))
+	if err != nil {
+		return data, err
+	}
+	data.Storage.Tables = []ui.AdminStorageTable{*table}
 	return data, nil
 }
 
