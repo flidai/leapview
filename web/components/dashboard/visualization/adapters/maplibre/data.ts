@@ -102,7 +102,10 @@ export function pathGeometry(envelope: VisualizationEnvelope, layer: Extract<Vis
     points.sort((a, b) => String(a.order).localeCompare(String(b.order), undefined, { numeric: true }))
     if (points.length < 2) continue
     const last = points.at(-1)!
-    features.push({ type: 'Feature', id, geometry: { type: 'LineString', coordinates: points.map((point) => point.coordinate) }, properties: {
+    // MapLibre's GeoJSON worker accepts string feature IDs into source tiles,
+    // but does not paint those LineStrings. Keep the semantic path identity in
+    // __lv_path and use the deterministic result order for the renderer ID.
+    features.push({ type: 'Feature', id: features.length, geometry: { type: 'LineString', coordinates: points.map((point) => point.coordinate) }, properties: {
       __lv_value: last.value ?? 1,
       __lv_category: last.category ?? null,
       __lv_path: id,

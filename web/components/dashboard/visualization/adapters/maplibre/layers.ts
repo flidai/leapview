@@ -14,7 +14,12 @@ export function mapLayer(id: string, layerOrKind: VisualizationGeographicLayer |
   }
   if (kind === 'path') {
     const path = layer?.kind === 'path' ? layer : undefined
-    return { id, source: id, type: 'line', paint: { 'line-color': path?.category || path?.value ? layerColorExpression(path?.color) : path?.stroke.color ?? '#0969da', 'line-width': path?.line.width ?? 3, 'line-opacity': governedOpacity((path?.opacity ?? 0.82) * (path?.stroke.opacity ?? 1), 0.16) } }
+    const width = path?.line.width ?? 3
+    return { id, source: id, type: 'line', paint: {
+      'line-color': path?.category ? layerColorExpression(path.color) : path?.value ? pathValueColorExpression(path.color) : path?.stroke.color ?? '#0969da',
+      'line-width': path?.value ? ['interpolate', ['linear'], ['sqrt', ['get', '__lv_weight']], 0, Math.max(1.5, width / 2), 1, width + 2] : width,
+      'line-opacity': governedOpacity((path?.opacity ?? 0.82) * (path?.stroke.opacity ?? 1), 0.16),
+    } }
   }
 	if (kind === 'point') {
 		const point = layer?.kind === 'point' ? layer : undefined
@@ -169,6 +174,15 @@ function colorInterpolation(scale?: { palette: string; reverse: boolean }): unkn
 function layerColorExpression(scale?: { kind: string; palette: string; reverse: boolean; nullColor: string }): unknown[] {
   if (scale?.kind === 'categorical') return ['coalesce', ['get', '__lv_color'], scale.nullColor]
   return colorInterpolation(scale)
+}
+
+function pathValueColorExpression(scale: { palette: string; reverse: boolean }): unknown[] {
+  const colors = paletteColors(scale)
+  // Route lines occupy far fewer pixels than points or filled regions. Keep
+  // the sequential ordering, but reserve the visible half of the palette so
+  // low-ranked routes do not disappear against a light geographic basemap.
+  const visible = scale.reverse ? colors.slice(0, 3) : colors.slice(2, 5)
+  return ['interpolate', ['linear'], ['sqrt', ['get', '__lv_weight']], 0, visible[0], 0.55, visible[1], 1, visible[2]]
 }
 
 export function paletteColors(scale?: { palette: string; reverse: boolean }): string[] {

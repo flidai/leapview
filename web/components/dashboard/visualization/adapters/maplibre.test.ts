@@ -496,12 +496,18 @@ test('MapLibre exposes a bounded formatted tabular equivalent without unrelated 
 test('MapLibre paths group and deterministically order valid coordinates', () => {
   const envelope = selectableEnvelope()
   const path = {
-    id: 'route', kind: 'path', latitude: { dataset: 'primary', field: 'lat' }, longitude: { dataset: 'primary', field: 'lon' }, path: { dataset: 'primary', field: 'state' }, order: { dataset: 'primary', field: 'value' }, tooltip: [], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#0969da', width: 3, opacity: 1 }, line: { width: 3, curvature: 0 }, opacity: .8,
+    id: 'route', kind: 'path', latitude: { dataset: 'primary', field: 'lat' }, longitude: { dataset: 'primary', field: 'lon' }, path: { dataset: 'primary', field: 'state' }, order: { dataset: 'primary', field: 'value' }, value: { dataset: 'primary', field: 'value' }, tooltip: [], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#0969da', width: 3, opacity: 1 }, line: { width: 3, curvature: 0 }, opacity: .8,
   } as VisualizationGeographicLayer
   const withCoordinates = { ...envelope, dataState: { ...envelope.dataState, datasets: [{ ...(envelope.dataState as any).datasets[0], columns: ['state', 'value', 'lat', 'lon'], rows: [['SP', 2, -20, -40], ['SP', 1, -21, -41], ['RJ', 1, null, -42]] }] } } as VisualizationEnvelope
   const result = pathGeometry(withCoordinates, path as Extract<VisualizationGeographicLayer, { kind: 'path' }>)
   expect(result.features).toHaveLength(1)
+  expect(result.features[0]?.id).toBe(0)
+  expect(result.features[0]?.properties?.__lv_path).toBe('SP')
   expect(result.features[0]?.geometry).toEqual({ type: 'LineString', coordinates: [[-41, -21], [-40, -20]] })
+  const style = mapLayer('lv-route', path)
+  expect(JSON.stringify(style.paint['line-color'])).not.toContain('#ddf4ff')
+  expect(JSON.stringify(style.paint['line-color'])).toContain('#54aeff')
+  expect(style.paint['line-width']).toEqual(['interpolate', ['linear'], ['sqrt', ['get', '__lv_weight']], 0, 1.5, 1, 5])
 })
 
 test('MapLibre fits the combined valid feature extent with bounded padding and zoom', () => {
