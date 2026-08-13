@@ -207,7 +207,7 @@ func (m ReadModel) RoleBindingsAndRoles(r *nethttp.Request, workspaceID string) 
 		return nil, nil, err
 	}
 	if repo == nil {
-		return nil, defaultWorkspaceRoleViews(), nil
+		return nil, builtInWorkspaceRoleViews(), nil
 	}
 	bindingRows, err := repo.ListRoleBindings(r.Context(), workspaceID)
 	if err != nil {
@@ -487,7 +487,7 @@ func CatalogWorkspaceView(catalog catalog.Catalog) workspace.WorkspaceView {
 	}
 }
 
-func defaultWorkspaceRoleViews() []workspace.RoleView {
+func builtInWorkspaceRoleViews() []workspace.RoleView {
 	return roleViews(access.DefaultRoles())
 }
 

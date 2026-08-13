@@ -19,10 +19,10 @@ type semanticOptions struct {
 }
 
 // SemanticModelsCommand constructs the semantic-model inspection and query command.
-func SemanticModelsCommand(ctx context.Context, client cliapi.Client, defaultWorkspaceID string) *cobra.Command {
-	values := &semanticOptions{workspaceID: defaultWorkspaceID}
+func SemanticModelsCommand(ctx context.Context, client cliapi.Client) *cobra.Command {
+	values := &semanticOptions{}
 	parent := &cobra.Command{Use: "semantic-models", Short: "Inspect semantic models"}
-	parent.PersistentFlags().StringVar(&values.workspaceID, "workspace", values.workspaceID, "workspace id")
+	parent.PersistentFlags().StringVar(&values.workspaceID, "workspace", "", "workspace id")
 
 	list := semanticRequestCommand(ctx, client, values, "list", "List semantic models", 0, func(ctx context.Context, api *dashboardgen.GenClient, _ []string) (dashboardgen.GenSchemaSemanticModelListResponse, error) {
 		response, err := api.ListSemanticModels(ctx, dashboardgen.GenListSemanticModelsClientRequest{
@@ -131,6 +131,9 @@ func semanticRequestCommand[T any](
 		Use:   use,
 		Short: short,
 		RunE: func(command *cobra.Command, args []string) error {
+			if err := requireWorkspace(values.workspaceID); err != nil {
+				return err
+			}
 			if err := values.pagination.Validate(command); err != nil {
 				return err
 			}

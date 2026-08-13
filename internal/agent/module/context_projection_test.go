@@ -103,8 +103,7 @@ func TestResolveDashboardTurnReferencesUsesCompiledMetadata(t *testing.T) {
 
 func TestResolveChatTurnContextUsesTrustedSearchMetadata(t *testing.T) {
 	module, err := Build(t.Context(), Config{
-		DefaultWorkspaceID: "test",
-		Search:             contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
+		Search: contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -130,8 +129,7 @@ func TestResolveChatTurnContextUsesTrustedSearchMetadata(t *testing.T) {
 
 func TestResolveChatTurnContextRejectsNonAttachableTypes(t *testing.T) {
 	module, err := Build(t.Context(), Config{
-		DefaultWorkspaceID: "test",
-		Search:             contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
+		Search: contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,8 +151,7 @@ func TestResolveChatTurnContextRejectsNonAttachableTypes(t *testing.T) {
 
 func TestResolveChatTurnContextAppliesCredentialToReferenceWorkspace(t *testing.T) {
 	module, err := Build(t.Context(), Config{
-		DefaultWorkspaceID: "test",
-		Search:             contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
+		Search: contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -187,6 +184,23 @@ func TestResolveChatTurnContextAppliesCredentialToReferenceWorkspace(t *testing.
 	}, candidate)
 	if err == nil {
 		t.Fatal("foreign workspace credential resolved referenced context")
+	}
+}
+
+func TestResolveChatTurnContextRequiresExplicitReferenceWorkspace(t *testing.T) {
+	module, err := Build(t.Context(), Config{
+		Search: contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/chats/new", nil), agent.Scope{DevAuthBypass: true}, agent.TurnContext{
+		Surface:     "chat",
+		WorkspaceID: "test",
+		References:  []agent.TurnReference{{Reference: agent.TurnReferenceKey{Type: "dashboard", ID: "dev-dashboard"}}},
+	})
+	if err == nil {
+		t.Fatal("chat reference without workspace was accepted")
 	}
 }
 

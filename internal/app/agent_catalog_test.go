@@ -483,7 +483,7 @@ func catalogTestServer(t *testing.T) *catalogTestHarness {
 		t.Fatalf("activate catalog serving state: %v", err)
 	}
 	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{
-		WorkspaceRepo: repository, DefaultWorkspaceID: string(workspaceID), DefaultEnvironment: string(servingstate.DefaultEnvironment),
+		WorkspaceRepo: repository, WorkspaceID: string(workspaceID), DefaultEnvironment: string(servingstate.DefaultEnvironment),
 	}))
 	return &catalogTestHarness{appTestHarness: server, store: store}
 }

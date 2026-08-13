@@ -107,7 +107,6 @@ func newViewAsMetrics(repository *viewAsAuthorizationRepository) Metrics {
 		PrincipalFromContext: func(context.Context) (Principal, bool) {
 			return Principal{ID: "author_1"}, true
 		},
-		DefaultWorkspaceID: "sales",
 	})
 }
 

@@ -187,6 +187,10 @@ func (h Handler) Storage(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "storage")
 }
 
+func (h Handler) StorageV2(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.renderPage(w, r, "storage-v2")
+}
+
 func (h Handler) Queries(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.ensureClientID(w, r)
 	h.renderPage(w, r, "queries")

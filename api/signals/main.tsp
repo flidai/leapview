@@ -416,7 +416,10 @@ model AssetLineageNodeSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["catalog", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "catalog" })
 model CatalogDashboardSignal {
-  `description`?: string;
+	`appearanceColor`: string;
+	`appearanceIcon`: string;
+	`description`?: string;
+	`dashboardId`: string;
   `href`: string;
   `id`: string;
   `lastRefreshedAt`?: string;

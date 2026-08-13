@@ -278,7 +278,7 @@ func TestDesktopAuthorizationRejectsDuplicateOrUnknownParameters(t *testing.T) {
 }
 
 func TestDesktopAuthorizationSurvivesExistingBrowserLoginReturn(t *testing.T) {
-	auth := NewAuth(nil, "test", AuthConfig{
+	auth := NewAuth(nil, AuthConfig{
 		CSRFKey:      "0123456789abcdef0123456789abcdef",
 		CookieSecure: true,
 	})
@@ -310,10 +310,9 @@ func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	module, err := Build(t.Context(), Config{
-		Database:    store.SQLDB(),
-		InstanceID:  desktopTestInstanceID,
-		WorkspaceID: "test",
-		PublicURL:   "https://analytics.company.com",
+		Database:   store.SQLDB(),
+		InstanceID: desktopTestInstanceID,
+		PublicURL:  "https://analytics.company.com",
 		Auth: AuthConfig{
 			DevBypass:    true,
 			CSRFKey:      "0123456789abcdef0123456789abcdef",

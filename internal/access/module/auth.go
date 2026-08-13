@@ -90,7 +90,6 @@ type disabledCredentialResolver interface {
 type Auth struct {
 	repo          access.Repository
 	sessions      sessionManager
-	workspaceID   string
 	devBypass     bool
 	devAPIToken   string
 	apiTokenOnly  bool
@@ -131,11 +130,10 @@ type OIDCProviderConfig struct {
 	Scopes       []string
 }
 
-func NewAuth(repo access.Repository, workspaceID string, cfg AuthConfig) *Auth {
+func NewAuth(repo access.Repository, cfg AuthConfig) *Auth {
 	auth := &Auth{
 		repo:         repo,
 		sessions:     repo,
-		workspaceID:  workspaceID,
 		devBypass:    cfg.DevBypass,
 		devAPIToken:  strings.TrimSpace(cfg.DevAPIToken),
 		apiTokenOnly: cfg.APITokenOnly,
@@ -462,6 +460,13 @@ func (a *Auth) MiddlewareWithObjectResolver(privilege access.Privilege, objectRe
 					concealDenied = resolved[0].Type != access.SecurablePlatform && resolved[0].Type != access.SecurableWorkspace
 				}
 			}
+			// A non-global privilege must never fall back to a process-wide
+			// workspace. If the request did not carry a workspace scope and no
+			// explicit resolver supplied a valid object, fail closed.
+			if len(objects) == 0 || hasInvalidAuthorizationObject(objects) {
+				writeAuthError(w, r, errForbidden, http.StatusForbidden)
+				return
+			}
 			if credential != nil && credential.Authoring != nil {
 				projectID := authoringProjectScope(r, credential.Authoring)
 				if err := credential.Authoring.Scope.Authorize(a.authoringAuth.InstanceID(), projectID, privilege); err != nil {
@@ -544,6 +549,18 @@ func (a *Auth) MiddlewareWithObjectResolver(privilege access.Privilege, objectRe
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func hasInvalidAuthorizationObject(objects []access.ObjectRef) bool {
+	for _, object := range objects {
+		if object.Type == "" {
+			return true
+		}
+		if object.Type == access.SecurableWorkspace && strings.TrimSpace(object.WorkspaceID) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func authoringProjectScope(
@@ -735,7 +752,12 @@ func (a *Auth) privilegeWorkspaceID(r *http.Request) string {
 		}
 		return workspaceID
 	}
-	return a.workspaceID
+	// Connection-asset streams carry the owning workspace under this explicit
+	// name because the visible route itself is project-global.
+	if workspaceID := strings.TrimSpace(r.URL.Query().Get("assetWorkspace")); workspaceID != "" {
+		return workspaceID
+	}
+	return ""
 }
 
 func (a *Auth) CSRFMiddleware(next http.Handler) http.Handler {

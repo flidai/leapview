@@ -75,6 +75,7 @@ for (const viewport of [
         const workspaceTablePanel = workspaceRecordTable.parentElement as HTMLElement
         const workspaceGlyph = workspace.shadowRoot.querySelector('.record-entity-icon') as HTMLElement | null
         const workspaceDashboardGlyph = workspace.shadowRoot.querySelector('.record-icon-dashboard') as HTMLElement | null
+        const workspaceGlyphs = Array.from(workspace.shadowRoot.querySelectorAll<HTMLElement>('.record-entity-icon'))
         const workspaceRowActionIcon = workspace.shadowRoot.querySelector('.record-actions svg') as SVGElement
         const workspaceRowActionLink = workspace.shadowRoot.querySelector('.record-actions .record-icon-action') as HTMLElement
         const workspaceNameCell = workspace.shadowRoot.querySelector('tbody tr:first-child td:first-child') as HTMLElement
@@ -114,6 +115,12 @@ for (const viewport of [
           workspaceGlyphHasIcon: Boolean(workspaceGlyph?.querySelector('svg')),
           workspaceGlyphBackground: workspaceGlyph ? getComputedStyle(workspaceGlyph).backgroundColor : '',
           workspaceDashboardGlyphBorderColor: workspaceDashboardGlyph ? getComputedStyle(workspaceDashboardGlyph).borderTopColor : '',
+          workspaceGlyphTreatments: workspaceGlyphs.map((glyph) => ({
+            framed: glyph.classList.contains('is-framed'),
+            plain: glyph.classList.contains('is-plain'),
+            background: getComputedStyle(glyph).backgroundColor,
+            borderWidth: getComputedStyle(glyph).borderTopWidth,
+          })),
           workspaceRowActionIconWidth: getComputedStyle(workspaceRowActionIcon).width,
           workspaceRowActionBorderColor: getComputedStyle(workspaceRowActionLink).borderTopColor,
           workspaceSearchFontSize: getComputedStyle(workspaceSearch).fontSize,
@@ -148,8 +155,12 @@ for (const viewport of [
         workspaceHasDescriptions: false,
         workspaceNamesUseIconTrack: true,
         workspaceGlyphHasIcon: true,
-        workspaceGlyphBackground: 'rgb(221, 244, 255)',
-        workspaceDashboardGlyphBorderColor: 'rgb(210, 191, 255)',
+        workspaceGlyphBackground: 'rgba(0, 0, 0, 0)',
+        workspaceDashboardGlyphBorderColor: 'rgb(130, 80, 223)',
+        workspaceGlyphTreatments: [
+          { framed: false, plain: true, background: 'rgba(0, 0, 0, 0)', borderWidth: '0px' },
+          { framed: false, plain: true, background: 'rgba(0, 0, 0, 0)', borderWidth: '0px' },
+        ],
         workspaceRowActionIconWidth: '16px',
         workspaceRowActionBorderColor: 'rgba(0, 0, 0, 0)',
           workspaceSearchFontSize: '14px',
@@ -182,6 +193,7 @@ for (const viewport of [
           connectionsHasEntityList: Boolean(connections.shadowRoot.querySelector('.entity-list-items')),
           connectionsHasRecordTable: Boolean(connections.shadowRoot.querySelector('lv-record-table')),
           connectionsFilterOptions: Array.from(connections.shadowRoot.querySelectorAll('.entity-filter option')).map((option) => option.textContent?.trim()),
+          connectionsIconsArePlain: Array.from(connections.shadowRoot.querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
           connectionsIsStyled: getComputedStyle(connectionsPage).paddingTop !== '0px',
           connectionsPageCentered: isMobile || Math.abs((connectionsPageRect.left + connectionsPageRect.width / 2) - window.innerWidth / 2) <= 1,
           connectionsPageConstrained: isMobile || Math.round(connectionsPageRect.width) < window.innerWidth,
@@ -193,6 +205,7 @@ for (const viewport of [
         connectionsHasEntityList: true,
         connectionsHasRecordTable: false,
         connectionsFilterOptions: ['All', 'Connection', 'Source'],
+        connectionsIconsArePlain: true,
         connectionsIsStyled: true,
         connectionsPageCentered: true,
         connectionsPageConstrained: true,
@@ -283,6 +296,9 @@ for (const viewport of [
           listBackground: getComputedStyle(list).backgroundColor,
           hasStatuses: rows.some((row) => Boolean(row.querySelector('.workspace-status'))),
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
+          iconsArePlain: rows.every((row) => row.querySelector('.entity-list-icon')?.classList.contains('is-plain')),
+          plainIconBorderWidth: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
+          plainIconBackground: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
           hasChevrons: rows.every((row) => Boolean(row.querySelector('.entity-list-chevron svg'))),
           fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - tableRect.width) <= 1),
           maxRowHeight: Math.max(...rows.map((row) => Math.round(row.getBoundingClientRect().height))),
@@ -298,6 +314,9 @@ for (const viewport of [
         listBackground: 'rgb(238, 242, 246)',
         hasStatuses: false,
         hasIcons: true,
+        iconsArePlain: true,
+        plainIconBorderWidth: '0px',
+        plainIconBackground: 'rgba(0, 0, 0, 0)',
         hasChevrons: false,
         fullWidth: true,
         maxRowHeight: 52,

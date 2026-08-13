@@ -24,15 +24,15 @@ func TestWorkloadMetricsBoundsDataQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	metrics := dashboardmodule.WithAdmission(inner, controller, "sales")
+	metrics := dashboardmodule.WithAdmission(inner, controller)
 
 	go func() {
-		_, _ = metrics.ExecuteDataQuery(context.Background(), dataquery.SemanticRows("sales", "orders", []dataquery.Field{{Field: "orders.id"}}, nil, nil, nil, 0, 1, false))
+		_, _ = metrics.ExecuteDataQuery(context.Background(), workloadTestQuery())
 	}()
 	<-inner.started
 	secondDone := make(chan error, 1)
 	go func() {
-		_, err := metrics.ExecuteDataQuery(context.Background(), dataquery.SemanticRows("sales", "orders", []dataquery.Field{{Field: "orders.id"}}, nil, nil, nil, 0, 1, false))
+		_, err := metrics.ExecuteDataQuery(context.Background(), workloadTestQuery())
 		secondDone <- err
 	}()
 
@@ -42,7 +42,7 @@ func TestWorkloadMetricsBoundsDataQueries(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	_, err = metrics.ExecuteDataQuery(context.Background(), dataquery.SemanticRows("sales", "orders", []dataquery.Field{{Field: "orders.id"}}, nil, nil, nil, 0, 1, false))
+	_, err = metrics.ExecuteDataQuery(context.Background(), workloadTestQuery())
 	if reason, ok := workload.ReasonOf(err); !ok || reason != workload.ClassQueueFull {
 		t.Fatalf("third query error = %v, want class queue rejection", err)
 	}
@@ -64,7 +64,7 @@ func TestWorkloadMetricsDoesNotAdmitWholeDashboardReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	metrics := dashboardmodule.WithAdmission(inner, controller, "sales")
+	metrics := dashboardmodule.WithAdmission(inner, controller)
 
 	done := make(chan error, 2)
 	for range 2 {
@@ -100,8 +100,8 @@ func TestWorkloadMetricsClassifiesAgentAndReleasesFailedQueries(t *testing.T) {
 			t.Fatalf("agent admission stats = %#v", stats)
 		}
 	}}
-	metrics := dashboardmodule.WithAdmission(inner, controller, "sales")
-	request := dataquery.SemanticRows("sales", "orders", []dataquery.Field{{Field: "orders.id"}}, nil, nil, nil, 0, 1, false)
+	metrics := dashboardmodule.WithAdmission(inner, controller)
+	request := workloadTestQuery()
 	request.Surface = dataquery.SurfaceAgent
 	request.Operation = dataquery.OperationAgentQuery
 	if _, err := metrics.ExecuteDataQuery(context.Background(), request); !errors.Is(err, wantErr) {
@@ -110,6 +110,12 @@ func TestWorkloadMetricsClassifiesAgentAndReleasesFailedQueries(t *testing.T) {
 	if stats := controller.Stats(); stats.Running != 0 || stats.Queued != 0 {
 		t.Fatalf("permit leaked after failure: %#v", stats)
 	}
+}
+
+func workloadTestQuery() dataquery.Query {
+	request := dataquery.SemanticRows("sales", "orders", []dataquery.Field{{Field: "orders.id"}}, nil, nil, nil, 0, 1, false)
+	request.WorkspaceID = "sales"
+	return request
 }
 
 type blockingQueryMetrics struct {

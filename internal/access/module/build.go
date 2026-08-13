@@ -20,7 +20,6 @@ import (
 
 type Config struct {
 	Database     *sql.DB
-	WorkspaceID  string
 	Auth         AuthConfig
 	ExistingAuth *Auth
 	WorkspaceIDs func(context.Context) ([]string, error)
@@ -38,12 +37,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Database == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
-			Auth: auth, WorkspaceIDs: config.WorkspaceIDs, DefaultWorkspaceID: config.WorkspaceID, Presentation: config.Presentation, Assets: config.Assets,
+			Auth: auth, WorkspaceIDs: config.WorkspaceIDs, Presentation: config.Presentation, Assets: config.Assets,
 			WorkspaceID: func(value string) string {
-				if value != "" {
-					return value
-				}
-				return config.WorkspaceID
+				return strings.TrimSpace(value)
 			},
 		}
 		if auth != nil {
@@ -91,7 +87,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	auth := config.ExistingAuth
 	if auth == nil && !config.Auth.Disabled {
-		auth = NewAuth(repository, config.WorkspaceID, config.Auth)
+		auth = NewAuth(repository, config.Auth)
 	}
 	if auth != nil {
 		auth.authoringAuth = authoringAuth
@@ -99,16 +95,12 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	surface := surfaceConfig{
 		Repository: func() (access.Repository, error) { return repository, nil },
 		Auth:       auth, WorkspaceIDs: config.WorkspaceIDs,
-		AuthoringAuth:      authoringAuth,
-		Avatar:             avatarService,
-		Presentation:       config.Presentation,
-		Assets:             config.Assets,
-		DefaultWorkspaceID: config.WorkspaceID,
+		AuthoringAuth: authoringAuth,
+		Avatar:        avatarService,
+		Presentation:  config.Presentation,
+		Assets:        config.Assets,
 		WorkspaceID: func(value string) string {
-			if value != "" {
-				return value
-			}
-			return config.WorkspaceID
+			return strings.TrimSpace(value)
 		},
 	}
 	if auth != nil {

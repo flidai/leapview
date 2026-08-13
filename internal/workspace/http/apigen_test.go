@@ -62,6 +62,8 @@ func (*recordingAPIGenHandler) ListWorkspaceAssets(stdhttp.ResponseWriter, *stdh
 func (*recordingAPIGenHandler) GetWorkspaceAsset(stdhttp.ResponseWriter, *stdhttp.Request)       {}
 func (*recordingAPIGenHandler) GetWorkspaceAssetLineage(stdhttp.ResponseWriter, *stdhttp.Request) {
 }
+func (*recordingAPIGenHandler) UpdateDashboardAppearance(stdhttp.ResponseWriter, *stdhttp.Request, string, string) {
+}
 
 func stringPointer(value string) *string { return &value }
 func int32Pointer(value int32) *int32    { return &value }

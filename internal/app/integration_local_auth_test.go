@@ -16,7 +16,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/workspace"
 	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
@@ -148,7 +147,7 @@ func newLocalAuthHarness(t *testing.T) (*harness, *accesssqlite.Repository) {
 
 	workspaceID := metrics.Catalog().Workspace.ID
 	if workspaceID == "" {
-		workspaceID = config.DefaultWorkspaceID
+		t.Fatal("local-auth runtime catalog has no workspace ID")
 	}
 	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{
 		ID:          workspace.WorkspaceID(workspaceID),
@@ -159,8 +158,8 @@ func newLocalAuthHarness(t *testing.T) (*harness, *accesssqlite.Repository) {
 	}
 	seedIntegrationActiveDeployment(t, store, workspaceID, catalogPath)
 	repo := accesssqlite.NewRepository(store.SQLDB())
-	auth := NewAuth(repo, workspaceID, AuthConfig{LocalAuth: true, CSRFKey: strings.Repeat("l", 32)})
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: workspaceID}))
+	auth := NewAuth(repo, AuthConfig{LocalAuth: true, CSRFKey: strings.Repeat("l", 32)})
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: workspaceID}))
 	h.store = store
 	h.handler = server.Routes()
 	h.server = httptest.NewServer(h.handler)

@@ -32,13 +32,13 @@ func TestFriendlyListCommandsPassPaginationQuery(t *testing.T) {
 		{
 			name:    "dashboards",
 			command: dashboardsCommand,
-			args:    []string{"list"},
+			args:    []string{"list", "--workspace", "test"},
 			path:    "/api/v1/workspaces/test/dashboards",
 		},
 		{
 			name:    "semantic-models",
 			command: semanticModelsCommand,
-			args:    []string{"list"},
+			args:    []string{"list", "--workspace", "test"},
 			path:    "/api/v1/workspaces/test/semantic-models",
 		},
 		{
@@ -83,7 +83,7 @@ func TestFriendlyListCommandsPassPaginationQuery(t *testing.T) {
 			}))
 			defer server.Close()
 
-			opts := &rootOptions{workspaceID: "test"}
+			opts := &rootOptions{}
 			cmd := tc.command(context.Background(), opts)
 			args := append([]string{}, tc.args...)
 			args = append(args, "--target", server.URL, "--token", "token", "--limit", "7", "--page-token", "cursor")
@@ -244,7 +244,7 @@ func TestDashboardDataCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			opts := &rootOptions{workspaceID: "test"}
 			cmd := dashboardsCommand(context.Background(), opts)
 			args := append([]string{}, tc.args...)
-			args = append(args, "--target", server.URL, "--token", "token")
+			args = append(args, "--workspace", "test", "--target", server.URL, "--token", "token")
 			cmd.SetArgs(args)
 			captureStdout(t, func() {
 				if err := cmd.Execute(); err != nil {
@@ -358,7 +358,7 @@ func TestSemanticModelDatasetCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			opts := &rootOptions{workspaceID: "test"}
 			cmd := semanticModelsCommand(context.Background(), opts)
 			args := append([]string{}, tc.args...)
-			args = append(args, "--target", server.URL, "--token", "token")
+			args = append(args, "--workspace", "test", "--target", server.URL, "--token", "token")
 			cmd.SetArgs(args)
 			captureStdout(t, func() {
 				if err := cmd.Execute(); err != nil {

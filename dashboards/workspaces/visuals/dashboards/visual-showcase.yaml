@@ -10,6 +10,9 @@ metadata:
     - visuals
     - qa
 spec:
+  appearance:
+    icon: gallery-vertical-end
+    color: blue
   semanticModel: visuals
   filters:
     purchase_date:

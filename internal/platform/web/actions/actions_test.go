@@ -52,6 +52,15 @@ func TestCommandRequestsCarryTypedGeneratedOperationIdentity(t *testing.T) {
 	}
 }
 
+func TestCommandPostWorkspaceUsesEncodedWorkspaceExpression(t *testing.T) {
+	binding := apigenui.MustAction("widget.create", "updateWidget")
+	got := CommandPostWorkspace(binding, "/catalog/appearance", "$dashboardAppearanceCommand.workspaceId", "dashboardAppearanceCommand")
+	want := `@post('/workspaces/' + encodeURIComponent($dashboardAppearanceCommand.workspaceId) + '/catalog/appearance', {filterSignals: {include: /^(?:dashboardAppearanceCommand)(?:[.]|$)/}, headers: window.LeapViewCommand.headers('updateWidget')})`
+	if got != want {
+		t.Fatalf("CommandPostWorkspace() = %q, want %q", got, want)
+	}
+}
+
 func TestGetScopesActiveSearchSignals(t *testing.T) {
 	got := Get("/chats/references/search", "agentReferenceSearch", "agentContext")
 	want := `@get('/chats/references/search', {filterSignals: {include: /^(?:agentReferenceSearch|agentContext)(?:[.]|$)/}, headers: window.LeapViewCommand.headers()})`

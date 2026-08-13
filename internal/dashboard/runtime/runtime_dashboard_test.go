@@ -448,14 +448,18 @@ r2,o2,4,,,2018-01-16,2018-01-16 10:00:00
 	defer metrics.Close()
 
 	ctx := dataquery.WithMetadata(context.Background(), dataquery.Metadata{PrincipalID: "test_principal"})
-	modelResult, err := metrics.ExecuteDataQuery(ctx, dataquery.ModelTableRows("sales", "orders", []string{"order_id", "status"}, []dataquery.Sort{{Field: "status", Direction: "desc"}}, 0, 1, true))
+	query := dataquery.ModelTableRows("sales", "orders", []string{"order_id", "status"}, []dataquery.Sort{{Field: "status", Direction: "desc"}}, 0, 1, true)
+	query.WorkspaceID = "sales"
+	modelResult, err := metrics.ExecuteDataQuery(ctx, query)
 	if err != nil {
 		t.Fatalf("unified model table query: %v", err)
 	}
 	if modelResult.TotalRows != 2 || len(modelResult.Rows) != 1 || modelResult.Rows[0]["order_id"] != "o2" {
 		t.Fatalf("unified model table result = %#v", modelResult)
 	}
-	if _, err := metrics.ExecuteDataQuery(ctx, dataquery.ModelTableRows("sales", "missing", nil, nil, 0, 1, false)); err == nil {
+	missingQuery := dataquery.ModelTableRows("sales", "missing", nil, nil, 0, 1, false)
+	missingQuery.WorkspaceID = "sales"
+	if _, err := metrics.ExecuteDataQuery(ctx, missingQuery); err == nil {
 		t.Fatal("missing model table preview error = nil")
 	}
 }

@@ -29,10 +29,16 @@ type Repository struct {
 }
 
 type ActivationHooks struct {
-	ApplyAccessSnapshot   func(context.Context, transaction.Transaction, string) error
-	ReconcilePublications func(context.Context, transaction.Transaction, PublicationReconcileInput) error
-	LinkRelease           func(context.Context, transaction.Transaction, deployment.CreateInput) error
-	RecordWorkflow        jobs.WorkflowRecorder
+	ApplyAccessSnapshot       func(context.Context, transaction.Transaction, string) error
+	ReconcilePublications     func(context.Context, transaction.Transaction, PublicationReconcileInput) error
+	ApplyDashboardAppearances func(context.Context, transaction.Transaction, DashboardAppearanceActivationInput) error
+	LinkRelease               func(context.Context, transaction.Transaction, deployment.CreateInput) error
+	RecordWorkflow            jobs.WorkflowRecorder
+}
+
+type DashboardAppearanceActivationInput struct {
+	ProjectID, WorkspaceID, ServingStateID, ActorID string
+	Appearances                                     map[string]json.RawMessage
 }
 
 type PublicationReconcileInput struct {
@@ -355,6 +361,21 @@ func (r *Repository) ActivateDeployment(
 				ActorID: row.CreatedBy, Publications: publications,
 			}); err != nil {
 				return deployment.Deployment{}, fmt.Errorf("%w: reconcile publications for workspace %q: %v", deployment.ErrConflict, target.WorkspaceID, err)
+			}
+		}
+		if r.hooks.ApplyDashboardAppearances != nil {
+			var appearances map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(candidate.DashboardAppearancesJson), &appearances); err != nil {
+				return deployment.Deployment{}, fmt.Errorf("%w: decode dashboard appearance snapshot for workspace %q: %v", deployment.ErrConflict, target.WorkspaceID, err)
+			}
+			if appearances == nil {
+				appearances = map[string]json.RawMessage{}
+			}
+			if err := r.hooks.ApplyDashboardAppearances(ctx, tx, DashboardAppearanceActivationInput{
+				ProjectID: candidate.ProjectID, WorkspaceID: candidate.WorkspaceID, ServingStateID: candidate.ID,
+				ActorID: row.CreatedBy, Appearances: appearances,
+			}); err != nil {
+				return deployment.Deployment{}, fmt.Errorf("%w: apply dashboard appearances for workspace %q: %v", deployment.ErrConflict, target.WorkspaceID, err)
 			}
 		}
 		if err := q.MarkOtherServingStatesDraining(ctx, platformdb.MarkOtherServingStatesDrainingParams{WorkspaceID: target.WorkspaceID, Environment: row.Environment, ID: target.ServingStateID}); err != nil {

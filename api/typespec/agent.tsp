@@ -138,7 +138,8 @@ alias GetAgentConfigOK = OkJson<AgentConfigResponse>;
 @tag("Agent")
 @doc("Platform-wide agent configuration. The update command is shared by API and administration UI invocations.")
 @route("/agent/config")
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@extension("x-leapview-object-scope", "platform")
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 @apigen.auditPayload(AgentCommandAuditPayload)
 interface AgentConfiguration {

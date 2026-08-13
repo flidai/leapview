@@ -96,7 +96,7 @@ func TestPublicDashboardDocumentsAreAnonymousAndRouteAware(t *testing.T) {
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		DefaultWorkspaceID: "test-workspace", SecurityHeaders: SecurityHeaders(false),
+		WorkspaceID: "test-workspace", SecurityHeaders: SecurityHeaders(false),
 	}))
 
 	public := httptest.NewRecorder()
@@ -159,7 +159,7 @@ func TestPublicationDeploymentRequiresManagementPrivilege(t *testing.T) {
 	if _, err := states.SaveValidated(ctx, created.ID, validation, zeroArtifact(created.ID, "test")); err != nil {
 		t.Fatal(err)
 	}
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{ServingStateRepo: states, DefaultWorkspaceID: "test", DefaultEnvironment: "prod"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{ServingStateRepo: states, WorkspaceID: "test", DefaultEnvironment: "prod"}))
 	targets := []apiadapter.TargetRequest{{Workspace: "test", CandidateID: string(created.ID)}}
 
 	viewer := testPrincipal(t, ctx, store, "viewer-publication@example.com", "Viewer", "viewer")
@@ -201,7 +201,7 @@ func TestPublicationAdminAuthorizationUsesAnyManagedWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		DefaultWorkspaceID: "test", Auth: testAuth(store, "test", AuthConfig{APITokenOnly: true}),
+		WorkspaceID: "test", Auth: testAuth(store, "test", AuthConfig{APITokenOnly: true}),
 	}))
 
 	request := httptest.NewRequest(http.MethodGet, "/admin/publications", nil)
@@ -216,7 +216,7 @@ func TestPublicationAdminAuthorizationUsesAnyManagedWorkspace(t *testing.T) {
 func TestDisabledSuspendedAndRotatedPublicationIDsReturnNotFound(t *testing.T) {
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test-workspace"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test-workspace"}))
 	request := func(path string) int {
 		recorder := httptest.NewRecorder()
 		server.Routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
@@ -247,7 +247,7 @@ func TestPublicDashboardDocumentsUseDedicatedRateLimitBucket(t *testing.T) {
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		DefaultWorkspaceID: "test-workspace",
+		WorkspaceID: "test-workspace",
 		RateLimits:         RateLimitConfig{Enabled: true, PublicPageLimit: 1, PublicPageWindow: time.Minute},
 	}))
 	handler := server.Routes()
@@ -268,7 +268,7 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		DefaultWorkspaceID: "test-workspace", PublicURL: "https://app.leapview.dev",
+		WorkspaceID: "test-workspace", PublicURL: "https://app.leapview.dev",
 		Auth: testAuth(store, "test-workspace", AuthConfig{DevBypass: true, DevAPIToken: "local-secret"}),
 	}))
 
@@ -319,7 +319,7 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 func TestPublicCommandsRequireMatchingLiveStreamAndSuspensionCancelsIt(t *testing.T) {
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test-workspace"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test-workspace"}))
 	resolved, err := server.routes.dashboardModule.ResolvePublicDashboard(context.Background(), "opaque-public-id-12345678901234")
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func TestPublicCommandsRequireMatchingLiveStreamAndSuspensionCancelsIt(t *testin
 	if err := guard(httptest.NewRequest(http.MethodPost, "/", nil), resolved.Metrics, request, signals); err != nil {
 		t.Fatalf("matching stream rejected: %v", err)
 	}
-	secondServer := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test-workspace"}))
+	secondServer := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test-workspace"}))
 	secondResolved, err := secondServer.routes.dashboardModule.ResolvePublicDashboard(context.Background(), "opaque-public-id-12345678901234")
 	if err != nil {
 		t.Fatal(err)

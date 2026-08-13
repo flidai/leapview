@@ -55,6 +55,7 @@ type State struct {
 	ProjectWorkspaces         []string
 	AccessPolicyJSON          string
 	DashboardPublicationsJSON string
+	DashboardAppearancesJSON  string
 	Environment               Environment
 	Status                    Status
 	Source                    Source
@@ -111,6 +112,7 @@ type Validation struct {
 	ProjectWorkspaces         []string
 	AccessPolicy              accesssnapshot.AccessPolicy
 	DashboardPublicationsJSON string
+	DashboardAppearancesJSON  string
 	ManagedDataRevisions      map[string]string
 	Graph                     servingstatevalidation.AssetGraph
 }

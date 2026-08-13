@@ -41,6 +41,16 @@ const emptyStorage: AdminStorageSignal = {
   selectedTable: undefined,
 }
 
+const storageV2Columns = [
+  { id: 'name', label: 'Name', width: '180px' },
+  { id: 'type', label: 'Type', width: '70px' },
+  { id: 'rows', label: 'Rows', width: '90px', align: 'right' as const },
+  { id: 'columns', label: 'Columns', width: '80px', align: 'right' as const },
+  { id: 'files', label: 'Files', width: '60px', align: 'right' as const },
+  { id: 'size', label: 'Data size', width: '90px', align: 'right' as const },
+  { id: 'snapshot', label: 'Snapshot', width: '80px', align: 'right' as const },
+]
+
 class LeapViewAdminPage extends DatastarLit(LitElement) {
   @state() private queryFilters: AdminQueryHistoryFilters = {}
   @state() private copiedQueryDetailValue = ''
@@ -649,7 +659,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     const mainClass = [
       'main',
       page.active === 'storage' ? 'main-storage' : '',
-      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'workspaces-admin' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'workspaces-admin' || page.active === 'storage-v2' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
     ].filter(Boolean).join(' ')
     return html`
@@ -690,7 +700,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
                 : page.active === 'workspaces-admin' ? html`<lv-workspace-registry></lv-workspace-registry>`
                   : page.active === 'service-accounts' ? html`<lv-service-accounts></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
-                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map(renderSection)}
+                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-v2' ? this.renderStorageV2(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map(renderSection)}
         </section>
       </div>
     `
@@ -734,6 +744,44 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     const storage = storageHasPayload(this.storage) ? this.storage : page.storage ?? emptyStorage
     return html`
       <lv-storage-explorer .storage=${storage}></lv-storage-explorer>
+    `
+  }
+
+  private renderStorageV2(page: AdminPageSignal) {
+    const storage = page.storage ?? emptyStorage
+    const items = (storage.tables ?? []).map((table) => ({
+      id: table.key,
+      title: table.name,
+      icon: table.type === 'view' ? 'view' : 'table',
+      iconTreatment: 'plain' as const,
+      group: table.schema || 'default',
+      columns: {
+        type: table.type || 'table',
+        rows: table.rowCountLabel || table.rowCount || '—',
+        columns: table.columnCount ?? '—',
+        files: table.fileCount ?? 0,
+        size: table.sizeLabel || '—',
+        snapshot: table.beginSnapshot || '—',
+      },
+      sortValues: {
+        rows: table.rowCount ?? 0,
+        columns: table.columnCount ?? 0,
+        files: table.fileCount ?? 0,
+        size: table.sizeBytes ?? 0,
+        snapshot: table.beginSnapshot ?? 0,
+      },
+    }))
+    return html`
+      <lv-entity-list
+        .items=${items}
+        .columns=${storageV2Columns}
+        group-by="group"
+        group-icon="schema"
+        client-filter
+        list-label="Storage tables"
+        search-placeholder="Search storage tables"
+        empty-text=${storage.status || 'No storage tables found.'}
+      ></lv-entity-list>
     `
   }
 
@@ -1147,6 +1195,7 @@ function adminGroupListItems(page: AdminPageSignal) {
       title: name,
       href: recordValueHref(row.name) || recordValueLabel(row.name_href) || '#',
       icon: 'group',
+      iconTreatment: 'plain' as const,
       category: provider.toLowerCase(),
       columns: {
         provider: provider || '—',

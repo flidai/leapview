@@ -10,7 +10,6 @@ import (
 
 func managedDataCommandAuditRecorder(
 	accessModule *accessmodule.Module,
-	workspaceID string,
 ) func(context.Context, manageddatamodule.CommandAuditEvent) error {
 	return func(ctx context.Context, event manageddatamodule.CommandAuditEvent) error {
 		if accessModule == nil {
@@ -21,8 +20,8 @@ func managedDataCommandAuditRecorder(
 			return fmt.Errorf("managed-data audit privilege %q is invalid", event.Privilege)
 		}
 		return accessModule.RecordAudit(ctx, accessmodule.AuditEventInput{
-			WorkspaceID: workspaceID, PrincipalID: event.PrincipalID,
-			Action: event.Action, TargetType: event.TargetType, TargetID: event.TargetID,
+			PrincipalID: event.PrincipalID,
+			Action:      event.Action, TargetType: event.TargetType, TargetID: event.TargetID,
 			Privilege: privilege, Status: event.Status,
 			RequestID: event.RequestID, CorrelationID: event.CorrelationID,
 			MetadataJSON: event.MetadataJSON,

@@ -31,16 +31,15 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 		if m.search == nil {
 			return agent.TurnContext{}, errors.New("search is not configured")
 		}
-		defaultWorkspaceID := firstNonEmptyContext(candidate.WorkspaceID, m.defaultWorkspaceID)
 		references := make([]productsearch.Reference, 0, len(candidate.References))
 		for _, reference := range candidate.References {
 			typ := productsearch.Type(strings.ToLower(strings.TrimSpace(reference.Reference.Type)))
 			if !m.IsReferenceType(typ) {
 				continue
 			}
-			workspaceID := firstNonEmptyContext(reference.Reference.WorkspaceID, defaultWorkspaceID)
+			workspaceID := strings.TrimSpace(reference.Reference.WorkspaceID)
 			if workspaceID == "" {
-				continue
+				return agent.TurnContext{}, errors.New("chat references require an explicit workspace")
 			}
 			workspaceScope := scope
 			workspaceScope.WorkspaceID = workspaceID
@@ -407,15 +406,6 @@ func resolvedVisualMetadata(component dashboard.PageVisual, visualID string, vis
 		visualType = string(spec.Mark)
 	}
 	return title, strings.TrimSpace(visualType), true
-}
-
-func firstNonEmptyContext(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func contextCredentialAllowsPrivilege(scope agent.Scope, privilege access.Privilege) bool {

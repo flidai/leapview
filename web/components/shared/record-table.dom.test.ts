@@ -133,8 +133,17 @@ test('primary record table gives entity cells the full column width', async () =
             description: 'Sales, order, category, and delivery overview.',
             href: '/dashboards/executive-sales',
             icon: 'dashboard',
+            iconTreatment: 'framed',
           },
           type: 'Dashboard',
+        }, {
+          name: {
+            label: 'Operations model',
+            href: '/models/operations',
+            icon: 'semantic_model',
+            iconTreatment: 'plain',
+          },
+          type: 'Semantic model',
         }],
         empty: 'No records.',
         minWidth: '620px',
@@ -154,14 +163,20 @@ test('primary record table gives entity cells the full column width', async () =
         cellInnerWidth: Math.round(cell.getBoundingClientRect().width - cellPadding),
         titleFits: title.getBoundingClientRect().right <= cell.getBoundingClientRect().right,
         descriptionFits: description.getBoundingClientRect().right <= cell.getBoundingClientRect().right,
-        iconBackground: getComputedStyle(element.querySelector('.record-entity-icon')!).backgroundColor,
+        iconTreatments: Array.from(element.querySelectorAll<HTMLElement>('.record-entity-icon')).map((icon) => ({
+          framed: icon.classList.contains('is-framed'),
+          plain: icon.classList.contains('is-plain'),
+          background: getComputedStyle(icon).backgroundColor,
+          borderWidth: getComputedStyle(icon).borderTopWidth,
+        })),
       }
     })
     expect(state.variant).toBe('primary')
     expect(state.linkWidth).toBeGreaterThanOrEqual(state.cellInnerWidth - 4)
     expect(state.titleFits).toBe(true)
     expect(state.descriptionFits).toBe(true)
-    expect(state.iconBackground).not.toBe('rgba(0, 0, 0, 0)')
+    expect(state.iconTreatments[0]).toEqual({ framed: true, plain: false, background: 'rgb(246, 248, 250)', borderWidth: '1px' })
+    expect(state.iconTreatments[1]).toEqual({ framed: false, plain: true, background: 'rgba(0, 0, 0, 0)', borderWidth: '0px' })
   } finally {
     await page.close()
   }

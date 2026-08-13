@@ -8,7 +8,7 @@ import (
 	"github.com/flidai/leapview/internal/workspace"
 )
 
-func (m *Module) SecurableObjects(ctx context.Context, defaultWorkspaceID string) ([]access.ObjectRef, error) {
+func (m *Module) SecurableObjects(ctx context.Context) ([]access.ObjectRef, error) {
 	objects := make([]access.ObjectRef, 0)
 	seen := map[string]struct{}{}
 	appendWorkspace := func(id, title string) {
@@ -24,7 +24,6 @@ func (m *Module) SecurableObjects(ctx context.Context, defaultWorkspaceID string
 		objects = append(objects, object)
 		seen[id] = struct{}{}
 	}
-	appendWorkspace(defaultWorkspaceID, "")
 	if m == nil || m.readModel == nil {
 		return objects, nil
 	}

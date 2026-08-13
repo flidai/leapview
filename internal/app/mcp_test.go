@@ -24,8 +24,8 @@ import (
 func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 	store := testStore(t)
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-
-		Auth: testAuth(store, "test", AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
+		Auth:        testAuth(store, "test", AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
+		WorkspaceID: "test",
 	}))
 	handler := server.Routes()
 
@@ -188,8 +188,8 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 func TestMCPGoSDKClientInteroperability(t *testing.T) {
 	store := testStore(t)
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-
-		Auth: testAuth(store, "test", AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
+		Auth:        testAuth(store, "test", AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
+		WorkspaceID: "test",
 	}))
 	live := httptest.NewServer(server.Routes())
 	defer live.Close()

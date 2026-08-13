@@ -13,11 +13,11 @@ func workspacesCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
 }
 
 func dashboardsCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
-	return dashboardcli.Command(ctx, capabilityAPIClient{}, opts.workspaceID)
+	return dashboardcli.Command(ctx, capabilityAPIClient{})
 }
 
 func semanticModelsCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
-	return dashboardcli.SemanticModelsCommand(ctx, capabilityAPIClient{}, opts.workspaceID)
+	return dashboardcli.SemanticModelsCommand(ctx, capabilityAPIClient{})
 }
 
 func addTargetTokenFlags(command *cobra.Command, opts *rootOptions) {

@@ -267,6 +267,7 @@ func (workspaceProject *WorkspaceProject) definition(project Project) (*manifest
 			Title:       firstNonEmpty(workspaceProject.DashboardTitles[name], dashboard.Title),
 			Description: workspaceProject.DashboardDescriptions[name],
 			Tags:        append([]string{}, workspaceProject.DashboardTags[name]...),
+			Appearance:  dashboard.Appearance,
 		})
 	}
 	sort.Slice(definition.Catalog.Dashboards, func(i, j int) bool {

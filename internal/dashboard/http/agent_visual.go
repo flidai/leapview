@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	nethttp "net/http"
+	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
@@ -136,8 +137,8 @@ func (h Handler) dashboardVisualAgentProjection(
 		NextCursor:   nextCursor,
 	}
 	workspaceID := chi.URLParam(r, "workspace")
-	if workspaceID == "" {
-		workspaceID = metrics.Catalog().Workspace.ID
+	if strings.TrimSpace(workspaceID) == "" {
+		return dashboardVisualQueryResult{}, fmt.Errorf("workspace ID is required")
 	}
 	if h.QueryFreshness != nil {
 		modelID := metrics.ModelIDForDashboard(chi.URLParam(r, "dashboard"))

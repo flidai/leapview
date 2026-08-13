@@ -116,12 +116,16 @@ func (m *Module) protectAnyWorkspace(privilege access.Privilege, next http.Handl
 }
 
 func (m *Module) authorizeAnyWorkspace(ctx context.Context, principalID string, credential *access.APICredential, privilege access.Privilege) (bool, error) {
-	if m.workspaceIDs == nil || m.repository == nil {
+	if m == nil || m.repository == nil {
 		return false, nil
 	}
-	workspaceIDs, err := m.workspaceIDs(ctx)
-	if err != nil {
-		return false, err
+	var workspaceIDs []string
+	if m.workspaceIDs != nil {
+		var err error
+		workspaceIDs, err = m.workspaceIDs(ctx)
+		if err != nil {
+			return false, err
+		}
 	}
 	repository, err := m.repository()
 	if err != nil {
@@ -130,38 +134,35 @@ func (m *Module) authorizeAnyWorkspace(ctx context.Context, principalID string, 
 	if repository == nil || strings.TrimSpace(principalID) == "" {
 		return false, nil
 	}
-	objects := authorizationObjects(workspaceIDs, m.workspaceID, credential, privilege)
+	objects := authorizationObjects(workspaceIDs, credential, privilege)
+	if len(objects) == 0 {
+		return false, nil
+	}
 	decision, err := repository.AuthorizeAny(ctx, principalID, privilege, objects)
 	return decision.Allowed, err
 }
 
-func authorizationObjects(workspaceIDs []string, defaultWorkspaceID string, credential *access.APICredential, privilege access.Privilege) []access.ObjectRef {
+func authorizationObjects(workspaceIDs []string, credential *access.APICredential, privilege access.Privilege) []access.ObjectRef {
 	objects := make([]access.ObjectRef, 0, len(workspaceIDs)+1)
 	if credential == nil || apiTokenAllows(credential.Token, "", privilege) {
 		objects = append(objects, access.PlatformObject())
 	}
+	seen := make(map[string]struct{}, len(workspaceIDs))
 	for _, workspaceID := range workspaceIDs {
+		workspaceID = strings.TrimSpace(workspaceID)
+		if workspaceID == "" {
+			continue
+		}
 		if credential != nil && !apiTokenAllows(credential.Token, workspaceID, privilege) {
 			continue
 		}
+		if _, ok := seen[workspaceID]; ok {
+			continue
+		}
+		seen[workspaceID] = struct{}{}
 		objects = append(objects, access.WorkspaceObject(workspaceID))
 	}
-	defaultWorkspaceID = strings.TrimSpace(defaultWorkspaceID)
-	if defaultWorkspaceID != "" && !containsWorkspaceObject(objects, defaultWorkspaceID) &&
-		(credential == nil || apiTokenAllows(credential.Token, defaultWorkspaceID, privilege)) {
-		objects = append(objects, access.WorkspaceObject(defaultWorkspaceID))
-	}
 	return objects
-}
-
-func containsWorkspaceObject(objects []access.ObjectRef, workspaceID string) bool {
-	expected := access.WorkspaceObject(workspaceID)
-	for _, object := range objects {
-		if object == expected {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *Module) AuthorizeAnyWorkspace(ctx context.Context, principalID string, credential *access.APICredential, privilege access.Privilege) (bool, error) {

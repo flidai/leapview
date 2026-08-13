@@ -30,7 +30,6 @@ type Principal struct {
 
 type Options struct {
 	Repo                  access.DataAuthorizationService
-	DefaultWorkspaceID    string
 	PrincipalFromContext  func(context.Context) (Principal, bool)
 	CredentialFromContext func(context.Context) (access.APICredential, bool)
 	TokenAllows           func(access.APIToken, string, access.Privilege) bool
@@ -39,7 +38,6 @@ type Options struct {
 type Metrics struct {
 	queryruntime.Metrics
 	repo                  access.DataAuthorizationService
-	defaultWorkspaceID    string
 	principalFromContext  func(context.Context) (Principal, bool)
 	credentialFromContext func(context.Context) (access.APICredential, bool)
 	tokenAllows           func(access.APIToken, string, access.Privilege) bool
@@ -67,7 +65,6 @@ func New(metrics queryruntime.Metrics, options Options) Metrics {
 	return Metrics{
 		Metrics:               metrics,
 		repo:                  options.Repo,
-		defaultWorkspaceID:    options.DefaultWorkspaceID,
 		principalFromContext:  options.PrincipalFromContext,
 		credentialFromContext: options.CredentialFromContext,
 		tokenAllows:           options.TokenAllows,
@@ -75,6 +72,9 @@ func New(metrics queryruntime.Metrics, options Options) Metrics {
 }
 
 func (m Metrics) MetricsForWorkspace(workspaceID string) (queryruntime.Metrics, bool) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, false
+	}
 	provider, ok := m.Metrics.(queryruntime.WorkspaceMetrics)
 	if ok {
 		metrics, ok := provider.MetricsForWorkspace(workspaceID)
@@ -82,17 +82,13 @@ func (m Metrics) MetricsForWorkspace(workspaceID string) (queryruntime.Metrics, 
 			return nil, ok
 		}
 		m.Metrics = metrics
-		m.defaultWorkspaceID = workspaceID
 		return m, true
 	}
 	if m.Metrics == nil {
 		return nil, false
 	}
-	if m.defaultWorkspaceID != "" && workspaceID == m.defaultWorkspaceID {
-		return m, true
-	}
 	catalog := m.Metrics.Catalog()
-	if catalog.Workspace.ID == "" || catalog.Workspace.ID == workspaceID {
+	if catalog.Workspace.ID == workspaceID {
 		return m, true
 	}
 	return nil, false
@@ -170,8 +166,8 @@ func (m Metrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Qu
 
 func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if request.WorkspaceID == "" {
-		request.WorkspaceID = m.defaultWorkspaceID
+	if strings.TrimSpace(request.WorkspaceID) == "" {
+		return request, nil, errors.New("workspace ID is required")
 	}
 	candidateCapability, candidateQuery := candidateQueryCapabilityFromContext(ctx)
 	privilege := dataQueryPrivilege(request)

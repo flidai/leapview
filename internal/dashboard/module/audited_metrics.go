@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -22,35 +23,34 @@ type QueryAuditRecorder = queryaudit.Recorder
 
 type auditedMetrics struct {
 	queryruntime.Metrics
-	recorder           queryaudit.Recorder
-	defaultWorkspaceID string
-	principalID        func(context.Context) (string, bool)
+	recorder    queryaudit.Recorder
+	principalID func(context.Context) (string, bool)
 }
 
-func WithQueryAudit(metrics queryruntime.Metrics, recorder queryaudit.Recorder, defaultWorkspaceID string, principalID func(context.Context) (string, bool)) queryruntime.Metrics {
+func WithQueryAudit(metrics queryruntime.Metrics, recorder queryaudit.Recorder, principalID func(context.Context) (string, bool)) queryruntime.Metrics {
 	if metrics == nil {
 		return metrics
 	}
-	return auditedMetrics{Metrics: metrics, recorder: recorder, defaultWorkspaceID: defaultWorkspaceID, principalID: principalID}
+	return auditedMetrics{Metrics: metrics, recorder: recorder, principalID: principalID}
 }
 
 func (m auditedMetrics) MetricsForWorkspace(workspaceID string) (queryruntime.Metrics, bool) {
+	if workspaceID == "" {
+		return nil, false
+	}
 	provider, ok := m.Metrics.(queryruntime.WorkspaceMetrics)
 	if ok {
 		metrics, found := provider.MetricsForWorkspace(workspaceID)
 		if !found || metrics == nil {
 			return nil, found
 		}
-		return auditedMetrics{Metrics: metrics, recorder: m.recorder, defaultWorkspaceID: workspaceID, principalID: m.principalID}, true
+		return auditedMetrics{Metrics: metrics, recorder: m.recorder, principalID: m.principalID}, true
 	}
 	if m.Metrics == nil {
 		return nil, false
 	}
-	if m.defaultWorkspaceID != "" && workspaceID == m.defaultWorkspaceID {
-		return m, true
-	}
 	catalog := m.Metrics.Catalog()
-	if catalog.Workspace.ID == "" || catalog.Workspace.ID == workspaceID {
+	if catalog.Workspace.ID == workspaceID {
 		return m, true
 	}
 	return nil, false
@@ -61,8 +61,9 @@ func (m auditedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.
 		return dataquery.Result{}, errors.New("query metrics are not configured")
 	}
 	ctx = m.auditContext(ctx)
-	if request.WorkspaceID == "" {
-		request.WorkspaceID = m.defaultWorkspaceID
+	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
+	if strings.TrimSpace(request.WorkspaceID) == "" {
+		return dataquery.Result{}, errors.New("workspace ID is required")
 	}
 	return dataquery.ExecuteAudited(ctx, request, m.Metrics.ExecuteDataQuery)
 }
@@ -73,8 +74,9 @@ func (m auditedMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataq
 		return dataquery.Result{}, errors.New("query metrics do not support native Arrow execution")
 	}
 	ctx = m.auditContext(ctx)
-	if request.WorkspaceID == "" {
-		request.WorkspaceID = m.defaultWorkspaceID
+	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
+	if strings.TrimSpace(request.WorkspaceID) == "" {
+		return dataquery.Result{}, errors.New("workspace ID is required")
 	}
 	return dataquery.ExecuteAudited(ctx, request, func(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 		return executor.ExecuteDataQueryArrow(ctx, request, sink)
@@ -185,9 +187,6 @@ func (m auditedMetrics) ExecuteConsumersPage(ctx context.Context, request consum
 
 func (m auditedMetrics) auditContext(ctx context.Context) context.Context {
 	metadata := dataquery.MetadataFromContext(ctx)
-	if metadata.WorkspaceID == "" {
-		metadata.WorkspaceID = m.defaultWorkspaceID
-	}
 	if metadata.PrincipalID == "" && m.principalID != nil {
 		metadata.PrincipalID, _ = m.principalID(ctx)
 	}

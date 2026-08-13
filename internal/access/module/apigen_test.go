@@ -101,6 +101,21 @@ func TestAPIGenPrincipalTargetPreservesPlatformAndCredentialWorkspaceBoundaries(
 	require.Equal(t, []ObjectRef{PlatformObject(), WorkspaceObject("sales")}, resolver(httptest.NewRequest(http.MethodPatch, "/api/v1/principals/p1", nil), "sales"))
 }
 
+func TestAPIGenGrantManagementClassifiesOnlyUnscopedContractsAsCrossWorkspace(t *testing.T) {
+	extensions := map[string]any{apiGenObjectScopeExtension: "grant-management"}
+	if !isCrossWorkspaceGrantManagement(APIGenOperationContract{Path: "/api/v1/principals", Extensions: extensions}) {
+		t.Fatal("global principal management was not classified as cross-workspace")
+	}
+	if isCrossWorkspaceGrantManagement(APIGenOperationContract{Path: "/api/v1/workspaces/{workspace}/grants", Extensions: extensions}) {
+		t.Fatal("workspace grant management was classified as cross-workspace")
+	}
+}
+
+func TestAPIGenWorkspaceCollectionClassificationIsExplicit(t *testing.T) {
+	require.True(t, isCrossWorkspaceCollection("listWorkspaces"))
+	require.False(t, isCrossWorkspaceCollection("getWorkspace"))
+}
+
 func TestAPIGenOperationPrivilegeUsesTypedCommandAuthorization(t *testing.T) {
 	contract := APIGenOperationContract{
 		AuthzMode: "privilege",

@@ -5,12 +5,14 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"gopkg.in/yaml.v3"
 )
 
 type Dashboard struct {
 	ID                string                                `yaml:"id"`
+	Appearance        dashboardappearance.Patch             `yaml:"appearance,omitempty" json:"appearance,omitempty"`
 	Title             string                                `yaml:"title"`
 	Description       string                                `yaml:"description"`
 	SemanticModel     string                                `yaml:"semantic_model"`

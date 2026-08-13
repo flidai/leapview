@@ -472,6 +472,7 @@ test('groups admin uses the reusable entity list and delegates search to the pag
         filterOptions: Array.from(root.querySelectorAll('.entity-filter option')).map((option) => option.textContent?.trim()),
         href: root.querySelector('.entity-list-identity')?.getAttribute('href'),
         toolbarActions: Array.from(root.querySelectorAll('.entity-toolbar-actions button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim()),
+        iconsArePlain: Array.from(root.querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
       }
     })
 
@@ -481,6 +482,7 @@ test('groups admin uses the reusable entity list and delegates search to the pag
     expect(state.filterOptions).toEqual(['All', 'Local', 'Scim'])
     expect(state.href).toBe('/admin/groups/operations')
     expect(state.toolbarActions).toEqual(['Export CSV', 'Create group'])
+    expect(state.iconsArePlain).toBe(true)
   } finally {
     await page.close()
   }
@@ -1354,6 +1356,169 @@ test('admin storage route renders storage explorer from typed signal data', asyn
     expect(state.explorerText ?? '').not.toMatch(/32000204/)
     expect(state.explorerText ?? '').not.toMatch(/dep_1/)
     expect(state.explorerText ?? '').toMatch(/12 KiB/)
+  } finally {
+    await page.close()
+  }
+})
+
+test('storage v2 renders the shared list grouped by collapsible schemas', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  await page.route('**/profile/avatars/**', (route) => route.fulfill({ status: 204 }))
+  const consoleErrors: string[] = []
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-entity-list'))
+
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const table = (schema: string, name: string, rows: number) => ({
+        key: `ducklake-catalog\u0000${schema}\u0000${name}`,
+        databaseId: 'ducklake-catalog',
+        databaseName: 'DuckLake catalog',
+        databasePath: '/tmp/leapview/leapview.db',
+        modelId: 'ducklake',
+        modelName: 'DuckLake',
+        schema,
+        name,
+        type: 'table',
+        tableId: rows,
+        tableUuid: `${schema}-${name}`,
+        duckLakePath: `${schema}/${name}/`,
+        beginSnapshot: 7,
+        endSnapshot: 0,
+        rowCount: rows,
+        rowCountLabel: rows.toLocaleString('en-US'),
+        columnCount: 3,
+        fileCount: 1,
+        sizeBytes: 12288,
+        sizeLabel: '12 KiB',
+      })
+      mergePatch({ page: {
+        kind: 'admin',
+        title: 'Storage v2',
+        active: 'storage-v2',
+        headerTitle: 'Storage v2',
+        headerDetail: 'Browse tables grouped by schema.',
+        storage: {
+          summary: { catalogPath: '/tmp/leapview/leapview.db', dataPath: '/tmp/leapview/data', catalogSizeLabel: '32 KiB', dataSizeLabel: '36 KiB', totalSizeLabel: '68 KiB', totalDataSizeLabel: '36 KiB', databaseCount: 1, tableCount: 3, snapshotCount: 1, dataFileCount: 3 },
+          status: '', warnings: [], selectedKey: '', snapshots: [], servingStates: [],
+          tables: [table('model', 'orders', 32000204), table('model', 'customers', 1200), { ...table('staging', 'events', 800), type: 'view' }],
+        },
+      } })
+      const element = document.querySelector('lv-admin-page') as any
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const root = list as HTMLElement
+      root.style.width = '672px'
+      const groupState = () => ({
+        labels: Array.from(root.querySelectorAll('.entity-list-group-label')).map((label) => label.textContent?.trim()),
+        counts: Array.from(root.querySelectorAll('.entity-list-group-count')).map((count) => count.textContent?.trim()),
+        rows: Array.from(root.querySelectorAll('.entity-list-table-row .entity-list-title')).map((title) => title.textContent?.trim()),
+      })
+      const initial = groupState()
+      const columnLabels = Array.from(root.querySelectorAll('.entity-list-sort-button > span:first-child')).map((label) => label.textContent?.trim())
+      const listText = root.textContent ?? ''
+      const initialIconState = {
+        hasRowIcons: Boolean(root.querySelector('.entity-list-table-row .entity-list-icon svg')),
+        spacerCount: root.querySelectorAll('.entity-list-table-row .entity-list-icon-spacer').length,
+        classes: Array.from(root.querySelectorAll('.entity-list-table-row .entity-list-icon')).map((icon) => icon.className),
+      }
+      const columns = Array.from(root.querySelectorAll('col'))
+      const headerButtons = Array.from(root.querySelectorAll<HTMLElement>('.entity-list-sort-button'))
+      const firstTitle = root.querySelector<HTMLElement>('.entity-list-table-row .entity-list-title')!
+      const firstGroupLabel = root.querySelector<HTMLElement>('.entity-list-group-label')!
+      const firstTypeCell = root.querySelector<HTMLElement>('.entity-list-table-row td')!
+      const tableWrap = root.querySelector<HTMLElement>('.entity-list-table-wrap')!
+      const layout = {
+        nameColumnWidth: columns[0].getBoundingClientRect().width,
+        nameHeaderRight: headerButtons[0].getBoundingClientRect().right,
+        typeHeaderLeft: headerButtons[1].getBoundingClientRect().left,
+        firstTitleRight: firstTitle.getBoundingClientRect().right,
+        firstTitleLeft: firstTitle.getBoundingClientRect().left,
+        firstGroupLabelLeft: firstGroupLabel.getBoundingClientRect().left,
+        firstTypeLeft: firstTypeCell.getBoundingClientRect().left,
+        scrollWidth: tableWrap.scrollWidth,
+        clientWidth: tableWrap.clientWidth,
+      }
+      const firstToggle = root.querySelector<HTMLButtonElement>('.entity-list-group-toggle')!
+      firstToggle.click()
+      await list.updateComplete
+      const collapsed = {
+        ...groupState(),
+        expanded: firstToggle.getAttribute('aria-expanded'),
+        chevronBackground: getComputedStyle(firstToggle.querySelector('.entity-list-group-chevron')!).backgroundColor,
+      }
+      const input = root.querySelector<HTMLInputElement>('.entity-search input')!
+      input.value = 'events'
+      input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await list.updateComplete
+      const filtered = groupState()
+      return {
+        initial,
+        collapsed,
+        filtered,
+        columnLabels,
+        listText,
+        initialIconState,
+        listLabel: root.querySelector('table')?.getAttribute('aria-label'),
+        clientFilter: list.clientFilter,
+        columnWidths: list.columns.map((column: { width?: string }) => column.width ?? ''),
+        layout,
+      }
+    })
+
+    expect(state.listLabel).toBe('Storage tables')
+    expect(state.clientFilter).toBe(true)
+    expect(state.columnLabels).toEqual(['Name', 'Type', 'Rows', 'Columns', 'Files', 'Data size', 'Snapshot'])
+    expect(state.columnWidths).toEqual(['180px', '70px', '90px', '80px', '60px', '90px', '80px'])
+    expect(state.layout.nameColumnWidth).toBeGreaterThanOrEqual(180)
+    expect(state.layout.nameHeaderRight).toBeLessThan(state.layout.typeHeaderLeft)
+    expect(state.layout.firstTitleRight).toBeLessThan(state.layout.firstTypeLeft)
+    expect(Math.abs(state.layout.firstTitleLeft - state.layout.firstGroupLabelLeft)).toBeLessThanOrEqual(1)
+    expect(state.layout.scrollWidth).toBeLessThanOrEqual(state.layout.clientWidth + 1)
+    expect(state.listText).not.toContain('DuckLake catalog')
+    expect(state.initialIconState.hasRowIcons).toBe(true)
+    expect(state.initialIconState.spacerCount).toBe(0)
+    expect(state.initialIconState.classes).toEqual([
+      'entity-list-icon is-plain entity-list-icon-table',
+      'entity-list-icon is-plain entity-list-icon-table',
+      'entity-list-icon is-plain entity-list-icon-view',
+    ])
+    expect(state.initial.labels).toEqual(['model', 'staging'])
+    expect(state.initial.counts).toEqual(['2', '1'])
+    expect(state.initial.rows).toEqual(['orders', 'customers', 'events'])
+    expect(state.collapsed.expanded).toBe('false')
+    expect(state.collapsed.rows).toEqual(['events'])
+    expect(state.filtered.labels).toEqual(['staging'])
+    expect(state.filtered.counts).toEqual(['1'])
+    expect(state.filtered.rows).toEqual(['events'])
+    expect(state.collapsed.chevronBackground).not.toBe('rgba(0, 0, 0, 0)')
+
+    const visibleToggle = page.locator('lv-admin-page lv-entity-list .entity-list-group-toggle', { hasText: 'staging' })
+    const restingStyles = await visibleToggle.evaluate((button) => ({
+      button: getComputedStyle(button).backgroundColor,
+      chevron: getComputedStyle(button.querySelector('.entity-list-group-chevron')!).backgroundColor,
+    }))
+    await visibleToggle.hover()
+    const hoverStyles = await visibleToggle.evaluate((button) => ({
+      button: getComputedStyle(button).backgroundColor,
+      chevron: getComputedStyle(button.querySelector('.entity-list-group-chevron')!).backgroundColor,
+    }))
+    expect(hoverStyles.button).toBe(restingStyles.button)
+    expect(hoverStyles.chevron).not.toBe(restingStyles.chevron)
+    expect(consoleErrors).toEqual([])
+    if (process.env.LEAPVIEW_CAPTURE_STORAGE_V2) {
+      const list = page.locator('lv-admin-page lv-entity-list')
+      await list.locator('.entity-search input').fill('')
+      await list.evaluate((element: any) => element.updateComplete)
+      await list.locator('.entity-list-group-toggle', { hasText: 'model' }).click()
+      await list.evaluate((element: any) => element.updateComplete)
+      await list.screenshot({ path: process.env.LEAPVIEW_CAPTURE_STORAGE_V2 })
+    }
   } finally {
     await page.close()
   }

@@ -108,6 +108,7 @@ class LeapViewWorkspacePage extends DatastarLit(LitElement) {
             title: workspace.title,
             href: workspace.href,
             icon: 'workspace',
+            iconTreatment: 'plain' as const,
             columns: { description: workspace.description },
           }))}
           .columns=${[
@@ -198,6 +199,7 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
             title: asset.title,
             href: asset.detailHref,
             icon: asset.type,
+            iconTreatment: 'plain' as const,
             category: asset.type,
             columns: {
               type: asset.typeLabel,
@@ -384,6 +386,7 @@ function renderAssetTable(assets: WorkspaceAssetSummarySignal[], empty: string) 
           label: asset.title,
           href: asset.detailHref,
           icon: asset.type,
+          iconTreatment: 'plain',
         },
         type: asset.typeLabel,
         actions,

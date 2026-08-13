@@ -46,7 +46,7 @@ func dashboardAPISetFilterBody(t *testing.T, pageID, bindingID string, values ..
 }
 
 func TestBIAPIListResponsesUseStandardEnvelope(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 
 	for _, tc := range []struct {
 		path string
@@ -99,11 +99,11 @@ func TestBIAPIListResponsesUseStandardEnvelope(t *testing.T) {
 }
 
 func TestBIAPIUsesWorkspaceRouteScope(t *testing.T) {
-	metrics := NewMultiWorkspaceMetrics("sales", map[string]QueryMetrics{
+	metrics := NewMultiWorkspaceMetrics(map[string]QueryMetrics{
 		"sales":      namedWorkspaceMetrics{workspaceID: "sales", dashboardID: "executive-sales", title: "Executive Sales"},
 		"operations": namedWorkspaceMetrics{workspaceID: "operations", dashboardID: "fulfillment-operations", title: "Fulfillment Operations"},
 	})
-	server := assembleRuntime(metrics, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "sales"}))
+	server := assembleRuntime(metrics, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "sales"}))
 
 	okReq := newPublicAPIRequest(http.MethodGet, "/api/v1/workspaces/operations/dashboards/fulfillment-operations", nil)
 	okRec := httptest.NewRecorder()
@@ -121,7 +121,7 @@ func TestBIAPIUsesWorkspaceRouteScope(t *testing.T) {
 }
 
 func TestBIAPIListPaginationRejectsMalformedLimit(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 	req := newPublicAPIRequest(http.MethodGet, "/api/v1/workspaces/test/dashboards?limit=oops", nil)
 	req.Header.Set("Accept", "application/json")
 	rec := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestBIAPIListPaginationRejectsMalformedLimit(t *testing.T) {
 }
 
 func TestBIAPIQueriesBoundRowsAndPageData(t *testing.T) {
-	server := assembleRuntime(manyRowsMetrics{}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(manyRowsMetrics{}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 
 	pageReq := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/query", strings.NewReader(dashboardAPISetFilterBody(t, "overview", "state", "SP")))
 	pageReq.Header.Set("Accept", "application/json")
@@ -163,7 +163,7 @@ func TestBIAPIQueriesBoundRowsAndPageData(t *testing.T) {
 }
 
 func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 
 	componentReq := newPublicAPIRequest(http.MethodGet, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview", nil)
 	componentReq.Header.Set("Accept", "application/json")
@@ -242,7 +242,7 @@ func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 }
 
 func TestSemanticAPIQueryAuditIncludesWorkspace(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 	req := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/semantic-models/test/query", strings.NewReader(`{"dimensions":[{"field":"orders.status","alias":"status"}],"measures":[{"field":"order_count"}],"limit":1}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer dev")
@@ -284,7 +284,7 @@ func TestSemanticAPIQueryAuditIncludesWorkspace(t *testing.T) {
 }
 
 func TestDashboardPageQueryWritesQueryEvents(t *testing.T) {
-	server := assembleRuntime(auditedDashboardMetrics{fakeMetrics: fakeMetrics{}}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(auditedDashboardMetrics{fakeMetrics: fakeMetrics{}}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 	req := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/query", strings.NewReader(`{}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer dev")
@@ -314,7 +314,7 @@ func TestDashboardPageQueryWritesQueryEvents(t *testing.T) {
 }
 
 func TestDashboardTableWindowWritesQueryEvents(t *testing.T) {
-	server := assembleRuntime(auditedDashboardMetrics{fakeMetrics: fakeMetrics{}}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(auditedDashboardMetrics{fakeMetrics: fakeMetrics{}}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 	req := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/order_rows/query", strings.NewReader(`{"limit":10}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer dev")
@@ -337,7 +337,7 @@ func TestDashboardTableWindowWritesQueryEvents(t *testing.T) {
 }
 
 func TestBIAPIDashboardVisualDataSurfaceNotFoundAndMalformedBody(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 
 	for _, tc := range []struct {
 		method string
@@ -369,7 +369,7 @@ func TestBIAPIDashboardVisualDataSurfaceNotFoundAndMalformedBody(t *testing.T) {
 }
 
 func TestBIAPISemanticDatasetSurface(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 
 	for _, tc := range []struct {
 		method string
@@ -447,7 +447,7 @@ func TestBIAPISemanticDatasetSurface(t *testing.T) {
 }
 
 func TestBIAPISemanticDatasetErrors(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
 
 	for _, tc := range []struct {
 		method string

@@ -58,8 +58,8 @@ func ValidateCommand(ctx context.Context) *cobra.Command {
 }
 
 // PlanCommand constructs the local or active-state project plan command.
-func PlanCommand(ctx context.Context, loader ActiveWorkspaceGraphLoader, defaultWorkspaceID string) *cobra.Command {
-	opts := &options{workspaceID: defaultWorkspaceID}
+func PlanCommand(ctx context.Context, loader ActiveWorkspaceGraphLoader) *cobra.Command {
+	opts := &options{}
 	cmd := &cobra.Command{
 		Use:   "plan [project]",
 		Short: "Emit a deterministic configuration-as-code plan",
@@ -139,7 +139,7 @@ func runPlan(ctx context.Context, loader ActiveWorkspaceGraphLoader, opts *optio
 	var plan workspacecompiler.ProjectPlan
 	var err error
 	if opts.remote.Target != "" {
-		if opts.workspaceID == "" {
+		if strings.TrimSpace(opts.workspaceID) == "" {
 			return fmt.Errorf("plan --target requires --workspace")
 		}
 		active, err := fetchActiveWorkspaceGraph(ctx, loader, opts)

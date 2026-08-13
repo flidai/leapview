@@ -6,6 +6,7 @@ import (
 	"fmt"
 	nethttp "net/http"
 	"sort"
+	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -30,8 +31,9 @@ func (h Handler) ListDashboards(w nethttp.ResponseWriter, r *nethttp.Request) {
 		out = append(out, dashboardSummaryDTO(row))
 	}
 	workspaceID := chi.URLParam(r, "workspace")
-	if workspaceID == "" {
-		workspaceID = catalog.Workspace.ID
+	if strings.TrimSpace(workspaceID) == "" {
+		writeJSONError(w, fmt.Errorf("workspace ID is required"), nethttp.StatusBadRequest)
+		return
 	}
 	principalID := ""
 	if h.CurrentPrincipalID != nil {

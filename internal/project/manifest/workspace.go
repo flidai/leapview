@@ -5,6 +5,7 @@ package manifest
 
 import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -32,11 +33,12 @@ type CatalogModel struct {
 }
 
 type CatalogDashboard struct {
-	ID          string   `yaml:"id"`
-	Title       string   `yaml:"title"`
-	Path        string   `yaml:"path"`
-	Description string   `yaml:"description"`
-	Tags        []string `yaml:"tags"`
+	ID          string                    `yaml:"id"`
+	Title       string                    `yaml:"title"`
+	Path        string                    `yaml:"path"`
+	Description string                    `yaml:"description"`
+	Tags        []string                  `yaml:"tags"`
+	Appearance  dashboardappearance.Patch `yaml:"appearance,omitempty" json:"appearance,omitempty"`
 }
 
 // Workspace is compiler-private mutable state. It is serialized into the

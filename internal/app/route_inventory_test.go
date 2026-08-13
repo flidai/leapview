@@ -180,6 +180,9 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.Contains(path, "/access/") || strings.HasSuffix(path, "/access/upsert") || strings.HasSuffix(path, "/access/remove"):
 		authenticated.owner = "workspace"
 		authenticated.privilege = "MANAGE_GRANTS"
+	case path == "/workspaces/{workspace}/catalog/appearance":
+		authenticated.owner = "workspace"
+		authenticated.privilege = "MANAGE_WORKSPACE"
 	case path == "/" || path == "/catalog/search" || path == "/data" || path == "/data/command" ||
 		strings.HasPrefix(path, "/workspaces") || strings.HasPrefix(path, "/connections"):
 		authenticated.owner = "workspace"
@@ -260,6 +263,7 @@ GET /admin/queries
 GET /admin/security
 GET /admin/service-accounts
 GET /admin/storage
+GET /admin/storage-v2
 GET /admin/system
 GET /admin/workspaces
 GET /api/docs
@@ -336,6 +340,7 @@ POST /auth/logout
 POST /chat/turns
 POST /chats/turns
 POST /candidates/{candidate}/workspaces/{workspace}/commands/{command}
+POST /workspaces/{workspace}/catalog/appearance
 POST /catalog/search
 POST /connections/search
 POST /data/command

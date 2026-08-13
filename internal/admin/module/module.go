@@ -100,7 +100,6 @@ type Config struct {
 	Publications          PublicationService
 	AgentConfigCommand    uicommand.Binding
 	PublicationCommands   map[string]uicommand.Binding
-	DefaultWorkspaceID    string
 	AuthConfigured        bool
 	LocalPasswordEnabled  bool
 	AccessConfigured      bool
@@ -161,8 +160,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		AgentConfigCommand:  config.AgentConfigCommand,
 		PublicationCommands: config.PublicationCommands,
 		ProductCommands:     config.ProductUICommands.Bindings,
-		DefaultWorkspaceID:  config.DefaultWorkspaceID, AuthConfigured: config.AuthConfigured,
-		AccessConfigured: config.AccessConfigured,
+		AuthConfigured:      config.AuthConfigured,
+		AccessConfigured:    config.AccessConfigured,
 	}
 	m.handler = adminhttp.Handler{
 		ReadModel: readModel, Layout: config.Layout,

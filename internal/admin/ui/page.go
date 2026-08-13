@@ -443,6 +443,10 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 			{Label: "Snapshots", Value: fmt.Sprint(data.Storage.SnapshotCount)},
 			{Label: "Tables", Value: fmt.Sprint(data.Storage.TableCount)},
 		})
+	case "storage-v2":
+		page.HeaderTitle = "Storage v2"
+		page.HeaderDetail = "Browse tables grouped by schema."
+		page.Storage = uisignals.Pointer(AdminStorageSignalFromData(data.Storage, AdminStorageCommand{}))
 	case "queries":
 		page.HeaderTitle = "Query history"
 		page.HeaderDetail = "Inspect query activity, performance, and failures."
@@ -1004,6 +1008,8 @@ func adminPageTitle(active string) string {
 		return "Agent"
 	case "storage":
 		return "Storage"
+	case "storage-v2":
+		return "Storage v2"
 	case "queries":
 		return "Query history"
 	case "audit":
@@ -1019,7 +1025,7 @@ func adminPageTitle(active string) string {
 
 func normalizeAdminSection(active string) string {
 	switch strings.TrimSpace(active) {
-	case "profile", "security", "api-tokens", "general", "workspaces-admin", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "queries", "audit", "system", "publications":
+	case "profile", "security", "api-tokens", "general", "workspaces-admin", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-v2", "queries", "audit", "system", "publications":
 		return strings.TrimSpace(active)
 	default:
 		return "profile"

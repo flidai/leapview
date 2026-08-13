@@ -22,7 +22,6 @@ type Module struct {
 	auth                *Auth
 	repository          func() (access.Repository, error)
 	workspaceIDs        func(context.Context) ([]string, error)
-	workspaceID         string
 	oauth               *mcpoauth.Service
 	oauthResource       mcpoauth.ResourceServer
 	desktopAuth         *desktopauth.Service
@@ -35,20 +34,19 @@ type Module struct {
 }
 
 type surfaceConfig struct {
-	Repository         func() (access.Repository, error)
-	CurrentPrincipal   func(*http.Request) (Principal, bool)
-	CurrentCredential  func(*http.Request) (access.APICredential, bool)
-	WorkspaceID        func(string) string
-	Auth               *Auth
-	WorkspaceIDs       func(context.Context) ([]string, error)
-	DefaultWorkspaceID string
-	Logger             *slog.Logger
-	OAuth              *mcpoauth.Service
-	OAuthResource      mcpoauth.ResourceServer
-	AuthoringAuth      *access.AuthoringAuthService
-	Avatar             *avatar.Service
-	Presentation       webpage.Presentation
-	Assets             staticasset.Resolver
+	Repository        func() (access.Repository, error)
+	CurrentPrincipal  func(*http.Request) (Principal, bool)
+	CurrentCredential func(*http.Request) (access.APICredential, bool)
+	WorkspaceID       func(string) string
+	Auth              *Auth
+	WorkspaceIDs      func(context.Context) ([]string, error)
+	Logger            *slog.Logger
+	OAuth             *mcpoauth.Service
+	OAuthResource     mcpoauth.ResourceServer
+	AuthoringAuth     *access.AuthoringAuthService
+	Avatar            *avatar.Service
+	Presentation      webpage.Presentation
+	Assets            staticasset.Resolver
 }
 
 func newSurface(config surfaceConfig) (*Module, error) {
@@ -101,7 +99,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Module{auth: config.Auth, repository: config.Repository, workspaceIDs: config.WorkspaceIDs, workspaceID: config.DefaultWorkspaceID, logger: logger,
+	return &Module{auth: config.Auth, repository: config.Repository, workspaceIDs: config.WorkspaceIDs, logger: logger,
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
 		roleBindingCommands: roleBindingCommands,
 		grantCommands:       grantCommands,

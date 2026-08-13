@@ -56,7 +56,7 @@ func apiCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 		},
 	}
 	addTargetTokenFlags(call, opts)
-	call.Flags().StringVar(&opts.workspaceID, "workspace", opts.workspaceID, "default workspace path parameter")
+	call.Flags().StringVar(&opts.workspaceID, "workspace", opts.workspaceID, "workspace path parameter")
 	call.Flags().StringArrayVar(&callOpts.pathParams, "path", nil, "path parameter as key=value; repeatable")
 	call.Flags().StringArrayVar(&callOpts.queryParams, "query", nil, "query parameter as key=value; repeatable")
 	call.Flags().StringVar(&callOpts.bodyJSON, "body-json", "", "request JSON body")

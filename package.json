@@ -30,7 +30,7 @@
     "test:movielens-performance-harness": "bun test scripts/movielens_performance.test.ts",
     "test:public-site-smoke": "bun test scripts/public_site_smoke.test.ts",
     "test:visual-modal": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts visual-modal && bun test web/components/dashboard/visual-modal-focus.test.ts web/components/dashboard/visual-modal.dom.test.ts",
-    "test:catalog-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts catalog-page && bun test web/components/app/catalog-page.dom.test.ts",
+    "test:catalog-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts catalog-page && bun test web/components/app/catalog-page.dom.test.ts web/components/app/dashboard-icon-picker.test.ts",
     "test:dashboard-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-page && bun test web/components/dashboard/dashboard-page.dom.test.ts",
     "test:chat-composer": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-composer && bun test web/components/chat/chat-composer.dom.test.ts",
     "test:chat-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-page && bun test web/components/chat/chat-page.dom.test.ts",

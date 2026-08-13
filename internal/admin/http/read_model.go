@@ -55,7 +55,6 @@ type ReadModel struct {
 	AgentConfigCommand  uicommand.Binding
 	PublicationCommands map[string]uicommand.Binding
 	ProductCommands     map[string]uicommand.Binding
-	DefaultWorkspaceID  string
 	AuthConfigured      bool
 	AccessConfigured    bool
 }
@@ -212,7 +211,7 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 	if repo == nil {
 		return data, nil
 	}
-	decision, err := repo.Authorize(r.Context(), principal.ID, access.PrivilegeManageGrants, access.WorkspaceObject(m.DefaultWorkspaceID))
+	decision, err := repo.Authorize(r.Context(), principal.ID, access.PrivilegeManagePlatform, access.PlatformObject())
 	if err != nil {
 		return data, err
 	}

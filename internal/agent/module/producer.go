@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/platform/jobs"
@@ -51,7 +52,7 @@ func (m *Module) runWorkflow(input agent.PromptInput, runID string, dispatch age
 		Job: jobs.EnqueueInput{
 			ID: "agent:" + runID + ":run", Kind: execution.JobKind,
 			WorkloadClass: m.runWorkloadClass,
-			WorkspaceID:   runWorkspaceID(scope, m.defaultWorkspaceID, m.globalWorkspaceID),
+			WorkspaceID:   runWorkspaceID(scope, m.globalWorkspaceID),
 			ResourceKind:  execution.ResourceKind, ResourceID: runID, Payload: payload,
 		},
 	}
@@ -96,15 +97,12 @@ func (m *Module) CancelQueuedRun(ctx context.Context, scope agent.Scope, convers
 	return true, nil
 }
 
-func runWorkspaceID(scope agent.Scope, defaultWorkspaceID, globalWorkspaceID string) string {
-	if scope.WorkspaceID != "" {
-		return scope.WorkspaceID
+func runWorkspaceID(scope agent.Scope, globalWorkspaceID string) string {
+	if workspaceID := strings.TrimSpace(scope.WorkspaceID); workspaceID != "" {
+		return workspaceID
 	}
-	if scope.Credential.WorkspaceID != "" {
-		return scope.Credential.WorkspaceID
+	if workspaceID := strings.TrimSpace(scope.Credential.WorkspaceID); workspaceID != "" {
+		return workspaceID
 	}
-	if defaultWorkspaceID != "" {
-		return defaultWorkspaceID
-	}
-	return globalWorkspaceID
+	return strings.TrimSpace(globalWorkspaceID)
 }

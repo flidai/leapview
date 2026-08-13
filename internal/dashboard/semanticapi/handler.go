@@ -96,8 +96,9 @@ func (h Handler) ListSemanticModels(w nethttp.ResponseWriter, r *nethttp.Request
 		out = append(out, semanticModelSummaryDTO(row))
 	}
 	workspaceID := chi.URLParam(r, "workspace")
-	if workspaceID == "" {
-		workspaceID = catalog.Workspace.ID
+	if strings.TrimSpace(workspaceID) == "" {
+		writeJSONError(w, fmt.Errorf("workspace ID is required"), nethttp.StatusBadRequest)
+		return
 	}
 	out, err := filterAuthorized(h, r, func(row api.SemanticModelSummary) access.ObjectRef {
 		return access.ItemObjectWithParent(access.SecurableSemanticModel, workspaceID, row.ID, access.WorkspaceObject(workspaceID))
@@ -455,13 +456,16 @@ func (h Handler) biMetrics(w nethttp.ResponseWriter, r *nethttp.Request) (Metric
 
 func (h Handler) metricsForRequest(r *nethttp.Request) (Metrics, bool) {
 	workspaceID := chi.URLParam(r, "workspace")
-	if workspaceID != "" && h.MetricsForWorkspace != nil {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, false
+	}
+	if h.MetricsForWorkspace != nil {
 		return h.MetricsForWorkspace(workspaceID)
 	}
 	if h.Metrics == nil {
 		return nil, false
 	}
-	return h.Metrics, true
+	return h.Metrics, h.Metrics.Catalog().Workspace.ID == workspaceID
 }
 
 func (h Handler) semanticModelForRequest(w nethttp.ResponseWriter, r *nethttp.Request) (*semanticmodel.Model, bool) {
@@ -933,7 +937,7 @@ func (h Handler) enrichSemanticQueryResponse(
 	}
 	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace"))
 	if workspaceID == "" {
-		workspaceID = metrics.Catalog().Workspace.ID
+		return
 	}
 	if model := semanticModelForID(metrics, modelID); model != nil {
 		response.Columns = semanticQueryColumns(workspaceID, modelID, model, response.Columns, dimensions, measures, timeRef)

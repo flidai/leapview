@@ -48,7 +48,8 @@ func ValidateArtifactWithOptions(path string, workspaceID servingstate.Workspace
 		ProjectID: validation.ProjectID, ProjectDigest: validation.ProjectDigest,
 		ProjectWorkspaces: append([]string(nil), validation.ProjectWorkspaces...),
 		AccessPolicy:      accessPolicy, DashboardPublicationsJSON: validation.DashboardPublicationsJSON,
-		ManagedDataRevisions: cloneStringMap(validation.ManagedDataRevisions), Graph: graph,
+		DashboardAppearancesJSON: validation.DashboardAppearancesJSON,
+		ManagedDataRevisions:     cloneStringMap(validation.ManagedDataRevisions), Graph: graph,
 	}, nil
 }
 

@@ -17,11 +17,11 @@ import (
 type fakeMetrics struct{}
 
 type assemblyConfig struct {
-	store              *platform.Store
-	AccessRepo         access.Repository
-	DefaultWorkspaceID string
-	SCIMBearerToken    string
-	RateLimits         apihttpmiddleware.RateLimitConfig
+	store           *platform.Store
+	AccessRepo      access.Repository
+	WorkspaceID     string
+	SCIMBearerToken string
+	RateLimits      apihttpmiddleware.RateLimitConfig
 }
 
 type scimTestHarness struct{ handler http.Handler }
@@ -50,15 +50,15 @@ func testAccessRepository(store *platform.Store) access.Repository {
 }
 
 func assembleSCIMTestHarness(_ fakeMetrics, config assemblyConfig) *scimTestHarness {
-	if config.DefaultWorkspaceID != "" {
+	if config.WorkspaceID != "" {
 		if err := workspacesqlite.NewRepository(config.store.SQLDB()).Ensure(context.Background(), workspace.EnsureInput{
-			ID: workspace.WorkspaceID(config.DefaultWorkspaceID), Title: config.DefaultWorkspaceID,
+			ID: workspace.WorkspaceID(config.WorkspaceID), Title: config.WorkspaceID,
 		}); err != nil {
 			panic(err)
 		}
 	}
 	module, err := Build(context.Background(), Config{
-		Database: config.store.SQLDB(), WorkspaceID: config.DefaultWorkspaceID,
+		Database: config.store.SQLDB(),
 	})
 	if err != nil {
 		panic(err)

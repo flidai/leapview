@@ -54,7 +54,6 @@ func BenchmarkGovernDataQueryWithPolicies(b *testing.B) {
 		PrincipalFromContext: func(context.Context) (Principal, bool) {
 			return Principal{ID: principal.ID}, true
 		},
-		DefaultWorkspaceID: "test",
 	})
 	request := dataquery.Query{
 		WorkspaceID: "test",

@@ -93,6 +93,9 @@ for (const viewport of [
             const mutedStroke = getComputedStyle(rows[2].querySelectorAll('.entity-list-badge path')[2]).stroke
             return paths.filter((path) => getComputedStyle(path).stroke !== mutedStroke).length
           }),
+          iconsAreFramed: rows.every((row) => row.querySelector('.entity-list-icon')?.classList.contains('is-framed')),
+          framedIconBorderWidth: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
+          framedIconBackground: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
           hasChevrons: rows.every((row) => Boolean(row.querySelector('.entity-list-chevron svg'))),
           fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - tableRect.width) <= 1),
           maxRowHeight: Math.max(...rows.map((row) => Math.round(row.getBoundingClientRect().height))),
@@ -127,6 +130,9 @@ for (const viewport of [
         emptyPopularityLabels: ['', '', '', 'No popularity data'],
         emptyPopularityOpacity: 'rgb(129, 139, 152)',
         popularityColoredBars: [3, 2, 1],
+        iconsAreFramed: true,
+        framedIconBorderWidth: '1px',
+        framedIconBackground: 'rgb(251, 239, 255)',
         hasChevrons: false,
         fullWidth: true,
         maxRowHeight: 52,
@@ -315,6 +321,71 @@ test('catalog page explains an empty dashboard collection', async () => {
   }
 })
 
+test('dashboard appearance picker searches aliases and emits field-level updates', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-icon-picker'))
+    const catalog = page.locator('lv-catalog-page')
+    await catalog.locator('button[aria-label="Customize Executive Sales Dashboard"]').click()
+    const picker = catalog.locator('lv-dashboard-icon-picker')
+    expect(await picker.count()).toBe(1)
+    const initialIconColor = await picker.locator('button.icon').first().evaluate((button) => getComputedStyle(button).color)
+    await picker.locator('input[aria-label="Search icons"]').fill('home')
+    const iconNames = await picker.locator('button.icon').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))
+    expect(iconNames).toContain('house')
+    expect(iconNames).not.toContain('home')
+
+    const detail = await catalog.evaluate(async (element: HTMLElement) => {
+      const selected = new Promise<unknown>((resolve) => element.addEventListener('lv-dashboard-appearance-change', (event) => resolve((event as CustomEvent).detail), { once: true }))
+      const picker = element.shadowRoot!.querySelector('lv-dashboard-icon-picker') as HTMLElement
+      const orange = picker.shadowRoot!.querySelector('button[aria-label="orange"]') as HTMLButtonElement
+      orange.click()
+      return selected
+    })
+    expect(detail).toEqual({ workspaceId: 'sales', dashboardId: 'executive-sales', color: 'orange' })
+    const selectedColorState = await picker.evaluate((element: HTMLElement) => {
+      const picker = element.shadowRoot!.querySelector('.picker') as HTMLElement
+      const icon = element.shadowRoot!.querySelector('button.icon') as HTMLElement
+      const pickerStyle = getComputedStyle(picker)
+      return { className: picker.className, iconColor: getComputedStyle(icon).color, pickerBackground: pickerStyle.backgroundColor }
+    })
+    expect(selectedColorState.className).toContain('color-orange')
+    expect(selectedColorState.iconColor).not.toBe(initialIconColor)
+    expect(selectedColorState.pickerBackground).toBe('rgb(255, 255, 255)')
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard appearance optimistic update rolls back when the command fails', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-icon-picker'))
+    const catalog = page.locator('lv-catalog-page')
+    await catalog.locator('button[aria-label="Customize Executive Sales Dashboard"]').click()
+    const state = await catalog.evaluate(async (element: any) => {
+      const picker = element.shadowRoot.querySelector('lv-dashboard-icon-picker') as HTMLElement
+      ;(picker.shadowRoot!.querySelector('button[aria-label="orange"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const optimistic = element.appearanceOverrides['executive-sales']?.color
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: '503' } } }))
+      await element.updateComplete
+      return {
+        optimistic,
+        rolledBack: element.appearanceOverrides['executive-sales'],
+        error: element.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
+      }
+    })
+    expect(state.optimistic).toBe('orange')
+    expect(state.rolledBack).toBeUndefined()
+    expect(state.error).toBe('Dashboard appearance could not be saved. Please try again.')
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   const page = {
     kind: 'catalog',
@@ -328,6 +399,10 @@ function testDocument(): string {
     dashboards: [
       {
         id: 'executive-sales',
+        workspaceId: 'sales',
+        dashboardId: 'executive-sales',
+        appearanceIcon: 'chart-no-axes-combined',
+        appearanceColor: 'purple',
         title: 'Executive Sales Dashboard',
         description: 'Fixture report',
         semanticModel: 'olist',
@@ -340,6 +415,10 @@ function testDocument(): string {
       },
       {
         id: 'operations-health',
+        workspaceId: 'operations',
+        dashboardId: 'operations-health',
+        appearanceIcon: 'package-check',
+        appearanceColor: 'orange',
         title: 'Operations Health',
         description: 'Fulfillment and delivery performance.',
         semanticModel: 'operations',
@@ -380,7 +459,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #eef2f6; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-asset-dashboard-bg: #fbefff; --lv-asset-dashboard-accent: #8250df; --lv-asset-dashboard-border: #d2bfff; --fgColor-disabled: #818b98; --display-blue-fgColor: #1f6feb; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --borderWidth-default: 1px; --borderWidth-thick: 2px; --control-medium-size: 32px; --motion-transition-stateChange: 160ms ease; }
+          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #eef2f6; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-asset-dashboard-bg: #fbefff; --lv-asset-dashboard-accent: #8250df; --lv-asset-dashboard-border: #d2bfff; --fgColor-disabled: #818b98; --display-blue-fgColor: #1f6feb; --display-purple-fgColor: #783ae4; --display-orange-fgColor: #a24610; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --borderWidth-default: 1px; --borderWidth-thick: 2px; --control-medium-size: 32px; --motion-transition-stateChange: 160ms ease; }
           body[data-color-mode='dark'] { --fgColor-disabled: #656c76; --display-blue-fgColor: #4da0ff; }
         </style>
       </head>

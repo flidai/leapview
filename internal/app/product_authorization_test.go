@@ -35,7 +35,7 @@ func TestProductAdministrationRejectsWorkspaceScopedManagePlatform(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test", Product: service}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test", Product: service}))
 
 	// This credential demonstrates the old ProtectGlobal behavior: a matching
 	// workspace grant was enough even though no PlatformObject grant exists.
@@ -77,7 +77,7 @@ func TestProductAdministrationUsesGeneratedRouteDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test", Product: service}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test", Product: service}))
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/instance/settings", nil)
 	request.Header.Set("Authorization", "Bearer "+token)

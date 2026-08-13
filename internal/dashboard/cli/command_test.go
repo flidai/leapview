@@ -39,9 +39,10 @@ func (transport *fakeTransport) DoAPIGen(_ context.Context, request apigenclient
 func TestCommandOwnsDashboardVisualQuery(t *testing.T) {
 	stop := errors.New("stop after request")
 	client := &fakeClient{transport: fakeTransport{err: stop}}
-	command := Command(context.Background(), client, "sales")
+	command := Command(context.Background(), client)
 	command.SetArgs([]string{
 		"visual-data", "executive", "overview", "orders",
+		"--workspace", "sales",
 		"--target", "https://example.test", "--token", "secret",
 		"--count", "7", "--filter-state-json", `{"version":"typed_v1"}`,
 	})
@@ -65,5 +66,13 @@ func TestCommandOwnsDashboardVisualQuery(t *testing.T) {
 	}
 	if body.FilterState == nil || body.FilterState.Version != "typed_v1" {
 		t.Fatalf("filter state = %#v", body.FilterState)
+	}
+}
+
+func TestCommandRequiresWorkspace(t *testing.T) {
+	command := Command(context.Background(), &fakeClient{})
+	command.SetArgs([]string{"list"})
+	if err := command.Execute(); err == nil {
+		t.Fatal("dashboard command accepted missing workspace")
 	}
 }

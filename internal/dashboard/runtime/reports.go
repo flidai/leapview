@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -40,18 +41,29 @@ func (m *Service) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
 }
 
 func (m *Service) QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
-	result, err := m.ExecuteDataQuery(ctx, reportAggregateDataQuery(modelID, request))
+	query := reportAggregateDataQuery(modelID, request)
+	query.WorkspaceID = m.workspaceID()
+	result, err := m.ExecuteDataQuery(ctx, query)
 	return reportRowsFromDataQuery(result.Rows), err
 }
 
 func (m *Service) PreviewSemantic(ctx context.Context, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error) {
-	result, err := m.ExecuteDataQuery(ctx, reportRowDataQuery(modelID, request, false))
+	query := reportRowDataQuery(modelID, request, false)
+	query.WorkspaceID = m.workspaceID()
+	result, err := m.ExecuteDataQuery(ctx, query)
 	return reportRowsFromDataQuery(result.Rows), err
 }
 
+func (m *Service) workspaceID() string {
+	if m != nil && m.reports != nil && m.reports.workspace != nil {
+		return m.reports.workspace.Catalog.Workspace.ID
+	}
+	return ""
+}
+
 func (m *Service) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
-	if request.WorkspaceID == "" && m.reports != nil && m.reports.workspace != nil {
-		request.WorkspaceID = m.reports.workspace.Catalog.Workspace.ID
+	if strings.TrimSpace(request.WorkspaceID) == "" {
+		return dataquery.Result{}, fmt.Errorf("workspace ID is required")
 	}
 	return dataquery.ExecuteAudited(ctx, request, func(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 		runtime, err := m.semanticRuntime(request.ModelID)
@@ -65,8 +77,8 @@ func (m *Service) ExecuteDataQuery(ctx context.Context, request dataquery.Query)
 }
 
 func (m *Service) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
-	if request.WorkspaceID == "" && m.reports != nil && m.reports.workspace != nil {
-		request.WorkspaceID = m.reports.workspace.Catalog.Workspace.ID
+	if strings.TrimSpace(request.WorkspaceID) == "" {
+		return dataquery.Result{}, fmt.Errorf("workspace ID is required")
 	}
 	return dataquery.ExecuteAudited(ctx, request, func(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 		runtime, err := m.semanticRuntime(request.ModelID)

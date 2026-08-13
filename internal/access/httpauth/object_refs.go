@@ -13,6 +13,9 @@ func ObjectsForRequest(privilege access.Privilege, r *http.Request, workspaceID 
 	if privilege == access.PrivilegeManagePlatform {
 		return []access.ObjectRef{access.PlatformObject()}
 	}
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil
+	}
 	return []access.ObjectRef{ObjectForWorkspace(workspaceID)}
 }
 
@@ -26,7 +29,7 @@ func RouteCanDeferGrantManagement(privilege access.Privilege, r *http.Request) b
 
 func ObjectForWorkspace(workspaceID string) access.ObjectRef {
 	if strings.TrimSpace(workspaceID) == "" {
-		return access.PlatformObject()
+		return access.ObjectRef{}
 	}
 	return access.WorkspaceObject(workspaceID)
 }

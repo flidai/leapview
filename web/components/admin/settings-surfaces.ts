@@ -591,6 +591,7 @@ function workspaceListItems(signal: WorkspaceRegistrySignal): EntityListItem[] {
       description: item.description,
       href: item.href || item.links.workspace,
       icon: 'workspace',
+      iconTreatment: 'plain',
       columns: {
         owner: item.owner?.displayName || 'Unassigned',
         administrators: administrators.length ? administrators.join(', ') : 'None',

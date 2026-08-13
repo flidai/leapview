@@ -45,6 +45,10 @@ func (h workspaceAPIGenHandler) GetWorkspaceAssetLineage(w http.ResponseWriter, 
 	h.module.HTTP().AssetLineage(w, r)
 }
 
+func (h workspaceAPIGenHandler) UpdateDashboardAppearance(w http.ResponseWriter, r *http.Request, workspaceID, dashboardID string) {
+	h.module.UpdateDashboardAppearance(w, r, workspaceID, dashboardID, false)
+}
+
 func (m *Module) DispatchAPIGenOperation(operationID string, logger *slog.Logger, w http.ResponseWriter, r *http.Request) bool {
 	return workspacehttp.DispatchAPIGenOperation(operationID, workspaceAPIGenHandler{module: m}, logger, w, r)
 }

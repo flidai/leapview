@@ -68,7 +68,7 @@ func TestAdminRoutesExposeOnlyPersonalSettingsToViewer(t *testing.T) {
 	viewer := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer", access.RoleViewer)
 	token := testAPIToken(t, ctx, store, viewer.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	for _, tc := range []struct {
 		method string
@@ -82,7 +82,9 @@ func TestAdminRoutesExposeOnlyPersonalSettingsToViewer(t *testing.T) {
 		{method: http.MethodGet, path: "/admin/api-tokens", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/agent", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage", status: http.StatusForbidden},
+		{method: http.MethodGet, path: "/admin/storage-v2", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/updates?route=admin&section=storage", status: http.StatusForbidden},
+		{method: http.MethodGet, path: "/updates?route=admin&section=storage-v2", status: http.StatusForbidden},
 		{method: http.MethodPost, path: "/admin/storage/select-table", body: `{}`, status: http.StatusForbidden},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
@@ -114,7 +116,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	}
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"}), DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"}), WorkspaceID: "test"}))
 
 	cases := []struct {
 		path   string
@@ -129,6 +131,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 		{path: "/admin/groups/group_finance", want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=group_finance&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
 		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`, "/admin/agent/config", "updateAgentConfig"}},
 		{path: "/admin/storage", want: []string{"<lv-admin-page", `section="storage"`, `/updates?route=admin&amp;section=storage`, "/admin/storage/select-table"}},
+		{path: "/admin/storage-v2", want: []string{"<lv-admin-page", `section="storage-v2"`, `/updates?route=admin&amp;section=storage-v2`}},
 		{path: "/admin/queries", want: []string{"<lv-admin-page", `section="queries"`, `/updates?route=admin&amp;section=queries`, "/admin/queries/command"}},
 		{path: "/admin/publications", want: []string{"<lv-admin-page", `section="publications"`, `/updates?route=admin&amp;section=publications`, "/admin/publications/command"}},
 	}
@@ -289,7 +292,7 @@ func TestAdminQueryHistoryCommandPublishesLoadMorePatch(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
 		{WorkspaceID: "sales", PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select 1"},
@@ -354,7 +357,7 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
 		{WorkspaceID: "sales", PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select orders"},
@@ -413,7 +416,7 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
 		{WorkspaceID: "sales", PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select orders"},
@@ -463,7 +466,7 @@ func TestAdminQueryHistoryCommandTogglesFilterAndResetsTable(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
 		{WorkspaceID: "sales", PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select orders"},
@@ -517,7 +520,7 @@ func TestAdminQueryHistoryCommandPublishesDetailPatch(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	repo := queryAuditRepositoryForTest(t, server)
 	if err := repo.RecordQueryEvent(ctx, queryaudit.EventInput{
 		WorkspaceID:   "sales",
@@ -587,7 +590,7 @@ func queryHistoryMenuForTest(menus []uisignals.FilterMenuSignal, id string) uisi
 func TestAdminQueryHistoryCommandRequiresCSRF(t *testing.T) {
 	store := testStore(t)
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodPost, "http://localhost:8150/admin/queries/command", strings.NewReader(`{"adminQueryHistoryCommand":{"action":"reset","limit":50}}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -606,7 +609,7 @@ func TestAdminPrincipalSearchCommandPatchesOnlyDirectoryRows(t *testing.T) {
 	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
 	store := testStore(t)
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/principals/search", strings.NewReader(`{"entityListQuery":"analyst","entityListFilter":"all"}`))
 	req.Header.Set("Authorization", "Bearer dev")
@@ -640,7 +643,7 @@ func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	reqCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -686,7 +689,7 @@ func TestAdminStorageDetailRouteIsDropped(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/storage/leapview-test.duckdb/model/orders", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -704,7 +707,7 @@ func TestAdminStorageUpdatesSubscribesWithoutInitialRescan(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	reqCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -755,7 +758,7 @@ func TestAdminStorageSelectTablePublishesSelectedTablePatch(t *testing.T) {
 	dataPath := filepath.Join(dir, "data")
 	seedAdminStorageDuckLakeAt(t, catalogPath, dataPath)
 	environment := adminStorageEnvironment(t, catalogPath, dataPath)
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test", DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath, AnalyticsModule: analyticsmodule.NewSurface(environment, nil)}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test", DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath, AnalyticsModule: analyticsmodule.NewSurface(environment, nil)}))
 	updates, unsubscribe := server.runtime.broker.Subscribe("admin-storage:test-client")
 	defer unsubscribe()
 
@@ -804,7 +807,7 @@ func TestAdminStorageReadsDuckLakeMetadata(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(legacyDir, "leapview-stale.duckdb"), []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	server := assembleRuntime(fakeMetrics{}, assemblyConfig{DefaultWorkspaceID: "test", DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath, AnalyticsModule: analyticsmodule.NewSurface(environment, nil)})
+	server := assembleRuntime(fakeMetrics{}, assemblyConfig{WorkspaceID: "test", DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath, AnalyticsModule: analyticsmodule.NewSurface(environment, nil)})
 
 	data := server.routes.adminModule.HTTP().ReadModel.StorageService.Data(httptest.NewRequest(http.MethodGet, "/admin/storage", nil).Context())
 	if data.Status != "" {
@@ -877,7 +880,7 @@ VALUES ('test', 'prod', 'dep_prod')`, snapshotID, snapshotID); err != nil {
 
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 
-		DefaultWorkspaceID:  "test",
+		WorkspaceID:  "test",
 		DuckLakeCatalogPath: catalogPath,
 		DuckLakeDataPath:    dataPath,
 		AnalyticsModule:     analyticsmodule.NewSurface(environment, nil),
@@ -906,7 +909,7 @@ func TestAdminStorageSelectTableRejectsInvalidCommand(t *testing.T) {
 	catalogPath := filepath.Join(dir, "catalog.duckdb")
 	dataPath := filepath.Join(dir, "data")
 	seedAdminStorageDuckLakeAt(t, catalogPath, dataPath)
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test", DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test", DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath}))
 	updates, unsubscribe := server.runtime.broker.Subscribe("admin-storage:test-client")
 	defer unsubscribe()
 
@@ -934,7 +937,7 @@ func TestAdminAccessRouteIsDropped(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/access", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -952,7 +955,7 @@ func TestAdminPrincipalDetailReturnsNotFoundForMissingPrincipal(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/principals/missing", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -970,7 +973,7 @@ func TestAdminGroupDetailReturnsNotFoundForMissingGroup(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/groups/missing", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -983,7 +986,7 @@ func TestAdminGroupDetailReturnsNotFoundForMissingGroup(t *testing.T) {
 }
 
 func TestAdminDefaultsToProfileWithoutStore(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, assemblyConfig{DefaultWorkspaceID: "test"})
+	server := assembleRuntime(fakeMetrics{}, assemblyConfig{WorkspaceID: "test"})
 	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
@@ -997,7 +1000,7 @@ func TestAdminDefaultsToProfileWithoutStore(t *testing.T) {
 }
 
 func TestAdminStorageRendersEmptyStateWithoutDuckDBFiles(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: t.TempDir()})
+	server := assembleRuntime(fakeMetrics{}, assemblyConfig{WorkspaceID: "test", DuckDBDir: t.TempDir()})
 	req := httptest.NewRequest(http.MethodGet, "/admin/storage", nil)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)

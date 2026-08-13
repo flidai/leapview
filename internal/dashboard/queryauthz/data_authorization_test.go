@@ -77,7 +77,6 @@ func TestGovernModelAggregateUsesTransitivePhysicalPolicies(t *testing.T) {
 		PrincipalFromContext: func(context.Context) (Principal, bool) {
 			return Principal{ID: principal.ID}, true
 		},
-		DefaultWorkspaceID: "test",
 	})
 	request := dataquery.Query{
 		WorkspaceID: "test",
@@ -152,7 +151,6 @@ func TestGovernDashboardCountUsesAuthorizationProjectionPolicies(t *testing.T) {
 		PrincipalFromContext: func(context.Context) (Principal, bool) {
 			return Principal{ID: principal.ID}, true
 		},
-		DefaultWorkspaceID: "test",
 	})
 	governed, _, err := metrics.GovernDataQuery(ctx, dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardCount,
@@ -201,7 +199,6 @@ func TestGovernDataQueryRejectsPrincipalEscalationAgainstAuthenticatedActor(t *t
 		PrincipalFromContext: func(context.Context) (Principal, bool) {
 			return Principal{ID: actor.ID}, true
 		},
-		DefaultWorkspaceID: "test",
 	})
 
 	_, _, err = metrics.GovernDataQuery(ctx, dataquery.Query{
@@ -226,7 +223,7 @@ func TestGovernDataQueryRejectsPrincipalEscalationAgainstAuthenticatedActor(t *t
 
 func TestResolvedDependencyObjectsIncludesRowQueryFilterFields(t *testing.T) {
 	model := governanceTestModel()
-	metrics := New(semanticModelMetrics{model: model}, Options{DefaultWorkspaceID: "test"})
+	metrics := New(semanticModelMetrics{model: model}, Options{})
 	_, physicalObjects, err := metrics.resolvedDependencyObjects(dataquery.Query{
 		WorkspaceID: "test", ModelID: model.Name, Kind: dataquery.KindSemanticRows, Target: "ratings",
 		Fields:  []dataquery.Field{{Field: "ratings.rating"}},
@@ -247,7 +244,7 @@ func TestPublicationQueryFailsClosedWhenAuditIdentityIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := governanceTestModel()
-	metrics := New(semanticModelMetrics{model: model}, Options{Repo: accesssqlite.NewRepository(store.SQLDB()), DefaultWorkspaceID: "test"})
+	metrics := New(semanticModelMetrics{model: model}, Options{Repo: accesssqlite.NewRepository(store.SQLDB())})
 	ctx = WithDashboardPublicationCapability(ctx, DashboardPublicationCapability{
 		WorkspaceID: "test", Publication: "website", Dashboard: "dashboard", ModelID: model.Name,
 		DependencyAssetIDs: []string{
@@ -301,7 +298,7 @@ func TestPublicationQueryAppliesGlobalAndPublicationPoliciesAndPersistsAudit(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	metrics := New(semanticModelMetrics{model: model}, Options{Repo: repo, DefaultWorkspaceID: "test"})
+	metrics := New(semanticModelMetrics{model: model}, Options{Repo: repo})
 	ctx = WithDashboardPublicationCapability(ctx, DashboardPublicationCapability{
 		WorkspaceID: "test", Publication: "website", Dashboard: "dashboard", ModelID: model.Name,
 		DependencyAssetIDs: []string{
@@ -334,7 +331,7 @@ func TestPublicationQueryRejectsCandidateAuthority(t *testing.T) {
 	model := governanceTestModel()
 	repository := &candidateAuthorizationRepository{}
 	metrics := New(semanticModelMetrics{model: model}, Options{
-		Repo: repository, DefaultWorkspaceID: "test",
+		Repo: repository,
 	})
 	ctx := WithDashboardPublicationCapability(t.Context(), DashboardPublicationCapability{
 		WorkspaceID: "test", Publication: "website", Dashboard: "dashboard", ModelID: model.Name,
@@ -358,6 +355,17 @@ func TestPublicationQueryRejectsCandidateAuthority(t *testing.T) {
 	}
 	if len(repository.audits) != 1 || repository.audits[0].Status != "denied" {
 		t.Fatalf("publication candidate audits = %#v", repository.audits)
+	}
+}
+
+func TestGovernDataQueryRejectsMissingWorkspaceScope(t *testing.T) {
+	metrics := New(semanticModelMetrics{model: governanceTestModel()}, Options{})
+	_, _, err := metrics.GovernDataQuery(t.Context(), dataquery.Query{
+		ModelID: "activity", Kind: dataquery.KindModelTableRows, Target: "ratings",
+		Fields: []dataquery.Field{{Field: "rating"}},
+	})
+	if err == nil {
+		t.Fatal("GovernDataQuery accepted a query without workspace scope")
 	}
 }
 

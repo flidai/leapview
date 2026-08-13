@@ -7,6 +7,9 @@ metadata:
   description: Delivery speed, order status, reviews, and geography overview.
   tags: [operations, fulfillment]
 spec:
+  appearance:
+    icon: package-check
+    color: orange
   semanticModel: operations
   filters:
     state:

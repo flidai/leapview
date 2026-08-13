@@ -14,13 +14,13 @@ func TestManagedDataCommandAuditRecorderPersistsAccessAudit(t *testing.T) {
 	store := testStore(t)
 	principal := testPrincipal(t, ctx, store, "data@example.com", "Data Author", "owner")
 	accessModule, err := accessmodule.Build(ctx, accessmodule.Config{
-		Database: store.SQLDB(), WorkspaceID: "test",
-		Auth: accessmodule.AuthConfig{Disabled: true},
+		Database: store.SQLDB(),
+		Auth:     accessmodule.AuthConfig{Disabled: true},
 	})
 	if err != nil {
 		t.Fatalf("build access module: %v", err)
 	}
-	record := managedDataCommandAuditRecorder(accessModule, "test")
+	record := managedDataCommandAuditRecorder(accessModule)
 
 	err = record(ctx, manageddatamodule.CommandAuditEvent{
 		PrincipalID: principal.ID, Action: "managed_data.upload_session.created",
@@ -33,7 +33,7 @@ func TestManagedDataCommandAuditRecorderPersistsAccessAudit(t *testing.T) {
 		t.Fatalf("record managed-data audit: %v", err)
 	}
 	events, err := testAccessRepository(store).ListAuditEvents(ctx, access.AuditEventFilter{
-		WorkspaceID: "test", Action: "managed_data.upload_session.created",
+		Action: "managed_data.upload_session.created",
 	})
 	if err != nil {
 		t.Fatalf("list managed-data audits: %v", err)
@@ -42,7 +42,7 @@ func TestManagedDataCommandAuditRecorderPersistsAccessAudit(t *testing.T) {
 		t.Fatalf("managed-data audits = %d, want 1", len(events))
 	}
 	event := events[0]
-	if event.PrincipalID != principal.ID || event.TargetType != "managed_data_upload_session" ||
+	if event.WorkspaceID != "" || event.PrincipalID != principal.ID || event.TargetType != "managed_data_upload_session" ||
 		event.TargetID != "upload-a" || event.Privilege != access.PrivilegeAuthorProject ||
 		event.Status != "success" || event.RequestID != "req-upload" || event.CorrelationID != "corr-upload" {
 		t.Fatalf("persisted managed-data audit = %#v", event)
@@ -50,10 +50,10 @@ func TestManagedDataCommandAuditRecorderPersistsAccessAudit(t *testing.T) {
 }
 
 func TestManagedDataCommandAuditRecorderRejectsInvalidComposition(t *testing.T) {
-	if err := managedDataCommandAuditRecorder(nil, "test")(t.Context(), manageddatamodule.CommandAuditEvent{}); err == nil {
+	if err := managedDataCommandAuditRecorder(nil)(t.Context(), manageddatamodule.CommandAuditEvent{}); err == nil {
 		t.Fatal("nil access module accepted")
 	}
-	if err := managedDataCommandAuditRecorder(&accessmodule.Module{}, "test")(t.Context(), manageddatamodule.CommandAuditEvent{Privilege: "NOT_A_PRIVILEGE"}); err == nil {
+	if err := managedDataCommandAuditRecorder(&accessmodule.Module{})(t.Context(), manageddatamodule.CommandAuditEvent{Privilege: "NOT_A_PRIVILEGE"}); err == nil {
 		t.Fatal("invalid privilege accepted")
 	}
 }

@@ -143,6 +143,36 @@ final result: passed
 
 ---
 
+# Dashboard icon picker selected-color design QA
+
+## Comparison target
+
+- Source visual truth: `/home/codex/.codex/attachments/78ce5ab9-0427-4644-a7ce-e390b21e6103/codex-clipboard-f197bf84-69ea-4938-a7c4-6a36d6823dc0.png`
+- Browser-rendered implementation: `/home/codex/.codex/worktrees/00bd/leapview/.tmp/product-design/dashboard-picker-selected-color-detail.png`
+- Combined comparison evidence: `/home/codex/.codex/worktrees/00bd/leapview/.tmp/product-design/dashboard-picker-selected-color-comparison.png`
+- Browser viewport: 900 × 700 CSS px at device scale factor 1; focused picker capture: 360 × 406 px.
+- State: dashboard appearance picker open in dark mode with blue selected.
+
+## Evidence review
+
+The picker now follows the source's direct color relationship: choosing a color updates the entire icon grid to that same Primer display color. Color dots, search, virtualized icon grid, selected-icon background, and reset action retain the existing LeapView layout and interaction behavior.
+
+- Computed icon color changed from orange `rgb(237, 131, 38)` to blue `rgb(77, 160, 255)` after selection.
+- Every visible icon resolved to the same active blue color.
+- The picker exposed `color-blue`, and the blue swatch exposed `aria-pressed="true"`.
+- Hover and focus preserve the active foreground color while adding only the shared control background.
+- No browser console errors or warnings occurred during the final capture.
+- Focused catalog DOM, TypeScript, Primer-alignment, and diff checks passed.
+- The first browser capture exposed a selector collision between the picker state class and swatch class that applied an inset blue frame to the whole popover. Scoping the swatch rule removed it; the final comparison has only the normal Primer border and floating shadow.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain for the requested selected-color behavior.
+
+final result: passed
+
+---
+
 # Administration detail shell design QA
 
 ## Comparison target
@@ -187,6 +217,67 @@ final result: passed
 
 - LeapView's established typography is denser than the generated design reference; retaining the product tokens keeps this screen consistent with the rest of settings.
 - The captured user is the signed-in system user, so unsafe self-blocking is intentionally absent even though the reference illustrates a Block access action.
+
+final result: passed
+
+---
+
+# Shared-list icon hierarchy design QA
+
+**Comparison target**
+
+- Source visual truth, bare project icons: `/home/codex/.codex/attachments/8a8ad5b2-6ec8-482a-9dbe-3cb528fdd05b/codex-clipboard-52456127-9256-4c06-900f-2115973a43e9.png`
+- Source visual truth, framed initiative icons: `/home/codex/.codex/attachments/b6acd30a-b323-4afe-9342-ba85df88a3a5/codex-clipboard-2bb57380-fa55-44f7-80bc-d7e6f4f696e1.png`
+- Combined comparison evidence: `/home/codex/.codex/worktrees/00bd/leapview/.tmp/product-design/icon-hierarchy-v2-comparison.png`
+- Browser-rendered implementations: `.tmp/product-design/workspace-assets-after.png`, `.tmp/product-design/icon-hierarchy-dashboards-v2.png`, `.tmp/product-design/icon-hierarchy-workspaces-v2.png`, and `.tmp/product-design/icon-hierarchy-storage-v2-v2.png`.
+- Browser viewport: 1280 × 820 CSS px at device scale factor 1, dark color scheme.
+- Source pixels: projects 2048 × 614; initiatives 2052 × 616. Implementation captures: 1280 × 820 CSS px.
+- State: populated list pages with default search/filter state, the Operations workspace asset inventory, and expanded Storage v2 schema groups.
+
+**Full-view comparison evidence**
+
+The combined comparison shows the corrected hierarchy in the same dark-table context as the references. The dedicated, user-facing dashboard catalog carries the stronger framed identity used by Linear initiatives. Workspace identities and every asset inside a workspace inventory, including dashboards, use bare type glyphs like Linear projects. Storage rows retain bare table/view glyphs because type recognition is useful in that domain. Existing LeapView typography, density, columns, and content remain unchanged.
+
+**Focused region comparison evidence**
+
+The individual route captures were inspected at original resolution because the leading visuals are small in the combined view. On `/workspaces/operations`, dashboard, model-table, and semantic-model assets all use a 0 px border and transparent background so the glyph communicates asset type consistently. The dedicated dashboard catalog uses the framed, customizable identity treatment, while workspace catalog entries and Storage table/view rows are bare.
+
+**Findings**
+
+- No actionable P0, P1, or P2 differences remain.
+- Fonts and typography: unchanged LeapView type tokens preserve hierarchy and truncation behavior.
+- Spacing and layout rhythm: every treatment keeps the existing 32 px leading track, so names and columns remain aligned across list types. Framed and plain treatments do not change row height.
+- Colors and visual tokens: plain workspace and workspace-item glyphs retain their semantic accent colors; dashboards in the dedicated catalog use the selected Primer display color with the existing framed treatment in both themes.
+- Image quality and asset fidelity: all non-avatar visuals use the existing Lucide icon library. Principal images and initials continue through the existing avatar component; no placeholder or handcrafted assets were added.
+- Copy and content: unchanged.
+
+**Interaction and browser checks**
+
+- Captured dashboards, workspaces, the Operations workspace inventory, and Storage v2 from the running development app.
+- Verified plain icons compute to a transparent background and 0 px border.
+- Verified dedicated dashboard-catalog icons compute to a token-backed colored background and 1 px border; dashboard assets inside workspace inventories remain plain.
+- Verified Storage v2 leaf rows retain bare table/view icon SVGs and align beneath their schema labels.
+- Existing search, filtering, sorting, grouped collapse/expand, links, and avatar fallbacks remain covered by route-level DOM suites.
+- Browser console errors across all four final captures: none.
+
+**Comparison history**
+
+- Pass 1 implemented framed workspaces and bare dashboards, which did not match the product hierarchy clarified in review.
+- Pass 2 moved framed, customizable identity to the dedicated dashboard catalog, kept workspace inventories consistently type-oriented with plain glyphs, and restored useful bare type icons in Storage v2. Grouped Storage rows remain aligned.
+
+**Implementation checklist**
+
+- Shared entity-list items expose an explicit `plain`, `framed`, or `none` icon treatment.
+- Plain is the default whenever an icon is supplied.
+- Dashboards use framed, customizable glyphs in the dedicated dashboard catalog.
+- Workspaces, all workspace assets (including dashboards), connections, sources, applications, and groups use plain glyphs.
+- Principals continue to use avatars or initials.
+- Storage v2 leaf rows use plain table/view glyphs.
+- Light/dark token behavior and compact/mobile list regressions are covered.
+
+**Follow-up polish**
+
+- The complete Lucide catalog is intentionally available by default. Its icon-node payload can be split or loaded on demand in a separate performance change without altering the picker contract.
 
 final result: passed
 ---
@@ -238,5 +329,65 @@ No actionable P0, P1, or P2 visual differences remain. The implementation follow
 - P3: a future iteration could replace the native datetime-local field with predefined expiration choices, but this is outside the workspace-and-permissions problem addressed here.
 
 Typography, tokens, icons, and copy are unchanged by the viewport-containment fix. Mobile retains its fixed, viewport-bounded sheet behavior.
+
+final result: passed
+
+---
+
+# Storage v2 grouped-list design QA
+
+**Comparison target**
+
+- Source visual truth: `/home/codex/.codex/attachments/8167fda4-8e22-47a9-ac26-0f0adbe32dd1/codex-clipboard-3ba36d48-1f0c-4ffc-b7fe-e4978a2b5f87.png`
+- Browser-rendered implementation: `/home/codex/.codex/worktrees/00bd/leapview/.tmp/product-design/icon-hierarchy-storage-v2-v2.png`
+- Combined comparison evidence: `/home/codex/.codex/worktrees/00bd/leapview/.tmp/product-design/storage-v2-v2-comparison.png`
+- Browser viewport: 1280 × 820 CSS px at device scale factor 1.
+- Source pixels: 2062 × 770. Final implementation capture: 1280 × 820 CSS px. Findings ignore the source crop's different content height.
+- State: dark-theme Storage v2 list with the schema group expanded and five realistic table rows.
+
+**Full-view comparison evidence**
+
+The implementation carries over the reference's essential grouping pattern: a persistent column header, full-width group bars with disclosure chevrons, group label and item count, and aligned child rows. It retains LeapView's existing list toolbar, system typography, icon library, and storage-specific columns instead of copying Linear's project content.
+
+**Focused region comparison evidence**
+
+The table region is readable at component-capture scale, so a separate crop was not needed. The group bars are 44 px tall and child rows are 52 px tall, matching the reference's dense but scannable rhythm. Chevrons, schema icons, labels, counts, column alignment, and bare table/view icon alignment were checked in the combined comparison.
+
+**Findings**
+
+- No actionable P0, P1, or P2 differences remain.
+- Fonts and typography: existing LeapView system font tokens preserve the product's established hierarchy; group labels use compact semibold text and counts use the caption style.
+- Spacing and layout rhythm: group and row heights, indentation, column tracks, and rounded group backgrounds reproduce the reference interaction within LeapView's shared-list dimensions.
+- Colors and visual tokens: LeapView's page, muted panel, foreground, border, hover, and focus tokens are used consistently. The palette difference from the dark reference is intentional product-system alignment.
+- Image quality and asset fidelity: the reference contains app-specific avatars and project icons that are not part of Storage v2. All implementation icons come from the existing Lucide library; no placeholder, CSS-drawn, emoji, or handcrafted SVG assets were introduced.
+- Copy and content: labels describe the storage domain directly: schema groups, tables, rows, columns, files, data size, and snapshot. The single DuckLake catalog is intentionally omitted.
+
+**Interaction and browser checks**
+
+- Tested expanding and collapsing a schema group.
+- Tested client-side search and verified group counts update to the filtered result set.
+- Tested table sorting through the existing shared-list regression suite.
+- Tested the Storage v2 route and update stream authorization as platform-admin-only.
+- Browser console errors: none.
+
+**Comparison history**
+
+- Initial pass found the test capture's search icon overlapping its placeholder because the isolated fixture omitted fallbacks for shared spacing tokens.
+- Added safe 12 px/36 px/32 px fallbacks for icon position, input padding, and control height.
+- Removed the redundant database column and catalog subtitle once the one-database constraint was confirmed.
+- Restored bare table/view leaf-row icons after review confirmed that type recognition is useful Storage UX, while preserving a consistent grouped name track.
+- Post-fix evidence: `.tmp/product-design/icon-hierarchy-storage-v2-v2.png`; the search control, group alignment, and table/view identity track render cleanly, with no remaining P0/P1/P2 finding.
+
+**Implementation Checklist**
+
+- Shared list supports grouped rendering from an item field.
+- Group headers expose count and accessible expanded state.
+- Storage v2 maps tables into the shared list and groups by schema.
+- Existing Storage explorer remains unchanged.
+- Route, navigation, permissions, filtering, collapse behavior, sorting regressions, and console output are covered.
+
+**Follow-up Polish**
+
+- P3: consider persisting collapsed schema state if Storage v2 later becomes a high-frequency daily workflow.
 
 final result: passed

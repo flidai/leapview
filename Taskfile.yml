@@ -317,10 +317,26 @@ tasks:
       - task: visualization-ir:generate
       - task: layout-contract:generate
       - task: map-style:generate
+      - task: lucide-icons:generate
       - task: cli-docs:generate
       - task: agent-tool-docs:generate
       - task: node:deps
       - task: docs:render
+
+  lucide-icons:generate:
+    desc: Generate the canonical Lucide icon catalog and server validator
+    deps:
+      - node:deps
+    method: checksum
+    sources:
+      - scripts/generate_lucide_icon_catalog.ts
+      - package.json
+      - bun.lock
+    generates:
+      - web/generated/lucide-icon-catalog.ts
+      - internal/dashboard/appearance/icons_gen.go
+    cmds:
+      - bun scripts/generate_lucide_icon_catalog.ts
 
   docs:generate:
     desc: Generate reference documentation, the unified catalog, and the FTS5 search index

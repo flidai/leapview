@@ -204,6 +204,18 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 	if err != nil {
 		return servingstate.State{}, err
 	}
+	appearancesJSON := strings.TrimSpace(validation.DashboardAppearancesJSON)
+	if appearancesJSON == "" {
+		appearancesJSON = "null"
+	}
+	var appearances map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(appearancesJSON), &appearances); err != nil {
+		return servingstate.State{}, fmt.Errorf("validated serving state dashboard appearances: %w", err)
+	}
+	canonicalAppearancesJSON, err := json.Marshal(appearances)
+	if err != nil {
+		return servingstate.State{}, err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return servingstate.State{}, err
@@ -231,7 +243,7 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 	case servingstate.StatusPending:
 	case servingstate.StatusValidated:
 		existingArtifact, existingErr := q.GetArtifactByServingState(ctx, current.ID)
-		if existingErr == nil && current.ProjectID == validation.ProjectID && current.ProjectDigest == validation.ProjectDigest && current.ProjectWorkspacesJson == string(projectWorkspacesJSON) && current.AccessPolicyJson == string(accessPolicyJSON) && current.DashboardPublicationsJson == string(canonicalPublicationsJSON) && current.Digest == validation.Digest && current.ManifestJson == validation.ManifestJSON && sameArtifact(existingArtifact, artifact) {
+		if existingErr == nil && current.ProjectID == validation.ProjectID && current.ProjectDigest == validation.ProjectDigest && current.ProjectWorkspacesJson == string(projectWorkspacesJSON) && current.AccessPolicyJson == string(accessPolicyJSON) && current.DashboardPublicationsJson == string(canonicalPublicationsJSON) && current.DashboardAppearancesJson == string(canonicalAppearancesJSON) && current.Digest == validation.Digest && current.ManifestJson == validation.ManifestJSON && sameArtifact(existingArtifact, artifact) {
 			return mapServingState(current), nil
 		}
 		return servingstate.State{}, fmt.Errorf("validated serving state %s is immutable", servingStateID)
@@ -288,6 +300,7 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 		ProjectWorkspacesJson:     string(projectWorkspacesJSON),
 		AccessPolicyJson:          string(accessPolicyJSON),
 		DashboardPublicationsJson: string(canonicalPublicationsJSON),
+		DashboardAppearancesJson:  string(canonicalAppearancesJSON),
 		Digest:                    validation.Digest,
 		ManifestJson:              validation.ManifestJSON,
 		ID:                        string(servingStateID),
@@ -401,6 +414,7 @@ func mapServingState(row platformdb.ServingState) servingstate.State {
 		ProjectWorkspaces:         projectWorkspaces,
 		AccessPolicyJSON:          row.AccessPolicyJson,
 		DashboardPublicationsJSON: row.DashboardPublicationsJson,
+		DashboardAppearancesJSON:  row.DashboardAppearancesJson,
 		Environment:               servingstate.Environment(row.Environment),
 		Status:                    servingstate.Status(row.Status),
 		Source:                    servingstate.NormalizeSource(servingstate.Source(row.Source)),

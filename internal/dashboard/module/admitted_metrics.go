@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
@@ -17,15 +18,14 @@ import (
 
 type admittedMetrics struct {
 	Metrics
-	admitter           workload.Admitter
-	defaultWorkspaceID string
+	admitter workload.Admitter
 }
 
-func WithAdmission(metrics Metrics, admitter workload.Admitter, defaultWorkspaceID string) Metrics {
+func WithAdmission(metrics Metrics, admitter workload.Admitter) Metrics {
 	if metrics == nil {
 		return nil
 	}
-	return admittedMetrics{Metrics: metrics, admitter: admitter, defaultWorkspaceID: defaultWorkspaceID}
+	return admittedMetrics{Metrics: metrics, admitter: admitter}
 }
 
 func (m admittedMetrics) readContext(ctx context.Context) context.Context {
@@ -39,12 +39,12 @@ func (m admittedMetrics) MetricsForWorkspace(workspaceID string) (Metrics, bool)
 		if !found || metrics == nil {
 			return nil, found
 		}
-		return admittedMetrics{Metrics: metrics, admitter: m.admitter, defaultWorkspaceID: workspaceID}, true
+		return admittedMetrics{Metrics: metrics, admitter: m.admitter}, true
 	}
 	if m.Metrics == nil {
 		return nil, false
 	}
-	if m.defaultWorkspaceID != "" && workspaceID != "" && workspaceID != m.defaultWorkspaceID {
+	if m.Metrics.Catalog().Workspace.ID != workspaceID {
 		return nil, false
 	}
 	return m, true
@@ -104,19 +104,17 @@ func (m admittedMetrics) QueryPublicVisualizationTile(ctx context.Context, publi
 
 func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 	ctx = m.readContext(ctx)
+	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
+	if strings.TrimSpace(request.WorkspaceID) == "" {
+		return dataquery.Result{}, errors.New("workspace ID is required")
+	}
 	if m.admitter == nil {
 		return m.Metrics.ExecuteDataQuery(ctx, request)
 	}
 	workspaceID := request.WorkspaceID
-	if workspaceID == "" {
-		workspaceID = m.defaultWorkspaceID
-	}
 	class := workload.Interactive
 	if request.Surface == dataquery.SurfaceAgent {
 		class = workload.Background
-		if activeClass, activeWorkspace, admitted := workload.Current(ctx); admitted && activeClass == workload.Background {
-			workspaceID = activeWorkspace
-		}
 	}
 	operation := request.Operation
 	if operation == "" {
@@ -152,6 +150,10 @@ func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery
 
 func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
 	ctx = m.readContext(ctx)
+	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
+	if strings.TrimSpace(request.WorkspaceID) == "" {
+		return dataquery.Result{}, errors.New("workspace ID is required")
+	}
 	executor, ok := m.Metrics.(arrowquery.Executor)
 	if !ok {
 		return dataquery.Result{}, errors.New("query metrics do not support native Arrow execution")
@@ -160,15 +162,9 @@ func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request data
 		return executor.ExecuteDataQueryArrow(ctx, request, sink)
 	}
 	workspaceID := request.WorkspaceID
-	if workspaceID == "" {
-		workspaceID = m.defaultWorkspaceID
-	}
 	class := workload.Interactive
 	if request.Surface == dataquery.SurfaceAgent {
 		class = workload.Background
-		if activeClass, activeWorkspace, admitted := workload.Current(ctx); admitted && activeClass == workload.Background {
-			workspaceID = activeWorkspace
-		}
 	}
 	operation := request.Operation
 	if operation == "" {

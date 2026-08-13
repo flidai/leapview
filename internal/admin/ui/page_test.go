@@ -45,6 +45,23 @@ func TestAdminBootstrapSignalsUseAdminOwnedContracts(t *testing.T) {
 	}
 }
 
+func TestStorageV2UsesStorageReadModelOnASettingsListPage(t *testing.T) {
+	signals := AdminBootstrapSignals("storage-v2", AdminData{Storage: AdminStorageData{
+		TableCount: 1,
+		Tables:     []AdminStorageTable{{DatabaseID: "catalog", DatabaseName: "DuckLake", Schema: "model", Name: "orders", Type: "table"}},
+	}})
+	page, ok := signals["page"].(uisignals.AdminPageSignal)
+	if !ok {
+		t.Fatalf("page = %T, want AdminPageSignal", signals["page"])
+	}
+	if page.Active != "storage-v2" || page.HeaderTitle != "Storage v2" || page.Storage == nil || len(page.Storage.Tables) != 1 {
+		t.Fatalf("storage v2 page = %#v", page)
+	}
+	if _, legacyStream := signals["adminStorage"]; legacyStream {
+		t.Fatalf("storage v2 should render from the shared page signal: %#v", signals)
+	}
+}
+
 func TestAdminListsUseDebouncedPostSearchCommands(t *testing.T) {
 	for _, active := range []string{"principals", "groups"} {
 		t.Run(active, func(t *testing.T) {

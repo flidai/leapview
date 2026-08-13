@@ -3,6 +3,7 @@ package compiler
 import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/report"
 	"gopkg.in/yaml.v3"
@@ -82,6 +83,7 @@ type projectSemanticModelSpec struct {
 }
 
 type dashboardSpec struct {
+	Appearance        dashboardappearance.Patch                `yaml:"appearance"`
 	SemanticModel     string                                   `yaml:"semanticModel"`
 	Filters           map[string]dashboardfilter.Definition    `yaml:"filters"`
 	FilterBindings    map[string]dashboardfilter.Binding       `yaml:"filter_bindings"`

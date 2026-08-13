@@ -97,7 +97,6 @@ type platformServices struct {
 }
 
 type httpPolicy struct {
-	defaultWorkspaceID string
 	defaultEnvironment string
 	scimBearerToken    string
 	metricsBearerToken string
@@ -216,7 +215,6 @@ type runtimeAssemblyInputs struct {
 	DuckDBDir               string
 	DuckLakeCatalogPath     string
 	DuckLakeDataPath        string
-	DefaultWorkspaceID      string
 	DefaultEnvironment      string
 	SCIMBearerToken         string
 	MetricsBearerToken      string
@@ -293,7 +291,7 @@ func buildApplicationSurfaces(
 		return nil, nil, nil, nil, err
 	}
 	if metrics != nil {
-		metrics = dashboardmodule.WithAdmission(metrics, controller, runtimeConfig.DefaultWorkspaceID)
+		metrics = dashboardmodule.WithAdmission(metrics, controller)
 	}
 	dataAccessRepo := data.AccessRepo
 	workspaceReadModel := data.WorkspaceReadModel
@@ -303,8 +301,7 @@ func buildApplicationSurfaces(
 	}
 	if metrics != nil && dataAuthorization != nil && (data.AccessRepo != nil || workflow.Auth != nil || capabilities.AccessModule != nil) {
 		metrics = dashboardmodule.WithQueryAuthorization(metrics, dashboardmodule.QueryAuthorizationConfig{
-			Repository:         dataAuthorization,
-			DefaultWorkspaceID: runtimeConfig.DefaultWorkspaceID,
+			Repository: dataAuthorization,
 			PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 				principal, ok := accessmodule.PrincipalFromContext(ctx)
 				return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: principal.DevBypass || workflow.Auth == nil}, ok
@@ -328,7 +325,7 @@ func buildApplicationSurfaces(
 		}
 	}
 	if metrics != nil && queryAuditRecorder != nil {
-		metrics = dashboardmodule.WithQueryAudit(metrics, queryAuditRecorder, runtimeConfig.DefaultWorkspaceID, func(ctx context.Context) (string, bool) {
+		metrics = dashboardmodule.WithQueryAudit(metrics, queryAuditRecorder, func(ctx context.Context) (string, bool) {
 			principal, ok := accessmodule.PrincipalFromContext(ctx)
 			return principal.ID, ok
 		})
@@ -346,10 +343,10 @@ func buildApplicationSurfaces(
 			return nil
 		}
 		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(provider, workspaceID)
-		candidate = dashboardmodule.WithAdmission(candidate, controller, workspaceID)
+		candidate = dashboardmodule.WithAdmission(candidate, controller)
 		if dataAuthorization != nil && (data.AccessRepo != nil || workflow.Auth != nil || capabilities.AccessModule != nil) {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
-				Repository: dataAuthorization, DefaultWorkspaceID: workspaceID,
+				Repository: dataAuthorization,
 				PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 					principal, ok := accessmodule.PrincipalFromContext(ctx)
 					return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: principal.DevBypass || workflow.Auth == nil}, ok
@@ -359,7 +356,7 @@ func buildApplicationSurfaces(
 			})
 		}
 		if queryAuditRecorder != nil {
-			candidate = dashboardmodule.WithQueryAudit(candidate, queryAuditRecorder, workspaceID, func(ctx context.Context) (string, bool) {
+			candidate = dashboardmodule.WithQueryAudit(candidate, queryAuditRecorder, func(ctx context.Context) (string, bool) {
 				principal, ok := accessmodule.PrincipalFromContext(ctx)
 				return principal.ID, ok
 			})
@@ -432,7 +429,6 @@ func buildApplicationSurfaces(
 	storage.duckLakeCatalogPath = runtimeConfig.DuckLakeCatalogPath
 	storage.duckLakeDataPath = runtimeConfig.DuckLakeDataPath
 	storage.instanceID = runtimeConfig.InstanceID
-	policy.defaultWorkspaceID = runtimeConfig.DefaultWorkspaceID
 	policy.defaultEnvironment = string(servingstatemodule.NormalizeEnvironment(servingstatemodule.Environment(runtimeConfig.DefaultEnvironment)))
 	storage.publicURL = strings.TrimSuffix(strings.TrimSpace(httpConfig.PublicURL), "/")
 	if strings.TrimSpace(httpConfig.DesktopDiscovery.CanonicalOrigin) != "" {
@@ -561,7 +557,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
 			WorkspaceID: func(value string) string {
-				return workspaceID(value)
+				return value
 			},
 		},
 		Connections: analyticsmodule.ConnectionBindingAPIGenConfig{
@@ -576,7 +572,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if routes.accessModule == nil {
 		var err error
 		routes.accessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Database: database, ExistingAuth: platform.auth, WorkspaceID: policy.defaultWorkspaceID,
+			Database: database, ExistingAuth: platform.auth,
 			InstanceID: storage.instanceID, PublicURL: storage.publicURL,
 			Presentation: webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
 			Assets:       platform.assets,
@@ -638,13 +634,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			AssetCatalog: persistence.workspaceAssetCatalog,
 			WorkspaceID: func(value string) string {
-				return workspaceID(value)
+				return value
 			},
 			Environment: func(r *http.Request) string {
 				return string(requestServingEnvironment(policy.defaultEnvironment, r))
 			},
 			MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-				return metricsForWorkspace(runtime.metrics, policy.defaultWorkspaceID, workspaceID)
+				return metricsForWorkspace(runtime.metrics, workspaceID)
 			},
 			RootMetrics: runtime.metrics,
 			AgentBootstrap: func(r *http.Request, workspaceID string) workspacemodule.DataExplorerAgentBootstrap {
@@ -664,7 +660,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			AuthConfigured:     platform.auth != nil,
 			RuntimeEnvironment: policy.defaultEnvironment,
-			DefaultWorkspaceID: policy.defaultWorkspaceID,
 			RefreshState:       workspaceRefreshStateBridge{support: refreshSupport},
 			RefreshRunner: workspacemodule.AssetRefreshFunc(func(ctx context.Context, input workspacemodule.AssetRefreshInput) error {
 				return refreshSupport.RefreshAsset(ctx, input.Request, input.WorkspaceID, input.Asset, input.Assets, input.Edges)
@@ -703,6 +698,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return version.RefreshedAt.UTC().Format(time.RFC3339), true, nil
 			},
+			RecordAudit: routes.accessModule.RecordAudit,
 		})
 		if err != nil {
 			return fmt.Errorf("build workspace module: %w", err)
@@ -721,15 +717,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		config.CandidateAudit = func(ctx context.Context, event deploymentmodule.CandidateEvent) error {
 			return routes.accessModule.RecordAudit(ctx, accessmodule.AuditEventInput{
-				WorkspaceID: policy.defaultWorkspaceID, PrincipalID: event.PrincipalID,
-				Action: event.Action, TargetType: "project_candidate", TargetID: event.CandidateID,
+				PrincipalID: event.PrincipalID,
+				Action:      event.Action, TargetType: "project_candidate", TargetID: event.CandidateID,
 				Privilege: accessmodule.PrivilegeDeploy, Status: string(event.Status), MetadataJSON: event.MetadataJSON,
 			})
 		}
-		config.CandidateSourceBlobAudit = candidateSourceBlobAuditRecorder(
-			routes.accessModule,
-			policy.defaultWorkspaceID,
-		)
+		config.CandidateSourceBlobAudit = candidateSourceBlobAuditRecorder(routes.accessModule)
 		config.Jobs = deploymentmodule.JobConfig{
 			Reconcile: func(ctx context.Context) error {
 				if routes.refreshModule == nil {
@@ -762,7 +755,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics: runtime.metrics,
 				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-					return metricsForWorkspace(runtime.metrics, policy.defaultWorkspaceID, workspaceID)
+					return metricsForWorkspace(runtime.metrics, workspaceID)
 				},
 				Admission: workloadController(&runtime.workloads), Broker: runtime.broker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
@@ -833,7 +826,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Semantic: dashboardmodule.SemanticConfig{
 				Metrics: runtime.metrics,
 				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-					return metricsForWorkspace(runtime.metrics, policy.defaultWorkspaceID, workspaceID)
+					return metricsForWorkspace(runtime.metrics, workspaceID)
 				},
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
@@ -881,12 +874,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return principal.ID
 			},
-			RuntimeMetrics: runtime.metrics, DefaultWorkspaceID: policy.defaultWorkspaceID,
+			RuntimeMetrics: runtime.metrics,
 			ServingSnapshot: func(ctx context.Context, requestedWorkspaceID string) (string, error) {
 				if routes.workspaceModule == nil {
 					return "", nil
 				}
-				return routes.workspaceModule.ActiveServingStateID(ctx, workspaceID(requestedWorkspaceID))
+				return routes.workspaceModule.ActiveServingStateID(ctx, requestedWorkspaceID)
 			},
 		})
 		if err != nil {
@@ -900,7 +893,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		routes.agentModule, err = agentmodule.Build(ctx, agentmodule.Config{
 			Database: database, Model: moduleWorkflow.agentConfig,
-			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs, DefaultWorkspaceID: policy.defaultWorkspaceID,
+			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			ProductName:      brand.Name,
 			BuildVersion:     platform.buildIdentity.Version,
 			APIGenOperations: agentAPIGenOperations(),
@@ -910,7 +903,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return string(requestServingEnvironment(policy.defaultEnvironment, r))
 			},
 			DashboardMetrics: func(workspaceID string) (QueryMetrics, bool) {
-				return metricsForWorkspace(runtime.metrics, policy.defaultWorkspaceID, workspaceID)
+				return metricsForWorkspace(runtime.metrics, workspaceID)
 			},
 			AuthorizeAnyObject:       routes.accessModule.AuthorizeAnyObject,
 			SkipContextAuthorization: platform.auth == nil,
@@ -920,7 +913,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Search: routes.workspaceModule, Environment: policy.defaultEnvironment,
 				Workspaces: persistence.workspaceReadModel, RootMetrics: runtime.metrics,
 				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-					return metricsForWorkspace(runtime.metrics, policy.defaultWorkspaceID, workspaceID)
+					return metricsForWorkspace(runtime.metrics, workspaceID)
 				},
 				AuthorizeAnyObject: routes.accessModule.AuthorizeAnyObject,
 				RecordAudit:        routes.accessModule.RecordAudit,
@@ -1103,7 +1096,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Publications:          routes.dashboardModule,
 			AgentConfigCommand:    routes.agentModule.UICommandBindings().UpdateConfig,
 			PublicationCommands:   routes.dashboardModule.PublicationCommandBindings(),
-			DefaultWorkspaceID:    policy.defaultWorkspaceID,
 			AuthConfigured:        platform.auth != nil,
 			LocalPasswordEnabled:  localPasswordEnabled,
 			AccessConfigured:      accessReader != nil,
@@ -1150,7 +1142,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return fmt.Errorf("build managed data module: %w", err)
 		}
 	}
-	objects, err := routes.workspaceModule.SecurableObjects(ctx, policy.defaultWorkspaceID)
+	objects, err := routes.workspaceModule.SecurableObjects(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve workspace securables: %w", err)
 	}
@@ -1344,7 +1336,7 @@ func authorizeListObject(access *accessmodule.Module, authenticationRequired boo
 	return access.AuthorizeObject(ctx, principalID, accessmodule.PrivilegeViewItem, object)
 }
 
-func metricsForWorkspace(metrics QueryMetrics, defaultWorkspaceID, workspaceID string) (QueryMetrics, bool) {
+func metricsForWorkspace(metrics QueryMetrics, workspaceID string) (QueryMetrics, bool) {
 	if workspaceID == "" {
 		return nil, false
 	}
@@ -1353,9 +1345,6 @@ func metricsForWorkspace(metrics QueryMetrics, defaultWorkspaceID, workspaceID s
 	}
 	if metrics == nil {
 		return nil, false
-	}
-	if defaultWorkspaceID != "" && workspaceID == defaultWorkspaceID {
-		return metrics, true
 	}
 	catalog := metrics.Catalog()
 	if catalog.Workspace.ID == "" || catalog.Workspace.ID == workspaceID {

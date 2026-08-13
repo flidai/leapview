@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	appearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/dashboard/report"
 	"github.com/flidai/leapview/internal/project/schema"
@@ -388,6 +389,7 @@ func loadWorkspaceDashboards(workspaceProject *WorkspaceProject, baseDir string,
 		}
 		dashboard := &report.Dashboard{
 			ID:                name,
+			Appearance:        spec.Appearance,
 			Title:             envelope.Metadata.Title,
 			Description:       envelope.Metadata.Description,
 			SemanticModel:     spec.SemanticModel,
@@ -396,6 +398,9 @@ func loadWorkspaceDashboards(workspaceProject *WorkspaceProject, baseDir string,
 			FilterApplication: spec.FilterApplication,
 			Visuals:           spec.Visuals,
 			Pages:             projectDashboardPages(spec.Pages),
+		}
+		if err := appearance.ValidatePatch(spec.Appearance); err != nil {
+			return resourceError(path, "dashboard:"+workspaceProject.ID+"."+name, "spec.appearance", "%s", err.Error())
 		}
 		workspaceProject.Dashboards[name] = dashboard
 		workspaceProject.DashboardTitles[name] = envelope.Metadata.Title
