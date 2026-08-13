@@ -35,6 +35,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/admin/groups", guard.ProtectGlobal(access.PrivilegeManageGrants, h.Groups))
 	r.Post("/admin/groups/search", guard.ProtectGlobal(access.PrivilegeManageGrants, h.GroupsSearch))
 	r.Get("/admin/groups/{group}", guard.ProtectGlobal(access.PrivilegeManageGrants, h.GroupDetail))
+	r.Post("/admin/access/command", guard.ProtectGlobal(access.PrivilegeManageGrants, h.AccessAdministrationCommand))
 	r.Get("/admin/service-accounts", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.ServiceAccounts))
 	r.Post("/admin/service-accounts/command", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.ServiceAccountCommand))
 	r.Get("/admin/authentication", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.Authentication))

@@ -69,12 +69,23 @@ func (r *Repository) preparePrincipalDeletion(ctx context.Context, id string) er
 }
 
 func (r *Repository) DisablePrincipal(ctx context.Context, id string) (access.Principal, error) {
+	return r.setPrincipalDisabled(ctx, id, false)
+}
+
+// DisableProvisionedPrincipal records a lifecycle disable owned by an external
+// provisioning subsystem. It is intentionally separate from DisablePrincipal,
+// which records a LeapView administrator block.
+func (r *Repository) DisableProvisionedPrincipal(ctx context.Context, id string) (access.Principal, error) {
+	return r.setPrincipalDisabled(ctx, id, true)
+}
+
+func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provisioned bool) (access.Principal, error) {
 	access.ClearAuthorizationCache(ctx)
 	if r == nil {
 		return access.Principal{}, fmt.Errorf("access repository database is required")
 	}
 	if _, inTransaction := r.db.(*sql.Tx); inTransaction {
-		return r.disablePrincipal(ctx, id)
+		return r.disablePrincipal(ctx, id, provisioned)
 	}
 	if r.root == nil {
 		return access.Principal{}, fmt.Errorf("access repository database is required")
@@ -85,7 +96,7 @@ func (r *Repository) DisablePrincipal(ctx context.Context, id string) (access.Pr
 	}
 	defer func() { _ = tx.Rollback() }()
 	txRepo := &Repository{root: r.root, db: tx, q: r.q.WithTx(tx), policyCache: r.policyCache}
-	principal, err := txRepo.disablePrincipal(ctx, id)
+	principal, err := txRepo.disablePrincipal(ctx, id, provisioned)
 	if err != nil {
 		return access.Principal{}, err
 	}
@@ -95,11 +106,17 @@ func (r *Repository) DisablePrincipal(ctx context.Context, id string) (access.Pr
 	return principal, nil
 }
 
-func (r *Repository) disablePrincipal(ctx context.Context, id string) (access.Principal, error) {
+func (r *Repository) disablePrincipal(ctx context.Context, id string, provisioned bool) (access.Principal, error) {
 	if _, err := r.PrincipalByID(ctx, id); err != nil {
 		return access.Principal{}, err
 	}
-	if err := r.q.DisablePrincipal(ctx, id); err != nil {
+	var err error
+	if provisioned {
+		err = r.q.DisableProvisionedPrincipal(ctx, id)
+	} else {
+		err = r.q.DisablePrincipal(ctx, id)
+	}
+	if err != nil {
 		return access.Principal{}, err
 	}
 	if err := r.q.RevokeSessionsByPrincipal(ctx, id); err != nil {

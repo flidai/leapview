@@ -55,6 +55,7 @@ func (r *Repository) ListPrincipalsWithActivity(ctx context.Context, filter acce
 			Email:       row.Email,
 			DisplayName: row.DisplayName,
 			DisabledAt:  nullString(row.DisabledAt),
+			BlockedAt:   nullString(row.BlockedAt),
 			CreatedAt:   row.CreatedAt,
 			UpdatedAt:   row.UpdatedAt,
 			LastSeenAt:  row.LastSeenAt,
@@ -90,7 +91,7 @@ func (r *Repository) principalDisabled(ctx context.Context, principalID string) 
 		}
 		return false, err
 	}
-	return row.DisabledAt.Valid && row.DisabledAt.String != "", nil
+	return (row.DisabledAt.Valid && row.DisabledAt.String != "") || (row.BlockedAt.Valid && row.BlockedAt.String != ""), nil
 }
 
 func (r *Repository) UpsertPrincipal(ctx context.Context, input access.PrincipalInput) (access.Principal, error) {
@@ -203,7 +204,7 @@ func (r *Repository) VerifyLocalPassword(ctx context.Context, email, password st
 	if err != nil {
 		return access.Principal{}, access.LocalCredential{}, err
 	}
-	if principal.DisabledAt != "" || !verifySecret(password, verifier) {
+	if principal.AccessDisabled() || !verifySecret(password, verifier) {
 		return access.Principal{}, access.LocalCredential{}, sql.ErrNoRows
 	}
 	return principal, credential, nil
@@ -247,7 +248,7 @@ func (r *Repository) ChangeLocalPassword(ctx context.Context, principalID, curre
 	if err != nil {
 		return access.LocalCredential{}, err
 	}
-	if principal.DisabledAt != "" || !verifySecret(currentPassword, verifier) {
+	if principal.AccessDisabled() || !verifySecret(currentPassword, verifier) {
 		return access.LocalCredential{}, sql.ErrNoRows
 	}
 	newVerifier, err := newSecretVerifier(newPassword)
@@ -286,7 +287,7 @@ func (r *Repository) localCredentialByEmail(ctx context.Context, email string) (
 	if err != nil {
 		return access.Principal{}, access.LocalCredential{}, "", err
 	}
-	return localCredentialValues(row.ID, row.Kind, row.Email, row.DisplayName, row.DisabledAt, row.CreatedAt, row.UpdatedAt,
+	return localCredentialValues(row.ID, row.Kind, row.Email, row.DisplayName, row.DisabledAt, row.BlockedAt, row.CreatedAt, row.UpdatedAt,
 		row.PasswordVerifier, row.MustChangePassword, row.CredentialCreatedAt, row.CredentialUpdatedAt, row.PasswordChangedAt)
 }
 
@@ -295,15 +296,16 @@ func (r *Repository) localCredentialByPrincipalID(ctx context.Context, principal
 	if err != nil {
 		return access.Principal{}, access.LocalCredential{}, "", err
 	}
-	return localCredentialValues(row.ID, row.Kind, row.Email, row.DisplayName, row.DisabledAt, row.CreatedAt, row.UpdatedAt,
+	return localCredentialValues(row.ID, row.Kind, row.Email, row.DisplayName, row.DisabledAt, row.BlockedAt, row.CreatedAt, row.UpdatedAt,
 		row.PasswordVerifier, row.MustChangePassword, row.CredentialCreatedAt, row.CredentialUpdatedAt, row.PasswordChangedAt)
 }
 
-func localCredentialValues(id, kind, email, displayName string, disabledAt sql.NullString, createdAt, updatedAt, verifier string,
+func localCredentialValues(id, kind, email, displayName string, disabledAt, blockedAt sql.NullString, createdAt, updatedAt, verifier string,
 	mustChange int64, credentialCreatedAt, credentialUpdatedAt string, passwordChangedAt sql.NullString,
 ) (access.Principal, access.LocalCredential, string, error) {
 	principal := access.Principal{ID: id, Kind: access.PrincipalKind(kind), Email: email, DisplayName: displayName, CreatedAt: createdAt, UpdatedAt: updatedAt}
 	principal.DisabledAt = nullString(disabledAt)
+	principal.BlockedAt = nullString(blockedAt)
 	credential := access.LocalCredential{
 		PrincipalID: principal.ID, MustChangePassword: mustChange != 0,
 		CreatedAt: credentialCreatedAt, UpdatedAt: credentialUpdatedAt, PasswordChangedAt: nullString(passwordChangedAt),

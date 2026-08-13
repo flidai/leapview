@@ -9,13 +9,32 @@ model PrincipalResponse {
   kind: string;
   email: string;
   displayName: string;
+  @doc("Lifecycle disable owned by the identity provisioning authority, such as SCIM active=false.")
   disabledAt?: utcDateTime;
+  @doc("LeapView administrator block. This is independent from externally managed lifecycle state.")
+  blockedAt?: utcDateTime;
   createdAt: utcDateTime;
   updatedAt: utcDateTime;
 }
 
+model PrincipalAdministrationCapabilities {
+  canUpdateProfile: boolean;
+  canResetPassword: boolean;
+  canBlock: boolean;
+  canUnblock: boolean;
+  canDelete: boolean;
+  canManageSessions: boolean;
+  canManageAuthorization: boolean;
+}
+
+model PrincipalAdministrationResponse {
+  ...PrincipalResponse;
+  identityManagement: IdentityManagementResponse;
+  capabilities: PrincipalAdministrationCapabilities;
+}
+
 model PrincipalListResponse {
-  items: PrincipalResponse[];
+  items: PrincipalAdministrationResponse[];
   page: PageInfo;
 }
 
@@ -93,10 +112,21 @@ model GroupPatchRequest {
 
 model GroupResponse {
   id: string;
+  workspaceId: string;
+  provider: string;
+  externalId: string;
   name: string;
   displayName: string;
+  capabilities: GroupAdministrationCapabilities;
   createdAt: utcDateTime;
   updatedAt: utcDateTime;
+}
+
+model GroupAdministrationCapabilities {
+  canUpdate: boolean;
+  canDelete: boolean;
+  canManageMembers: boolean;
+  canManageAuthorization: boolean;
 }
 
 model GroupListResponse {
@@ -260,6 +290,14 @@ model GroupInvalidFailure {}
   publicDetail: "Group not found.",
 })
 model GroupNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 422,
+  code: "GROUP_NOT_MUTABLE",
+  publicDetail: "This group is managed by an external provisioning system.",
+})
+model GroupNotMutableFailure {}
 
 @apigen.failureDefinition(#{
   kind: "not_found",
@@ -634,8 +672,8 @@ interface CurrentAuthoringSessions {
 
 alias ListPrincipalsOK = OkJson<PrincipalListResponse>;
 alias CreatePrincipalCreated = CreatedJson<LocalPasswordResetResponse>;
-alias GetPrincipalOK = OkJson<PrincipalResponse>;
-alias UpdatePrincipalOK = OkJson<PrincipalResponse>;
+alias GetPrincipalOK = OkJson<PrincipalAdministrationResponse>;
+alias UpdatePrincipalOK = OkJson<PrincipalAdministrationResponse>;
 alias ResetPrincipalPasswordOK = OkJson<LocalPasswordResetResponse>;
 alias ListPrincipalSessionsOK = OkJson<SessionListResponse>;
 
@@ -656,6 +694,7 @@ interface Principals {
   @apigen.command(#{ auditAction: "principal.local_user.created" })
   @apigen.failsWith(PrincipalAlreadyExistsFailure)
   @apigen.auditPayload(PrincipalCreatedAuditPayload)
+  @apigen.ui("principal.create")
   createPrincipal(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: PrincipalCreateRequest): CreatePrincipalCreated | CommonErrors;
 
   @summary("Get a principal")
@@ -678,6 +717,7 @@ interface Principals {
   })
   @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalUpdatedAuditPayload)
+  @apigen.ui("principal.update")
   updatePrincipal(@path principal: string, @header("If-Match") ifMatch: string, @body body: PrincipalPatchRequest): UpdatePrincipalOK | CommonErrors;
 
   @summary("Delete a principal")
@@ -694,6 +734,7 @@ interface Principals {
   })
   @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalDeletedAuditPayload)
+  @apigen.ui("principal.delete")
   deletePrincipal(@path principal: string): EmptyResponse | CommonErrors;
 
   @summary("Reset a local principal password")
@@ -704,37 +745,42 @@ interface Principals {
   @apigen.command(#{ auditAction: "principal.local_password.reset" })
   @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalPasswordResetAuditPayload)
+  @apigen.ui("principal.password.reset")
   resetPrincipalPassword(@path principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): ResetPrincipalPasswordOK | CommonErrors;
 
-  @summary("Disable a principal and reject its credentials")
+  @summary("Block a principal in LeapView and reject its credentials")
+  @doc("Sets an independent LeapView administrator block. External provisioning cannot clear this block.")
   @route("/{principal}/disable")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
   @apigen.command(#{
-    auditAction: "principal.disabled",
+    auditAction: "principal.blocked",
     failures: #[
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be disabled by this operation." },
     ],
   })
   @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalUpdatedAuditPayload)
-  disablePrincipal(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
+  @apigen.ui("principal.block")
+  disablePrincipal(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalAdministrationResponse> | CommonErrors;
 
-  @summary("Re-enable a disabled principal")
+  @summary("Remove a principal's LeapView administrator block")
+  @doc("Clears only the LeapView administrator block. An externally disabled principal remains disabled.")
   @route("/{principal}/enable")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @extension("x-leapview-object-scope", "grant-management")
   @apigen.command(#{
-    auditAction: "principal.enabled",
+    auditAction: "principal.unblocked",
     failures: #[
       #{ kind: "invalid", statusCode: 422, code: "PRINCIPAL_NOT_MUTABLE", publicDetail: "This principal cannot be enabled by this operation." },
     ],
   })
   @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalUpdatedAuditPayload)
-  enablePrincipal(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
+  @apigen.ui("principal.unblock")
+  enablePrincipal(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalAdministrationResponse> | CommonErrors;
 
   @summary("List a principal's sessions")
   @route("/{principal}/sessions")
@@ -751,6 +797,7 @@ interface Principals {
   @apigen.command(#{ auditAction: "session.revoked" })
   @apigen.failsWith(SessionNotFoundFailure)
   @apigen.auditPayload(PrincipalSessionRevokedAuditPayload)
+  @apigen.ui("principal.session.revoke")
   revokePrincipalSession(@path @apigen.target principal: string, @path session: string): EmptyResponse | CommonErrors;
 }
 
@@ -862,6 +909,7 @@ interface Groups {
   @apigen.command(#{ auditAction: "group.created" })
   @apigen.failsWith(GroupInvalidFailure)
   @apigen.auditPayload(GroupAuditPayload)
+  @apigen.ui("group.create")
   createGroup(@path workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GroupCreateRequest): CreateGroupCreated | CommonErrors;
 
   @summary("Delete a group")
@@ -870,7 +918,9 @@ interface Groups {
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.command(#{ auditAction: "group.deleted" })
   @apigen.failsWith(GroupNotFoundFailure)
+  @apigen.failsWith(GroupNotMutableFailure)
   @apigen.auditPayload(GroupAuditPayload)
+  @apigen.ui("group.delete")
   deleteGroup(@path @apigen.target workspace: string, @path group: string): EmptyResponse | CommonErrors;
 
   @summary("Get a group")
@@ -885,7 +935,9 @@ interface Groups {
   @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
   @apigen.command(#{ auditAction: "group.updated" })
   @apigen.failsWith(GroupNotFoundFailure)
+  @apigen.failsWith(GroupNotMutableFailure)
   @apigen.auditPayload(GroupAuditPayload)
+  @apigen.ui("group.update")
   updateGroup(@path @apigen.target workspace: string, @path group: string, @header("If-Match") ifMatch: string, @body body: GroupPatchRequest): UpdateGroupOK | CommonErrors;
 
   @summary("List group members")
@@ -905,6 +957,8 @@ interface Groups {
     ],
   })
   @apigen.auditPayload(GroupMemberAuditPayload)
+  @apigen.failsWith(GroupNotMutableFailure)
+  @apigen.ui("group.member.remove")
   removeGroupMember(@path @apigen.target workspace: string, @path group: string, @path principal: string): EmptyResponse | CommonErrors;
 
   @summary("Add a group member")
@@ -918,6 +972,8 @@ interface Groups {
     ],
   })
   @apigen.auditPayload(GroupMemberAuditPayload)
+  @apigen.failsWith(GroupNotMutableFailure)
+  @apigen.ui("group.member.add")
   addGroupMember(@path @apigen.target workspace: string, @path group: string, @path principal: string): AddGroupMemberOK | CommonErrors;
 }
 

@@ -569,7 +569,12 @@ func (h Handler) ListPrincipals(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, principalDTO(row))
+		dto, dtoErr := h.principalAdministrationDTO(r.Context(), repo, row, h.currentPrincipalID(r))
+		if dtoErr != nil {
+			writeJSONError(w, dtoErr, stdhttp.StatusInternalServerError)
+			return
+		}
+		out = append(out, dto)
 	}
 	_ = writePagedJSON(w, r, out)
 }
@@ -644,7 +649,12 @@ func (h Handler) GetPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if revision, revisionErr := access.PrincipalRevision(principal); revisionErr == nil {
 		w.Header().Set("ETag", revision)
 	}
-	writeJSON(w, stdhttp.StatusOK, principalDTO(principal))
+	dto, err := h.principalAdministrationDTO(r.Context(), repo, principal, h.currentPrincipalID(r))
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, dto)
 }
 
 func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -667,6 +677,15 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)))
 		return
 	}
+	management, err := principalIdentityManagement(r.Context(), repo, existing.ID)
+	if err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), err)
+		return
+	}
+	if management.Source != access.IdentityManagementLocal {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), principalManagedExternallyError(management))
+		return
+	}
 	if existing.ID == h.currentPrincipalID(r) {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), apigenfailure.New("invalid", "the current principal cannot delete itself"))
 		return
@@ -678,6 +697,13 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		management, managementErr := principalIdentityManagement(r.Context(), txRepo, id)
+		if managementErr != nil {
+			return access.AuditEventInput{}, managementErr
+		}
+		if management.Source != access.IdentityManagementLocal {
+			return access.AuditEventInput{}, principalManagedExternallyError(management)
+		}
 		txDeleter, ok := txRepo.(interface {
 			DeletePrincipal(context.Context, string) error
 		})
@@ -736,9 +762,9 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		writeJSONError(w, fmt.Errorf("principal status changes are unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	action := "principal.disabled"
+	action := "principal.blocked"
 	if !disabled {
-		action = "principal.enabled"
+		action = "principal.unblocked"
 	}
 	var updated access.Principal
 	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
@@ -760,8 +786,14 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		writeAuditedMutationError(w, r, operationID, err, statusForNotFound(err))
 		return
 	}
-	dto := principalDTO(updated)
-	w.Header().Set("ETag", resourceETag(dto))
+	dto, dtoErr := h.principalAdministrationDTO(r.Context(), repo, updated, h.currentPrincipalID(r))
+	if dtoErr != nil {
+		writeJSONError(w, dtoErr, stdhttp.StatusInternalServerError)
+		return
+	}
+	if revision, revisionErr := access.PrincipalRevision(updated); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
 	writeJSON(w, stdhttp.StatusOK, dto)
 }
 
@@ -771,10 +803,27 @@ func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Req
 		writeCommandFailure(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), err)
 		return
 	}
+	principalID := chi.URLParam(r, "principal")
+	management, err := principalIdentityManagement(r.Context(), repo, principalID)
+	if err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), err)
+		return
+	}
+	if !management.HasLocalPassword {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), apigenfailure.New("invalid", "this principal does not have a local password"))
+		return
+	}
 	var reset access.LocalPasswordReset
 	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		management, managementErr := principalIdentityManagement(r.Context(), txRepo, principalID)
+		if managementErr != nil {
+			return access.AuditEventInput{}, managementErr
+		}
+		if !management.HasLocalPassword {
+			return access.AuditEventInput{}, apigenfailure.New("invalid", "this principal does not have a local password")
+		}
 		var mutationErr error
-		reset, mutationErr = txRepo.ResetLocalPassword(r.Context(), chi.URLParam(r, "principal"))
+		reset, mutationErr = txRepo.ResetLocalPassword(r.Context(), principalID)
 		return commandAccessAuditInput(r, "principal.local_password.reset", h.currentPrincipalID(r), "", "principal", reset.Principal.ID, access.PrivilegeManageGrants, "success", map[string]any{"email": reset.Principal.Email}, mutationErr)
 	})
 	if err != nil {
@@ -810,6 +859,15 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)))
 		return
 	}
+	management, err := principalIdentityManagement(r.Context(), repo, existing.ID)
+	if err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err)
+		return
+	}
+	if management.Source != access.IdentityManagementLocal {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), principalManagedExternallyError(management))
+		return
+	}
 	if strings.TrimSpace(input.DisplayName) != "" {
 		existing.DisplayName = input.DisplayName
 	}
@@ -821,6 +879,13 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}
 		return access.PrincipalRevision(current)
 	}, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		management, managementErr := principalIdentityManagement(r.Context(), txRepo, existing.ID)
+		if managementErr != nil {
+			return access.AuditEventInput{}, managementErr
+		}
+		if management.Source != access.IdentityManagementLocal {
+			return access.AuditEventInput{}, principalManagedExternallyError(management)
+		}
 		var mutationErr error
 		principal, mutationErr = txRepo.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: existing.ID, Kind: existing.Kind, Email: existing.Email, DisplayName: existing.DisplayName})
 		return commandAccessAuditInput(r, "principal.updated", h.currentPrincipalID(r), "", "principal", principal.ID, access.PrivilegeManageGrants, "success", map[string]any{
@@ -834,7 +899,12 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if revision, revisionErr := access.PrincipalRevision(principal); revisionErr == nil {
 		w.Header().Set("ETag", revision)
 	}
-	writeJSON(w, stdhttp.StatusOK, principalDTO(principal))
+	dto, dtoErr := h.principalAdministrationDTO(r.Context(), repo, principal, h.currentPrincipalID(r))
+	if dtoErr != nil {
+		writeJSONError(w, dtoErr, stdhttp.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, dto)
 }
 
 // OAuthToken issues the existing REST API credential used by service-principal
@@ -1146,7 +1216,7 @@ func (h Handler) ListGroups(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	rows, err := repo.ListGroups(r.Context(), h.workspaceID(chi.URLParam(r, "workspace")))
+	rows, err := applicableGroups(r.Context(), repo, h.workspaceID(chi.URLParam(r, "workspace")))
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
@@ -1209,6 +1279,10 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !ok {
 		return
 	}
+	if !groupIsLocallyManaged(group) {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGroup(), groupManagedExternallyError(group))
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGroup(), err)
@@ -1246,6 +1320,10 @@ func (h Handler) DeleteGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !ok {
 		return
 	}
+	if !groupIsLocallyManaged(group) {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGroup(), groupManagedExternallyError(group))
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGroup(), err)
@@ -1268,7 +1346,16 @@ func (h Handler) ListGroupMembers(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	rows, err := repo.ListGroupMembers(r.Context(), h.workspaceID(chi.URLParam(r, "workspace")), chi.URLParam(r, "group"))
+	group, ok := h.groupByID(w, r, nil)
+	if !ok {
+		return
+	}
+	var rows []access.GroupMember
+	if groupIsLocallyManaged(group) {
+		rows, err = repo.ListGroupMembers(r.Context(), group.WorkspaceID, group.ID)
+	} else {
+		rows, err = repo.ListGroupMembersByGroup(r.Context(), group.ID)
+	}
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
@@ -1286,8 +1373,16 @@ func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationAddGroupMember(), err)
 		return
 	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	groupID := chi.URLParam(r, "group")
+	group, ok := h.groupByID(w, r, commandOperation(accessgen.GenCommandOperationAddGroupMember()))
+	if !ok {
+		return
+	}
+	if !groupIsLocallyManaged(group) {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationAddGroupMember(), groupManagedExternallyError(group))
+		return
+	}
+	workspaceID := group.WorkspaceID
+	groupID := group.ID
 	principalID := chi.URLParam(r, "principal")
 	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
 		mutationErr := txRepo.AddGroupMember(r.Context(), workspaceID, groupID, principalID)
@@ -1306,8 +1401,16 @@ func (h Handler) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		writeCommandFailure(w, r, accessgen.GenCommandOperationRemoveGroupMember(), err)
 		return
 	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	groupID := chi.URLParam(r, "group")
+	group, ok := h.groupByID(w, r, commandOperation(accessgen.GenCommandOperationRemoveGroupMember()))
+	if !ok {
+		return
+	}
+	if !groupIsLocallyManaged(group) {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationRemoveGroupMember(), groupManagedExternallyError(group))
+		return
+	}
+	workspaceID := group.WorkspaceID
+	groupID := group.ID
 	principalID := chi.URLParam(r, "principal")
 	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
 		mutationErr := txRepo.RemoveGroupMember(r.Context(), workspaceID, groupID, principalID)
@@ -2074,7 +2177,43 @@ func principalDTO(row access.Principal) map[string]any {
 	if row.DisabledAt != "" {
 		dto["disabledAt"] = normalizeTimestamp(row.DisabledAt)
 	}
+	if row.BlockedAt != "" {
+		dto["blockedAt"] = normalizeTimestamp(row.BlockedAt)
+	}
 	return dto
+}
+
+func (h Handler) principalAdministrationDTO(ctx context.Context, repo access.Repository, principal access.Principal, actorID string) (map[string]any, error) {
+	management, err := principalIdentityManagement(ctx, repo, principal.ID)
+	if err != nil {
+		return nil, err
+	}
+	response := principalDTO(principal)
+	identity := map[string]any{"source": management.Source}
+	if management.Provider != "" {
+		identity["provider"] = management.Provider
+	}
+	response["identityManagement"] = identity
+	isUser := principalKindAllowsGenericMutation(principal.Kind)
+	isSelf := strings.TrimSpace(actorID) != "" && actorID == principal.ID
+	response["capabilities"] = map[string]bool{
+		"canUpdateProfile":       isUser && management.Source == access.IdentityManagementLocal,
+		"canResetPassword":       isUser && management.HasLocalPassword,
+		"canBlock":               isUser && !isSelf && principal.BlockedAt == "" && principal.DisabledAt == "",
+		"canUnblock":             isUser && principal.BlockedAt != "",
+		"canDelete":              isUser && !isSelf && management.Source == access.IdentityManagementLocal,
+		"canManageSessions":      isUser,
+		"canManageAuthorization": isUser,
+	}
+	return response, nil
+}
+
+func principalManagedExternallyError(management access.PrincipalIdentityManagement) error {
+	provider := strings.TrimSpace(management.Provider)
+	if provider == "" {
+		provider = "the owning identity subsystem"
+	}
+	return apigenfailure.New("invalid", fmt.Sprintf("principal profile is managed by %s", provider))
 }
 
 func localPasswordResetDTO(row access.LocalPasswordReset) map[string]any {
@@ -2167,7 +2306,26 @@ func normalizeTimestamp(value string) string {
 }
 
 func groupDTO(row access.Group) map[string]any {
-	return map[string]any{"id": row.ID, "name": row.ExternalID, "displayName": row.Name, "createdAt": row.CreatedAt, "updatedAt": row.CreatedAt}
+	local := groupIsLocallyManaged(row)
+	return map[string]any{
+		"id": row.ID, "workspaceId": row.WorkspaceID, "provider": row.Provider, "externalId": row.ExternalID,
+		"name": row.ExternalID, "displayName": row.Name, "createdAt": row.CreatedAt, "updatedAt": row.CreatedAt,
+		"capabilities": map[string]bool{
+			"canUpdate": local, "canDelete": local, "canManageMembers": local, "canManageAuthorization": true,
+		},
+	}
+}
+
+func groupIsLocallyManaged(group access.Group) bool {
+	return strings.EqualFold(strings.TrimSpace(group.Provider), "local") && strings.TrimSpace(group.WorkspaceID) != ""
+}
+
+func groupManagedExternallyError(group access.Group) error {
+	provider := strings.TrimSpace(group.Provider)
+	if provider == "" {
+		provider = "the owning provisioning system"
+	}
+	return apigenfailure.New("invalid", fmt.Sprintf("group is managed by %s", provider))
 }
 
 func groupMemberPrincipalDTO(row access.GroupMember) map[string]any {
@@ -2872,7 +3030,7 @@ func (h Handler) groupByID(w stdhttp.ResponseWriter, r *stdhttp.Request, operati
 		writeFailure(err)
 		return access.Group{}, false
 	}
-	rows, err := repo.ListGroups(r.Context(), h.workspaceID(chi.URLParam(r, "workspace")))
+	rows, err := applicableGroups(r.Context(), repo, h.workspaceID(chi.URLParam(r, "workspace")))
 	if err != nil {
 		writeFailure(err)
 		return access.Group{}, false
@@ -2888,6 +3046,18 @@ func (h Handler) groupByID(w stdhttp.ResponseWriter, r *stdhttp.Request, operati
 		writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
 	}
 	return access.Group{}, false
+}
+
+func applicableGroups(ctx context.Context, repo access.Repository, workspaceID string) ([]access.Group, error) {
+	localGroups, err := repo.ListGroups(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	directoryGroups, err := repo.ListSCIMGroups(ctx, access.SCIMGroupFilter{})
+	if err != nil {
+		return nil, err
+	}
+	return append(localGroups, directoryGroups...), nil
 }
 
 func decodeRoleBindingInput(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID) (access.RoleBindingInput, bool) {

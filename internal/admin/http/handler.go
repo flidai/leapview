@@ -468,6 +468,24 @@ func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals m
 		}
 		signals["adminServiceAccounts"] = state
 		signals["adminServiceAccountCommand"] = adminsettings.ServiceAccountCommand{}
+	case "principals", "groups", "principal-detail", "group-detail":
+		if h.SettingsRepository == nil {
+			return nil
+		}
+		actorID := ""
+		if h.ReadModel.CurrentPrincipal != nil {
+			if principal, ok := h.ReadModel.CurrentPrincipal(r); ok {
+				actorID = principal.ID
+			}
+		}
+		selectedPrincipalID := strings.TrimSpace(r.URL.Query().Get("principal"))
+		selectedGroupID := strings.TrimSpace(r.URL.Query().Get("group"))
+		state, err := h.loadAccessAdministration(r.Context(), actorID, selectedPrincipalID, selectedGroupID)
+		if err != nil {
+			return err
+		}
+		signals["adminAccess"] = state
+		signals["adminAccessCommand"] = adminsettings.AccessAdministrationCommand{}
 	case "audit":
 		if h.SettingsRepository == nil {
 			return nil

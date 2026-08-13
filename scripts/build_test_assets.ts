@@ -38,6 +38,7 @@ const fixtures = new Map<string, FixtureBuild>([
   ['data-explorer', single('data-explorer', 'web/components/data/data-explorer.ts', '.tmp/data-explorer-test/data-explorer-under-test.js')],
   ['windowed-table', single('windowed-table', 'web/components/shared/windowed-table.ts', '.tmp/windowed-table-test/windowed-table-under-test.js')],
   ['filter-menu', single('filter-menu', 'web/components/shared/filter-menu.ts', '.tmp/filter-menu-test/filter-menu-under-test.js')],
+  ['entity-multi-select', single('entity-multi-select', 'web/components/shared/entity-multi-select.ts', '.tmp/entity-multi-select-test/entity-multi-select-under-test.js')],
   ['datastar-inspector', single('datastar-inspector', 'web/components/inspector/datastar-inspector.ts', '.tmp/datastar-inspector-test/datastar-inspector-under-test.js')],
   ['admin-page', pageWithMonacoWorker('admin-page', 'web/components/admin/admin-page.ts', '.tmp/admin-page-test', 'admin-page-under-test.js')],
   ['code-editor', pageWithMonacoWorker('code-editor', 'web/components/shared/code-editor.ts', '.tmp/code-editor-test', 'code-editor-under-test.js')],

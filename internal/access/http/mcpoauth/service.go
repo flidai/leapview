@@ -188,7 +188,7 @@ func (s *Service) Authorize(w http.ResponseWriter, r *http.Request, principalID 
 		return
 	}
 	principal, err := s.repo.PrincipalByID(request.Context(), principalID)
-	if err != nil || principal.DisabledAt != "" {
+	if err != nil || principal.AccessDisabled() {
 		s.provider.WriteAuthorizeError(request.Context(), w, authorizeRequest, fosite.ErrAccessDenied)
 		return
 	}
@@ -250,7 +250,7 @@ func (s *Service) clientCredentialsToken(w http.ResponseWriter, r *http.Request)
 		clientID, clientSecret = basicID, basicSecret
 	}
 	principal, err := s.repo.PrincipalForServicePrincipalSecret(r.Context(), clientID, clientSecret)
-	if err != nil || principal.DisabledAt != "" {
+	if err != nil || principal.AccessDisabled() {
 		w.Header().Set("WWW-Authenticate", `Basic realm="leapview-oauth"`)
 		writeOAuthJSONError(w, http.StatusUnauthorized, "invalid_client", "client authentication failed")
 		return
@@ -306,7 +306,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Credential, e
 		return Credential{}, fosite.ErrRequestUnauthorized
 	}
 	principal, err := s.repo.PrincipalByID(ctx, request.GetSession().GetSubject())
-	if err != nil || principal.DisabledAt != "" {
+	if err != nil || principal.AccessDisabled() {
 		return Credential{}, fosite.ErrRequestUnauthorized
 	}
 	return Credential{

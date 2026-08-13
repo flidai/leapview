@@ -59,7 +59,7 @@ func (r *Repository) ResolveExternalPrincipal(ctx context.Context, input access.
 		if err != nil {
 			return access.Principal{}, err
 		}
-		if principal.DisabledAt.Valid && principal.DisabledAt.String != "" {
+		if (principal.DisabledAt.Valid && principal.DisabledAt.String != "") || (principal.BlockedAt.Valid && principal.BlockedAt.String != "") {
 			return access.Principal{}, sql.ErrNoRows
 		}
 		return r.UpsertPrincipal(ctx, access.PrincipalInput{
@@ -80,7 +80,7 @@ func (r *Repository) ResolveExternalPrincipal(ctx context.Context, input access.
 		}
 		if err == nil {
 			principal = mapPrincipal(row)
-			if principal.DisabledAt != "" {
+			if principal.AccessDisabled() {
 				return access.Principal{}, sql.ErrNoRows
 			}
 		}
@@ -171,7 +171,7 @@ func (r *Repository) UpsertSCIMUser(ctx context.Context, input access.SCIMUserIn
 	if !input.Active {
 		return r.DisableSCIMUser(ctx, principal.ID)
 	}
-	if err := r.q.EnablePrincipal(ctx, principal.ID); err != nil {
+	if err := r.q.EnableProvisionedPrincipal(ctx, principal.ID); err != nil {
 		return access.SCIMUser{}, err
 	}
 	row, err := r.q.GetPrincipal(ctx, principal.ID)
@@ -237,7 +237,7 @@ func (r *Repository) DisableSCIMUser(ctx context.Context, principalID string) (a
 	if err != nil {
 		return access.SCIMUser{}, err
 	}
-	if _, err := r.DisablePrincipal(ctx, principalID); err != nil {
+	if _, err := r.DisableProvisionedPrincipal(ctx, principalID); err != nil {
 		return access.SCIMUser{}, err
 	}
 	if err := r.q.DeleteSCIMGroupMembersByPrincipal(ctx, principalID); err != nil {

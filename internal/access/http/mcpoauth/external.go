@@ -84,7 +84,7 @@ func (e *External) Authenticate(ctx context.Context, rawToken string) (Credentia
 	if err != nil {
 		return Credential{}, fmt.Errorf("resolve external OAuth principal: %w", err)
 	}
-	if principal.DisabledAt != "" {
+	if principal.AccessDisabled() {
 		return Credential{}, fmt.Errorf("external OAuth principal is disabled")
 	}
 	return Credential{Principal: principal, Resource: e.config.ResourceURL, Scopes: uniqueStrings(scopes)}, nil

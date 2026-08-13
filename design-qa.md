@@ -89,6 +89,106 @@ The requested follow-up removes the parent card around the entire section. The h
 - [x] No actionable P0/P1/P2 differences remain.
 
 final result: passed
+
+---
+
+# Group detail cleanup design QA
+
+## Comparison target
+
+- Source visual truth: `/home/codex/.codex/attachments/79f0a96d-3f44-4d0f-beb1-5daa6ab6708a/codex-clipboard-2886dfac-61c8-4654-aa71-d64ff1635275.png`
+- Source dimensions: 1600 × 1542 pixels at density 1.
+- Browser-rendered implementation: `/home/codex/.codex/worktrees/a431/leapview/.tmp/design-qa/group-detail-clean-desktop.png`
+- Rename interaction: `/home/codex/.codex/worktrees/a431/leapview/.tmp/design-qa/group-detail-rename-modal.png`
+- Add-member interaction: `/home/codex/.codex/worktrees/a431/leapview/.tmp/design-qa/group-detail-add-member-modal.png`
+- Mobile implementation: `/home/codex/.codex/worktrees/a431/leapview/.tmp/design-qa/group-detail-clean-mobile.png`
+- Side-by-side comparison: `/home/codex/.codex/worktrees/a431/leapview/.tmp/design-qa/group-detail-comparison.png`
+- Desktop viewport and implementation pixels: 1600 × 1542 CSS pixels at device scale factor 1.
+- Mobile viewport and implementation pixels: 390 × 844 CSS pixels at device scale factor 1.
+- State: dark theme, editable local `analysts` group with one member and multiple eligible member candidates.
+
+## Evidence review
+
+- Full view: the source captures the pre-cleanup state. The implementation applies the requested delta by removing the duplicate route title, description, and five metric cards, leaving one group identity header and the borderless Overview and Members document.
+- Focused interactions: Rename group is now a prefilled modal reached from More actions. Add member is now a section-level action with a focused user-selection modal. Both provide Cancel and close controls, use native dialog semantics, and return to the read-only detail page after dismissal or submission.
+- Fonts and typography: existing LeapView Primer-backed typography is unchanged. Removing the duplicate title and metric type removes competing hierarchy while retaining the established page, section, label, and body recipes.
+- Spacing and layout rhythm: the detail shell now begins at the route's content origin and uses whitespace plus hairline separators. No route-level metric cards or detail cards remain. Section actions align with their owning headings.
+- Colors and visual tokens: the cleanup uses existing panel, text, border, accent-button, backdrop, and focus tokens; no raw colors or new visual vocabulary were introduced.
+- Image quality and assets: the screen has no product imagery. Rename, add-member, and close affordances use the existing Lucide icon library and render sharply at both tested densities.
+- Copy and content: group identity, provider, workspace, created date, member count, IDs, and membership remain visible. The modal copy states the consequence and object of each action without repeating page-level guidance.
+- Responsive behavior: at 390px the identity and header action stack, facts become one-column rows, the Add member action remains beside Members, and the complete member row—including Remove—fits without horizontal scrolling.
+
+## Comparison history
+
+1. The first implementation comparison confirmed the requested desktop cleanup and modal behaviors, but mobile evidence showed the Remove action outside the initially visible member-table columns. This was a P2 action-discoverability issue.
+2. The member table gained a responsive intrinsic layout, an end-aligned action column, and breakable email content. The revised 390 × 844 capture shows Member, Email, and Remove together with no component or document overflow.
+3. The post-fix combined desktop comparison and focused modal captures found no remaining P0, P1, or P2 differences.
+
+## Interaction and implementation checks
+
+- Route-level page headers: 0.
+- Route-level metric cards: 0.
+- Detail cards: 0.
+- Inline detail forms: 0.
+- Tested actions: open/dismiss Rename group, preserve current name, open/dismiss Add member, populate eligible users, and verify the typed rename/add command payloads in DOM tests.
+- Desktop and mobile horizontal overflow: none.
+- Browser console errors: none.
+- Focused TypeScript, Primer alignment, component DOM, admin-page DOM, Go UI, and production asset builds: passed.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain.
+
+final result: passed
+
+---
+
+# Administration detail shell design QA
+
+## Comparison target
+
+- Source visual truth: `/home/codex/.codex/generated_images/019ffaad-bbad-77e2-8678-e356a9837b3a/exec-551561ad-c7c6-4aa0-9fa5-b4007b47e917.png`
+- Source dimensions: 1487 × 1058 pixels.
+- User detail implementation: `/tmp/leapview-detail-option1-desktop-v2.png`
+- Mobile implementation: `/tmp/leapview-detail-option1-mobile-scrolled.png`
+- Group detail implementation: `/tmp/leapview-group-detail-option1-desktop.png`
+- Full-view comparison: `/tmp/leapview-detail-comparison.png`
+- Focused header and overview comparison: `/tmp/leapview-detail-comparison-focus-v2.png`
+- Desktop viewport: 1440 × 1024 CSS pixels at device scale factor 1; captured detail surface: 1104 × 823 pixels.
+- Mobile viewport: 390 × 844 CSS pixels at device scale factor 1.
+- State: dark theme, local system-managed user and managed group detail routes.
+
+## Evidence review
+
+- Full view: the implementation follows the selected editorial-ledger direction: identity first, then a slim source notice and a continuous document of divided sections. No detail cards remain.
+- Focused view: the header is borderless and uses the application surface, a 64px initials avatar, concise source/status badges, and capability-aware actions. The overview facts use a responsive horizontal definition grid.
+- Typography: the reference hierarchy is retained while using LeapView's existing Primer-backed type scale and weight tokens. This makes the production view intentionally more compact than the stylized reference.
+- Spacing and layout: section hierarchy comes from whitespace and hairline dividers. Desktop facts flow across columns; mobile facts, actions, tables, and sections stack without document overflow.
+- Colors and tokens: surfaces, text, borders, accent notice, status badges, and controls all use existing application tokens. No new raw color system was introduced.
+- Images and icons: no raster assets were needed. Initials avatars are product UI, while informational and blocking actions use the existing Lucide icon library.
+- Copy and content: notices explain whether LeapView or an external identity source owns the record. Local records retain editable operations; managed records remain read-only where appropriate.
+- Reuse: users and groups render through the same `renderAdministrationDetailShell` composition, with domain-specific sections and operations supplied as content.
+
+## Comparison history
+
+1. Initial comparison found redundant section descriptions and repeated empty-state labels in Access. These created more visual noise than the selected minimal reference.
+2. Removed the redundant descriptions and render Access subheadings only when their tables contain data.
+3. The revised combined comparison found no remaining P0, P1, or P2 differences.
+
+## Interaction and responsive checks
+
+- User and group routes load through the shared administration navigation and preserve their back links.
+- Capability-aware actions remain wired to the existing update, block/unblock, member, and delete command paths.
+- Desktop user detail renders four divided sections; group detail renders two divided sections; both render zero `.detail-card` elements.
+- At 390px, the identity header and actions stack, the security section remains reachable, and neither the component nor document has horizontal overflow.
+- Browser console errors: none during the final desktop and mobile checks.
+
+## Accepted P3 differences
+
+- LeapView's established typography is denser than the generated design reference; retaining the product tokens keeps this screen consistent with the rest of settings.
+- The captured user is the signed-in system user, so unsafe self-blocking is intentionally absent even though the reference illustrates a Block access action.
+
+final result: passed
 ---
 
 # Personal API token design QA
