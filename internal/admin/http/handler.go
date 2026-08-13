@@ -191,6 +191,19 @@ func (h Handler) StorageV2(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "storage-v2")
 }
 
+func (h Handler) StorageV2Table(w nethttp.ResponseWriter, r *nethttp.Request) {
+	data, err := h.adminData(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	if !selectStorageV2Table(&data, chi.URLParam(r, "schema"), chi.URLParam(r, "table")) {
+		nethttp.NotFound(w, r)
+		return
+	}
+	h.writePage(w, r, "storage-v2-detail", data)
+}
+
 func (h Handler) Queries(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.ensureClientID(w, r)
 	h.renderPage(w, r, "queries")
@@ -611,9 +624,26 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 			}
 		}
 		return data, sql.ErrNoRows
+	case "storage-v2-detail":
+		if !selectStorageV2Table(&data, r.URL.Query().Get("schema"), r.URL.Query().Get("table")) {
+			return data, sql.ErrNoRows
+		}
+		return data, nil
 	default:
 		return data, nil
 	}
+}
+
+func selectStorageV2Table(data *ui.AdminData, schema, table string) bool {
+	schema = strings.TrimSpace(schema)
+	table = strings.TrimSpace(table)
+	for _, candidate := range data.Storage.Tables {
+		if candidate.Schema == schema && candidate.Name == table {
+			data.Storage.Tables = []ui.AdminStorageTable{candidate}
+			return true
+		}
+	}
+	return false
 }
 
 func (h Handler) patchAndWait(w nethttp.ResponseWriter, r *nethttp.Request, patch pagestream.SignalPatch) {

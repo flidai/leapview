@@ -188,6 +188,10 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	if active == "group-detail" && data.SelectedGroup != nil {
 		adminUpdatesURL = updatesURL(uisignals.RouteAdmin, "section", active, "group", data.SelectedGroup.ID)
 	}
+	if active == "storage-v2-detail" && len(data.Storage.Tables) == 1 {
+		table := data.Storage.Tables[0]
+		adminUpdatesURL = updatesURL(uisignals.RouteAdmin, "section", active, "schema", table.Schema, "table", table.Name)
+	}
 	adminAttrs := []g.Node{
 		g.Attr("slot", "page"),
 		g.Attr("section", active),
@@ -335,9 +339,13 @@ func AdminListResultsPatch(active string, data AdminData) map[string]any {
 }
 
 func adminLayoutContext(active string) webpage.Context {
+	pageID := active
+	if active == "storage-v2-detail" {
+		pageID = "storage-v2"
+	}
 	return webpage.Context{
 		Active: "admin", SectionTitle: "Workspace", PageTitle: "Published assets",
-		PageID: active, Compact: true,
+		PageID: pageID, Compact: true,
 	}
 }
 
@@ -447,6 +455,37 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		page.HeaderTitle = "Storage v2"
 		page.HeaderDetail = "Browse tables and views across schemas."
 		page.Storage = uisignals.Pointer(AdminStorageSignalFromData(data.Storage, AdminStorageCommand{}))
+		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{{
+			Label: "Total data size", Value: data.Storage.TotalDataSizeLabel,
+			Detail: uisignals.Optional(fmt.Sprintf("%d active files", data.Storage.DataFileCount)),
+		}})
+	case "storage-v2-detail":
+		page.HeaderTitle = "Storage v2"
+		page.HeaderDetail = "Physical storage and active data files."
+		if len(data.Storage.Tables) != 1 {
+			page.Empty = uisignals.Pointer("Storage table not found.")
+			return page
+		}
+		table := data.Storage.Tables[0]
+		page.HeaderTitle = "Storage v2 / " + table.Schema + "." + table.Name
+		page.Storage = uisignals.Pointer(AdminStorageSignalFromData(data.Storage, AdminStorageCommand{
+			DatabaseID: table.DatabaseID, Schema: table.Schema, Table: table.Name,
+		}))
+		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{
+			{Label: "Data size", Value: table.SizeLabel},
+			{Label: "Active files", Value: fmt.Sprint(table.FileCount)},
+			{Label: "Stored rows", Value: table.RowCountLabel},
+			{Label: "Begin snapshot", Value: fmt.Sprint(table.BeginSnapshot)},
+		})
+		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{
+			{Title: "Storage", Facts: uisignals.Pointer([]uisignals.DefinitionFactSignal{
+				{Label: "Schema", Value: table.Schema},
+				{Label: "Object type", Value: table.Type},
+				{Label: "DuckLake path", Value: table.DuckLakePath},
+				{Label: "Table UUID", Value: table.TableUUID},
+			})},
+			{Title: "Active files", Table: uisignals.Pointer(adminStorageFilesGrid(table.Files))},
+		})
 	case "queries":
 		page.HeaderTitle = "Query history"
 		page.HeaderDetail = "Inspect query activity, performance, and failures."
@@ -810,6 +849,31 @@ func adminGroupMembersGrid(group AdminGroup, principals []AdminPrincipal) adminR
 	}
 }
 
+func adminStorageFilesGrid(files []AdminStorageFile) adminRecordTable {
+	rows := make([]map[string]any, 0, len(files))
+	for _, file := range files {
+		rows = append(rows, map[string]any{
+			"path":     file.Path,
+			"format":   strings.ToUpper(file.Format),
+			"rows":     map[string]any{"label": file.RecordCountLabel, "value": file.RecordCount},
+			"size":     map[string]any{"label": file.SizeLabel, "value": file.SizeBytes},
+			"snapshot": file.BeginSnapshot,
+		})
+	}
+	return adminRecordTable{
+		Columns: []adminRecordTableColumn{
+			{ID: "path", Header: "File path", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("320px")},
+			{ID: "format", Header: "Format", Width: uisignals.Pointer("90px")},
+			{ID: "rows", Header: "Rows", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("right"), Width: uisignals.Pointer("110px")},
+			{ID: "size", Header: "Data size", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("right"), Width: uisignals.Pointer("110px")},
+			{ID: "snapshot", Header: "Begin snapshot", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("right"), Width: uisignals.Pointer("130px")},
+		},
+		Rows:     rows,
+		Empty:    "No active data files were found for this table.",
+		MinWidth: uisignals.Pointer("760px"),
+	}
+}
+
 func adminQueryEventsGrid(events []AdminQueryEvent) adminRecordTable {
 	rows := make([]map[string]any, 0, len(events))
 	for _, event := range events {
@@ -1010,6 +1074,8 @@ func adminPageTitle(active string) string {
 		return "Storage"
 	case "storage-v2":
 		return "Storage v2"
+	case "storage-v2-detail":
+		return "Storage table"
 	case "queries":
 		return "Query history"
 	case "audit":
@@ -1025,7 +1091,7 @@ func adminPageTitle(active string) string {
 
 func normalizeAdminSection(active string) string {
 	switch strings.TrimSpace(active) {
-	case "profile", "security", "api-tokens", "general", "workspaces-admin", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-v2", "queries", "audit", "system", "publications":
+	case "profile", "security", "api-tokens", "general", "workspaces-admin", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-v2", "storage-v2-detail", "queries", "audit", "system", "publications":
 		return strings.TrimSpace(active)
 	default:
 		return "profile"

@@ -47,8 +47,10 @@ func TestAdminBootstrapSignalsUseAdminOwnedContracts(t *testing.T) {
 
 func TestStorageV2UsesStorageReadModelOnASettingsListPage(t *testing.T) {
 	signals := AdminBootstrapSignals("storage-v2", AdminData{Storage: AdminStorageData{
-		TableCount: 1,
-		Tables:     []AdminStorageTable{{DatabaseID: "catalog", DatabaseName: "DuckLake", Schema: "model", Name: "orders", Type: "table"}},
+		TableCount:         1,
+		DataFileCount:      3,
+		TotalDataSizeLabel: "36 KiB",
+		Tables:             []AdminStorageTable{{DatabaseID: "catalog", DatabaseName: "DuckLake", Schema: "model", Name: "orders", Type: "table"}},
 	}})
 	page, ok := signals["page"].(uisignals.AdminPageSignal)
 	if !ok {
@@ -57,8 +59,60 @@ func TestStorageV2UsesStorageReadModelOnASettingsListPage(t *testing.T) {
 	if page.Active != "storage-v2" || page.HeaderTitle != "Storage v2" || page.Storage == nil || len(page.Storage.Tables) != 1 {
 		t.Fatalf("storage v2 page = %#v", page)
 	}
+	if page.Metrics == nil {
+		t.Fatal("storage v2 metrics are missing")
+	}
+	metrics := *page.Metrics
+	if len(metrics) != 1 || metrics[0].Label != "Total data size" || metrics[0].Value != "36 KiB" || metrics[0].Detail == nil || *metrics[0].Detail != "3 active files" {
+		t.Fatalf("storage v2 metrics = %#v", page.Metrics)
+	}
 	if _, legacyStream := signals["adminStorage"]; legacyStream {
 		t.Fatalf("storage v2 should render from the shared page signal: %#v", signals)
+	}
+}
+
+func TestStorageV2TableDetailFocusesOnStorageAndActiveFiles(t *testing.T) {
+	data := AdminData{Storage: AdminStorageData{Tables: []AdminStorageTable{{
+		DatabaseID: "ducklake-catalog", Schema: "model", Name: "orders", Type: "table",
+		TableUUID: "table-uuid", DuckLakePath: "model/orders/", BeginSnapshot: 7,
+		RowCount: 1000, RowCountLabel: "1,000", FileCount: 1, SizeBytes: 12582912, SizeLabel: "12 MiB",
+		Files: []AdminStorageFile{{
+			Path: "model/orders/file.parquet", Format: "parquet", RecordCount: 1000,
+			RecordCountLabel: "1,000", SizeBytes: 12582912, SizeLabel: "12 MiB", BeginSnapshot: 7,
+		}},
+	}}}}
+
+	signals := AdminBootstrapSignals("storage-v2-detail", data)
+	page, ok := signals["page"].(uisignals.AdminPageSignal)
+	if !ok {
+		t.Fatalf("page = %T, want AdminPageSignal", signals["page"])
+	}
+	if page.Active != "storage-v2-detail" || page.HeaderTitle != "Storage v2 / model.orders" || page.Storage == nil || len(page.Storage.Tables) != 1 {
+		t.Fatalf("storage v2 detail page = %#v", page)
+	}
+	if page.Metrics == nil || page.Sections == nil {
+		t.Fatalf("storage v2 detail content is missing: %#v", page)
+	}
+	metrics := *page.Metrics
+	sections := *page.Sections
+	if len(metrics) != 4 || metrics[0].Label != "Data size" || metrics[0].Value != "12 MiB" || metrics[2].Value != "1,000" {
+		t.Fatalf("storage v2 detail metrics = %#v", page.Metrics)
+	}
+	if len(sections) != 2 || sections[0].Title != "Storage" || sections[0].Facts == nil || sections[1].Table == nil {
+		t.Fatalf("storage v2 detail sections = %#v", page.Sections)
+	}
+	files := sections[1].Table
+	if len(files.Rows) != 1 || files.Rows[0]["path"] != "model/orders/file.parquet" || files.Rows[0]["format"] != "PARQUET" {
+		t.Fatalf("active files table = %#v", files)
+	}
+
+	var output strings.Builder
+	if err := AdminPage("storage-v2-detail", data, nil).Render(&output); err != nil {
+		t.Fatal(err)
+	}
+	rendered := html.UnescapeString(output.String())
+	if !strings.Contains(rendered, `/updates?route=admin&schema=model&section=storage-v2-detail&table=orders`) {
+		t.Fatalf("storage v2 detail missing scoped updates URL:\n%s", rendered)
 	}
 }
 

@@ -1402,6 +1402,7 @@ test('storage v2 renders a simple shared table with a schema column', async () =
         active: 'storage-v2',
         headerTitle: 'Storage v2',
         headerDetail: 'Browse tables and views across schemas.',
+        metrics: [{ label: 'Total data size', value: '36 KiB', detail: '3 active files' }],
         storage: {
           summary: { catalogPath: '/tmp/leapview/leapview.db', dataPath: '/tmp/leapview/data', catalogSizeLabel: '32 KiB', dataSizeLabel: '36 KiB', totalSizeLabel: '68 KiB', totalDataSizeLabel: '36 KiB', databaseCount: 1, tableCount: 3, snapshotCount: 1, dataFileCount: 3 },
           status: '', warnings: [], selectedKey: '', snapshots: [], servingStates: [],
@@ -1442,6 +1443,7 @@ test('storage v2 renders a simple shared table with a schema column', async () =
         scrollWidth: tableWrap.scrollWidth,
         clientWidth: tableWrap.clientWidth,
       }
+      const hrefs = Array.from(root.querySelectorAll<HTMLAnchorElement>('.entity-list-table-row a.entity-list-identity')).map((link) => link.getAttribute('href'))
       const input = root.querySelector<HTMLInputElement>('.entity-search input')!
       input.value = 'events'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
@@ -1452,6 +1454,8 @@ test('storage v2 renders a simple shared table with a schema column', async () =
         filtered,
         columnLabels,
         listText,
+        metricsText: Array.from(element.shadowRoot.querySelectorAll('.metrics .metric')).map((metric: Element) => metric.textContent?.replace(/\s+/g, ' ').trim()),
+        hrefs,
         initialIconState,
         listLabel: root.querySelector('table')?.getAttribute('aria-label'),
         clientFilter: list.clientFilter,
@@ -1473,6 +1477,12 @@ test('storage v2 renders a simple shared table with a schema column', async () =
     expect(state.layout.firstTitleRight).toBeLessThan(state.layout.firstSchemaLeft)
     expect(state.layout.scrollWidth).toBeLessThanOrEqual(state.layout.clientWidth + 1)
     expect(state.listText).not.toContain('DuckLake catalog')
+    expect(state.metricsText).toEqual(['Total data size 36 KiB 3 active files'])
+    expect(state.hrefs).toEqual([
+      '/admin/storage-v2/tables/model/orders',
+      '/admin/storage-v2/tables/model/customers',
+      '/admin/storage-v2/tables/staging/events',
+    ])
     expect(state.initialIconState.hasRowIcons).toBe(true)
     expect(state.initialIconState.spacerCount).toBe(0)
     expect(state.initialIconState.classes).toEqual([
@@ -1493,6 +1503,90 @@ test('storage v2 renders a simple shared table with a schema column', async () =
       await list.evaluate((element: any) => element.updateComplete)
       await list.screenshot({ path: process.env.LEAPVIEW_CAPTURE_STORAGE_V2 })
     }
+  } finally {
+    await page.close()
+  }
+})
+
+test('storage v2 table detail emphasizes physical storage and active files', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  await page.route('**/profile/avatars/**', (route) => route.fulfill({ status: 204 }))
+  const consoleErrors: string[] = []
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
+
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        kind: 'admin',
+        title: 'Storage table',
+        active: 'storage-v2-detail',
+        headerTitle: 'Storage v2 / model.orders',
+        headerDetail: 'Physical storage and active data files.',
+        metrics: [
+          { label: 'Data size', value: '12 MiB' },
+          { label: 'Active files', value: '1' },
+          { label: 'Stored rows', value: '1,000' },
+          { label: 'Begin snapshot', value: '7' },
+        ],
+        sections: [
+          { title: 'Storage', facts: [
+            { label: 'Schema', value: 'model' },
+            { label: 'Object type', value: 'table' },
+            { label: 'DuckLake path', value: 'model/orders/' },
+            { label: 'Table UUID', value: 'table-uuid' },
+          ] },
+          { title: 'Active files', table: {
+            columns: [
+              { id: 'path', header: 'File path', kind: 'code', width: '320px' },
+              { id: 'format', header: 'Format', width: '90px' },
+              { id: 'rows', header: 'Rows', kind: 'number', align: 'right', width: '110px' },
+              { id: 'size', header: 'Data size', kind: 'number', align: 'right', width: '110px' },
+              { id: 'snapshot', header: 'Begin snapshot', kind: 'number', align: 'right', width: '130px' },
+            ],
+            rows: [{
+              path: 'model/orders/file.parquet',
+              format: 'PARQUET',
+              rows: { label: '1,000', value: 1000 },
+              size: { label: '12 MiB', value: 12582912 },
+              snapshot: 7,
+            }],
+            empty: 'No active data files were found for this table.',
+            minWidth: '760px',
+          } },
+        ],
+      } })
+      const element = document.querySelector('lv-admin-page') as any
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const files = root.querySelector('lv-record-table') as any
+      await files.updateComplete
+      return {
+        title: root.querySelector('h1')?.textContent?.trim(),
+        backHref: root.querySelector<HTMLAnchorElement>('.storage-v2-back')?.getAttribute('href'),
+        metricText: Array.from(root.querySelectorAll('.metrics .metric')).map((metric) => metric.textContent?.replace(/\s+/g, ' ').trim()),
+        factText: Array.from(root.querySelectorAll('.facts .metric')).map((fact) => fact.textContent?.replace(/\s+/g, ' ').trim()),
+        sectionTitles: Array.from(root.querySelectorAll('.section > h2')).map((heading) => heading.textContent?.trim()),
+        fileHeaders: Array.from(files.querySelectorAll('th')).map((header: Element) => header.textContent?.replace(/\s+/g, ' ').trim()),
+        fileText: files.textContent?.replace(/\s+/g, ' ').trim(),
+      }
+    })
+
+    expect(state.title).toBe('Storage v2 / model.orders')
+    expect(state.backHref).toBe('/admin/storage-v2')
+    expect(state.metricText).toEqual(['Data size 12 MiB', 'Active files 1', 'Stored rows 1,000', 'Begin snapshot 7'])
+    expect(state.factText).toEqual(['Schema model', 'Object type table', 'DuckLake path model/orders/', 'Table UUID table-uuid'])
+    expect(state.sectionTitles).toEqual(['Storage', 'Active files'])
+    expect(state.fileHeaders).toEqual(['File path', 'Format', 'Rows', 'Data size', 'Begin snapshot'])
+    expect(state.fileText).toContain('model/orders/file.parquet')
+    expect(state.fileText).toContain('PARQUET')
+    expect(state.fileText).toContain('12 MiB')
+    expect(state.fileText).not.toContain('DuckLake catalog')
+    expect(consoleErrors).toEqual([])
   } finally {
     await page.close()
   }

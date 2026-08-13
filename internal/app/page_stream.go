@@ -41,7 +41,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 				switch strings.TrimSpace(section) {
 				case "profile", "security", "api-tokens":
 					return routes.accessModule.ProtectNamed("", next), true
-				case "general", "service-accounts", "authentication", "storage", "storage-v2", "agent", "system":
+				case "general", "service-accounts", "authentication", "storage", "storage-v2", "storage-v2-detail", "agent", "system":
 					return routes.accessModule.ProtectPlatformNamed("MANAGE_PLATFORM", next), true
 				case "workspaces-admin":
 					return routes.accessModule.ProtectGlobalNamed("MANAGE_WORKSPACE", next), true

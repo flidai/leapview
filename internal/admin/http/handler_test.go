@@ -56,6 +56,31 @@ func TestAdminRootRedirectsToDefaultProfile(t *testing.T) {
 	}
 }
 
+func TestSelectStorageV2TableNarrowsTheDetailReadModel(t *testing.T) {
+	data := ui.AdminData{Storage: ui.AdminStorageData{
+		TotalDataSizeLabel: "24 MiB",
+		Tables: []ui.AdminStorageTable{
+			{Schema: "model", Name: "customers"},
+			{Schema: "model", Name: "orders", Files: []ui.AdminStorageFile{{Path: "model/orders/file.parquet"}}},
+		},
+	}}
+
+	if !selectStorageV2Table(&data, " model ", " orders ") {
+		t.Fatal("expected table selection to succeed")
+	}
+	if len(data.Storage.Tables) != 1 || data.Storage.Tables[0].Name != "orders" || len(data.Storage.Tables[0].Files) != 1 {
+		t.Fatalf("selected storage table = %#v", data.Storage.Tables)
+	}
+	if data.Storage.TotalDataSizeLabel != "24 MiB" {
+		t.Fatalf("storage summary was unexpectedly changed: %#v", data.Storage)
+	}
+
+	missing := ui.AdminData{Storage: ui.AdminStorageData{Tables: []ui.AdminStorageTable{{Schema: "model", Name: "orders"}}}}
+	if selectStorageV2Table(&missing, "model", "missing") {
+		t.Fatal("missing table selection unexpectedly succeeded")
+	}
+}
+
 func TestProfileRendersAdminOwnedPageAdapter(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/admin/profile", nil)

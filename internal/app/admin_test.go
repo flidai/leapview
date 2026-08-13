@@ -83,8 +83,10 @@ func TestAdminRoutesExposeOnlyPersonalSettingsToViewer(t *testing.T) {
 		{method: http.MethodGet, path: "/admin/agent", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage-v2", status: http.StatusForbidden},
+		{method: http.MethodGet, path: "/admin/storage-v2/tables/model/orders", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/updates?route=admin&section=storage", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/updates?route=admin&section=storage-v2", status: http.StatusForbidden},
+		{method: http.MethodGet, path: "/updates?route=admin&section=storage-v2-detail&schema=model&table=orders", status: http.StatusForbidden},
 		{method: http.MethodPost, path: "/admin/storage/select-table", body: `{}`, status: http.StatusForbidden},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
@@ -880,7 +882,7 @@ VALUES ('test', 'prod', 'dep_prod')`, snapshotID, snapshotID); err != nil {
 
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 
-		WorkspaceID:  "test",
+		WorkspaceID:         "test",
 		DuckLakeCatalogPath: catalogPath,
 		DuckLakeDataPath:    dataPath,
 		AnalyticsModule:     analyticsmodule.NewSurface(environment, nil),

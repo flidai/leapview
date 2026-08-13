@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
-import { CheckCircle2, Clock3, Copy, XCircle } from 'lucide'
+import { ArrowLeft, CheckCircle2, Clock3, Copy, XCircle } from 'lucide'
 import type { AdminPageSignal, AdminContentSectionSignal, AdminPublicationSignal, AdminQueryDetailSignal, AdminQueryHistoryFilters, AdminQueryHistorySignal, AdminStorageSignal, FilterMenuCommand, FilterMenuSignal, RecordTableSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -227,6 +227,25 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       min-width: 0;
       align-content: start;
       gap: var(--base-size-12);
+    }
+
+    .storage-v2-back {
+      display: inline-flex;
+      width: fit-content;
+      align-items: center;
+      gap: var(--base-size-6);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-body);
+      text-decoration: none;
+    }
+
+    .storage-v2-back:hover {
+      color: var(--lv-fg-default);
+    }
+
+    .storage-v2-back svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
     }
 
     .publication-list {
@@ -660,7 +679,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     const mainClass = [
       'main',
       page.active === 'storage' ? 'main-storage' : '',
-      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'workspaces-admin' || page.active === 'storage-v2' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'workspaces-admin' || page.active === 'storage-v2' || page.active === 'storage-v2-detail' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
     ].filter(Boolean).join(' ')
     return html`
@@ -701,7 +720,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
                 : page.active === 'workspaces-admin' ? html`<lv-workspace-registry></lv-workspace-registry>`
                   : page.active === 'service-accounts' ? html`<lv-service-accounts></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
-                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-v2' ? this.renderStorageV2(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map(renderSection)}
+                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-v2' ? this.renderStorageV2(page) : page.active === 'storage-v2-detail' ? this.renderStorageV2Detail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map(renderSection)}
         </section>
       </div>
     `
@@ -753,6 +772,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     const items = (storage.tables ?? []).map((table) => ({
       id: table.key,
       title: table.name,
+      href: `/admin/storage-v2/tables/${encodeURIComponent(table.schema || 'default')}/${encodeURIComponent(table.name)}`,
       icon: table.type === 'view' ? 'view' : 'table',
       iconTreatment: 'plain' as const,
       columns: {
@@ -781,6 +801,16 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
         search-placeholder="Search storage tables"
         empty-text=${storage.status || 'No storage tables found.'}
       ></lv-entity-list>
+    `
+  }
+
+  private renderStorageV2Detail(page: AdminPageSignal) {
+    return html`
+      <a class="storage-v2-back" href="/admin/storage-v2">
+        ${lucideIcon(ArrowLeft, { size: 16, strokeWidth: 2 })}
+        <span>Back to Storage v2</span>
+      </a>
+      ${page.sections?.map(renderSection)}
     `
   }
 
