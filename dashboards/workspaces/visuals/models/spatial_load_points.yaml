@@ -54,7 +54,7 @@ spec:
         printf('olist-geo-%07d', point_number) AS point_id,
         city,
         state,
-        latitude,
-        longitude
+        -33.5 + ((point_number - 1) % 1000) * 0.037 AS latitude,
+        -73.5 + floor((point_number - 1) / 1000) * 0.039 AS longitude
       FROM numbered
       WHERE point_number <= 1000000

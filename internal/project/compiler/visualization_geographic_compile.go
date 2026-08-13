@@ -11,6 +11,10 @@ import (
 )
 
 func compileGeographicVisualizationSpec(authored reportdef.Visual) (visualizationir.VisualizationSpec, error) {
+	tiled, err := geographicUsesTiledDelivery(authored)
+	if err != nil {
+		return visualizationir.VisualizationSpec{}, err
+	}
 	fields := geographicVisualizationFields(authored)
 	known := make(map[string]struct{}, len(fields))
 	for _, field := range fields {
@@ -46,9 +50,13 @@ func compileGeographicVisualizationSpec(authored reportdef.Visual) (visualizatio
 	if accessibilityDescription == "" {
 		accessibilityDescription = title
 	}
+	maxRows := compiledVisualLimit(authored)
+	if tiled {
+		maxRows = 0
+	}
 	base := visualizationir.VisualizationSpecBase{
 		Kind: "geographic", Title: title, Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: fields}},
-		DataBudget:    visualizationir.VisualizationDataBudget{MaxRows: compiledVisualLimit(authored), RequiredCompleteness: visualizationir.VisualizationCompletenessComplete},
+		DataBudget:    visualizationir.VisualizationDataBudget{MaxRows: maxRows, RequiredCompleteness: visualizationir.VisualizationCompletenessComplete},
 		Accessibility: visualizationir.VisualizationAccessibility{Title: accessibilityTitle, Description: accessibilityDescription},
 		Interactions:  compiledSelectionInteractions("point_selection", authored.Interaction.PointSelection),
 	}

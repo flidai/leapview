@@ -19,10 +19,12 @@ import (
 )
 
 type VisualizationDataService struct {
-	mu       *sync.RWMutex
-	reports  *ReportService
-	runtimes map[string]*modelRuntime
-	filters  *FilterService
+	mu          *sync.RWMutex
+	reports     *ReportService
+	runtimes    map[string]*modelRuntime
+	filters     *FilterService
+	tiles       *spatialTileRegistry
+	workspaceID string
 }
 
 func (s *VisualizationDataService) visuals(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, keys []string) (map[string]visualizationir.VisualizationEnvelope, error) {

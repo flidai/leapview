@@ -94,6 +94,7 @@ type entry struct {
 	composite, key, scope string
 	arrowResult           *arrowresult.Result
 	arrowHold             *arrowresult.Lease
+	byteValue             []byte
 	metadata              Metadata
 	bytes                 int64
 }
@@ -289,6 +290,31 @@ func (s *Scope) LookupArrow(key string) (*EntryLease, Token, bool, error) {
 	return &EntryLease{data: lease, metadata: cloneMetadata(e.metadata)}, state.generation, true, nil
 }
 
+// LookupBytes returns a copy of an immutable byte entry. Callers can mutate
+// the returned slice without changing cached tiles or other callers' results.
+func (s *Scope) LookupBytes(key string) ([]byte, Token, bool, error) {
+	if s == nil || s.pool == nil {
+		return nil, 0, false, fmt.Errorf("result cache scope is required")
+	}
+	p := s.pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := p.scopes[s.key]
+	if p.closed || state == nil || state.closed {
+		return nil, 0, false, fmt.Errorf("result cache scope is closed")
+	}
+	element := p.entries[s.key+"\x00"+key]
+	if element == nil {
+		return nil, state.generation, false, nil
+	}
+	e := element.Value.(entry)
+	if e.byteValue == nil {
+		return nil, state.generation, false, nil
+	}
+	p.lru.MoveToFront(element)
+	return append([]byte(nil), e.byteValue...), state.generation, true, nil
+}
+
 // StoreArrow retains one cache-owned reference when the value fits every
 // applicable budget. The caller retains ownership of its original reference.
 func (s *Scope) StoreArrow(key string, token Token, result *arrowresult.Result, metadata Metadata) StoreOutcome {
@@ -322,6 +348,48 @@ func (s *Scope) StoreArrow(key string, token Token, result *arrowresult.Result, 
 		p.removeLocked(old, "")
 	}
 	e := entry{composite: composite, key: key, scope: s.key, arrowResult: result, arrowHold: hold, metadata: cloneMetadata(metadata), bytes: bytes}
+	element := p.lru.PushFront(e)
+	p.entries[composite] = element
+	state.entries[composite] = struct{}{}
+	state.usage.entries++
+	state.usage.bytes += bytes
+	workspace := p.workspaceLocked(state.id.WorkspaceID)
+	workspace.entries++
+	workspace.bytes += bytes
+	p.bytes += bytes
+	p.enforceLocked(state)
+	p.stores[StoreStored]++
+	return StoreStored
+}
+
+// StoreBytes copies and retains one immutable byte entry under the same
+// runtime/workspace/node budgets as Arrow results.
+func (s *Scope) StoreBytes(key string, token Token, value []byte) StoreOutcome {
+	if s == nil || s.pool == nil || value == nil {
+		return StoreClosed
+	}
+	p := s.pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := p.scopes[s.key]
+	if p.closed || state == nil || state.closed {
+		p.stores[StoreClosed]++
+		return StoreClosed
+	}
+	if token != state.generation {
+		p.stores[StoreStale]++
+		return StoreStale
+	}
+	bytes := int64(len(key) + len(value))
+	if bytes > p.limits.RuntimeBytes || bytes > p.limits.WorkspaceBytes || bytes > p.limits.NodeBytes {
+		p.stores[StoreOversized]++
+		return StoreOversized
+	}
+	composite := s.key + "\x00" + key
+	if old := p.entries[composite]; old != nil {
+		p.removeLocked(old, "")
+	}
+	e := entry{composite: composite, key: key, scope: s.key, byteValue: append([]byte(nil), value...), bytes: bytes}
 	element := p.lru.PushFront(e)
 	p.entries[composite] = element
 	state.entries[composite] = struct{}{}

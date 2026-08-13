@@ -104,9 +104,9 @@ type MatrixQueryBinding struct {
 type PivotQueryBinding = MatrixQueryBinding
 
 // SpatialQueryBinding is the compiler-resolved query contract for a
-// geographic visualization. Viewport is present only when the visual uses the
-// large-data spatial runtime; inline and keyed choropleth maps deliberately
-// keep it nil while retaining the same geographic query ownership.
+// geographic visualization. Tiles is present when every data-bound layer can
+// use the governed MVT runtime. Viewport remains during the compatibility
+// window and is removed once all active streams have tiled parity.
 type SpatialQueryBinding struct {
 	TableID    string                  `json:"tableID" yaml:"table_id"`
 	Dimensions []FieldBinding          `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
@@ -116,6 +116,21 @@ type SpatialQueryBinding struct {
 	Sort       []Sort                  `json:"sort,omitempty" yaml:"sort,omitempty"`
 	Limit      int64                   `json:"limit" yaml:"limit"`
 	Viewport   *SpatialViewportBinding `json:"viewport,omitempty" yaml:"viewport,omitempty"`
+	Tiles      *SpatialTileBinding     `json:"tiles,omitempty" yaml:"tiles,omitempty"`
+}
+
+// SpatialTileBinding identifies the compiler-resolved coordinate pair and
+// bounded server-side transport policy for one native MapLibre vector source.
+type SpatialTileBinding struct {
+	Latitude       FieldBinding `json:"latitude" yaml:"latitude"`
+	Longitude      FieldBinding `json:"longitude" yaml:"longitude"`
+	MinimumZoom    int32        `json:"minimumZoom" yaml:"minimum_zoom"`
+	MaximumZoom    int32        `json:"maximumZoom" yaml:"maximum_zoom"`
+	RawMinimumZoom int32        `json:"rawMinimumZoom" yaml:"raw_minimum_zoom"`
+	FeatureCap     int64        `json:"featureCap" yaml:"feature_cap"`
+	MaximumBytes   int64        `json:"maximumBytes" yaml:"maximum_bytes"`
+	MetatileSize   int32        `json:"metatileSize" yaml:"metatile_size"`
+	CellRadius     int32        `json:"cellRadius" yaml:"cell_radius"`
 }
 
 // SpatialViewportBinding identifies the one compiler-resolved coordinate pair
@@ -151,6 +166,9 @@ func (query QueryBinding) Validate() error {
 		return err
 	}
 	if viewport := view.viewport; viewport != nil {
+		if view.tiles != nil {
+			return fmt.Errorf("spatial query cannot use viewport and tiled delivery together")
+		}
 		if viewport.FeatureCap <= 0 || viewport.FeatureCap > view.limit {
 			return fmt.Errorf("spatial viewport requires a positive feature cap no greater than its row limit")
 		}
@@ -161,14 +179,34 @@ func (query QueryBinding) Validate() error {
 			return fmt.Errorf("spatial viewport coordinates must reference compiled query fields")
 		}
 	}
+	if tiles := view.tiles; tiles != nil {
+		if view.limit != 0 {
+			return fmt.Errorf("spatial tiled query must not use a row transport limit")
+		}
+		if tiles.MinimumZoom < 0 || tiles.MaximumZoom > 24 || tiles.MinimumZoom > tiles.MaximumZoom {
+			return fmt.Errorf("spatial tiles require an ordered zoom range between 0 and 24")
+		}
+		if tiles.RawMinimumZoom < tiles.MinimumZoom || tiles.RawMinimumZoom > tiles.MaximumZoom {
+			return fmt.Errorf("spatial tiles raw minimum zoom must be within the tile zoom range")
+		}
+		if tiles.FeatureCap <= 0 || tiles.MaximumBytes <= 0 || tiles.MetatileSize <= 0 {
+			return fmt.Errorf("spatial tiles require positive feature, byte, and metatile budgets")
+		}
+		if tiles.CellRadius < 32 || tiles.CellRadius > 64 {
+			return fmt.Errorf("spatial tile cell radius must be between 32 and 64 CSS pixels")
+		}
+		if !containsFieldBinding(view.fields, tiles.Latitude) || !containsFieldBinding(view.fields, tiles.Longitude) {
+			return fmt.Errorf("spatial tile coordinates must reference compiled query fields")
+		}
+	}
 	if !queryKindSupportsResult(query.Kind, query.ResultShape) {
 		return fmt.Errorf("visualization query kind %q does not support result shape %q", query.Kind, query.ResultShape)
 	}
 	if query.Kind == QueryDetail && view.tableID == "" {
 		return fmt.Errorf("visualization detail query requires table ID")
 	}
-	if len(view.fields) == 0 || view.limit <= 0 {
-		return fmt.Errorf("visualization %s query requires fields and positive limit", query.Kind)
+	if len(view.fields) == 0 || (view.limit <= 0 && view.tiles == nil) {
+		return fmt.Errorf("visualization %s query requires fields and a positive limit unless tiled", query.Kind)
 	}
 	aliases := make(map[string]int, len(view.fields))
 	fieldIDs := make(map[string]struct{}, len(view.fields))
@@ -247,6 +285,7 @@ type queryBindingView struct {
 	time     *TimeBinding
 	limit    int64
 	viewport *SpatialViewportBinding
+	tiles    *SpatialTileBinding
 }
 
 func (query QueryBinding) validationView() (queryBindingView, error) {
@@ -294,7 +333,7 @@ func (query QueryBinding) validationView() (queryBindingView, error) {
 		if query.Spatial == nil {
 			return queryBindingView{}, fmt.Errorf("spatial query binding requires spatial branch")
 		}
-		view.tableID, view.sorts, view.limit, view.viewport = query.Spatial.TableID, query.Spatial.Sort, query.Spatial.Limit, query.Spatial.Viewport
+		view.tableID, view.sorts, view.limit, view.viewport, view.tiles = query.Spatial.TableID, query.Spatial.Sort, query.Spatial.Limit, query.Spatial.Viewport, query.Spatial.Tiles
 		addAggregateFields(query.Spatial.Dimensions, query.Spatial.Series, query.Spatial.Time, query.Spatial.Measures)
 	default:
 		return queryBindingView{}, fmt.Errorf("unsupported visualization query kind %q", query.Kind)
@@ -398,7 +437,10 @@ func validateSecondaryQueries(definition Definition, base ir.VisualizationSpecBa
 	if err != nil {
 		return err
 	}
-	if primaryView.limit > base.DataBudget.MaxRows {
+	if primaryView.tiles != nil && base.DataBudget.MaxRows != 0 {
+		return fmt.Errorf("visualization %q tiled spatial query must not declare a row budget", definition.ID)
+	}
+	if primaryView.tiles == nil && primaryView.limit > base.DataBudget.MaxRows {
 		return fmt.Errorf("visualization %q primary query limit %d exceeds row budget %d", definition.ID, primaryView.limit, base.DataBudget.MaxRows)
 	}
 	for datasetID, query := range definition.SecondaryQueries {

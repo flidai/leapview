@@ -14,6 +14,7 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -69,6 +70,11 @@ type visualizationRuntime interface {
 	QueryVisualization(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error)
 	QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error)
 	QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error)
+}
+
+type spatialTileRuntime interface {
+	QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error)
+	QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error)
 }
 
 type semanticQueryRuntime interface {
@@ -313,6 +319,32 @@ func (m runtimeMetrics) QueryVisualizationSpatialWindow(ctx context.Context, das
 		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide visualization data")
 	}
 	return port.QueryVisualizationSpatialWindow(ctx, dashboardID, pageID, filters, request)
+}
+
+func (m runtimeMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	runtime, release, err := m.active(ctx)
+	if err != nil {
+		return dashboardruntime.SpatialTileResult{}, err
+	}
+	defer release()
+	port, ok := runtime.(spatialTileRuntime)
+	if !ok {
+		return dashboardruntime.SpatialTileResult{}, fmt.Errorf("active runtime does not provide spatial tiles")
+	}
+	return port.QueryVisualizationTile(ctx, dashboardID, visualID, revision, zoom, x, y)
+}
+
+func (m runtimeMetrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	runtime, release, err := m.active(ctx)
+	if err != nil {
+		return dashboardruntime.SpatialTileResult{}, err
+	}
+	defer release()
+	port, ok := runtime.(spatialTileRuntime)
+	if !ok {
+		return dashboardruntime.SpatialTileResult{}, fmt.Errorf("active runtime does not provide public spatial tiles")
+	}
+	return port.QueryPublicVisualizationTile(ctx, publicID, dashboardID, visualID, revision, zoom, x, y)
 }
 
 func (m runtimeMetrics) WithDashboardRefreshLease(ctx context.Context, run func(context.Context) error) error {

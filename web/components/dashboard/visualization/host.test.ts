@@ -229,7 +229,7 @@ test('registry rejects duplicate IDs and unsupported capabilities fail closed', 
     ...registration,
     id: 'future',
     schemaVersion: (currentVisualizationSchemaVersion + 1) as typeof currentVisualizationSchemaVersion,
-  })).toThrow(/schema version 9/)
+  })).toThrow(new RegExp(`schema version ${currentVisualizationSchemaVersion}`))
 
   const controller = new VisualizationController(registry, {} as HTMLElement)
   await expect(controller.apply(envelope(1))).rejects.toThrow(/does not support kind/)

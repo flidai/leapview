@@ -18,6 +18,15 @@ type Frame struct {
 	Completeness ir.VisualizationCompleteness
 }
 
+type SpatialTiledMetadata struct {
+	Cardinality      int64
+	Extent           ir.VisualizationSpatialBounds
+	RawDomains       []ir.VisualizationSpatialScaleDomain
+	AggregateDomains []ir.VisualizationSpatialScaleDomain
+	TileURL          string
+	RawMinimumZoom   int32
+}
+
 // FrameFromRecords orders named query values according to the immutable
 // compiled dataset schema. It is the shared boundary for non-dashboard
 // producers such as agent-generated visualizations.
@@ -195,6 +204,44 @@ func SpatialEnvelopeFromFrame(definition visualizationdefinition.Definition, fra
 	return envelope, nil
 }
 
+func SpatialTiledEnvelopeFromMetadata(definition visualizationdefinition.Definition, metadata SpatialTiledMetadata, selections []dashboard.InteractionSelectionEntry, dataRevision, generation int64) (ir.VisualizationEnvelope, error) {
+	if err := definition.Validate(); err != nil {
+		return ir.VisualizationEnvelope{}, err
+	}
+	geographic, ok := definition.Spec.Value.(*ir.GeographicVisualizationSpec)
+	if !ok || definition.Query.Kind != visualizationdefinition.QuerySpatial || definition.Query.Spatial == nil || definition.Query.Spatial.Tiles == nil {
+		return ir.VisualizationEnvelope{}, fmt.Errorf("visualization %q has no compiled spatial tile binding", definition.ID)
+	}
+	schema, err := compiledDatasetSchema(geographic.VisualizationSpecBase, definition.Query.DatasetID)
+	if err != nil {
+		return ir.VisualizationEnvelope{}, err
+	}
+	tiles := definition.Query.Spatial.Tiles
+	count := metadata.Cardinality
+	state := ir.SpatialTiledVisualizationDataState{
+		VisualizationDataStateBase: ir.VisualizationDataStateBase{Kind: "spatial_tiled", SpecRevision: definition.SpecRevision, DataRevision: dataRevision, Generation: generation},
+		Kind:                       "spatial_tiled", Schema: schema, Cardinality: ir.VisualizationCardinality{Kind: ir.VisualizationCardinalityKindExact, Count: &count}, Extent: metadata.Extent,
+		RawDomains: metadata.RawDomains, AggregateDomains: metadata.AggregateDomains, TileURL: metadata.TileURL,
+		MinimumZoom: tiles.MinimumZoom, MaximumZoom: tiles.MaximumZoom, RawMinimumZoom: metadata.RawMinimumZoom, FeatureCap: tiles.FeatureCap, MaximumTileBytes: tiles.MaximumBytes,
+	}
+	status := ir.VisualizationStatusKindReady
+	if count == 0 {
+		status = ir.VisualizationStatusKindNoData
+	}
+	envelope := ir.VisualizationEnvelope{
+		SchemaVersion: ir.CurrentSchemaVersion, VisualID: definition.ID, RendererID: definition.RendererID, SpecRevision: definition.SpecRevision, Spec: definition.Spec,
+		DataRevision: dataRevision, DataState: ir.VisualizationDataState{Value: &state}, Highlights: []ir.VisualizationHighlightState{}, Status: ir.VisualizationStatus{Kind: status}, Diagnostics: []ir.VisualizationDiagnostic{},
+	}
+	envelope.Selection, err = compiledSelections(definition.Spec, selections, dataRevision)
+	if err != nil {
+		return ir.VisualizationEnvelope{}, err
+	}
+	if err := ir.ValidateEnvelope(envelope); err != nil {
+		return ir.VisualizationEnvelope{}, fmt.Errorf("compiled spatial tiled visualization %q: %w", definition.ID, err)
+	}
+	return envelope, nil
+}
+
 func compiledDatasetSchema(base ir.VisualizationSpecBase, datasetID string) (ir.VisualizationDatasetSchema, error) {
 	for _, schema := range base.Datasets {
 		if schema.ID == datasetID {
@@ -334,7 +381,17 @@ func EmptyEnvelopeFromDefinition(definition visualizationdefinition.Definition, 
 		SpecRevision: definition.SpecRevision, Spec: definition.Spec, DataRevision: dataRevision,
 		Selection: []ir.VisualizationSelectionEntry{}, Highlights: []ir.VisualizationHighlightState{}, Status: ir.VisualizationStatus{Kind: ir.VisualizationStatusKindNoData}, Diagnostics: []ir.VisualizationDiagnostic{},
 	}
-	if definition.Query.Kind == visualizationdefinition.QuerySpatial && definition.Query.Spatial != nil && definition.Query.Spatial.Viewport != nil {
+	if definition.Query.Kind == visualizationdefinition.QuerySpatial && definition.Query.Spatial != nil && definition.Query.Spatial.Tiles != nil {
+		count := int64(0)
+		tiles := definition.Query.Spatial.Tiles
+		state := ir.SpatialTiledVisualizationDataState{
+			VisualizationDataStateBase: ir.VisualizationDataStateBase{Kind: "spatial_tiled", SpecRevision: definition.SpecRevision, DataRevision: dataRevision, Generation: generation},
+			Kind:                       "spatial_tiled", Schema: schema, Cardinality: ir.VisualizationCardinality{Kind: ir.VisualizationCardinalityKindExact, Count: &count},
+			Extent: ir.VisualizationSpatialBounds{West: -180, South: -85.0511287798066, East: 180, North: 85.0511287798066}, RawDomains: []ir.VisualizationSpatialScaleDomain{}, AggregateDomains: []ir.VisualizationSpatialScaleDomain{},
+			TileURL: "/tiles/unavailable/{z}/{x}/{y}.mvt", MinimumZoom: tiles.MinimumZoom, MaximumZoom: tiles.MaximumZoom, RawMinimumZoom: tiles.RawMinimumZoom, FeatureCap: tiles.FeatureCap, MaximumTileBytes: tiles.MaximumBytes,
+		}
+		envelope.DataState = ir.VisualizationDataState{Value: &state}
+	} else if definition.Query.Kind == visualizationdefinition.QuerySpatial && definition.Query.Spatial != nil && definition.Query.Spatial.Viewport != nil {
 		geographic, ok := definition.Spec.Value.(*ir.GeographicVisualizationSpec)
 		if !ok {
 			return ir.VisualizationEnvelope{}, fmt.Errorf("compiled spatial visualization %q is not geographic", definition.ID)

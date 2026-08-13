@@ -1,7 +1,7 @@
 import type { FeatureCollection } from 'geojson'
 import type { GeoJSONSource } from 'maplibre-gl'
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../../generated/visualization'
-import type { OptimisticInteractionCommand } from '../../../interaction-selection'
+import { interactionSelectionLabel, interactionSelectionValue, type OptimisticInteractionCommand } from '../../../interaction-selection'
 import { clearInteractionCommand, interactionCommandForRowIndex } from '../../interaction-command'
 import { coordinateGeometry, joinGeometry, pathGeometry } from './data'
 import { applyFeatureScales } from './layers'
@@ -49,6 +49,22 @@ export function mapInteractionCommand(
   features: readonly RenderedFeatureLocator[],
   selectableLayerIDs: readonly string[],
 ): OptimisticInteractionCommand | undefined {
+	if (envelope.dataState.kind === 'spatial_tiled') {
+		const selectable = new Set(selectableLayerIDs)
+		for (const feature of features) {
+			if (!feature.layer?.id || !selectable.has(feature.layer.id) || feature.properties?.__lv_aggregate === true) continue
+			const interaction = envelope.spec.interactions.find((candidate) => candidate.kind === 'select')
+			if (!interaction) continue
+			const mappings = interaction.mappings.map((mapping) => {
+				const value = interactionSelectionValue(feature.properties?.[mapping.source.field])
+				const label = interactionSelectionValue(feature.properties?.[mapping.label?.field ?? mapping.source.field])
+				if (value === undefined || label === undefined) return undefined
+				return { field: mapping.targetFieldID, ...(mapping.targetFactID ? { fact: mapping.targetFactID } : {}), ...(mapping.grain ? { grain: mapping.grain } : {}), value, label: interactionSelectionLabel(label) }
+			})
+			if (mappings.some((mapping) => mapping === undefined)) continue
+			return { sourceKind: 'visual', sourceId: envelope.visualID, interactionKind: interaction.id, action: 'set', toggle: interaction.mode === 'multiple', mappings: mappings as OptimisticInteractionCommand['mappings'] }
+		}
+	}
   return interactionCommandForRenderedFeatures(envelope, features, selectableLayerIDs)
     ?? (envelope.selection.length > 0 ? clearInteractionCommand(envelope) : undefined)
 }

@@ -295,6 +295,22 @@ type RulesVisualizationConditionalRule struct {
 	DefaultStyle VisualizationConditionalStyle       `json:"defaultStyle"`
 }
 
+type SpatialTiledVisualizationDataState struct {
+	VisualizationDataStateBase
+	Kind             string                            `json:"kind"`
+	Schema           VisualizationDatasetSchema        `json:"schema"`
+	Cardinality      VisualizationCardinality          `json:"cardinality"`
+	Extent           VisualizationSpatialBounds        `json:"extent"`
+	RawDomains       []VisualizationSpatialScaleDomain `json:"rawDomains"`
+	AggregateDomains []VisualizationSpatialScaleDomain `json:"aggregateDomains"`
+	TileURL          string                            `json:"tileURL"`
+	MinimumZoom      int32                             `json:"minimumZoom"`
+	MaximumZoom      int32                             `json:"maximumZoom"`
+	RawMinimumZoom   int32                             `json:"rawMinimumZoom"`
+	FeatureCap       int64                             `json:"featureCap"`
+	MaximumTileBytes int64                             `json:"maximumTileBytes"`
+}
+
 type SpatialWindowedVisualizationDataState struct {
 	VisualizationDataStateBase
 	Kind         string                           `json:"kind"`
@@ -1069,12 +1085,18 @@ type VisualizationDataState struct {
 }
 
 func (*InlineVisualizationDataState) isVisualizationDataStateVariant()          {}
+func (*SpatialTiledVisualizationDataState) isVisualizationDataStateVariant()    {}
 func (*SpatialWindowedVisualizationDataState) isVisualizationDataStateVariant() {}
 func (*WindowedVisualizationDataState) isVisualizationDataStateVariant()        {}
 
 func (value VisualizationDataState) MarshalJSON() ([]byte, error) {
 	switch variant := value.Value.(type) {
 	case *InlineVisualizationDataState:
+		if variant == nil {
+			return nil, fmt.Errorf("VisualizationDataState variant is nil")
+		}
+		return json.Marshal(variant)
+	case *SpatialTiledVisualizationDataState:
 		if variant == nil {
 			return nil, fmt.Errorf("VisualizationDataState variant is nil")
 		}
@@ -1136,6 +1158,57 @@ func (value *VisualizationDataState) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("decode VisualizationDataState variant %q: required property specRevision is missing", tag.Value)
 		}
 		var variant InlineVisualizationDataState
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode VisualizationDataState variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "spatial_tiled":
+		if _, ok := fields["aggregateDomains"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property aggregateDomains is missing", tag.Value)
+		}
+		if _, ok := fields["cardinality"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property cardinality is missing", tag.Value)
+		}
+		if _, ok := fields["dataRevision"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property dataRevision is missing", tag.Value)
+		}
+		if _, ok := fields["extent"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property extent is missing", tag.Value)
+		}
+		if _, ok := fields["featureCap"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property featureCap is missing", tag.Value)
+		}
+		if _, ok := fields["generation"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property generation is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["maximumTileBytes"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property maximumTileBytes is missing", tag.Value)
+		}
+		if _, ok := fields["maximumZoom"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property maximumZoom is missing", tag.Value)
+		}
+		if _, ok := fields["minimumZoom"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property minimumZoom is missing", tag.Value)
+		}
+		if _, ok := fields["rawDomains"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property rawDomains is missing", tag.Value)
+		}
+		if _, ok := fields["rawMinimumZoom"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property rawMinimumZoom is missing", tag.Value)
+		}
+		if _, ok := fields["schema"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property schema is missing", tag.Value)
+		}
+		if _, ok := fields["specRevision"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property specRevision is missing", tag.Value)
+		}
+		if _, ok := fields["tileURL"]; !ok {
+			return fmt.Errorf("decode VisualizationDataState variant %q: required property tileURL is missing", tag.Value)
+		}
+		var variant SpatialTiledVisualizationDataState
 		if err := decode(&variant); err != nil {
 			return fmt.Errorf("decode VisualizationDataState variant %q: %w", tag.Value, err)
 		}
@@ -1226,6 +1299,7 @@ func (value *VisualizationDataState) UnmarshalJSON(data []byte) error {
 
 type VisualizationDataStateVisitor interface {
 	VisitInlineVisualizationDataState(*InlineVisualizationDataState) error
+	VisitSpatialTiledVisualizationDataState(*SpatialTiledVisualizationDataState) error
 	VisitSpatialWindowedVisualizationDataState(*SpatialWindowedVisualizationDataState) error
 	VisitWindowedVisualizationDataState(*WindowedVisualizationDataState) error
 }
@@ -1243,6 +1317,11 @@ func (value *VisualizationDataState) Visit(visitor VisualizationDataStateVisitor
 			return fmt.Errorf("VisualizationDataState variant is nil")
 		}
 		return visitor.VisitInlineVisualizationDataState(variant)
+	case *SpatialTiledVisualizationDataState:
+		if variant == nil {
+			return fmt.Errorf("VisualizationDataState variant is nil")
+		}
+		return visitor.VisitSpatialTiledVisualizationDataState(variant)
 	case *SpatialWindowedVisualizationDataState:
 		if variant == nil {
 			return fmt.Errorf("VisualizationDataState variant is nil")
@@ -1270,6 +1349,11 @@ func (value *VisualizationDataState) Kind() (string, error) {
 			return "", fmt.Errorf("VisualizationDataState variant is nil")
 		}
 		return "inline", nil
+	case *SpatialTiledVisualizationDataState:
+		if variant == nil {
+			return "", fmt.Errorf("VisualizationDataState variant is nil")
+		}
+		return "spatial_tiled", nil
 	case *SpatialWindowedVisualizationDataState:
 		if variant == nil {
 			return "", fmt.Errorf("VisualizationDataState variant is nil")
@@ -1293,6 +1377,11 @@ func (value *VisualizationDataState) Base() (*VisualizationDataStateBase, error)
 	}
 	switch variant := value.Value.(type) {
 	case *InlineVisualizationDataState:
+		if variant == nil {
+			return nil, fmt.Errorf("VisualizationDataState variant is nil")
+		}
+		return &variant.VisualizationDataStateBase, nil
+	case *SpatialTiledVisualizationDataState:
 		if variant == nil {
 			return nil, fmt.Errorf("VisualizationDataState variant is nil")
 		}
@@ -1327,6 +1416,7 @@ const (
 	VisualizationDataStateKindInline          VisualizationDataStateKind = "inline"
 	VisualizationDataStateKindWindowed        VisualizationDataStateKind = "windowed"
 	VisualizationDataStateKindSpatialWindowed VisualizationDataStateKind = "spatial_windowed"
+	VisualizationDataStateKindSpatialTiled    VisualizationDataStateKind = "spatial_tiled"
 )
 
 type VisualizationDataStateTransport struct {
@@ -2969,6 +3059,13 @@ type VisualizationSpatialRadiusSelection struct {
 	Kind         string                         `json:"kind"`
 	Center       VisualizationSpatialCoordinate `json:"center"`
 	RadiusMeters float64                        `json:"radiusMeters"`
+}
+
+type VisualizationSpatialScaleDomain struct {
+	Field   string   `json:"field"`
+	Minimum *float64 `json:"minimum,omitempty"`
+	Maximum *float64 `json:"maximum,omitempty"`
+	Total   *float64 `json:"total,omitempty"`
 }
 
 type VisualizationSpatialSelectionCommand struct {

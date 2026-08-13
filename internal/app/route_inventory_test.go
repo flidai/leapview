@@ -298,6 +298,7 @@ GET /metrics
 GET /public/dashboards/{publicId}
 GET /public/dashboards/{publicId}/pages/{page}
 GET /public/dashboards/{publicId}/updates
+GET /public/dashboards/{publicId}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /readyz
 GET /static/*
 GET /updates
@@ -308,6 +309,7 @@ GET /workspaces/{workspace}/assets/{asset}
 GET /workspaces/{workspace}/assets/{asset}/{section}
 GET /workspaces/{workspace}/dashboards/{dashboard}
 GET /workspaces/{workspace}/dashboards/{dashboard}/pages/{page}
+GET /workspaces/{workspace}/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /workspaces/{workspace}/data
 HEAD /metrics
 HEAD /static/*

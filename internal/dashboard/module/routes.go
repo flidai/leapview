@@ -41,6 +41,7 @@ func (m *Module) MountPublicCommands(r chi.Router) {
 func (m *Module) MountPublicStream(r chi.Router) {
 	if m != nil {
 		r.Get("/public/dashboards/{publicId}/updates", m.PublicDashboardUpdates)
+		r.Get("/public/dashboards/{publicId}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", m.PublicVisualizationTile)
 	}
 }
 
@@ -51,6 +52,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	h := m.handler
 	r.Get("/workspaces/{workspace}/dashboards/{dashboard}", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.Dashboard))
 	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.Page))
+	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, m.VisualizationTile))
 	r.Post("/workspaces/{workspace}/commands/visual-window", guard.Protect(access.PrivilegeViewItem, h.VisualWindow))
 	r.Post("/workspaces/{workspace}/commands/visual-spatial-window", guard.Protect(access.PrivilegeViewItem, h.VisualSpatialWindow))
 	r.Post("/workspaces/{workspace}/commands/select", guard.Protect(access.PrivilegeViewItem, h.Select))

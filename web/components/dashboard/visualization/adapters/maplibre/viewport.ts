@@ -1,5 +1,5 @@
 import type { Feature, FeatureCollection, Geometry, Position } from 'geojson'
-import type { VisualizationMapCamera } from '../../../../../generated/visualization'
+import type { VisualizationMapCamera, VisualizationSpatialBounds } from '../../../../../generated/visualization'
 
 type GeographicViewport = {
   fitBounds(bounds: [[number, number], [number, number]], options: { padding: number; duration: number; maxZoom: number }): unknown
@@ -26,6 +26,20 @@ export function fitMapToGeographicData(map: GeographicViewport, collections: Fea
   if (south === north) { south -= 0.01; north += 0.01 }
   map.fitBounds([[west, south], [east, north]], { padding: camera?.padding ?? 24, duration: 0, maxZoom: camera?.maximumZoom ?? 10 })
   return true
+}
+
+export function fitMapToSpatialExtent(map: GeographicViewport, extent: VisualizationSpatialBounds, camera?: VisualizationMapCamera): boolean {
+	if (camera?.mode === 'preserve') return false
+	if (camera?.mode === 'fixed' && camera.center && camera.center.length === 2) {
+		map.jumpTo?.({ center: [camera.center[0]!, camera.center[1]!], zoom: camera.zoom })
+		return true
+	}
+	let { west, south, east, north } = extent
+	if (![west, south, east, north].every(Number.isFinite)) return false
+	if (west === east) { west -= 0.01; east += 0.01 }
+	if (south === north) { south -= 0.01; north += 0.01 }
+	map.fitBounds([[west, south], [east, north]], { padding: camera?.padding ?? 24, duration: 0, maxZoom: camera?.maximumZoom ?? 10 })
+	return true
 }
 
 export function coordinateReferenceGrid(collections: FeatureCollection[]): FeatureCollection {

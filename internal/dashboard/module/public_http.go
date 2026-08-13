@@ -17,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
@@ -165,6 +166,7 @@ func (m *Module) PublicDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	query.Set("page", pageID)
 	r.URL.RawQuery = query.Encode()
 	ctx = PublicationExecutionContext(ctx, resolved.Publication, resolved.ModelID)
+	ctx = dashboardruntime.WithPublicSpatialTiles(ctx, resolved.Publication.PublicID)
 	ctx = dashboardhttp.WithPublicPresentation(ctx, dashboardhttp.PublicPresentation{PublicID: resolved.Publication.PublicID, Presentation: presentation})
 	SetPublicDashboardSecurityHeaders(w.Header(), presentation, resolved.Publication.AllowedOrigins)
 	m.PublicDashboardHTTP(resolved).Updates(w, r.WithContext(ctx))
@@ -184,6 +186,7 @@ func (m *Module) PublicDashboardCommand(commandName string) http.HandlerFunc {
 		query.Set("model", resolved.ModelID)
 		r.URL.RawQuery = query.Encode()
 		ctx := PublicationExecutionContext(r.Context(), resolved.Publication, resolved.ModelID)
+		ctx = dashboardruntime.WithPublicSpatialTiles(ctx, resolved.Publication.PublicID)
 		SetPublicDashboardSecurityHeaders(w.Header(), reportui.PresentationPublic, resolved.Publication.AllowedOrigins)
 		recorder := &apihttpmiddleware.Recorder{ResponseWriter: w, StatusCode: http.StatusOK}
 		handler := m.PublicDashboardHTTP(resolved)

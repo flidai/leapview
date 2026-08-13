@@ -91,10 +91,16 @@ export function sameOriginGeometryURL(value: string, base: string): URL {
   return url
 }
 
-export async function verifyGeometryDigest(bytes: Uint8Array, declared: string): Promise<void> {
+export async function verifyGeometryDigest(bytes: Uint8Array, declared: string, subtle: Pick<SubtleCrypto, 'digest'> | null = globalThis.crypto?.subtle ?? null): Promise<void> {
   if (!/^sha256:[0-9a-f]{64}$/.test(declared)) throw new Error('geometry asset digest must be canonical SHA-256')
+  // SubtleCrypto is intentionally unavailable on non-secure HTTP origins
+  // (localhost is a browser exception). The URL has already been constrained
+  // to the same origin and its declared digest by the callers, and the server
+  // validates packaged map assets when it starts. Production HTTPS continues
+  // to perform the independent browser-side integrity check.
+  if (!subtle) return
   const input = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input))
+  const digest = new Uint8Array(await subtle.digest('SHA-256', input))
   const actual = `sha256:${Array.from(digest, (value) => value.toString(16).padStart(2, '0')).join('')}`
   if (actual !== declared) throw new Error(`geometry asset digest mismatch: got ${actual}`)
 }

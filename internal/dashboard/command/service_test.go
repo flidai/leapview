@@ -76,8 +76,9 @@ func (m fakeMetrics) Report(string) (dashboarddefinition.Definition, *semanticmo
 				}},
 			},
 			"customer_map": {
-				Type: "map", DataBudget: reportdef.VisualDataBudget{MaxRows: 1_000_000, RequiredCompleteness: "partial"},
+				Type: "map",
 				Query: reportdef.VisualQuery{
+					Table:      "orders",
 					Dimensions: []reportdef.FieldRef{{Field: "latitude", Alias: "latitude"}, {Field: "longitude", Alias: "longitude"}, {Field: "state", Alias: "state"}},
 					Measures:   []reportdef.FieldRef{{Field: "order_count", Alias: "value"}},
 				},
@@ -152,7 +153,7 @@ func TestPrepareSpatialSelectValidatesGeometryAndUsesExplicitTargets(t *testing.
 	}
 }
 
-func TestPrepareVisualSpatialWindowValidatesCompiledIdentity(t *testing.T) {
+func TestPrepareVisualSpatialWindowRejectsTiledVisual(t *testing.T) {
 	definition, _, _ := (fakeMetrics{}).Report("dash")
 	mapDefinition := definition.Visualizations["customer_map"]
 	request := dashboard.SpatialWindowRequest{
@@ -160,17 +161,8 @@ func TestPrepareVisualSpatialWindowValidatesCompiledIdentity(t *testing.T) {
 		Bounds: dashboard.SpatialBounds{West: 170, South: -20, East: -170, North: 25}, Zoom: 3.25, Width: 960, Height: 540,
 		WindowID: "170.000000,-20.000000,-170.000000,25.000000@3.250:960x540",
 	}
-	prepared, err := (Service{Metrics: fakeMetrics{}}).PrepareVisualSpatialWindow(Request{DashboardID: "dash", PageID: "overview", VisualSpatialWindowCommand: request}, dashboard.Filters{}.WithDefaults())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(prepared.Plan.Targets) != 1 || prepared.Plan.Targets[0].Kind != TargetSpatial || prepared.Plan.Targets[0].SpatialRequest != request {
-		t.Fatalf("targets = %#v", prepared.Plan.Targets)
-	}
-
-	request.SpecRevision = "sha256:forged"
-	if _, err := (Service{Metrics: fakeMetrics{}}).PrepareVisualSpatialWindow(Request{DashboardID: "dash", PageID: "overview", VisualSpatialWindowCommand: request}, dashboard.Filters{}); err == nil {
-		t.Fatal("forged spatial revision was accepted")
+	if _, err := (Service{Metrics: fakeMetrics{}}).PrepareVisualSpatialWindow(Request{DashboardID: "dash", PageID: "overview", VisualSpatialWindowCommand: request}, dashboard.Filters{}.WithDefaults()); err == nil {
+		t.Fatal("legacy viewport command was accepted for a tiled visual")
 	}
 }
 

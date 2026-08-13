@@ -14,6 +14,7 @@ import (
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
@@ -127,6 +128,22 @@ func (m auditedMetrics) QueryVisualizationSpatialWindow(ctx context.Context, das
 		return visualizationir.VisualizationEnvelope{}, errors.New("query metrics are not configured")
 	}
 	return m.Metrics.QueryVisualizationSpatialWindow(m.auditContext(ctx), dashboardID, pageID, filters, request)
+}
+
+func (m auditedMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	port, ok := m.Metrics.(visualizationTileMetrics)
+	if !ok {
+		return dashboardruntime.SpatialTileResult{}, errors.New("spatial tile metrics are not configured")
+	}
+	return port.QueryVisualizationTile(m.auditContext(ctx), workspaceID, dashboardID, visualID, revision, zoom, x, y)
+}
+
+func (m auditedMetrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	port, ok := m.Metrics.(publicVisualizationTileMetrics)
+	if !ok {
+		return dashboardruntime.SpatialTileResult{}, errors.New("public spatial tile metrics are not configured")
+	}
+	return port.QueryPublicVisualizationTile(m.auditContext(ctx), publicID, dashboardID, visualID, revision, zoom, x, y)
 }
 
 func (m auditedMetrics) QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {

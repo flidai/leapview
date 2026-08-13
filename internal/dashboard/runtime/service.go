@@ -52,6 +52,7 @@ type Service struct {
 	filters        *FilterService
 	visualizations *VisualizationDataService
 	snapshots      *SnapshotService
+	tiles          *spatialTileRegistry
 }
 
 type modelRuntime struct {
@@ -74,7 +75,7 @@ func NewFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 
 func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntimeFactory, definition *dashboarddefinition.Workspace) (*Service, error) {
 	service := &Service{
-		runtimes: map[string]*modelRuntime{},
+		runtimes: map[string]*modelRuntime{}, tiles: newSpatialTileRegistry(),
 	}
 	service.catalog = NewCatalogService(&service.mu, definition)
 	service.reports = &ReportService{
@@ -83,10 +84,12 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 	}
 	service.filters = &FilterService{}
 	service.visualizations = &VisualizationDataService{
-		mu:       &service.mu,
-		reports:  service.reports,
-		runtimes: service.runtimes,
-		filters:  service.filters,
+		mu:          &service.mu,
+		reports:     service.reports,
+		runtimes:    service.runtimes,
+		filters:     service.filters,
+		tiles:       service.tiles,
+		workspaceID: definition.Catalog.Workspace.ID,
 	}
 	service.snapshots = &SnapshotService{
 		mu:             &service.mu,

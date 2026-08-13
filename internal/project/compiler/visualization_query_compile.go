@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -125,12 +126,49 @@ func compiledVisualResultShape(authored reportdef.Visual) (visualizationdefiniti
 }
 
 func compiledSpatialBinding(modelID string, authored reportdef.Visual, model *semanticmodel.Model) (visualizationdefinition.QueryBinding, error) {
+	tiled, err := geographicUsesTiledDelivery(authored)
+	if err != nil {
+		return visualizationdefinition.QueryBinding{}, err
+	}
 	limit := compiledVisualLimit(authored)
+	if tiled {
+		limit = 0
+	}
 	spatial := &visualizationdefinition.SpatialQueryBinding{
 		TableID: authored.Query.Table, Dimensions: compiledFields(authored.Query.Dimensions), Measures: compiledFields(authored.Query.Measures),
 		Series: compiledOptionalField(authored.Query.Series), Time: compiledTime(authored.Query.Time), Sort: compiledSort(authored.Query.Sort), Limit: limit,
 	}
-	if limit > 20_000 {
+	if tiled {
+		latitudeAlias, longitudeAlias, found, err := authoredTiledCoordinates(authored.Geo.Layers)
+		if err != nil {
+			return visualizationdefinition.QueryBinding{}, err
+		}
+		if !found {
+			return visualizationdefinition.QueryBinding{}, fmt.Errorf("tiled geographic visual requires a point, heat, or density coordinate layer")
+		}
+		fields := compiledVisualFields(authored.Query)
+		latitude, latitudeOK := fieldBindingByAlias(fields, latitudeAlias)
+		longitude, longitudeOK := fieldBindingByAlias(fields, longitudeAlias)
+		if !latitudeOK || !longitudeOK {
+			return visualizationdefinition.QueryBinding{}, fmt.Errorf("spatial tile coordinates %q and %q must reference compiled query aliases", latitudeAlias, longitudeAlias)
+		}
+		if spatial.TableID == "" && model != nil {
+			latitudeDimension, latitudeErr := model.ResolveDimension(latitude.FieldID)
+			longitudeDimension, longitudeErr := model.ResolveDimension(longitude.FieldID)
+			if latitudeErr == nil && longitudeErr == nil && latitudeDimension.Table == longitudeDimension.Table {
+				spatial.TableID = latitudeDimension.Table
+			}
+		}
+		if spatial.TableID == "" {
+			return visualizationdefinition.QueryBinding{}, fmt.Errorf("tiled geographic visual must set query.table when its coordinate fields do not resolve to one fact table")
+		}
+		spatial.Tiles = &visualizationdefinition.SpatialTileBinding{
+			Latitude: latitude, Longitude: longitude,
+			MinimumZoom: 0, MaximumZoom: 18, RawMinimumZoom: 5,
+			FeatureCap: 5000, MaximumBytes: 512 * 1024, MetatileSize: 4,
+			CellRadius: tiledCellRadius(authored.Geo.Layers),
+		}
+	} else if limit > 20_000 {
 		latitudeAlias, longitudeAlias, found, err := authoredViewportCoordinates(authored.Geo.Layers)
 		if err != nil {
 			return visualizationdefinition.QueryBinding{}, err
@@ -161,6 +199,70 @@ func compiledSpatialBinding(modelID string, authored reportdef.Visual, model *se
 	return visualizationdefinition.QueryBinding{
 		Kind: visualizationdefinition.QuerySpatial, ResultShape: visualizationdefinition.ResultGeographicFeatures, ModelID: modelID, DatasetID: "primary", Identity: interactionIdentity(authored.Interaction.PointSelection), Spatial: spatial,
 	}, nil
+}
+
+func geographicUsesTiledDelivery(authored reportdef.Visual) (bool, error) {
+	hasTiled, hasInline := false, false
+	for _, layer := range authored.Geo.Layers {
+		switch layer.Kind {
+		case "point", "heat", "density":
+			hasTiled = true
+		case "choropleth", "path":
+			hasInline = true
+		case "reference":
+			// Reference geometry remains an independent overlay.
+		}
+	}
+	if hasTiled && hasInline {
+		return false, fmt.Errorf("geographic visual cannot mix tiled point/heat/density layers with inline choropleth/path data layers; split them into separate visuals or move geometry to a reference overlay")
+	}
+	if !hasTiled {
+		return false, nil
+	}
+	if authored.Query.Limit > 0 {
+		return false, fmt.Errorf("tiled geographic visual must not set query.limit; tile budgets govern transport independently of source cardinality")
+	}
+	if authored.DataBudget.MaxRows > 0 {
+		return false, fmt.Errorf("tiled geographic visual must not set data_budget.max_rows; tile budgets govern transport independently of source cardinality")
+	}
+	return true, nil
+}
+
+func authoredTiledCoordinates(layers []reportdef.VisualGeoLayer) (latitude, longitude string, found bool, err error) {
+	for _, layer := range layers {
+		switch layer.Kind {
+		case "point", "heat", "density":
+		default:
+			continue
+		}
+		if strings.TrimSpace(layer.Latitude) == "" || strings.TrimSpace(layer.Longitude) == "" {
+			continue
+		}
+		if !found {
+			latitude, longitude, found = layer.Latitude, layer.Longitude, true
+			continue
+		}
+		if latitude != layer.Latitude || longitude != layer.Longitude {
+			return "", "", false, fmt.Errorf("tiled geographic coordinate layers must share one latitude/longitude pair")
+		}
+	}
+	return latitude, longitude, found, nil
+}
+
+func tiledCellRadius(layers []reportdef.VisualGeoLayer) int32 {
+	radius := 0.0
+	for _, layer := range layers {
+		switch layer.Kind {
+		case "point":
+			radius = math.Max(radius, layer.Size.MaximumRadius)
+			if layer.Cluster.Enabled {
+				radius = math.Max(radius, float64(layer.Cluster.Radius))
+			}
+		case "heat", "density":
+			radius = math.Max(radius, layer.Heat.Radius)
+		}
+	}
+	return int32(math.Round(math.Max(32, math.Min(64, radius))))
 }
 
 func authoredViewportCoordinates(layers []reportdef.VisualGeoLayer) (latitude, longitude string, found bool, err error) {

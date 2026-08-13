@@ -1287,9 +1287,9 @@ test('every visual documentation page mounts its generated production payloads',
         ({ count }) => {
           const examples = [...document.querySelectorAll('lv-site-visual-example')]
           return examples.length === count && examples.every((example) => {
-            const host = example.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: { dataState?: { datasets?: Array<{ rows?: unknown[] }>; blocks?: Record<string, { rows?: unknown[] }> } } } | null
+            const host = example.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: { dataState?: { datasets?: Array<{ rows?: unknown[] }>; blocks?: Record<string, { rows?: unknown[] }>; cardinality?: { count?: number } } } } | null
             const state = host?.envelope?.dataState
-            return Boolean(state?.datasets?.some((dataset) => dataset.rows?.length) || Object.values(state?.blocks ?? {}).some((block) => block.rows?.length))
+            return Boolean(state?.datasets?.some((dataset) => dataset.rows?.length) || Object.values(state?.blocks ?? {}).some((block) => block.rows?.length) || (state?.cardinality?.count ?? 0) > 0)
           })
         },
         { count: expected },
@@ -1416,9 +1416,9 @@ test('map documentation renders fitted, attributed canvases without adapter erro
       }
     }))).toEqual([
       { summary: 'View map data (27 rows)', columns: 2, rows: 27 },
-      { summary: 'View map data (35 rows)', columns: 2, rows: 35 },
-      { summary: 'View map data (35 rows)', columns: 3, rows: 35 },
-      { summary: 'View map data (35 rows)', columns: 2, rows: 35 },
+      { summary: 'View visible map data (0 visible features: 0 raw points, 0 aggregate cells; 35 total coordinates)', columns: 6, rows: 0 },
+      { summary: 'View visible map data (0 visible features: 0 raw points, 0 aggregate cells; 35 total coordinates)', columns: 5, rows: 0 },
+      { summary: 'View visible map data (0 visible features: 0 raw points, 0 aggregate cells; 35 total coordinates)', columns: 4, rows: 0 },
       { summary: 'View map data (27 rows)', columns: 2, rows: 27 },
       { summary: 'View map data (35 rows)', columns: 2, rows: 35 },
     ])

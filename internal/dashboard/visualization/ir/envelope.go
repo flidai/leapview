@@ -92,6 +92,13 @@ func WithStreamRevision(envelope VisualizationEnvelope, dataRevision, generation
 		state := *value
 		state.DataRevision, state.Generation = dataRevision, generation
 		revised.DataState.Value = &state
+	case *SpatialTiledVisualizationDataState:
+		if value == nil {
+			return VisualizationEnvelope{}, fmt.Errorf("visualization spatial tiled data state is nil")
+		}
+		state := *value
+		state.DataRevision, state.Generation = dataRevision, generation
+		revised.DataState.Value = &state
 	default:
 		return VisualizationEnvelope{}, fmt.Errorf("unsupported visualization data state variant %T", value)
 	}
@@ -158,6 +165,11 @@ func (visitor *dataStateRevisionVisitor) VisitWindowedVisualizationDataState(val
 }
 
 func (visitor *dataStateRevisionVisitor) VisitSpatialWindowedVisualizationDataState(value *SpatialWindowedVisualizationDataState) error {
+	visitor.set(value.SpecRevision, value.DataRevision, value.Generation)
+	return nil
+}
+
+func (visitor *dataStateRevisionVisitor) VisitSpatialTiledVisualizationDataState(value *SpatialTiledVisualizationDataState) error {
 	visitor.set(value.SpecRevision, value.DataRevision, value.Generation)
 	return nil
 }

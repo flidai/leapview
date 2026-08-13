@@ -177,28 +177,37 @@ func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Qu
 }
 
 func (c *queryResultCache) cacheKey(request dataquery.Query) (string, uint64, error) {
+	spatialTileGenerationVersion := 0
+	if request.SpatialTile != nil {
+		// Bump whenever MVT encoding or promoted feature identity changes so an
+		// active cache can never serve bytes from an older tile contract.
+		spatialTileGenerationVersion = 5
+	}
 	keyBytes, err := json.Marshal(queryResultCacheKey{
-		Namespace:                  c.namespace,
-		WorkspaceID:                request.WorkspaceID,
-		CandidateID:                request.CandidateID,
-		EffectivePolicyFingerprint: request.EffectivePolicyFingerprint,
-		Operation:                  request.Operation,
-		ModelID:                    request.ModelID,
-		Kind:                       request.Kind,
-		Target:                     request.Target,
-		Fields:                     request.Fields,
-		Measures:                   request.Measures,
-		AuthorizationFields:        request.AuthorizationFields,
-		Value:                      request.Value,
-		Time:                       request.Time,
-		Filters:                    request.Filters,
-		Sort:                       request.Sort,
-		ColumnMasks:                request.ColumnMasks,
-		Offset:                     request.Offset,
-		Limit:                      request.Limit,
-		BinCount:                   request.BinCount,
-		IncludeTotal:               request.IncludeTotal,
-		Spatial:                    request.Spatial,
+		Namespace:                    c.namespace,
+		WorkspaceID:                  request.WorkspaceID,
+		CandidateID:                  request.CandidateID,
+		EffectivePolicyFingerprint:   request.EffectivePolicyFingerprint,
+		Operation:                    request.Operation,
+		ModelID:                      request.ModelID,
+		Kind:                         request.Kind,
+		Target:                       request.Target,
+		Fields:                       request.Fields,
+		Measures:                     request.Measures,
+		AuthorizationFields:          request.AuthorizationFields,
+		Value:                        request.Value,
+		Time:                         request.Time,
+		Filters:                      request.Filters,
+		Sort:                         request.Sort,
+		ColumnMasks:                  request.ColumnMasks,
+		Offset:                       request.Offset,
+		Limit:                        request.Limit,
+		BinCount:                     request.BinCount,
+		IncludeTotal:                 request.IncludeTotal,
+		Spatial:                      request.Spatial,
+		SpatialTile:                  request.SpatialTile,
+		SpatialTileGenerationVersion: spatialTileGenerationVersion,
+		SpatialMetadata:              request.SpatialMetadata,
 	})
 	if err != nil {
 		return "", 0, fmt.Errorf("encode governed query cache key: %w", err)
@@ -216,27 +225,30 @@ func (e canceledQueryCacheFlightError) Error() string { return e.err.Error() }
 func (e canceledQueryCacheFlightError) Unwrap() error { return e.err }
 
 type queryResultCacheKey struct {
-	Namespace                  string
-	WorkspaceID                string
-	CandidateID                string
-	EffectivePolicyFingerprint string
-	Operation                  string
-	ModelID                    string
-	Kind                       dataquery.Kind
-	Target                     string
-	Fields                     []dataquery.Field
-	Measures                   []dataquery.Field
-	AuthorizationFields        []dataquery.Field
-	Value                      dataquery.Field
-	Time                       dataquery.Time
-	Filters                    []dataquery.Filter
-	Sort                       []dataquery.Sort
-	ColumnMasks                []dataquery.ColumnMask
-	Offset                     int
-	Limit                      int
-	BinCount                   int
-	IncludeTotal               bool
-	Spatial                    *dataquery.SpatialWindow
+	Namespace                    string
+	WorkspaceID                  string
+	CandidateID                  string
+	EffectivePolicyFingerprint   string
+	Operation                    string
+	ModelID                      string
+	Kind                         dataquery.Kind
+	Target                       string
+	Fields                       []dataquery.Field
+	Measures                     []dataquery.Field
+	AuthorizationFields          []dataquery.Field
+	Value                        dataquery.Field
+	Time                         dataquery.Time
+	Filters                      []dataquery.Filter
+	Sort                         []dataquery.Sort
+	ColumnMasks                  []dataquery.ColumnMask
+	Offset                       int
+	Limit                        int
+	BinCount                     int
+	IncludeTotal                 bool
+	Spatial                      *dataquery.SpatialWindow
+	SpatialTile                  *dataquery.SpatialTile
+	SpatialTileGenerationVersion int
+	SpatialMetadata              *dataquery.SpatialMetadata
 }
 
 func (c *queryResultCache) clear() {

@@ -87,6 +87,63 @@ type Request struct {
 	ColumnMasks []ColumnMask
 	Limit       int
 	Offset      int
+	// SpatialBucket replaces the selected coordinate dimensions with globally
+	// aligned Web-Mercator cell indexes before semantic measure aggregation.
+	// It is an internal governed planning primitive for vector tiles.
+	SpatialBucket *SpatialBucket
+}
+
+type SpatialBucket struct {
+	Latitude   Field
+	Longitude  Field
+	Zoom       int
+	CellPixels int
+}
+
+type SpatialTileRequest struct {
+	Table        string
+	Measures     []Field
+	Filters      []Filter
+	ColumnMasks  []ColumnMask
+	Latitude     Field
+	Longitude    Field
+	Zoom         int
+	TargetZoom   int
+	MetatileX    int
+	MetatileY    int
+	MetatileSize int
+	CellPixels   int
+	Buffer       int
+}
+
+type SpatialTileRawRequest struct {
+	Table        string
+	Dimensions   []Field
+	Measures     []Field
+	Identity     []Field
+	Filters      []Filter
+	ColumnMasks  []ColumnMask
+	Time         Time
+	Latitude     Field
+	Longitude    Field
+	Zoom         int
+	MetatileX    int
+	MetatileY    int
+	MetatileSize int
+	FeatureCap   int
+	Buffer       int
+}
+
+type SpatialMetadataRequest struct {
+	Table          string
+	Measures       []Field
+	Filters        []Filter
+	ColumnMasks    []ColumnMask
+	Latitude       Field
+	Longitude      Field
+	FeatureCap     int
+	RawMinimumZoom int
+	MaximumZoom    int
 }
 
 type RowRequest struct {

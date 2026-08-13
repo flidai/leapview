@@ -152,7 +152,11 @@ func TestSpatialAggregationMillionRowsIsCompleteAndBounded(t *testing.T) {
 	}
 }
 
-func BenchmarkSpatialAggregationMillionRows(b *testing.B) {
+// BenchmarkSpatialInitialViewportMillionRows is the migration baseline for
+// dynamic vector tiles. Keep the fixture, viewport, feature cap, and consumed
+// result shape stable so the tiled implementation can replace the execution
+// beneath this benchmark without changing the measured workload.
+func BenchmarkSpatialInitialViewportMillionRows(b *testing.B) {
 	db := spatialScaleFixture(b, 1_000_000)
 	defer db.Close()
 	plan := spatialScalePlan(b, 5_000)

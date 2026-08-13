@@ -347,6 +347,8 @@ func TestDashboardResultCacheEligibility(t *testing.T) {
 		dataquery.OperationDashboardDistribution,
 		dataquery.OperationDashboardFilterOptions,
 		dataquery.OperationDashboardSpatial,
+		dataquery.OperationDashboardSpatialTile,
+		dataquery.OperationDashboardSpatialMetadata,
 	} {
 		request := dataquery.Query{Surface: dataquery.SurfaceDashboard, Operation: operation}
 		if !dashboardQueryResultCacheable(request) {
@@ -360,6 +362,43 @@ func TestDashboardResultCacheEligibility(t *testing.T) {
 	} {
 		if dashboardQueryResultCacheable(request) {
 			t.Errorf("non-dashboard request was cacheable: %#v", request)
+		}
+	}
+}
+
+func TestQueryResultCacheKeysEverySpatialTileCoordinateAndPrecision(t *testing.T) {
+	cache := newQueryResultCache(256, "snapshot=1")
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTile,
+		ModelID: "sales", Kind: dataquery.KindSemanticSpatialTile, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}},
+		SpatialTile: &dataquery.SpatialTile{
+			Latitude: dataquery.Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: dataquery.Field{Field: "orders.longitude", Alias: "longitude"},
+			Zoom: 10, MetatileX: 376, MetatileY: 512, MetatileSize: 4, CellPixels: 48, Buffer: 768, FeatureCap: 5000, Precision: dataquery.SpatialTilePrecisionRaw,
+		},
+	}
+	baseline, _, err := cache.cacheKey(request)
+	require.NoError(t, err)
+	if !strings.Contains(baseline, `"SpatialTileGenerationVersion":5`) {
+		t.Fatalf("spatial tile cache key has no generation version: %s", baseline)
+	}
+	variants := []func(*dataquery.SpatialTile){
+		func(tile *dataquery.SpatialTile) { tile.Zoom++ },
+		func(tile *dataquery.SpatialTile) { tile.TargetZoom++ },
+		func(tile *dataquery.SpatialTile) { tile.MetatileX += 4 },
+		func(tile *dataquery.SpatialTile) { tile.MetatileY += 4 },
+		func(tile *dataquery.SpatialTile) { tile.CellPixels = 64 },
+		func(tile *dataquery.SpatialTile) { tile.Precision = dataquery.SpatialTilePrecisionAggregated },
+	}
+	for index, mutate := range variants {
+		variant := request
+		tile := *request.SpatialTile
+		variant.SpatialTile = &tile
+		mutate(variant.SpatialTile)
+		key, _, err := cache.cacheKey(variant)
+		require.NoError(t, err)
+		if key == baseline {
+			t.Fatalf("spatial tile cache variant %d reused the baseline key", index)
 		}
 	}
 }

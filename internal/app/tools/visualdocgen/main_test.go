@@ -437,6 +437,11 @@ func visualizationEnvelopeRowCount(envelope visualizationir.VisualizationEnvelop
 			count += len(block.Rows)
 		}
 		return count
+	case *visualizationir.SpatialTiledVisualizationDataState:
+		if state.Cardinality.Count != nil {
+			return int(*state.Cardinality.Count)
+		}
+		return 0
 	default:
 		return 0
 	}

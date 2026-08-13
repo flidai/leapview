@@ -55,7 +55,7 @@ func validateDashboardPublicationQuery(capability DashboardPublicationCapability
 		return fmt.Errorf("public query operation %q is not allowed", request.Operation)
 	}
 	switch request.Kind {
-	case dataquery.KindSemanticAggregate, dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution:
+	case dataquery.KindSemanticAggregate, dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution, dataquery.KindSemanticSpatial, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialMetadata:
 	default:
 		return fmt.Errorf("public query kind %q is not allowed", request.Kind)
 	}

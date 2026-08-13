@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
@@ -278,6 +279,28 @@ func (m *dynamicRuntimeMetrics) QueryVisualizationSpatialWindow(ctx context.Cont
 		return metrics.QueryVisualizationSpatialWindow(ctx, dashboardID, pageID, filters, request)
 	}
 	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
+}
+
+func (m *dynamicRuntimeMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	if metrics, ok := m.MetricsForWorkspace(workspaceID); ok {
+		if tiled, ok := metrics.(interface {
+			QueryVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
+		}); ok {
+			return tiled.QueryVisualizationTile(ctx, workspaceID, dashboardID, visualID, revision, zoom, x, y)
+		}
+	}
+	return dashboardruntime.SpatialTileResult{}, fmt.Errorf("workspace spatial tile runtime is not configured")
+}
+
+func (m *dynamicRuntimeMetrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	if metrics := m.defaultMetrics(); metrics != nil {
+		if tiled, ok := metrics.(interface {
+			QueryPublicVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
+		}); ok {
+			return tiled.QueryPublicVisualizationTile(ctx, publicID, dashboardID, visualID, revision, zoom, x, y)
+		}
+	}
+	return dashboardruntime.SpatialTileResult{}, fmt.Errorf("public spatial tile runtime is not configured")
 }
 
 func (m *dynamicRuntimeMetrics) QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {

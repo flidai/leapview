@@ -3,6 +3,7 @@ package ir
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -20,9 +21,6 @@ func ValidateEnvelope(envelope VisualizationEnvelope) error {
 	if envelope.VisualID == "" || envelope.RendererID == "" {
 		return fmt.Errorf("visualization ID and renderer ID are required")
 	}
-	if base.DataBudget.MaxRows <= 0 {
-		return fmt.Errorf("visualization data budget maxRows must be positive")
-	}
 	schemas, err := validateSpecification(envelope.Spec, base)
 	if err != nil {
 		return err
@@ -35,14 +33,28 @@ func ValidateEnvelope(envelope VisualizationEnvelope) error {
 	}
 	switch state := envelope.DataState.Value.(type) {
 	case *InlineVisualizationDataState:
+		if base.DataBudget.MaxRows <= 0 {
+			return fmt.Errorf("visualization data budget maxRows must be positive")
+		}
 		if err := validateInlineState(*state, schemas, base.DataBudget); err != nil {
 			return err
 		}
 		return validateInlineSemantics(envelope.Spec, *state)
 	case *WindowedVisualizationDataState:
+		if base.DataBudget.MaxRows <= 0 {
+			return fmt.Errorf("visualization data budget maxRows must be positive")
+		}
 		return validateWindowedState(*state, base.DataBudget)
 	case *SpatialWindowedVisualizationDataState:
+		if base.DataBudget.MaxRows <= 0 {
+			return fmt.Errorf("visualization data budget maxRows must be positive")
+		}
 		return validateSpatialWindowedState(*state, base.DataBudget)
+	case *SpatialTiledVisualizationDataState:
+		if base.DataBudget.MaxRows != 0 {
+			return fmt.Errorf("spatial tiled visualization must not declare a row transport budget")
+		}
+		return validateSpatialTiledState(*state, schemas)
 	default:
 		return fmt.Errorf("unsupported visualization data state %T", state)
 	}
@@ -1471,6 +1483,80 @@ func validateSpatialWindowedState(state SpatialWindowedVisualizationDataState, b
 	}
 	if err := validateRows(state.Schema, columns, window.Rows); err != nil {
 		return fmt.Errorf("spatial window %q: %w", window.ID, err)
+	}
+	return nil
+}
+
+func validateSpatialTiledState(state SpatialTiledVisualizationDataState, schemas map[string]VisualizationDatasetSchema) error {
+	if err := validateSchema(state.Schema); err != nil {
+		return err
+	}
+	schema, ok := schemas[state.Schema.ID]
+	if !ok || !reflect.DeepEqual(schema, state.Schema) {
+		return fmt.Errorf("spatial tiled schema must exactly match a specification dataset")
+	}
+	if state.Cardinality.Kind != VisualizationCardinalityKindExact || state.Cardinality.Count == nil || *state.Cardinality.Count < 0 {
+		return fmt.Errorf("spatial tiled cardinality must be exact and non-negative")
+	}
+	if err := validateSpatialMetadataExtent(state.Extent); err != nil {
+		return fmt.Errorf("invalid spatial tiled extent: %w", err)
+	}
+	if !strings.HasPrefix(state.TileURL, "/") || !strings.Contains(state.TileURL, "{z}") || !strings.Contains(state.TileURL, "{x}") || !strings.Contains(state.TileURL, "{y}") {
+		return fmt.Errorf("spatial tiled URL must be an opaque same-origin XYZ template")
+	}
+	if state.MinimumZoom < 0 || state.MaximumZoom > 24 || state.MinimumZoom > state.MaximumZoom || state.RawMinimumZoom < state.MinimumZoom || state.RawMinimumZoom > state.MaximumZoom+1 {
+		return fmt.Errorf("invalid spatial tiled zoom policy")
+	}
+	if state.FeatureCap <= 0 || state.FeatureCap > 5000 || state.MaximumTileBytes <= 0 || state.MaximumTileBytes > 512*1024 {
+		return fmt.Errorf("invalid spatial tiled transport budgets")
+	}
+	if err := validateSpatialDomains(state.RawDomains, state.Schema); err != nil {
+		return fmt.Errorf("invalid raw spatial domains: %w", err)
+	}
+	if err := validateSpatialDomains(state.AggregateDomains, state.Schema); err != nil {
+		return fmt.Errorf("invalid aggregate spatial domains: %w", err)
+	}
+	return nil
+}
+
+func validateSpatialMetadataExtent(bounds VisualizationSpatialBounds) error {
+	for _, coordinate := range []float64{bounds.West, bounds.South, bounds.East, bounds.North} {
+		if math.IsNaN(coordinate) || math.IsInf(coordinate, 0) {
+			return fmt.Errorf("coordinates must be finite")
+		}
+	}
+	if bounds.West < -180 || bounds.West > 180 || bounds.East < -180 || bounds.East > 180 || bounds.South < -90 || bounds.South > 90 || bounds.North < -90 || bounds.North > 90 || bounds.South > bounds.North {
+		return fmt.Errorf("coordinates are outside geographic bounds")
+	}
+	return nil
+}
+
+func validateSpatialDomains(domains []VisualizationSpatialScaleDomain, schema VisualizationDatasetSchema) error {
+	fields := make(map[string]VisualizationField, len(schema.Fields))
+	for _, field := range schema.Fields {
+		fields[field.ID] = field
+	}
+	seen := make(map[string]struct{}, len(domains))
+	for _, domain := range domains {
+		field, ok := fields[domain.Field]
+		if !ok {
+			return fmt.Errorf("domain references unknown field %q", domain.Field)
+		}
+		if field.DataType != VisualizationDataTypeInteger && field.DataType != VisualizationDataTypeDecimal {
+			return fmt.Errorf("domain field %q is not numeric", domain.Field)
+		}
+		if _, ok := seen[domain.Field]; ok {
+			return fmt.Errorf("domain field %q is duplicated", domain.Field)
+		}
+		seen[domain.Field] = struct{}{}
+		for _, value := range []*float64{domain.Minimum, domain.Maximum, domain.Total} {
+			if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0)) {
+				return fmt.Errorf("domain field %q contains a non-finite value", domain.Field)
+			}
+		}
+		if domain.Minimum != nil && domain.Maximum != nil && *domain.Minimum > *domain.Maximum {
+			return fmt.Errorf("domain field %q minimum exceeds maximum", domain.Field)
+		}
 	}
 	return nil
 }

@@ -137,6 +137,48 @@ func TestValidateEnvelopeEnforcesSpatialWindowInvariants(t *testing.T) {
 	}
 }
 
+func TestValidateEnvelopeAcceptsRowFreeSpatialTiledState(t *testing.T) {
+	fields := []VisualizationField{
+		{ID: "lat", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Latitude"},
+		{ID: "lon", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Longitude"},
+		{ID: "revenue", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
+	}
+	base := VisualizationSpecBase{Kind: "geographic", Title: "Stores", Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: fields}}, DataBudget: VisualizationDataBudget{MaxRows: 0, RequiredCompleteness: VisualizationCompletenessComplete}, Accessibility: VisualizationAccessibility{Title: "Stores", Description: "Stores"}, Interactions: []VisualizationInteraction{}}
+	layerBase := VisualizationGeographicLayerBase{ID: "stores", Kind: "point", Tooltip: []VisualizationFieldRef{}, Position: VisualizationMapLayerPositionBelowLabels, Visibility: VisualizationMapVisibility{MaximumZoom: 18}}
+	spec := VisualizationSpec{Value: &GeographicVisualizationSpec{VisualizationSpecBase: base, Kind: "geographic", Layers: []VisualizationGeographicLayer{{Value: &VisualizationPointLayer{VisualizationGeographicLayerBase: layerBase, Kind: "point", Latitude: VisualizationFieldRef{Dataset: "primary", Field: "lat"}, Longitude: VisualizationFieldRef{Dataset: "primary", Field: "lon"}, Size: VisualizationMapSizeScale{MinimumRadius: 5, MaximumRadius: 28}, Cluster: VisualizationMapCluster{Radius: 48, MinimumPoints: 2}}}}, Presentation: GeographicVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionHidden), Theme: VisualizationMapThemeAuto, LabelDensity: VisualizationMapLabelDensityNormal, Camera: VisualizationMapCamera{Mode: VisualizationMapCameraModeFitData, MaximumZoom: 14}}}}
+	revision, err := ComputeSpecRevision(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count, minimum, maximum, total := int64(14_876), 1.0, 250.0, 2_000_000.0
+	state := SpatialTiledVisualizationDataState{
+		VisualizationDataStateBase: VisualizationDataStateBase{Kind: "spatial_tiled", SpecRevision: revision.String(), DataRevision: 3, Generation: 1},
+		Kind:                       "spatial_tiled", Schema: base.Datasets[0], Cardinality: VisualizationCardinality{Kind: VisualizationCardinalityKindExact, Count: &count},
+		Extent:           VisualizationSpatialBounds{West: -74, South: -34, East: -34, North: 6},
+		RawDomains:       []VisualizationSpatialScaleDomain{{Field: "revenue", Minimum: &minimum, Maximum: &maximum, Total: &total}},
+		AggregateDomains: []VisualizationSpatialScaleDomain{{Field: "revenue", Minimum: &minimum, Maximum: &total, Total: &total}},
+		TileURL:          "/workspaces/sales/dashboards/orders/visuals/stores/tiles/rev/{z}/{x}/{y}.mvt",
+		MinimumZoom:      0, MaximumZoom: 18, RawMinimumZoom: 10, FeatureCap: 5000, MaximumTileBytes: 512 * 1024,
+	}
+	envelope := VisualizationEnvelope{SchemaVersion: CurrentSchemaVersion, VisualID: "stores", RendererID: "maplibre", SpecRevision: revision.String(), DataRevision: 3, Spec: spec, DataState: VisualizationDataState{Value: &state}, Selection: []VisualizationSelectionEntry{}, Status: VisualizationStatus{Kind: VisualizationStatusKindReady}, Diagnostics: []VisualizationDiagnostic{}}
+	if err := ValidateEnvelope(envelope); err != nil {
+		t.Fatalf("valid spatial tiled envelope: %v", err)
+	}
+	state.RawMinimumZoom = state.MaximumZoom + 1
+	if err := ValidateEnvelope(envelope); err != nil {
+		t.Fatalf("aggregate-only spatial tiled envelope: %v", err)
+	}
+	state.RawMinimumZoom++
+	if err := ValidateEnvelope(envelope); err == nil {
+		t.Fatal("spatial tiled state accepted a raw transition beyond the aggregate-only sentinel")
+	}
+	state.RawMinimumZoom = 10
+	state.TileURL = "/tiles/rev/{z}/{x}.mvt"
+	if err := ValidateEnvelope(envelope); err == nil {
+		t.Fatal("spatial tiled state without a complete XYZ URL was accepted")
+	}
+}
+
 func TestValidateEnvelopeEnforcesHierarchySemantics(t *testing.T) {
 	t.Parallel()
 

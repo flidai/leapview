@@ -56,6 +56,14 @@ func (p *Planner) planAggregate(request Request) (Plan, error) {
 	if err := p.validateAggregateFilters(request.Filters, resolved); err != nil {
 		return Plan{}, err
 	}
+	if request.SpatialBucket != nil {
+		if resolved.MultiFact {
+			return Plan{}, fmt.Errorf("spatial tile buckets require a single fact query")
+		}
+		if err := validateAggregateSpatialBucket(*request.SpatialBucket, resolved.Dimensions); err != nil {
+			return Plan{}, err
+		}
+	}
 
 	measureNames := sortedMeasureNames(resolved.Measures)
 	measureColumns := map[string]string{}
@@ -84,7 +92,7 @@ func (p *Planner) planAggregate(request Request) (Plan, error) {
 		}
 	}
 
-	source, stitchCTEs := stitchFacts(resolved.Facts, resolved.Dimensions, resolved.Measures, measureNames, measureColumns)
+	source, stitchCTEs := stitchFacts(resolved.Facts, resolved.Dimensions, resolved.Measures, measureNames, measureColumns, request.SpatialBucket != nil)
 	ctes = append(ctes, stitchCTEs...)
 
 	selects := []string{}
@@ -147,6 +155,21 @@ func (p *Planner) planAggregate(request Request) (Plan, error) {
 		}
 		selects = append(selects, expr+" AS "+member.Alias)
 		columns = append(columns, member.Alias)
+	}
+	if request.SpatialBucket != nil {
+		selects = append(selects,
+			"s.__spatial_count AS __lv_count",
+			"s.__spatial_coordinate_count AS __lv_coordinate_count",
+			"s.__spatial_center_longitude AS __lv_center_longitude",
+			"s.__spatial_center_latitude AS __lv_center_latitude",
+			"s.__spatial_west AS __lv_west",
+			"s.__spatial_south AS __lv_south",
+			"s.__spatial_east AS __lv_east",
+			"s.__spatial_north AS __lv_north",
+		)
+		columns = append(columns, "__lv_count", "__lv_coordinate_count", "__lv_center_longitude", "__lv_center_latitude", "__lv_west", "__lv_south", "__lv_east", "__lv_north")
+		columnSet["__lv_count"] = true
+		columnSet["__lv_coordinate_count"] = true
 	}
 	if len(selects) == 0 {
 		return Plan{}, fmt.Errorf("aggregate query requires at least one selected field")
@@ -479,12 +502,23 @@ func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolu
 	}
 
 	selects := []string{}
+	spatialLatitudeExpr, spatialLongitudeExpr := "", ""
 	for index, dimension := range resolved.Dimensions {
 		field, path, _ := p.aggregateDimensionBinding(fact, dimension)
 		physical, _ := p.Model.ResolveDimension(field)
 		expr, err := dimensionExprForPath(physical, aliases, path)
 		if err != nil {
 			return "", nil, nil, err
+		}
+		if request.SpatialBucket != nil {
+			switch dimension.Name {
+			case request.SpatialBucket.Longitude.Field:
+				spatialLongitudeExpr = expr
+				expr = spatialBucketXExpression(expr, request.SpatialBucket.Zoom, request.SpatialBucket.CellPixels)
+			case request.SpatialBucket.Latitude.Field:
+				spatialLatitudeExpr = expr
+				expr = spatialBucketYExpression(expr, request.SpatialBucket.Zoom, request.SpatialBucket.CellPixels)
+			}
 		}
 		expr = canonicalDimensionExpr(expr, dimension.Type)
 		if dimension.Grain != "" {
@@ -534,6 +568,21 @@ func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolu
 		}
 		selects = append(selects, expr+" AS "+measureColumns[name])
 	}
+	if request.SpatialBucket != nil {
+		if spatialLatitudeExpr == "" || spatialLongitudeExpr == "" {
+			return "", nil, nil, fmt.Errorf("spatial bucket coordinates are not resolved dimensions")
+		}
+		selects = append(selects,
+			"COUNT(*) AS __spatial_count",
+			"COUNT(DISTINCT ("+spatialLatitudeExpr+", "+spatialLongitudeExpr+")) AS __spatial_coordinate_count",
+			"AVG("+spatialLongitudeExpr+") AS __spatial_center_longitude",
+			"AVG("+spatialLatitudeExpr+") AS __spatial_center_latitude",
+			"MIN("+spatialLongitudeExpr+") AS __spatial_west",
+			"MIN("+spatialLatitudeExpr+") AS __spatial_south",
+			"MAX("+spatialLongitudeExpr+") AS __spatial_east",
+			"MAX("+spatialLatitudeExpr+") AS __spatial_north",
+		)
+	}
 	whereParts, whereArgs, err := p.factWhereParts(request.Filters, resolved, fact, aliases)
 	if err != nil {
 		return "", nil, nil, err
@@ -555,7 +604,7 @@ func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolu
 		for index := range positions {
 			positions[index] = fmt.Sprint(index + 1)
 		}
-		if hasFactMeasures(resolved.Measures, fact) {
+		if hasFactMeasures(resolved.Measures, fact) || request.SpatialBucket != nil {
 			sql.WriteString("\n  GROUP BY ")
 			sql.WriteString(strings.Join(positions, ", "))
 		} else {
@@ -574,7 +623,7 @@ func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolu
 	return sql.String(), append(measureArgs, whereArgs...), dependencyList, nil
 }
 
-func stitchFacts(facts []string, dimensions []aggregateDimension, measures map[string]ResolvedMeasure, measureNames []string, measureColumns map[string]string) (string, []string) {
+func stitchFacts(facts []string, dimensions []aggregateDimension, measures map[string]ResolvedMeasure, measureNames []string, measureColumns map[string]string, spatial bool) (string, []string) {
 	if len(facts) == 1 {
 		return "fact_0 s", nil
 	}
@@ -620,6 +669,18 @@ func stitchFacts(facts []string, dimensions []aggregateDimension, measures map[s
 				selects = append(selects, rightAlias+"."+column+" AS "+column)
 			}
 		}
+		if spatial {
+			selects = append(selects,
+				fmt.Sprintf("GREATEST(COALESCE(%s.__spatial_count, 0), COALESCE(%s.__spatial_count, 0)) AS __spatial_count", leftAlias, rightAlias),
+				fmt.Sprintf("GREATEST(COALESCE(%s.__spatial_coordinate_count, 0), COALESCE(%s.__spatial_coordinate_count, 0)) AS __spatial_coordinate_count", leftAlias, rightAlias),
+				spatialWeightedCenter(leftAlias, rightAlias, "longitude"),
+				spatialWeightedCenter(leftAlias, rightAlias, "latitude"),
+				spatialExtentMerge(leftAlias, rightAlias, "west", "LEAST"),
+				spatialExtentMerge(leftAlias, rightAlias, "south", "LEAST"),
+				spatialExtentMerge(leftAlias, rightAlias, "east", "GREATEST"),
+				spatialExtentMerge(leftAlias, rightAlias, "north", "GREATEST"),
+			)
+		}
 		for _, name := range measureNames {
 			if measures[name].Fact == facts[index] {
 				availableMeasures[name] = true
@@ -630,6 +691,16 @@ func stitchFacts(facts []string, dimensions []aggregateDimension, measures map[s
 		leftName = cteName
 	}
 	return leftName + " s", ctes
+}
+
+func spatialWeightedCenter(left, right, axis string) string {
+	column := "__spatial_center_" + axis
+	return fmt.Sprintf("CASE WHEN %s.%s IS NULL THEN %s.%s WHEN %s.%s IS NULL THEN %s.%s ELSE ((%s.%s * %s.__spatial_count) + (%s.%s * %s.__spatial_count)) / NULLIF(%s.__spatial_count + %s.__spatial_count, 0) END AS %s", left, column, right, column, right, column, left, column, left, column, left, right, column, right, left, right, column)
+}
+
+func spatialExtentMerge(left, right, edge, operation string) string {
+	column := "__spatial_" + edge
+	return fmt.Sprintf("CASE WHEN %s.%s IS NULL THEN %s.%s WHEN %s.%s IS NULL THEN %s.%s ELSE %s(%s.%s, %s.%s) END AS %s", left, column, right, column, right, column, left, column, operation, left, column, right, column, column)
 }
 
 func (p *Planner) validateAggregateFilters(filters []Filter, resolved aggregateResolution) error {

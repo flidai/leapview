@@ -70143,6 +70143,139 @@ components:
         lastSeenAt: "2026-01-02T15:04:05Z"
         profileId: example
         revokedAt: "2026-01-02T15:04:05Z"
+    SpatialTiledVisualizationDataState:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/VisualizationDataStateBase'
+      required:
+        - kind
+        - schema
+        - cardinality
+        - extent
+        - rawDomains
+        - aggregateDomains
+        - tileURL
+        - minimumZoom
+        - maximumZoom
+        - rawMinimumZoom
+        - featureCap
+        - maximumTileBytes
+      properties:
+        kind:
+          type: string
+          enum:
+            - spatial_tiled
+          example: example
+        schema:
+          $ref: '#/components/schemas/VisualizationDatasetSchema'
+        cardinality:
+          $ref: '#/components/schemas/VisualizationCardinality'
+        extent:
+          $ref: '#/components/schemas/VisualizationSpatialBounds'
+        rawDomains:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationSpatialScaleDomain'
+          example:
+            - field: example
+              maximum: !!float 1
+              minimum: !!float 1
+              total: !!float 1
+        aggregateDomains:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationSpatialScaleDomain'
+          example:
+            - field: example
+              maximum: !!float 1
+              minimum: !!float 1
+              total: !!float 1
+        tileURL:
+          type: string
+          example: example
+        minimumZoom:
+          type: integer
+          format: int32
+          example: 1
+        maximumZoom:
+          type: integer
+          format: int32
+          example: 1
+        rawMinimumZoom:
+          type: integer
+          format: int32
+          description: |-
+            First zoom rendered at raw coordinate grain. A value of maximumZoom + 1
+            means the revision remains aggregate at every supported zoom.
+          example: 1
+        featureCap:
+          type: integer
+          format: int64
+          example: 1
+        maximumTileBytes:
+          type: integer
+          format: int64
+          example: 1
+      description: |-
+        Row-free metadata and transport contract for server-generated vector tiles.
+        Tile URLs are opaque, revision-scoped capabilities; this state deliberately
+        contains neither query rows nor authored filter values.
+      example:
+        aggregateDomains:
+          - field: example
+            maximum: !!float 1
+            minimum: !!float 1
+            total: !!float 1
+        cardinality:
+          count: 1
+          kind: unknown
+        extent:
+          east: !!float 1
+          north: !!float 1
+          south: !!float 1
+          west: !!float 1
+        featureCap: 1
+        kind: example
+        maximumTileBytes: 1
+        maximumZoom: 1
+        minimumZoom: 1
+        rawDomains:
+          - field: example
+            maximum: !!float 1
+            minimum: !!float 1
+            total: !!float 1
+        rawMinimumZoom: 1
+        schema:
+          fields:
+            - dataType: string
+              geographic:
+                geometryAsset: example
+                identifierSystem: example
+                joinField: example
+                unmatchedPolicy: example
+              grid:
+                columnValue: example
+                formatting: []
+                group: example
+                measure: example
+              id: example
+              label: example
+              nullable: true
+              provenance:
+                calculationID: example
+                kind: modeled
+                sourceRefs:
+                  - example
+              role: dimension
+              sourceRef: example
+              time:
+                calendar: example
+                grain: example
+                meaning: instant
+                timezone: example
+                weekStart: monday
+          id: example
+        tileURL: example
     SpatialWindowedVisualizationDataState:
       type: object
       allOf:
@@ -71665,10 +71798,12 @@ components:
         - $ref: '#/components/schemas/InlineVisualizationDataState'
         - $ref: '#/components/schemas/WindowedVisualizationDataState'
         - $ref: '#/components/schemas/SpatialWindowedVisualizationDataState'
+        - $ref: '#/components/schemas/SpatialTiledVisualizationDataState'
       discriminator:
         propertyName: kind
         mapping:
           inline: '#/components/schemas/InlineVisualizationDataState'
+          spatial_tiled: '#/components/schemas/SpatialTiledVisualizationDataState'
           spatial_windowed: '#/components/schemas/SpatialWindowedVisualizationDataState'
           windowed: '#/components/schemas/WindowedVisualizationDataState'
     VisualizationDataStateBase:
@@ -73849,6 +73984,31 @@ components:
           longitude: !!float 1
         kind: example
         radiusMeters: !!float 1
+    VisualizationSpatialScaleDomain:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          type: string
+          example: example
+        minimum:
+          type: number
+          format: double
+          example: !!float 1
+        maximum:
+          type: number
+          format: double
+          example: !!float 1
+        total:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        field: example
+        maximum: !!float 1
+        minimum: !!float 1
+        total: !!float 1
     VisualizationSpatialSelectionGeometry:
       oneOf:
         - $ref: '#/components/schemas/VisualizationSpatialBoxSelection'

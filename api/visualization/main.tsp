@@ -389,6 +389,7 @@ enum VisualizationDataStateKind {
   inline: "inline",
   windowed: "windowed",
   spatialWindowed: "spatial_windowed",
+  spatialTiled: "spatial_tiled",
 }
 
 enum VisualizationDataStateTransportEncoding {
@@ -1329,6 +1330,37 @@ model SpatialWindowedVisualizationDataState extends VisualizationDataState {
   `window`?: VisualizationSpatialWindowBlock;
 }
 
+model VisualizationSpatialScaleDomain {
+  `field`: string;
+  `minimum`?: float64;
+  `maximum`?: float64;
+  `total`?: float64;
+}
+
+/**
+ * Row-free metadata and transport contract for server-generated vector tiles.
+ * Tile URLs are opaque, revision-scoped capabilities; this state deliberately
+ * contains neither query rows nor authored filter values.
+ */
+model SpatialTiledVisualizationDataState extends VisualizationDataState {
+  `kind`: "spatial_tiled";
+  `schema`: VisualizationDatasetSchema;
+  `cardinality`: VisualizationCardinality;
+  `extent`: VisualizationSpatialBounds;
+  `rawDomains`: VisualizationSpatialScaleDomain[];
+  `aggregateDomains`: VisualizationSpatialScaleDomain[];
+  `tileURL`: string;
+  `minimumZoom`: int32;
+  `maximumZoom`: int32;
+  /**
+   * First zoom rendered at raw coordinate grain. A value of maximumZoom + 1
+   * means the revision remains aggregate at every supported zoom.
+   */
+  `rawMinimumZoom`: int32;
+  `featureCap`: int64;
+  `maximumTileBytes`: int64;
+}
+
 /**
  * Versioned transport header for carrying a data state as one opaque browser
  * signal. The payload is decoded only after every repeated revision and
@@ -1396,7 +1428,7 @@ model VisualizationDiagnostic {
 @apigen.contract(#{ kind: "visualization-envelope", tags: #["visualization", "ir"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "visualization-envelope" })
 model VisualizationEnvelope {
-  `schemaVersion`: 9;
+  `schemaVersion`: 10;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;

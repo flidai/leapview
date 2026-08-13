@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { applyFeatureScales, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapInteractionCommand, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapPointerOptions, mapThemeColors, mapTooltipEntries, nextSpatialRequestSequence, normalizeFeatureWeights, pathGeometry, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, spatialWindowAlreadyCurrent, spatialWindowRequest, updateSelectionSources, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyFeatureScales, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapInteractionCommand, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapPointerOptions, mapThemeColors, mapTooltipEntries, nextSpatialRequestSequence, normalizeFeatureWeights, pathGeometry, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, spatialWindowAlreadyCurrent, spatialWindowRequest, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledRawPrecisionVisible, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -17,6 +17,10 @@ test('MapLibre geometry assets are same-origin and content addressed', async () 
   expect(() => sameOriginGeometryURL('https://attacker.example/states.geojson', 'https://dash.example/workspaces/sales')).toThrow(/same-origin/)
   await expect(verifyGeometryDigest(new TextEncoder().encode('geometry'), 'sha256:invalid')).rejects.toThrow(/canonical SHA-256/)
   await expect(verifyGeometryDigest(new TextEncoder().encode('geometry'), `sha256:${'0'.repeat(64)}`)).rejects.toThrow(/digest mismatch/)
+  // Plain-HTTP development shares are not secure contexts, so browsers do
+  // not expose SubtleCrypto there. Canonical, content-addressed URLs remain
+  // enforced even when client-side digest verification is unavailable.
+  await expect(verifyGeometryDigest(new TextEncoder().encode('geometry'), `sha256:${'0'.repeat(64)}`, null)).resolves.toBeUndefined()
 })
 
 test('MapLibre map styles rewrite only pinned same-origin PMTiles and assets', async () => {
@@ -345,6 +349,137 @@ test('MapLibre tooltips use compiled fields and contractual formatting without e
   expect(entries.some((entry) => entry.value.includes('governed'))).toBe(false)
 })
 
+test('MapLibre aggregate tooltips lead with the business measure and retain location count', () => {
+	const envelope = tiledPointEnvelope()
+	const entries = mapTooltipEntries(envelope, [{
+		layer: { id: 'lv-orders' },
+		properties: { __lv_aggregate: true, __lv_coordinate_count: 12, revenue: 1_250 },
+	}])
+	expect(entries).toEqual([
+		{ label: 'Precision', value: 'Aggregated area' },
+		{ label: 'Contained locations', value: '12' },
+		{ label: 'Revenue', value: '1250' },
+	])
+})
+
+test('MapLibre tiled layers reuse one native source and stable server-provided domains', () => {
+  const envelope = tiledPointEnvelope()
+  const layer = envelope.spec.kind === 'geographic' ? envelope.spec.layers[0]! : undefined
+  const style = mapLayer('lv-orders', layer!, envelope.dataState.kind === 'spatial_tiled' ? envelope.dataState : undefined, 'lv-map-tiles')
+  expect(style.source).toBe('lv-map-tiles')
+  expect(style['source-layer']).toBe('primary')
+  expect(style.filter).toContainEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], false])
+  expect(style.minzoom).toBe(10)
+  expect(JSON.stringify(style.paint['circle-radius'])).toContain('__lv_aggregate')
+	expect(JSON.stringify(style.paint['circle-radius'])).toContain('revenue')
+	expect(JSON.stringify(style.paint['circle-radius'])).not.toContain('__lv_coordinate_count')
+  expect(JSON.stringify(style.paint['circle-radius'])).toContain('["boolean",["get","__lv_selected"],false]')
+  expect(JSON.stringify(style.paint['circle-radius'])).toContain('500')
+  expect(JSON.stringify(style.paint['circle-radius'])).toContain('5000')
+	expect(JSON.stringify(style.paint['circle-color'])).toContain('__lv_aggregate')
+	expect(JSON.stringify(style.paint['circle-color'])).toContain('#54aeff')
+  expect(JSON.stringify(style.paint['circle-opacity'])).toContain('["boolean",["get","__lv_has_selection"],false]')
+  expect(vectorTileTemplateURL(envelope.dataState.kind === 'spatial_tiled' ? envelope.dataState.tileURL : '', 'https://example.test/dashboard')).toBe('https://example.test/workspaces/sales/dashboards/orders/visuals/orders-map/tiles/revision/{z}/{x}/{y}.mvt')
+})
+
+test('MapLibre switches the complete tiled map to one precision family at the global transition', () => {
+	expect(tiledRawPrecisionVisible(6.999, 7)).toBe(false)
+	expect(tiledRawPrecisionVisible(7, 7)).toBe(true)
+	expect(tiledRawPrecisionVisible(18, 19)).toBe(false)
+})
+
+test('MapLibre refreshes tiled paint domains when governed metadata replaces the loading placeholder', () => {
+  const exact = tiledPointEnvelope()
+  if (exact.dataState.kind !== 'spatial_tiled') throw new Error('tiled state fixture is unavailable')
+  const loading = {
+    ...exact,
+    status: { kind: 'loading' },
+    dataState: { ...exact.dataState, aggregateDomains: [], rawDomains: [], rawMinimumZoom: 5 },
+  } as VisualizationEnvelope
+
+  const loadingPaint = tiledLayerPaintUpdates(loading, 'lv-map-tiles')[0]?.paint
+  const exactPaint = tiledLayerPaintUpdates(exact, 'lv-map-tiles')[0]?.paint
+  expect(exactPaint).toBeDefined()
+  expect(exactPaint).not.toEqual(loadingPaint)
+  expect(JSON.stringify(loadingPaint?.['circle-radius'])).not.toContain('5000')
+  expect(JSON.stringify(exactPaint?.['circle-radius'])).toContain('5000')
+	expect(tiledLayerPaintUpdates(loading, 'lv-map-tiles')[0]?.minzoom).toBe(5)
+	expect(tiledLayerPaintUpdates(exact, 'lv-map-tiles')[0]?.minzoom).toBe(10)
+	expect(tiledLayerPaintUpdates(exact, 'lv-map-tiles').find((update) => update.id === 'lv-orders-aggregate')?.maxzoom).toBe(10)
+})
+
+test('MapLibre tiled point aggregates encode and label the authored business measure', () => {
+	const envelope = tiledPointEnvelope()
+	const layer = envelope.spec.kind === 'geographic' ? envelope.spec.layers[0]! : undefined
+	if (!layer || layer.kind !== 'point') throw new Error('point layer fixture is unavailable')
+	if (envelope.dataState.kind !== 'spatial_tiled') throw new Error('tiled state fixture is unavailable')
+	const aggregate = tiledAggregatePointLayer('lv-orders-aggregate', 'lv-map-tiles', layer, envelope.dataState)
+	const count = tiledAggregateCountLayer('lv-orders-aggregate-count', 'lv-map-tiles', layer, envelope.dataState)
+	expect(aggregate.filter).toContainEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], true])
+	expect(aggregate.maxzoom).toBe(10)
+	expect(count['source-layer']).toBe('primary')
+	expect(count.filter).toEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], true])
+	expect(count.maxzoom).toBe(10)
+	expect(JSON.stringify(count.layout['text-field'])).toContain('revenue')
+	expect(JSON.stringify(count.layout['text-field'])).toContain('1000')
+	expect(JSON.stringify(count.layout['text-field'])).toContain('k')
+	expect(JSON.stringify(count.layout['text-field'])).not.toContain('__lv_coordinate_count')
+	expect(count.layout['text-size']).toBe(11)
+	expect(count.layout['text-allow-overlap']).toBe(true)
+})
+
+test('MapLibre tiled density blends occupied aggregate cells without changing raw heat styling', () => {
+	const envelope = tiledPointEnvelope()
+	if (envelope.dataState.kind !== 'spatial_tiled') throw new Error('tiled state fixture is unavailable')
+	const density = {
+		id: 'customers', kind: 'density',
+		latitude: { dataset: 'primary', field: 'latitude' }, longitude: { dataset: 'primary', field: 'longitude' },
+		value: { dataset: 'primary', field: 'revenue' }, tooltip: [], position: 'above_labels',
+		visibility: { minimumZoom: 0, maximumZoom: 18 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#d0d7de' },
+		heat: { radius: 22, intensity: 1.35 }, opacity: .86,
+	} as VisualizationGeographicLayer
+	if (density.kind !== 'density') throw new Error('density layer fixture is unavailable')
+	const raw = mapLayer('lv-customers', density, envelope.dataState, 'lv-map-tiles')
+	const aggregate = tiledAggregateHeatLayer('lv-customers-aggregate', 'lv-map-tiles', density, envelope.dataState)
+	expect(raw.filter).toEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], false])
+	expect(raw.minzoom).toBe(10)
+	expect(raw.paint['heatmap-radius']).toBe(22)
+	expect(aggregate.filter).toEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], true])
+	expect(aggregate.maxzoom).toBe(10)
+	expect(aggregate.paint['heatmap-radius']).toBe(72)
+	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('sqrt')
+	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('5000')
+})
+
+test('MapLibre aggregate clicks jump directly to the server refinement zoom', () => {
+	expect(aggregateExpansionCamera({ __lv_west: -54, __lv_south: -18, __lv_east: -36, __lv_north: 0, __lv_target_zoom: 5 })).toEqual({ center: [-45, -9], zoom: 5 })
+	expect(aggregateExpansionCamera({ __lv_west: 170, __lv_south: -10, __lv_east: -170, __lv_north: 10, __lv_target_zoom: 6 })).toEqual({ center: [-180, 0], zoom: 6 })
+	expect(aggregateExpansionCamera({ __lv_west: -54, __lv_south: -18, __lv_east: -36, __lv_north: 0 })).toBeUndefined()
+})
+
+test('MapLibre tiled accessibility deduplicates visible raw and aggregate features', () => {
+  const envelope = tiledPointEnvelope()
+  const data = mapAccessibleRenderedFeatures(envelope, [
+    { layer: { id: 'lv-orders' }, properties: { __lv_id: 'raw:11', __lv_aggregate: false, order_id: 'o1', revenue: 42, latitude: -23.5, longitude: -46.6 } },
+    { layer: { id: 'lv-orders' }, properties: { __lv_id: 'raw:11', __lv_aggregate: false, order_id: 'o1', revenue: 42, latitude: -23.5, longitude: -46.6 } },
+    { layer: { id: 'lv-orders' }, properties: { __lv_id: 'aggregate:2:10:7', __lv_aggregate: true, __lv_coordinate_count: 12, revenue: 500 } },
+  ])
+  expect(data.totalRows).toBe(15_000)
+  expect(data.rows).toHaveLength(2)
+  expect({ visible: data.visibleRows, raw: data.rawRows, aggregate: data.aggregateRows }).toEqual({ visible: 2, raw: 1, aggregate: 1 })
+  expect(data.rows.map((row) => row[0])).toEqual(['Raw point', 'Aggregated area'])
+	expect(data.columns[1]).toEqual({ id: '__lv_coordinate_count', label: 'Contained locations' })
+	expect(data.rows.map((row) => row[1])).toEqual(['1', '12'])
+})
+
+test('MapLibre tiled interaction submits raw identities and never aggregate cells', () => {
+  const envelope = tiledPointEnvelope()
+  const raw = { layer: { id: 'lv-orders' }, properties: { __lv_id: 11, __lv_aggregate: false, order_id: 'o1' } }
+  const aggregate = { layer: { id: 'lv-orders' }, properties: { __lv_id: 22, __lv_aggregate: true, order_id: 'not-a-row' } }
+  expect(mapInteractionCommand(envelope, [raw], ['lv-orders'])?.mappings[0]?.value).toBe('o1')
+  expect(mapInteractionCommand(envelope, [aggregate], ['lv-orders'])).toBeUndefined()
+})
+
 test('MapLibre exposes a bounded formatted tabular equivalent without unrelated fields', () => {
   const data = mapAccessibleData(selectableEnvelope(), 1)
   expect(data.totalRows).toBe(2)
@@ -501,6 +636,40 @@ test('MapLibre coalesces unchanged themes and serializes WebGL style mutations b
   await second
   expect(applied).toEqual(['first', 'second'])
 })
+
+function tiledPointEnvelope(): VisualizationEnvelope {
+  const layer = {
+    id: 'orders', kind: 'point', latitude: { dataset: 'primary', field: 'latitude' }, longitude: { dataset: 'primary', field: 'longitude' }, value: { dataset: 'primary', field: 'revenue' }, label: { dataset: 'primary', field: 'order_id' }, tooltip: [{ dataset: 'primary', field: 'order_id' }, { dataset: 'primary', field: 'revenue' }], position: 'above_labels', visibility: { minimumZoom: 0, maximumZoom: 18 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#d0d7de' }, size: { minimumRadius: 4, maximumRadius: 18 }, stroke: { color: '#fff', width: 1, opacity: 1 }, cluster: { enabled: false, radius: 40, maximumZoom: 14, minimumPoints: 2, showCount: true }, opacity: .8,
+  } as VisualizationGeographicLayer
+  return {
+    schemaVersion: 10, visualID: 'orders-map', rendererID: 'maplibre', specRevision: 'sha256:tiles', dataRevision: 7,
+    spec: {
+      kind: 'geographic', title: 'Orders', datasets: [{ id: 'primary', fields: [
+        { id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
+        { id: 'latitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Latitude' },
+        { id: 'longitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Longitude' },
+        { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+      ] }],
+      dataBudget: { maxRows: 0, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Order locations' },
+      interactions: [{ id: 'point_selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: ['detail'], mappings: [{ source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.order_id', targetFactID: 'orders' }] }],
+      layers: [layer], spatialInteractions: [],
+      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, roam: true, theme: 'auto', labelDensity: 'normal', camera: { mode: 'fit_data', padding: 24, minimumZoom: 0, maximumZoom: 18 }, controls: { zoom: true, reset: true, compass: true } },
+    },
+    dataState: {
+      kind: 'spatial_tiled', specRevision: 'sha256:tiles', dataRevision: 7, generation: 1,
+      schema: { id: 'primary', fields: [
+        { id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
+        { id: 'latitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Latitude' },
+        { id: 'longitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Longitude' },
+        { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+      ] },
+      cardinality: { kind: 'exact', count: 15_000 }, extent: { west: -47, south: -24, east: -46, north: -23 },
+      rawDomains: [{ field: 'revenue', minimum: 0, maximum: 500, total: 5000 }], aggregateDomains: [{ field: 'revenue', minimum: 0, maximum: 5000, total: 5000 }],
+      tileURL: '/workspaces/sales/dashboards/orders/visuals/orders-map/tiles/revision/{z}/{x}/{y}.mvt', minimumZoom: 0, maximumZoom: 18, rawMinimumZoom: 10, featureCap: 5000, maximumTileBytes: 524288,
+    },
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+}
 
 function selectableEnvelope(): VisualizationEnvelope {
   return {

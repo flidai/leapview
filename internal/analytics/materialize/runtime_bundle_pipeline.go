@@ -244,6 +244,9 @@ func (r *Runtime) executeArrowBundle(ctx context.Context, planned plannedBundle)
 		defer lease.Release()
 		ctx = leasedCtx
 	}
+	if err := r.ensureRequiredExtensions(ctx); err != nil {
+		return bundleExecution{}, err
+	}
 	ctx, connectionWait := dataquery.WithConnectionWaitCounter(ctx)
 	started := time.Now()
 	summary := dataquery.Result{PlanningMS: planned.planningMS, SQL: planned.plan.Plan.SQL}
