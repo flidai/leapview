@@ -322,9 +322,10 @@ async function verifyFilterShowcase(): Promise<void> {
           const from = control.getByLabel('Start date')
           const to = control.getByLabel('End date')
           await from.fill('2017-01-01')
-          await from.press('Tab')
           await to.fill('2018-12-31')
-          await to.press('Tab')
+          // Native date inputs expose platform-specific internal Tab stops.
+          // Enter is the filter control's deterministic compound-commit boundary.
+          await to.press('Enter')
         },
         expressionKind: 'range',
       },

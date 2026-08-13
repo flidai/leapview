@@ -16,6 +16,9 @@ class LeapViewFilterDock extends LitElement {
   @property({ attribute: false }) contract?: DashboardFilterContract
   @property({ attribute: false }) filterState?: DashboardFilterState
   @property({ attribute: false }) optionPages: Record<string, DashboardFilterOptionPage> = {}
+  @property({ attribute: false }) optionContexts: Record<string, string> = {}
+  @property({ type: Boolean }) optionRequestReady = true
+  @property({ attribute: false }) pendingBindingKeys: string[] = []
   @property({ type: String }) pageId = ''
   @property({ type: Boolean, reflect: true }) loading: DashboardStatus['loading'] = false
   @property({ type: Boolean, reflect: true }) pending = false
@@ -513,8 +516,10 @@ class LeapViewFilterDock extends LitElement {
             .binding=${binding}
             .expression=${expression}
             .options=${this.optionPages[binding.key]}
-            .pending=${this.pending}
-            .stale=${this.loading}
+            .optionContext=${this.optionContexts[binding.key] ?? ''}
+            .optionRequestReady=${this.optionRequestReady}
+            .pending=${this.pendingBindingKeys.includes(binding.key)}
+            .stale=${false}
             .active=${this.isActive(expression)}
             .dirty=${this.filterState?.dirtyBindings.includes(binding.key) ?? false}
           ></lv-filter-pane-card>`

@@ -286,10 +286,9 @@ func optionCacheContext(optionContext OptionContext, dependencies map[string]Exp
 		Dependencies map[string]Expression
 		Search       string
 		Limit        int
-		Revision     uint64
 	}{
 		optionContext.ServingStateID, optionContext.PolicyIdentity, optionContext.Binding.Key,
-		dependencies, search, limit, optionContext.State.Revision,
+		dependencies, search, limit,
 	}
 	data, _ := json.Marshal(payload)
 	sum := sha256.Sum256(data)
