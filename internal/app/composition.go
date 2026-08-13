@@ -160,6 +160,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	workspaceReadModel, err := workspacemodule.BuildReadModel(store.SQLDB())
+	if err != nil {
+		return fail(err)
+	}
 	if !production {
 		if err := accessModule.SeedLocalDeveloperPlatformAdmin(ctx); err != nil {
 			return fail(err)
@@ -428,7 +432,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		dataAssemblyInputs{
 			Database: store.SQLDB(), PlatformHealth: store, AdminDatabase: store.SQLDB(),
 			ServingStateRepo: servingStateRepo, StorageRetention: retention,
-			WorkspaceDirectory: workspaceDirectory,
+			WorkspaceReadModel: workspaceReadModel, WorkspaceDirectory: workspaceDirectory,
 		},
 		capabilityAssemblyInputs{
 			AnalyticsModule: analyticsModule, DashboardAssets: dashboardAssets,

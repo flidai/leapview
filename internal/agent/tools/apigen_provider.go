@@ -149,7 +149,48 @@ func (p APIGenProvider) Run(ctx context.Context, scope Scope, operation APIGenOp
 	if err != nil {
 		return agentToolRuntimeError(err)
 	}
+	if result.IsError {
+		return apigenAgentToolError(agentToolHTTPErrorCode(result.StatusCode), agentToolHTTPErrorMessage(result.Content, result.StatusCode))
+	}
 	return agentcore.ToolResult{Content: result.Content, IsError: result.IsError}
+}
+
+func agentToolHTTPErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return "invalid_arguments"
+	case http.StatusUnauthorized:
+		return "authentication_required"
+	case http.StatusForbidden:
+		return "access_denied"
+	case http.StatusNotFound:
+		return "resource_not_found"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusServiceUnavailable:
+		return "service_unavailable"
+	default:
+		return "agent_tool_failed"
+	}
+}
+
+func agentToolHTTPErrorMessage(content any, status int) string {
+	if envelope, ok := content.(map[string]any); ok {
+		if body, ok := envelope["body"].(map[string]any); ok {
+			for _, key := range []string{"message", "detail", "title"} {
+				if message, ok := body[key].(string); ok && strings.TrimSpace(message) != "" {
+					return strings.TrimSpace(message)
+				}
+			}
+		}
+	}
+	message := strings.TrimSpace(http.StatusText(status))
+	if message == "" {
+		message = "agent tool request failed"
+	}
+	return message
 }
 
 func normalizeCuratedQueryArguments(toolName string, arguments json.RawMessage) json.RawMessage {

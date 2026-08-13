@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -89,6 +90,9 @@ func (m *Module) mcpServer(r *http.Request) (*mcp.Server, error) {
 				Arguments: arguments,
 			})
 			if err != nil {
+				if errors.Is(err, agentcore.ErrInvalidToolArguments) {
+					return mcpErrorResult("invalid_arguments", err.Error()), nil
+				}
 				return mcpErrorResult("tool_execution_failed", err.Error()), nil
 			}
 			return mcpResult(result)
