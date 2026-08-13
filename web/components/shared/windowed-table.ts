@@ -202,7 +202,7 @@ class WindowedTable extends LitElement {
       overflow: hidden;
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
+      background: var(--lv-windowed-table-surface, var(--lv-bg-panel));
     }
 
     .toolbar,
@@ -312,7 +312,7 @@ class WindowedTable extends LitElement {
       top: 0;
       z-index: 2;
       border-bottom: var(--lv-border-emphasis, var(--lv-border-default));
-      background: var(--lv-bg-panel);
+      background: var(--lv-windowed-table-surface, var(--lv-bg-panel));
       color: var(--lv-fg-muted);
     }
 

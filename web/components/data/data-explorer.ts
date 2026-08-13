@@ -202,7 +202,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
       border-right: var(--lv-border-muted);
-      background: var(--lv-bg-panel);
+      background: var(--lv-bg-app);
     }
 
     .explore-browser {
@@ -337,7 +337,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
     summary {
       display: grid;
-      grid-template-columns: 1rem 1rem minmax(0, 1fr) auto;
+      grid-template-columns: 1rem 1rem minmax(0, 1fr);
       gap: var(--base-size-6);
       align-items: center;
       border-radius: var(--lv-radius-default);
@@ -358,11 +358,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       transform: rotate(90deg);
     }
 
-    summary em {
-      color: var(--lv-fg-subtle);
-      font-style: normal;
-    }
-
     .object-list {
       display: grid;
       gap: var(--base-size-2);
@@ -371,7 +366,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
     .object-node > summary {
       display: grid;
-      grid-template-columns: 1rem 1rem minmax(0, 1fr) auto;
+      grid-template-columns: 1rem 1rem minmax(0, 1fr);
       gap: var(--base-size-6);
       padding: var(--base-size-8);
       color: var(--lv-fg-default);
@@ -402,7 +397,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       display: grid;
       min-width: 0;
       width: 100%;
-      grid-template-columns: 1rem 1rem minmax(0, 1fr) auto;
+      grid-template-columns: 1rem 1rem minmax(0, 1fr);
       gap: var(--base-size-6);
       align-items: center;
       border: 0;
@@ -436,11 +431,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     .object-button strong {
       font: var(--lv-type-body);
       font-weight: var(--base-text-weight-medium);
-    }
-
-    .object-button span:last-child {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
     }
 
     .column-list {
@@ -544,7 +534,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       gap: var(--base-size-8);
       border-bottom: var(--lv-border-muted);
       padding: var(--base-size-12) var(--base-size-16);
-      background: var(--lv-bg-panel);
+      background: var(--lv-bg-app);
     }
 
     .query-row {
@@ -622,7 +612,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       overflow: auto;
       border-top: var(--lv-border-muted);
-      background: var(--lv-bg-panel);
+      background: var(--lv-bg-app);
     }
 
     .diagnostic-block {
@@ -739,7 +729,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       gap: var(--base-size-4);
       align-items: center;
       border-bottom: var(--lv-border-muted);
-      background: var(--lv-bg-panel);
+      background: var(--lv-bg-app);
       padding: 0 var(--base-size-16);
     }
 
@@ -1388,8 +1378,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         <summary>
           <span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span>
           <span aria-hidden="true">${lucideIcon(Database, { size: 14 })}</span>
-          <span>${label(workspace.title)}</span>
-          <em title=${`${workspace.objects.length} model tables`}>${workspace.objects.length} tables</em>
+          <span title=${`${workspace.objects.length} model tables`}>${label(workspace.title)} (${workspace.objects.length})</span>
         </summary>
         <div class="object-list">
           ${this.renderObjectNodes(workspace.objects, selectedWorkspaceId, selectedKey, explore, semanticActive)}
@@ -1450,8 +1439,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           >
             <span class="chevron object-expand" title="Expand columns" aria-label="Expand columns">${lucideIcon(ChevronRight, { size: 13 })}</span>
             <span aria-hidden="true">${lucideIcon(iconForLayer(object.layer), { size: 14 })}</span>
-            <strong>${label(displayTitle)}</strong>
-            <span title=${`${object.columnCount || 0} columns`} aria-label=${`${object.columnCount || 0} columns`}>${object.columnCount || 0}</span>
+            <strong title=${`${object.columnCount || 0} columns`}>${label(displayTitle)}</strong>
           </summary>
           <div class="column-list" aria-label=${`${object.title} fields`}>
             ${fields.map((field) => {

@@ -27,6 +27,7 @@ class DataExploreTable extends LitElement {
     lv-windowed-table {
       min-width: 0;
       min-height: 0;
+      --lv-windowed-table-surface: var(--lv-bg-app);
     }
   `
 
