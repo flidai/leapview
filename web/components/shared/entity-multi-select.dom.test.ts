@@ -82,3 +82,27 @@ test('filters entities and emits ordered multi-selection changes', async () => {
     await page.close()
   }
 })
+
+test('remote search preserves selections across result pages', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-entity-multi-select'))
+    const result = await page.evaluate(async () => {
+      const picker = document.querySelector('lv-entity-multi-select') as any
+      picker.remoteSearch = true
+      picker.items = [{ id: 'ana', label: 'Ana', detail: 'ana@example.com' }]
+      await picker.updateComplete
+      picker.shadowRoot.querySelector<HTMLInputElement>('input[value="ana"]')?.click()
+      await picker.updateComplete
+      picker.items = [{ id: 'sam', label: 'Sam', detail: 'sam@example.com' }]
+      await picker.updateComplete
+      picker.shadowRoot.querySelector<HTMLInputElement>('input[value="sam"]')?.click()
+      await picker.updateComplete
+      return { selectedIds: picker.selectedIds, count: picker.shadowRoot.querySelector('.selection-count')?.textContent?.trim() }
+    })
+    expect(result).toEqual({ selectedIds: ['ana', 'sam'], count: '2 selected' })
+  } finally {
+    await page.close()
+  }
+})

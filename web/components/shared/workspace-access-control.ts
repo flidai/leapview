@@ -1,8 +1,10 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Plus, Search, Trash2, UserRound, Users } from 'lucide'
+import { Trash2, UserRound, Users } from 'lucide'
 import { lucideIcon } from './lucide-icons'
 import './drawer'
+import './entity-multi-select'
+import type { EntityMultiSelectItem } from './entity-multi-select'
 
 type Workspace = {
   id?: string
@@ -76,6 +78,7 @@ type AccessCommand = {
   bindingId?: string
   subjectType?: string
   subjectId?: string
+  subjects?: Array<{ subjectType: string; subjectId: string }>
 }
 
 const emptyAccess: WorkspaceAccess = {
@@ -96,6 +99,9 @@ class WorkspaceAccessControl extends LitElement {
   @state() private open = false
   @state() private selectedRole = ''
   @state() private query = ''
+  @state() private selectedSubjectKeys: string[] = []
+
+  private selectedSubjects = new Map<string, AccessCandidate>()
 
   private previousFocus: HTMLElement | null = null
 
@@ -140,6 +146,15 @@ class WorkspaceAccessControl extends LitElement {
       outline: var(--focus-outline, var(--lv-border-default));
       outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
       outline-offset: var(--focus-outline-offset, var(--base-size-2));
+    }
+
+    .trigger:disabled {
+      cursor: not-allowed;
+      opacity: var(--opacity-disabled);
+    }
+
+    .candidate-batch-add {
+      justify-self: end;
     }
 
     .icon {
@@ -483,24 +498,11 @@ class WorkspaceAccessControl extends LitElement {
                 aria-label=${this.modeIsObject(access) ? 'Privilege to grant' : 'Role to assign'}
                 .value=${this.selectedRole}
                 ?disabled=${status.loading}
-                @change=${(event: Event) => { this.selectedRole = (event.currentTarget as HTMLSelectElement).value }}
+                @change=${this.handleRoleChange}
               >
                 <option value="">${this.modeIsObject(access) ? 'Select a privilege' : 'Select a role'}</option>
                 ${this.roles.map((role) => html`<option value=${role.name}>${roleLabel(role.name)}</option>`)}
               </select>
-            </label>
-            <label class="field-shell access-search">
-              ${searchIcon()}
-              <input
-                type="search"
-                autocomplete="off"
-                aria-label="Search people and groups"
-                aria-controls="workspace-access-candidates"
-                placeholder="Search people and groups..."
-                .value=${this.query}
-                ?disabled=${!this.selectedRole || status.loading}
-                @input=${this.handleSearchInput}
-              >
             </label>
             ${this.renderCandidates(access, status)}
           </section>
@@ -514,48 +516,37 @@ class WorkspaceAccessControl extends LitElement {
   }
 
   private renderCandidates(access: WorkspaceAccess, status: AccessStatus) {
-    if (!this.selectedRole) {
-      return html`<div class="search-state">Select a ${this.modeIsObject(access) ? 'privilege' : 'role'} to search people and groups.</div>`
-    }
     const searchStatus = access.searchStatus ?? {}
-    if (!this.query.trim()) {
-      return html`<div class="search-state">Search by name or email.</div>`
-    }
-    if (searchStatus.loading) {
-      return html`<div class="search-state" role="status">Searching...</div>`
-    }
-    if (searchStatus.error) {
-      return html`<div class="search-state search-state-error" role="alert">${searchStatus.error}</div>`
-    }
-    const candidates = access.candidates ?? []
-    if (candidates.length === 0) {
-      return html`<div class="search-state">No people or groups found.</div>`
-    }
+    const candidates = this.query.trim() ? access.candidates ?? [] : []
+    const pickerItems: EntityMultiSelectItem[] = candidates.map((candidate) => ({
+      id: candidateKey(candidate), label: candidate.label, detail: candidate.detail, kind: candidate.subjectType,
+    }))
+    const emptyMessage = !this.selectedRole
+      ? `Select a ${this.modeIsObject(access) ? 'privilege' : 'role'} to search people and groups.`
+      : this.query.trim()
+        ? 'No people or groups found.'
+        : 'Search by name or email.'
     return html`
-      <div id="workspace-access-candidates" class="candidate-list" role="list" aria-label="People and groups">
-        ${candidates.map((candidate) => {
-          return html`
-            <div
-              class="candidate"
-              role="listitem"
-              data-subject-type=${candidate.subjectType}
-            >
-              ${subjectIcon(candidate.subjectType)}
-              ${subjectCopy(candidate.label, candidate.detail)}
-              <button
-                class="row-action candidate-add"
-                type="button"
-                aria-label=${`Add ${candidate.label} as ${roleLabel(this.selectedRole)}`}
-                title=${`Add as ${roleLabel(this.selectedRole)}`}
-                ?disabled=${status.loading}
-                @click=${() => this.addCandidate(candidate)}
-              >
-                ${plusIcon()}
-              </button>
-            </div>
-          `
-        })}
-      </div>
+      <lv-entity-multi-select
+        label="People and groups"
+        searchPlaceholder="Search people and groups..."
+        .items=${pickerItems}
+        .selectedIds=${this.selectedSubjectKeys}
+        .emptyMessage=${emptyMessage}
+        noResultsMessage="No people or groups found."
+        remoteSearch
+        ?disabled=${!this.selectedRole || status.loading}
+        @lv-entity-search=${this.handleEntitySearch}
+        @lv-entity-selection-change=${(event: CustomEvent<{ selectedIds: string[] }>) => this.updateSelectedSubjects(event, candidates)}
+      ></lv-entity-multi-select>
+      ${searchStatus.loading ? html`<div class="search-state" role="status">Searching...</div>` : nothing}
+      ${searchStatus.error ? html`<div class="search-state search-state-error" role="alert">${searchStatus.error}</div>` : nothing}
+      <button
+        class="trigger candidate-batch-add"
+        type="button"
+        ?disabled=${status.loading || this.selectedSubjectKeys.length === 0}
+        @click=${this.addSelectedSubjects}
+      >${assignmentActionLabel(this.selectedSubjectKeys.length)}</button>
     `
   }
 
@@ -636,13 +627,19 @@ class WorkspaceAccessControl extends LitElement {
     return `${access.workspace?.title ?? 'Workspace'} roles apply to every published asset in this workspace.`
   }
 
-  private readonly handleSearchInput = (event: Event): void => {
-    this.query = (event.currentTarget as HTMLInputElement).value
+  private readonly handleEntitySearch = (event: CustomEvent<{ query: string }>): void => {
+    this.query = event.detail.query
     this.dispatchEvent(new CustomEvent('lv-workspace-access-search', {
       bubbles: true,
       composed: true,
       detail: { search: this.query },
     }))
+  }
+
+  private readonly handleRoleChange = (event: Event): void => {
+    this.selectedRole = (event.currentTarget as HTMLSelectElement).value
+    this.selectedSubjectKeys = []
+    this.selectedSubjects.clear()
   }
 
   private readonly openDialog = (): void => {
@@ -661,21 +658,44 @@ class WorkspaceAccessControl extends LitElement {
     }, 0)
   }
 
-  private addCandidate(candidate: AccessCandidate): void {
+  private updateSelectedSubjects(event: CustomEvent<{ selectedIds: string[] }>, candidates: AccessCandidate[]): void {
+    const selected = new Set(event.detail.selectedIds)
+    for (const candidate of candidates) {
+      const key = candidateKey(candidate)
+      if (selected.has(key)) this.selectedSubjects.set(key, candidate)
+    }
+    for (const key of this.selectedSubjects.keys()) {
+      if (!selected.has(key)) this.selectedSubjects.delete(key)
+    }
+    this.selectedSubjectKeys = [...event.detail.selectedIds]
+  }
+
+  private readonly addSelectedSubjects = (): void => {
     const role = (this.renderRoot.querySelector('.assignment-role') as HTMLSelectElement | null)?.value.trim() ?? ''
-    if (!role) return
+    const subjects = this.selectedSubjectKeys
+      .map((key) => this.selectedSubjects.get(key))
+      .filter((candidate): candidate is AccessCandidate => Boolean(candidate))
+      .map((candidate) => ({ subjectType: candidate.subjectType, subjectId: candidate.subjectId }))
+    if (!role || subjects.length === 0) return
     const command: AccessCommand = {
       email: '',
+      bindingId: '',
+      principalId: '',
       role: this.modeIsObject() ? '' : role,
       privilege: this.modeIsObject() ? role : '',
-      subjectType: candidate.subjectType,
-      subjectId: candidate.subjectId,
+      subjectType: '',
+      subjectId: '',
+      subjects,
     }
     this.dispatchEvent(new CustomEvent('lv-workspace-access-upsert', {
       bubbles: true,
       composed: true,
       detail: command,
     }))
+    this.query = ''
+    this.selectedSubjectKeys = []
+    this.selectedSubjects.clear()
+    this.renderRoot.querySelector('lv-entity-multi-select')?.clear()
   }
 
   private updateBindingRole(binding: Binding, role: string): void {
@@ -819,6 +839,15 @@ function displayLabel(binding: Binding): string {
   return binding.displayName || binding.groupName || binding.email || binding.subjectId || 'Principal'
 }
 
+function candidateKey(candidate: AccessCandidate): string {
+  return `${candidate.subjectType}:${candidate.subjectId}`
+}
+
+function assignmentActionLabel(count: number): string {
+  if (count === 0) return 'Grant access'
+  return `Grant access to ${count}`
+}
+
 function roleLabel(role: string): string {
   return role.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
@@ -840,14 +869,6 @@ function subjectIcon(subjectType: 'principal' | 'group', extraClass = '') {
 
 function trashIcon() {
   return html`<span class="icon" aria-hidden="true">${lucideIcon(Trash2, { size: 16 })}</span>`
-}
-
-function plusIcon() {
-  return html`<span class="icon" aria-hidden="true">${lucideIcon(Plus, { size: 16 })}</span>`
-}
-
-function searchIcon() {
-  return html`<span class="icon" aria-hidden="true">${lucideIcon(Search, { size: 16 })}</span>`
 }
 
 function usersIcon() {

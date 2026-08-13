@@ -435,7 +435,7 @@ test('workspace asset filter emits an update event without navigating', async ()
   }
 })
 
-test('workspace access drawer selects a role before searching and adds each result directly', async () => {
+test('workspace access drawer selects a role, batches subjects, and keeps existing bindings editable', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -456,8 +456,9 @@ test('workspace access drawer selects a role before searching and adds each resu
       const drawer = accessControl.shadowRoot.querySelector('lv-drawer') as any
       const dialog = drawer?.shadowRoot?.querySelector('[role="dialog"]')
       const rolePicker = accessControl.shadowRoot.querySelector('.assignment-role') as HTMLSelectElement
-      const search = accessControl.shadowRoot.querySelector('.access-search input') as HTMLInputElement
-      const rolePrecedesSearch = Boolean(rolePicker.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING)
+      const picker = accessControl.shadowRoot.querySelector('lv-entity-multi-select') as any
+      const search = picker.shadowRoot.querySelector('input[type="search"]') as HTMLInputElement
+      const rolePrecedesSearch = Boolean(rolePicker.compareDocumentPosition(picker) & Node.DOCUMENT_POSITION_FOLLOWING)
       const searchDisabledBeforeRole = search.disabled
       const roleOptions = Array.from(rolePicker.options).map((option) => ({
         value: (option as HTMLOptionElement).value,
@@ -466,13 +467,21 @@ test('workspace access drawer selects a role before searching and adds each resu
       rolePicker.value = 'data_deployer'
       rolePicker.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       await accessControl.updateComplete
+      await picker.updateComplete
       search.value = 'finance'
       search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
       await new Promise((resolve) => setTimeout(resolve, 250))
-      const candidates = Array.from(accessControl.shadowRoot.querySelectorAll<HTMLElement>('.candidate'))
-      const candidateTypes = candidates.map((candidate) => candidate.dataset.subjectType)
-      const addButtons = Array.from(accessControl.shadowRoot.querySelectorAll<HTMLButtonElement>('.candidate-add'))
-      addButtons[0]?.click()
+      await picker.updateComplete
+      const candidates = Array.from(picker.shadowRoot.querySelectorAll<HTMLElement>('.item'))
+      const candidateTypes = candidates.map((candidate) => candidate.querySelector('.entity-icon-group') ? 'group' : 'principal')
+      const checkboxes = Array.from(picker.shadowRoot.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+      checkboxes[0]?.click()
+      checkboxes[1]?.click()
+      await picker.updateComplete
+      await accessControl.updateComplete
+      const batchButton = accessControl.shadowRoot.querySelector<HTMLButtonElement>('.candidate-batch-add')
+      const batchButtonLabel = batchButton?.textContent?.trim()
+      batchButton?.click()
       accessControl.shadowRoot.querySelector<HTMLButtonElement>('button[aria-label="Remove Operations Group"]')?.click()
       const rowRole = accessControl.shadowRoot.querySelector('.row select') as HTMLSelectElement | null
       return {
@@ -488,7 +497,7 @@ test('workspace access drawer selects a role before searching and adds each resu
         searchEvents,
         candidateTypes,
         candidateLabels: candidates.map((candidate) => candidate.textContent?.replace(/\s+/g, ' ').trim()),
-        addButtonLabels: addButtons.map((button) => button.getAttribute('aria-label')),
+        batchButtonLabel,
         hasSelectedSubject: Boolean(accessControl.shadowRoot.querySelector('.selected-subject')),
         roleOptions,
         upsertEvents,
@@ -511,7 +520,7 @@ test('workspace access drawer selects a role before searching and adds each resu
       searchEvents: [{ search: 'finance' }],
       candidateTypes: ['principal', 'group'],
       candidateLabels: ['Ana Analyst ana@example.com', 'Analytics Group'],
-      addButtonLabels: ['Add Ana Analyst as Data Deployer', 'Add Analytics as Data Deployer'],
+      batchButtonLabel: 'Grant access to 2',
       hasSelectedSubject: false,
       roleOptions: [
         { value: '', label: 'Select a role' },
@@ -523,8 +532,14 @@ test('workspace access drawer selects a role before searching and adds each resu
         email: '',
         role: 'data_deployer',
         privilege: '',
-        subjectType: 'principal',
-        subjectId: 'principal_ana',
+        bindingId: '',
+        principalId: '',
+        subjectType: '',
+        subjectId: '',
+        subjects: [
+          { subjectType: 'principal', subjectId: 'principal_ana' },
+          { subjectType: 'group', subjectId: 'group_analytics' },
+        ],
       }],
       removeEvents: [{
         principalId: '',

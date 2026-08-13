@@ -53,7 +53,7 @@ const emptyWorkspaceAccess: WorkspaceAccessSignal = {
   candidates: [],
   canManage: false,
   status: { loading: false, error: '', message: '' },
-  command: { bindingId: '', email: '', principalId: '', privilege: '', role: '', subjectId: '', subjectType: '' },
+  command: { bindingId: '', email: '', principalId: '', privilege: '', role: '', subjectId: '', subjectType: '', subjects: [] },
   search: '',
   searchStatus: { loading: false, error: '' },
 }

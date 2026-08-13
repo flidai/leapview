@@ -20,6 +20,7 @@ export class EntityMultiSelect extends LitElement {
   @property() emptyMessage = 'No options available.'
   @property() noResultsMessage = 'No matching options.'
   @property({ type: Boolean }) disabled = false
+  @property({ type: Boolean }) remoteSearch = false
 
   @state() private query = ''
 
@@ -204,7 +205,7 @@ export class EntityMultiSelect extends LitElement {
 
   render() {
     const normalizedQuery = this.query.trim().toLowerCase()
-    const visibleItems = normalizedQuery
+    const visibleItems = normalizedQuery && !this.remoteSearch
       ? this.items.filter((item) => `${item.label} ${item.detail ?? ''}`.toLowerCase().includes(normalizedQuery))
       : this.items
     const selected = new Set(this.selectedIds)
@@ -261,13 +262,20 @@ export class EntityMultiSelect extends LitElement {
 
   private readonly handleSearch = (event: Event): void => {
     this.query = (event.currentTarget as HTMLInputElement).value
+    this.dispatchEvent(new CustomEvent('lv-entity-search', {
+      bubbles: true,
+      composed: true,
+      detail: { query: this.query },
+    }))
   }
 
   private toggle(id: string, checked: boolean): void {
     const selected = new Set(this.selectedIds)
     if (checked) selected.add(id)
     else selected.delete(id)
-    this.selectedIds = this.items.filter((item) => selected.has(item.id)).map((item) => item.id)
+    const visibleIDs = new Set(this.items.map((item) => item.id))
+    const preserved = this.selectedIds.filter((selectedID) => selected.has(selectedID) && !visibleIDs.has(selectedID))
+    this.selectedIds = [...preserved, ...this.items.filter((item) => selected.has(item.id)).map((item) => item.id)]
     this.dispatchEvent(new CustomEvent('lv-entity-selection-change', {
       bubbles: true,
       composed: true,
