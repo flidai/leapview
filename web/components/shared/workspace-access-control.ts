@@ -539,7 +539,6 @@ class WorkspaceAccessControl extends LitElement {
         @lv-entity-search=${this.handleEntitySearch}
         @lv-entity-selection-change=${(event: CustomEvent<{ selectedIds: string[] }>) => this.updateSelectedSubjects(event, candidates)}
       ></lv-entity-multi-select>
-      ${searchStatus.loading ? html`<div class="search-state" role="status">Searching...</div>` : nothing}
       ${searchStatus.error ? html`<div class="search-state search-state-error" role="alert">${searchStatus.error}</div>` : nothing}
       <button
         class="trigger candidate-batch-add"

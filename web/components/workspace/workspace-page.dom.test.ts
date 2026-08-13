@@ -472,6 +472,9 @@ test('workspace access drawer selects a role, batches subjects, and keeps existi
       search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
       await new Promise((resolve) => setTimeout(resolve, 250))
       await picker.updateComplete
+      accessControl.access = { ...accessControl.access, searchStatus: { loading: true, error: '' } }
+      await accessControl.updateComplete
+      const hasSearchingStatus = accessControl.shadowRoot.textContent?.includes('Searching...') ?? false
       const candidates = Array.from(picker.shadowRoot.querySelectorAll<HTMLElement>('.item'))
       const candidateTypes = candidates.map((candidate) => candidate.querySelector('.entity-icon-group') ? 'group' : 'principal')
       const checkboxes = Array.from(picker.shadowRoot.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
@@ -494,6 +497,7 @@ test('workspace access drawer selects a role, batches subjects, and keeps existi
         searchDisabledBeforeRole,
         searchDisabledAfterRole: search.disabled,
         searchPlaceholder: search.placeholder,
+        hasSearchingStatus,
         searchEvents,
         candidateTypes,
         candidateLabels: candidates.map((candidate) => candidate.textContent?.replace(/\s+/g, ' ').trim()),
@@ -517,6 +521,7 @@ test('workspace access drawer selects a role, batches subjects, and keeps existi
       searchDisabledBeforeRole: true,
       searchDisabledAfterRole: false,
       searchPlaceholder: 'Search people and groups...',
+      hasSearchingStatus: false,
       searchEvents: [{ search: 'finance' }],
       candidateTypes: ['principal', 'group'],
       candidateLabels: ['Ana Analyst ana@example.com', 'Analytics Group'],
