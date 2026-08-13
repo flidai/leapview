@@ -58,7 +58,7 @@ export function tiledAggregateHeatLayer(id: string, sourceID: string, layer: Ext
 		minzoom: layer.visibility.minimumZoom, maxzoom: Math.min(layer.visibility.maximumZoom, state.rawMinimumZoom),
 		paint: {
 			'heatmap-weight': ['*', tiledAggregateHeatWeightExpression(layer, state), ['case', featureFlag('__lv_selected'), 1, featureFlag('__lv_has_selection'), 0.75, featureFlag('__lv_highlighted'), 1, featureFlag('__lv_has_highlight'), 0.15, 0.75]],
-			'heatmap-intensity': layer.heat.intensity ?? (layer.kind === 'density' ? 1.35 : 1),
+			'heatmap-intensity': tiledAggregateHeatIntensityExpression(layer, state),
 			// Aggregate features represent occupied cells rather than individual
 			// coordinates. Overlap their kernels so the aligned server grid reads
 			// as a continuous density surface instead of a lattice of dots.
@@ -69,6 +69,19 @@ export function tiledAggregateHeatLayer(id: string, sourceID: string, layer: Ext
 			'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'], 0, transparentColor(colors[0]), 0.15, colors[0], 0.35, colors[1], 0.6, colors[2], 0.85, colors[3], 1, colors[4]],
 		},
 	}
+}
+
+function tiledAggregateHeatIntensityExpression(layer: Extract<VisualizationGeographicLayer, { kind: 'heat' | 'density' }>, state: SpatialTiledVisualizationDataState): number | unknown[] {
+	const authored = layer.heat.intensity ?? (layer.kind === 'density' ? 1.35 : 1)
+	const minimumZoom = Math.max(layer.visibility.minimumZoom, state.minimumZoom)
+	const transitionZoom = Math.min(layer.visibility.maximumZoom, state.rawMinimumZoom)
+	if (transitionZoom <= minimumZoom) return authored
+	// Aggregation replaces many raw heat kernels with one cell kernel. Preserve
+	// the authored relative weights, but compensate for that lost contribution
+	// count at overview zooms. Taper to the authored intensity at the global raw
+	// transition so the two precision families meet without a visual jump.
+	const overviewBoost = layer.kind === 'density' ? 6 : 4
+	return ['interpolate', ['linear'], ['zoom'], minimumZoom, authored * overviewBoost, transitionZoom, authored]
 }
 
 export function tiledAggregateCountLayer(id: string, sourceID: string, layer: Extract<VisualizationGeographicLayer, { kind: 'point' }>, state?: SpatialTiledVisualizationDataState): any {

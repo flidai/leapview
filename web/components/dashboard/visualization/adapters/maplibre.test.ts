@@ -447,6 +447,11 @@ test('MapLibre tiled density blends occupied aggregate cells without changing ra
 	expect(aggregate.filter).toEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], true])
 	expect(aggregate.maxzoom).toBe(10)
 	expect(aggregate.paint['heatmap-radius']).toBe(72)
+	const aggregateIntensity = aggregate.paint['heatmap-intensity'] as unknown[]
+	expect(aggregateIntensity.slice(0, 4)).toEqual(['interpolate', ['linear'], ['zoom'], 0])
+	expect(aggregateIntensity[4] as number).toBeCloseTo(8.1)
+	expect(aggregateIntensity.slice(5)).toEqual([10, 1.35])
+	expect(raw.paint['heatmap-intensity']).toBe(1.35)
 	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('sqrt')
 	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('5000')
 })
