@@ -69,7 +69,7 @@ type ExpectedBlockRequest = {
 const blockIDs: WindowedTableBlockID[] = ['a', 'b', 'c']
 const defaultSort: WindowedTableSort = { key: '', direction: '' }
 const defaultChunkSize = 100
-const defaultRowHeight = 34
+const defaultRowHeight = 32
 
 function emptyBlock(start: number, sort = defaultSort, resetVersion = 0): WindowedTableBlock {
   return { start, requestSeq: 0, resetVersion, sort, rows: [] }
@@ -163,6 +163,7 @@ function sameSort(a: WindowedTableSort, b: WindowedTableSort): boolean {
 
 class WindowedTable extends LitElement {
   @property({ attribute: false }) table: WindowedTablePayload | null = null
+  @property({ type: Boolean, reflect: true }) compact = false
   @state() private viewportTop = 0
   @state() private localVisibleColumns: string[] = []
   @state() private localColumnWidths: Record<string, number> = {}
@@ -220,6 +221,19 @@ class WindowedTable extends LitElement {
     .footer {
       border-block-start: var(--lv-border-muted);
       border-block-end: 0;
+    }
+
+    :host([compact]) .toolbar {
+      display: none;
+    }
+
+    :host([compact]) .shell {
+      grid-template-rows: minmax(0, 1fr) auto;
+    }
+
+    :host([compact]) .footer {
+      justify-content: flex-start;
+      padding: var(--base-size-4) var(--base-size-12);
     }
 
     .toolbar strong,
@@ -359,6 +373,10 @@ class WindowedTable extends LitElement {
       outline: 0;
     }
 
+    :host([compact]) .header-cell button {
+      min-height: var(--control-small-size);
+    }
+
     .sort {
       min-width: 1rem;
       color: var(--lv-fg-link);
@@ -411,7 +429,7 @@ class WindowedTable extends LitElement {
     .row {
       position: absolute;
       inset-inline: 0;
-      min-height: var(--lv-windowed-row-height, 34px);
+      min-height: var(--lv-windowed-row-height, 32px);
       border-bottom: var(--lv-border-muted);
       background: var(--lv-bg-app);
     }
@@ -426,7 +444,7 @@ class WindowedTable extends LitElement {
 
     .cell {
       display: flex;
-      min-height: var(--lv-windowed-row-height, 34px);
+      min-height: var(--lv-windowed-row-height, 32px);
       align-items: center;
       padding: 0 var(--base-size-8);
       color: var(--lv-fg-default);
@@ -634,8 +652,12 @@ class WindowedTable extends LitElement {
           ` : nothing}
         </div>
         <div class="footer">
-          <span>${table.totalLabel || `${table.totalRows.toLocaleString()} rows`}</span>
-          <span>${columns.length} visible · ${table.columns.length} total columns</span>
+          ${this.compact
+            ? html`<span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>`
+            : html`
+              <span>${table.totalLabel || `${table.totalRows.toLocaleString()} rows`}</span>
+              <span>${columns.length} visible · ${table.columns.length} total columns</span>
+            `}
         </div>
       </section>
     `

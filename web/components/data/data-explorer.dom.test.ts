@@ -166,7 +166,7 @@ test('data explorer renders object browser and emits preview commands', async ()
           totalRows: 500,
           availableRows: 500,
           chunkSize: 100,
-          rowHeight: 34,
+          rowHeight: 32,
           resetVersion: 0,
           blocks: {
             a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: [
@@ -223,12 +223,6 @@ test('data explorer renders object browser and emits preview commands', async ()
       const operationsWorkspace = root.querySelector<HTMLDetailsElement>('.workspace-group[data-workspace-id="operations"]')!
       operationsWorkspace.open = true
       await new Promise((resolve) => setTimeout(resolve, 0))
-      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('.object-tab')).find((tab) => tab.textContent?.includes('Schema'))!).click()
-      await element.updateComplete
-      const schemaText = root.querySelector('.schema-view')?.textContent ?? ''
-      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('.object-tab')).find((tab) => tab.textContent?.includes('Query details'))!).click()
-      await element.updateComplete
-      const queryText = root.querySelector('.query-view')?.textContent ?? ''
       const openedWorkspacePreserved = operationsWorkspace.open
       const selectedNodeExpandedByDefault = Boolean(root.querySelector('.object-button.is-selected')?.closest('.object-node')?.hasAttribute('open'))
       const searchInput = root.querySelector<HTMLInputElement>('.search input')!
@@ -237,11 +231,31 @@ test('data explorer renders object browser and emits preview commands', async ()
       await element.updateComplete
       await new Promise((resolve) => requestAnimationFrame(resolve))
       const columnSearchMatches = Array.from(root.querySelectorAll<HTMLDetailsElement>('.object-node[data-column-match="true"]'))
+      const resizerControl = root.querySelector<HTMLElement>('.browser-resizer')!
+      const widthBeforeKeyboardResize = Number(resizerControl.getAttribute('aria-valuenow'))
+      resizerControl.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+      await element.updateComplete
+      const widthAfterKeyboardResize = Number(root.querySelector<HTMLElement>('.browser-resizer')?.getAttribute('aria-valuenow'))
+      const sidebarToggle = root.querySelector<HTMLButtonElement>('.sidebar-toggle')!
+      const tableWidthBeforeCollapse = Math.round(grid.getBoundingClientRect().width)
+      const togglePositionBeforeCollapse = sidebarToggle.getBoundingClientRect()
+      sidebarToggle.click()
+      await element.updateComplete
+      const sidebarCollapsed = !root.querySelector('.tree') && sidebarToggle.getAttribute('aria-expanded') === 'false'
+      const tableWidthAfterCollapse = Math.round(grid.getBoundingClientRect().width)
+      const togglePositionAfterCollapse = sidebarToggle.getBoundingClientRect()
+      const collapsedToggleLabel = sidebarToggle.getAttribute('aria-label')
+      sidebarToggle.click()
+      await element.updateComplete
+      const headerColumnCheckboxes = Array.from(root.querySelectorAll<HTMLInputElement>('.header-column-menu input'))
+      headerColumnCheckboxes.at(-1)?.click()
+      await element.updateComplete
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
         groups: Array.from(root.querySelectorAll('summary')).map((item) => item.textContent?.trim()),
-        selectedTitle: root.querySelector('h2')?.textContent?.trim(),
-        breadcrumb: root.querySelector('.selected-title')?.textContent?.replace(/\s+/g, ' ').trim(),
+        hasBreadcrumb: Boolean(root.querySelector('[aria-label="Breadcrumb"]')),
+        hasDescription: Boolean(root.querySelector('.detail')),
+        hasSelectedHeader: Boolean(root.querySelector('.selected-header')),
         badgeCount: root.querySelectorAll('.badge').length,
         hasSearch: Boolean(root.querySelector('.search input')),
         tabs: Array.from(root.querySelectorAll('.object-tab')).map((tab) => tab.textContent?.trim()),
@@ -252,18 +266,30 @@ test('data explorer renders object browser and emits preview commands', async ()
         rowClickExpanded,
         expandClickExpanded,
         workspaceSummaries: Array.from(root.querySelectorAll('.workspace-group > summary')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
+        workspaceIcons: Array.from(root.querySelectorAll('.workspace-icon')).map((item) => item.getAttribute('title')),
         columnSearchMatchCount: columnSearchMatches.length,
         columnSearchMatchesOpen: columnSearchMatches.every((node) => node.open),
         openedWorkspacePreserved,
-        hasColumnsControl: grid.shadowRoot.querySelector('.options summary')?.textContent?.includes('Columns'),
+        hasHeaderColumnsControl: root.querySelector('.header-columns summary')?.textContent?.replace(/\s+/g, ' ').trim(),
         hasPreviewTable: Boolean(previewTable),
         hasWindowedTable: Boolean(grid),
         tableKey: grid.table?.tableKey,
+        tableRowHeight: grid.table?.rowHeight,
+        tableFooterHeight: Math.round(grid.shadowRoot.querySelector('.footer')!.getBoundingClientRect().height),
+        tableFooterDisplay: getComputedStyle(grid.shadowRoot.querySelector('.footer')!).display,
+        tableFooterText: grid.shadowRoot.querySelector('.footer')?.textContent?.replace(/\s+/g, ' ').trim(),
+        tableToolbarHeight: Math.round(grid.shadowRoot.querySelector('.toolbar')!.getBoundingClientRect().height),
+        sidebarCollapsed,
+        widthBeforeKeyboardResize,
+        widthAfterKeyboardResize,
+        tableWidthBeforeCollapse,
+        tableWidthAfterCollapse,
+        togglePositionBeforeCollapse: { x: Math.round(togglePositionBeforeCollapse.x), y: Math.round(togglePositionBeforeCollapse.y) },
+        togglePositionAfterCollapse: { x: Math.round(togglePositionAfterCollapse.x), y: Math.round(togglePositionAfterCollapse.y) },
+        collapsedToggleLabel,
         rowCount: grid.shadowRoot.querySelectorAll('.row[role="row"]').length,
         firstCellWidth: Math.round(cellRect.width),
         tableWidth: Math.round(tableRect.width),
-        schemaText,
-        queryText,
         commands,
       }
     })
@@ -273,11 +299,12 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.groups.join(' ')).toContain('Sales')
     expect(state.groups.join(' ')).not.toContain('Model tables')
     expect(state.groups.join(' ')).not.toContain('Semantic views')
-    expect(state.selectedTitle).toBe('orders')
-    expect(state.breadcrumb).toBe('Sales / orders')
+    expect(state.hasBreadcrumb).toBe(false)
+    expect(state.hasDescription).toBe(false)
+    expect(state.hasSelectedHeader).toBe(false)
     expect(state.badgeCount).toBe(0)
     expect(state.hasSearch).toBe(true)
-    expect(state.tabs).toEqual(['Data', 'Schema (2)', 'Query details'])
+    expect(state.tabs).toEqual([])
     expect(state.selectedColumns).toEqual(['order_id', 'status'])
     expect(state.selectedFieldStates).toEqual(['true', 'true'])
     expect(state.selectedNodeText).not.toContain('olist · orders')
@@ -286,24 +313,32 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.rowClickExpanded).toBe(false)
     expect(state.expandClickExpanded).toBe(true)
     expect(state.workspaceSummaries).toContain('Sales (2)')
+    expect(state.workspaceIcons).toEqual(['Workspace'])
     expect(state.columnSearchMatchCount).toBe(2)
     expect(state.columnSearchMatchesOpen).toBe(true)
     expect(state.openedWorkspacePreserved).toBe(true)
-    expect(state.hasColumnsControl).toBe(true)
+    expect(state.hasHeaderColumnsControl).toBe('Columns2/2')
     expect(state.hasPreviewTable).toBe(true)
     expect(state.hasWindowedTable).toBe(true)
     expect(state.tableKey).toBe('sales:model_table:model_table:olist.orders')
+    expect(state.tableRowHeight).toBe(32)
+    expect(state.tableFooterDisplay).toBe('flex')
+    expect(state.tableFooterHeight).toBeGreaterThan(0)
+    expect(state.tableFooterText).toMatch(/^\d+-\d+ of 500(?: · loading)?$/)
+    expect(state.tableToolbarHeight).toBe(0)
+    expect(state.sidebarCollapsed).toBe(true)
+    expect(state.widthAfterKeyboardResize).toBe(state.widthBeforeKeyboardResize + 16)
+    expect(state.tableWidthAfterCollapse).toBeGreaterThan(state.tableWidthBeforeCollapse)
+    expect(Math.abs(state.togglePositionAfterCollapse.x - state.togglePositionBeforeCollapse.x)).toBeLessThanOrEqual(8)
+    expect(Math.abs(state.togglePositionAfterCollapse.y - state.togglePositionBeforeCollapse.y)).toBeLessThanOrEqual(8)
+    expect(state.collapsedToggleLabel).toBe('Open data catalog')
     expect(state.rowCount).toBeGreaterThan(0)
     expect(state.tableWidth).toBeGreaterThan(700)
     expect(state.firstCellWidth).toBeGreaterThan(100)
-    expect(state.schemaText).toContain('Primary key')
-    expect(state.schemaText).toContain('Stable order identifier.')
-    expect(state.schemaText).toContain('order_id')
-    expect(state.queryText).toContain('Generated SQL')
-    expect(state.queryText).toContain('SELECT * FROM model.orders')
     expect(state.commands.some((command) => command.workspaceId === 'sales' && command.objectKey === 'model_table:model_table:olist.customers')).toBe(true)
     expect(state.commands.some((command) => command.objectKey === 'model_table:model_table:olist.customers' && command.visibleColumns?.length === 0 && Object.keys(command.columnWidths ?? {}).length === 0)).toBe(true)
     expect(state.commands.some((command) => command.workspaceId === 'sales' && command.sort?.column === 'order_id')).toBe(true)
+    expect(state.commands.some((command) => command.visibleColumns?.length === 1 && command.visibleColumns[0] === 'order_id')).toBe(true)
     expect(state.commands.some((command) => command.workspaceId === 'sales' && command.objectKey === 'model_table:model_table:olist.orders' && command.columnWidths?.order_id > 200)).toBe(true)
     expect(state.commands.some((command) => command.workspaceId === 'sales' && command.block && command.start > 0 && command.count === 100 && command.requestSeq > 0)).toBe(true)
   } finally {
@@ -348,7 +383,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       }
       const dataExplorer = {
         objects: [selectedObject, customersObject, itemsObject], selectedKey: selectedObject.key, selectedWorkspaceId: 'sales', selectedObject, preview: {
-          columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 34, resetVersion: 0, blocks: {}, totalRowLabel: 'Unknown', sort: {},
+          columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, totalRowLabel: 'Unknown', sort: {},
         },
         command: { mode: 'explore', workspaceId: 'sales', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
         explore: {
@@ -409,7 +444,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       skuField.click()
       const initialState = {
         modes: Array.from(root.querySelectorAll('.mode-button')).map((button) => ({ text: button.textContent?.trim(), pressed: button.getAttribute('aria-pressed') })),
-        breadcrumb: root.querySelector('.selected-title')?.textContent?.replace(/\s+/g, ' ').trim(),
+        hasBreadcrumb: Boolean(root.querySelector('[aria-label="Breadcrumb"]')),
         workspaceTables: root.querySelector('.workspace-group')?.textContent?.replace(/\s+/g, ' ').trim(),
         chips: Array.from(root.querySelectorAll('.selection-shelf .chip')).map((chip) => chip.textContent?.replace(/\s+/g, ' ').trim()),
         grain: root.querySelector('.result-meta')?.textContent?.replace(/\s+/g, ' ').trim(),
@@ -459,7 +494,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
     })
 
     expect(state.modes).toEqual([])
-    expect(state.breadcrumb).toBe('Sales / orders')
+    expect(state.hasBreadcrumb).toBe(false)
     expect(state.workspaceTables).toContain('orders')
     expect(state.chips.join(' ')).toContain('Order ID')
     expect(state.chips.join(' ')).toContain('Revenue')

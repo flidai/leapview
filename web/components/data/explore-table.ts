@@ -15,6 +15,7 @@ const emptyResult: DataExploreResultSignal = {
 class DataExploreTable extends LitElement {
   @property({ attribute: false }) command: DataExploreCommand = emptyCommand
   @property({ attribute: false }) result: DataExploreResultSignal = emptyResult
+  @property({ attribute: false }) visibleColumns: string[] = []
 
   static styles = css`
     :host {
@@ -33,6 +34,7 @@ class DataExploreTable extends LitElement {
 
   render() {
     return html`<lv-windowed-table
+      compact
       .table=${this.tablePayload()}
       @lv-windowed-table-request=${this.forwardSort}
       @lv-windowed-table-column-widths=${this.forwardColumnWidths}
@@ -57,7 +59,7 @@ class DataExploreTable extends LitElement {
       totalRows: rows.length,
       availableRows: rows.length,
       chunkSize: Math.max(command.limit || 100, 1),
-      rowHeight: 34,
+      rowHeight: 32,
       resetVersion: command.resetVersion ?? 0,
       sort: { key: sort?.field ?? '', column: sort?.field ?? '', direction: sort?.direction ?? '' },
       blocks: {
@@ -70,6 +72,7 @@ class DataExploreTable extends LitElement {
         },
       },
       error: result.error,
+      visibleColumns: this.visibleColumns,
       columnWidths: command.columnWidths ?? {},
       totalLabel: result.truncated ? `${rows.length}+ rows` : `${rows.length} rows`,
     }

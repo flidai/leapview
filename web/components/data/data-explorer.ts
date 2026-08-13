@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
-import { ChevronRight, Code2, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
+import { Boxes, ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
 import type {
   AgentReferenceSignal,
   DataExploreCommand,
@@ -27,7 +27,7 @@ const emptyPreview: DataPreviewSignal = {
   totalRows: 0,
   availableRows: 0,
   chunkSize: 100,
-  rowHeight: 34,
+  rowHeight: 32,
   resetVersion: 0,
   blocks: {},
   totalRowLabel: 'Unknown',
@@ -57,7 +57,7 @@ type WorkspaceGroup = {
   objects: DataExplorerObjectSignal[]
 }
 
-type BrowseView = 'data' | 'schema' | 'query'
+type ExplorerColumn = { key: string, label?: string }
 
 const dataExplorerAgentStorageKey = 'leapview-data-explorer-agent-state'
 
@@ -74,12 +74,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private search = ''
   @state() private fieldSearch = ''
   @state() private showSQL = false
-  @state() private browseView: BrowseView = 'data'
   @state() private filterField = ''
   @state() private filterOperator = 'equals'
   @state() private filterValue = ''
   @state() private optimisticExplore: DataExploreCommand | null = null
   @state() private agentDrawerOpen = false
+  @state() private browserCollapsed = false
+  @state() private browserWidth = 320
+  @state() private exploreVisibleColumns: string[] = []
   private lastSelectedKey = ''
   private lastSearch = ''
   private expandedWorkspaceIDs = new Set<string>()
@@ -87,6 +89,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private agentStateInitialized = false
   private agentRestoreDispatched = false
   private restoredAgentConversationId = ''
+  private browserResizeCleanup?: () => void
 
   static styles = css`
     :host {
@@ -126,8 +129,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       grid-template-columns: minmax(0, 1fr) auto;
       gap: var(--base-size-12);
       align-items: center;
+      box-sizing: border-box;
       border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-12) var(--base-size-16);
+      min-height: 3.25rem;
+      padding: var(--base-size-8) var(--base-size-12);
       background: var(--lv-bg-app);
     }
 
@@ -138,6 +143,64 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       display: flex;
       align-items: center;
       gap: var(--base-size-8);
+    }
+
+    .header-columns {
+      position: relative;
+    }
+
+    .header-columns summary {
+      display: flex;
+      height: var(--control-small-size);
+      align-items: center;
+      gap: var(--base-size-6);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-control);
+      color: var(--lv-fg-default);
+      padding: 0 var(--base-size-8);
+      cursor: pointer;
+      list-style: none;
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
+      text-transform: none;
+    }
+
+    .header-columns summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .header-columns summary:hover,
+    .header-columns summary:focus-visible {
+      background: var(--lv-bg-control-hover);
+      outline: 0;
+    }
+
+    .header-column-menu {
+      position: absolute;
+      top: calc(100% + var(--base-size-4));
+      right: 0;
+      z-index: var(--zIndex-overlay);
+      display: grid;
+      min-width: 14rem;
+      max-height: 22rem;
+      gap: var(--base-size-4);
+      overflow: auto;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      box-shadow: var(--lv-shadow-floating-sm);
+      padding: var(--base-size-8);
+    }
+
+    .header-column-menu label {
+      display: flex;
+      min-height: var(--control-xsmall-size);
+      align-items: center;
+      gap: var(--base-size-8);
+      color: var(--lv-fg-default);
+      cursor: pointer;
+      font: var(--lv-type-caption);
     }
 
     .text-button,
@@ -174,20 +237,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       font: var(--lv-type-section-title);
     }
 
-    .detail {
-      margin-top: var(--base-size-4);
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body);
-    }
-
     .explorer {
       display: grid;
       min-width: 0;
       min-height: 0;
-      grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr);
+      grid-template-columns: auto 4px minmax(0, 1fr);
       overflow: hidden;
     }
 
@@ -201,8 +255,80 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     .browser {
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
-      border-right: var(--lv-border-muted);
       background: var(--lv-bg-app);
+    }
+
+    .browser-tools {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: var(--base-size-6);
+      border-bottom: var(--lv-border-muted);
+      padding: var(--base-size-6) var(--base-size-8);
+    }
+
+    .sidebar-toggle {
+      display: grid;
+      width: var(--control-small-size);
+      height: var(--control-small-size);
+      flex: none;
+      place-items: center;
+      border: 0;
+      border-radius: var(--lv-radius-default);
+      background: transparent;
+      color: var(--lv-fg-muted);
+      cursor: pointer;
+    }
+
+    .sidebar-toggle:hover,
+    .sidebar-toggle:focus-visible {
+      background: var(--lv-bg-control-hover);
+      color: var(--lv-fg-default);
+      outline: 0;
+    }
+
+    .browser-resizer {
+      position: relative;
+      min-width: 4px;
+      border-right: var(--lv-border-muted);
+      cursor: col-resize;
+      touch-action: none;
+    }
+
+    .browser-resizer::after {
+      position: absolute;
+      inset-block: 0;
+      left: 1px;
+      width: 2px;
+      background: transparent;
+      content: '';
+    }
+
+    .browser-resizer:hover::after,
+    .browser-resizer:focus-visible::after {
+      background: var(--lv-fg-link);
+    }
+
+    .browser-resizer:focus-visible {
+      outline: 0;
+    }
+
+    .browser-collapsed .browser {
+      grid-template-rows: max-content;
+      align-content: start;
+    }
+
+    .explorer.browser-collapsed {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .browser-collapsed .browser-tools {
+      justify-content: start;
+      padding-inline: var(--base-size-8);
+    }
+
+    .browser-collapsed .browser-resizer {
+      display: none;
     }
 
     .explore-browser {
@@ -300,14 +426,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
     .search {
       position: relative;
-      padding: var(--base-size-12);
-      border-bottom: var(--lv-border-muted);
+      min-width: 0;
+      flex: 1;
     }
 
     .search input {
       width: 100%;
       min-width: 0;
-      height: var(--control-medium-size);
+      height: var(--control-small-size);
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-control);
@@ -318,7 +444,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
     .search-icon {
       position: absolute;
-      left: var(--base-size-20);
+      left: var(--base-size-8);
       top: 50%;
       display: grid;
       color: var(--lv-fg-muted);
@@ -328,7 +454,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     .tree {
       min-height: 0;
       overflow: auto;
-      padding: var(--base-size-8);
+      padding: var(--base-size-6);
     }
 
     details {
@@ -341,7 +467,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       gap: var(--base-size-6);
       align-items: center;
       border-radius: var(--lv-radius-default);
-      padding: var(--base-size-6) var(--base-size-8);
+      min-height: var(--control-small-size);
+      padding: var(--base-size-4) var(--base-size-6);
       color: var(--lv-fg-muted);
       cursor: pointer;
       list-style: none;
@@ -368,7 +495,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       display: grid;
       grid-template-columns: 1rem 1rem minmax(0, 1fr);
       gap: var(--base-size-6);
-      padding: var(--base-size-8);
+      min-height: var(--control-small-size);
+      padding: var(--base-size-4) var(--base-size-6);
       color: var(--lv-fg-default);
       font: var(--lv-type-body);
       font-weight: var(--base-text-weight-medium);
@@ -404,7 +532,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       border-radius: var(--lv-radius-default);
       background: transparent;
       color: var(--lv-fg-default);
-      padding: var(--base-size-8);
+      min-height: var(--control-small-size);
+      padding: var(--base-size-4) var(--base-size-6);
       text-align: left;
       cursor: pointer;
       font: inherit;
@@ -513,7 +642,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
     .main {
       display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr);
       background: var(--lv-bg-app);
     }
 
@@ -624,73 +753,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       border-left: var(--lv-border-muted);
     }
 
-    .selected-header {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: var(--base-size-12);
-      align-items: center;
-      border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-12) var(--base-size-16);
-    }
-
-    .selected-actions {
-      display: flex;
-      align-items: center;
-      gap: var(--base-size-8);
-    }
-
-    .definition-link {
-      display: inline-flex;
-      min-height: var(--control-medium-size);
-      align-items: center;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-control);
-      color: var(--lv-fg-default);
-      padding: 0 var(--base-size-12);
-      text-decoration: none;
-      font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
-    }
-
-    .definition-link:hover,
-    .definition-link:focus-visible {
-      background: var(--lv-bg-control-hover);
-      outline: 0;
-    }
-
-    .selected-title {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-      gap: var(--base-size-8);
-    }
-
-    .breadcrumb-workspace,
-    .breadcrumb-separator {
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body-large);
-    }
-
-    .breadcrumb-workspace {
-      flex: 0 1 auto;
-    }
-
-    .breadcrumb-separator {
-      flex: none;
-      color: var(--lv-fg-subtle);
-    }
-
-    .selected-title h2 {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-section-title);
-    }
-
     .icon-button {
       display: inline-grid;
       width: var(--control-medium-size);
@@ -716,54 +778,20 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       padding: 0 var(--base-size-12);
     }
 
+    .header .icon-button {
+      width: var(--control-small-size);
+      height: var(--control-small-size);
+    }
+
+    .header .ask-button {
+      width: auto;
+    }
+
     .content {
       display: grid;
       min-width: 0;
       min-height: 0;
       overflow: hidden;
-    }
-
-    .object-tabs {
-      display: flex;
-      min-width: 0;
-      gap: var(--base-size-4);
-      align-items: center;
-      border-bottom: var(--lv-border-muted);
-      background: var(--lv-bg-app);
-      padding: 0 var(--base-size-16);
-    }
-
-    .object-tab {
-      position: relative;
-      min-height: var(--control-medium-size);
-      border: 0;
-      background: transparent;
-      color: var(--lv-fg-muted);
-      padding: 0 var(--base-size-12);
-      cursor: pointer;
-      font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
-    }
-
-    .object-tab[aria-selected='true'] {
-      color: var(--lv-fg-default);
-    }
-
-    .object-tab[aria-selected='true']::after {
-      position: absolute;
-      right: var(--base-size-8);
-      bottom: -1px;
-      left: var(--base-size-8);
-      height: 2px;
-      border-radius: var(--lv-radius-full);
-      background: var(--lv-fg-link);
-      content: '';
-    }
-
-    .object-tab:hover,
-    .object-tab:focus-visible {
-      color: var(--lv-fg-default);
-      outline: 0;
     }
 
     lv-data-preview-table {
@@ -897,9 +925,21 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         grid-template-columns: 1fr;
       }
 
+      .browser-resizer {
+        display: none;
+      }
+
+      .explorer.browser-collapsed {
+        grid-template-columns: 1fr;
+      }
+
       .browser,
       .main {
         min-height: 22rem;
+      }
+
+      .browser {
+        width: auto !important;
       }
 
       .filter-editor,
@@ -921,6 +961,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   disconnectedCallback(): void {
     window.clearTimeout(this.exploreTimer)
+    this.browserResizeCleanup?.()
     super.disconnectedCallback()
   }
 
@@ -929,7 +970,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (selectedKey !== this.lastSelectedKey) {
       this.lastSelectedKey = selectedKey
       this.showSQL = false
-      this.browseView = 'data'
       const selectedWorkspaceID = this.dataExplorer.selectedWorkspaceId ?? ''
       if (selectedWorkspaceID) this.expandedWorkspaceIDs.add(selectedWorkspaceID)
       requestAnimationFrame(() => {
@@ -981,37 +1021,87 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const filtered = filterObjects(explorer.objects ?? [], this.search)
     const grouped = groupObjectsByWorkspace(filtered, page)
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
+    const columns = this.headerColumns(explorer, semanticActive)
+    const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
     return html`
       <section class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
-          <div>
-            <h1>${page?.title ?? 'Data Explorer'}</h1>
-            ${page?.description ? html`<p class="detail">${page.description}</p>` : nothing}
-          </div>
+          <h1>${page?.title ?? 'Data Explorer'}</h1>
           <div class="header-actions">
+            ${columns.length ? html`
+              <details class="header-columns">
+                <summary title="Choose visible columns" aria-label="Choose visible columns">
+                  ${lucideIcon(Columns3, { size: 15 })}<span>Columns</span><span aria-hidden="true">${visibleColumnKeys.length}/${columns.length}</span>
+                </summary>
+                <div class="header-column-menu">
+                  ${columns.map((column) => {
+                    const checked = visibleColumnKeys.includes(column.key)
+                    return html`
+                      <label>
+                        <input
+                          type="checkbox"
+                          .checked=${checked}
+                          ?disabled=${checked && visibleColumnKeys.length <= 1}
+                          @change=${(event: Event) => this.toggleHeaderColumn(column.key, (event.target as HTMLInputElement).checked, columns, semanticActive)}
+                        />
+                        ${column.label || column.key}
+                      </label>
+                    `
+                  })}
+                </div>
+              </details>
+            ` : nothing}
             ${agentEnabled ? html`<button type="button" class="icon-button ask-button" aria-label="Ask about this data" aria-expanded=${String(this.agentDrawerOpen)} title="Ask about this data" @click=${() => this.setAgentDrawerOpen(!this.agentDrawerOpen)}>${agentIcon()}<span>Ask</span></button>` : nothing}
           </div>
         </header>
-        <div class="explorer">
-          <aside class="browser" aria-label="Data objects">
-            <label class="search">
-              <span class="search-icon" aria-hidden="true">${lucideIcon(Search, { size: 15 })}</span>
-              <input
-                type="search"
-                .value=${this.search}
-                @input=${(event: Event) => this.search = (event.target as HTMLInputElement).value}
-                placeholder="Search data"
-                autocomplete="off"
-              />
-            </label>
-            <div class="tree">
-              ${filtered.length
-                ? html`
-                  ${this.renderWorkspaceGroups(grouped, explorer.selectedWorkspaceId ?? '', explorer.selectedKey ?? '', explorer.explore ?? emptyExplorer.explore, semanticActive)}
-                `
-                : html`<p class="empty">No data objects match this search.</p>`}
+        <div
+          class=${`explorer${this.browserCollapsed ? ' browser-collapsed' : ''}`}
+        >
+          <aside class="browser" aria-label="Data objects" style=${`width:${this.browserCollapsed ? 44 : this.browserWidth}px`}>
+            <div class="browser-tools">
+              <button
+                type="button"
+                class="sidebar-toggle"
+                aria-label=${this.browserCollapsed ? 'Open data catalog' : 'Close data catalog'}
+                aria-expanded=${String(!this.browserCollapsed)}
+                title=${this.browserCollapsed ? 'Open data catalog' : 'Close data catalog'}
+                @click=${() => this.browserCollapsed = !this.browserCollapsed}
+              >${lucideIcon(Database, { size: 16 })}</button>
+              ${this.browserCollapsed ? nothing : html`
+                <label class="search">
+                  <span class="search-icon" aria-hidden="true">${lucideIcon(Search, { size: 15 })}</span>
+                  <input
+                    type="search"
+                    .value=${this.search}
+                    @input=${(event: Event) => this.search = (event.target as HTMLInputElement).value}
+                    placeholder="Search data"
+                    autocomplete="off"
+                  />
+                </label>
+              `}
             </div>
+            ${this.browserCollapsed ? nothing : html`
+              <div class="tree">
+                ${filtered.length
+                  ? html`
+                    ${this.renderWorkspaceGroups(grouped, explorer.selectedWorkspaceId ?? '', explorer.selectedKey ?? '', explorer.explore ?? emptyExplorer.explore, semanticActive)}
+                  `
+                  : html`<p class="empty">No data objects match this search.</p>`}
+              </div>
+            `}
           </aside>
+          <div
+            class="browser-resizer"
+            role="separator"
+            aria-label="Resize data browser"
+            aria-orientation="vertical"
+            aria-valuemin="280"
+            aria-valuemax="440"
+            aria-valuenow=${String(this.browserWidth)}
+            tabindex="0"
+            @pointerdown=${this.beginBrowserResize}
+            @keydown=${this.resizeBrowserFromKeyboard}
+          ></div>
           <main class="main" aria-label="Data results">
             ${selected
               ? semanticActive
@@ -1020,8 +1110,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               : html`<p class="empty">No data objects are available.</p>`}
           </main>
         </div>
-        ${agentEnabled ? html`<lv-chat-drawer
-          ?open=${this.agentDrawerOpen}
+        ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer
+          open
           .suggestions=${this.agentSuggestions(explorer)}
           @lv-chat-drawer-close=${() => this.setAgentDrawerOpen(false)}
           @lv-chat-new=${this.handleAgentNew}
@@ -1148,6 +1238,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             ? html`<lv-data-explore-table
                 .command=${command}
                 .result=${result}
+                .visibleColumns=${this.exploreVisibleColumns}
                 @lv-data-explore-table-command=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.emitExplore({ ...command, ...event.detail })}
               ></lv-data-explore-table>`
             : html`<p class="empty">Select at least one dimension or measure to run a governed exploration.</p>`}
@@ -1254,7 +1345,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selectedByDefault = !activeCommand && field.kind !== 'measure' && field.modelTable === objectTableID(baseObject)
     const selectedNow = values.includes(field.id) || selectedByDefault
     const next = selectedNow ? values.filter((id) => id !== field.id) : [...values, field.id]
-    this.browseView = 'data'
     this.emitExplore({ ...command, [key]: next, sort: (command.sort ?? []).filter((sort) => sort.field !== field.id) })
   }
 
@@ -1349,6 +1439,60 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.persistAgentState()
   }
 
+  private beginBrowserResize = (event: PointerEvent): void => {
+    if (this.browserCollapsed) return
+    event.preventDefault()
+    this.browserResizeCleanup?.()
+    const startX = event.clientX
+    const startWidth = this.browserWidth
+    const move = (next: PointerEvent) => {
+      this.browserWidth = clampBrowserWidth(startWidth + next.clientX - startX)
+    }
+    const finish = () => this.browserResizeCleanup?.()
+    this.browserResizeCleanup = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+      this.browserResizeCleanup = undefined
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+  }
+
+  private resizeBrowserFromKeyboard = (event: KeyboardEvent): void => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    this.browserWidth = clampBrowserWidth(this.browserWidth + (event.key === 'ArrowRight' ? 16 : -16))
+  }
+
+  private headerColumns(explorer: DataExplorerSignal, semanticActive: boolean): ExplorerColumn[] {
+    if (semanticActive) return explorer.explore?.result?.columns ?? []
+    const previewColumns = explorer.preview?.columns ?? []
+    return previewColumns.length ? previewColumns : explorer.selectedObject?.columns ?? []
+  }
+
+  private headerVisibleColumnKeys(explorer: DataExplorerSignal, columns: ExplorerColumn[], semanticActive: boolean): string[] {
+    const configured = semanticActive ? this.exploreVisibleColumns : explorer.command?.visibleColumns ?? []
+    if (!configured.length) return columns.map((column) => column.key)
+    const allowed = new Set(configured)
+    const visible = columns.filter((column) => allowed.has(column.key)).map((column) => column.key)
+    return visible.length ? visible : columns.map((column) => column.key)
+  }
+
+  private toggleHeaderColumn(key: string, checked: boolean, columns: ExplorerColumn[], semanticActive: boolean): void {
+    const visible = this.headerVisibleColumnKeys(this.dataExplorer, columns, semanticActive)
+    const next = checked
+      ? columns.map((column) => column.key).filter((columnKey) => columnKey === key || visible.includes(columnKey))
+      : visible.filter((columnKey) => columnKey !== key)
+    const configured = next.length === columns.length ? [] : next
+    if (semanticActive) {
+      this.exploreVisibleColumns = configured
+      return
+    }
+    this.emitCommand({ visibleColumns: configured })
+  }
+
   private persistAgentState(): void {
     try {
       localStorage.setItem(dataExplorerAgentStorageKey, JSON.stringify({
@@ -1377,7 +1521,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       >
         <summary>
           <span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span>
-          <span aria-hidden="true">${lucideIcon(Database, { size: 14 })}</span>
+          <span class="workspace-icon" aria-hidden="true" title="Workspace">${lucideIcon(Boxes, { size: 14 })}</span>
           <span title=${`${workspace.objects.length} model tables`}>${label(workspace.title)} (${workspace.objects.length})</span>
         </summary>
         <div class="object-list">
@@ -1482,35 +1626,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     })
   }
 
-  private renderSelected(object: DataExplorerObjectSignal, preview: DataPreviewSignal, command: DataExplorerCommand) {
-    const columns = object.columns?.length ? object.columns : preview.columns ?? []
+  private renderSelected(_object: DataExplorerObjectSignal, preview: DataPreviewSignal, command: DataExplorerCommand) {
     return html`
-      <header class="selected-header">
-        <nav class="selected-title" aria-label="Breadcrumb">
-          <span aria-hidden="true">${lucideIcon(iconForLayer(object.layer), { size: 18 })}</span>
-          <span class="breadcrumb-workspace">${label(object.workspaceTitle || object.workspaceId)}</span>
-          <span class="breadcrumb-separator" aria-hidden="true">/</span>
-          <h2>${label(object.title)}</h2>
-        </nav>
-        <div class="selected-actions">
-          ${object.detailHref ? html`<a class="definition-link" href=${object.detailHref}>Open definition</a>` : nothing}
-        </div>
-      </header>
-      <nav class="object-tabs" role="tablist" aria-label="Data object details">
-        ${this.renderBrowseTab('data', 'Data')}
-        ${this.renderBrowseTab('schema', `Schema (${columns.length})`)}
-        ${this.renderBrowseTab('query', 'Query details')}
-      </nav>
-      <div class="content" role="tabpanel" aria-label=${browseViewLabel(this.browseView)}>
-        ${this.browseView === 'data' ? html`
-          <lv-data-preview-table
-            .preview=${preview}
-            .command=${command}
-            @lv-data-preview-table-command=${(event: CustomEvent<Partial<DataExplorerCommand>>) => this.emitCommand(event.detail)}
-          ></lv-data-preview-table>
-        ` : this.browseView === 'schema'
-          ? this.renderSchema(object, columns)
-          : this.renderQueryDetails(object, preview)}
+      <div class="content" aria-label="Data preview">
+        <lv-data-preview-table
+          .preview=${preview}
+          .command=${command}
+          @lv-data-preview-table-command=${(event: CustomEvent<Partial<DataExplorerCommand>>) => this.emitCommand(event.detail)}
+        ></lv-data-preview-table>
       </div>
     `
   }
@@ -1523,28 +1646,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selectedDataset = datasets.find((dataset) => dataset.id === command.datasetId) ?? explore.selectedDataset
     const queryFields = new Set([...(command.dimensions ?? []), ...(command.measures ?? [])])
     const result = explore.result
-    const columns = object.columns ?? []
     const hasQuery = queryFields.size > 0 || Boolean(command.time)
     return html`
-      <header class="selected-header">
-        <nav class="selected-title" aria-label="Breadcrumb">
-          <span aria-hidden="true">${lucideIcon(iconForLayer(object.layer), { size: 18 })}</span>
-          <span class="breadcrumb-workspace">${label(object.workspaceTitle || object.workspaceId)}</span>
-          <span class="breadcrumb-separator" aria-hidden="true">/</span>
-          <h2>${label(object.title)}</h2>
-        </nav>
-        <div class="selected-actions">
-          ${object.detailHref ? html`<a class="definition-link" href=${object.detailHref}>Open definition</a>` : nothing}
-        </div>
-      </header>
-      <nav class="object-tabs" role="tablist" aria-label="Data object details">
-        ${this.renderBrowseTab('data', 'Data')}
-        ${this.renderBrowseTab('schema', `Schema (${columns.length})`)}
-        ${this.renderBrowseTab('query', 'Query details')}
-      </nav>
-      <div class="content" role="tabpanel" aria-label=${browseViewLabel(this.browseView)}>
-        ${this.browseView === 'data' ? html`
-          <section class="semantic-result" aria-label="Governed result table">
+      <div class="content" aria-label="Data exploration">
+        <section class="semantic-result" aria-label="Governed result table">
             <section class="query-bar" aria-label="Query">
               <div class="query-row">
                 <span class="query-label">Fields</span>
@@ -1587,13 +1692,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               ? html`<lv-data-explore-table
                   .command=${command}
                   .result=${result}
+                  .visibleColumns=${this.exploreVisibleColumns}
                   @lv-data-explore-table-command=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.emitExplore({ ...command, ...event.detail })}
                 ></lv-data-explore-table>`
               : html`<p class="empty">Select at least one field to build a governed result table.</p>`}
-          </section>
-        ` : this.browseView === 'schema'
-          ? this.renderSchema(object, columns)
-          : this.renderExploreQueryDetails(object, explore, command)}
+        </section>
       </div>
     `
   }
@@ -1656,20 +1759,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const path = event.composedPath()
     if (path.some((target) => target instanceof HTMLElement && target.classList.contains('object-expand'))) return
     event.preventDefault()
-    this.browseView = 'data'
     if (!selected || this.dataExplorer.command?.mode === 'explore' || this.optimisticExplore) this.selectObject(object)
-  }
-
-  private renderBrowseTab(view: BrowseView, title: string) {
-    return html`
-      <button
-        type="button"
-        class="object-tab"
-        role="tab"
-        aria-selected=${String(this.browseView === view)}
-        @click=${() => this.browseView = view}
-      >${title}</button>
-    `
   }
 
   private renderSchema(object: DataExplorerObjectSignal, columns: NonNullable<DataExplorerObjectSignal['columns']>) {
@@ -1877,17 +1967,6 @@ function layerLabel(layer: string): string {
   }
 }
 
-function browseViewLabel(view: BrowseView): string {
-  switch (view) {
-    case 'schema':
-      return 'Schema'
-    case 'query':
-      return 'Query details'
-    default:
-      return 'Data preview'
-  }
-}
-
 function queryTargetLabel(object: DataExplorerObjectSignal): string {
   const target = object.source || object.table || object.title
   const model = object.modelId ? `${object.modelId} · ` : ''
@@ -1897,6 +1976,10 @@ function queryTargetLabel(object: DataExplorerObjectSignal): string {
 function label(value: unknown): string {
   if (value == null || value === '') return '-'
   return String(value)
+}
+
+function clampBrowserWidth(value: number): number {
+  return Math.min(440, Math.max(280, Math.round(value)))
 }
 
 if (!customElements.get('lv-data-explorer')) customElements.define('lv-data-explorer', DataExplorerPage)

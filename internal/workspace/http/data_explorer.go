@@ -16,7 +16,7 @@ import (
 const (
 	dataExplorerDefaultLimit = 100
 	dataExplorerMaxLimit     = 1000
-	dataExplorerRowHeight    = 34
+	dataExplorerRowHeight    = 32
 )
 
 const (
