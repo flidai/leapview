@@ -75,3 +75,100 @@ func TestDataExploreFieldsDeclareBaseTableCompatibility(t *testing.T) {
 		t.Fatalf("incompatible fields entered valid selection sets: dimensions=%#v measures=%#v", validDimensions, validMeasures)
 	}
 }
+
+func TestResolveDataExploreBaseRebasesToUniqueSelectedTable(t *testing.T) {
+	model := DataExplorerModel{
+		Tables: map[string]DataExplorerTable{
+			"orders":    {Dimensions: map[string]DataExplorerField{"order_id": {Name: "order_id"}}},
+			"customers": {Dimensions: map[string]DataExplorerField{"state": {Name: "state"}}},
+			"items":     {Dimensions: map[string]DataExplorerField{"sku": {Name: "sku"}}},
+		},
+		Measures: map[string]DataExplorerMeasure{
+			"order_count": {Name: "order_count", Fact: "orders"},
+		},
+		Relationships: []DataExplorerRelationship{
+			{ID: "orders_customers", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
+			{ID: "items_orders", From: "items.order_id", To: "orders.order_id", Cardinality: "many_to_one"},
+		},
+	}
+
+	command := uisignals.DataExploreCommand{Dimensions: []string{"customers.state", "orders.order_id"}}
+	base, changed := resolveDataExploreBase(model, "customers", command)
+	if base != "orders" || !changed {
+		t.Fatalf("resolved base = %q, changed = %v; want orders, true", base, changed)
+	}
+
+	base, changed = resolveDataExploreBase(model, "orders", command)
+	if base != "orders" || changed {
+		t.Fatalf("stable base = %q, changed = %v; want orders, false", base, changed)
+	}
+}
+
+func TestDataExploreFieldsOfferSafeRebaseWithoutOfferingUnsafeGuess(t *testing.T) {
+	model := DataExplorerModel{
+		Tables: map[string]DataExplorerTable{
+			"orders":    {Dimensions: map[string]DataExplorerField{"order_id": {Name: "order_id"}}},
+			"customers": {Dimensions: map[string]DataExplorerField{"state": {Name: "state"}}},
+			"items":     {Dimensions: map[string]DataExplorerField{"sku": {Name: "sku"}}},
+		},
+		Relationships: []DataExplorerRelationship{
+			{ID: "orders_customers", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
+		},
+	}
+	command := uisignals.DataExploreCommand{Dimensions: []string{"customers.state"}}
+	fields := dataExploreFields(model, command, "customers")
+	byID := map[string]uisignals.DataExploreFieldSignal{}
+	for _, field := range fields {
+		byID[field.ID] = field
+	}
+
+	orders := byID["orders.order_id"]
+	if orders.Compatible || uisignals.ValueOrZero(orders.RebaseDatasetID) != "orders" {
+		t.Fatalf("orders rebase affordance = %#v", orders)
+	}
+	if reason := uisignals.ValueOrZero(orders.CompatibilityReason); reason == "" {
+		t.Fatalf("orders rebase reason is empty: %#v", orders)
+	}
+	items := byID["items.sku"]
+	if items.Compatible || uisignals.ValueOrZero(items.RebaseDatasetID) != "" {
+		t.Fatalf("unsafe items affordance = %#v", items)
+	}
+}
+
+func TestResolveDataExploreBaseDoesNotGuessBetweenEqualSafeBases(t *testing.T) {
+	model := DataExplorerModel{
+		Tables: map[string]DataExplorerTable{
+			"regions":  {Dimensions: map[string]DataExplorerField{"name": {Name: "name"}}},
+			"channels": {Dimensions: map[string]DataExplorerField{"name": {Name: "name"}}},
+			"orders":   {Dimensions: map[string]DataExplorerField{}},
+			"tickets":  {Dimensions: map[string]DataExplorerField{}},
+		},
+		Relationships: []DataExplorerRelationship{
+			{ID: "orders_regions", From: "orders.region_id", To: "regions.region_id", Cardinality: "many_to_one"},
+			{ID: "orders_channels", From: "orders.channel_id", To: "channels.channel_id", Cardinality: "many_to_one"},
+			{ID: "tickets_regions", From: "tickets.region_id", To: "regions.region_id", Cardinality: "many_to_one"},
+			{ID: "tickets_channels", From: "tickets.channel_id", To: "channels.channel_id", Cardinality: "many_to_one"},
+		},
+	}
+	command := uisignals.DataExploreCommand{Dimensions: []string{"regions.name", "channels.name"}}
+
+	base, changed := resolveDataExploreBase(model, "unknown", command)
+	if base != "unknown" || changed {
+		t.Fatalf("ambiguous base = %q, changed = %v; want unknown, false", base, changed)
+	}
+}
+
+func TestDataExploreObjectForDatasetKeepsBreadcrumbAtResolvedGrain(t *testing.T) {
+	objects := []uisignals.DataExplorerObjectSignal{
+		{Key: "customers-key", WorkspaceID: "sales", Layer: "model_table", ModelID: uisignals.Pointer("sales"), Table: uisignals.Pointer("customers")},
+		{Key: "orders-key", WorkspaceID: "sales", Layer: "model_table", ModelID: uisignals.Pointer("sales"), Table: uisignals.Pointer("orders")},
+	}
+	command := uisignals.DataExploreCommand{
+		WorkspaceID: uisignals.Pointer("sales"), ModelID: uisignals.Pointer("sales"), DatasetID: uisignals.Pointer("orders"),
+	}
+
+	object := dataExploreObjectForDataset(objects, command)
+	if object == nil || object.Key != "orders-key" {
+		t.Fatalf("resolved query object = %#v", object)
+	}
+}

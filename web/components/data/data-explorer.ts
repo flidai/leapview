@@ -961,6 +961,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
     if (this.optimisticExplore && (this.dataExplorer.explore?.command?.requestSeq ?? 0) >= this.optimisticExplore.requestSeq) {
       this.optimisticExplore = null
+      replaceDataExplorerURL(this.dataExplorer.command)
     }
     const agent = this.signal<{ activeConversationId?: string } | null>('agent', null)
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''
@@ -1222,6 +1223,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private toggleExploreField(field: DataExploreFieldSignal, command: DataExploreCommand) {
+    if (field.compatible === false && !field.rebaseDatasetId) return
     const key = field.kind === 'measure' ? 'measures' : 'dimensions'
     const values = command[key]
     const next = values.includes(field.id) ? values.filter((id) => id !== field.id) : [...values, field.id]
@@ -1234,7 +1236,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     explore: DataExploreSignal,
     semanticActive: boolean,
   ) {
-    if (field.compatible === false) return
+    if (field.compatible === false && !field.rebaseDatasetId) return
     const selected = this.dataExplorer.selectedObject
     const baseObject = selected && selected.workspaceId === object.workspaceId && selected.modelId === object.modelId
       ? selected
@@ -1454,6 +1456,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           <div class="column-list" aria-label=${`${object.title} fields`}>
             ${fields.map((field) => {
               const compatible = field.compatible !== false
+              const rebaseable = !compatible && Boolean(field.rebaseDatasetId)
+              const selectable = compatible || rebaseable
               const relationshipPath = field.relationshipPath ?? []
               const fieldSelected = compatible && semanticActive && contextMatches
                 ? queryFields.has(field.id)
@@ -1464,20 +1468,20 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                   : field.description || field.id
                 : field.compatibilityReason || `Not compatible with ${command.datasetId || objectTableID(object)}`
               return html`
-              <div class=${`${field.kind === 'measure' ? 'column-item measure-field' : 'column-item'}${compatible ? '' : ' is-unavailable'}`} title=${compatibilityTitle}>
+              <div class=${`${field.kind === 'measure' ? 'column-item measure-field' : 'column-item'}${selectable ? '' : ' is-unavailable'}${rebaseable ? ' is-rebaseable' : ''}`} title=${compatibilityTitle}>
                 <button
                   type="button"
                   class=${fieldSelected ? 'field-button is-selected' : 'field-button'}
                   aria-pressed=${String(fieldSelected)}
-                  aria-disabled=${String(!compatible)}
-                  ?disabled=${!compatible}
+                  aria-disabled=${String(!selectable)}
+                  ?disabled=${!selectable}
                   title=${compatible ? `${fieldSelected ? 'Remove' : 'Add'} ${field.label}${relationshipPath.length ? ` · ${compatibilityTitle}` : ''}` : compatibilityTitle}
                   @click=${() => this.toggleUnifiedField(field, object, explore, semanticActive)}
                 >
                   <span class="field-check" aria-hidden="true">${lucideIcon(fieldSelected ? SquareCheckBig : Square, { size: 13 })}</span>
                   <span title=${field.type ? `Field type ${field.type}` : field.kind === 'measure' ? 'Measure' : 'Field type unknown'} aria-label=${field.type ? `Field type ${field.type}` : field.kind === 'measure' ? 'Measure' : 'Field type unknown'}>${lucideIcon(field.kind === 'measure' ? Sigma : fieldTypeIcon(field.type), { size: 13 })}</span>
                   <span>${field.label || field.id}</span>
-                  <code>${compatible ? field.kind === 'measure' ? 'measure' : relationshipPath.length ? 'related' : field.type || '' : 'unavailable'}</code>
+                  <code>${compatible ? field.kind === 'measure' ? 'measure' : relationshipPath.length ? 'related' : field.type || '' : rebaseable ? 'changes grain' : 'unavailable'}</code>
                 </button>
                 ${field.kind === 'dimension' && compatible && semanticActive && contextMatches
                   ? html`<button type="button" class="field-action" title="Filter ${field.label}" aria-label="Filter ${field.label}" @click=${() => this.openFilter(field)}>${lucideIcon(Filter, { size: 13 })}</button>`

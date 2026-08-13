@@ -406,7 +406,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       const stateField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('State'))!
       const skuField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('SKU'))!
       skuField.click()
-      return {
+      const initialState = {
         modes: Array.from(root.querySelectorAll('.mode-button')).map((button) => ({ text: button.textContent?.trim(), pressed: button.getAttribute('aria-pressed') })),
         breadcrumb: root.querySelector('.selected-title')?.textContent?.replace(/\s+/g, ' ').trim(),
         workspaceTables: root.querySelector('.workspace-group')?.textContent?.replace(/\s+/g, ' ').trim(),
@@ -414,7 +414,45 @@ test('data explorer builds a governed semantic exploration and filter command', 
         grain: root.querySelector('.result-meta')?.textContent?.replace(/\s+/g, ' ').trim(),
         tableRows: table.result.rows,
         relatedField: { disabled: stateField.disabled, text: stateField.textContent?.replace(/\s+/g, ' ').trim(), title: stateField.title },
-        unavailableField: { disabled: skuField.disabled, text: skuField.textContent?.replace(/\s+/g, ' ').trim(), title: skuField.title },
+      }
+      const unavailableField = { disabled: skuField.disabled, text: skuField.textContent?.replace(/\s+/g, ' ').trim(), title: skuField.title }
+
+      const customerCommand = {
+        ...exploreCommand, datasetId: 'customers', dimensions: ['customers.state'], measures: [], sort: [], requestSeq: 100, resetVersion: 100,
+      }
+      const customerExplorer = {
+        ...dataExplorer,
+        selectedKey: customersObject.key,
+        selectedObject: customersObject,
+        command: { ...dataExplorer.command, objectKey: customersObject.key, explore: customerCommand },
+        explore: {
+          ...dataExplorer.explore,
+          command: customerCommand,
+          selectedDataset: { id: 'customers', title: 'Customers', grain: 'customer_id', fieldCount: 1 },
+          fields: [
+            { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Order ID and change grain from Customers to Orders.', selected: false },
+            { id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Status and change grain from Customers to Orders.', selected: false },
+            { id: 'customers.state', label: 'State', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, selected: true },
+            { id: 'items.sku', label: 'SKU', kind: 'dimension', modelTable: 'items', type: 'string', compatible: false, compatibilityReason: 'No safe base supports this field with the selection.', selected: false },
+          ],
+          result: { columns: [{ key: 'state', label: 'State' }], rows: [{ state: 'SP' }], rowsReturned: 1, durationMs: 2, requestSeq: 100, truncated: false, warnings: [] },
+        },
+      }
+      mergePatch({ dataExplorer: customerExplorer })
+      for (let index = 0; index < 10; index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const rebaseField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('Status'))!
+      rebaseField.click()
+      await element.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 380))
+      const rebaseCommand = commands.at(-1)?.explore
+      return {
+        ...initialState,
+        unavailableField,
+        rebaseField: { disabled: rebaseField.disabled, text: rebaseField.textContent?.replace(/\s+/g, ' ').trim(), title: rebaseField.title },
+        rebaseCommand,
         commands,
       }
     })
@@ -432,6 +470,11 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.unavailableField.disabled).toBe(true)
     expect(state.unavailableField.text).toContain('unavailable')
     expect(state.unavailableField.title).toContain('no grain-preserving relationship path')
+    expect(state.rebaseField.disabled).toBe(false)
+    expect(state.rebaseField.text).toContain('changes grain')
+    expect(state.rebaseField.title).toContain('change grain from Customers to Orders')
+    expect(state.rebaseCommand.datasetId).toBe('customers')
+    expect(state.rebaseCommand.dimensions).toEqual(['customers.state', 'orders.status'])
     expect(state.commands.some((command) => command.explore?.dimensions?.includes('items.sku'))).toBe(false)
     expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.dimensions?.includes('orders.order_id'))).toBe(true)
     expect(state.commands.some((command) => command.explore?.filters?.[0]?.field === 'orders.status' && command.explore.filters[0].values[0] === 'delivered')).toBe(true)

@@ -72,6 +72,14 @@ func (h Handler) globalDataExplorerStateWithCurrent(r *nethttp.Request, command 
 	exploreCommand := normalizeDataExploreCommand(*command.Explore, exploreWorkspaceID)
 	command.Explore = &exploreCommand
 	explore := h.dataExploreState(r.Context(), exploreCommand)
+	command.Explore = &explore.Command
+	if uisignals.ValueOrZero(command.Mode) == "explore" {
+		if queryObject := dataExploreObjectForDataset(objects, explore.Command); queryObject != nil {
+			selected = queryObject
+			command.WorkspaceID = uisignals.Optional(queryObject.WorkspaceID)
+			command.ObjectKey = uisignals.Optional(queryObject.Key)
+		}
+	}
 	explorer := uisignals.DataExplorerSignal{
 		Objects:             objects,
 		SelectedWorkspaceID: command.WorkspaceID,
@@ -185,8 +193,20 @@ func (h Handler) dataExploreState(ctx context.Context, command uisignals.DataExp
 		datasetID = state.Datasets[0].ID
 	}
 	selectedDataset := state.Datasets[selectedDatasetIndex]
-	state.SelectedDataset = &selectedDataset
 	command.DatasetID = uisignals.Optional(datasetID)
+	rebaseWarning := ""
+	if resolvedDatasetID, changed := resolveDataExploreBase(model, datasetID, command); changed {
+		rebaseWarning = fmt.Sprintf("Grain changed from %s to %s to support the selected fields.", dataExploreLabel(datasetID), dataExploreLabel(resolvedDatasetID))
+		datasetID = resolvedDatasetID
+		command.DatasetID = uisignals.Optional(datasetID)
+		for index := range state.Datasets {
+			if state.Datasets[index].ID == datasetID {
+				selectedDataset = state.Datasets[index]
+				break
+			}
+		}
+	}
+	state.SelectedDataset = &selectedDataset
 
 	state.Fields = dataExploreFields(model, command, datasetID)
 	validDimensions, validMeasures := dataExploreFieldSets(state.Fields)
@@ -196,6 +216,9 @@ func (h Handler) dataExploreState(ctx context.Context, command uisignals.DataExp
 	command.Sort = validDataExploreSort(command.Sort, command.Dimensions, command.Measures)
 	state.Command = command
 	if len(command.Dimensions) == 0 && len(command.Measures) == 0 && command.Time == nil {
+		if rebaseWarning != "" {
+			state.Result.Warnings = append(state.Result.Warnings, rebaseWarning)
+		}
 		return state
 	}
 
@@ -219,6 +242,7 @@ func (h Handler) dataExploreState(ctx context.Context, command uisignals.DataExp
 	executed, err := metrics.ExecuteDataExplore(ctx, request)
 	if err != nil {
 		state.Result.Error = uisignals.Pointer(err.Error())
+		state.Result.Warnings = appendDataExploreWarning(state.Result.Warnings, rebaseWarning)
 		return state
 	}
 	labels := dataExploreResultLabels(state.Fields, command)
@@ -229,7 +253,7 @@ func (h Handler) dataExploreState(ctx context.Context, command uisignals.DataExp
 	state.Result = uisignals.DataExploreResultSignal{
 		Columns: columns, Rows: executed.Rows, SQL: uisignals.Optional(executed.SQL), Plan: uisignals.Optional(executed.Plan),
 		DurationMS: executed.DurationMS, RowsReturned: int64(executed.RowsReturned), Truncated: executed.Truncated,
-		Warnings: append([]string(nil), executed.Warnings...), RequestSeq: command.RequestSeq,
+		Warnings: appendDataExploreWarning(executed.Warnings, rebaseWarning), RequestSeq: command.RequestSeq,
 	}
 	return state
 }
@@ -294,11 +318,19 @@ func dataExploreFields(model DataExplorerModel, command uisignals.DataExploreCom
 			dimension := table.Dimensions[name]
 			id := tableID + "." + name
 			compatible, reason, path := dataExploreFieldCompatibility(model, baseTable, tableID)
+			rebaseDatasetID := ""
+			if !compatible {
+				rebaseDatasetID = dataExploreFieldRebase(model, command, baseTable, id, "dimension")
+				if rebaseDatasetID != "" {
+					reason = fmt.Sprintf("Select %s and change grain from %s to %s.", firstNonEmpty(dimension.Label, dataExploreLabel(name)), dataExploreLabel(baseTable), dataExploreLabel(rebaseDatasetID))
+				}
+			}
 			out = append(out, uisignals.DataExploreFieldSignal{
 				ID: id, Label: firstNonEmpty(dimension.Label, dataExploreLabel(name)), Kind: "dimension", ModelTable: tableID,
 				Description: uisignals.Optional(dimension.Description), Type: uisignals.Optional(dimension.Type),
 				Selected: selectedDimensions[id], Compatible: compatible,
 				CompatibilityReason: uisignals.Optional(reason), RelationshipPath: uisignals.OptionalSlice(path),
+				RebaseDatasetID: uisignals.Optional(rebaseDatasetID),
 			})
 		}
 	}
@@ -313,17 +345,154 @@ func dataExploreFields(model DataExplorerModel, command uisignals.DataExploreCom
 		measure := model.Measures[id]
 		compatible := measure.Fact == baseTable
 		reason := ""
+		rebaseDatasetID := ""
 		if !compatible {
-			reason = fmt.Sprintf("Measure belongs to %s. Start from %s to use it.", dataExploreLabel(measure.Fact), dataExploreLabel(measure.Fact))
+			rebaseDatasetID = dataExploreFieldRebase(model, command, baseTable, id, "measure")
+			if rebaseDatasetID != "" {
+				reason = fmt.Sprintf("Select %s and change grain from %s to %s.", firstNonEmpty(measure.Label, dataExploreLabel(id)), dataExploreLabel(baseTable), dataExploreLabel(rebaseDatasetID))
+			} else {
+				reason = fmt.Sprintf("Measure belongs to %s and cannot be combined safely with the selected fields.", dataExploreLabel(measure.Fact))
+			}
 		}
 		out = append(out, uisignals.DataExploreFieldSignal{
 			ID: id, Label: firstNonEmpty(measure.Label, dataExploreLabel(id)), Kind: "measure", ModelTable: measure.Fact,
 			Description: uisignals.Optional(measure.Description), Fact: uisignals.Optional(measure.Fact),
 			Type: uisignals.Optional(measure.Type), Selected: selectedMeasures[id], Compatible: compatible,
-			CompatibilityReason: uisignals.Optional(reason),
+			CompatibilityReason: uisignals.Optional(reason), RebaseDatasetID: uisignals.Optional(rebaseDatasetID),
 		})
 	}
 	return out
+}
+
+func resolveDataExploreBase(model DataExplorerModel, currentBase string, command uisignals.DataExploreCommand) (string, bool) {
+	currentBase = strings.TrimSpace(currentBase)
+	targets, measureFacts := dataExploreCommandTargets(model, command)
+	if dataExploreBaseScore(model, currentBase, targets, measureFacts) >= 0 {
+		return currentBase, false
+	}
+	bestBase, bestScore, tied := "", -1, false
+	for candidate := range model.Tables {
+		score := dataExploreBaseScore(model, candidate, targets, measureFacts)
+		if score < 0 {
+			continue
+		}
+		switch {
+		case bestScore < 0 || score < bestScore:
+			bestBase, bestScore, tied = candidate, score, false
+		case score == bestScore:
+			tied = true
+		}
+	}
+	if bestBase == "" || tied || bestBase == currentBase {
+		return currentBase, false
+	}
+	return bestBase, true
+}
+
+func dataExploreCommandTargets(model DataExplorerModel, command uisignals.DataExploreCommand) ([]string, []string) {
+	targetSet := map[string]bool{}
+	measureSet := map[string]bool{}
+	addDimension := func(id string) {
+		table, field := keyParts(strings.TrimSpace(id))
+		if dimensions, ok := model.Tables[table]; ok {
+			if _, ok := dimensions.Dimensions[field]; ok {
+				targetSet[table] = true
+			}
+		}
+	}
+	for _, id := range command.Dimensions {
+		addDimension(id)
+	}
+	for _, filter := range command.Filters {
+		addDimension(filter.Field)
+	}
+	if command.Time != nil {
+		addDimension(command.Time.Field)
+	}
+	for _, id := range command.Measures {
+		if measure, ok := model.Measures[strings.TrimSpace(id)]; ok && !measure.Hidden {
+			measureSet[measure.Fact] = true
+		}
+	}
+	targets := make([]string, 0, len(targetSet))
+	for table := range targetSet {
+		targets = append(targets, table)
+	}
+	measureFacts := make([]string, 0, len(measureSet))
+	for fact := range measureSet {
+		measureFacts = append(measureFacts, fact)
+	}
+	sort.Strings(targets)
+	sort.Strings(measureFacts)
+	return targets, measureFacts
+}
+
+func dataExploreBaseScore(model DataExplorerModel, candidate string, targets, measureFacts []string) int {
+	if _, ok := model.Tables[candidate]; !ok {
+		return -1
+	}
+	for _, fact := range measureFacts {
+		if fact != candidate {
+			return -1
+		}
+	}
+	score := 0
+	for _, target := range targets {
+		if target == candidate {
+			continue
+		}
+		paths := dataExploreSafeRelationshipPaths(model, candidate, target)
+		if len(paths) != 1 {
+			return -1
+		}
+		score += len(paths[0])
+	}
+	return score
+}
+
+func dataExploreFieldRebase(model DataExplorerModel, command uisignals.DataExploreCommand, currentBase, fieldID, kind string) string {
+	hypothetical := command
+	if kind == "measure" {
+		hypothetical.Measures = appendUniqueDataExploreValue(hypothetical.Measures, fieldID)
+	} else {
+		hypothetical.Dimensions = appendUniqueDataExploreValue(hypothetical.Dimensions, fieldID)
+	}
+	base, changed := resolveDataExploreBase(model, currentBase, hypothetical)
+	if !changed {
+		return ""
+	}
+	return base
+}
+
+func appendUniqueDataExploreValue(values []string, value string) []string {
+	out := append([]string(nil), values...)
+	for _, current := range out {
+		if current == value {
+			return out
+		}
+	}
+	return append(out, value)
+}
+
+func appendDataExploreWarning(warnings []string, warning string) []string {
+	out := append([]string(nil), warnings...)
+	if strings.TrimSpace(warning) != "" {
+		out = append(out, warning)
+	}
+	return out
+}
+
+func dataExploreObjectForDataset(objects []uisignals.DataExplorerObjectSignal, command uisignals.DataExploreCommand) *uisignals.DataExplorerObjectSignal {
+	workspaceID := uisignals.ValueOrZero(command.WorkspaceID)
+	modelID := uisignals.ValueOrZero(command.ModelID)
+	datasetID := uisignals.ValueOrZero(command.DatasetID)
+	for index := range objects {
+		object := &objects[index]
+		if object.WorkspaceID == workspaceID && object.Layer == "model_table" && uisignals.ValueOrZero(object.ModelID) == modelID && uisignals.ValueOrZero(object.Table) == datasetID {
+			return object
+		}
+	}
+	return nil
 }
 
 func dataExploreFieldCompatibility(model DataExplorerModel, baseTable, targetTable string) (bool, string, []string) {

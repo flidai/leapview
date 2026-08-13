@@ -1170,6 +1170,7 @@ model DataExploreFieldSignal {
   `kind`: "dimension" | "measure";
   `label`: string;
   `modelTable`: string;
+  `rebaseDatasetId`?: string;
   `relationshipPath`?: string[];
   `selected`: boolean;
   `type`?: string;
