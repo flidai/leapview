@@ -3,7 +3,6 @@ import { property, state } from 'lit/decorators.js'
 import {
   ArrowUpDown,
   BarChart3,
-  Boxes,
   Braces,
   CheckCircle2,
   ChevronDown,
@@ -23,6 +22,7 @@ import {
   Sigma,
   Table2,
   Waves,
+  Waypoints,
   XCircle,
 } from 'lucide'
 import {
@@ -761,7 +761,7 @@ function iconForName(name: string): any {
     case 'table':
       return Table2
     case 'semantic_model':
-      return Boxes
+      return Waypoints
     case 'source':
     case 'schema':
       return Server

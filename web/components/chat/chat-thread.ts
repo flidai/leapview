@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Box, ChevronRight, FileText, LayoutDashboard, LayoutPanelTop, Wrench, type IconNode } from 'lucide'
+import { ChevronRight, FileText, LayoutDashboard, LayoutPanelTop, Waypoints, Wrench, type IconNode } from 'lucide'
 import type { ChatArtifactSignal, ChatStatus, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -657,15 +657,15 @@ const toolIconContent: Record<string, IconNode> = {
   catalog_get: FileText,
   docs_search: FileText,
   docs_read: FileText,
-  query_semantic_model: Box,
+  query_semantic_model: Waypoints,
   query_dashboard_visual: LayoutPanelTop,
   query_visual: LayoutPanelTop,
   // Historical transcript entries retain their original icons after the
   // curated catalog cutover.
   list_dashboards: LayoutDashboard,
   describe_dashboard: FileText,
-  list_semantic_models: Box,
-  describe_model: Box,
+  list_semantic_models: Waypoints,
+  describe_model: Waypoints,
   query_dashboard_page: LayoutPanelTop,
 }
 
