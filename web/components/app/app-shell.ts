@@ -7,6 +7,7 @@ import '../navigation/sidebar'
 const emptyChrome: ChromeSignal = {
   sidebar: {
     workspaceTitle: '',
+    productName: 'LeapView',
     active: '',
     dashboardId: '',
     dashboardTitle: '',
@@ -47,13 +48,31 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
     @media (max-width: 640px) {
       :host {
+        height: 100svh;
+        min-height: 0;
         grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(0, 1fr);
+        overflow: hidden;
       }
 
       lv-sidebar {
         border-right: 0;
         border-bottom: var(--lv-border-default);
         min-width: 0;
+      }
+
+      main {
+        min-height: 0;
+        overflow-y: auto;
+      }
+
+      ::slotted([slot='page']) {
+        min-height: 100%;
+      }
+
+      ::slotted(lv-dashboard-page[slot='page']) {
+        height: 100%;
+        min-height: 0;
       }
     }
   `
@@ -87,11 +106,14 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
   private followSidebarLinkFromHost = (event: MouseEvent): void => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-    if (event.composedPath().some((node) => node instanceof HTMLAnchorElement)) return
 
     const sidebar = this.shadowRoot?.querySelector('lv-sidebar') as HTMLElement | null
     const root = sidebar?.shadowRoot
     if (!sidebar || !root) return
+
+    const path = event.composedPath()
+    if (event.target !== this && !path.includes(sidebar)) return
+    if (path.some((node) => node instanceof HTMLAnchorElement)) return
 
     const sidebarRect = sidebar.getBoundingClientRect()
     if (event.clientX < sidebarRect.left || event.clientX > sidebarRect.right || event.clientY < sidebarRect.top || event.clientY > sidebarRect.bottom) return

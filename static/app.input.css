@@ -24,6 +24,11 @@
 /* color */
 @import '@primer/primitives/dist/css/functional/themes/light.css';
 @import '@primer/primitives/dist/css/functional/themes/dark.css';
+@import '@primer/primitives/dist/css/functional/themes/dark-dimmed.css';
+@import '@primer/primitives/dist/css/functional/themes/light-colorblind.css';
+@import '@primer/primitives/dist/css/functional/themes/dark-colorblind.css';
+@import '@primer/primitives/dist/css/functional/themes/light-tritanopia.css';
+@import '@primer/primitives/dist/css/functional/themes/dark-tritanopia.css';
 
 @import 'tailwindcss' source(none);
 
@@ -135,6 +140,7 @@
   --container-card: 21rem;
   --container-inspector: calc(100vw - var(--base-size-32));
   --container-login-panel: 24.125rem;
+  --container-settings: var(--overlay-width-large);
   --container-workspace-detail: 72rem;
   --container-workspace-search: 32rem;
 
@@ -382,13 +388,16 @@
     --lv-icon-sm: var(--base-size-16);
     --lv-icon-md: var(--base-size-24);
     --lv-page-content-max-width: var(--container-workspace-detail);
+    --lv-settings-content-max-width: var(--container-settings);
     --lv-workspace-detail-max-width: var(--container-workspace-detail);
     --lv-login-panel-width: var(--container-login-panel);
     --lv-lineage-graph-height: var(--spacing-inspector-panel);
     --lv-dashboard-filter-open-width: var(--overlay-width-small);
     --lv-dashboard-agent-width: calc(var(--base-size-128) * 3 + var(--base-size-36));
     --lv-sidebar-width-expanded: calc(var(--base-size-128) + var(--base-size-80) + var(--base-size-40));
+    --lv-admin-sidebar-width-expanded: calc(var(--base-size-128) + var(--base-size-64));
     --lv-sidebar-width-collapsed: var(--base-size-48);
+    --lv-sidebar-resized-width: initial;
     --lv-page-rail-width-collapsed: calc(var(--base-size-40) - var(--base-size-2));
     --lv-sub-sidebar-width-expanded: calc(var(--base-size-128) + var(--base-size-16));
     --lv-spinner-size-sm: calc(var(--base-size-8) + var(--base-size-2));

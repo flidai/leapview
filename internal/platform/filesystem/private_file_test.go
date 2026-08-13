@@ -33,6 +33,11 @@ func TestReadPrivateFileRejectsBroadPermissions(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// os.WriteFile applies the process umask to newly created files. Force the
+	// broad mode so this assertion is stable under security-conscious CI shells.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ReadPrivateFile(path); err == nil {
 		t.Fatal("broadly readable private file was accepted")
 	}

@@ -164,7 +164,12 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	hasFileBodies := docUsesFileBodies(doc)
 	usesFmt := hasFileBodies
 	hasTools := len(toolContracts) > 0
+	hasCommands := false
 	for _, endpoint := range doc.Endpoints {
+		if endpoint.Command != nil {
+			hasCommands = true
+			usesFmt = true
+		}
 		if endpoint.OperationID != "getHealth" {
 			hasStrictOperations = true
 		}
@@ -210,6 +215,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("\tapigenaudit \"github.com/Yacobolo/toolbelt/apigen/runtime/audit\"\n")
 	b.WriteString("\tapigencommand \"github.com/Yacobolo/toolbelt/apigen/runtime/command\"\n")
 	b.WriteString("\tapigenfailure \"github.com/Yacobolo/toolbelt/apigen/runtime/failure\"\n")
+	b.WriteString("\tapigenui \"github.com/Yacobolo/toolbelt/apigen/runtime/ui\"\n")
 	if hasTools {
 		b.WriteString("\tapigenagenttool \"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool\"\n")
 	}
@@ -261,6 +267,31 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		fmt.Fprintf(&b, "// GenCommandOperation%s returns the generated identity for %s.\n", exportedName(endpoint.OperationID), endpoint.OperationID)
 		fmt.Fprintf(&b, "func GenCommandOperation%s() GenCommandOperationID { return GenCommandOperationID{value: %q} }\n\n", exportedName(endpoint.OperationID), endpoint.OperationID)
 	}
+	if hasCommands {
+		for _, endpoint := range doc.Endpoints {
+			if endpoint.Command == nil {
+				continue
+			}
+			emitCommandExecutionEntryPoints(&b, endpoint)
+		}
+	}
+	b.WriteString("// GetAPIGenUIActions returns every generated UI action binding in this package.\n")
+	b.WriteString("func GetAPIGenUIActions() []apigenui.Action {\n")
+	b.WriteString("\treturn []apigenui.Action{\n")
+	for _, endpoint := range doc.Endpoints {
+		if endpoint.Command == nil || endpoint.Command.UI == nil {
+			continue
+		}
+		fmt.Fprintf(&b, "\t\tapigenui.MustAction(%q, %q),\n", endpoint.Command.UI.ActionID, endpoint.OperationID)
+	}
+	b.WriteString("\t}\n}\n\n")
+	for _, endpoint := range doc.Endpoints {
+		if endpoint.Command == nil || endpoint.Command.UI == nil {
+			continue
+		}
+		fmt.Fprintf(&b, "// GenUIAction%s returns the generated UI binding for %s.\n", exportedName(endpoint.OperationID), endpoint.OperationID)
+		fmt.Fprintf(&b, "func GenUIAction%s() apigenui.Action { return apigenui.MustAction(%q, %q) }\n\n", exportedName(endpoint.OperationID), endpoint.Command.UI.ActionID, endpoint.OperationID)
+	}
 	b.WriteString("type GenOperationSurface string\n\n")
 	b.WriteString("const (\n\tGenOperationSurfaceUI GenOperationSurface = \"ui\"\n\tGenOperationSurfaceAgent GenOperationSurface = \"agent\"\n\tGenOperationSurfaceAutomation GenOperationSurface = \"automation\"\n)\n\n")
 	b.WriteString("type GenAuditField struct {\n\tName string\n\tSensitivity string\n}\n\n")
@@ -269,8 +300,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("type GenAsyncExecutionContract struct {\n\tMode string\n\tGuarantee string\n\tJobKind string\n\tResourceKind string\n\tInitialEvent string\n\tInitialState string\n\tStatusOperation string\n\tEventsOperation string\n\tCancellation string\n}\n\n")
 	b.WriteString("type GenCommandFailure struct {\n\tKind string\n\tStatusCode int\n\tCode string\n\tPublicDetail string\n}\n\n")
 	b.WriteString("type GenOperationTarget struct {\n\tParameter string\n\tType string\n}\n\n")
+	b.WriteString("type GenUIActionContract struct {\n\tActionID string\n}\n\n")
 	b.WriteString("type GenCommandContract struct {\n")
-	b.WriteString("\tOwner string\n\tAudit GenAuditPolicy\n\tExecution *GenAsyncExecutionContract\n\tFailures []GenCommandFailure\n\tAdditionalExposures []GenOperationSurface\n\tTarget *GenOperationTarget\n")
+	b.WriteString("\tOwner string\n\tAudit GenAuditPolicy\n\tExecution *GenAsyncExecutionContract\n\tFailures []GenCommandFailure\n\tAdditionalExposures []GenOperationSurface\n\tUI *GenUIActionContract\n\tTarget *GenOperationTarget\n")
 	b.WriteString("\tIdempotency string\n\tConcurrency string\n\tAuthzMode string\n\tPrivilege string\n")
 	b.WriteString("}\n\n")
 	b.WriteString("type GenOperationContract struct {\n")
@@ -390,7 +422,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("func cloneAPIGenOperationContract(contract GenOperationContract) GenOperationContract {\n")
 	b.WriteString("\tcontract.Tags = append([]string(nil), contract.Tags...)\n")
 	b.WriteString("\tcontract.DocumentedStatusCodes = append([]int(nil), contract.DocumentedStatusCodes...)\n")
-	b.WriteString("\tif contract.Command != nil { command := *contract.Command; command.Failures = make([]GenCommandFailure, len(contract.Command.Failures)); copy(command.Failures, contract.Command.Failures); command.AdditionalExposures = append([]GenOperationSurface(nil), contract.Command.AdditionalExposures...); if contract.Command.Audit.Payload != nil { payload := *contract.Command.Audit.Payload; payload.Fields = append([]GenAuditField(nil), contract.Command.Audit.Payload.Fields...); command.Audit.Payload = &payload }; if contract.Command.Target != nil { target := *contract.Command.Target; command.Target = &target }; if contract.Command.Execution != nil { execution := *contract.Command.Execution; command.Execution = &execution }; contract.Command = &command }\n")
+	b.WriteString("\tif contract.Command != nil { command := *contract.Command; command.Failures = make([]GenCommandFailure, len(contract.Command.Failures)); copy(command.Failures, contract.Command.Failures); command.AdditionalExposures = append([]GenOperationSurface(nil), contract.Command.AdditionalExposures...); if contract.Command.Audit.Payload != nil { payload := *contract.Command.Audit.Payload; payload.Fields = append([]GenAuditField(nil), contract.Command.Audit.Payload.Fields...); command.Audit.Payload = &payload }; if contract.Command.UI != nil { ui := *contract.Command.UI; command.UI = &ui }; if contract.Command.Target != nil { target := *contract.Command.Target; command.Target = &target }; if contract.Command.Execution != nil { execution := *contract.Command.Execution; command.Execution = &execution }; contract.Command = &command }\n")
 	b.WriteString("\tcontract.Extensions = cloneAPIGenAnyMap(contract.Extensions)\n")
 	b.WriteString("\treturn contract\n")
 	b.WriteString("}\n\n")
@@ -1483,6 +1515,10 @@ func renderGenCommandContract(command *ir.Command) string {
 	if command.Target != nil {
 		target = fmt.Sprintf("&GenOperationTarget{Parameter: %q, Type: %q}", command.Target.Parameter, command.Target.Type)
 	}
+	ui := "nil"
+	if command.UI != nil {
+		ui = fmt.Sprintf("&GenUIActionContract{ActionID: %q}", command.UI.ActionID)
+	}
 	execution := "nil"
 	if command.Execution != nil {
 		execution = fmt.Sprintf("&GenAsyncExecutionContract{Mode: %q, Guarantee: %q, JobKind: %q, ResourceKind: %q, InitialEvent: %q, InitialState: %q, StatusOperation: %q, EventsOperation: %q, Cancellation: %q}",
@@ -1517,7 +1553,7 @@ func renderGenCommandContract(command *ir.Command) string {
 		failures.WriteString("}")
 	}
 	return fmt.Sprintf(
-		"&GenCommandContract{Owner: %q, Audit: GenAuditPolicy{Required: %t, SuccessAction: %q, Guarantee: %q, Payload: %s}, Execution: %s, Failures: %s, AdditionalExposures: %s, Target: %s, Idempotency: %q, Concurrency: %q, AuthzMode: %q, Privilege: %q}",
+		"&GenCommandContract{Owner: %q, Audit: GenAuditPolicy{Required: %t, SuccessAction: %q, Guarantee: %q, Payload: %s}, Execution: %s, Failures: %s, AdditionalExposures: %s, UI: %s, Target: %s, Idempotency: %q, Concurrency: %q, AuthzMode: %q, Privilege: %q}",
 		command.Owner,
 		command.Audit.Required,
 		command.Audit.SuccessAction,
@@ -1526,6 +1562,7 @@ func renderGenCommandContract(command *ir.Command) string {
 		execution,
 		failures.String(),
 		exposures.String(),
+		ui,
 		target,
 		command.Idempotency,
 		command.Concurrency,
@@ -2202,4 +2239,67 @@ func packageName(opts Options) string {
 		return "api"
 	}
 	return opts.PackageName
+}
+
+func emitCommandExecutionEntryPoints(b *strings.Builder, endpoint ir.Endpoint) {
+	name := exportedName(endpoint.OperationID)
+	targetField := ""
+	if endpoint.Command.Target != nil {
+		targetField = exportedName(endpoint.Command.Target.Parameter)
+		switch targetField {
+		case "Surface", "IdempotencyKey", "ConcurrencyToken", "RequestID", "CorrelationID":
+			targetField += "Target"
+		}
+	}
+
+	fmt.Fprintf(b, "// Gen%sCommandInvocation is the typed cross-surface invocation for %s.\n", name, endpoint.OperationID)
+	fmt.Fprintf(b, "type Gen%sCommandInvocation struct {\n", name)
+	b.WriteString("\tSurface apigencommand.Surface\n")
+	if targetField != "" {
+		fmt.Fprintf(b, "\t%s string\n", targetField)
+	}
+	if endpoint.Command.Idempotency == "required" {
+		b.WriteString("\tIdempotencyKey string\n")
+	}
+	if endpoint.Command.Concurrency == "if-match" {
+		b.WriteString("\tConcurrencyToken string\n")
+	}
+	b.WriteString("\tRequestID string\n")
+	b.WriteString("\tCorrelationID string\n")
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "func (invocation Gen%sCommandInvocation) apigenInvocation() apigencommand.Invocation {\n", name)
+	fmt.Fprintf(b, "\treturn apigencommand.Invocation{OperationID: %q, Surface: invocation.Surface, ", endpoint.OperationID)
+	if endpoint.Command.Target != nil {
+		fmt.Fprintf(b, "TargetValues: map[string]string{%q: invocation.%s}, ", endpoint.Command.Target.Parameter, targetField)
+	}
+	if endpoint.Command.Idempotency == "required" {
+		b.WriteString("IdempotencyKey: invocation.IdempotencyKey, ")
+	}
+	if endpoint.Command.Concurrency == "if-match" {
+		b.WriteString("ConcurrencyToken: invocation.ConcurrencyToken, ")
+	}
+	b.WriteString("RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID}\n")
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "// BeginGen%sCommand validates and begins %s from its generated contract.\n", name, endpoint.OperationID)
+	fmt.Fprintf(b, "func BeginGen%sCommand(ctx context.Context, invocation Gen%sCommandInvocation) (context.Context, *apigencommand.Guard, error) {\n", name, name)
+	fmt.Fprintf(b, "\tcontract, ok := GetAPIGenCommandRuntimeContract(%q)\n", endpoint.OperationID)
+	fmt.Fprintf(b, "\tif !ok { return ctx, nil, fmt.Errorf(\"%%w: %%q\", apigencommand.ErrContractNotFound, %q) }\n", endpoint.OperationID)
+	b.WriteString("\treturn apigencommand.BeginInvocation(ctx, contract, invocation.apigenInvocation())\n")
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "// ExecuteGen%sCommand applies %s's generated invocation and execution policy.\n", name, endpoint.OperationID)
+	fmt.Fprintf(b, "func ExecuteGen%sCommand(ctx context.Context, executor *apigencommand.Executor, invocation Gen%sCommandInvocation, execution apigencommand.Execution) error {\n", name, name)
+	fmt.Fprintf(b, "\tcontract, ok := GetAPIGenCommandRuntimeContract(%q)\n", endpoint.OperationID)
+	fmt.Fprintf(b, "\tif !ok { return fmt.Errorf(\"%%w: %%q\", apigencommand.ErrContractNotFound, %q) }\n", endpoint.OperationID)
+	b.WriteString("\treturn apigencommand.ExecuteInvocation(ctx, executor, contract, invocation.apigenInvocation(), execution)\n")
+	b.WriteString("}\n\n")
+
+	if endpoint.Command.Concurrency == "if-match" {
+		fmt.Fprintf(b, "// CheckGen%sCommandConcurrency applies %s's generated concurrency policy.\n", name, endpoint.OperationID)
+		fmt.Fprintf(b, "func CheckGen%sCommandConcurrency(ctx context.Context, executor *apigencommand.Executor, presented, current string) error {\n", name)
+		fmt.Fprintf(b, "\treturn executor.CheckConcurrency(ctx, %q, presented, current)\n", endpoint.OperationID)
+		b.WriteString("}\n\n")
+	}
 }

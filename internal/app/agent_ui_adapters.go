@@ -2,8 +2,10 @@ package app
 
 import (
 	"net/http"
+	"strings"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	"github.com/flidai/leapview/internal/app/brand"
 	appshell "github.com/flidai/leapview/internal/app/shell"
@@ -12,13 +14,38 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 )
 
-func applicationLayout(access *accessmodule.Module, agent *agentmodule.Module, assets staticasset.Resolver, r *http.Request) webpage.Provider {
+func applicationLayout(access *accessmodule.Module, agent *agentmodule.Module, product *adminmodule.ProductService, assets staticasset.Resolver, r *http.Request) webpage.Provider {
 	config := appshell.Config{
 		Presentation: webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
 		Assets:       assets,
 	}
+	if product != nil {
+		if identity, err := product.Get(r.Context()); err == nil {
+			config.Presentation.ProductName = sidebarUserName(identity.DisplayName, brand.Name)
+			if identity.Logo != nil {
+				config.ProductLogoURL = "/product/logo/" + identity.Logo.SHA256
+			}
+		}
+	}
 	if access != nil {
 		config.RoleLabel = access.CurrentRoleLabel(r)
+		config.ColorMode = string(access.CurrentTheme(r))
+		if principal, ok := access.CurrentPrincipal(r); ok {
+			config.UserName = sidebarUserName(principal.DisplayName, principal.Email, principal.ID)
+			if avatars := access.PersonalAvatar(); avatars != nil {
+				if metadata, err := avatars.Current(r.Context(), principal.ID); err == nil {
+					config.UserAvatarURL = accessmodule.AvatarURL(principal.ID, metadata)
+				}
+			}
+		}
+		if adminLayoutRequest(r) {
+			privileges := access.AdminNavigationPrivileges(r)
+			config.AdminAccess = &appshell.AdminNavigationAccess{
+				ManagePlatform: privileges.ManagePlatform, ManageGrants: privileges.ManageGrants,
+				ManageWorkspace: privileges.ManageWorkspace, ManagePublications: privileges.ManagePublications,
+				ViewAudit: privileges.ViewAudit, ViewConnections: privileges.ViewConnections,
+			}
+		}
 	}
 	if agent == nil {
 		return appshell.Provider(config)
@@ -32,6 +59,24 @@ func applicationLayout(access *accessmodule.Module, agent *agentmodule.Module, a
 		})
 	}
 	return appshell.Provider(config)
+}
+
+func sidebarUserName(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func adminLayoutRequest(r *http.Request) bool {
+	if r == nil || r.URL == nil {
+		return false
+	}
+	path := strings.TrimSpace(r.URL.Path)
+	return strings.HasPrefix(path, "/admin") || path == "/connections" || strings.HasPrefix(path, "/connections/") ||
+		(path == "/updates" && strings.TrimSpace(r.URL.Query().Get("route")) == routeAdmin)
 }
 
 func dashboardAgentBootstrap(state agentmodule.ChatViewState) dashboardmodule.AgentBootstrap {

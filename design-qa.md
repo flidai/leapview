@@ -89,3 +89,54 @@ The requested follow-up removes the parent card around the entire section. The h
 - [x] No actionable P0/P1/P2 differences remain.
 
 final result: passed
+---
+
+# Personal API token design QA
+
+## Comparison target
+
+- Source visual truth: `/home/codex/.codex/attachments/a3cf84e3-0799-47fa-a22b-0db340ec39e4/codex-clipboard-df1232fa-df9c-463c-bada-d4935712edb5.png`
+- Browser-rendered implementation: `/home/codex/.codex/worktrees/e397/leapview/.tmp/design-qa/api-tokens-page-final.png`
+- Focused implementation region: `/home/codex/.codex/worktrees/e397/leapview/.tmp/design-qa/api-token-focused-final.png`
+- Mobile implementation: `/home/codex/.codex/worktrees/e397/leapview/.tmp/design-qa/api-tokens-mobile-final.png`
+- Side-by-side evidence: `/home/codex/.codex/worktrees/e397/leapview/.tmp/design-qa/api-token-comparison-normalized-final.png`
+- State: dark theme, workspace scope selected, permission picker open.
+
+## Capture normalization
+
+- Source pixels: 1594 × 810.
+- Desktop browser viewport and screenshot: 1440 × 1000 CSS pixels at device scale factor 1.
+- Focused implementation crop: 640 × 800 pixels at device scale factor 1.
+- Mobile browser viewport and screenshot: 390 × 844 CSS pixels at device scale factor 1.
+- The source is a wide GitHub permission panel, while LeapView intentionally preserves its established 640-pixel settings column. The comparison therefore normalizes the interaction region rather than forcing GitHub's full-page width onto LeapView.
+
+## Evidence review
+
+- Full view: the LeapView settings hierarchy remains centered and compact, with token basics, resource access, permissions, and existing credentials in a clear sequence. The open picker stays within the desktop viewport and does not expand the document.
+- Focused region: the implementation matches the source pattern of an explicit permission count, an Add permissions trigger, a searchable floating picker, grouped native checkboxes, and concise permission descriptions.
+- Typography: all settings and permission labels resolve to the required 14px Primer-backed type recipe. Weight, line height, and muted supporting text preserve the existing LeapView hierarchy.
+- Spacing and layout: Primer base-size tokens provide consistent 6/8/12/16/20px rhythm, compact control sizing, panel borders, and restrained radii. The narrower LeapView column is an intentional product constraint.
+- Colors and tokens: surfaces, borders, focus, foregrounds, backdrop, and accent states use LeapView aliases backed by Primer primitives; no new raw colors were introduced.
+- Images and icons: the reference contains no product imagery. Add, search, remove, and close actions use the application's existing icon system rather than simulated assets.
+- Copy and content: repository-specific wording was translated to LeapView's workspace and product scopes. Permission names and descriptions are server-owned and reflect the capabilities the signed-in user may delegate.
+- Primary interactions tested: choose scope, search permissions, select and remove permissions, create typed command payload, Escape dismissal with focus return, outside-pointer dismissal, mobile close action, and mobile viewport containment.
+- Browser console errors: none during the final desktop capture.
+
+## Comparison history
+
+1. Initial mobile capture found a P2 dismissal issue: the nearly full-height picker relied on tapping a narrow outside margin or using a keyboard Escape key.
+2. The picker gained a visible close action and a Primer-backed modal backdrop on compact viewports. The revised 390 × 844 capture shows the close control, bounded panel, background separation, and no horizontal overflow.
+3. Final desktop and mobile comparison found no remaining P0, P1, or P2 issues.
+4. An in-app browser annotation on 2026-08-12 exposed a P2 desktop overflow issue: implicit grid rows let a long permission list retain its content height, while the panel maximum did not account for its actual vertical position. The panel now uses `auto minmax(0, 1fr)` rows, calculates the available height below its trigger, keeps a 16px viewport gap, and confines scrolling to the permission list. A browser DOM regression at 1440 × 700 with 13 permissions verifies the panel remains inside the viewport, the list has `scrollHeight > clientHeight`, and computed vertical overflow is `auto`.
+
+## Findings
+
+No actionable P0, P1, or P2 visual differences remain. The implementation follows the GitHub interaction model while retaining LeapView's narrower settings layout and Primer visual language.
+
+## Follow-up polish
+
+- P3: a future iteration could replace the native datetime-local field with predefined expiration choices, but this is outside the workspace-and-permissions problem addressed here.
+
+Typography, tokens, icons, and copy are unchanged by the viewport-containment fix. Mobile retains its fixed, viewport-bounded sheet behavior.
+
+final result: passed

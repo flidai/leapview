@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "f70a574126a6b1718372b3e1e16e8fddb87017e964c6b22de0d722f8a042aa8f"
+	const expectedRouteContractDigest = "a036e041883c45a9b12636dd9e9a4c9845f1a3c4038372773819284ca4423334"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -120,6 +120,10 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 			public.access = "authenticated"
 		}
 		return public, true
+	case strings.HasPrefix(path, "/profile/avatar") || strings.HasPrefix(path, "/profile/avatars/"):
+		public.owner = "access"
+		public.access = "authenticated"
+		return public, true
 	case strings.HasPrefix(path, "/public/dashboards/") || strings.HasPrefix(path, "/embed/dashboards/"):
 		public.owner = "dashboard"
 		return public, true
@@ -127,18 +131,28 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 
 	authenticated := routeMetadata{access: "authenticated"}
 	switch {
+	case strings.HasPrefix(path, "/product/logo/"):
+		authenticated.owner = "admin"
+	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/personal-settings/command":
+		authenticated.owner = "admin"
 	case path == "/admin/agent" || path == "/admin/agent/config":
 		authenticated.owner = "agent"
-		authenticated.privilege = "MANAGE_GRANTS"
+		authenticated.privilege = "MANAGE_PLATFORM"
 	case strings.HasPrefix(path, "/admin/publications"):
 		authenticated.owner = "admin"
 		authenticated.privilege = "MANAGE_PUBLICATIONS"
-	case strings.HasPrefix(path, "/admin/queries"):
+	case strings.HasPrefix(path, "/admin/queries") || strings.HasPrefix(path, "/admin/audit"):
 		authenticated.owner = "admin"
 		authenticated.privilege = "VIEW_AUDIT"
-	case strings.HasPrefix(path, "/admin"):
+	case path == "/admin/workspaces":
+		authenticated.owner = "admin"
+		authenticated.privilege = "MANAGE_WORKSPACE"
+	case strings.HasPrefix(path, "/admin/principals") || strings.HasPrefix(path, "/admin/groups"):
 		authenticated.owner = "admin"
 		authenticated.privilege = "MANAGE_GRANTS"
+	case strings.HasPrefix(path, "/admin"):
+		authenticated.owner = "admin"
+		authenticated.privilege = "MANAGE_PLATFORM"
 	case strings.HasPrefix(path, "/chats"):
 		authenticated.owner = "agent"
 		switch {
@@ -220,6 +234,7 @@ func apiOwner(tags []string) (string, bool) {
 const nonAPIRouteInventory = `
 CONNECT /metrics
 CONNECT /static/*
+DELETE /profile/avatar
 DELETE /metrics
 DELETE /static/*
 GET /
@@ -230,7 +245,11 @@ GET /.well-known/oauth-protected-resource/mcp
 GET /__dev/pagestream/signals
 GET /__dev/pagestream/traces
 GET /admin
+GET /admin/api-tokens
 GET /admin/agent
+GET /admin/audit
+GET /admin/authentication
+GET /admin/general
 GET /admin/groups
 GET /admin/groups/{group}
 GET /admin/principals
@@ -238,7 +257,11 @@ GET /admin/principals/{principal}
 GET /admin/profile
 GET /admin/publications
 GET /admin/queries
+GET /admin/security
+GET /admin/service-accounts
 GET /admin/storage
+GET /admin/system
+GET /admin/workspaces
 GET /api/docs
 GET /api/openapi.json
 GET /auth/{provider}
@@ -269,6 +292,8 @@ GET /embed/dashboards/{publicId}/pages/{page}
 GET /favicon.ico
 GET /healthz
 GET /login
+GET /profile/avatars/{principal}/{digest}
+GET /product/logo/{digest}
 GET /metrics
 GET /public/dashboards/{publicId}
 GET /public/dashboards/{publicId}/pages/{page}
@@ -291,10 +316,14 @@ OPTIONS /static/*
 PATCH /admin/agent/config
 PATCH /metrics
 PATCH /static/*
+POST /admin/audit/command
+POST /admin/personal-settings/command
+POST /admin/product-settings/command
 POST /admin/publications/command
 POST /admin/groups/search
 POST /admin/principals/search
 POST /admin/queries/command
+POST /admin/service-accounts/command
 POST /admin/storage/select-table
 POST /auth/desktop/disconnect
 POST /auth/desktop/redeem
@@ -313,6 +342,8 @@ POST /oauth/register
 POST /oauth/device/code
 POST /oauth/revoke
 POST /oauth/token
+PUT /profile/avatar
+PUT /admin/product-logo
 POST /public/dashboards/{publicId}/commands/clear-selection
 POST /public/dashboards/{publicId}/commands/filter
 POST /public/dashboards/{publicId}/commands/filter-options

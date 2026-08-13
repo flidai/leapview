@@ -59,7 +59,7 @@ func (r *synchronizedResponseRecorder) BodyString() string {
 	return r.Body.String()
 }
 
-func TestAdminRouteRejectsViewer(t *testing.T) {
+func TestAdminRoutesExposeOnlyPersonalSettingsToViewer(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	viewer := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer", access.RoleViewer)
@@ -71,20 +71,24 @@ func TestAdminRouteRejectsViewer(t *testing.T) {
 		method string
 		path   string
 		body   string
+		status int
 	}{
-		{method: http.MethodGet, path: "/admin"},
-		{method: http.MethodGet, path: "/admin/agent"},
-		{method: http.MethodGet, path: "/admin/storage"},
-		{method: http.MethodGet, path: "/updates?route=admin&section=storage"},
-		{method: http.MethodPost, path: "/admin/storage/select-table", body: `{}`},
+		{method: http.MethodGet, path: "/admin", status: http.StatusSeeOther},
+		{method: http.MethodGet, path: "/admin/profile", status: http.StatusOK},
+		{method: http.MethodGet, path: "/admin/security", status: http.StatusOK},
+		{method: http.MethodGet, path: "/admin/api-tokens", status: http.StatusOK},
+		{method: http.MethodGet, path: "/admin/agent", status: http.StatusForbidden},
+		{method: http.MethodGet, path: "/admin/storage", status: http.StatusForbidden},
+		{method: http.MethodGet, path: "/updates?route=admin&section=storage", status: http.StatusForbidden},
+		{method: http.MethodPost, path: "/admin/storage/select-table", body: `{}`, status: http.StatusForbidden},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
 		server.Routes().ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("%s status = %d, want %d body=%s", tc.path, rec.Code, http.StatusForbidden, rec.Body.String())
+		if rec.Code != tc.status {
+			t.Fatalf("%s status = %d, want %d body=%s", tc.path, rec.Code, tc.status, rec.Body.String())
 		}
 	}
 }
@@ -92,7 +96,7 @@ func TestAdminRouteRejectsViewer(t *testing.T) {
 func TestAdminPagesRenderReadOnlyAccessData(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	analyst := testPrincipal(t, ctx, store, "analyst@example.com", "Analyst", access.RoleViewer)
 	repo := testAccessRepository(store)
 	group, err := repo.UpsertGroup(ctx, access.GroupInput{ID: "group_finance", WorkspaceID: "test", Provider: "local", ExternalID: "finance", Name: "Finance"})
@@ -120,7 +124,7 @@ func TestAdminPagesRenderReadOnlyAccessData(t *testing.T) {
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`}},
 		{path: "/admin/groups/group_finance", want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=group_finance&amp;route=admin&amp;section=group-detail`}},
-		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`, "/admin/agent/config"}},
+		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`, "/admin/agent/config", "updateAgentConfig"}},
 		{path: "/admin/storage", want: []string{"<lv-admin-page", `section="storage"`, `/updates?route=admin&amp;section=storage`, "/admin/storage/select-table"}},
 		{path: "/admin/queries", want: []string{"<lv-admin-page", `section="queries"`, `/updates?route=admin&amp;section=queries`, "/admin/queries/command"}},
 		{path: "/admin/publications", want: []string{"<lv-admin-page", `section="publications"`, `/updates?route=admin&amp;section=publications`, "/admin/publications/command"}},
@@ -157,7 +161,7 @@ func TestAdminPagesRenderReadOnlyAccessData(t *testing.T) {
 func TestAdminQueryHistoryCommandPublishesLoadMorePatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -222,7 +226,7 @@ func encodeAdminQueryCursor(createdAt, id string) string {
 func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -281,7 +285,7 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -331,7 +335,7 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 func TestAdminQueryHistoryCommandTogglesFilterAndResetsTable(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -385,7 +389,7 @@ func TestAdminQueryHistoryCommandTogglesFilterAndResetsTable(t *testing.T) {
 func TestAdminQueryHistoryCommandPublishesDetailPatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -500,15 +504,15 @@ func TestAdminPrincipalSearchCommandPatchesOnlyDirectoryRows(t *testing.T) {
 	if !ok || len(directory) != 1 {
 		t.Fatalf("directory patch = %#v", page["directoryList"])
 	}
-	if _, ok := directory["groups"].([]any); !ok {
-		t.Fatalf("directory groups = %#v", directory["groups"])
+	if _, ok := directory["items"].([]any); !ok {
+		t.Fatalf("directory items = %#v", directory["items"])
 	}
 }
 
 func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -554,7 +558,7 @@ func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 func TestAdminStorageDetailRouteIsDropped(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -572,7 +576,7 @@ func TestAdminStorageDetailRouteIsDropped(t *testing.T) {
 func TestAdminStorageUpdatesSubscribesWithoutInitialRescan(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -618,7 +622,7 @@ func TestAdminStorageUpdatesSubscribesWithoutInitialRescan(t *testing.T) {
 func TestAdminStorageSelectTablePublishesSelectedTablePatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	dir := t.TempDir()
@@ -770,7 +774,7 @@ VALUES ('test', 'prod', 'dep_prod')`, snapshotID, snapshotID); err != nil {
 func TestAdminStorageSelectTableRejectsInvalidCommand(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	dir := t.TempDir()
@@ -802,7 +806,7 @@ func TestAdminStorageSelectTableRejectsInvalidCommand(t *testing.T) {
 func TestAdminAccessRouteIsDropped(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -820,7 +824,7 @@ func TestAdminAccessRouteIsDropped(t *testing.T) {
 func TestAdminPrincipalDetailReturnsNotFoundForMissingPrincipal(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -838,7 +842,7 @@ func TestAdminPrincipalDetailReturnsNotFoundForMissingPrincipal(t *testing.T) {
 func TestAdminGroupDetailReturnsNotFoundForMissingGroup(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))

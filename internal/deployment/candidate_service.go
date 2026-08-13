@@ -363,7 +363,7 @@ func (service *CandidateService) expireOnRead(ctx context.Context, candidate Can
 	return Candidate{}, ErrCandidateConflict
 }
 
-func (service *CandidateService) record(ctx context.Context, action string, candidate Candidate, metadata map[string]any) error {
+func (service *CandidateService) record(ctx context.Context, operationID, action string, candidate Candidate, metadata map[string]any) error {
 	if service.audit == nil {
 		return ErrCandidateAuditUnavailable
 	}
@@ -374,10 +374,6 @@ func (service *CandidateService) record(ctx context.Context, action string, cand
 	metadata["baseGeneration"] = candidate.BaseGeneration
 	metadata["projectId"] = candidate.ProjectID
 	metadata["candidateKey"] = candidate.Key
-	operationID, command := apigencommand.OperationID(ctx)
-	if !command {
-		operationID, _ = candidateOperationID(action)
-	}
 	resumed, _ := metadata["resumed"].(bool)
 	payload := deploymentgen.GenSchemaCandidateAuditPayload{
 		OperationId: operationID, CandidateId: candidate.ID, ProjectId: candidate.ProjectID,
@@ -427,11 +423,16 @@ func (service *CandidateService) recordBestEffort(
 		logger = slog.Default()
 	}
 	operationID, command := apigencommand.OperationID(ctx)
-	if !command {
+	if command {
+		contract, ok := deploymentgen.GetAPIGenCommandRuntimeContract(operationID)
+		if !ok || contract.AuditAction != action {
+			operationID, command = candidateOperationID(action)
+		}
+	} else {
 		operationID, command = candidateOperationID(action)
 	}
 	if !command {
-		if err := service.record(ctx, action, candidate, metadata); err != nil {
+		if err := service.record(ctx, "", action, candidate, metadata); err != nil {
 			logger.ErrorContext(ctx, "candidate audit failed", "audit_action", action, "candidate_id", candidate.ID, "project_id", candidate.ProjectID, "principal_id", candidate.OwnerID, "error", err)
 		}
 		return
@@ -446,7 +447,7 @@ func (service *CandidateService) recordBestEffort(
 			if action != contract.AuditAction {
 				return fmt.Errorf("candidate audit action %q does not match generated action %q", action, contract.AuditAction)
 			}
-			return service.record(ctx, contract.AuditAction, candidate, metadata)
+			return service.record(ctx, contract.OperationID, contract.AuditAction, candidate, metadata)
 		},
 		LogMessage: "candidate audit failed",
 		LogAttributes: []slog.Attr{

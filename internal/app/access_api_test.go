@@ -208,7 +208,7 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 		PrincipalID: owner.ID,
 		WorkspaceID: "test",
 		Name:        "auth",
-		Privileges:  []access.Privilege{access.PrivilegeManageGrants},
+		Privileges:  []access.Privilege{access.PrivilegeManageGrants, access.PrivilegeUseWorkspace},
 	})
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
@@ -273,7 +273,7 @@ func TestCurrentAPITokenCreateRejectsExpiredExpiry(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
 
 	expiresAt := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"expired-api-token","workspaceId":"test","expiresAt":"`+expiresAt+`"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"expired-api-token","workspaceId":"test","privileges":[],"expiresAt":"`+expiresAt+`"}`))
 	req.Header.Set("Authorization", "Bearer "+authSecret)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
@@ -344,7 +344,7 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
 		PrincipalID: owner.ID,
 		Name:        "platform-admin",
-		Privileges:  []access.Privilege{access.PrivilegeManagePlatform, access.PrivilegeManageGrants},
+		Privileges:  []access.Privilege{access.PrivilegeManagePlatform, access.PrivilegeManageGrants, access.PrivilegeUseWorkspace},
 	})
 	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{ID: "sp_secret_cache", DisplayName: "Secret Cache"})
 	if err != nil {

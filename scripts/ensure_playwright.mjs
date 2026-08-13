@@ -15,7 +15,7 @@ try {
   // Browser provisioning is intentionally lazy for local, standalone test runs.
 }
 
-const install = spawnSync(process.execPath, ['x', 'playwright', 'install', 'chromium'], {
+const install = spawnSync('bun', ['x', 'playwright', 'install', 'chromium'], {
   stdio: 'inherit',
   timeout: 300_000,
 })

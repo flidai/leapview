@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { CheckCircle2, Clock3, Copy, XCircle } from 'lucide'
-import type { AdminPageSignal, AdminContentSectionSignal, AdminProfileSignal, AdminPublicationSignal, AdminQueryDetailSignal, AdminQueryHistoryFilters, AdminQueryHistorySignal, AdminStorageSignal, FilterMenuCommand, FilterMenuSignal, RecordTableSignal } from '../../generated/signals'
+import type { AdminPageSignal, AdminContentSectionSignal, AdminPublicationSignal, AdminQueryDetailSignal, AdminQueryHistoryFilters, AdminQueryHistorySignal, AdminStorageSignal, FilterMenuCommand, FilterMenuSignal, RecordTableSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
@@ -11,9 +11,13 @@ import '../shared/drawer'
 import '../shared/entity-list'
 import '../shared/filter-menu'
 import '../shared/record-table'
+import '../shared/user-avatar'
 import './agent-tools'
 import './agent-prompt-editor'
 import './storage-explorer'
+import './personal-settings'
+import './product-settings'
+import './settings-surfaces'
 
 const emptyStorage: AdminStorageSignal = {
   summary: {
@@ -82,6 +86,25 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       gap: 0;
       justify-self: stretch;
       padding: 0;
+    }
+
+    .main-settings {
+      width: min(calc(100% - var(--base-size-48)), var(--lv-settings-content-max-width));
+      gap: var(--base-size-24);
+      padding: var(--base-size-64) 0;
+    }
+
+    .main-settings .page-title-block {
+      display: grid;
+      gap: var(--base-size-8);
+    }
+
+    .main-settings .page-header .page-detail {
+      margin-top: 0;
+    }
+
+    .main-settings .page-header h1 {
+      font: var(--lv-type-page-title);
     }
 
     header {
@@ -164,89 +187,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .empty {
       padding: var(--base-size-12);
-    }
-
-    .profile-card {
-      display: grid;
-      max-width: 42rem;
-      overflow: hidden;
-      border: 0;
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-    }
-
-    .profile-row {
-      display: grid;
-      min-width: 0;
-      min-height: 4rem;
-      grid-template-columns: minmax(0, 1fr) minmax(0, auto);
-      align-items: center;
-      gap: var(--base-size-16);
-      margin: 0 var(--base-size-16);
-      border-bottom: var(--lv-border-muted);
-    }
-
-    .profile-row:last-child {
-      border-bottom: 0;
-    }
-
-    .profile-label-group {
-      display: grid;
-      min-width: 0;
-      gap: var(--base-size-2);
-    }
-
-    .profile-label {
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body-compact);
-    }
-
-    .profile-help {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .profile-value {
-      box-sizing: border-box;
-      min-width: 0;
-      max-width: min(24rem, 58vw);
-      overflow: hidden;
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-control);
-      color: var(--lv-fg-default);
-      padding: var(--base-size-6) var(--base-size-12);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body-compact);
-    }
-
-    .profile-value-muted {
-      color: var(--lv-fg-muted);
-    }
-
-    .profile-picture {
-      min-height: 4.25rem;
-    }
-
-    .profile-avatar {
-      display: grid;
-      width: var(--control-large-size);
-      height: var(--control-large-size);
-      place-items: center;
-      overflow: hidden;
-      border: var(--lv-border-muted);
-      border-radius: 50%;
-      background: var(--lv-bg-selected);
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .profile-avatar img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
     }
 
     .warnings {
@@ -647,6 +587,15 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
         padding: var(--base-size-12);
       }
 
+      .main-settings {
+        gap: var(--base-size-24);
+        padding: var(--base-size-32) var(--base-size-16) var(--base-size-64);
+      }
+
+      .main-settings .page-header h1 {
+        font: var(--lv-type-page-title);
+      }
+
       .local-user-action {
         width: 100%;
       }
@@ -697,12 +646,13 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     const mainClass = [
       'main',
       page.active === 'storage' ? 'main-storage' : '',
-      page.active === 'principals' || page.active === 'groups' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'workspaces-admin' ? 'main-directory' : '',
+      isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
     ].filter(Boolean).join(' ')
     return html`
       <div class="route">
         <section class=${mainClass} aria-label="Admin">
-          ${page.active === 'storage' ? nothing : renderPageHeader(page.headerTitle || page.title)}
+          ${page.active === 'storage' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
           ${page.empty && page.active !== 'storage' ? html`<div class="panel"><div class="empty">${page.empty}</div></div>` : nothing}
           ${page.metrics?.length && page.active !== 'storage' && page.active !== 'queries' ? html`
             <div class="metrics">
@@ -721,7 +671,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
                 .items=${adminPrincipalListItems(page)}
                 .columns=${adminPrincipalListColumns()}
                 .filters=${adminPrincipalListFilters()}
-                .groups=${adminPrincipalListGroups(page)}
                 initial-query=${page.listQuery ?? ''}
                 active-filter=${page.listFilter ?? 'all'}
                 search-placeholder=${page.directoryList.searchPlaceholder}
@@ -731,7 +680,12 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
               ></lv-entity-list>`
             : page.active === 'groups'
               ? html`<lv-entity-list .items=${adminGroupListItems(page)} .columns=${adminGroupListColumns()} .filters=${adminGroupListFilters(page)} initial-query=${page.listQuery ?? ''} active-filter=${page.listFilter ?? 'all'} search-placeholder="Search groups by name or ID" empty-text="No groups found."></lv-entity-list>`
-            : page.active === 'profile' ? this.renderProfile(page.profile) : page.active === 'storage' ? this.renderStorage(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.sections?.map(renderSection)}
+            : isPersonalSettings(page.active) ? html`<lv-personal-settings></lv-personal-settings>`
+              : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
+                : page.active === 'workspaces-admin' ? html`<lv-workspace-registry></lv-workspace-registry>`
+                  : page.active === 'service-accounts' ? html`<lv-service-accounts></lv-service-accounts>`
+                    : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
+                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.sections?.map(renderSection)}
         </section>
       </div>
     `
@@ -751,50 +705,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       `
     }
     return nothing
-  }
-
-  private renderProfile(profile?: AdminProfileSignal) {
-    const current = profile ?? { id: '', email: '', displayName: '', title: '', username: '', profilePictureUrl: undefined }
-    const displayName = current.displayName || current.email || current.username || 'Not set'
-    const initials = profileInitials(displayName)
-    return html`
-      <section class="profile-card" aria-label="Profile details">
-        <div class="profile-row profile-picture">
-          <div class="profile-label-group">
-            <span class="profile-label">Profile picture</span>
-          </div>
-          <div class="profile-avatar" aria-label=${current.profilePictureUrl ? 'Profile picture' : `Profile initials: ${initials}`}>
-            ${current.profilePictureUrl ? html`<img src=${current.profilePictureUrl} alt="">` : initials}
-          </div>
-        </div>
-        <div class="profile-row">
-          <div class="profile-label-group">
-            <span class="profile-label">Email</span>
-          </div>
-          <span class="profile-value">${current.email || 'Not set'}</span>
-        </div>
-        <div class="profile-row">
-          <div class="profile-label-group">
-            <span class="profile-label">Full name</span>
-          </div>
-          <span class="profile-value">${displayName}</span>
-        </div>
-        <div class="profile-row">
-          <div class="profile-label-group">
-            <span class="profile-label">Title</span>
-            <span class="profile-help">Your job title or role</span>
-          </div>
-          <span class=${current.title ? 'profile-value' : 'profile-value profile-value-muted'}>${current.title || 'Not set'}</span>
-        </div>
-        <div class="profile-row">
-          <div class="profile-label-group">
-            <span class="profile-label">Username</span>
-            <span class="profile-help">One word, like a nickname or first name</span>
-          </div>
-          <span class=${current.username ? 'profile-value' : 'profile-value profile-value-muted'}>${current.username || 'Not set'}</span>
-        </div>
-      </section>
-    `
   }
 
   private renderAgent(page: AdminPageSignal) {
@@ -1112,6 +1022,14 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
 }
 
+function isPersonalSettings(active: string): boolean {
+  return active === 'profile' || active === 'security' || active === 'api-tokens'
+}
+
+function isProductSettings(active: string): boolean {
+  return active === 'general' || active === 'authentication' || active === 'system'
+}
+
 const emptyQueryHistoryTable: RecordTableSignal = {
   columns: [],
   rows: [],
@@ -1138,43 +1056,46 @@ function adminGroupTable(page: AdminPageSignal): RecordTableSignal | undefined {
 }
 
 function adminPrincipalListItems(page: AdminPageSignal) {
-  return (page.directoryList?.groups ?? []).flatMap((group) => group.items.map((item) => ({
+  return (page.directoryList?.items ?? []).map((item) => ({
     id: item.id,
     title: item.name,
     description: item.username,
     href: item.href,
-    icon: item.kind === 'application' ? 'application' : 'user',
-    group: group.id,
+    avatarUrl: item.avatarUrl,
+    icon: 'user',
     columns: {
       email: item.email || '—',
-      status: item.role,
+      status: item.status === 'inactive' ? 'Inactive' : 'Active',
       teams: `${item.groupCount} ${item.groupCount === 1 ? 'team' : 'teams'}`,
       joined: formatAdminListDate(item.joinedAt),
+      lastSeen: formatAdminLastSeen(item.lastSeenAt),
     },
-  })))
+    columnTitles: {
+      lastSeen: item.lastSeenAt ? formatAdminExactDate(item.lastSeenAt) : '',
+    },
+    sortValues: {
+      lastSeen: adminTimestamp(item.lastSeenAt),
+    },
+  }))
 }
 
 function adminPrincipalListColumns() {
   return [
-    { id: 'name', label: 'Name', width: '31%' },
-    { id: 'email', label: 'Email', width: '24%' },
-    { id: 'status', label: 'Status', width: '17%' },
-    { id: 'teams', label: 'Teams', width: '14%' },
-    { id: 'joined', label: 'Joined', width: '14%' },
+    { id: 'name', label: 'Name', width: '27%' },
+    { id: 'email', label: 'Email', width: '22%' },
+    { id: 'status', label: 'Status', width: '14%' },
+    { id: 'teams', label: 'Teams', width: '12%' },
+    { id: 'joined', label: 'Joined', width: '12%' },
+    { id: 'lastSeen', label: 'Last seen', width: '13%' },
   ]
 }
 
 function adminPrincipalListFilters() {
   return [
     { id: 'all', label: 'All' },
-    { id: 'people', label: 'People' },
-    { id: 'applications', label: 'Applications' },
+    { id: 'active', label: 'Active' },
     { id: 'inactive', label: 'Inactive' },
   ]
-}
-
-function adminPrincipalListGroups(page: AdminPageSignal) {
-  return (page.directoryList?.groups ?? []).map((group) => ({ id: group.id, label: group.label }))
 }
 
 function formatAdminListDate(value: string): string {
@@ -1182,6 +1103,32 @@ function formatAdminListDate(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(date)
+}
+
+function formatAdminLastSeen(value: string): string {
+  const timestamp = adminTimestamp(value)
+  if (!timestamp) return 'Never'
+  const elapsed = Math.max(0, Date.now() - timestamp)
+  if (elapsed < 60_000) return 'Now'
+  if (elapsed < 60 * 60_000) return `${Math.floor(elapsed / 60_000)}m ago`
+  if (elapsed < 24 * 60 * 60_000) return `${Math.floor(elapsed / (60 * 60_000))}h ago`
+  if (elapsed < 7 * 24 * 60 * 60_000) return `${Math.floor(elapsed / (24 * 60 * 60_000))}d ago`
+  return formatAdminListDate(value)
+}
+
+function formatAdminExactDate(value: string): string {
+  const timestamp = adminTimestamp(value)
+  if (!timestamp) return ''
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit',
+    timeZone: 'UTC', timeZoneName: 'short',
+  }).format(timestamp)
+}
+
+function adminTimestamp(value: string): number {
+  if (!value) return 0
+  const timestamp = Date.parse(value)
+  return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
 function adminGroupListItems(page: AdminPageSignal) {
@@ -1322,12 +1269,6 @@ function csrfToken(): string {
 function principalIDFromPage(page: AdminPageSignal): string {
   const metric = page.metrics?.find((item) => item.label === 'Principal ID')
   return metric?.value ?? ''
-}
-
-function profileInitials(value: string): string {
-  const parts = value.trim().split(/\s+/).filter(Boolean)
-  if (parts.length > 1) return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
-  return (parts[0]?.slice(0, 2) || '?').toUpperCase()
 }
 
 function renderSection(section: AdminContentSectionSignal) {

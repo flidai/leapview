@@ -87,6 +87,7 @@ func TestLoad_AcceptsAndNormalizesTypedCommand(t *testing.T) {
       }},
       "failures": [],
       "additional_exposures": ["ui", "automation"],
+      "ui": {"action_id": "workspace.access.role-binding.create"},
       "target": {"parameter": "workspace", "type": "workspace"},
       "idempotency": "required",
       "authz_mode": "privilege",
@@ -100,6 +101,7 @@ func TestLoad_AcceptsAndNormalizesTypedCommand(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "command", doc.Endpoints[0].Kind)
 	require.Equal(t, []string{"automation", "ui"}, doc.Endpoints[0].Command.AdditionalExposures)
+	require.Equal(t, "workspace.access.role-binding.create", doc.Endpoints[0].Command.UI.ActionID)
 	require.Equal(t, "workspace", doc.Endpoints[0].Command.Target.Parameter)
 	require.Equal(t, "required", doc.Endpoints[0].Command.Idempotency)
 }
@@ -136,6 +138,9 @@ func TestValidate_RejectsInvalidTypedCommands(t *testing.T) {
 		{name: "audit payload retention", mutate: func(endpoint *Endpoint) { endpoint.Command.Audit.Payload.Retention = "forever" }, wantErr: "unsupported retention"},
 		{name: "audit payload sensitivity", mutate: func(endpoint *Endpoint) { endpoint.Command.Audit.Payload.Fields[0].Sensitivity = "private" }, wantErr: "unsupported sensitivity"},
 		{name: "exposure", mutate: func(endpoint *Endpoint) { endpoint.Command.AdditionalExposures = []string{"desktop"} }, wantErr: "unsupported additional exposure"},
+		{name: "ui action", mutate: func(endpoint *Endpoint) { endpoint.Command.UI = &UIAction{ActionID: "Create Binding"} }, wantErr: "stable dotted lower-kebab-case"},
+		{name: "ui exposure", mutate: func(endpoint *Endpoint) { endpoint.Command.UI = &UIAction{ActionID: "workspace.binding.delete"} }, wantErr: "requires the ui additional exposure"},
+		{name: "ui metadata", mutate: func(endpoint *Endpoint) { endpoint.Command.AdditionalExposures = []string{"ui"} }, wantErr: "requires ui metadata"},
 		{name: "target", mutate: func(endpoint *Endpoint) { endpoint.Command.Target.Parameter = "missing" }, wantErr: "must name a required path parameter"},
 		{name: "post policy", mutate: func(endpoint *Endpoint) { endpoint.Method = "post" }, wantErr: "POST commands require idempotency policy"},
 		{name: "patch policy", mutate: func(endpoint *Endpoint) { endpoint.Method = "patch" }, wantErr: "PATCH commands require concurrency policy"},
@@ -161,6 +166,28 @@ func TestValidate_RejectsInvalidTypedCommands(t *testing.T) {
 			require.ErrorContains(t, err, test.wantErr)
 		})
 	}
+}
+
+func TestValidateRejectsDuplicateUIActionIDs(t *testing.T) {
+	command := func(actionID string) *Command {
+		return &Command{
+			Owner:               "CommandAPI",
+			Audit:               AuditPolicy{Required: false},
+			Failures:            []CommandFailure{},
+			AdditionalExposures: []string{"ui"},
+			UI:                  &UIAction{ActionID: actionID},
+		}
+	}
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Commands", Version: "1"},
+		Endpoints: []Endpoint{
+			{Method: "delete", Path: "/first", OperationID: "deleteFirst", Responses: []Response{{StatusCode: 204, Description: "deleted"}}, Command: command("workspace.widget.delete")},
+			{Method: "delete", Path: "/second", OperationID: "deleteSecond", Responses: []Response{{StatusCode: 204, Description: "deleted"}}, Command: command("workspace.widget.delete")},
+		},
+	}
+	require.ErrorContains(t, Validate(doc), `duplicate ui action_id "workspace.widget.delete"`)
 }
 
 func TestValidateAsyncExecutionContract(t *testing.T) {

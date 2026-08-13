@@ -105,7 +105,7 @@ func requiredCollectionField(key string) bool {
 }
 
 func isTimestampField(key string) bool {
-	return strings.HasSuffix(key, "At") || key == "timestamp" || key == "created" || key == "updated"
+	return strings.HasSuffix(key, "At") || strings.HasSuffix(key, "Since") || key == "timestamp" || key == "created" || key == "updated"
 }
 
 func parsePublicTimestamp(value string) (string, error) {

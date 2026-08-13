@@ -112,32 +112,30 @@ also the transport-neutral application command identity:
 
 ```typespec
 @route("/workspaces/{workspace}/role-bindings")
+@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
+@apigen.auditPayload(RoleBindingAuditPayload)
 interface RoleBindings {
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+  @apigen.ui("workspace.access.role-binding.create")
+  @apigen.failsWith(RoleBindingConflict)
   @apigen.command(#{
-    audit: #{
-      required: true,
-      successAction: "role_binding.created",
-      guarantee: "transactional",
-    },
-    failures: #[
-      #{
-        kind: "conflict",
-        statusCode: 409,
-        code: "ROLE_BINDING_CONFLICT",
-        publicDetail: "The role binding conflicts with current state.",
-      },
-    ],
-    additionalExposures: #["ui"],
+    auditAction: "role_binding.created",
   })
-  @operationId("createRoleBinding")
   createRoleBinding(
-    @path workspace: string,
+    @path @apigen.target workspace: string,
     @header("Idempotency-Key") idempotencyKey: string,
     @body body: RoleBindingRequest,
   ): RoleBindingResponse;
 }
+
+@apigen.failureDefinition(#{
+  kind: "conflict",
+  statusCode: 409,
+  code: "ROLE_BINDING_CONFLICT",
+  publicDetail: "The role binding conflicts with current state.",
+})
+model RoleBindingConflict {}
 ```
 
 HTTP is implied by the endpoint, and generated clients provide the CLI/API
@@ -146,8 +144,10 @@ such as `ui`, `agent`, or `automation`. Owner and authorization are derived
 from the declaring namespace and `@apigen.authz`; the target is inferred from a
 single path parameter or selected explicitly with `targetParameter`.
 
-APIGen requires an explicit `@operationId`, stable dotted lower-snake-case
-audit actions, a required `Idempotency-Key` on POST commands, and a required
+APIGen uses the TypeSpec operation name as the operation ID by default;
+`@operationId` remains available for intentional overrides. Inferred IDs must
+be unique. APIGen also requires stable dotted lower-snake-case audit actions, a
+required `Idempotency-Key` on POST commands, and a required
 `If-Match` on PATCH commands. It emits the normalized value in IR, generated Go
 operation registries, aggregate registries, and OpenAPI `x-apigen-command`.
 The generated runtime registry is the transport-neutral execution policy:
@@ -168,8 +168,11 @@ request bodies, target values, idempotency keys, and concurrency tokens are not
 logged. Applications should not maintain parallel method/path allowlists or
 surface-specific command-policy tables.
 
-Every command must explicitly declare `failures`, using `#[]` when it has no
-operation-owned domain failures. Each failure binds a transport-neutral stable
+Every command must explicitly declare `failures`, inherit them through
+`@apigen.commandDefaults`, use one or more `@apigen.failsWith` references, or
+use `#[]` when it has no operation-owned domain failures. Named failures are
+declared once with `@apigen.failureDefinition`; APIGen rejects conflicting
+definitions for the same public code. Each failure binds a transport-neutral stable
 lower-snake-case `kind` to one documented HTTP status, stable upper-snake-case
 public `code`, and safe `publicDetail`. Generated registries expose
 `GetAPIGenCommandFailureContracts`; `runtime/failure` classifies domain errors
@@ -213,6 +216,14 @@ redacts `internal`, `pii`, and `secret`. Both encoders reject missing or
 undeclared fields, so schema drift fails the command lifecycle instead of
 silently changing persisted audit data.
 
+Auditing is required by default for concise `@apigen.command` declarations.
+Interfaces can own shared `@apigen.authz`, `@apigen.commandDefaults`, and
+`@apigen.auditPayload` metadata; operation metadata overrides inherited
+defaults, and generated IR always contains the fully expanded policy. A truly
+ephemeral mutation must opt out conspicuously with
+`@apigen.unaudited("reason")`. The legacy nested `audit` form remains accepted
+while contracts migrate.
+
 Generated Go servers also expose `GetAPIGenCommandRuntimeContract`, which
 normalizes every required audit into `runtime/command.Contract`. Construct a
 `runtime/command.Executor` with that lookup and supply both application
@@ -222,20 +233,18 @@ and reject successful responses whose command never completed through the
 executor. This makes a newly declared command fail closed until its runtime
 capability is wired.
 
-Commands that start durable work can add a typed execution lifecycle:
+Commands that start durable work can reference their status and event
+operations by symbol:
 
 ```typespec
-execution: #{
-  mode: "async",
+@apigen.asyncExecution(Releases.getRelease, Releases.listReleaseEvents, #{
   guarantee: "transactional",
   jobKind: "release.finalize",
   resourceKind: "release",
   initialEvent: "release.validating",
   initialState: "validating",
-  statusOperation: "getRelease",
-  eventsOperation: "listReleaseEvents",
   cancellation: "unsupported",
-}
+})
 ```
 
 APIGen requires a transactional execution guarantee, a `202` response, and

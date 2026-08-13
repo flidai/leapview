@@ -12,6 +12,7 @@ import (
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
@@ -29,6 +30,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	platformlifecycle "github.com/flidai/leapview/internal/platform/lifecycle"
@@ -60,6 +62,7 @@ type capabilityRoutes struct {
 	releaseModule      *releasemodule.Module
 	refreshModule      *refreshmodule.Module
 	adminModule        *adminmodule.Module
+	product            *adminmodule.ProductService
 	dashboardTelemetry dashboardmodule.Telemetry
 }
 
@@ -115,6 +118,8 @@ type persistenceInputs struct {
 	workspaceDirectory    workspacemodule.Directory
 	workspaceAssetCatalog workspacemodule.AssetCatalogReader
 	accessRepo            accessmodule.Repository
+	product               *adminmodule.ProductService
+	productStatus         adminmodule.ProductStatus
 }
 
 type workflowInputs struct {
@@ -189,6 +194,8 @@ type capabilityAssemblyInputs struct {
 	ManagedDataModule *manageddatamodule.Module
 	AnalyticsModule   *analyticsmodule.Module
 	DashboardAssets   dashboardmodule.Assets
+	Product           *adminmodule.ProductService
+	ProductStatus     adminmodule.ProductStatus
 }
 
 type workflowAssemblyInputs struct {
@@ -367,6 +374,9 @@ func buildApplicationSurfaces(
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
 	persistence.adminDatabase = data.AdminDatabase
+	persistence.product = capabilities.Product
+	routes.product = capabilities.Product
+	persistence.productStatus = capabilities.ProductStatus
 	if data.Database != nil {
 		platform.jobModule = capabilities.JobModule
 		if platform.jobModule == nil {
@@ -604,6 +614,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		refreshSupport := workspaceRefreshSupport(refreshDeps)
 		accessUICommands := routes.accessModule.UICommandBindings()
+		accessCommandPrivileges, privilegeErr := routes.accessModule.WorkspaceCommandPrivileges()
+		if privilegeErr != nil {
+			return fmt.Errorf("resolve generated access command privileges: %w", privilegeErr)
+		}
 		var err error
 		routes.workspaceModule, err = workspacemodule.Build(ctx, workspacemodule.Config{
 			Database:            database,
@@ -612,6 +626,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			AccessService:       routes.accessModule.WorkspaceAccessService(),
 			RoleBindingCommands: routes.accessModule.RoleBindingCommands(),
 			GrantCommands:       routes.accessModule.GrantCommands(),
+			CommandPrivileges:   accessCommandPrivileges,
 			AccessCommands: workspacemodule.AccessCommandBindings{
 				CreateRoleBinding: accessUICommands.CreateRoleBinding,
 				UpdateRoleBinding: accessUICommands.UpdateRoleBinding,
@@ -648,7 +663,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			CSRFToken:        routes.accessModule.CSRFToken,
 			CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,
 			Layout: func(r *http.Request) webpage.Provider {
-				return applicationLayout(routes.accessModule, routes.agentModule, platform.assets, r)
+				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
 			CurrentCredential: func(r *http.Request) (accessmodule.APICredential, bool) {
 				return accessmodule.APICredentialFromContext(r.Context())
@@ -729,7 +744,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				},
 				CSRFToken: routes.accessModule.CSRFToken,
 				Layout: func(r *http.Request) webpage.Provider {
-					return applicationLayout(routes.accessModule, routes.agentModule, platform.assets, r)
+					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 				},
 				Environment: func(r *http.Request) string {
 					return string(requestServingEnvironment(policy.defaultEnvironment, r))
@@ -984,7 +999,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				CSRFToken:        routes.accessModule.CSRFToken,
 				CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,
 				Layout: func(r *http.Request) webpage.Provider {
-					return applicationLayout(routes.accessModule, routes.agentModule, platform.assets, r)
+					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 				},
 				CurrentPrincipal: func(r *http.Request) (agentmodule.Principal, bool) {
 					if platform.auth == nil {
@@ -1021,6 +1036,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				ID: principal.ID, Email: principal.Email, DisplayName: principal.DisplayName, DevBypass: principal.DevBypass,
 			}, ok
 		}
+		settingsAccess := routes.accessModule.SettingsAdministration()
+		workspaceSettings := routes.workspaceModule.SettingsAdministration()
+		localPasswordEnabled := routes.accessModule.Auth() != nil && routes.accessModule.Auth().LocalAuthEnabled()
+		productCommands, commandErr := apigencommand.NewExecutor(apiaggregate.GetAPIGenCommandRuntimeContract, nil)
+		if commandErr != nil {
+			return fmt.Errorf("build product command executor: %w", commandErr)
+		}
 		var err error
 		routes.adminModule, err = adminmodule.Build(ctx, adminmodule.Config{
 			Access: accessReader,
@@ -1038,9 +1060,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			AuthorizeAnyWorkspace: routes.accessModule.AuthorizeAnyWorkspace,
 			Publications:          routes.dashboardModule,
+			AgentConfigCommand:    routes.agentModule.UICommandBindings().UpdateConfig,
 			PublicationCommands:   routes.dashboardModule.PublicationCommandBindings(),
 			DefaultWorkspaceID:    policy.defaultWorkspaceID,
 			AuthConfigured:        platform.auth != nil,
+			LocalPasswordEnabled:  localPasswordEnabled,
 			AccessConfigured:      accessReader != nil,
 			Storage: adminmodule.StorageConfig{
 				CatalogPath: storage.duckLakeCatalogPath, DataPath: storage.duckLakeDataPath,
@@ -1048,12 +1072,21 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Analytics: runtime.analyticsModule.AdminResources(), Admitter: workloadController(&runtime.workloads),
 			},
 			Layout: func(r *http.Request) webpage.Provider {
-				return applicationLayout(routes.accessModule, routes.agentModule, platform.assets, r)
+				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
 			EnsureClientID: func(w http.ResponseWriter, r *http.Request) {
 				_ = pagestream.EnsureClientID(w, r)
 			},
-			Broker: runtime.broker,
+			Broker:  runtime.broker,
+			Product: persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
+			ProductUICommands:   productUICommandContract(),
+			SettingsAccess:      settingsAccess,
+			PersonalAvatar:      routes.accessModule.PersonalAvatar(),
+			AuthoringSessions:   routes.accessModule.AuthoringSessions(),
+			CurrentSession:      routes.accessModule.CurrentSessionID,
+			WorkspaceSettings:   workspaceSettings,
+			WorkspaceAccess:     settingsAccess,
+			SettingsEnvironment: policy.defaultEnvironment,
 		})
 		if err != nil {
 			return fmt.Errorf("build admin module: %w", err)
@@ -1085,6 +1118,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	apiDispatcher = &apiGenDispatcher{
 		managedDataModule:  routes.managedDataModule,
+		productAPI:         routes.adminModule,
 		arrowQueries:       supportsNativeArrow(runtime.metrics),
 		defaultEnvironment: policy.defaultEnvironment, managedDataTus: policy.managedDataTus,
 		instanceID: storage.instanceID, canonicalOrigin: storage.publicURL, buildIdentity: platform.buildIdentity,
@@ -1237,6 +1271,22 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		platformlifecycle.Component{Start: platform.jobModule.Start, Stop: platform.jobModule.Stop},
 	)
 	return nil
+}
+
+func writeProductCommandFailure(ctx context.Context, w http.ResponseWriter, r *http.Request, operationID string, cause error) {
+	if contracts, ok := apiaggregate.GetAPIGenCommandFailureContracts(operationID); ok && apigenfailure.ValidateContracts(contracts) == nil {
+		if contract, matched := apigenfailure.Match(contracts, cause); matched {
+			apitransport.WriteAPIGenFailure(ctx, w, r, nil, apitransport.APIGenFailure{
+				OperationID: operationID, Kind: contract.Kind, StatusCode: contract.StatusCode,
+				Code: contract.Code, PublicDetail: contract.PublicDetail, Cause: cause,
+			})
+			return
+		}
+	}
+	apitransport.WriteAPIGenFailure(ctx, w, r, nil, apitransport.APIGenFailure{
+		OperationID: operationID, Kind: "handler", StatusCode: http.StatusInternalServerError,
+		Code: "INTERNAL_ERROR", PublicDetail: "The request could not be completed.", Cause: cause,
+	})
 }
 
 func workspaceReadModel(persistence persistenceInputs) (workspacemodule.ReadModel, error) {

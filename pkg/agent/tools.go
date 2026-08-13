@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"sync"
@@ -11,6 +12,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"golang.org/x/sync/errgroup"
 )
+
+var ErrInvalidToolArguments = errors.New("invalid tool arguments")
 
 type ToolDefinition struct {
 	Name         string
@@ -98,14 +101,14 @@ func (c *ToolCatalog) Execute(ctx context.Context, call ToolCall) (ToolResult, e
 
 func validateCompiledToolCall(tool *compiledTool, call ToolCall) error {
 	if !json.Valid(call.Arguments) {
-		return fmt.Errorf("tool arguments must be valid JSON")
+		return fmt.Errorf("%w: arguments must be valid JSON", ErrInvalidToolArguments)
 	}
 	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(call.Arguments))
 	if err != nil {
-		return fmt.Errorf("tool arguments must be valid JSON: %w", err)
+		return fmt.Errorf("%w: arguments must be valid JSON: %v", ErrInvalidToolArguments, err)
 	}
 	if err := tool.schema.Validate(instance); err != nil {
-		return fmt.Errorf("tool arguments did not match the schema: %w", err)
+		return fmt.Errorf("%w: arguments did not match the schema: %v", ErrInvalidToolArguments, err)
 	}
 	return nil
 }

@@ -423,6 +423,24 @@ func BeginInvocation(ctx context.Context, contract Contract, invocation Invocati
 	return started, guard, nil
 }
 
+// ExecuteInvocation begins a generated invocation when a transport has not
+// already done so, verifies an existing transport invocation has the same
+// operation identity, and executes the command's generated policy.
+func ExecuteInvocation(ctx context.Context, executor *Executor, contract Contract, invocation Invocation, execution Execution) error {
+	if activeOperationID, started := OperationID(ctx); started {
+		if activeOperationID != contract.OperationID {
+			return fmt.Errorf("%w: %w: active %q, executing %q", ErrInvocationRejected, ErrOperationMismatch, activeOperationID, contract.OperationID)
+		}
+	} else {
+		var err error
+		ctx, _, err = BeginInvocation(ctx, contract, invocation)
+		if err != nil {
+			return err
+		}
+	}
+	return executor.Execute(ctx, contract.OperationID, execution)
+}
+
 func begin(ctx context.Context, contract Contract, invocation Invocation) (context.Context, *Guard, error) {
 	if err := contract.Validate(); err != nil {
 		return ctx, nil, err

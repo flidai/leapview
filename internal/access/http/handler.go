@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessapi "github.com/flidai/leapview/internal/access/api"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	"github.com/flidai/leapview/internal/access/avatar"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/go-chi/chi/v5"
@@ -42,6 +43,7 @@ type Principal struct {
 type RepositoryProvider func() (access.Repository, error)
 type PrincipalProvider func(*stdhttp.Request) (Principal, bool)
 type CredentialProvider func(*stdhttp.Request) (access.APICredential, bool)
+type SessionProvider func(*stdhttp.Request) (string, bool)
 type WorkspaceIDNormalizer func(string) string
 
 type AuthoringAuthentication interface {
@@ -58,13 +60,16 @@ type AuthoringAuthentication interface {
 }
 
 type Handler struct {
-	Repository          RepositoryProvider
-	RoleBindingCommands access.RoleBindingCommander
-	GrantCommands       access.GrantCommander
-	CurrentPrincipal    PrincipalProvider
-	CurrentCredential   CredentialProvider
-	WorkspaceID         WorkspaceIDNormalizer
-	AuthoringAuth       AuthoringAuthentication
+	Repository           RepositoryProvider
+	RoleBindingCommands  access.RoleBindingCommander
+	GrantCommands        access.GrantCommander
+	CurrentPrincipal     PrincipalProvider
+	CurrentCredential    CredentialProvider
+	CurrentSession       SessionProvider
+	WorkspaceID          WorkspaceIDNormalizer
+	AuthoringAuth        AuthoringAuthentication
+	Avatar               AvatarService
+	LocalPasswordEnabled bool
 }
 
 func (h Handler) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -73,15 +78,182 @@ func (h Handler) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
 		return
 	}
-	if h.Repository != nil {
-		if repo, err := h.repository(); err == nil {
-			if stored, err := repo.PrincipalByID(r.Context(), principal.ID); err == nil {
-				writeJSON(w, stdhttp.StatusOK, principalDTO(stored))
-				return
-			}
-		}
+	response, err := h.currentPrincipalResponse(r, principal)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
 	}
-	writeJSON(w, stdhttp.StatusOK, currentPrincipalDTO(principal))
+	w.Header().Set("ETag", resourceETag(response))
+	writeJSON(w, stdhttp.StatusOK, response)
+}
+
+func (h Handler) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	current, ok := h.currentPrincipal(r)
+	if !ok {
+		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		return
+	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	var input struct {
+		DisplayName *string `json:"displayName"`
+	}
+	if err := decodeStrictJSON(r, &input); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	if input.DisplayName == nil {
+		writeJSONError(w, fmt.Errorf("displayName is required"), stdhttp.StatusBadRequest)
+		return
+	}
+	displayName := strings.TrimSpace(*input.DisplayName)
+	if displayName == "" || len(displayName) > 200 {
+		writeJSONError(w, fmt.Errorf("displayName must contain between 1 and 200 bytes"), stdhttp.StatusBadRequest)
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	existing, err := repo.PrincipalByID(r.Context(), current.ID)
+	if err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	management, err := principalIdentityManagement(r.Context(), repo, existing.ID)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	if management.Source != access.IdentityManagementLocal {
+		writeJSONError(w, fmt.Errorf("display name is managed by the identity provider"), stdhttp.StatusUnprocessableEntity)
+		return
+	}
+	currentResponse, err := h.currentPrincipalResponseFor(r.Context(), existing, management, repo, true)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	if !requireIfMatch(w, r, resourceETag(currentResponse)) {
+		return
+	}
+	var updated access.Principal
+	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		var mutationErr error
+		updated, mutationErr = txRepo.UpsertPrincipal(r.Context(), access.PrincipalInput{
+			ID: existing.ID, Kind: existing.Kind, Email: existing.Email, DisplayName: displayName,
+		})
+		return commandAccessAuditInput(r, "principal.profile.updated", existing.ID, "", "principal", existing.ID, "", "success", map[string]any{
+			"email": existing.Email, "displayName": displayName,
+		}, mutationErr)
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateCurrentPrincipal(), err, stdhttp.StatusBadRequest)
+		return
+	}
+	response, err := h.currentPrincipalResponseFor(r.Context(), updated, management, repo, true)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", resourceETag(response))
+	writeJSON(w, stdhttp.StatusOK, response)
+}
+
+func (h Handler) ChangeCurrentPassword(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	principal, ok := h.currentPrincipal(r)
+	if !ok {
+		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		return
+	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := decodeStrictJSON(r, &input); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	if input.CurrentPassword == "" || input.NewPassword == "" {
+		writeJSONError(w, fmt.Errorf("currentPassword and newPassword are required"), stdhttp.StatusBadRequest)
+		return
+	}
+	if input.CurrentPassword == input.NewPassword {
+		writeJSONError(w, fmt.Errorf("newPassword must differ from currentPassword"), stdhttp.StatusBadRequest)
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	management, err := principalIdentityManagement(r.Context(), repo, principal.ID)
+	if err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	if !h.LocalPasswordEnabled || !management.HasLocalPassword {
+		writeJSONError(w, fmt.Errorf("local password changes are unavailable for this principal"), stdhttp.StatusUnprocessableEntity)
+		return
+	}
+	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		_, mutationErr := txRepo.ChangeLocalPassword(r.Context(), principal.ID, input.CurrentPassword, input.NewPassword)
+		return commandAccessAuditInput(r, "password.changed", principal.ID, "", "principal", principal.ID, "", "success", map[string]any{
+			"email": principal.Email, "provider": "local",
+		}, mutationErr)
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
+			return
+		}
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationChangeCurrentPassword(), err, stdhttp.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
+func (h Handler) UpdateCurrentTheme(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	principal, ok := h.currentPrincipal(r)
+	if !ok {
+		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		return
+	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	var input struct {
+		Theme string `json:"theme"`
+	}
+	if err := decodeStrictJSON(r, &input); err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), err)
+		return
+	}
+	theme, ok := access.ParseThemeMode(input.Theme)
+	if !ok {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), fmt.Errorf("unsupported theme %q", input.Theme))
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), err)
+		return
+	}
+	preferences, ok := repo.(access.AuditedPrincipalPreferences)
+	if !ok {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), fmt.Errorf("principal preferences are unavailable"))
+		return
+	}
+	if err := preferences.SetPrincipalThemeAudited(r.Context(), principal.ID, theme); err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), err)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
 func (h Handler) ListCurrentEffectivePrivileges(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -117,6 +289,13 @@ func (h Handler) ListCurrentAPITokens(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
 		return
 	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	if principal.Kind != "" && principal.Kind != access.PrincipalKindUser {
+		writeJSONError(w, fmt.Errorf("personal API tokens are only available to user principals"), stdhttp.StatusForbidden)
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -140,6 +319,13 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), fmt.Errorf("authenticated principal is required"))
 		return
 	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	if principal.Kind != "" && principal.Kind != access.PrincipalKindUser {
+		writeJSONError(w, fmt.Errorf("personal API tokens are only available to user principals"), stdhttp.StatusForbidden)
+		return
+	}
 	var input struct {
 		Name        string   `json:"name"`
 		WorkspaceID string   `json:"workspaceId"`
@@ -159,10 +345,58 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		}
 		expiresAt = parsed
 	}
+	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
+	requestedPrivileges := privilegesFromStrings(input.Privileges)
+	if input.Privileges == nil {
+		requestedPrivileges = nil
+	}
+	for _, privilege := range requestedPrivileges {
+		if !knownPrivilege(privilege) {
+			writeJSONError(w, fmt.Errorf("unsupported API token privilege %q", privilege), stdhttp.StatusBadRequest)
+			return
+		}
+	}
+	if credential, ok := h.currentCredential(r); ok && credential.Token.ID != "" {
+		if credential.Token.WorkspaceID != "" && credential.Token.WorkspaceID != input.WorkspaceID {
+			writeJSONError(w, fmt.Errorf("API tokens cannot create credentials outside their workspace scope"), stdhttp.StatusForbidden)
+			return
+		}
+		if credential.Token.Privileges != nil && input.Privileges == nil {
+			writeJSONError(w, fmt.Errorf("API tokens cannot create credentials broader than their privilege scope"), stdhttp.StatusForbidden)
+			return
+		}
+		for _, privilege := range requestedPrivileges {
+			if !apiTokenAllows(credential.Token, input.WorkspaceID, privilege) {
+				writeJSONError(w, fmt.Errorf("API tokens cannot create credentials broader than their privilege scope"), stdhttp.StatusForbidden)
+				return
+			}
+		}
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), err)
 		return
+	}
+	if len(requestedPrivileges) > 0 {
+		target := access.PlatformObject()
+		if input.WorkspaceID != "" {
+			target = access.WorkspaceObject(input.WorkspaceID)
+		}
+		effective, effectiveErr := repo.EffectivePrivileges(r.Context(), principal.ID, target)
+		if effectiveErr != nil {
+			writeJSONError(w, effectiveErr, stdhttp.StatusInternalServerError)
+			return
+		}
+		allowed := make(map[access.Privilege]struct{}, len(effective))
+		for _, privilege := range effective {
+			allowed[privilege] = struct{}{}
+		}
+		for _, privilege := range requestedPrivileges {
+			if _, ok := allowed[privilege]; !ok {
+				writeJSONError(w, fmt.Errorf("requested API token privileges exceed the principal's effective privileges"), stdhttp.StatusForbidden)
+				return
+			}
+		}
 	}
 	var token string
 	var row access.APIToken
@@ -170,7 +404,7 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		var mutationErr error
 		token, row, mutationErr = txRepo.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{
 			PrincipalID: principal.ID, WorkspaceID: input.WorkspaceID, Name: input.Name,
-			Privileges: privilegesFromStrings(input.Privileges), ExpiresAt: expiresAt,
+			Privileges: requestedPrivileges, ExpiresAt: expiresAt,
 		})
 		return commandAccessAuditInput(r, "api_token.created", principal.ID, row.WorkspaceID, "api_token", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"name": row.Name, "privileges": row.Privileges}, mutationErr)
 	})
@@ -185,6 +419,13 @@ func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentAPIToken(), fmt.Errorf("authenticated principal is required"))
+		return
+	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	if principal.Kind != "" && principal.Kind != access.PrincipalKindUser {
+		writeJSONError(w, fmt.Errorf("personal API tokens are only available to user principals"), stdhttp.StatusForbidden)
 		return
 	}
 	repo, err := h.repository()
@@ -219,6 +460,9 @@ func (h Handler) ListCurrentSessions(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
 		return
 	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
 	h.listPrincipalSessions(w, r, principal.ID)
 }
 
@@ -238,8 +482,12 @@ func (h Handler) listPrincipalSessions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	out := make([]map[string]any, 0, len(rows))
+	currentSessionID := ""
+	if current, ok := h.currentPrincipal(r); ok && current.ID == principalID && h.CurrentSession != nil {
+		currentSessionID, _ = h.CurrentSession(r)
+	}
 	for _, row := range rows {
-		out = append(out, sessionDTO(row))
+		out = append(out, sessionDTOFor(row, currentSessionID))
 	}
 	_ = writePagedJSON(w, r, out)
 }
@@ -248,6 +496,9 @@ func (h Handler) RevokeCurrentSession(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentSession(), fmt.Errorf("authenticated principal is required"))
+		return
+	}
+	if h.rejectAuthoringCredential(w, r) {
 		return
 	}
 	h.revokePrincipalSession(w, r, accessgen.GenCommandOperationRevokeCurrentSession(), principal.ID, principal.ID, access.PrivilegeUseWorkspace, nil)
@@ -416,6 +667,10 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)))
 		return
 	}
+	if existing.ID == h.currentPrincipalID(r) {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), apigenfailure.New("invalid", "the current principal cannot delete itself"))
+		return
+	}
 	if _, ok := repo.(interface {
 		DeletePrincipal(context.Context, string) error
 	}); !ok {
@@ -435,10 +690,79 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}, mutationErr)
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeletePrincipal(), err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeletePrincipal(), err, principalDeletionStatus(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
+func (h Handler) DisablePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.setPrincipalDisabled(w, r, true)
+}
+
+func (h Handler) EnablePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.setPrincipalDisabled(w, r, false)
+}
+
+func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Request, disabled bool) {
+	operationID := accessgen.GenCommandOperationDisablePrincipal()
+	if !disabled {
+		operationID = accessgen.GenCommandOperationEnablePrincipal()
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	id := chi.URLParam(r, "principal")
+	existing, err := repo.PrincipalByID(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	if !principalKindAllowsGenericMutation(existing.Kind) {
+		writeJSONError(w, fmt.Errorf("principal kind %q is managed by its owning subsystem", existing.Kind), stdhttp.StatusUnprocessableEntity)
+		return
+	}
+	if disabled && existing.ID == h.currentPrincipalID(r) {
+		writeJSONError(w, fmt.Errorf("the current principal cannot disable itself"), stdhttp.StatusUnprocessableEntity)
+		return
+	}
+	type principalStatusWriter interface {
+		DisablePrincipal(context.Context, string) (access.Principal, error)
+		EnablePrincipal(context.Context, string) (access.Principal, error)
+	}
+	if _, ok := repo.(principalStatusWriter); !ok {
+		writeJSONError(w, fmt.Errorf("principal status changes are unavailable"), stdhttp.StatusServiceUnavailable)
+		return
+	}
+	action := "principal.disabled"
+	if !disabled {
+		action = "principal.enabled"
+	}
+	var updated access.Principal
+	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		writer, ok := txRepo.(principalStatusWriter)
+		if !ok {
+			return access.AuditEventInput{}, fmt.Errorf("principal status changes are unavailable")
+		}
+		var mutationErr error
+		if disabled {
+			updated, mutationErr = writer.DisablePrincipal(r.Context(), id)
+		} else {
+			updated, mutationErr = writer.EnablePrincipal(r.Context(), id)
+		}
+		return commandAccessAuditInput(r, action, h.currentPrincipalID(r), "", "principal", id, access.PrivilegeManageGrants, "success", map[string]any{
+			"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName,
+		}, mutationErr)
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, operationID, err, statusForNotFound(err))
+		return
+	}
+	dto := principalDTO(updated)
+	w.Header().Set("ETag", resourceETag(dto))
+	writeJSON(w, stdhttp.StatusOK, dto)
 }
 
 func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -706,7 +1030,7 @@ func (h Handler) DeleteServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return commandAccessAuditInput(r, "service_principal.deleted", principal.ID, "", "service_principal", id, access.PrivilegeManagePlatform, "success", nil, mutationErr)
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteServicePrincipal(), err, statusForNotFound(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteServicePrincipal(), err, principalDeletionStatus(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1649,6 +1973,18 @@ func (h Handler) grantInvocation(r *stdhttp.Request) access.GrantInvocation {
 }
 
 func (h Handler) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.listAuditEvents(w, r, h.workspaceID(chi.URLParam(r, "workspace")))
+}
+
+func (h Handler) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	workspaceID := strings.TrimSpace(r.URL.Query().Get("workspace"))
+	if workspaceID != "" {
+		workspaceID = h.workspaceID(workspaceID)
+	}
+	h.listAuditEvents(w, r, workspaceID)
+}
+
+func (h Handler) listAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, workspaceID string) {
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -1660,7 +1996,7 @@ func (h Handler) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	cursorTime, cursorID := decodeCursor(r.URL.Query().Get("pageToken"))
 	rows, err := repo.ListAuditEvents(r.Context(), access.AuditEventFilter{
-		WorkspaceID: h.workspaceID(chi.URLParam(r, "workspace")),
+		WorkspaceID: workspaceID,
 		PrincipalID: r.URL.Query().Get("actor"),
 		Action:      r.URL.Query().Get("action"),
 		TargetType:  r.URL.Query().Get("targetType"),
@@ -1690,7 +2026,7 @@ func (h Handler) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 
 func (h Handler) repository() (access.Repository, error) {
 	if h.Repository == nil {
-		return nil, nil
+		return nil, fmt.Errorf("access repository is unavailable")
 	}
 	return h.Repository()
 }
@@ -1717,6 +2053,15 @@ func (h Handler) currentCredential(r *stdhttp.Request) (access.APICredential, bo
 	return h.CurrentCredential(r)
 }
 
+func (h Handler) rejectAuthoringCredential(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
+	credential, ok := h.currentCredential(r)
+	if !ok || credential.Authoring == nil {
+		return false
+	}
+	writeJSONError(w, fmt.Errorf("authoring credentials cannot manage personal account security"), stdhttp.StatusForbidden)
+	return true
+}
+
 func (h Handler) workspaceID(value string) string {
 	if h.WorkspaceID == nil {
 		return strings.TrimSpace(value)
@@ -1725,7 +2070,11 @@ func (h Handler) workspaceID(value string) string {
 }
 
 func principalDTO(row access.Principal) map[string]any {
-	return map[string]any{"id": row.ID, "kind": string(row.Kind), "email": row.Email, "displayName": row.DisplayName, "createdAt": normalizeTimestamp(row.CreatedAt), "updatedAt": normalizeTimestamp(row.UpdatedAt)}
+	dto := map[string]any{"id": row.ID, "kind": string(row.Kind), "email": row.Email, "displayName": row.DisplayName, "createdAt": normalizeTimestamp(row.CreatedAt), "updatedAt": normalizeTimestamp(row.UpdatedAt)}
+	if row.DisabledAt != "" {
+		dto["disabledAt"] = normalizeTimestamp(row.DisabledAt)
+	}
+	return dto
 }
 
 func localPasswordResetDTO(row access.LocalPasswordReset) map[string]any {
@@ -1738,6 +2087,76 @@ func currentPrincipalDTO(row Principal) map[string]any {
 		kind = access.PrincipalKindUser
 	}
 	return map[string]any{"id": row.ID, "kind": string(kind), "email": row.Email, "displayName": row.DisplayName, "createdAt": normalizeTimestamp(row.CreatedAt), "updatedAt": normalizeTimestamp(row.UpdatedAt)}
+}
+
+func (h Handler) currentPrincipalResponse(r *stdhttp.Request, current Principal) (map[string]any, error) {
+	ctx := r.Context()
+	accountManagement := true
+	if credential, ok := h.currentCredential(r); ok && credential.Authoring != nil {
+		accountManagement = false
+	}
+	if h.Repository == nil {
+		return h.currentPrincipalResponseFor(ctx, access.Principal{
+			ID: current.ID, Kind: current.Kind, Email: current.Email, DisplayName: current.DisplayName,
+			CreatedAt: current.CreatedAt, UpdatedAt: current.UpdatedAt,
+		}, access.PrincipalIdentityManagement{Source: access.IdentityManagementSystem}, nil, accountManagement)
+	}
+	repo, err := h.repository()
+	if err != nil {
+		return nil, err
+	}
+	stored, err := repo.PrincipalByID(ctx, current.ID)
+	if err != nil {
+		return nil, err
+	}
+	management, err := principalIdentityManagement(ctx, repo, stored.ID)
+	if err != nil {
+		return nil, err
+	}
+	return h.currentPrincipalResponseFor(ctx, stored, management, repo, accountManagement)
+}
+
+func (h Handler) currentPrincipalResponseFor(
+	ctx context.Context,
+	principal access.Principal,
+	management access.PrincipalIdentityManagement,
+	repo access.Repository,
+	accountManagement bool,
+) (map[string]any, error) {
+	response := principalDTO(principal)
+	identity := map[string]any{"source": management.Source}
+	if management.Provider != "" {
+		identity["provider"] = management.Provider
+	}
+	response["identityManagement"] = identity
+	isUser := principal.Kind == "" || principal.Kind == access.PrincipalKindUser
+	response["capabilities"] = map[string]bool{
+		"canUpdateDisplayName":       accountManagement && isUser && management.Source == access.IdentityManagementLocal,
+		"canChangePassword":          accountManagement && isUser && h.LocalPasswordEnabled && management.HasLocalPassword,
+		"canManageAvatar":            accountManagement && isUser && h.Avatar != nil,
+		"canManageSessions":          accountManagement && isUser && repo != nil,
+		"canManageAuthoringSessions": isUser && h.AuthoringAuth != nil,
+		"canManageApiTokens":         accountManagement && isUser && repo != nil,
+	}
+	if h.Avatar != nil && isUser {
+		metadata, err := h.Avatar.Current(ctx, principal.ID)
+		switch {
+		case err == nil:
+			response["avatar"] = avatarResponse(metadata)
+		case errors.Is(err, avatar.ErrNotFound):
+		default:
+			return nil, err
+		}
+	}
+	return response, nil
+}
+
+func principalIdentityManagement(ctx context.Context, repo access.Repository, principalID string) (access.PrincipalIdentityManagement, error) {
+	resolver, ok := repo.(access.PrincipalIdentityManagementRepository)
+	if !ok {
+		return access.PrincipalIdentityManagement{Source: access.IdentityManagementSystem}, nil
+	}
+	return resolver.PrincipalIdentityManagement(ctx, principalID)
 }
 
 func normalizeTimestamp(value string) string {
@@ -1833,7 +2252,11 @@ func authorizationDecisionDTO(row access.AuthorizationDecision) map[string]any {
 }
 
 func apiTokenDTO(row access.APIToken) map[string]any {
-	return map[string]any{"id": row.ID, "name": row.Name, "workspaceId": row.WorkspaceID, "privileges": row.Privileges, "expiresAt": emptyToNil(row.ExpiresAt), "revokedAt": emptyToNil(row.RevokedAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt)}
+	dto := map[string]any{"id": row.ID, "name": row.Name, "workspaceId": row.WorkspaceID, "expiresAt": emptyToNil(row.ExpiresAt), "revokedAt": emptyToNil(row.RevokedAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt)}
+	if row.Privileges != nil {
+		dto["privileges"] = row.Privileges
+	}
+	return dto
 }
 
 func servicePrincipalSecretDTO(row access.ServicePrincipalSecret, rawSecret string) map[string]any {
@@ -1852,9 +2275,14 @@ func servicePrincipalSecretDTO(row access.ServicePrincipalSecret, rawSecret stri
 }
 
 func sessionDTO(row access.Session) map[string]any {
+	return sessionDTOFor(row, "")
+}
+
+func sessionDTOFor(row access.Session, currentSessionID string) map[string]any {
 	return map[string]any{
 		"id":                row.ID,
 		"kind":              row.Kind,
+		"current":           row.ID != "" && row.ID == currentSessionID,
 		"instanceId":        emptyToNil(row.InstanceID),
 		"profileId":         emptyToNil(row.ProfileID),
 		"clientId":          emptyToNil(row.ClientID),
@@ -1908,6 +2336,10 @@ func encodeAccessAuditPayload(r *stdhttp.Request, action, targetID string, metad
 	operationID, ok := apigencommand.OperationID(r.Context())
 	if !ok {
 		switch action {
+		case "principal.profile.updated":
+			operationID = "updateCurrentPrincipal"
+		case "password.changed":
+			operationID = "changeCurrentPassword"
 		case "api_token.created":
 			operationID = "createCurrentAPIToken"
 		case "api_token.revoked":
@@ -1924,6 +2356,10 @@ func encodeAccessAuditPayload(r *stdhttp.Request, action, targetID string, metad
 			operationID = "deletePrincipal"
 		case "principal.updated":
 			operationID = "updatePrincipal"
+		case "principal.disabled":
+			operationID = "disablePrincipal"
+		case "principal.enabled":
+			operationID = "enablePrincipal"
 		case "principal.local_password.reset":
 			operationID = "resetPrincipalPassword"
 		case "service_principal.created":
@@ -1973,6 +2409,10 @@ func encodeAccessAuditPayload(r *stdhttp.Request, action, targetID string, metad
 	var encoded string
 	var err error
 	switch operationID {
+	case "updateCurrentPrincipal":
+		encoded, err = accessgen.EncodeGenUpdateCurrentPrincipalAuditPayload(accessgen.GenSchemaCurrentPrincipalUpdatedAuditPayload{Email: str("email"), DisplayName: str("displayName")})
+	case "changeCurrentPassword":
+		encoded, err = accessgen.EncodeGenChangeCurrentPasswordAuditPayload(accessgen.GenSchemaCurrentPasswordChangedAuditPayload{Email: str("email"), Provider: str("provider")})
 	case "createCurrentAPIToken":
 		encoded, err = accessgen.EncodeGenCreateCurrentAPITokenAuditPayload(accessgen.GenSchemaAPITokenAuditPayload{Name: str("name"), Privileges: stringsValue("privileges")})
 	case "revokeCurrentAPIToken":
@@ -1987,6 +2427,10 @@ func encodeAccessAuditPayload(r *stdhttp.Request, action, targetID string, metad
 		encoded, err = accessgen.EncodeGenDeletePrincipalAuditPayload(accessgen.GenSchemaPrincipalDeletedAuditPayload{Email: str("email"), Kind: str("kind"), DisplayName: str("displayName")})
 	case "updatePrincipal":
 		encoded, err = accessgen.EncodeGenUpdatePrincipalAuditPayload(accessgen.GenSchemaPrincipalUpdatedAuditPayload{Email: str("email"), Kind: str("kind"), DisplayName: str("displayName")})
+	case "disablePrincipal":
+		encoded, err = accessgen.EncodeGenDisablePrincipalAuditPayload(accessgen.GenSchemaPrincipalUpdatedAuditPayload{Email: str("email"), Kind: str("kind"), DisplayName: str("displayName")})
+	case "enablePrincipal":
+		encoded, err = accessgen.EncodeGenEnablePrincipalAuditPayload(accessgen.GenSchemaPrincipalUpdatedAuditPayload{Email: str("email"), Kind: str("kind"), DisplayName: str("displayName")})
 	case "resetPrincipalPassword":
 		encoded, err = accessgen.EncodeGenResetPrincipalPasswordAuditPayload(accessgen.GenSchemaPrincipalPasswordResetAuditPayload{Email: str("email")})
 	case "createServicePrincipal":
@@ -2136,20 +2580,33 @@ func auditEventDTO(row access.AuditEvent) map[string]any {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	return map[string]any{
-		"id":            row.ID,
-		"workspaceId":   row.WorkspaceID,
-		"principalId":   row.PrincipalID,
-		"action":        row.Action,
-		"targetType":    row.TargetType,
-		"targetId":      row.TargetID,
-		"privilege":     row.Privilege,
-		"status":        row.Status,
-		"requestId":     row.RequestID,
-		"correlationId": row.CorrelationID,
-		"metadata":      metadata,
-		"createdAt":     row.CreatedAt,
+	dto := map[string]any{
+		"id":         row.ID,
+		"action":     row.Action,
+		"targetType": row.TargetType,
+		"targetId":   row.TargetID,
+		"metadata":   metadata,
+		"createdAt":  row.CreatedAt,
 	}
+	if row.WorkspaceID != "" {
+		dto["workspaceId"] = row.WorkspaceID
+	}
+	if row.PrincipalID != "" {
+		dto["principalId"] = row.PrincipalID
+	}
+	if row.Privilege != "" {
+		dto["privilege"] = row.Privilege
+	}
+	if row.Status != "" {
+		dto["status"] = row.Status
+	}
+	if row.RequestID != "" {
+		dto["requestId"] = row.RequestID
+	}
+	if row.CorrelationID != "" {
+		dto["correlationId"] = row.CorrelationID
+	}
+	return dto
 }
 
 func emptyToNil(value string) any {
@@ -2697,11 +3154,28 @@ func resourceETag(value any) string {
 	return apitransport.StrongETag(string(encoded))
 }
 
+func requireIfMatch(w stdhttp.ResponseWriter, r *stdhttp.Request, current string) bool {
+	value := strings.TrimSpace(r.Header.Get("If-Match"))
+	if value == "*" || value == current {
+		return true
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	writeJSONError(w, fmt.Errorf("If-Match does not match the current resource"), stdhttp.StatusPreconditionFailed)
+	return false
+}
+
 func statusForNotFound(err error) int {
 	if err == sql.ErrNoRows {
 		return stdhttp.StatusNotFound
 	}
 	return stdhttp.StatusInternalServerError
+}
+
+func principalDeletionStatus(err error) int {
+	if errors.Is(err, access.ErrPrincipalOwnsSecurableObject) {
+		return stdhttp.StatusConflict
+	}
+	return statusForNotFound(err)
 }
 
 func firstNonEmpty(values ...string) string {

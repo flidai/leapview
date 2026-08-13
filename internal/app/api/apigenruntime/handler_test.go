@@ -246,6 +246,42 @@ func TestGeneratedTransportAcceptsJSONContentTypeParameters(t *testing.T) {
 	}
 }
 
+func TestGeneratedTransportPassesAvatarImageMediaTypesToAccessHandler(t *testing.T) {
+	called := false
+	handler, err := buildTestHandler(func(operationID string, _ http.ResponseWriter, request *http.Request) bool {
+		called = operationID == "uploadCurrentAvatar" && request.Header.Get("Content-Type") == "image/webp"
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/me/avatar", bytes.NewBufferString("image"))
+	request.Header.Set("Content-Type", "image/webp")
+	recorder := httptest.NewRecorder()
+	handler.HandleAPIGen("uploadCurrentAvatar", recorder, request)
+	if !called {
+		t.Fatalf("avatar request was rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGeneratedTransportPassesProductLogoImageMediaTypesToAdminHandler(t *testing.T) {
+	called := false
+	handler, err := buildTestHandler(func(operationID string, _ http.ResponseWriter, request *http.Request) bool {
+		called = operationID == "uploadProductLogo" && request.Header.Get("Content-Type") == "image/png"
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/instance/logo", bytes.NewBufferString("image"))
+	request.Header.Set("Content-Type", "image/png")
+	recorder := httptest.NewRecorder()
+	handler.HandleAPIGen("uploadProductLogo", recorder, request)
+	if !called {
+		t.Fatalf("product logo request was rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestGeneratedSemanticTransportBoundsBodyBeforeService(t *testing.T) {
 	called := false
 	handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool { called = true; return true })

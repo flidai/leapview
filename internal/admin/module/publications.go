@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
@@ -58,10 +57,9 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 		// the UI retry identity stable without requiring a separate signal field.
 		idempotencyKey = requestID
 	}
-	invocation := apigencommand.Invocation{
+	invocation := publication.CommandInvocation{
 		OperationID:    binding.OperationID(),
-		Surface:        apigencommand.SurfaceUI,
-		TargetValues:   map[string]string{"workspace": strings.TrimSpace(command.WorkspaceID)},
+		Surface:        "ui",
 		IdempotencyKey: idempotencyKey,
 		RequestID:      requestID,
 		CorrelationID:  correlationID,

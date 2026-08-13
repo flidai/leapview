@@ -1,7 +1,7 @@
 import { emitFile, getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxLength, getMaxValue, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
 import { getAllHttpServices, getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
-import { getExtensions, getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
-import { getAuthz, getAuditPayload, getAuditSchema, getCLI, getCommand, getContracts, getMetadata, getPackages, getResponseShape, getSensitivity, getTool, getTransportErrors, isManual, isQuery, } from "./decorators.js";
+import { getExtensions, getOperationId, getTagsMetadata, resolveInfo } from "@typespec/openapi";
+import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getNamedFailures, getPackages, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, isTarget, isManual, isQuery, } from "./decorators.js";
 import { reportDiagnostic } from "./lib.js";
 class IRBuilder {
     program;
@@ -514,7 +514,20 @@ function buildDocument(program, builder, service, options) {
 }
 function mergedEndpoints(program, builder, operations, operationsAuth, defaultSecurity) {
     const groups = operationGroups(program, operations);
-    return groups.map((group) => endpoint(program, builder, group, operationsAuth, defaultSecurity));
+    const endpoints = groups.map((group) => endpoint(program, builder, group, operationsAuth, defaultSecurity));
+    const operationIDs = new Map();
+    for (let index = 0; index < endpoints.length; index++) {
+        const operationID = endpoints[index].operation_id;
+        const target = groups[index].canonical.operation;
+        const existing = operationIDs.get(operationID);
+        if (existing) {
+            builder.invalidOperationKind(`operation ID ${JSON.stringify(operationID)} is duplicated; use @operationId for an intentional override`, target);
+        }
+        else {
+            operationIDs.set(operationID, target);
+        }
+    }
+    return endpoints;
 }
 function operationGroups(program, operations) {
     const byRoute = new Map();
@@ -578,7 +591,7 @@ function endpoint(program, builder, group, operationsAuth, defaultSecurity) {
     const output = prune({
         method: operation.verb,
         path: operation.path,
-        operation_id: getOperationId(program, operation.operation) ?? resolveOperationId(program, operation.operation),
+        operation_id: operationID(program, operation.operation),
         kind: operationKind(program, builder, operation),
         namespace: namespaceName(operation.operation.namespace),
         summary: getSummary(program, operation.operation),
@@ -600,7 +613,8 @@ function endpoint(program, builder, group, operationsAuth, defaultSecurity) {
 function validateSharedRouteMetadata(program, builder, operations, canonical) {
     const canonicalNamespace = namespaceName(canonical.operation.namespace);
     const canonicalCLI = stableJSONString(cliMetadata(program, canonical));
-    const canonicalCommand = stableJSONString(getCommand({ program }, canonical.operation));
+    const canonicalCommand = stableJSONString(commandIdentity(program, canonical.operation));
+    const canonicalUI = stableJSONString(getUI({ program }, canonical.operation));
     const canonicalAuditPayload = stableJSONString(auditPayloadIdentity(program, canonical.operation));
     const canonicalQuery = isQuery({ program }, canonical.operation);
     const canonicalTool = stableJSONString(toolMetadata(program, canonical));
@@ -614,8 +628,11 @@ function validateSharedRouteMetadata(program, builder, operations, canonical) {
         if (stableJSONString(cliMetadata(program, operation)) !== canonicalCLI) {
             builder.unsupportedSharedRoute(operation.operation, "incompatible cli metadata");
         }
-        if (stableJSONString(getCommand({ program }, operation.operation)) !== canonicalCommand) {
+        if (stableJSONString(commandIdentity(program, operation.operation)) !== canonicalCommand) {
             builder.unsupportedSharedRoute(operation.operation, "incompatible command metadata");
+        }
+        if (stableJSONString(getUI({ program }, operation.operation)) !== canonicalUI) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible ui metadata");
         }
         if (stableJSONString(auditPayloadIdentity(program, operation.operation)) !== canonicalAuditPayload) {
             builder.unsupportedSharedRoute(operation.operation, "incompatible audit payload metadata");
@@ -639,14 +656,15 @@ function validateSharedRouteMetadata(program, builder, operations, canonical) {
 }
 function operationKind(program, builder, operation) {
     const command = getCommand({ program }, operation.operation);
+    const ui = getUI({ program }, operation.operation);
     const query = isQuery({ program }, operation.operation);
     const method = operation.verb.toLowerCase();
-    if (builder.requireExplicitOperationKind && getOperationId(program, operation.operation) === undefined) {
-        builder.invalidOperationKind("an explicit @operationId is required", operation.operation);
-    }
     if (command && query) {
         builder.invalidOperationKind("@apigen.command and @apigen.query are mutually exclusive", operation.operation);
         return "command";
+    }
+    if (ui !== undefined && !command) {
+        builder.invalidCommand("@apigen.ui requires @apigen.command", operation.operation);
     }
     if (command) {
         if (method === "get" || method === "head") {
@@ -672,16 +690,21 @@ const auditActionPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 const stableNamePattern = /^[a-z][a-z0-9_]*$/;
 const jobKindPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/;
 const failureCodePattern = /^[A-Z][A-Z0-9_]*$/;
+const uiActionPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/;
 function commandMetadata(program, builder, operation, parameters) {
     const options = getCommand({ program }, operation.operation);
     if (!options) {
         return undefined;
     }
-    if (getOperationId(program, operation.operation) === undefined) {
-        builder.invalidCommand("an explicit @operationId is required", operation.operation);
-    }
     const successAction = options.audit.successAction?.trim();
     const guarantee = options.audit.guarantee;
+    const unauditedReason = getUnauditedReason({ program }, operation.operation)?.trim();
+    if (getUnauditedReason({ program }, operation.operation) !== undefined && !unauditedReason) {
+        builder.invalidCommand("@apigen.unaudited requires a non-empty reason", operation.operation);
+    }
+    if (unauditedReason && (options.audit.required || successAction)) {
+        builder.invalidCommand("@apigen.unaudited cannot be combined with an audited command", operation.operation);
+    }
     if (options.audit.required && !successAction) {
         builder.invalidCommand("audit.successAction is required when audit.required is true", operation.operation);
     }
@@ -732,13 +755,25 @@ function commandMetadata(program, builder, operation, parameters) {
         }
     }
     let execution;
-    if (options.execution) {
-        const jobKind = options.execution.jobKind.trim();
-        const resourceKind = options.execution.resourceKind.trim();
-        const initialEvent = options.execution.initialEvent.trim();
-        const initialState = options.execution.initialState.trim();
-        const statusOperation = options.execution.statusOperation.trim();
-        const eventsOperation = options.execution.eventsOperation.trim();
+    const typedExecution = getAsyncExecution({ program }, operation.operation);
+    if (options.execution && typedExecution) {
+        builder.invalidCommand("declare async execution either inline or with @apigen.asyncExecution, not both", operation.operation);
+    }
+    const executionOptions = typedExecution
+        ? {
+            mode: typedExecution.options.mode ?? "async",
+            ...typedExecution.options,
+            statusOperation: operationID(program, typedExecution.status),
+            eventsOperation: operationID(program, typedExecution.events),
+        }
+        : options.execution;
+    if (executionOptions) {
+        const jobKind = executionOptions.jobKind.trim();
+        const resourceKind = executionOptions.resourceKind.trim();
+        const initialEvent = executionOptions.initialEvent.trim();
+        const initialState = executionOptions.initialState.trim();
+        const statusOperation = executionOptions.statusOperation.trim();
+        const eventsOperation = executionOptions.eventsOperation.trim();
         if (!jobKindPattern.test(jobKind)) {
             builder.invalidCommand("execution.jobKind must be a stable lower_snake_case identifier", operation.operation);
         }
@@ -752,21 +787,37 @@ function commandMetadata(program, builder, operation, parameters) {
             builder.invalidCommand("execution statusOperation and eventsOperation must be distinct operation IDs", operation.operation);
         }
         execution = {
-            mode: options.execution.mode,
-            guarantee: options.execution.guarantee,
+            mode: executionOptions.mode,
+            guarantee: executionOptions.guarantee,
             job_kind: jobKind,
             resource_kind: resourceKind,
             initial_event: initialEvent,
             initial_state: initialState,
             status_operation: statusOperation,
             events_operation: eventsOperation,
-            cancellation: options.execution.cancellation,
+            cancellation: executionOptions.cancellation,
         };
     }
     const failures = [];
     const failureKinds = new Set();
     const failureCodes = new Set();
-    for (const authored of options.failures ?? []) {
+    const namedFailures = getNamedFailures({ program }, operation.operation);
+    const authoredCommand = getAuthoredCommand({ program }, operation.operation);
+    const commandDefaults = operation.operation.interface
+        ? getCommandDefaults({ program }, operation.operation.interface)
+        : undefined;
+    if (authoredCommand?.failures === undefined && commandDefaults?.failures === undefined && namedFailures.length === 0) {
+        builder.invalidCommand("every command must declare failures, inherit default failures, or use @apigen.failsWith", operation.operation);
+    }
+    for (const named of namedFailures) {
+        if (!named.options) {
+            builder.invalidCommand(`failure model ${JSON.stringify(named.model.name)} requires @apigen.failureDefinition`, operation.operation);
+        }
+    }
+    for (const authored of [
+        ...(options.failures ?? []),
+        ...namedFailures.flatMap((named) => named.options ? [named.options] : []),
+    ]) {
         const kind = authored.kind.trim();
         const code = authored.code.trim();
         const publicDetail = authored.publicDetail.trim();
@@ -793,14 +844,39 @@ function commandMetadata(program, builder, operation, parameters) {
         failures.push({ kind, status_code: authored.statusCode, code, public_detail: publicDetail });
     }
     failures.sort((left, right) => left.kind.localeCompare(right.kind));
+    const authoredUIAction = getUI({ program }, operation.operation);
+    const uiAction = authoredUIAction?.trim();
+    if (authoredUIAction !== undefined && !uiAction) {
+        builder.invalidCommand("@apigen.ui actionId is required", operation.operation);
+    }
+    else if (uiAction && !uiActionPattern.test(uiAction)) {
+        builder.invalidCommand(`@apigen.ui actionId ${JSON.stringify(uiAction)} must be a stable dotted lower-kebab-case name`, operation.operation);
+    }
     const additionalExposures = [...(options.additionalExposures ?? [])];
+    if (uiAction && additionalExposures.includes("ui")) {
+        builder.invalidCommand("@apigen.ui already declares the ui exposure; remove it from additionalExposures", operation.operation);
+    }
+    if (uiAction) {
+        additionalExposures.push("ui");
+    }
+    if (!uiAction && additionalExposures.includes("ui")) {
+        builder.invalidCommand("ui exposure requires @apigen.ui with a stable actionId", operation.operation);
+    }
     if (new Set(additionalExposures).size !== additionalExposures.length) {
         builder.invalidCommand("additionalExposures must not contain duplicates", operation.operation);
     }
     additionalExposures.sort();
     const emittedParameters = parameters ?? [];
     const pathParameters = emittedParameters.filter((parameter) => parameter.in === "path");
-    let targetParameter = options.targetParameter?.trim();
+    const decoratedTargets = [...operation.operation.parameters.properties.values()]
+        .filter((property) => propertyIsTarget(program, property));
+    if (decoratedTargets.length > 1) {
+        builder.invalidCommand("@apigen.target must identify exactly one operation parameter", operation.operation);
+    }
+    if (options.targetParameter && decoratedTargets.length > 0) {
+        builder.invalidCommand("declare a command target with targetParameter or @apigen.target, not both", operation.operation);
+    }
+    let targetParameter = decoratedTargets[0]?.name ?? options.targetParameter?.trim();
     if (!targetParameter && pathParameters.length === 1) {
         targetParameter = pathParameters[0].name;
     }
@@ -836,12 +912,44 @@ function commandMetadata(program, builder, operation, parameters) {
         execution,
         failures,
         additional_exposures: additionalExposures.length > 0 ? additionalExposures : undefined,
+        ui: uiAction ? { action_id: uiAction } : undefined,
         target,
         idempotency,
         concurrency,
         authz_mode: authzMode,
         privilege,
     });
+}
+function operationID(program, operation) {
+    return getOperationId(program, operation) ?? operation.name;
+}
+function propertyIsTarget(program, property) {
+    let candidate = property;
+    while (candidate) {
+        if (isTarget({ program }, candidate)) {
+            return true;
+        }
+        candidate = candidate.sourceProperty;
+    }
+    return false;
+}
+function commandIdentity(program, operation) {
+    const asyncExecution = getAsyncExecution({ program }, operation);
+    return {
+        options: getCommand({ program }, operation),
+        target: [...operation.parameters.properties.values()]
+            .filter((property) => propertyIsTarget(program, property))
+            .map((property) => property.name),
+        asyncExecution: asyncExecution && {
+            status: operationID(program, asyncExecution.status),
+            events: operationID(program, asyncExecution.events),
+            options: asyncExecution.options,
+        },
+        namedFailures: getNamedFailures({ program }, operation).map((failure) => ({
+            name: failure.model.name,
+            options: failure.options,
+        })),
+    };
 }
 function auditPayloadIdentity(program, operation) {
     const payload = getAuditPayload({ program }, operation);

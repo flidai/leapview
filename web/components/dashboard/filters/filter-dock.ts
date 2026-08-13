@@ -22,12 +22,14 @@ class LeapViewFilterDock extends LitElement {
   @property({ type: String }) pageId = ''
   @property({ type: Boolean, reflect: true }) loading: DashboardStatus['loading'] = false
   @property({ type: Boolean, reflect: true }) pending = false
+  @property({ type: Boolean, attribute: false }) externalTrigger = false
 
   @property({ type: Boolean, reflect: true, attribute: 'data-open' })
   private open = storedFilterDockOpen()
   @state() private mobile = isMobileFilterDock()
 
   private mobileQuery: MediaQueryList | null = null
+  private returnFocus?: HTMLElement
 
   connectedCallback(): void {
     super.connectedCallback()
@@ -47,6 +49,7 @@ class LeapViewFilterDock extends LitElement {
   protected firstUpdated(): void {
     this.syncDialogMode()
     if (this.open) this.focusCloseButton()
+    this.emitState()
   }
 
   static styles = css`
@@ -75,7 +78,7 @@ class LeapViewFilterDock extends LitElement {
       height: 100%;
       overflow: hidden;
       border-left: var(--lv-border-default);
-      background: var(--lv-bg-panel-muted);
+      background: var(--lv-bg-app);
       transition:
         width var(--lv-duration-fast) var(--motion-easing-move),
         background-color var(--lv-duration-fast) var(--motion-easing-move);
@@ -356,6 +359,10 @@ class LeapViewFilterDock extends LitElement {
         padding: var(--base-size-12);
       }
 
+      .rail[data-suppressed] {
+        display: none;
+      }
+
       .rail span,
       aside[data-open] .rail span {
         writing-mode: horizontal-tb;
@@ -390,6 +397,7 @@ class LeapViewFilterDock extends LitElement {
   render() {
     const visibleBindings = this.visibleBindings()
     const activeCount = visibleBindings.filter(binding => this.isActive(this.expression(binding))).length
+    const railSuppressed = this.mobile && this.externalTrigger
     return html`
       <aside ?data-open=${this.open} aria-label="Report filters" @keydown=${this.onKeyDown}>
         <button
@@ -398,6 +406,10 @@ class LeapViewFilterDock extends LitElement {
           title="Open filters"
           aria-label=${activeCount > 0 ? `Filters, ${activeCount} active` : 'Filters'}
           aria-expanded=${String(this.open)}
+          aria-hidden=${railSuppressed ? 'true' : nothing}
+          data-suppressed=${railSuppressed ? '' : nothing}
+          tabindex=${railSuppressed ? '-1' : nothing}
+          ?inert=${railSuppressed}
           @click=${this.toggle}
         >
           ${lucideIcon(SlidersHorizontal)}
@@ -536,16 +548,23 @@ class LeapViewFilterDock extends LitElement {
     return this.filterState?.dirtyBindings.length ?? 0
   }
 
-  private toggle = async (): Promise<void> => {
-    if (this.open) {
-      await this.close()
-      return
-    }
+  public async openPanel(returnFocus?: HTMLElement): Promise<void> {
+    if (this.open) return
+    this.returnFocus = returnFocus
     this.open = true
     storeFilterDockOpen(true)
     await this.updateComplete
     this.syncDialogMode()
     this.focusCloseButton()
+    this.emitState()
+  }
+
+  private toggle = async (): Promise<void> => {
+    if (this.open) {
+      await this.close()
+      return
+    }
+    await this.openPanel(this.renderRoot.querySelector<HTMLButtonElement>('.rail') ?? undefined)
   }
 
   private close = async (): Promise<void> => {
@@ -553,7 +572,18 @@ class LeapViewFilterDock extends LitElement {
     this.open = false
     storeFilterDockOpen(false)
     await this.updateComplete
-    this.renderRoot.querySelector<HTMLButtonElement>('.rail')?.focus({ preventScroll: true })
+    const focusTarget = this.returnFocus ?? this.renderRoot.querySelector<HTMLButtonElement>('.rail') ?? undefined
+    this.returnFocus = undefined
+    focusTarget?.focus({ preventScroll: true })
+    this.emitState()
+  }
+
+  private emitState(): void {
+    this.dispatchEvent(new CustomEvent('lv-filter-dock-state', {
+      bubbles: true,
+      composed: true,
+      detail: { open: this.open },
+    }))
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {

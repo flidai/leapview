@@ -1,11 +1,16 @@
 package presentation
 
-import "time"
+import (
+	"time"
+
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
+)
 
 // AssetRefreshState is the refresh capability's presentation read model for a
 // workspace asset. Consumers may adapt it into their own page contracts.
 type AssetRefreshState struct {
 	CSRFToken        string
+	RunCommand       uicommand.Binding
 	Runs             []AssetRefreshRun
 	Latest           AssetRefreshRun
 	LatestSuccessful AssetRefreshRun

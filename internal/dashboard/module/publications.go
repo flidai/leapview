@@ -37,7 +37,7 @@ func (m *Module) PublicationByPublicID(ctx context.Context, publicID string) (pu
 // the admin surface. It validates the generated cross-surface policy before
 // mutating state, then executes the generated audit contract with the same
 // request identity.
-func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceID, name, actorID string, action publication.Action, invocation apigencommand.Invocation) (publication.Publication, error) {
+func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceID, name, actorID string, action publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
 	if m == nil || m.publicationService == nil || m.recordPublicationCommandAudit == nil {
 		return publication.Publication{}, publication.ErrNotFound
 	}
@@ -46,20 +46,10 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceI
 		return publication.Publication{}, publication.ErrConflict
 	}
 	operationIDValue := operationID.APIGenOperationID()
-	contract, ok := dashboardgen.GetAPIGenCommandRuntimeContract(operationIDValue)
-	if !ok {
-		return publication.Publication{}, errPublicationCommandAuditUnavailable
-	}
 	if invocation.Surface == "" {
-		invocation.Surface = apigencommand.SurfaceUI
+		invocation.Surface = string(apigencommand.SurfaceUI)
 	}
-	if invocation.TargetValues == nil {
-		invocation.TargetValues = map[string]string{}
-	}
-	if strings.TrimSpace(invocation.TargetValues["workspace"]) == "" {
-		invocation.TargetValues["workspace"] = strings.TrimSpace(workspaceID)
-	}
-	ctx, _, err := apigencommand.BeginInvocation(ctx, contract, invocation)
+	ctx, err := beginGeneratedPublicationInvocation(ctx, action, workspaceID, invocation)
 	if err != nil {
 		return publication.Publication{}, err
 	}
@@ -87,6 +77,39 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceI
 		},
 	})
 	return row, err
+}
+
+func beginGeneratedPublicationInvocation(ctx context.Context, action publication.Action, workspaceID string, invocation publication.CommandInvocation) (context.Context, error) {
+	operationID, ok := publicationOperationID(action)
+	if !ok {
+		return ctx, publication.ErrConflict
+	}
+	if claimed := strings.TrimSpace(invocation.OperationID); claimed != "" && claimed != operationID.APIGenOperationID() {
+		return ctx, apigencommand.ErrOperationMismatch
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	switch action {
+	case publication.ActionSuspend:
+		started, _, err := dashboardgen.BeginGenSuspendDashboardPublicationCommand(ctx, dashboardgen.GenSuspendDashboardPublicationCommandInvocation{
+			Surface: apigencommand.Surface(invocation.Surface), Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+		})
+		return started, err
+	case publication.ActionResume:
+		started, _, err := dashboardgen.BeginGenResumeDashboardPublicationCommand(ctx, dashboardgen.GenResumeDashboardPublicationCommandInvocation{
+			Surface: apigencommand.Surface(invocation.Surface), Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+		})
+		return started, err
+	case publication.ActionRotate:
+		started, _, err := dashboardgen.BeginGenRotateDashboardPublicationCommand(ctx, dashboardgen.GenRotateDashboardPublicationCommandInvocation{
+			Surface: apigencommand.Surface(invocation.Surface), Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+		})
+		return started, err
+	default:
+		return ctx, publication.ErrConflict
+	}
 }
 
 func (m *Module) AllPublications(ctx context.Context) ([]publication.Publication, error) {

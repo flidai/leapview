@@ -6,7 +6,9 @@ import (
 	"sort"
 	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/access/avatar"
 	"github.com/flidai/leapview/internal/admin/storage"
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
@@ -37,18 +39,29 @@ type AccessReader interface {
 	Authorize(context.Context, string, access.Privilege, access.ObjectRef) (access.AuthorizationDecision, error)
 }
 
+type AvatarReader interface {
+	Current(context.Context, string) (avatar.Metadata, error)
+}
+
 type ReadModel struct {
 	Access              AccessReader
+	Avatars             AvatarReader
 	AgentDetails        AgentDetailsProvider
 	StorageService      storage.Service
 	QueryAuditReader    QueryAuditReaderProvider
 	CSRFToken           CSRFTokenProvider
 	CurrentPrincipal    CurrentPrincipalProvider
 	Publications        PublicationProvider
+	AgentConfigCommand  uicommand.Binding
 	PublicationCommands map[string]uicommand.Binding
+	ProductCommands     map[string]uicommand.Binding
 	DefaultWorkspaceID  string
 	AuthConfigured      bool
 	AccessConfigured    bool
+}
+
+func (m ReadModel) SettingsData(r *http.Request) (ui.AdminData, error) {
+	return m.baseData(r), nil
 }
 
 func (m ReadModel) Data(r *http.Request) (ui.AdminData, error) {
@@ -93,13 +106,9 @@ func (m ReadModel) baseData(r *http.Request) ui.AdminData {
 		AuthConfigured:      m.AuthConfigured,
 		AccessConfigured:    m.AccessConfigured,
 		AccessStatusLabel:   "Configured",
+		AgentConfigCommand:  m.AgentConfigCommand,
 		PublicationCommands: m.PublicationCommands,
-	}
-	if principal, ok := m.currentPrincipal(r); ok {
-		data.Profile = ui.AdminProfile{
-			ID: principal.ID, Email: principal.Email, DisplayName: principal.DisplayName,
-			Username: profileUsername(principal),
-		}
+		ProductCommands:     m.ProductCommands,
 	}
 	return data
 }
@@ -178,6 +187,10 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		UpdatePath:   "/admin/agent/config",
 		CanWrite:     true,
 	}
+	data.Revision, err = apigencommand.RevisionToken(details)
+	if err != nil {
+		return ui.AdminAgentData{}, err
+	}
 	for _, tool := range details.Tools {
 		data.Tools = append(data.Tools, ui.AdminAgentTool{
 			Name:         tool.Name,
@@ -218,19 +231,32 @@ func (m ReadModel) principalsData(r *http.Request, repo AccessReader) ([]ui.Admi
 	principals := make([]ui.AdminPrincipal, 0, len(rows))
 	for _, row := range rows {
 		principals = append(principals, ui.AdminPrincipal{
-			ID:          row.ID,
-			Kind:        string(row.Kind),
-			Email:       row.Email,
-			DisplayName: row.DisplayName,
-			DisabledAt:  row.DisabledAt,
-			CreatedAt:   row.CreatedAt,
-			UpdatedAt:   row.UpdatedAt,
+			ID:                row.ID,
+			Kind:              string(row.Kind),
+			Email:             row.Email,
+			DisplayName:       row.DisplayName,
+			ProfilePictureURL: m.avatarURL(r.Context(), row.ID),
+			DisabledAt:        row.DisabledAt,
+			CreatedAt:         row.CreatedAt,
+			UpdatedAt:         row.UpdatedAt,
+			LastSeenAt:        row.LastSeenAt,
 		})
 	}
 	sort.SliceStable(principals, func(i, j int) bool {
 		return adminPrincipalSortKey(principals[i]) < adminPrincipalSortKey(principals[j])
 	})
 	return principals, nil
+}
+
+func (m ReadModel) avatarURL(ctx context.Context, principalID string) string {
+	if m.Avatars == nil {
+		return ""
+	}
+	metadata, err := m.Avatars.Current(ctx, principalID)
+	if err != nil {
+		return ""
+	}
+	return avatar.URLForPrincipal(principalID, metadata)
 }
 
 func groupMembersData(r *http.Request, repo AccessReader, groupID string) []ui.AdminPrincipalRef {
@@ -331,15 +357,6 @@ func (m ReadModel) csrfToken(r *http.Request) string {
 		return ""
 	}
 	return m.CSRFToken(r)
-}
-
-func profileUsername(principal Principal) string {
-	if email := strings.TrimSpace(principal.Email); email != "" {
-		if username, _, ok := strings.Cut(email, "@"); ok && username != "" {
-			return username
-		}
-	}
-	return strings.TrimSpace(principal.ID)
 }
 
 func buildAdminPrincipals(principals []ui.AdminPrincipal, bindings []workspace.RoleBindingView, groupsByID map[string]access.Group, membersByGroup map[string][]ui.AdminPrincipalRef) []ui.AdminPrincipal {

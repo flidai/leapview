@@ -29,6 +29,7 @@ func TestEveryCommandFailureVocabularyGeneratesTypedClientContracts(t *testing.T
 	}
 
 	clientPaths := map[string]string{
+		"LeapViewAPI":             "internal/app/api/gen/client.apigen.gen.go",
 		"LeapViewAPI.Access":      "internal/access/api/gen/client.apigen.gen.go",
 		"LeapViewAPI.Agent":       "internal/agent/api/gen/client.apigen.gen.go",
 		"LeapViewAPI.Analytics":   "internal/analytics/api/gen/client.apigen.gen.go",

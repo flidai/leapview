@@ -8,6 +8,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 )
 
 type grantRepository struct {
@@ -76,14 +77,14 @@ func (r *grantRepository) RunAuditedMutation(ctx context.Context, mutation func(
 
 func TestGrantCommandsEnforceGeneratedSurfaceAndAuditContract(t *testing.T) {
 	repo := &grantRepository{grants: map[string]access.Grant{}}
-	commands, err := NewGrantCommands(func() (access.Repository, error) { return repo, nil }, grantTestCatalog(t))
+	commands, err := NewGrantCommands(func() (access.Repository, error) { return repo, nil })
 	if err != nil {
 		t.Fatalf("build commands: %v", err)
 	}
 	invocation := access.GrantInvocation{
 		PrincipalID: "principal-admin", Surface: access.OperationSurfaceUI,
 		RequestID: "request-1", CorrelationID: "correlation-1", IdempotencyKey: "grant-1",
-		OperationClaims: []string{string(access.OperationCreateGrant)},
+		OperationClaims: []string{accessgen.GenCommandOperationCreateGrant().APIGenOperationID()},
 	}
 	input := access.GrantInput{
 		Object:      access.ObjectRef{Type: access.SecurableDashboard, WorkspaceID: "sales", ObjectID: "executive"},
@@ -94,7 +95,7 @@ func TestGrantCommandsEnforceGeneratedSurfaceAndAuditContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create grant: %v", err)
 	}
-	assertGrantAudit(t, repo.audits[0], access.OperationCreateGrant, "grant.created", access.OperationSurfaceUI, "sales")
+	assertGrantAudit(t, repo.audits[0], accessgen.GenCommandOperationCreateGrant().APIGenOperationID(), "grant.created", access.OperationSurfaceUI, "sales")
 
 	input.Privilege = access.PrivilegeQueryData
 	if _, err := commands.UpdateGrant(t.Context(), invocation, "sales", created.ID, input); err == nil {
@@ -116,10 +117,10 @@ func TestGrantCommandsEnforceGeneratedSurfaceAndAuditContract(t *testing.T) {
 	if updated.Privilege != access.PrivilegeQueryData {
 		t.Fatalf("updated grant = %#v", updated)
 	}
-	assertGrantAudit(t, repo.audits[1], access.OperationUpdateGrant, "grant.updated", access.OperationSurfaceAPI, "sales")
+	assertGrantAudit(t, repo.audits[1], accessgen.GenCommandOperationUpdateGrant().APIGenOperationID(), "grant.updated", access.OperationSurfaceAPI, "sales")
 
 	invocation.Surface = access.OperationSurfaceUI
-	invocation.OperationClaims = []string{string(access.OperationDeleteGrant)}
+	invocation.OperationClaims = []string{accessgen.GenCommandOperationDeleteGrant().APIGenOperationID()}
 	deleted, err := commands.DeleteGrant(t.Context(), invocation, "sales", created.ID)
 	if err != nil {
 		t.Fatalf("delete grant: %v", err)
@@ -127,12 +128,12 @@ func TestGrantCommandsEnforceGeneratedSurfaceAndAuditContract(t *testing.T) {
 	if deleted.ID != created.ID || len(repo.grants) != 0 {
 		t.Fatalf("deleted grant = %#v remaining = %#v", deleted, repo.grants)
 	}
-	assertGrantAudit(t, repo.audits[2], access.OperationDeleteGrant, "grant.deleted", access.OperationSurfaceUI, "sales")
+	assertGrantAudit(t, repo.audits[2], accessgen.GenCommandOperationDeleteGrant().APIGenOperationID(), "grant.deleted", access.OperationSurfaceUI, "sales")
 }
 
 func TestGrantCommandsRollBackMutationWhenRequiredAuditFails(t *testing.T) {
 	repo := &grantRepository{grants: map[string]access.Grant{}, auditErr: errors.New("audit unavailable")}
-	commands, err := NewGrantCommands(func() (access.Repository, error) { return repo, nil }, grantTestCatalog(t))
+	commands, err := NewGrantCommands(func() (access.Repository, error) { return repo, nil })
 	if err != nil {
 		t.Fatalf("build commands: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestGrantUpdateRejectsStaleRevisionInsideAuditTransaction(t *testing.T) {
 		"grant-1": {ID: "grant-1", ObjectID: "dashboard-1", ObjectType: access.SecurableDashboard,
 			WorkspaceID: "sales", SubjectType: access.SubjectPrincipal, SubjectID: "viewer", Privilege: access.PrivilegeViewItem},
 	}}
-	commands, err := NewGrantCommands(func() (access.Repository, error) { return repo, nil }, grantTestCatalog(t))
+	commands, err := NewGrantCommands(func() (access.Repository, error) { return repo, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +177,7 @@ func TestGrantUpdateRejectsStaleRevisionInsideAuditTransaction(t *testing.T) {
 
 func TestGrantCommandsRejectMissingTransactionBeforeMutation(t *testing.T) {
 	repo := &nonTransactionalGrantRepository{}
-	commands, err := NewGrantCommands(func() (access.Repository, error) { return repo, nil }, grantTestCatalog(t))
+	commands, err := NewGrantCommands(func() (access.Repository, error) { return repo, nil })
 	if err != nil {
 		t.Fatalf("build commands: %v", err)
 	}
@@ -190,12 +191,16 @@ func TestGrantCommandsRejectMissingTransactionBeforeMutation(t *testing.T) {
 }
 
 func TestGrantAuditKeepsProjectEnvironmentAtPlatformScope(t *testing.T) {
-	descriptor, _ := grantTestCatalog(t).DescribeOperation(access.OperationCreateGrant)
-	input, err := grantAuditInput(descriptor, access.GrantInvocation{Surface: access.OperationSurfaceAPI}, access.Grant{
+	operationID := accessgen.GenCommandOperationCreateGrant().APIGenOperationID()
+	contract, ok := accessgen.GetAPIGenCommandRuntimeContract(operationID)
+	if !ok {
+		t.Fatal("missing generated createGrant contract")
+	}
+	input, err := grantAuditInput(contract, operationID, access.GrantInvocation{Surface: access.OperationSurfaceAPI}, access.Grant{
 		ID: "grant-1", WorkspaceID: "finance", ObjectType: access.SecurableProjectEnvironment,
 		ObjectID: "production", SubjectType: access.SubjectPrincipal,
 		SubjectID: "reviewer", Privilege: access.PrivilegeApproveDeployment,
-	})
+	}, accessgen.EncodeGenCreateGrantAuditPayload)
 	if err != nil {
 		t.Fatalf("encode grant audit: %v", err)
 	}
@@ -212,36 +217,7 @@ func TestGrantAuditKeepsProjectEnvironmentAtPlatformScope(t *testing.T) {
 	}
 }
 
-func grantTestCatalog(t *testing.T) access.OperationCatalog {
-	t.Helper()
-	descriptors := []access.OperationDescriptor{
-		{
-			ID: access.OperationCreateGrant, Kind: access.OperationKindCommand, Owner: "LeapViewAPI.Access",
-			Target:    access.OperationTarget{Type: access.SecurableWorkspace, Parameter: "workspace"},
-			Privilege: access.PrivilegeManageGrants, AuditEvent: "grant.created", HTTPIdempotency: "required",
-			ExposedSurfaces: []access.OperationSurface{access.OperationSurfaceAPI, access.OperationSurfaceCLI, access.OperationSurfaceUI},
-		},
-		{
-			ID: access.OperationUpdateGrant, Kind: access.OperationKindCommand, Owner: "LeapViewAPI.Access",
-			Target:    access.OperationTarget{Type: access.SecurableWorkspace, Parameter: "workspace"},
-			Privilege: access.PrivilegeManageGrants, AuditEvent: "grant.updated", HTTPConcurrency: "if-match",
-			ExposedSurfaces: []access.OperationSurface{access.OperationSurfaceAPI, access.OperationSurfaceCLI},
-		},
-		{
-			ID: access.OperationDeleteGrant, Kind: access.OperationKindCommand, Owner: "LeapViewAPI.Access",
-			Target:    access.OperationTarget{Type: access.SecurableWorkspace, Parameter: "workspace"},
-			Privilege: access.PrivilegeManageGrants, AuditEvent: "grant.deleted",
-			ExposedSurfaces: []access.OperationSurface{access.OperationSurfaceAPI, access.OperationSurfaceCLI, access.OperationSurfaceUI},
-		},
-	}
-	catalog, err := access.NewOperationCatalog(descriptors)
-	if err != nil {
-		t.Fatalf("build operation catalog: %v", err)
-	}
-	return catalog
-}
-
-func assertGrantAudit(t *testing.T, input access.AuditEventInput, operation access.OperationID, action string, surface access.OperationSurface, workspaceID string) {
+func assertGrantAudit(t *testing.T, input access.AuditEventInput, operation string, action string, surface access.OperationSurface, workspaceID string) {
 	t.Helper()
 	if input.Action != action || input.WorkspaceID != workspaceID || input.PrincipalID != "principal-admin" || input.Privilege != access.PrivilegeManageGrants || input.RequestID != "request-1" || input.CorrelationID != "correlation-1" {
 		t.Fatalf("audit input = %#v", input)
@@ -251,7 +227,7 @@ func assertGrantAudit(t *testing.T, input access.AuditEventInput, operation acce
 		t.Fatalf("decode audit metadata: %v", err)
 	}
 	payload, ok := metadata["payload"].(map[string]any)
-	if !ok || payload["operationId"] != string(operation) || payload["surface"] != string(surface) || payload["privilege"] == "" {
+	if !ok || payload["operationId"] != operation || payload["surface"] != string(surface) || payload["privilege"] == "" {
 		t.Fatalf("audit metadata = %#v", metadata)
 	}
 }

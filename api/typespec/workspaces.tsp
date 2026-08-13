@@ -18,6 +18,63 @@ model WorkspaceListResponse {
   page: PageInfo;
 }
 
+model WorkspaceAdministrationSubjectResponse {
+  subjectType: string;
+  subjectId: string;
+  email?: string;
+  displayName: string;
+  role?: string;
+}
+
+model WorkspaceAdministrationRuntimeResponse {
+  environment: string;
+  activeServingStateId?: string;
+  activeServingStateStatus?: string;
+  activeServingStateSince?: utcDateTime;
+  projectId?: string;
+  currentDeploymentId?: string;
+  currentDeploymentStatus?: string;
+  currentDeploymentSince?: utcDateTime;
+  currentReleaseId?: string;
+}
+
+model WorkspaceAdministrationCapabilitiesResponse {
+  manageWorkspace: boolean;
+  manageAccess: boolean;
+  managePublications: boolean;
+  manageConnections: boolean;
+  viewManagedData: boolean;
+  ingestManagedData: boolean;
+  publishReleases: boolean;
+  requestDeployments: boolean;
+  viewDeployments: boolean;
+  useAgent: boolean;
+  viewAgent: boolean;
+}
+
+model WorkspaceAdministrationLinksResponse {
+  self: string;
+  workspace: string;
+  groups?: string;
+  roles?: string;
+  roleBindings?: string;
+  grants?: string;
+  publications?: string;
+  managedConnections?: string;
+  releases?: string;
+  deployments?: string;
+  agentConversations?: string;
+}
+
+model WorkspaceAdministrationResponse {
+  workspace: WorkspaceResponse;
+  owner?: WorkspaceAdministrationSubjectResponse;
+  administrators: WorkspaceAdministrationSubjectResponse[];
+  runtime: WorkspaceAdministrationRuntimeResponse;
+  capabilities: WorkspaceAdministrationCapabilitiesResponse;
+  links: WorkspaceAdministrationLinksResponse;
+}
+
 model AssetResponse {
   id: string;
   snapshotId: string;
@@ -104,7 +161,6 @@ alias ListWorkspacesOK = OkJson<WorkspaceListResponse>;
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
 @apigen.cli(#{ command: #["workspaces", "list"], output: #{ mode: "raw" } })
-@operationId("listWorkspaces")
 op listWorkspaces(@query limit?: ListLimit, @query pageToken?: PageToken): ListWorkspacesOK | CommonErrors;
 
 @tag("Workspaces")
@@ -112,8 +168,14 @@ op listWorkspaces(@query limit?: ListLimit, @query pageToken?: PageToken): ListW
 @route("/workspaces/{workspace}")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
-@operationId("getWorkspace")
 op getWorkspace(@path workspace: string): OkJson<WorkspaceResponse> | CommonErrors;
+
+@tag("Workspaces")
+@summary("Get the workspace administration overview")
+@route("/workspaces/{workspace}/administration")
+@get
+@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_WORKSPACE" })
+op getWorkspaceAdministration(@path workspace: string): OkJson<WorkspaceAdministrationResponse> | CommonErrors;
 
 alias ListWorkspaceAssetEdgesOK = OkJson<AssetEdgeListResponse>;
 
@@ -123,7 +185,6 @@ alias ListWorkspaceAssetEdgesOK = OkJson<AssetEdgeListResponse>;
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
 @apigen.cli(#{ command: #["assets", "edges"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }], output: #{ mode: "raw" } })
-@operationId("listWorkspaceAssetEdges")
 op listWorkspaceAssetEdges(@path workspace: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListWorkspaceAssetEdgesOK | CommonErrors;
 
 alias ListWorkspaceAssetsOK = OkJson<AssetListResponse>;
@@ -134,7 +195,6 @@ alias ListWorkspaceAssetsOK = OkJson<AssetListResponse>;
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
 @apigen.cli(#{ command: #["assets", "list"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }], output: #{ mode: "raw" } })
-@operationId("listWorkspaceAssets")
 op listWorkspaceAssets(@path workspace: string, @query type?: string, @query q?: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListWorkspaceAssetsOK | CommonErrors;
 
 @tag("Workspaces")
@@ -142,7 +202,6 @@ op listWorkspaceAssets(@path workspace: string, @query type?: string, @query q?:
 @route("/workspaces/{workspace}/active-asset-graph")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
-@operationId("getWorkspaceActiveAssetGraph")
 op getWorkspaceActiveAssetGraph(@path workspace: string): OkJson<WorkspaceAssetGraphResponse> | CommonErrors;
 
 @tag("Workspaces")
@@ -152,7 +211,6 @@ op getWorkspaceActiveAssetGraph(@path workspace: string): OkJson<WorkspaceAssetG
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "workspace-asset")
 @apigen.cli(#{ command: #["assets", "describe"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "assetId", displayName: "asset-id" }], output: #{ mode: "raw" } })
-@operationId("getWorkspaceAsset")
 op getWorkspaceAsset(@path workspace: string, @path assetId: string): OkJson<AssetResponse> | CommonErrors;
 
 @tag("Workspaces")
@@ -162,5 +220,4 @@ op getWorkspaceAsset(@path workspace: string, @path assetId: string): OkJson<Ass
 @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
 @extension("x-leapview-object-scope", "workspace-asset")
 @apigen.cli(#{ command: #["assets", "lineage"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "assetId", displayName: "asset-id" }], output: #{ mode: "raw" } })
-@operationId("getWorkspaceAssetLineage")
 op getWorkspaceAssetLineage(@path workspace: string, @path assetId: string): OkJson<AssetLineageResponse> | CommonErrors;

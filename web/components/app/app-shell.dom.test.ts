@@ -150,6 +150,103 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
   }
 })
 
+test('app shell renders custom identity with permanent LeapView attribution', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/upgraded-shell`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const identity = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      sidebar.config = { ...sidebar.config, productName: 'Northstar Analytics', productLogoUrl: '/instance-logo.png' }
+      await sidebar.updateComplete
+      const root = sidebar.shadowRoot!
+      return {
+        navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
+        name: root.querySelector('.brand .name')?.textContent?.trim(),
+        logo: root.querySelector('.product-logo')?.getAttribute('src'),
+        attribution: root.querySelector('.powered-by')?.textContent?.trim(),
+        attributionHref: root.querySelector('.powered-by')?.getAttribute('href'),
+      }
+    })
+    expect(identity).toEqual({
+      navigationLabel: 'Northstar Analytics workspace',
+      name: 'Northstar Analytics',
+      logo: '/instance-logo.png',
+      attribution: 'Powered by LeapView',
+      attributionHref: 'https://leapview.dev',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('desktop sidebar exposes an accessible persisted resize handle', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/admin-sidebar`)
+    await page.evaluate(() => localStorage.removeItem('leapview-admin-sidebar-width'))
+    await page.reload()
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+
+    const initial = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      await sidebar.updateComplete
+      const handle = sidebar.shadowRoot.querySelector('.resize-handle') as HTMLElement
+      handle.focus()
+      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+      await sidebar.updateComplete
+      return {
+        label: handle.getAttribute('aria-label'),
+        orientation: handle.getAttribute('aria-orientation'),
+        role: handle.getAttribute('role'),
+        tabIndex: handle.tabIndex,
+        value: handle.getAttribute('aria-valuenow'),
+      }
+    })
+
+    expect(initial).toEqual({
+      label: 'Resize navigation sidebar',
+      orientation: 'vertical',
+      role: 'separator',
+      tabIndex: 0,
+      value: '200',
+    })
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('lv-app-shell') as HTMLElement
+      const sidebar = shell?.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
+      return Math.round(sidebar?.getBoundingClientRect().width ?? 0) === 200
+    })
+
+    const handleBox = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const handle = sidebar.shadowRoot!.querySelector('.resize-handle') as HTMLElement
+      const box = handle.getBoundingClientRect()
+      return { x: box.x, y: box.y, width: box.width, height: box.height }
+    })
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + Math.min(80, handleBox.height / 2))
+    await page.mouse.down()
+    await page.mouse.move(handleBox.x + handleBox.width / 2 + 32, handleBox.y + Math.min(80, handleBox.height / 2))
+    await page.mouse.up()
+
+    const resized = await shellGeometry(page)
+    expect(resized.sidebar.width).toBe(232)
+    expect(resized.shellMain.x).toBe(resized.sidebar.right)
+
+    await page.reload()
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('lv-app-shell') as HTMLElement
+      const sidebar = shell?.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
+      return Math.round(sidebar?.getBoundingClientRect().width ?? 0) === 232
+    })
+    const persistedWidth = (await shellGeometry(page)).sidebar.width
+    expect(persistedWidth).toBe(232)
+  } finally {
+    await page.evaluate(() => localStorage.removeItem('leapview-admin-sidebar-width')).catch(() => undefined)
+    await page.close()
+  }
+})
+
 test('compact app shell keeps the primary sidebar collapsible', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
@@ -232,6 +329,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
       const sidebarBox = sidebar.getBoundingClientRect()
       const mainBox = main.getBoundingClientRect()
       return {
+        documentOverflow: document.documentElement.scrollHeight - window.innerHeight,
         sidebarWidth: Math.round(sidebarBox.width),
         mainX: Math.round(mainBox.x),
         mainY: Math.round(mainBox.y),
@@ -250,6 +348,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
       }
     })
 
+    expect(state.documentOverflow).toBe(0)
     expect(state.sidebarWidth).toBe(553)
     expect(state.mainX).toBe(0)
     expect(state.mainY).toBe(state.sidebarBottom)
@@ -487,11 +586,18 @@ test('admin sidebar replaces global navigation and provides a back to app action
     await page.goto(`${baseURL}/admin-sidebar`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('lv-app-shell') as HTMLElement
+      const sidebar = shell?.shadowRoot?.querySelector('lv-sidebar') as HTMLElement | null
+      return sidebar?.hasAttribute('data-admin') && Math.round(sidebar.getBoundingClientRect().width) === 192
+    })
 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
       const root = sidebar.shadowRoot!
       return {
+        adminMode: sidebar.hasAttribute('data-admin'),
+        width: Math.round(sidebar.getBoundingClientRect().width),
         links: Array.from(root.querySelectorAll('a')).map((link: any) => ({
           href: link.getAttribute('href'),
           text: link.textContent.trim(),
@@ -536,18 +642,32 @@ test('admin sidebar replaces global navigation and provides a back to app action
         collapseControlCount: root.querySelectorAll('.collapse-button').length,
         hasNavPrimaryAction: Boolean(root.querySelector('.primary-action')),
         hasHistory: Boolean(root.querySelector('.history')),
+        hasThemeToggle: Boolean(root.querySelector('.theme-button, [data-theme-toggle]')),
+        currentUser: (() => {
+          const card = root.querySelector('.user-card') as HTMLElement
+          const avatar = card.querySelector('lv-user-avatar') as any
+          return {
+            title: card.getAttribute('title'),
+            name: card.querySelector('.user-name')?.textContent?.trim(),
+            initials: avatar?.shadowRoot?.textContent?.trim(),
+            avatarSrc: avatar?.shadowRoot?.querySelector('img')?.getAttribute('src'),
+            role: card.querySelector('.user-role')?.textContent?.trim(),
+          }
+        })(),
       }
     })
 
-    expect(state.groupLabels).toEqual(['Personal', 'Access', 'Data', 'Operations'])
-    expect(state.visibleGroupLabels).toEqual(['Personal', 'Access', 'Data', 'Operations'])
+    expect(state.groupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
+    expect(state.adminMode).toBe(true)
+    expect(state.width).toBe(192)
+    expect(state.visibleGroupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
     expect(state.links).toEqual(expect.arrayContaining([
       { href: '/admin/profile', text: 'Profile', current: 'false' },
       { href: '/admin/principals', text: 'Principals', current: 'page' },
       { href: '/admin/groups', text: 'Groups', current: 'false' },
       { href: '/admin/agent', text: 'Agent', current: 'false' },
       { href: '/admin/storage', text: 'Storage', current: 'false' },
-      { href: '/admin/queries', text: 'Query History', current: 'false' },
+      { href: '/admin/queries', text: 'Query history', current: 'false' },
       { href: '/admin/publications', text: 'Publications', current: 'false' },
     ]))
     expect(state.brandAction).toEqual({ href: '/', text: 'Back to app' })
@@ -557,6 +677,19 @@ test('admin sidebar replaces global navigation and provides a back to app action
     expect(state.collapseControlCount).toBe(0)
     expect(state.hasNavPrimaryAction).toBe(false)
     expect(state.hasHistory).toBe(false)
+    expect(state.hasThemeToggle).toBe(false)
+    expect(state.currentUser).toEqual({
+      title: 'Ada Lovelace', name: 'Ada Lovelace', initials: '',
+      avatarSrc: '/profile/avatars/ada/avatar-digest', role: 'Platform admin',
+    })
+
+    const updatedAvatarSrc = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement & { updateComplete: Promise<unknown> }
+      document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: '/profile/avatars/ada/new-digest' } }))
+      await sidebar.updateComplete
+      return (sidebar.shadowRoot!.querySelector('lv-user-avatar') as any)?.shadowRoot?.querySelector('img')?.getAttribute('src')
+    })
+    expect(updatedAvatarSrc).toBe('/profile/avatars/ada/new-digest')
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement & { updateComplete: Promise<unknown> }
@@ -573,7 +706,68 @@ test('admin sidebar replaces global navigation and provides a back to app action
         links: Array.from(root.querySelectorAll('a[href^="/admin/"]')).map((link) => link.getAttribute('href')),
       }
     })
-    expect(filtered).toEqual({ groupLabels: ['Data'], links: ['/admin/storage'] })
+    expect(filtered).toEqual({ groupLabels: ['Data & sharing'], links: ['/admin/storage'] })
+  } finally {
+    await page.close()
+  }
+})
+
+test('admin sidebar keeps chrome fixed while only navigation items scroll', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 520 } })
+  try {
+    await page.goto(`${baseURL}/admin-sidebar`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const root = sidebar.shadowRoot!
+      const aside = root.querySelector('aside') as HTMLElement
+      const nav = root.querySelector('nav') as HTMLElement
+      const header = root.querySelector('.brand') as HTMLElement
+      const footer = root.querySelector('.footer') as HTMLElement
+      return {
+        viewportHeight: window.innerHeight,
+        documentHeight: document.documentElement.scrollHeight,
+        sidebarHeight: Math.round(sidebar.getBoundingClientRect().height),
+        asideHeight: Math.round(aside.getBoundingClientRect().height),
+        navOverflowY: getComputedStyle(nav).overflowY,
+        navScrolls: nav.scrollHeight > nav.clientHeight,
+        headerTop: Math.round(header.getBoundingClientRect().top),
+        footerBottom: Math.round(footer.getBoundingClientRect().bottom),
+      }
+    })
+
+    expect(state).toEqual({
+      viewportHeight: 520,
+      documentHeight: 520,
+      sidebarHeight: 520,
+      asideHeight: 520,
+      navOverflowY: 'auto',
+      navScrolls: true,
+      headerTop: 0,
+      footerBottom: 520,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('app shell ignores synthetic file input clicks from page content', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/admin-sidebar`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    await page.locator('lv-app-shell').evaluate((element: HTMLElement) => {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.slot = 'page'
+      element.append(input)
+      input.click()
+    })
+    await page.waitForTimeout(100)
+
+    expect(new URL(page.url()).pathname).toBe('/admin-sidebar')
   } finally {
     await page.close()
   }
@@ -765,6 +959,9 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
       modelId: '',
       modelTitle: '',
       compact,
+      userName: admin ? 'Ada Lovelace' : 'Current User',
+      userAvatarUrl: admin ? '/profile/avatars/ada/avatar-digest' : undefined,
+      userRole: admin ? 'Platform admin' : 'Workspace member',
       primaryAction: admin ? { label: 'Back to app', href: '/', icon: 'back' } : history ? { label: 'New chat', href: '/chats/new', icon: 'plus' } : undefined,
       history: history ? {
         label: 'Chats',
@@ -779,6 +976,15 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
           label: 'Personal',
           items: [
             { id: 'profile', label: 'Profile', href: '/admin/profile', icon: 'user' },
+            { id: 'security', label: 'Security & sessions', href: '/admin/security', icon: 'activity' },
+            { id: 'api-tokens', label: 'API tokens', href: '/admin/api-tokens', icon: 'data' },
+          ],
+        },
+        {
+          label: 'Product',
+          items: [
+            { id: 'general', label: 'General', href: '/admin/general', icon: 'settings' },
+            { id: 'workspaces-admin', label: 'Workspaces', href: '/admin/workspaces', icon: 'catalog' },
           ],
         },
         {
@@ -786,11 +992,14 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
           items: [
             { id: 'principals', label: 'Principals', href: '/admin/principals', icon: 'users' },
             { id: 'groups', label: 'Groups', href: '/admin/groups', icon: 'users-round' },
+            { id: 'service-accounts', label: 'Service accounts', href: '/admin/service-accounts', icon: 'bot' },
+            { id: 'authentication', label: 'Authentication', href: '/admin/authentication', icon: 'system' },
           ],
         },
         {
-          label: 'Data',
+          label: 'Data & sharing',
           items: [
+            { id: 'connections', label: 'Connections', href: '/connections', icon: 'data' },
             { id: 'storage', label: 'Storage', href: '/admin/storage', icon: 'database' },
             { id: 'publications', label: 'Publications', href: '/admin/publications', icon: 'globe' },
           ],
@@ -799,7 +1008,9 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
           label: 'Operations',
           items: [
             { id: 'agent', label: 'Agent', href: '/admin/agent', icon: 'bot' },
-            { id: 'queries', label: 'Query History', href: '/admin/queries', icon: 'history' },
+            { id: 'queries', label: 'Query history', href: '/admin/queries', icon: 'history' },
+            { id: 'audit', label: 'Audit log', href: '/admin/audit', icon: 'activity' },
+            { id: 'system', label: 'System', href: '/admin/system', icon: 'system' },
           ],
         },
       ] : history || nav ? [{

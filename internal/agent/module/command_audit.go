@@ -35,9 +35,13 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 	if surface == "" {
 		surface = "api"
 	}
+	workspaceID := strings.TrimSpace(input.Scope.WorkspaceID)
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(m.defaultWorkspaceID)
+	}
 	metadata, err := encodeAgentCommandAuditPayload(operationID, agentgen.GenSchemaAgentCommandAuditPayload{
 		OperationId: operationID,
-		WorkspaceId: strings.TrimSpace(input.Scope.WorkspaceID),
+		WorkspaceId: workspaceID,
 		TargetType:  targetType,
 		TargetId:    strings.TrimSpace(input.TargetID),
 		Surface:     surface,
@@ -46,7 +50,7 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 		return err
 	}
 	return m.recordAudit(ctx, access.AuditEventInput{
-		WorkspaceID:   strings.TrimSpace(input.Scope.WorkspaceID),
+		WorkspaceID:   workspaceID,
 		PrincipalID:   strings.TrimSpace(input.Scope.PrincipalID),
 		Action:        command.Audit.SuccessAction,
 		TargetType:    targetType,
@@ -61,6 +65,8 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 
 func encodeAgentCommandAuditPayload(operationID string, payload agentgen.GenSchemaAgentCommandAuditPayload) (string, error) {
 	switch operationID {
+	case string(agentgen.GenOperationUpdateAgentConfig):
+		return agentgen.EncodeGenUpdateAgentConfigAuditPayload(payload)
 	case string(agentgen.GenOperationCreateAgentConversation):
 		return agentgen.EncodeGenCreateAgentConversationAuditPayload(payload)
 	case string(agentgen.GenOperationArchiveAgentConversation):

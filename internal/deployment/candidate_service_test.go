@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/stretchr/testify/require"
 )
 
@@ -123,6 +125,54 @@ func TestCandidateServicePreservesCommittedMutationWhenBestEffortAuditFails(t *t
 		!strings.Contains(output, "candidate_id=cand_audit_failure") ||
 		!strings.Contains(output, "audit store unavailable") {
 		t.Fatalf("audit failure log = %q", output)
+	}
+}
+
+func TestCandidateServiceUsesNestedAuditContractDuringSynchronization(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	repository := newCandidateMemoryRepository()
+	var events []CandidateEvent
+	var logs bytes.Buffer
+	service, err := NewCandidateService(repository, CandidateServiceConfig{
+		TargetID: "lvinst_prod", CanonicalOrigin: "https://prod.leapview.example", Environment: "prod",
+		Lifetime: time.Hour, MaxActivePerOwner: 4, Now: func() time.Time { return now },
+		NewID: func() (string, error) { return "cand_nested_audit", nil },
+		Audit: func(_ context.Context, event CandidateEvent) error {
+			events = append(events, event)
+			return nil
+		},
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	require.NoError(t, err)
+
+	contract, ok := deploymentgen.GetAPIGenCommandRuntimeContract(string(deploymentgen.GenOperationCommitProjectCandidateSynchronization))
+	if !ok {
+		t.Fatal("commit synchronization command contract is missing")
+	}
+	ctx, guard, err := apigencommand.Begin(t.Context(), contract)
+	require.NoError(t, err)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	started, err := service.Start(ctx, StartCandidateRequest{
+		ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: digest,
+	})
+	require.NoError(t, err)
+	if guard.Completed() {
+		t.Fatal("nested candidate start completed the outer synchronization command")
+	}
+	_, err = service.MarkReady(ctx, candidateScopeForService(started.Candidate), digest, "sha256:"+strings.Repeat("b", 64))
+	require.NoError(t, err)
+	if !guard.Completed() {
+		t.Fatal("candidate ready audit did not complete the outer synchronization command")
+	}
+	if len(events) != 2 || events[0].Action != CandidateAuditStarted || events[1].Action != CandidateAuditReady {
+		t.Fatalf("nested synchronization audit events = %#v", events)
+	}
+	if !strings.Contains(events[0].MetadataJSON, `"operationId":"startProjectCandidate"`) ||
+		!strings.Contains(events[1].MetadataJSON, `"operationId":"commitProjectCandidateSynchronization"`) {
+		t.Fatalf("nested synchronization audit metadata = %#v", events)
+	}
+	if strings.Contains(logs.String(), "does not match generated action") {
+		t.Fatalf("nested synchronization logged an audit mismatch: %s", logs.String())
 	}
 }
 

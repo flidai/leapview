@@ -97,31 +97,9 @@ func (r *roleBindingRepository) RunAuditedMutation(ctx context.Context, mutation
 	return err
 }
 
-func TestRoleBindingCommandsRejectMissingAndUnexposedContracts(t *testing.T) {
-	empty, err := access.NewOperationCatalog(nil)
-	if err != nil {
-		t.Fatalf("empty catalog: %v", err)
-	}
-	if _, err := NewRoleBindingCommands(nil, empty); err == nil {
-		t.Fatal("expected missing generated operations to fail construction")
-	}
-
-	catalog := roleBindingTestCatalogForSurfaces(t, []access.OperationSurface{access.OperationSurfaceAPI})
-	commands, err := NewRoleBindingCommands(func() (access.Repository, error) {
-		return &roleBindingRepository{bindings: map[string]access.RoleBinding{}}, nil
-	}, catalog)
-	if err != nil {
-		t.Fatalf("build commands: %v", err)
-	}
-	_, err = commands.CreateRoleBinding(t.Context(), access.RoleBindingInvocation{Surface: access.OperationSurfaceUI}, access.RoleBindingInput{})
-	if err == nil {
-		t.Fatal("expected an unexposed UI invocation to fail")
-	}
-}
-
 func TestRoleBindingCommandsRollbackWhenAuditPersistenceFails(t *testing.T) {
 	repo := &roleBindingRepository{bindings: map[string]access.RoleBinding{}, auditErr: errors.New("audit unavailable")}
-	commands, err := NewRoleBindingCommands(func() (access.Repository, error) { return repo, nil }, roleBindingTestCatalog(t))
+	commands, err := NewRoleBindingCommands(func() (access.Repository, error) { return repo, nil })
 	if err != nil {
 		t.Fatalf("build commands: %v", err)
 	}
@@ -136,7 +114,7 @@ func TestRoleBindingCommandsRollbackWhenAuditPersistenceFails(t *testing.T) {
 
 func TestRoleBindingCommandsRejectMissingTransactionBeforeMutation(t *testing.T) {
 	repo := &nonTransactionalRoleBindingRepository{}
-	commands, err := NewRoleBindingCommands(func() (access.Repository, error) { return repo, nil }, roleBindingTestCatalog(t))
+	commands, err := NewRoleBindingCommands(func() (access.Repository, error) { return repo, nil })
 	if err != nil {
 		t.Fatalf("build commands: %v", err)
 	}
@@ -151,14 +129,14 @@ func TestRoleBindingCommandsRejectMissingTransactionBeforeMutation(t *testing.T)
 
 func TestRoleBindingCommandsShareStableOperationContract(t *testing.T) {
 	repo := &roleBindingRepository{bindings: map[string]access.RoleBinding{}}
-	commands, err := NewRoleBindingCommands(func() (access.Repository, error) { return repo, nil }, roleBindingTestCatalog(t))
+	commands, err := NewRoleBindingCommands(func() (access.Repository, error) { return repo, nil })
 	if err != nil {
 		t.Fatalf("build commands: %v", err)
 	}
 	invocation := access.RoleBindingInvocation{
 		PrincipalID: "principal-admin", Surface: access.OperationSurfaceUI,
 		RequestID: "request-1", CorrelationID: "correlation-1", IdempotencyKey: "role-binding-1",
-		OperationClaims: []string{string(access.OperationCreateRoleBinding)},
+		OperationClaims: []string{accessgen.GenCommandOperationCreateRoleBinding().APIGenOperationID()},
 	}
 
 	created, err := commands.CreateRoleBinding(t.Context(), invocation, access.RoleBindingInput{
@@ -171,7 +149,7 @@ func TestRoleBindingCommandsShareStableOperationContract(t *testing.T) {
 	if created.ID != "binding-1" {
 		t.Fatalf("created binding = %#v", created)
 	}
-	assertRoleBindingAudit(t, repo.audits[0], access.OperationCreateRoleBinding, "role_binding.created", access.OperationSurfaceUI)
+	assertRoleBindingAudit(t, repo.audits[0], accessgen.GenCommandOperationCreateRoleBinding().APIGenOperationID(), "role_binding.created", access.OperationSurfaceUI)
 
 	invocation.Surface = access.OperationSurfaceAPI
 	invocation.ConcurrencyToken, err = access.RoleBindingRevision(created)
@@ -188,7 +166,7 @@ func TestRoleBindingCommandsShareStableOperationContract(t *testing.T) {
 	if updated.Role != access.RoleEditor {
 		t.Fatalf("updated binding = %#v", updated)
 	}
-	assertRoleBindingAudit(t, repo.audits[1], access.OperationUpdateRoleBinding, "role_binding.updated", access.OperationSurfaceAPI)
+	assertRoleBindingAudit(t, repo.audits[1], accessgen.GenCommandOperationUpdateRoleBinding().APIGenOperationID(), "role_binding.updated", access.OperationSurfaceAPI)
 
 	deleted, err := commands.DeleteRoleBinding(t.Context(), invocation, "sales", created.ID)
 	if err != nil {
@@ -197,14 +175,14 @@ func TestRoleBindingCommandsShareStableOperationContract(t *testing.T) {
 	if deleted.ID != created.ID || len(repo.bindings) != 0 {
 		t.Fatalf("deleted binding = %#v remaining = %#v", deleted, repo.bindings)
 	}
-	assertRoleBindingAudit(t, repo.audits[2], access.OperationDeleteRoleBinding, "role_binding.deleted", access.OperationSurfaceAPI)
+	assertRoleBindingAudit(t, repo.audits[2], accessgen.GenCommandOperationDeleteRoleBinding().APIGenOperationID(), "role_binding.deleted", access.OperationSurfaceAPI)
 }
 
 func TestRoleBindingUpdateRejectsStaleRevisionInsideAuditTransaction(t *testing.T) {
 	repo := &roleBindingRepository{bindings: map[string]access.RoleBinding{
 		"binding-1": {ID: "binding-1", WorkspaceID: "sales", SubjectType: access.SubjectPrincipal, SubjectID: "viewer", Role: access.RoleViewer},
 	}}
-	commands, err := NewRoleBindingCommands(func() (access.Repository, error) { return repo, nil }, roleBindingTestCatalog(t))
+	commands, err := NewRoleBindingCommands(func() (access.Repository, error) { return repo, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,14 +200,17 @@ func TestRoleBindingUpdateRejectsStaleRevisionInsideAuditTransaction(t *testing.
 	}
 }
 
-func TestRoleBindingOperationDescriptorsAreTransportNeutral(t *testing.T) {
-	catalog := roleBindingTestCatalog(t)
-	for _, id := range []access.OperationID{access.OperationCreateRoleBinding, access.OperationUpdateRoleBinding, access.OperationDeleteRoleBinding} {
-		descriptor, ok := catalog.DescribeOperation(id)
+func TestRoleBindingGeneratedContractsAreTransportNeutral(t *testing.T) {
+	for _, id := range []string{
+		accessgen.GenCommandOperationCreateRoleBinding().APIGenOperationID(),
+		accessgen.GenCommandOperationUpdateRoleBinding().APIGenOperationID(),
+		accessgen.GenCommandOperationDeleteRoleBinding().APIGenOperationID(),
+	} {
+		descriptor, ok := accessgen.GetAPIGenCommandRuntimeContract(id)
 		if !ok {
 			t.Fatalf("operation %q is not registered", id)
 		}
-		if descriptor.Kind != access.OperationKindCommand || descriptor.Owner != "LeapViewAPI.Access" || descriptor.Target.Type != access.SecurableWorkspace {
+		if descriptor.Owner != "LeapViewAPI.Access" || descriptor.Target == nil || descriptor.Target.Type != string(access.SecurableWorkspace) {
 			t.Fatalf("operation %q descriptor = %#v", id, descriptor)
 		}
 		for _, surface := range []access.OperationSurface{access.OperationSurfaceAPI, access.OperationSurfaceCLI, access.OperationSurfaceUI} {
@@ -240,40 +221,7 @@ func TestRoleBindingOperationDescriptorsAreTransportNeutral(t *testing.T) {
 	}
 }
 
-func roleBindingTestCatalog(t *testing.T) access.OperationCatalog {
-	return roleBindingTestCatalogForSurfaces(t, []access.OperationSurface{access.OperationSurfaceAPI, access.OperationSurfaceCLI, access.OperationSurfaceUI})
-}
-
-func roleBindingTestCatalogForSurfaces(t *testing.T, surfaces []access.OperationSurface) access.OperationCatalog {
-	t.Helper()
-	descriptors := []access.OperationDescriptor{
-		{
-			ID: access.OperationCreateRoleBinding, Kind: access.OperationKindCommand, Owner: "LeapViewAPI.Access",
-			Target:    access.OperationTarget{Type: access.SecurableWorkspace, Parameter: "workspace"},
-			Privilege: access.PrivilegeManageGrants, AuditEvent: "role_binding.created", HTTPIdempotency: "required",
-			ExposedSurfaces: append([]access.OperationSurface(nil), surfaces...),
-		},
-		{
-			ID: access.OperationUpdateRoleBinding, Kind: access.OperationKindCommand, Owner: "LeapViewAPI.Access",
-			Target:    access.OperationTarget{Type: access.SecurableWorkspace, Parameter: "workspace"},
-			Privilege: access.PrivilegeManageGrants, AuditEvent: "role_binding.updated", HTTPConcurrency: "if-match",
-			ExposedSurfaces: append([]access.OperationSurface(nil), surfaces...),
-		},
-		{
-			ID: access.OperationDeleteRoleBinding, Kind: access.OperationKindCommand, Owner: "LeapViewAPI.Access",
-			Target:    access.OperationTarget{Type: access.SecurableWorkspace, Parameter: "workspace"},
-			Privilege: access.PrivilegeManageGrants, AuditEvent: "role_binding.deleted",
-			ExposedSurfaces: append([]access.OperationSurface(nil), surfaces...),
-		},
-	}
-	catalog, err := access.NewOperationCatalog(descriptors)
-	if err != nil {
-		t.Fatalf("build operation catalog: %v", err)
-	}
-	return catalog
-}
-
-func assertRoleBindingAudit(t *testing.T, input access.AuditEventInput, operation access.OperationID, action string, surface access.OperationSurface) {
+func assertRoleBindingAudit(t *testing.T, input access.AuditEventInput, operation string, action string, surface access.OperationSurface) {
 	t.Helper()
 	if input.Action != action || input.WorkspaceID != "sales" || input.PrincipalID != "principal-admin" || input.RequestID != "request-1" || input.CorrelationID != "correlation-1" {
 		t.Fatalf("audit input = %#v", input)
@@ -283,14 +231,14 @@ func assertRoleBindingAudit(t *testing.T, input access.AuditEventInput, operatio
 		t.Fatalf("decode audit metadata: %v", err)
 	}
 	wantSchema := "RoleBindingAuditPayload"
-	if operation == access.OperationCreateRoleBinding {
+	if operation == accessgen.GenCommandOperationCreateRoleBinding().APIGenOperationID() {
 		wantSchema = "RoleBindingCreatedAuditPayload"
 	}
 	if metadata["schemaVersion"] != float64(1) || metadata["retention"] != "security" || metadata["payloadSchema"] != wantSchema {
 		t.Fatalf("audit envelope = %#v", metadata)
 	}
 	payload, ok := metadata["payload"].(map[string]any)
-	if !ok || payload["operationId"] != string(operation) || payload["surface"] != string(surface) || payload["subjectId"] != "principal-viewer" {
+	if !ok || payload["operationId"] != operation || payload["surface"] != string(surface) || payload["subjectId"] != "principal-viewer" {
 		t.Fatalf("audit payload = %#v", metadata["payload"])
 	}
 }

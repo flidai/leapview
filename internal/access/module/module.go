@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/access/avatar"
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	accesshttp "github.com/flidai/leapview/internal/access/http"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
@@ -45,6 +46,7 @@ type surfaceConfig struct {
 	OAuth              *mcpoauth.Service
 	OAuthResource      mcpoauth.ResourceServer
 	AuthoringAuth      *access.AuthoringAuthService
+	Avatar             *avatar.Service
 	Presentation       webpage.Presentation
 	Assets             staticasset.Resolver
 }
@@ -56,24 +58,46 @@ func newSurface(config surfaceConfig) (*Module, error) {
 	}
 	currentPrincipal := func(r *http.Request) (accesshttp.Principal, bool) {
 		if config.CurrentPrincipal == nil {
-			return accesshttp.Principal{}, false
+			principal, ok := PrincipalFromContext(r.Context())
+			return accesshttp.Principal{ID: principal.ID, Kind: principal.Kind, Email: principal.Email, DisplayName: principal.DisplayName, CreatedAt: principal.CreatedAt, UpdatedAt: principal.UpdatedAt}, ok
 		}
 		principal, ok := config.CurrentPrincipal(r)
 		return accesshttp.Principal{ID: principal.ID, Kind: principal.Kind, Email: principal.Email, DisplayName: principal.DisplayName, CreatedAt: principal.CreatedAt, UpdatedAt: principal.UpdatedAt}, ok
 	}
-	catalog, err := generatedRoleBindingCatalog()
+	localPasswordEnabled := config.Auth != nil && config.Auth.LocalAuthEnabled()
+	var avatarService accesshttp.AvatarService
+	if config.Avatar != nil {
+		avatarService = config.Avatar
+	}
+	currentSession := func(r *http.Request) (string, bool) {
+		if config.Repository == nil {
+			return "", false
+		}
+		cookie, err := r.Cookie("lv_session")
+		if err != nil || strings.TrimSpace(cookie.Value) == "" {
+			return "", false
+		}
+		repository, err := config.Repository()
+		if err != nil || repository == nil {
+			return "", false
+		}
+		resolver, ok := repository.(interface {
+			CredentialForSessionToken(context.Context, string) (access.Session, error)
+		})
+		if !ok {
+			return "", false
+		}
+		session, err := resolver.CredentialForSessionToken(r.Context(), cookie.Value)
+		if err != nil || session.ID == "" {
+			return "", false
+		}
+		return session.ID, true
+	}
+	roleBindingCommands, err := accessoperation.NewRoleBindingCommands(accessoperation.RepositoryProvider(config.Repository))
 	if err != nil {
 		return nil, err
 	}
-	roleBindingCommands, err := accessoperation.NewRoleBindingCommands(accessoperation.RepositoryProvider(config.Repository), catalog)
-	if err != nil {
-		return nil, err
-	}
-	grantCatalog, err := generatedGrantCatalog()
-	if err != nil {
-		return nil, err
-	}
-	grantCommands, err := accessoperation.NewGrantCommands(accessoperation.RepositoryProvider(config.Repository), grantCatalog)
+	grantCommands, err := accessoperation.NewGrantCommands(accessoperation.RepositoryProvider(config.Repository))
 	if err != nil {
 		return nil, err
 	}
@@ -83,9 +107,10 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		grantCommands:       grantCommands,
 		presentation:        config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
 			Repository: config.Repository, CurrentPrincipal: currentPrincipal,
-			RoleBindingCommands: roleBindingCommands,
-			GrantCommands:       grantCommands,
-			CurrentCredential:   config.CurrentCredential, WorkspaceID: config.WorkspaceID, AuthoringAuth: config.AuthoringAuth,
+			RoleBindingCommands: roleBindingCommands, GrantCommands: grantCommands,
+			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
+			WorkspaceID: config.WorkspaceID, AuthoringAuth: config.AuthoringAuth,
+			Avatar: avatarService, LocalPasswordEnabled: localPasswordEnabled,
 		}}, nil
 }
 

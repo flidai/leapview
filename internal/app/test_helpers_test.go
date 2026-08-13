@@ -8,6 +8,7 @@ import (
 	"time"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
@@ -74,6 +75,8 @@ type assemblyConfig struct {
 	AnalyticsModule       *analyticsmodule.Module
 	DashboardAssets       dashboardmodule.Assets
 	QueryAudit            *analyticsmodule.QueryAuditSurface
+	Product               *adminmodule.ProductService
+	ProductStatus         adminmodule.ProductStatus
 }
 
 // appTestHarness is a test fixture facade for legacy app-package tests.
@@ -174,7 +177,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			ReleaseModule: options.ReleaseModule, JobModule: options.JobModule,
 			AccessModule: options.AccessModule, Agent: options.Agent,
 			ManagedDataModule: options.ManagedDataModule, AnalyticsModule: options.AnalyticsModule,
-			DashboardAssets: options.DashboardAssets,
+			DashboardAssets: options.DashboardAssets, Product: options.Product, ProductStatus: options.ProductStatus,
 		},
 		workflowAssemblyInputs{
 			AgentSettings: options.AgentSettings, ManagedDataValidation: options.ManagedDataValidation,
