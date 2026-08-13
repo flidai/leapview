@@ -42,13 +42,14 @@ const emptyStorage: AdminStorageSignal = {
 }
 
 const storageV2Columns = [
-  { id: 'name', label: 'Name', width: '180px' },
-  { id: 'type', label: 'Type', width: '70px' },
-  { id: 'rows', label: 'Rows', width: '90px', align: 'right' as const },
-  { id: 'columns', label: 'Columns', width: '80px', align: 'right' as const },
-  { id: 'files', label: 'Files', width: '60px', align: 'right' as const },
-  { id: 'size', label: 'Data size', width: '90px', align: 'right' as const },
-  { id: 'snapshot', label: 'Snapshot', width: '80px', align: 'right' as const },
+  { id: 'name', label: 'Name', width: '155px' },
+  { id: 'schema', label: 'Schema', width: '85px' },
+  { id: 'type', label: 'Type', width: '60px' },
+  { id: 'rows', label: 'Rows', width: '85px', align: 'right' as const },
+  { id: 'columns', label: 'Columns', width: '70px', align: 'right' as const },
+  { id: 'files', label: 'Files', width: '55px', align: 'right' as const },
+  { id: 'size', label: 'Data size', width: '85px', align: 'right' as const },
+  { id: 'snapshot', label: 'Snapshot', width: '75px', align: 'right' as const },
 ]
 
 class LeapViewAdminPage extends DatastarLit(LitElement) {
@@ -754,8 +755,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       title: table.name,
       icon: table.type === 'view' ? 'view' : 'table',
       iconTreatment: 'plain' as const,
-      group: table.schema || 'default',
       columns: {
+        schema: table.schema || 'default',
         type: table.type || 'table',
         rows: table.rowCountLabel || table.rowCount || '—',
         columns: table.columnCount ?? '—',
@@ -775,8 +776,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       <lv-entity-list
         .items=${items}
         .columns=${storageV2Columns}
-        group-by="group"
-        group-icon="schema"
         client-filter
         list-label="Storage tables"
         search-placeholder="Search storage tables"

@@ -445,7 +445,7 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		})
 	case "storage-v2":
 		page.HeaderTitle = "Storage v2"
-		page.HeaderDetail = "Browse tables grouped by schema."
+		page.HeaderDetail = "Browse tables and views across schemas."
 		page.Storage = uisignals.Pointer(AdminStorageSignalFromData(data.Storage, AdminStorageCommand{}))
 	case "queries":
 		page.HeaderTitle = "Query history"
