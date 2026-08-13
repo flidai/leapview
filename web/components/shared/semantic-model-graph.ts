@@ -2,7 +2,7 @@ import { LitElement, html } from 'lit'
 import { property } from 'lit/decorators.js'
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Binary, Braces, CalendarDays, CircleHelp, Clock3, Hash, RotateCcw, Table2, ToggleLeft, Type, type IconNode } from 'lucide'
+import { RotateCcw, Table2, type IconNode } from 'lucide'
 import '@xyflow/react/dist/style.css'
 import {
   Background,
@@ -18,6 +18,7 @@ import {
   type Node,
   useNodesState,
 } from '@xyflow/react'
+import { fieldTypeIcon } from './field-type-icon'
 import type {
   SemanticModelGraphEdgeSignal,
   SemanticModelGraphFieldSignal,
@@ -455,18 +456,6 @@ function ModelFieldRow({ field, index }: { field: SemanticModelGraphFieldSignal;
     field.primaryKey ? React.createElement('span', { className: 'semantic-model-field-key', title: 'Primary key' }, 'PK') : null,
     field.join ? React.createElement(Handle, { id: `${field.name}:source`, type: 'source', position: Position.Right, style: { top } }) : null,
   )
-}
-
-function fieldTypeIcon(type = ''): IconNode {
-  const normalized = type.toLowerCase()
-  if (normalized.includes('time')) return Clock3
-  if (normalized.includes('date')) return CalendarDays
-  if (normalized.includes('bool')) return ToggleLeft
-  if (normalized.includes('int') || normalized.includes('decimal') || normalized.includes('double') || normalized.includes('float') || normalized.includes('number') || normalized.includes('numeric')) return Hash
-  if (normalized.includes('blob') || normalized.includes('binary') || normalized.includes('byte')) return Binary
-  if (normalized.includes('json') || normalized.includes('struct') || normalized.includes('map') || normalized.includes('list') || normalized.includes('array')) return Braces
-  if (normalized.includes('char') || normalized.includes('text') || normalized.includes('string') || normalized.includes('uuid')) return Type
-  return CircleHelp
 }
 
 function iconElement(icon: IconNode, className: string) {

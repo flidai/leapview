@@ -6,7 +6,10 @@ import (
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
-const dashboardTurnContextSurface = "dashboard"
+const (
+	dashboardTurnContextSurface = "dashboard"
+	dataTurnContextSurface      = "data"
+)
 
 const MaxTurnReferences = 12
 
@@ -14,16 +17,45 @@ const MaxTurnReferences = 12
 // deliberately separate from Scope: Scope controls authorization, while this
 // value describes the dashboard state the user is asking about.
 type TurnContext struct {
-	Surface        string          `json:"surface"`
-	WorkspaceID    string          `json:"workspaceId,omitempty"`
-	DashboardID    string          `json:"dashboardId,omitempty"`
-	DashboardTitle string          `json:"dashboardTitle,omitempty"`
-	PageID         string          `json:"pageId,omitempty"`
-	PageTitle      string          `json:"pageTitle,omitempty"`
-	ModelID        string          `json:"modelId,omitempty"`
-	Generation     int64           `json:"generation,omitempty"`
-	Filters        map[string]any  `json:"filters,omitempty"`
-	References     []TurnReference `json:"references,omitempty"`
+	Surface        string           `json:"surface"`
+	WorkspaceID    string           `json:"workspaceId,omitempty"`
+	DashboardID    string           `json:"dashboardId,omitempty"`
+	DashboardTitle string           `json:"dashboardTitle,omitempty"`
+	PageID         string           `json:"pageId,omitempty"`
+	PageTitle      string           `json:"pageTitle,omitempty"`
+	ModelID        string           `json:"modelId,omitempty"`
+	DatasetID      string           `json:"datasetId,omitempty"`
+	Exploration    *DataExploration `json:"exploration,omitempty"`
+	Generation     int64            `json:"generation,omitempty"`
+	Filters        map[string]any   `json:"filters,omitempty"`
+	References     []TurnReference  `json:"references,omitempty"`
+}
+
+type DataExploration struct {
+	Dimensions []string                `json:"dimensions"`
+	Measures   []string                `json:"measures"`
+	Filters    []DataExplorationFilter `json:"filters"`
+	Sort       []DataExplorationSort   `json:"sort"`
+	Time       *DataExplorationTime    `json:"time,omitempty"`
+	Limit      int64                   `json:"limit"`
+}
+
+type DataExplorationFilter struct {
+	Field    string   `json:"field"`
+	Operator string   `json:"operator"`
+	Values   []string `json:"values"`
+	Fact     string   `json:"fact,omitempty"`
+}
+
+type DataExplorationSort struct {
+	Field     string `json:"field"`
+	Direction string `json:"direction"`
+}
+
+type DataExplorationTime struct {
+	Field string `json:"field"`
+	Grain string `json:"grain"`
+	Alias string `json:"alias,omitempty"`
 }
 
 type TurnReference struct {
@@ -78,6 +110,10 @@ func (c TurnContext) normalized() TurnContext {
 	c.PageID = strings.TrimSpace(c.PageID)
 	c.PageTitle = strings.TrimSpace(c.PageTitle)
 	c.ModelID = strings.TrimSpace(c.ModelID)
+	c.DatasetID = strings.TrimSpace(c.DatasetID)
+	if c.Exploration != nil {
+		c.Exploration = normalizeDataExploration(*c.Exploration)
+	}
 	refs := make([]TurnReference, 0, len(c.References))
 	seen := map[string]struct{}{}
 	for _, ref := range c.References {
@@ -121,13 +157,78 @@ func (c TurnContext) normalized() TurnContext {
 	return c
 }
 
+// NormalizedDataExploration returns a bounded, canonical copy suitable for a
+// trusted turn context after the caller validates its semantic members.
+func (c TurnContext) NormalizedDataExploration() *DataExploration {
+	return c.normalized().Exploration
+}
+
 func turnContextItems(context *TurnContext) []agentcore.ContextItem {
 	if context == nil {
 		return nil
 	}
 	normalized := context.normalized()
-	if normalized.Surface != dashboardTurnContextSurface && (normalized.Surface != "chat" || len(normalized.References) == 0) {
+	if normalized.Surface != dashboardTurnContextSurface && normalized.Surface != dataTurnContextSurface && (normalized.Surface != "chat" || len(normalized.References) == 0) {
 		return nil
 	}
 	return []agentcore.ContextItem{{Key: "leapview_context", Value: normalized}}
+}
+
+func normalizeDataExploration(value DataExploration) *DataExploration {
+	value.Dimensions = normalizedStrings(value.Dimensions, 64)
+	value.Measures = normalizedStrings(value.Measures, 64)
+	if value.Limit <= 0 {
+		value.Limit = 100
+	} else if value.Limit > 1000 {
+		value.Limit = 1000
+	}
+	filters := make([]DataExplorationFilter, 0, min(len(value.Filters), 32))
+	for _, filter := range value.Filters {
+		filter.Field = strings.TrimSpace(filter.Field)
+		filter.Operator = strings.ToLower(strings.TrimSpace(filter.Operator))
+		filter.Fact = strings.TrimSpace(filter.Fact)
+		filter.Values = normalizedStrings(filter.Values, 100)
+		if filter.Field != "" && filter.Operator != "" && len(filters) < 32 {
+			filters = append(filters, filter)
+		}
+	}
+	value.Filters = filters
+	sorts := make([]DataExplorationSort, 0, min(len(value.Sort), 8))
+	for _, sort := range value.Sort {
+		sort.Field = strings.TrimSpace(sort.Field)
+		sort.Direction = strings.ToLower(strings.TrimSpace(sort.Direction))
+		if sort.Field != "" && len(sorts) < 8 {
+			sorts = append(sorts, sort)
+		}
+	}
+	value.Sort = sorts
+	if value.Time != nil {
+		value.Time.Field = strings.TrimSpace(value.Time.Field)
+		value.Time.Grain = strings.ToLower(strings.TrimSpace(value.Time.Grain))
+		value.Time.Alias = strings.TrimSpace(value.Time.Alias)
+		if value.Time.Field == "" {
+			value.Time = nil
+		}
+	}
+	return &value
+}
+
+func normalizedStrings(values []string, limit int) []string {
+	result := make([]string, 0, min(len(values), limit))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result
 }

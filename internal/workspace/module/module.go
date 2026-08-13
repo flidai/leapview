@@ -64,6 +64,8 @@ func (f AssetRefreshFunc) RefreshAsset(ctx context.Context, input AssetRefreshIn
 }
 
 type AccessCommandBindings = ui.AccessCommandBindings
+type DataExplorerAgentBootstrap = ui.DataExplorerAgentBootstrap
+type DataExplorerAgentCommandBindings = ui.DataExplorerAgentCommandBindings
 
 type Config struct {
 	Database            *sql.DB
@@ -77,6 +79,8 @@ type Config struct {
 	GrantCommands       access.GrantOperations
 	CommandPrivileges   access.WorkspaceCommandPrivileges
 	AccessCommands      ui.AccessCommandBindings
+	AgentBootstrap      func(*http.Request, string) ui.DataExplorerAgentBootstrap
+	AgentCommands       ui.DataExplorerAgentCommandBindings
 	AssetCatalog        workspace.AssetCatalogReader
 	MetricsForWorkspace func(string) (queryruntime.Metrics, bool)
 	RootMetrics         queryruntime.Metrics
@@ -187,6 +191,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		RoleBindingCommands: config.RoleBindingCommands,
 		GrantCommands:       config.GrantCommands,
 		AccessCommands:      config.AccessCommands,
+		AgentBootstrap:      config.AgentBootstrap,
+		AgentCommands:       config.AgentCommands,
 	}
 	m.search = buildSearch(config.Database, config.AuthorizeObject)
 	return m, nil

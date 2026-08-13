@@ -112,6 +112,15 @@ func (m dataExplorerFixtureMetrics) ExecuteDataQuery(ctx context.Context, reques
 		return dataquery.Result{}, nil
 	}
 	switch request.Kind {
+	case dataquery.KindSemanticAggregate:
+		return dataquery.Result{
+			Columns:      dataquery.ColumnsFromNames([]string{"status", "order_count"}),
+			Rows:         []dataquery.Row{{"status": "delivered", "order_count": int64(1)}},
+			SQL:          "SELECT status, COUNT(*) AS order_count FROM model.orders GROUP BY status",
+			PlanText:     "semantic aggregate on orders",
+			DurationMS:   7,
+			RowsReturned: 1,
+		}, nil
 	case dataquery.KindSemanticRows:
 		if request.Target != "orders" {
 			return dataquery.Result{}, nil
@@ -161,6 +170,55 @@ func (m dataExplorerFixtureMetrics) ExecuteDataQuery(ctx context.Context, reques
 		return result, nil
 	default:
 		return dataquery.Result{}, fmt.Errorf("unsupported query kind %q", request.Kind)
+	}
+}
+
+func TestDataExplorerExploreBuildsGovernedSemanticTable(t *testing.T) {
+	t.Parallel()
+	requests := []dataquery.Query{}
+	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), dataQueries: &requests}
+	store := testStore(t)
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+
+	command := dataExplorerCommandFromQuery("test", "")
+	command.Mode = uisignals.Pointer("explore")
+	command.Explore = &uisignals.DataExploreCommand{
+		WorkspaceID: uisignals.Pointer("test"), ModelID: uisignals.Pointer("olist"), DatasetID: uisignals.Pointer("orders"),
+		Dimensions: []string{"orders.status"}, Measures: []string{"order_count"}, Filters: []uisignals.DataExploreFilterSignal{},
+		Sort: []uisignals.DataExploreSortSignal{{Field: "order_count", Direction: "desc"}}, Limit: 100,
+	}
+	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=test&mode=explore", nil)
+	_, explorer, err := server.globalDataExplorerState(req, command)
+	if err != nil {
+		t.Fatalf("globalDataExplorerState() error = %v", err)
+	}
+	if got := uisignals.ValueOrZero(explorer.Command.Mode); got != "explore" {
+		t.Fatalf("mode = %q, want explore", got)
+	}
+	if explorer.Explore.SelectedModel == nil || explorer.Explore.SelectedModel.ID != "olist" {
+		t.Fatalf("selected model = %#v", explorer.Explore.SelectedModel)
+	}
+	if explorer.Explore.SelectedDataset == nil || explorer.Explore.SelectedDataset.ID != "orders" {
+		t.Fatalf("selected dataset = %#v", explorer.Explore.SelectedDataset)
+	}
+	if len(explorer.Explore.Fields) != 3 {
+		t.Fatalf("field catalog = %#v, want two dimensions and one measure", explorer.Explore.Fields)
+	}
+	if len(explorer.Explore.Result.Rows) != 1 || explorer.Explore.Result.Rows[0]["status"] != "delivered" {
+		t.Fatalf("result = %#v", explorer.Explore.Result)
+	}
+	if explorer.Explore.Result.SQL == nil || !strings.Contains(*explorer.Explore.Result.SQL, "COUNT") {
+		t.Fatalf("sql = %#v", explorer.Explore.Result.SQL)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(requests))
+	}
+	query := requests[0]
+	if query.Kind != dataquery.KindSemanticAggregate || query.Target != "orders" {
+		t.Fatalf("query = %#v", query)
+	}
+	if query.Surface != dataquery.SurfaceDataExplorer || query.Operation != "semantic_explore" {
+		t.Fatalf("metadata = surface %q operation %q", query.Surface, query.Operation)
 	}
 }
 
@@ -310,8 +368,8 @@ func TestGlobalDataExplorerSelectsDuplicateKeysByWorkspace(t *testing.T) {
 	if uisignals.ValueOrZero(explorer.SelectedKey) != "model_table:model_table:olist.orders" || explorer.SelectedObject == nil || explorer.SelectedObject.WorkspaceID != "ops" {
 		t.Fatalf("selected object = %#v key=%q", explorer.SelectedObject, uisignals.ValueOrZero(explorer.SelectedKey))
 	}
-	if len(explorer.Objects) != 6 {
-		t.Fatalf("object count = %d, want both workspaces' three objects", len(explorer.Objects))
+	if len(explorer.Objects) != 2 {
+		t.Fatalf("object count = %d, want both workspaces' model table", len(explorer.Objects))
 	}
 }
 
@@ -327,7 +385,7 @@ func TestGlobalDataExplorerFallsBackToRuntimeCatalogWithoutActiveAssetDeployment
 		t.Fatalf("selected workspace page=%q explorer=%q", uisignals.ValueOrZero(page.SelectedWorkspaceID), uisignals.ValueOrZero(explorer.SelectedWorkspaceID))
 	}
 	rendered := fmtSprint(explorer)
-	for _, want := range []string{"model_table:model_table:test.orders", "semantic_view:test.orders"} {
+	for _, want := range []string{"model_table:model_table:test.orders"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("fallback explorer missing %q:\n%#v", want, explorer)
 		}
@@ -337,7 +395,7 @@ func TestGlobalDataExplorerFallsBackToRuntimeCatalogWithoutActiveAssetDeployment
 	}
 }
 
-func TestDataExplorerPreviewsSourceModelTableAndSemanticRows(t *testing.T) {
+func TestDataExplorerPreviewsModelTable(t *testing.T) {
 	store := testStore(t)
 	dataDir := seedDataExplorerCSV(t)
 	duckDBDir := seedDataExplorerDuckDB(t)
@@ -351,9 +409,7 @@ func TestDataExplorerPreviewsSourceModelTableAndSemanticRows(t *testing.T) {
 		want     string
 		wantRows bool
 	}{
-		{name: "source metadata", object: "source:source:olist.orders", want: "order_id", wantRows: false},
 		{name: "model table", object: "model_table:model_table:olist.orders", want: "shipped", wantRows: true},
-		{name: "semantic", object: "semantic_view:olist.orders", want: "Order ID", wantRows: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -369,12 +425,9 @@ func TestDataExplorerPreviewsSourceModelTableAndSemanticRows(t *testing.T) {
 				t.Fatalf("preview window defaults = chunk %d rowHeight %d", explorer.Preview.ChunkSize, explorer.Preview.RowHeight)
 			}
 			if len(explorer.Preview.Blocks) == 0 || tc.wantRows && len(explorer.Preview.Blocks["a"].Rows) == 0 {
-				t.Fatalf("preview row state does not match source policy:\n%#v", explorer.Preview)
+				t.Fatalf("preview row state is incomplete:\n%#v", explorer.Preview)
 			}
-			if !tc.wantRows && len(explorer.Preview.Blocks["a"].Rows) != 0 {
-				t.Fatalf("source metadata preview exposed raw rows:\n%#v", explorer.Preview)
-			}
-			rendered := fmtSprint(explorer)
+			rendered := fmtSprint(explorer.Preview)
 			if !strings.Contains(rendered, tc.want) {
 				t.Fatalf("preview missing %q:\n%#v", tc.want, explorer.Preview)
 			}
@@ -382,41 +435,6 @@ func TestDataExplorerPreviewsSourceModelTableAndSemanticRows(t *testing.T) {
 				t.Fatalf("semantic preview included aggregate measure:\n%#v", explorer.Preview)
 			}
 		})
-	}
-}
-
-func TestDataExplorerSourceUsesOwningWorkspaceModelForImportedSourceKeys(t *testing.T) {
-	store := testStore(t)
-	dataDir := seedDataExplorerCSV(t)
-	metrics := dataExplorerFixtureMetrics{dataDir: dataDir, modelID: "sales", sourceKey: "olist.payments"}
-	seedActiveDeploymentFromWorkspaceAssets(t, store, "sales", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "sales"}))
-
-	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=sales&object=source:source:olist.payments", nil)
-	_, explorer, err := server.globalDataExplorerState(req, dataExplorerCommandFromQuery("sales", "source:source:olist.payments"))
-	if err != nil {
-		t.Fatalf("globalDataExplorerState() error = %v", err)
-	}
-	if explorer.SelectedObject == nil {
-		t.Fatal("selected object is nil")
-	}
-	if uisignals.ValueOrZero(explorer.SelectedObject.ModelID) != "sales" || uisignals.ValueOrZero(explorer.SelectedObject.Source) != "olist.payments" {
-		t.Fatalf("selected source resolved to model/source %#v", explorer.SelectedObject)
-	}
-	if explorer.SelectedObject.Key == "source:source:olist.payments" {
-		t.Fatalf("selected source kept legacy key: %#v", explorer.SelectedObject)
-	}
-	if uisignals.ValueOrZero(explorer.SelectedKey) != explorer.SelectedObject.Key || uisignals.ValueOrZero(explorer.Command.ObjectKey) != explorer.SelectedObject.Key {
-		t.Fatalf("command did not canonicalize selected key: selected=%q command=%q object=%q", uisignals.ValueOrZero(explorer.SelectedKey), uisignals.ValueOrZero(explorer.Command.ObjectKey), explorer.SelectedObject.Key)
-	}
-	if explorer.SelectedObject.ColumnCount == 0 || len(explorer.Preview.Columns) == 0 {
-		t.Fatalf("source columns were not resolved: object=%#v preview=%#v", explorer.SelectedObject, explorer.Preview)
-	}
-	if uisignals.ValueOrZero(explorer.Preview.Error) != "" {
-		t.Fatalf("preview error = %q", uisignals.ValueOrZero(explorer.Preview.Error))
-	}
-	if len(explorer.Preview.Blocks["a"].Rows) != 0 {
-		t.Fatalf("refresh-only source exposed serving rows: %#v", explorer.Preview.Blocks)
 	}
 }
 
@@ -459,7 +477,7 @@ func TestDataExplorerCommandPublishesPatch(t *testing.T) {
 	updates, unsubscribe := server.runtime.broker.Subscribe("data-explorer:test-client")
 	defer unsubscribe()
 
-	body := strings.NewReader(`{"dataExplorerCommand":{"workspaceId":"test","objectKey":"semantic_view:olist.orders","block":"b","start":100,"count":100,"requestSeq":7,"resetVersion":2,"sort":{"column":"status","direction":"asc"}}}`)
+	body := strings.NewReader(`{"dataExplorerCommand":{"workspaceId":"test","objectKey":"model_table:model_table:olist.orders","block":"b","start":100,"count":100,"requestSeq":7,"resetVersion":2,"sort":{"column":"status","direction":"asc"}}}`)
 	req := dataExplorerTestRequest(http.MethodPost, "/data/command", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
@@ -475,7 +493,7 @@ func TestDataExplorerCommandPublishesPatch(t *testing.T) {
 		if !ok {
 			t.Fatalf("patch missing dataExplorer: %#v", patch)
 		}
-		if uisignals.ValueOrZero(explorer.SelectedWorkspaceID) != "test" || uisignals.ValueOrZero(explorer.SelectedKey) != "semantic_view:olist.orders" || uisignals.ValueOrZero(explorer.Preview.Error) != "" {
+		if uisignals.ValueOrZero(explorer.SelectedWorkspaceID) != "test" || uisignals.ValueOrZero(explorer.SelectedKey) != "model_table:model_table:olist.orders" || uisignals.ValueOrZero(explorer.Preview.Error) != "" {
 			t.Fatalf("unexpected explorer patch: %#v", explorer)
 		}
 		block := explorer.Preview.Blocks["b"]
@@ -487,15 +505,15 @@ func TestDataExplorerCommandPublishesPatch(t *testing.T) {
 	}
 }
 
-func TestDataExplorerSemanticPreviewIgnoresInvalidSortColumn(t *testing.T) {
+func TestDataExplorerModelTablePreviewIgnoresInvalidSortColumn(t *testing.T) {
 	requests := []dataquery.Query{}
 	store := testStore(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), dataQueries: &requests}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
 	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 
-	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=test&object=semantic_view:olist.orders", nil)
-	command := dataExplorerCommandFromQuery("test", "semantic_view:olist.orders")
+	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=test&object=model_table:model_table:olist.orders", nil)
+	command := dataExplorerCommandFromQuery("test", "model_table:model_table:olist.orders")
 	command.Sort = uisignals.DataPreviewSortSignal{Column: uisignals.Pointer("order_count"), Direction: uisignals.Pointer("desc")}
 	_, explorer, err := server.globalDataExplorerState(req, command)
 	if err != nil {
@@ -505,24 +523,24 @@ func TestDataExplorerSemanticPreviewIgnoresInvalidSortColumn(t *testing.T) {
 		t.Fatalf("preview error = %q", uisignals.ValueOrZero(explorer.Preview.Error))
 	}
 	if len(requests) == 0 {
-		t.Fatal("semantic preview was not requested")
+		t.Fatal("model table preview was not requested")
 	}
 	for _, sort := range requests[len(requests)-1].Sort {
 		if sort.Field == "order_count" {
-			t.Fatalf("invalid semantic sort was forwarded to planner: %#v", requests[len(requests)-1].Sort)
+			t.Fatalf("invalid model table sort was forwarded to planner: %#v", requests[len(requests)-1].Sort)
 		}
 	}
 }
 
-func TestDataExplorerSemanticPreviewAcceptsExposedSortColumn(t *testing.T) {
+func TestDataExplorerModelTablePreviewAcceptsExposedSortColumn(t *testing.T) {
 	requests := []dataquery.Query{}
 	store := testStore(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), dataQueries: &requests}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
 	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 
-	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=test&object=semantic_view:olist.orders", nil)
-	command := dataExplorerCommandFromQuery("test", "semantic_view:olist.orders")
+	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=test&object=model_table:model_table:olist.orders", nil)
+	command := dataExplorerCommandFromQuery("test", "model_table:model_table:olist.orders")
 	command.Sort = uisignals.DataPreviewSortSignal{Column: uisignals.Pointer("status"), Direction: uisignals.Pointer("asc")}
 	_, explorer, err := server.globalDataExplorerState(req, command)
 	if err != nil {
@@ -532,10 +550,10 @@ func TestDataExplorerSemanticPreviewAcceptsExposedSortColumn(t *testing.T) {
 		t.Fatalf("preview error = %q", uisignals.ValueOrZero(explorer.Preview.Error))
 	}
 	if len(requests) == 0 || len(requests[len(requests)-1].Sort) != 1 {
-		t.Fatalf("semantic preview did not receive valid sort: %#v", requests)
+		t.Fatalf("model table preview did not receive valid sort: %#v", requests)
 	}
 	if got := requests[len(requests)-1].Sort[0]; got.Field != "status" || got.Direction != "asc" {
-		t.Fatalf("semantic sort = %#v", got)
+		t.Fatalf("model table sort = %#v", got)
 	}
 }
 
@@ -548,12 +566,12 @@ func TestDataExplorerCommandReusesPostedPreviewTotalsForScroll(t *testing.T) {
 	defer unsubscribe()
 
 	object := uisignals.DataExplorerObjectSignal{
-		Key:         "semantic_view:olist.orders",
+		Key:         "model_table:model_table:olist.orders",
 		WorkspaceID: "test",
-		Layer:       "semantic_view",
+		Layer:       "model_table",
 		ModelID:     uisignals.Pointer("olist"),
 		Table:       uisignals.Pointer("orders"),
-		Title:       "orders semantic view",
+		Title:       "orders",
 		Columns: uisignals.OptionalSlice([]uisignals.DataPreviewColumnSignal{
 			{Key: "order_id", Label: "Order ID", Type: uisignals.Pointer("string")},
 			{Key: "status", Label: "Status", Type: uisignals.Pointer("string")},
@@ -637,7 +655,7 @@ func TestDataExplorerCommandDoesNotPublishCanceledPreview(t *testing.T) {
 	updates, unsubscribe := server.runtime.broker.Subscribe("data-explorer:test-client")
 	defer unsubscribe()
 
-	body := strings.NewReader(`{"dataExplorerCommand":{"workspaceId":"test","objectKey":"semantic_view:olist.orders","block":"b","start":100,"count":100,"requestSeq":7,"resetVersion":2}}`)
+	body := strings.NewReader(`{"dataExplorerCommand":{"workspaceId":"test","objectKey":"model_table:model_table:olist.orders","block":"b","start":100,"count":100,"requestSeq":7,"resetVersion":2}}`)
 	req := dataExplorerTestRequest(http.MethodPost, "/data/command", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
@@ -663,12 +681,12 @@ func TestDataExplorerCommandColumnWidthsReuseCurrentPreview(t *testing.T) {
 	defer unsubscribe()
 
 	object := uisignals.DataExplorerObjectSignal{
-		Key:         "semantic_view:olist.orders",
+		Key:         "model_table:model_table:olist.orders",
 		WorkspaceID: "test",
-		Layer:       "semantic_view",
+		Layer:       "model_table",
 		ModelID:     uisignals.Pointer("olist"),
 		Table:       uisignals.Pointer("orders"),
-		Title:       "orders semantic view",
+		Title:       "orders",
 		Columns: uisignals.OptionalSlice([]uisignals.DataPreviewColumnSignal{
 			{Key: "order_id", Label: "Order ID", Type: uisignals.Pointer("string")},
 			{Key: "status", Label: "Status", Type: uisignals.Pointer("string")},
@@ -740,7 +758,7 @@ func TestDataExplorerBrowserCommandRequiresAndAcceptsCSRF(t *testing.T) {
 	updates, unsubscribe := server.runtime.broker.Subscribe("data-explorer:test-client")
 	defer unsubscribe()
 
-	commandBody := `{"dataExplorerCommand":{"workspaceId":"test","objectKey":"semantic_view:olist.orders","block":"b","start":100,"count":100,"requestSeq":7,"resetVersion":2,"sort":{"column":"status","direction":"asc"}}}`
+	commandBody := `{"dataExplorerCommand":{"workspaceId":"test","objectKey":"model_table:model_table:olist.orders","block":"b","start":100,"count":100,"requestSeq":7,"resetVersion":2,"sort":{"column":"status","direction":"asc"}}}`
 	forbiddenReq := dataExplorerTestRequest(http.MethodPost, "http://localhost:8150/data/command", strings.NewReader(commandBody))
 	forbiddenReq.Header.Set("Content-Type", "application/json")
 	forbiddenReq.Header.Set("Accept", "application/json")
@@ -752,7 +770,7 @@ func TestDataExplorerBrowserCommandRequiresAndAcceptsCSRF(t *testing.T) {
 		t.Fatalf("POST without CSRF status = %d, want %d body=%s", forbiddenRec.Code, http.StatusForbidden, forbiddenRec.Body.String())
 	}
 
-	getReq := dataExplorerTestRequest(http.MethodGet, "http://localhost:8150/data?workspace=test&object=semantic_view:olist.orders", nil)
+	getReq := dataExplorerTestRequest(http.MethodGet, "http://localhost:8150/data?workspace=test&object=model_table:model_table:olist.orders", nil)
 	getRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusOK {

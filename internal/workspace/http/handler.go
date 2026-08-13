@@ -41,6 +41,8 @@ type Handler struct {
 	RoleBindingCommands access.RoleBindingCommander
 	GrantCommands       access.GrantOperations
 	AccessCommands      ui.AccessCommandBindings
+	AgentBootstrap      func(*nethttp.Request, string) ui.DataExplorerAgentBootstrap
+	AgentCommands       ui.DataExplorerAgentCommandBindings
 	Layout              func(*nethttp.Request) webpage.Provider
 }
 

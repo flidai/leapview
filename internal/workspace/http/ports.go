@@ -13,6 +13,48 @@ type Metrics interface {
 	Catalog() navigation.Catalog
 	DataExplorerModel(modelID string) (DataExplorerModel, bool)
 	ExecuteDataPreview(ctx context.Context, request DataPreviewRequest) (DataPreviewResult, error)
+	ExecuteDataExplore(ctx context.Context, request DataExploreRequest) (DataExploreResult, error)
+}
+
+type DataExploreRequest struct {
+	WorkspaceID string
+	ModelID     string
+	DatasetID   string
+	Dimensions  []string
+	Measures    []string
+	Time        DataExploreTime
+	Filters     []DataExploreFilter
+	Sort        []DataExploreSort
+	Limit       int
+}
+
+type DataExploreTime struct {
+	Field string
+	Grain string
+	Alias string
+}
+
+type DataExploreFilter struct {
+	Field    string
+	Fact     string
+	Operator string
+	Values   []string
+}
+
+type DataExploreSort struct {
+	Field     string
+	Direction string
+}
+
+type DataExploreResult struct {
+	Columns      []string
+	Rows         []map[string]any
+	SQL          string
+	Plan         string
+	DurationMS   int64
+	RowsReturned int
+	Truncated    bool
+	Warnings     []string
 }
 
 type DataPreviewRequest struct {
@@ -37,8 +79,13 @@ type DataPreviewResult struct {
 }
 
 type DataExplorerModel struct {
-	Sources map[string]DataExplorerSource
-	Tables  map[string]DataExplorerTable
+	ID            string
+	Title         string
+	Description   string
+	Sources       map[string]DataExplorerSource
+	Tables        map[string]DataExplorerTable
+	Measures      map[string]DataExplorerMeasure
+	Relationships []DataExplorerRelationship
 }
 
 type DataExplorerSource struct {
@@ -47,21 +94,45 @@ type DataExplorerSource struct {
 }
 
 type DataExplorerTable struct {
-	Dimensions map[string]DataExplorerField
-	Columns    map[string]DataExplorerField
-	Schema     []DataExplorerColumn
+	Description string
+	Grain       string
+	Dimensions  map[string]DataExplorerField
+	Columns     map[string]DataExplorerField
+	Schema      []DataExplorerColumn
+}
+
+type DataExplorerMeasure struct {
+	Name        string
+	Label       string
+	Description string
+	Fact        string
+	Type        string
+	Hidden      bool
+}
+
+type DataExplorerRelationship struct {
+	ID          string
+	Description string
+	From        string
+	To          string
+	Cardinality string
 }
 
 type DataExplorerField struct {
-	Name  string
-	Label string
-	Type  string
+	Name        string
+	Label       string
+	Type        string
+	Description string
 }
 
 type DataExplorerColumn struct {
 	Name         string
 	PhysicalType string
 	Ordinal      int
+	Nullable     *bool
+	Default      string
+	Comment      string
+	PrimaryKey   bool
 }
 
 type AssetCatalogReader interface {

@@ -497,6 +497,8 @@ model AgentContextSignal {
   `pageId`: string;
   `pageTitle`: string;
   `modelId`: string;
+  `datasetId`?: string;
+  `exploration`?: DataExploreAgentContextSignal;
   `generation`: int64;
   `filters`: DashboardFilterState;
   `referenceLimit`: int32;
@@ -1105,6 +1107,8 @@ model DashboardStatus {
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExplorerCommand {
+  `explore`?: DataExploreCommand;
+  `mode`?: "browse" | "explore";
   `block`?: string;
   `columnWidths`?: Record<float64>;
   `count`: int64;
@@ -1119,6 +1123,112 @@ model DataExplorerCommand {
   `workspaceId`?: string;
 }
 
+model DataExploreAgentContextSignal {
+  `dimensions`: string[];
+  `filters`: DataExploreFilterSignal[];
+  `limit`: int64;
+  `measures`: string[];
+  `sort`: DataExploreSortSignal[];
+  `time`?: DataExploreTimeSignal;
+}
+
+@apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
+model DataExploreCommand {
+  `columnWidths`?: Record<float64>;
+  `datasetId`?: string;
+  `dimensions`: string[];
+  `filters`: DataExploreFilterSignal[];
+  `limit`: int64;
+  `measures`: string[];
+  `modelId`?: string;
+  `requestSeq`: int64;
+  `resetVersion`: int64;
+  `sort`: DataExploreSortSignal[];
+  `time`?: DataExploreTimeSignal;
+  `workspaceId`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExploreDatasetSignal {
+  `description`?: string;
+  `fieldCount`: int64;
+  `grain`?: string;
+  `id`: string;
+  `title`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExploreFieldSignal {
+  `compatible`: boolean;
+  `compatibilityReason`?: string;
+  `description`?: string;
+  `fact`?: string;
+  `id`: string;
+  `kind`: "dimension" | "measure";
+  `label`: string;
+  `modelTable`: string;
+  `relationshipPath`?: string[];
+  `selected`: boolean;
+  `type`?: string;
+}
+
+model DataExploreFilterSignal {
+  `fact`?: string;
+  `field`: string;
+  `operator`: string;
+  `values`: string[];
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExploreModelSignal {
+  `datasets`: DataExploreDatasetSignal[];
+  `description`?: string;
+  `id`: string;
+  `title`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExploreResultSignal {
+  `columns`: DataPreviewColumnSignal[];
+  `durationMs`: int64;
+  `error`?: string;
+  `plan`?: string;
+  `requestSeq`: int64;
+  `rows`: Record<unknown>[];
+  `rowsReturned`: int64;
+  `sql`?: string;
+  `truncated`: boolean;
+  `warnings`: string[];
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExploreSignal {
+  `command`: DataExploreCommand;
+  `datasets`: DataExploreDatasetSignal[];
+  `fields`: DataExploreFieldSignal[];
+  `models`: DataExploreModelSignal[];
+  `result`: DataExploreResultSignal;
+  `selectedDataset`?: DataExploreDatasetSignal;
+  `selectedModel`?: DataExploreModelSignal;
+}
+
+model DataExploreSortSignal {
+  `direction`: "asc" | "desc";
+  `field`: string;
+}
+
+model DataExploreTimeSignal {
+  `alias`?: string;
+  `field`: string;
+  `grain`: string;
+}
+
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExplorerObjectSignal {
@@ -1127,6 +1237,7 @@ model DataExplorerObjectSignal {
   `columns`?: DataPreviewColumnSignal[];
   `description`?: string;
   `detailHref`?: string;
+  `grain`?: string;
   `key`: string;
   `layer`: string;
   `modelId`?: string;
@@ -1141,6 +1252,14 @@ model DataExplorerObjectSignal {
 @apigen.contract(#{ kind: "ui-envelope", tags: #["data", "envelope"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "data" })
 model DataExplorerPageEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "agent" })
+  `agent`: ChatSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "agentContext" })
+  `agentContext`: AgentContextSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "agentReferenceSearch" })
+  `agentReferenceSearch`: AgentReferenceSearchSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "merge", `x-leapview-signal-key`: "agentVisuals" })
+  `agentVisuals`: Record<LeapViewVisualization.VisualizationEnvelope>;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
   `chrome`: ChromeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "dataExplorer" })
@@ -1170,6 +1289,7 @@ model DataExplorerPageSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExplorerSignal {
   `command`: DataExplorerCommand;
+  `explore`: DataExploreSignal;
   `objects`: DataExplorerObjectSignal[];
   `preview`: DataPreviewSignal;
   `selectedKey`?: string;
@@ -1201,8 +1321,12 @@ model DataPreviewBlockSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataPreviewColumnSignal {
+  `defaultValue`?: string;
+  `description`?: string;
   `key`: string;
   `label`: string;
+  `nullable`?: boolean;
+  `primaryKey`?: boolean;
   `type`?: string;
 }
 

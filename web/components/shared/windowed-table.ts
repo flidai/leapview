@@ -168,6 +168,7 @@ class WindowedTable extends LitElement {
   @state() private localColumnWidths: Record<string, number> = {}
   @state() private resizeGuide = -1
   private viewportHeight = 0
+  private viewportWidth = 0
   private lastResetVersion = -1
   private lastTableKey = ''
   private shouldResetScroll = false
@@ -232,14 +233,16 @@ class WindowedTable extends LitElement {
     }
 
     .options summary {
-      display: grid;
-      width: var(--lv-button-height-sm);
+      display: flex;
+      width: auto;
       height: var(--lv-button-height-sm);
-      place-items: center;
+      align-items: center;
+      gap: var(--base-size-6);
       border: var(--lv-border-default);
       border-radius: var(--lv-button-radius);
       background: var(--lv-button-bg-rest);
       color: var(--lv-button-fg-rest);
+      padding: 0 var(--base-size-8);
       cursor: pointer;
       list-style: none;
     }
@@ -437,11 +440,21 @@ class WindowedTable extends LitElement {
       font-variant-numeric: tabular-nums;
     }
 
-    code {
+    .cell code,
+    .cell > span:not(.muted):not(.skeleton) {
+      display: block;
+      min-width: 0;
+      width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font: var(--lv-type-code-inline);
+      font: var(--lv-type-body);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .cell.right code,
+    .cell.right > span:not(.muted):not(.skeleton) {
+      text-align: right;
     }
 
     .muted,
@@ -513,8 +526,13 @@ class WindowedTable extends LitElement {
   willUpdate(): void {
     const table = normalizeTable(this.table)
     if (this.lastResetVersion !== table.resetVersion || this.lastTableKey !== table.tableKey) {
+      const tableChanged = this.lastTableKey !== table.tableKey
       this.lastResetVersion = table.resetVersion
       this.lastTableKey = table.tableKey
+      if (tableChanged) {
+        this.localVisibleColumns = []
+        this.localColumnWidths = {}
+      }
       this.blockCache = emptyBlocks(table.chunkSize, table.sort, table.resetVersion)
       this.shouldResetScroll = true
       this.expectedBlocks.clear()
@@ -536,8 +554,8 @@ class WindowedTable extends LitElement {
   render() {
     const table = normalizeTable(this.table)
     const columns = this.visibleColumns(table)
-    const widths = columns.map((column) => this.columnWidth(table, column))
-    const tableWidth = Math.max(760, widths.reduce((sum, width) => sum + width, 0))
+    const widths = this.displayColumnWidths(table, columns)
+    const tableWidth = Math.max(760, this.viewportWidth, widths.reduce((sum, width) => sum + width, 0))
     const visibleRows = this.visibleRows(table)
     const rowRange = this.rowRangeText(table)
     const loading = Boolean(table.loadingBlock) || this.visibleLoading(table)
@@ -547,7 +565,9 @@ class WindowedTable extends LitElement {
         <div class="toolbar">
           <span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>
           <details class="options">
-            <summary title="Columns" aria-label="Columns">${lucideIcon(Columns3, { size: 15 })}</summary>
+            <summary title="Choose visible columns" aria-label="Choose visible columns">
+              ${lucideIcon(Columns3, { size: 15 })}<span>Columns</span><span aria-hidden="true">${columns.length}/${table.columns.length}</span>
+            </summary>
             <div class="menu">
               ${table.columns.map((column) => {
                 const checked = columns.some((visible) => visible.key === column.key)
@@ -615,7 +635,7 @@ class WindowedTable extends LitElement {
         </div>
         <div class="footer">
           <span>${table.totalLabel || `${table.totalRows.toLocaleString()} rows`}</span>
-          <span>${columns.length} of ${table.columns.length} columns</span>
+          <span>${columns.length} visible · ${table.columns.length} total columns</span>
         </div>
       </section>
     `
@@ -625,8 +645,10 @@ class WindowedTable extends LitElement {
     const viewport = this.viewportRef.value
     if (!viewport || this.resizeObserver) return
     this.viewportHeight = viewport.clientHeight
+    this.viewportWidth = viewport.clientWidth
     this.resizeObserver = new ResizeObserver(() => {
       this.viewportHeight = viewport.clientHeight
+      this.viewportWidth = viewport.clientWidth
       this.requestUpdate()
       this.scheduleEnsureBlocksForScroll()
     })
@@ -824,6 +846,16 @@ class WindowedTable extends LitElement {
     return Math.max(this.minColumnWidth(column), defaultColumnWidth(column))
   }
 
+  private displayColumnWidths(table: Required<WindowedTablePayload>, columns: WindowedTableColumn[]): number[] {
+    const widths = columns.map((column) => this.columnWidth(table, column))
+    if (!widths.length) return widths
+    const availableWidth = Math.max(760, this.viewportWidth)
+    const currentWidth = widths.reduce((sum, width) => sum + width, 0)
+    if (currentWidth >= availableWidth) return widths
+    const extraPerColumn = (availableWidth - currentWidth) / widths.length
+    return widths.map((width) => Math.floor(width + extraPerColumn))
+  }
+
   private minColumnWidth(column: WindowedTableColumn): number {
     const configured = Number(column.minWidth)
     if (Number.isFinite(configured) && configured > 0) return configured
@@ -850,7 +882,7 @@ class WindowedTable extends LitElement {
     this.resizeDrag = {
       columnKey: column.key,
       startClientX: clientX,
-      startSize: this.columnWidth(table, column),
+      startSize: Math.round((event.currentTarget as HTMLElement).parentElement?.getBoundingClientRect().width ?? this.columnWidth(table, column)),
       minSize: this.minColumnWidth(column),
     }
     this.scheduleResize(event)

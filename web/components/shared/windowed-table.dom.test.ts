@@ -232,7 +232,7 @@ test('windowed table resizes columns and emits width state', async () => {
       }
     })
 
-    expect(state.firstWidthBefore).toBe(180)
+    expect(state.firstWidthBefore).toBeGreaterThan(180)
     expect(state.firstWidthAfter).toBeGreaterThanOrEqual(420)
     expect(state.planeWidthAfter).toBeGreaterThan(state.planeWidthBefore)
     expect(state.widthEvents.at(-1)?.columnWidths?.id).toBeGreaterThanOrEqual(420)
