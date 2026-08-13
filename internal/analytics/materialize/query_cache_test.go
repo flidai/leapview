@@ -348,6 +348,7 @@ func TestDashboardResultCacheEligibility(t *testing.T) {
 		dataquery.OperationDashboardFilterOptions,
 		dataquery.OperationDashboardSpatial,
 		dataquery.OperationDashboardSpatialTile,
+		dataquery.OperationDashboardSpatialTileBudget,
 		dataquery.OperationDashboardSpatialMetadata,
 	} {
 		request := dataquery.Query{Surface: dataquery.SurfaceDashboard, Operation: operation}
@@ -363,6 +364,33 @@ func TestDashboardResultCacheEligibility(t *testing.T) {
 		if dashboardQueryResultCacheable(request) {
 			t.Errorf("non-dashboard request was cacheable: %#v", request)
 		}
+	}
+}
+
+func TestQueryResultCacheKeysSpatialTileBudgetZoom(t *testing.T) {
+	cache := newQueryResultCache(256, "snapshot=1")
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTileBudget,
+		ModelID: "sales", Kind: dataquery.KindSemanticSpatialTileBudget, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}},
+		SpatialTileBudget: &dataquery.SpatialTileBudget{
+			Latitude: dataquery.Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: dataquery.Field{Field: "orders.longitude", Alias: "longitude"},
+			Zoom: 10, Buffer: 768, FeatureCap: 5_000, MaximumBytes: 512 * 1024,
+		},
+	}
+	baseline, _, err := cache.cacheKey(request)
+	require.NoError(t, err)
+	if !strings.Contains(baseline, `"SpatialTileGenerationVersion":5`) {
+		t.Fatalf("spatial tile budget cache key has no generation version: %s", baseline)
+	}
+	variant := request
+	budget := *request.SpatialTileBudget
+	budget.Zoom++
+	variant.SpatialTileBudget = &budget
+	key, _, err := cache.cacheKey(variant)
+	require.NoError(t, err)
+	if key == baseline {
+		t.Fatal("spatial tile budget zoom reused the baseline key")
 	}
 }
 

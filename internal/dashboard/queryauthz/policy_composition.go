@@ -252,7 +252,7 @@ func selectedColumnMasks(request dataquery.Query, masks []columnMaskPolicy) ([]d
 	resolved := map[string]*maskComposition{}
 	for _, mask := range masks {
 		fields := selectedMaskedFields(request, mask)
-		if request.Kind == dataquery.KindSemanticAggregate || request.Kind == dataquery.KindSemanticSpatial || request.Kind == dataquery.KindSemanticSpatialTile || request.Kind == dataquery.KindSemanticSpatialMetadata {
+		if request.Kind == dataquery.KindSemanticAggregate || request.Kind == dataquery.KindSemanticSpatial || request.Kind == dataquery.KindSemanticSpatialTile || request.Kind == dataquery.KindSemanticSpatialTileBudget || request.Kind == dataquery.KindSemanticSpatialMetadata {
 			fields = append(fields, mask.Fields...)
 		}
 		for _, field := range uniqueStrings(fields) {

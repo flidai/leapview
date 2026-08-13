@@ -238,6 +238,57 @@ func TestSpatialRawTileFallsBackWithoutTruncating(t *testing.T) {
 	}
 }
 
+func TestSpatialTileBudgetMeasuresRevisionWideEncodedBytes(t *testing.T) {
+	db := spatialScaleFixture(t, 1_000)
+	defer db.Close()
+	for _, statement := range []string{"INSTALL spatial FROM core", "LOAD spatial"} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Skipf("DuckDB spatial extension unavailable: %v", err)
+		}
+	}
+	request := SpatialTileBudgetRequest{
+		Table:      "orders",
+		Dimensions: []Field{{Field: "orders.order_id", Alias: "order_id"}, {Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}},
+		Measures:   []Field{{Field: "revenue", Alias: "revenue"}}, Identity: []Field{{Field: "orders.order_id", Alias: "order_id"}},
+		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
+		Zoom: 0, FeatureCap: 500, MaximumBytes: 512 * 1024, Buffer: 768,
+	}
+	plan, err := NewPlanner(testModel()).PlanSpatialTileBudget(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.SQL, "MAX(OCTET_LENGTH(e.mvt))") || !strings.Contains(plan.SQL, SpatialTileMaximumBytesColumn) {
+		t.Fatalf("budget plan does not measure encoded child bytes:\n%s", plan.SQL)
+	}
+	var maximumFeatures, maximumBytes int
+	if err := db.QueryRow(plan.SQL, plan.Args...).Scan(&maximumFeatures, &maximumBytes); err != nil {
+		t.Fatalf("execute feature-overflow budget plan: %v\n%s", err, plan.SQL)
+	}
+	if maximumFeatures != 1_000 || maximumBytes != 0 {
+		t.Fatalf("feature-overflow budget = %d features, %d bytes; want 1000 features and skipped encoding", maximumFeatures, maximumBytes)
+	}
+	request.FeatureCap = 2_000
+	plan, err = NewPlanner(testModel()).PlanSpatialTileBudget(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(plan.SQL, plan.Args...).Scan(&maximumFeatures, &maximumBytes); err != nil {
+		t.Fatalf("execute encoded budget plan: %v\n%s", err, plan.SQL)
+	}
+	if maximumFeatures != 1_000 || maximumBytes <= 0 {
+		t.Fatalf("encoded budget = %d features, %d bytes", maximumFeatures, maximumBytes)
+	}
+	if _, err := db.Exec("UPDATE model.orders SET order_id = repeat('x', 1000) || order_id"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(plan.SQL, plan.Args...).Scan(&maximumFeatures, &maximumBytes); err != nil {
+		t.Fatalf("execute encoded byte-overflow plan: %v\n%s", err, plan.SQL)
+	}
+	if maximumFeatures > request.FeatureCap || maximumBytes <= 512*1024 {
+		t.Fatalf("forced byte overflow = %d features, %d bytes; want a feature-safe tile above 512 KiB", maximumFeatures, maximumBytes)
+	}
+}
+
 func BenchmarkSpatialInitialViewportMillionRowsMVT(b *testing.B) {
 	db := spatialMVTScaleFixture(b, 1_000_000)
 	defer db.Close()

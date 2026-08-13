@@ -390,7 +390,7 @@ func (m Metrics) authorizeDataQuery(ctx context.Context, principalID string, pri
 
 func (m Metrics) resolvedDependencyObjects(request dataquery.Query, includePublicInteractions bool) ([]access.ObjectRef, []access.ObjectRef, error) {
 	switch request.Kind {
-	case dataquery.KindSemanticAggregate, dataquery.KindSemanticSpatial, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialMetadata:
+	case dataquery.KindSemanticAggregate, dataquery.KindSemanticSpatial, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget, dataquery.KindSemanticSpatialMetadata:
 	case dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution:
 		if !includePublicInteractions {
 			return nil, nil, nil

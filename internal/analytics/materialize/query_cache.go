@@ -178,7 +178,7 @@ func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Qu
 
 func (c *queryResultCache) cacheKey(request dataquery.Query) (string, uint64, error) {
 	spatialTileGenerationVersion := 0
-	if request.SpatialTile != nil {
+	if request.SpatialTile != nil || request.SpatialTileBudget != nil {
 		// Bump whenever MVT encoding or promoted feature identity changes so an
 		// active cache can never serve bytes from an older tile contract.
 		spatialTileGenerationVersion = 5
@@ -206,6 +206,7 @@ func (c *queryResultCache) cacheKey(request dataquery.Query) (string, uint64, er
 		IncludeTotal:                 request.IncludeTotal,
 		Spatial:                      request.Spatial,
 		SpatialTile:                  request.SpatialTile,
+		SpatialTileBudget:            request.SpatialTileBudget,
 		SpatialTileGenerationVersion: spatialTileGenerationVersion,
 		SpatialMetadata:              request.SpatialMetadata,
 	})
@@ -247,6 +248,7 @@ type queryResultCacheKey struct {
 	IncludeTotal                 bool
 	Spatial                      *dataquery.SpatialWindow
 	SpatialTile                  *dataquery.SpatialTile
+	SpatialTileBudget            *dataquery.SpatialTileBudget
 	SpatialTileGenerationVersion int
 	SpatialMetadata              *dataquery.SpatialMetadata
 }

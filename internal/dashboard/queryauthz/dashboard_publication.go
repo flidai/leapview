@@ -50,12 +50,15 @@ func validateDashboardPublicationQuery(capability DashboardPublicationCapability
 		dataquery.OperationDashboardCount,
 		dataquery.OperationDashboardHistogram,
 		dataquery.OperationDashboardDistribution,
-		dataquery.OperationDashboardFilterOptions:
+		dataquery.OperationDashboardFilterOptions,
+		dataquery.OperationDashboardSpatialTile,
+		dataquery.OperationDashboardSpatialTileBudget,
+		dataquery.OperationDashboardSpatialMetadata:
 	default:
 		return fmt.Errorf("public query operation %q is not allowed", request.Operation)
 	}
 	switch request.Kind {
-	case dataquery.KindSemanticAggregate, dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution, dataquery.KindSemanticSpatial, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialMetadata:
+	case dataquery.KindSemanticAggregate, dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution, dataquery.KindSemanticSpatial, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget, dataquery.KindSemanticSpatialMetadata:
 	default:
 		return fmt.Errorf("public query kind %q is not allowed", request.Kind)
 	}

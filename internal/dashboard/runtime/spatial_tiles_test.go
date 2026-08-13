@@ -132,3 +132,15 @@ func TestSpatialTilePrecisionIsRevisionWideAtEachZoom(t *testing.T) {
 		}
 	}
 }
+
+func TestSpatialRawZoomRequiresBothGlobalBudgets(t *testing.T) {
+	if !spatialRawZoomFits(5_000, 512*1024, 5_000, 512*1024) {
+		t.Fatal("raw zoom rejected exact feature and byte budgets")
+	}
+	if spatialRawZoomFits(5_001, 1, 5_000, 512*1024) {
+		t.Fatal("raw zoom accepted feature overflow")
+	}
+	if spatialRawZoomFits(1, 512*1024+1, 5_000, 512*1024) {
+		t.Fatal("raw zoom accepted encoded-byte overflow")
+	}
+}

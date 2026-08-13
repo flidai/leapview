@@ -134,6 +134,22 @@ type SpatialTileRawRequest struct {
 	Buffer       int
 }
 
+type SpatialTileBudgetRequest struct {
+	Table        string
+	Dimensions   []Field
+	Measures     []Field
+	Identity     []Field
+	Filters      []Filter
+	ColumnMasks  []ColumnMask
+	Time         Time
+	Latitude     Field
+	Longitude    Field
+	Zoom         int
+	FeatureCap   int
+	MaximumBytes int64
+	Buffer       int
+}
+
 type SpatialMetadataRequest struct {
 	Table          string
 	Measures       []Field

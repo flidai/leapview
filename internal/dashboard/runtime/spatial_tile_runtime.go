@@ -8,6 +8,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
@@ -47,6 +48,10 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	effectiveRawMinimumZoom, ok := spatialInteger(row["__spatial_raw_minimum_zoom"])
 	if !ok || effectiveRawMinimumZoom < int64(spatial.Tiles.RawMinimumZoom) || effectiveRawMinimumZoom > int64(spatial.Tiles.MaximumZoom)+1 {
 		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("spatial metadata for %q has invalid raw precision transition", visualID)
+	}
+	effectiveRawMinimumZoom, err = s.spatialRawMinimumZoomByByteBudget(ctx, runtime, definition, queryFilters, int(effectiveRawMinimumZoom))
+	if err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
 	}
 	cardinality, ok := spatialInteger(row["__spatial_cardinality"])
 	if !ok || cardinality < 0 {
@@ -170,19 +175,7 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 	if err != nil {
 		return SpatialTileResult{}, err
 	}
-	fields := fieldBindingsToDataFields(spatial.Dimensions)
-	if spatial.Series != nil {
-		fields = append(fields, dataquery.Field{Field: spatial.Series.FieldID, Alias: spatial.Series.Alias})
-	}
-	identity := make([]dataquery.Field, 0, len(definition.Query.Identity))
-	for _, fieldID := range definition.Query.Identity {
-		for _, binding := range append(append([]visualizationdefinition.FieldBinding(nil), spatial.Dimensions...), spatial.Measures...) {
-			if binding.FieldID == fieldID {
-				identity = append(identity, dataquery.Field{Field: binding.FieldID, Alias: binding.Alias})
-				break
-			}
-		}
-	}
+	fields, identity := spatialTileFieldsAndIdentity(definition)
 	metatileSize := int(spatial.Tiles.MetatileSize)
 	metatileX, metatileY := x/metatileSize*metatileSize, y/metatileSize*metatileSize
 	buffer := int(spatial.Tiles.CellRadius) * 16
@@ -222,6 +215,72 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 		return SpatialTileResult{}, fmt.Errorf("encoded tile exceeds %d-byte budget", spatial.Tiles.MaximumBytes)
 	}
 	return SpatialTileResult{Bytes: tile, Features: features, Precision: string(precision), CacheOutcome: result.CacheOutcome}, nil
+}
+
+func (s *VisualizationDataService) spatialRawMinimumZoomByByteBudget(ctx context.Context, runtime *modelRuntime, definition visualizationdefinition.Definition, queryFilters []reportdef.QueryFilter, minimumZoom int) (int64, error) {
+	spatial := definition.Query.Spatial
+	if spatial == nil || spatial.Tiles == nil {
+		return 0, fmt.Errorf("visual has no compiled spatial tiles")
+	}
+	maximumZoom := int(spatial.Tiles.MaximumZoom)
+	if minimumZoom > maximumZoom {
+		return int64(minimumZoom), nil
+	}
+	fields, identity := spatialTileFieldsAndIdentity(definition)
+	buffer := int(spatial.Tiles.CellRadius) * 16
+	for zoom := minimumZoom; zoom <= maximumZoom; zoom++ {
+		query := dataquery.Query{
+			Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTileBudget,
+			ModelID: definition.Query.ModelID, Kind: dataquery.KindSemanticSpatialTileBudget,
+			Fields: fields, Measures: fieldBindingsToDataFields(spatial.Measures), Filters: reportFiltersToDataFilters(queryFilters),
+			SpatialTileBudget: &dataquery.SpatialTileBudget{
+				Latitude: dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias}, Longitude: dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
+				Identity: identity, Zoom: zoom, Buffer: buffer, FeatureCap: int(spatial.Tiles.FeatureCap), MaximumBytes: spatial.Tiles.MaximumBytes,
+			},
+		}
+		if spatial.Time != nil {
+			query.Time = dataquery.Time{Field: spatial.Time.FieldID, Alias: spatial.Time.Alias, Grain: spatial.Time.Grain}
+		}
+		result, err := runtime.data.ExecuteDataQuery(ctx, query)
+		if err != nil {
+			return 0, fmt.Errorf("probe raw spatial tile budget at zoom %d: %w", zoom, err)
+		}
+		if len(result.Rows) != 1 {
+			return 0, fmt.Errorf("raw spatial tile budget at zoom %d returned %d rows, want one", zoom, len(result.Rows))
+		}
+		maximumFeatures, featuresOK := spatialInteger(result.Rows[0]["__spatial_tile_maximum_features"])
+		maximumBytes, bytesOK := spatialInteger(result.Rows[0]["__spatial_tile_maximum_bytes"])
+		if !featuresOK || !bytesOK || maximumFeatures < 0 || maximumBytes < 0 {
+			return 0, fmt.Errorf("raw spatial tile budget at zoom %d returned invalid maxima", zoom)
+		}
+		if spatialRawZoomFits(maximumFeatures, maximumBytes, spatial.Tiles.FeatureCap, spatial.Tiles.MaximumBytes) {
+			return int64(zoom), nil
+		}
+	}
+	return int64(maximumZoom + 1), nil
+}
+
+func spatialRawZoomFits(maximumFeatures, maximumBytes, featureCap, maximumTileBytes int64) bool {
+	return maximumFeatures <= featureCap && maximumBytes <= maximumTileBytes
+}
+
+func spatialTileFieldsAndIdentity(definition visualizationdefinition.Definition) ([]dataquery.Field, []dataquery.Field) {
+	spatial := definition.Query.Spatial
+	fields := fieldBindingsToDataFields(spatial.Dimensions)
+	if spatial.Series != nil {
+		fields = append(fields, dataquery.Field{Field: spatial.Series.FieldID, Alias: spatial.Series.Alias})
+	}
+	identity := make([]dataquery.Field, 0, len(definition.Query.Identity))
+	bindings := append(append([]visualizationdefinition.FieldBinding(nil), spatial.Dimensions...), spatial.Measures...)
+	for _, fieldID := range definition.Query.Identity {
+		for _, binding := range bindings {
+			if binding.FieldID == fieldID {
+				identity = append(identity, dataquery.Field{Field: binding.FieldID, Alias: binding.Alias})
+				break
+			}
+		}
+	}
+	return fields, identity
 }
 
 func spatialAggregateTargetZoom(zoom, rawMinimumZoom, maximumZoom int) int {

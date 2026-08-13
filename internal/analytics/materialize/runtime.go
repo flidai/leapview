@@ -561,6 +561,7 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 		dataquery.OperationDashboardFilterOptions,
 		dataquery.OperationDashboardSpatial,
 		dataquery.OperationDashboardSpatialTile,
+		dataquery.OperationDashboardSpatialTileBudget,
 		dataquery.OperationDashboardSpatialMetadata:
 		return true
 	default:

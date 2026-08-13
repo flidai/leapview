@@ -223,6 +223,19 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 				Zoom: tile.Zoom, TargetZoom: tile.TargetZoom, MetatileX: tile.MetatileX, MetatileY: tile.MetatileY, MetatileSize: tile.MetatileSize, CellPixels: tile.CellPixels, Buffer: tile.Buffer,
 			})
 		}
+	case dataquery.KindSemanticSpatialTileBudget:
+		if request.SpatialTileBudget == nil {
+			err = fmt.Errorf("semantic spatial tile budget query requires a budget probe")
+			break
+		}
+		budget := request.SpatialTileBudget
+		planned.plan, err = planner.PlanSpatialTileBudget(semanticquery.SpatialTileBudgetRequest{
+			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measures: dataQueryFields(request.Measures), Identity: dataQueryFields(budget.Identity),
+			Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+			Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+			Latitude: semanticquery.Field{Field: budget.Latitude.Field, Alias: budget.Latitude.Alias}, Longitude: semanticquery.Field{Field: budget.Longitude.Field, Alias: budget.Longitude.Alias},
+			Zoom: budget.Zoom, FeatureCap: budget.FeatureCap, MaximumBytes: budget.MaximumBytes, Buffer: budget.Buffer,
+		})
 	case dataquery.KindSemanticSpatialMetadata:
 		if request.SpatialMetadata == nil {
 			err = fmt.Errorf("semantic spatial metadata query requires coordinates")
