@@ -12,7 +12,6 @@ import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggr
 import { clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, updateSelectionSources } from './maplibre/interactions'
 import { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
 import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
-import { nextSpatialRequestSequence, spatialWindowAlreadyCurrent, spatialWindowRequest, type MapSpatialWindowRequest } from './maplibre/spatial'
 import { MapSpatialSelectionControl } from './maplibre/spatial-selection-control'
 import { coordinateReferenceGrid, fitMapToGeographicData, fitMapToSpatialExtent, resetMapToHome, type MapHomeCamera } from './maplibre/viewport'
 
@@ -24,7 +23,6 @@ export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights,
 export { clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, updateSelectionSources } from './maplibre/interactions'
 export { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries } from './maplibre/overlays'
 export { installWebGLRecovery, removeRendererFrame, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
-export { nextSpatialRequestSequence, spatialWindowAlreadyCurrent, spatialWindowRequest, type MapSpatialWindowRequest } from './maplibre/spatial'
 export { coordinateReferenceGrid, fitMapToGeographicData, resetMapToHome } from './maplibre/viewport'
 
 export function vectorTileTemplateURL(template: string, base: string): string {
@@ -132,9 +130,6 @@ class MapLibreHandle implements RendererHandle {
   private homeCamera?: { center: [number, number]; zoom: number; bearing: number; pitch: number }
   private viewportInitialized = false
   private updateQueue: Promise<void> = Promise.resolve()
-  private spatialRequestSeq = 0
-  private spatialRequestTimer?: number
-  private lastSpatialRequest?: { key: string; at: number }
   private lastBasemapThemeKey = ''
   private disposed = false
   private readonly disposeWebGLRecovery: () => void
@@ -279,7 +274,6 @@ class MapLibreHandle implements RendererHandle {
     this.map.off('error', this.handleMapError)
     this.map.off('sourcedata', this.handleSourceData)
     this.disposeWebGLRecovery()
-    if (this.spatialRequestTimer !== undefined) window.clearTimeout(this.spatialRequestTimer)
     this.selectionControl?.dispose()
     this.spatialSelectionControl?.dispose()
     if (this.navigationControl) this.map.removeControl(this.navigationControl)
@@ -630,30 +624,9 @@ class MapLibreHandle implements RendererHandle {
   }
 
   private readonly handleMoveEnd = () => {
-		if (!this.envelope) return
-		if (this.envelope.dataState.kind === 'spatial_tiled') {
-			this.syncTiledPrecisionVisibility()
-			this.updateAccessibleTiledFeatures(this.envelope)
-			return
-		}
-		if (this.envelope.dataState.kind !== 'spatial_windowed' || !this.envelope.dataState.window) return
-    if (this.spatialRequestTimer !== undefined) window.clearTimeout(this.spatialRequestTimer)
-    this.spatialRequestTimer = window.setTimeout(() => {
-      this.spatialRequestTimer = undefined
-      if (!this.envelope || this.envelope.dataState.kind !== 'spatial_windowed' || !this.envelope.dataState.window || this.disposed) return
-      const bounds = this.map.getBounds()
-      const requestSeq = nextSpatialRequestSequence(this.envelope, this.spatialRequestSeq)
-      const request = spatialWindowRequest(this.envelope, {
-        west: bounds.getWest(), south: bounds.getSouth(), east: bounds.getEast(), north: bounds.getNorth(),
-      }, this.map.getZoom(), this.map.getCanvas().clientWidth, this.map.getCanvas().clientHeight, requestSeq)
-      if (!request || spatialWindowAlreadyCurrent(this.envelope, request)) return
-      const key = `${request.resetVersion}:${request.windowID}`
-      const now = performance.now()
-      if (this.lastSpatialRequest?.key === key && now - this.lastSpatialRequest.at < 500) return
-      this.spatialRequestSeq = requestSeq
-      this.lastSpatialRequest = { key, at: now }
-      this.container.dispatchEvent(new CustomEvent('lv-visual-spatial-window-change', { bubbles: true, composed: true, detail: request }))
-    }, 120)
+		if (!this.envelope || this.envelope.dataState.kind !== 'spatial_tiled') return
+		this.syncTiledPrecisionVisibility()
+		this.updateAccessibleTiledFeatures(this.envelope)
   }
 
   private readonly handleZoom = () => { this.syncTiledPrecisionVisibility() }

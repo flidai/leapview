@@ -22,12 +22,14 @@ type spatialTileRevision struct {
 	VisualID    string
 	PublicID    string
 	PrincipalID string
+	StreamID    string
 	Filters     dashboard.Filters
 	// RawMinimumZoom is computed once from the complete governed coordinate
 	// grain. It makes precision revision-wide instead of tile-local.
-	RawMinimumZoom int
-	CreatedAt      time.Time
-	ExpiresAt      time.Time
+	RawMinimumZoom         int
+	AuthoredRawMinimumZoom int
+	CreatedAt              time.Time
+	ExpiresAt              time.Time
 }
 
 type spatialTilePublicationContextKey struct{}
@@ -66,7 +68,7 @@ func (r *spatialTileRegistry) register(entry spatialTileRevision) (string, error
 	defer r.mu.Unlock()
 	now := time.Now()
 	for existingToken, existing := range r.entries {
-		if existing.DashboardID == entry.DashboardID && existing.PageID == entry.PageID && existing.VisualID == entry.VisualID && existing.PublicID == entry.PublicID && existing.PrincipalID == entry.PrincipalID && existing.ExpiresAt.IsZero() {
+		if existing.DashboardID == entry.DashboardID && existing.PageID == entry.PageID && existing.VisualID == entry.VisualID && existing.PublicID == entry.PublicID && existing.PrincipalID == entry.PrincipalID && existing.StreamID == entry.StreamID && existing.ExpiresAt.IsZero() {
 			existing.ExpiresAt = now.Add(replacedSpatialTileRevisionGrace)
 			r.entries[existingToken] = existing
 		}
@@ -80,6 +82,21 @@ func (r *spatialTileRegistry) register(entry spatialTileRevision) (string, error
 	r.entries[token] = entry
 	r.order = append(r.order, token)
 	return token, nil
+}
+
+func (r *spatialTileRegistry) expireStream(streamID string) {
+	if r == nil || streamID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	for token, entry := range r.entries {
+		if entry.StreamID == streamID && entry.ExpiresAt.IsZero() {
+			entry.ExpiresAt = now.Add(replacedSpatialTileRevisionGrace)
+			r.entries[token] = entry
+		}
+	}
 }
 
 func (r *spatialTileRegistry) resolve(token, dashboardID, visualID, publicID, principalID string) (spatialTileRevision, error) {
@@ -112,6 +129,9 @@ type SpatialTileResult struct {
 	Features     int
 	Precision    string
 	CacheOutcome string
+	QueryMS      int64
+	EncodingMS   int64
+	Fallback     bool
 }
 
 func (m *Service) QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (SpatialTileResult, error) {
@@ -122,7 +142,9 @@ func (m *Service) QueryVisualizationTile(ctx context.Context, dashboardID, visua
 	if err != nil {
 		return SpatialTileResult{}, err
 	}
-	return m.snapshots.querySpatialTile(ctx, dashboardID, entry.PageID, entry.Filters, visualID, entry.RawMinimumZoom, zoom, x, y)
+	result, err := m.snapshots.querySpatialTile(ctx, dashboardID, entry.PageID, entry.Filters, visualID, revision, entry.RawMinimumZoom, zoom, x, y)
+	result.Fallback = zoom >= entry.AuthoredRawMinimumZoom && zoom < entry.RawMinimumZoom
+	return result, err
 }
 
 func (m *Service) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (SpatialTileResult, error) {
@@ -133,5 +155,15 @@ func (m *Service) QueryPublicVisualizationTile(ctx context.Context, publicID, da
 	if err != nil {
 		return SpatialTileResult{}, err
 	}
-	return m.snapshots.querySpatialTile(ctx, dashboardID, entry.PageID, entry.Filters, visualID, entry.RawMinimumZoom, zoom, x, y)
+	result, err := m.snapshots.querySpatialTile(ctx, dashboardID, entry.PageID, entry.Filters, visualID, revision, entry.RawMinimumZoom, zoom, x, y)
+	result.Fallback = zoom >= entry.AuthoredRawMinimumZoom && zoom < entry.RawMinimumZoom
+	return result, err
+}
+
+// ExpireVisualizationTileStream retires all capabilities minted for a closed
+// dashboard SSE stream while preserving the bounded in-flight grace period.
+func (m *Service) ExpireVisualizationTileStream(streamID string) {
+	if m != nil && m.tiles != nil {
+		m.tiles.expireStream(streamID)
+	}
 }

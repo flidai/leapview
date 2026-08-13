@@ -80,37 +80,38 @@ type SessionKeyFactory func(
 ) dashboardsession.Key
 
 type Handler struct {
-	Metrics               Metrics
-	MetricsForWorkspace   func(workspaceID string) (Metrics, bool)
-	AnalyticalContext     func(context.Context) context.Context
-	Broker                SignalBroker
-	Coordinators          *dashboardstream.Registry
-	Logger                *slog.Logger
-	RefreshStarted        dashboardstream.StartObserver
-	RefreshFinished       dashboardstream.SummaryObserver
-	RefreshEventObserved  dashboardstream.EventPublisher
-	CacheObserved         dataquery.CacheOutcomeObserver
-	CurrentPrincipalID    func(r *nethttp.Request) string
-	CurrentUsagePrincipal func(r *nethttp.Request) (string, bool)
-	RecordDashboardView   func(context.Context, usage.View) error
-	AuthorizeListObject   func(ctx context.Context, principalID string, object access.ObjectRef) (bool, error)
-	CSRFToken             func(r *nethttp.Request) string
-	Layout                func(r *nethttp.Request) webpage.Provider
-	Presentation          reportui.Presentation
-	Assets                staticasset.Resolver
-	Environment           func(*nethttp.Request) string
-	DataRefreshedAt       func(context.Context, string, string, string) string
-	QueryFreshness        func(context.Context, string, string, string) (api.QueryFreshness, bool)
-	CommandGuard          func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
-	SharedCommandPrepare  SharedCommandPrepare
-	SessionStore          dashboardsession.Store
-	SessionKey            SessionKeyFactory
-	OptionCursorSecret    []byte
-	OptionCache           *dashboardfilter.OptionCache
-	AgentBootstrap        func(*nethttp.Request, string) reportui.AgentBootstrap
-	AgentCommands         reportui.AgentCommandBindings
-	RouteScope            reportui.RouteScope
-	StreamNamespace       string
+	Metrics                 Metrics
+	MetricsForWorkspace     func(workspaceID string) (Metrics, bool)
+	AnalyticalContext       func(context.Context) context.Context
+	Broker                  SignalBroker
+	Coordinators            *dashboardstream.Registry
+	Logger                  *slog.Logger
+	RefreshStarted          dashboardstream.StartObserver
+	RefreshFinished         dashboardstream.SummaryObserver
+	RefreshEventObserved    dashboardstream.EventPublisher
+	CacheObserved           dataquery.CacheOutcomeObserver
+	CurrentPrincipalID      func(r *nethttp.Request) string
+	CurrentUsagePrincipal   func(r *nethttp.Request) (string, bool)
+	RecordDashboardView     func(context.Context, usage.View) error
+	AuthorizeListObject     func(ctx context.Context, principalID string, object access.ObjectRef) (bool, error)
+	CSRFToken               func(r *nethttp.Request) string
+	Layout                  func(r *nethttp.Request) webpage.Provider
+	Presentation            reportui.Presentation
+	Assets                  staticasset.Resolver
+	Environment             func(*nethttp.Request) string
+	DataRefreshedAt         func(context.Context, string, string, string) string
+	QueryFreshness          func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	CommandGuard            func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
+	SharedCommandPrepare    SharedCommandPrepare
+	SessionStore            dashboardsession.Store
+	SessionKey              SessionKeyFactory
+	OptionCursorSecret      []byte
+	OptionCache             *dashboardfilter.OptionCache
+	AgentBootstrap          func(*nethttp.Request, string) reportui.AgentBootstrap
+	AgentCommands           reportui.AgentCommandBindings
+	RouteScope              reportui.RouteScope
+	StreamNamespace         string
+	SpatialTileStreamClosed func(Metrics, string)
 }
 
 func (h Handler) scopedStreamID(streamID string) string {
@@ -158,6 +159,13 @@ func (h Handler) analyticalContext(ctx context.Context) context.Context {
 		return ctx
 	}
 	return h.AnalyticalContext(ctx)
+}
+
+func (h Handler) analyticalStreamContext(ctx context.Context, streamID string) context.Context {
+	ctx = h.analyticalContext(ctx)
+	metadata := dataquery.MetadataFromContext(ctx)
+	metadata.StreamID = streamID
+	return dataquery.WithMetadata(ctx, metadata)
 }
 
 func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID, workspaceID string, rows []api.DashboardSummary) ([]api.DashboardSummary, error) {

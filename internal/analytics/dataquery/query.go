@@ -15,7 +15,6 @@ const (
 	KindModelTableRows            Kind = "model_table_rows"
 	KindSemanticHistogram         Kind = "semantic_histogram"
 	KindSemanticDistribution      Kind = "semantic_distribution"
-	KindSemanticSpatial           Kind = "semantic_spatial"
 	KindSemanticSpatialTile       Kind = "semantic_spatial_tile"
 	KindSemanticSpatialTileBudget Kind = "semantic_spatial_tile_budget"
 	KindSemanticSpatialMetadata   Kind = "semantic_spatial_metadata"
@@ -54,30 +53,9 @@ type Query struct {
 	Limit               int
 	BinCount            int
 	IncludeTotal        bool
-	Spatial             *SpatialWindow
 	SpatialTile         *SpatialTile
 	SpatialTileBudget   *SpatialTileBudget
 	SpatialMetadata     *SpatialMetadata
-}
-
-type SpatialPrecision string
-
-const (
-	SpatialPrecisionRaw        SpatialPrecision = "raw"
-	SpatialPrecisionAggregated SpatialPrecision = "aggregated"
-)
-
-type SpatialWindow struct {
-	Latitude   Field
-	Longitude  Field
-	West       float64
-	South      float64
-	East       float64
-	North      float64
-	Width      int
-	Height     int
-	FeatureCap int
-	Precision  SpatialPrecision
 }
 
 type SpatialTilePrecision string
@@ -257,7 +235,6 @@ const (
 	OperationDashboardHistogram         = "dashboard_histogram"
 	OperationDashboardDistribution      = "dashboard_distribution"
 	OperationDashboardFilterOptions     = "dashboard_filter_options"
-	OperationDashboardSpatial           = "dashboard_spatial"
 	OperationDashboardSpatialTile       = "dashboard_spatial_tile"
 	OperationDashboardSpatialTileBudget = "dashboard_spatial_tile_budget"
 	OperationDashboardSpatialMetadata   = "dashboard_spatial_metadata"
@@ -294,6 +271,7 @@ type Metadata struct {
 	ObjectType    string
 	ObjectID      string
 	CorrelationID string
+	StreamID      string
 }
 
 type metadataContextKey struct{}
@@ -392,17 +370,6 @@ func (q Query) Validate() error {
 		}
 		if q.Kind == KindSemanticHistogram && q.BinCount <= 0 {
 			return fmt.Errorf("semantic histogram query requires a positive bin count")
-		}
-	case KindSemanticSpatial:
-		if strings.TrimSpace(q.Target) == "" || len(q.Fields) == 0 || q.Spatial == nil {
-			return fmt.Errorf("semantic spatial query requires target, selected fields, and spatial window")
-		}
-		spatial := q.Spatial
-		if strings.TrimSpace(spatial.Latitude.Field) == "" || strings.TrimSpace(spatial.Longitude.Field) == "" || spatial.Width <= 0 || spatial.Height <= 0 || spatial.FeatureCap <= 0 {
-			return fmt.Errorf("semantic spatial query requires coordinates, viewport dimensions, and feature cap")
-		}
-		if spatial.Precision != SpatialPrecisionRaw && spatial.Precision != SpatialPrecisionAggregated {
-			return fmt.Errorf("unsupported semantic spatial precision %q", spatial.Precision)
 		}
 	case KindSemanticSpatialTile:
 		if len(q.Fields) == 0 || q.SpatialTile == nil {

@@ -102,12 +102,6 @@ func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool
 			return Plan{}, fmt.Errorf("consumer %s:%s: %w", logical.Target.Kind, logical.Target.ID, err)
 		}
 		item.scope = scope
-		if logical.Target.Kind == KindSpatial {
-			// Viewport identity is intentionally part of spatial coalescing. Two
-			// visuals may share governed query work, but their camera windows must
-			// never be fused into one renderer result.
-			item.scope += "|spatial:" + logical.Target.SpatialRequest.WindowID
-		}
 		analyzed[index] = item
 	}
 
@@ -262,8 +256,6 @@ func semanticFilter(filter dataquery.Filter) semanticquery.Filter {
 func consumerKindPriority(kind Kind) int {
 	switch kind {
 	case KindVisual:
-		return 0
-	case KindSpatial:
 		return 0
 	case KindWindow:
 		return 2

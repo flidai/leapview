@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math"
 
@@ -112,7 +113,7 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	publicID := spatialTilePublicationFromContext(ctx)
 	token, err := s.tiles.register(spatialTileRevision{
 		DashboardID: dashboardID, PageID: pageID, VisualID: visualID, PublicID: publicID,
-		PrincipalID: dataquery.MetadataFromContext(ctx).PrincipalID, Filters: filters, RawMinimumZoom: int(effectiveRawMinimumZoom),
+		PrincipalID: dataquery.MetadataFromContext(ctx).PrincipalID, StreamID: dataquery.MetadataFromContext(ctx).StreamID, Filters: filters, RawMinimumZoom: int(effectiveRawMinimumZoom), AuthoredRawMinimumZoom: int(spatial.Tiles.RawMinimumZoom),
 	})
 	if err != nil {
 		return visualizationir.VisualizationEnvelope{}, err
@@ -136,7 +137,7 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	return envelope, visualizationir.ValidateEnvelope(envelope)
 }
 
-func (s *SnapshotService) querySpatialTile(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, visualID string, rawMinimumZoom, zoom, x, y int) (SpatialTileResult, error) {
+func (s *SnapshotService) querySpatialTile(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, visualID, revision string, rawMinimumZoom, zoom, x, y int) (SpatialTileResult, error) {
 	report, runtime, err := s.reports.reportRuntime(dashboardID, s.runtimes)
 	if err != nil {
 		return SpatialTileResult{}, err
@@ -162,10 +163,16 @@ func (s *SnapshotService) querySpatialTile(ctx context.Context, dashboardID, pag
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.visualizations.spatialTile(ctx, runtime, report, filters, visualID, rawMinimumZoom, zoom, x, y)
+	return s.visualizations.spatialTile(ctx, runtime, report, filters, visualID, revision, rawMinimumZoom, zoom, x, y)
 }
 
-func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, visualID string, rawMinimumZoom, zoom, x, y int) (SpatialTileResult, error) {
+type immutableByteCache interface {
+	LookupImmutableBytes(string) ([]byte, bool, error)
+	StoreImmutableBytes(string, []byte) bool
+	CoalesceImmutableBytes(context.Context, string, func() error) (bool, error)
+}
+
+func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, visualID, revision string, rawMinimumZoom, zoom, x, y int) (SpatialTileResult, error) {
 	definition := report.Visualizations[visualID]
 	spatial := definition.Query.Spatial
 	if spatial == nil || spatial.Tiles == nil {
@@ -178,6 +185,16 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 	fields, identity := spatialTileFieldsAndIdentity(definition)
 	metatileSize := int(spatial.Tiles.MetatileSize)
 	metatileX, metatileY := x/metatileSize*metatileSize, y/metatileSize*metatileSize
+	cache, cacheEnabled := runtime.data.(immutableByteCache)
+	childKey := spatialTileByteCacheKey(revision, zoom, x, y)
+	if cacheEnabled {
+		if cached, ok, cacheErr := lookupSpatialTileBytes(cache, childKey); cacheErr != nil {
+			return SpatialTileResult{}, cacheErr
+		} else if ok {
+			cached.CacheOutcome = dataquery.CacheHit
+			return cached, nil
+		}
+	}
 	buffer := int(spatial.Tiles.CellRadius) * 16
 	execute := func(precision dataquery.SpatialTilePrecision) (dataquery.Result, error) {
 		targetZoom := spatialAggregateTargetZoom(zoom, rawMinimumZoom, int(spatial.Tiles.MaximumZoom))
@@ -197,24 +214,110 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 		return runtime.data.ExecuteDataQuery(ctx, query)
 	}
 	precision := spatialTilePrecision(zoom, rawMinimumZoom)
-	result, err := execute(precision)
+	generate := func() (SpatialTileResult, error) {
+		result, executeErr := execute(precision)
+		if executeErr != nil {
+			return SpatialTileResult{}, executeErr
+		}
+		if precision == dataquery.SpatialTilePrecisionRaw && !spatialRawMetatileFits(result.Rows, spatial.Tiles.MaximumBytes) {
+			return SpatialTileResult{}, fmt.Errorf("raw spatial tile exceeds the revision-wide feature or byte budget at zoom %d", zoom)
+		}
+		requested := SpatialTileResult{Precision: string(precision), CacheOutcome: result.CacheOutcome, QueryMS: result.DurationMS}
+		for childX := metatileX; childX < metatileX+metatileSize; childX++ {
+			for childY := metatileY; childY < metatileY+metatileSize; childY++ {
+				tile, features, found, tileErr := spatialTileFromRows(result.Rows, childX, childY)
+				if tileErr != nil {
+					return SpatialTileResult{}, tileErr
+				}
+				if !found {
+					tile = []byte{}
+				}
+				if int64(len(tile)) > spatial.Tiles.MaximumBytes {
+					return SpatialTileResult{}, fmt.Errorf("encoded tile exceeds %d-byte budget", spatial.Tiles.MaximumBytes)
+				}
+				child := SpatialTileResult{Bytes: tile, Features: features, Precision: string(precision), QueryMS: result.DurationMS}
+				if childX == x && childY == y {
+					requested = child
+				}
+				if cacheEnabled && !storeSpatialTileBytes(cache, spatialTileByteCacheKey(revision, zoom, childX, childY), child) {
+					return SpatialTileResult{}, fmt.Errorf("spatial tile byte cache rejected a bounded child tile")
+				}
+			}
+		}
+		return requested, nil
+	}
+	if !cacheEnabled {
+		return generate()
+	}
+	var generated SpatialTileResult
+	shared, err := cache.CoalesceImmutableBytes(ctx, spatialTileMetatileCacheKey(revision, zoom, metatileX, metatileY), func() error {
+		if _, ok, lookupErr := lookupSpatialTileBytes(cache, childKey); lookupErr != nil || ok {
+			return lookupErr
+		}
+		var generateErr error
+		generated, generateErr = generate()
+		return generateErr
+	})
 	if err != nil {
 		return SpatialTileResult{}, err
 	}
-	tile, features, found, err := spatialTileFromRows(result.Rows, x, y)
+	if !shared && generated.Bytes != nil {
+		generated.CacheOutcome = dataquery.CacheMiss
+		return generated, nil
+	}
+	cached, ok, err := lookupSpatialTileBytes(cache, childKey)
 	if err != nil {
 		return SpatialTileResult{}, err
 	}
-	if precision == dataquery.SpatialTilePrecisionRaw && !spatialRawMetatileFits(result.Rows, spatial.Tiles.MaximumBytes) {
-		return SpatialTileResult{}, fmt.Errorf("raw spatial tile exceeds the revision-wide feature or byte budget at zoom %d", zoom)
+	if !ok {
+		return SpatialTileResult{}, fmt.Errorf("coalesced spatial tile was not stored")
 	}
-	if !found {
-		tile = []byte{}
+	if shared {
+		cached.CacheOutcome = dataquery.CacheCoalesced
+	} else {
+		cached.CacheOutcome = dataquery.CacheHit
 	}
-	if int64(len(tile)) > spatial.Tiles.MaximumBytes {
-		return SpatialTileResult{}, fmt.Errorf("encoded tile exceeds %d-byte budget", spatial.Tiles.MaximumBytes)
+	return cached, nil
+}
+
+const spatialTileByteGenerationVersion = 1
+
+func spatialTileByteCacheKey(revision string, zoom, x, y int) string {
+	return fmt.Sprintf("spatial-tile-byte:v%d:%s:%d:%d:%d", spatialTileByteGenerationVersion, revision, zoom, x, y)
+}
+
+func spatialTileMetatileCacheKey(revision string, zoom, x, y int) string {
+	return fmt.Sprintf("spatial-metatile-flight:v%d:%s:%d:%d:%d", spatialTileByteGenerationVersion, revision, zoom, x, y)
+}
+
+func spatialTileMetadataCacheKey(key string) string { return key + ":metadata" }
+
+func storeSpatialTileBytes(cache immutableByteCache, key string, result SpatialTileResult) bool {
+	metadata := make([]byte, 9)
+	binary.BigEndian.PutUint64(metadata[0:8], uint64(max(result.Features, 0)))
+	if result.Precision == string(dataquery.SpatialTilePrecisionRaw) {
+		metadata[8] = 1
 	}
-	return SpatialTileResult{Bytes: tile, Features: features, Precision: string(precision), CacheOutcome: result.CacheOutcome}, nil
+	return cache.StoreImmutableBytes(key, result.Bytes) && cache.StoreImmutableBytes(spatialTileMetadataCacheKey(key), metadata)
+}
+
+func lookupSpatialTileBytes(cache immutableByteCache, key string) (SpatialTileResult, bool, error) {
+	tile, found, err := cache.LookupImmutableBytes(key)
+	if err != nil || !found {
+		return SpatialTileResult{}, false, err
+	}
+	metadata, metadataFound, err := cache.LookupImmutableBytes(spatialTileMetadataCacheKey(key))
+	if err != nil {
+		return SpatialTileResult{}, false, err
+	}
+	if !metadataFound || len(metadata) != 9 {
+		return SpatialTileResult{}, false, nil
+	}
+	precision := string(dataquery.SpatialTilePrecisionAggregated)
+	if metadata[8] == 1 {
+		precision = string(dataquery.SpatialTilePrecisionRaw)
+	}
+	return SpatialTileResult{Bytes: tile, Features: int(binary.BigEndian.Uint64(metadata[0:8])), Precision: precision}, true, nil
 }
 
 func (s *VisualizationDataService) spatialRawMinimumZoomByByteBudget(ctx context.Context, runtime *modelRuntime, definition visualizationdefinition.Definition, queryFilters []reportdef.QueryFilter, minimumZoom int) (int64, error) {

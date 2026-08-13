@@ -390,7 +390,7 @@ func (m Metrics) authorizeDataQuery(ctx context.Context, principalID string, pri
 
 func (m Metrics) resolvedDependencyObjects(request dataquery.Query, includePublicInteractions bool) ([]access.ObjectRef, []access.ObjectRef, error) {
 	switch request.Kind {
-	case dataquery.KindSemanticAggregate, dataquery.KindSemanticSpatial, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget, dataquery.KindSemanticSpatialMetadata:
+	case dataquery.KindSemanticAggregate, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget, dataquery.KindSemanticSpatialMetadata:
 	case dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution:
 		if !includePublicInteractions {
 			return nil, nil, nil
@@ -694,10 +694,6 @@ func (m Metrics) QueryVisualization(ctx context.Context, dashboardID, pageID str
 
 func (m Metrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
 	return m.Metrics.QueryVisualizationWindow(dataquery.WithGovernor(ctx, m), dashboardID, pageID, filters, request)
-}
-
-func (m Metrics) QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	return m.Metrics.QueryVisualizationSpatialWindow(dataquery.WithGovernor(ctx, m), dashboardID, pageID, filters, request)
 }
 
 func (m Metrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {

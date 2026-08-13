@@ -149,62 +149,6 @@ func TestRuntimeCachesOwnedArrowAndRebuildsRequestTimingOnHit(t *testing.T) {
 	}
 }
 
-func TestRuntimeExecutesSpatialQueriesThroughOwnedArrowResults(t *testing.T) {
-	database := &arrowCountingRuntimeDatabase{}
-	runtime := &Runtime{
-		modelID: "sales",
-		model: &semanticmodel.Model{
-			Name: "sales",
-			Tables: map[string]semanticmodel.Table{
-				"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
-					"latitude":  {Expr: "latitude", Type: "number"},
-					"longitude": {Expr: "longitude", Type: "number"},
-				}},
-			},
-			Measures: map[string]semanticmodel.MetricMeasure{
-				"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero"},
-			},
-		},
-		db:         database,
-		queryCache: newQueryResultCache(256, ""),
-	}
-	request := dataquery.Query{
-		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatial,
-		ModelID: "sales", Kind: dataquery.KindSemanticSpatial, Target: "orders",
-		Fields:   []dataquery.Field{{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}},
-		Measures: []dataquery.Field{{Field: "order_count", Alias: "value"}},
-		Spatial: &dataquery.SpatialWindow{
-			Latitude: dataquery.Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: dataquery.Field{Field: "orders.longitude", Alias: "longitude"},
-			West: -180, South: -85, East: 180, North: 85, Width: 800, Height: 600, FeatureCap: 5000,
-			Precision: dataquery.SpatialPrecisionAggregated,
-		},
-	}
-
-	first, err := runtime.ExecuteDataQuery(context.Background(), request)
-	require.NoError(t, err)
-	second, err := runtime.ExecuteDataQuery(context.Background(), request)
-	require.NoError(t, err)
-	if first.CacheOutcome != dataquery.CacheMiss || second.CacheOutcome != dataquery.CacheHit {
-		t.Fatalf("cache outcomes = (%q, %q), want (miss, hit)", first.CacheOutcome, second.CacheOutcome)
-	}
-	if got := database.queries.Load(); got != 1 {
-		t.Fatalf("Arrow executions = %d, want 1", got)
-	}
-	if !first.TotalRowsKnown || first.TotalRows != 1 {
-		t.Fatalf("spatial total = (%d, %t), want (1, true)", first.TotalRows, first.TotalRowsKnown)
-	}
-	for _, result := range []dataquery.Result{first, second} {
-		for _, column := range result.Columns {
-			if column.Name == semanticquery.SpatialTotalColumn {
-				t.Fatalf("spatial transport column leaked through result schema: %#v", result.Columns)
-			}
-		}
-		if _, ok := result.Rows[0][semanticquery.SpatialTotalColumn]; ok {
-			t.Fatalf("spatial transport column leaked through result row: %#v", result.Rows[0])
-		}
-	}
-}
-
 func TestQueryResultCacheUsesGovernedRequestAndReturnsDeepCopies(t *testing.T) {
 	cache := newQueryResultCache(256, "")
 	request := dataquery.Query{
@@ -346,7 +290,6 @@ func TestDashboardResultCacheEligibility(t *testing.T) {
 		dataquery.OperationDashboardHistogram,
 		dataquery.OperationDashboardDistribution,
 		dataquery.OperationDashboardFilterOptions,
-		dataquery.OperationDashboardSpatial,
 		dataquery.OperationDashboardSpatialTile,
 		dataquery.OperationDashboardSpatialTileBudget,
 		dataquery.OperationDashboardSpatialMetadata,
@@ -427,47 +370,6 @@ func TestQueryResultCacheKeysEverySpatialTileCoordinateAndPrecision(t *testing.T
 		require.NoError(t, err)
 		if key == baseline {
 			t.Fatalf("spatial tile cache variant %d reused the baseline key", index)
-		}
-	}
-}
-
-func TestQueryResultCacheKeysEverySpatialViewportCoordinate(t *testing.T) {
-	cache := newQueryResultCache(256, "snapshot=1")
-	request := dataquery.Query{
-		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatial,
-		ModelID: "sales", Kind: dataquery.KindSemanticSpatial, Target: "orders",
-		Fields: []dataquery.Field{{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}},
-		Spatial: &dataquery.SpatialWindow{
-			Latitude: dataquery.Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: dataquery.Field{Field: "orders.longitude", Alias: "longitude"},
-			West: 170, South: -20, East: -170, North: 25, Width: 960, Height: 540, FeatureCap: 5000, Precision: dataquery.SpatialPrecisionAggregated,
-		},
-	}
-	baseline, _, err := cache.cacheKey(request)
-	require.NoError(t, err)
-	identical, _, err := cache.cacheKey(request)
-	if err != nil || identical != baseline {
-		t.Fatalf("identical spatial cache key = %q, %v; want %q", identical, err, baseline)
-	}
-
-	variants := []func(*dataquery.SpatialWindow){
-		func(window *dataquery.SpatialWindow) { window.West = 160 },
-		func(window *dataquery.SpatialWindow) { window.South = -30 },
-		func(window *dataquery.SpatialWindow) { window.East = -160 },
-		func(window *dataquery.SpatialWindow) { window.North = 35 },
-		func(window *dataquery.SpatialWindow) { window.Width = 1200 },
-		func(window *dataquery.SpatialWindow) { window.Height = 800 },
-		func(window *dataquery.SpatialWindow) { window.FeatureCap = 1000 },
-		func(window *dataquery.SpatialWindow) { window.Precision = dataquery.SpatialPrecisionRaw },
-	}
-	for index, mutate := range variants {
-		variant := request
-		window := *request.Spatial
-		variant.Spatial = &window
-		mutate(variant.Spatial)
-		key, _, err := cache.cacheKey(variant)
-		require.NoError(t, err)
-		if key == baseline {
-			t.Fatalf("spatial cache variant %d reused the baseline key", index)
 		}
 	}
 }

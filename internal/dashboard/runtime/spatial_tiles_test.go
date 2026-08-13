@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,6 +61,28 @@ func TestSpatialTileRevisionTokensAreRandomAndScopeBound(t *testing.T) {
 		if _, err := registry.resolve(request.token, request.dashboard, request.visual, request.publicID, request.principalID); err == nil {
 			t.Fatalf("cross-scope revision unexpectedly resolved: %#v", request)
 		}
+	}
+}
+
+func TestSpatialTileRevisionLifecycleIsBoundToItsStream(t *testing.T) {
+	registry := newSpatialTileRegistry()
+	first, err := registry.register(spatialTileRevision{DashboardID: "orders", PageID: "map", VisualID: "density", PrincipalID: "principal", StreamID: "stream-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := registry.register(spatialTileRevision{DashboardID: "orders", PageID: "map", VisualID: "density", PrincipalID: "principal", StreamID: "stream-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !registry.entries[first].ExpiresAt.IsZero() || !registry.entries[second].ExpiresAt.IsZero() {
+		t.Fatal("one stream replaced another stream's active tile capability")
+	}
+	registry.expireStream("stream-a")
+	if registry.entries[first].ExpiresAt.IsZero() {
+		t.Fatal("closed stream capability did not receive its in-flight grace period")
+	}
+	if !registry.entries[second].ExpiresAt.IsZero() {
+		t.Fatal("closing one stream retired an unrelated stream capability")
 	}
 }
 
@@ -142,5 +166,51 @@ func TestSpatialRawZoomRequiresBothGlobalBudgets(t *testing.T) {
 	}
 	if spatialRawZoomFits(1, 512*1024+1, 5_000, 512*1024) {
 		t.Fatal("raw zoom accepted encoded-byte overflow")
+	}
+}
+
+type memoryImmutableByteCache struct {
+	mu     sync.Mutex
+	values map[string][]byte
+}
+
+func (cache *memoryImmutableByteCache) LookupImmutableBytes(key string) ([]byte, bool, error) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	value, ok := cache.values[key]
+	return append([]byte(nil), value...), ok, nil
+}
+
+func (cache *memoryImmutableByteCache) StoreImmutableBytes(key string, value []byte) bool {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.values == nil {
+		cache.values = map[string][]byte{}
+	}
+	cache.values[key] = append([]byte{}, value...)
+	return true
+}
+
+func (cache *memoryImmutableByteCache) CoalesceImmutableBytes(_ context.Context, _ string, execute func() error) (bool, error) {
+	return false, execute()
+}
+
+func TestSpatialChildTileByteCacheRoundTripsEmptyAndRawTiles(t *testing.T) {
+	cache := &memoryImmutableByteCache{values: map[string][]byte{}}
+	for _, result := range []SpatialTileResult{
+		{Bytes: []byte{}, Precision: string(dataquery.SpatialTilePrecisionAggregated)},
+		{Bytes: []byte{1, 2, 3}, Features: 17, Precision: string(dataquery.SpatialTilePrecisionRaw)},
+	} {
+		key := spatialTileByteCacheKey("revision", 8, result.Features, 2)
+		if !storeSpatialTileBytes(cache, key, result) {
+			t.Fatal("bounded child tile was not cached")
+		}
+		cached, found, err := lookupSpatialTileBytes(cache, key)
+		if err != nil || !found || !bytes.Equal(cached.Bytes, result.Bytes) || cached.Features != result.Features || cached.Precision != result.Precision {
+			t.Fatalf("cached child = %#v found=%v err=%v, want %#v", cached, found, err, result)
+		}
+	}
+	if spatialTileByteCacheKey("revision-a", 8, 1, 2) == spatialTileByteCacheKey("revision-b", 8, 1, 2) {
+		t.Fatal("tile byte cache key omitted revision scope")
 	}
 }

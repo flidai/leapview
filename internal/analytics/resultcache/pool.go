@@ -389,7 +389,9 @@ func (s *Scope) StoreBytes(key string, token Token, value []byte) StoreOutcome {
 	if old := p.entries[composite]; old != nil {
 		p.removeLocked(old, "")
 	}
-	e := entry{composite: composite, key: key, scope: s.key, byteValue: append([]byte(nil), value...), bytes: bytes}
+	stored := make([]byte, len(value))
+	copy(stored, value)
+	e := entry{composite: composite, key: key, scope: s.key, byteValue: stored, bytes: bytes}
 	element := p.lru.PushFront(e)
 	p.entries[composite] = element
 	state.entries[composite] = struct{}{}

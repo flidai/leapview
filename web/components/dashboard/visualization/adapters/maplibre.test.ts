@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyFeatureScales, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapInteractionCommand, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapPointerOptions, mapThemeColors, mapTooltipEntries, nextSpatialRequestSequence, normalizeFeatureWeights, pathGeometry, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, spatialWindowAlreadyCurrent, spatialWindowRequest, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledRawPrecisionVisible, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyFeatureScales, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapInteractionCommand, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapPointerOptions, mapThemeColors, mapTooltipEntries, normalizeFeatureWeights, pathGeometry, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledRawPrecisionVisible, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -202,87 +202,6 @@ test('MapLibre selection-only refreshes update existing sources without rebuildi
   expect(result.collections).toEqual(updates)
   expect(updates).toHaveLength(1)
   expect(updates[0]?.features[0]?.properties).toMatchObject({ __lv_dataset: 'primary', __lv_row_index: 0, __lv_layer_id: 'states' })
-})
-
-test('MapLibre spatial requests preserve revision and viewport identity', () => {
-  const envelope = {
-    ...selectableEnvelope(),
-    dataRevision: 12,
-    dataState: {
-      kind: 'spatial_windowed', specRevision: 'sha256:test', dataRevision: 12, generation: 2,
-      schema: selectableEnvelope().spec.datasets[0], cardinality: { kind: 'estimate', count: 1_000_000 },
-      extent: { west: -180, south: -85, east: 180, north: 85 }, rowCap: 1_000_000, featureCap: 5000,
-      resetVersion: 4,
-    },
-  } as VisualizationEnvelope
-  expect(spatialWindowRequest(envelope, { west: 170, south: -20, east: -170, north: 25 }, 3.25, 960, 540, 8)).toBeUndefined()
-
-  const populated = {
-    ...envelope,
-    dataState: {
-      ...envelope.dataState,
-      window: {
-        id: 'initial', bounds: { west: -180, south: -85, east: 180, north: 85 }, zoom: 0, width: 960, height: 540,
-        precision: 'aggregated', rows: [], requestSeq: 7, resetVersion: 4,
-      },
-    },
-  } as VisualizationEnvelope
-  expect(spatialWindowRequest(populated, { west: 170, south: -20, east: -170, north: 25 }, 3.25, 960, 540, 8)).toEqual({
-    visualID: 'state-map', specRevision: 'sha256:test', dataRevision: 12, requestSeq: 8, resetVersion: 4,
-    bounds: { west: 170, south: -20, east: -170, north: 25 }, zoom: 3.25, width: 960, height: 540,
-    windowID: '170.000000,-20.000000,-170.000000,25.000000@3.250:960x540',
-  })
-  expect(spatialWindowRequest(selectableEnvelope(), { west: 0, south: 0, east: 1, north: 1 }, 1, 100, 100, 1)).toBeUndefined()
-})
-
-test('MapLibre spatial requests normalize wrapped worlds and bound browser-controlled coordinates', () => {
-  const envelope = {
-    ...selectableEnvelope(),
-    dataState: {
-      kind: 'spatial_windowed', specRevision: 'sha256:test', dataRevision: 12, generation: 2,
-      schema: selectableEnvelope().spec.datasets[0], cardinality: { kind: 'estimate', count: 1_000_000 },
-      extent: { west: -180, south: -85, east: 180, north: 85 }, rowCap: 1_000_000, featureCap: 5000,
-      resetVersion: 4,
-      window: {
-        id: 'initial', bounds: { west: -180, south: -85, east: 180, north: 85 }, zoom: 0, width: 100, height: 100,
-        precision: 'aggregated', rows: [], requestSeq: 8, resetVersion: 4,
-      },
-    },
-  } as VisualizationEnvelope
-
-  expect(spatialWindowRequest(envelope, { west: 170, south: -20, east: 190, north: 25 }, 3, 20_000, 18_000, 9)).toMatchObject({
-    bounds: { west: 170, south: -20, east: -170, north: 25 }, width: 16_384, height: 16_384,
-    windowID: '170.000000,-20.000000,-170.000000,25.000000@3.000:16384x16384',
-  })
-  expect(spatialWindowRequest(envelope, { west: -540, south: -85, east: 540, north: 85 }, 1, 100, 100, 10)).toMatchObject({
-    bounds: { west: -180, south: -85, east: 180, north: 85 },
-  })
-  expect(spatialWindowRequest(envelope, { west: 0, south: 0, east: 1, north: 1 }, 1, Number.POSITIVE_INFINITY, 100, 1)).toBeUndefined()
-  expect(spatialWindowRequest(envelope, { west: 0, south: 0, east: 1, north: 1 }, 1, 100, 100, 0)).toBeUndefined()
-  expect(spatialWindowRequest(envelope, { west: 0, south: 0, east: 1, north: 1 }, 1, 100, 100, 1.5)).toBeUndefined()
-})
-
-test('MapLibre viewport requests advance server sequence and suppress an already-current window', () => {
-	const envelope = {
-		...selectableEnvelope(),
-		dataRevision: 14,
-		dataState: {
-			kind: 'spatial_windowed', specRevision: 'sha256:test', dataRevision: 14, generation: 3,
-			schema: selectableEnvelope().spec.datasets[0], cardinality: { kind: 'exact', count: 1_000_000 },
-			extent: { west: -180, south: -85, east: 180, north: 85 }, rowCap: 1_000_000, featureCap: 5000, resetVersion: 6,
-			window: {
-				id: '-74.000000,-34.000000,-34.000000,6.000000@5.000:1200x700',
-				bounds: { west: -74, south: -34, east: -34, north: 6 }, zoom: 5, width: 1200, height: 700,
-				precision: 'aggregated', rows: [], requestSeq: 21, resetVersion: 6,
-			},
-		},
-	} as VisualizationEnvelope
-
-	expect(nextSpatialRequestSequence(envelope, 3)).toBe(22)
-	const current = spatialWindowRequest(envelope, { west: -74, south: -34, east: -34, north: 6 }, 5, 1200, 700, 22)!
-	expect(spatialWindowAlreadyCurrent(envelope, current)).toBe(true)
-	expect(spatialWindowAlreadyCurrent(envelope, { ...current, resetVersion: 7 })).toBe(false)
-	expect(spatialWindowAlreadyCurrent(envelope, { ...current, windowID: '-73.000000,-34.000000,-34.000000,6.000000@5.000:1200x700' })).toBe(false)
 })
 
 test('a superseded MapLibre mount cannot remove the winning renderer frame', () => {

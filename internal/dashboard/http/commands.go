@@ -22,12 +22,6 @@ func (h Handler) VisualWindow(w nethttp.ResponseWriter, r *nethttp.Request) {
 	})
 }
 
-func (h Handler) VisualSpatialWindow(w nethttp.ResponseWriter, r *nethttp.Request) {
-	h.handleCommand(w, r, func(service command.Service, request command.Request, current dashboard.Filters) (command.PreparedRefresh, error) {
-		return service.PrepareVisualSpatialWindow(request, current)
-	})
-}
-
 func (h Handler) Select(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.handleCommand(w, r, func(service command.Service, request command.Request, current dashboard.Filters) (command.PreparedRefresh, error) {
 		return service.PrepareSelect(request, current)
@@ -65,13 +59,12 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 	modelID := lddatastar.ModelID(r, signals, dashboardID, metrics.ModelIDForDashboard)
 	streamID := h.scopedStreamID(lddatastar.ClientStreamID(r, signals, dashboardID, pageID))
 	request := command.Request{
-		DashboardID:                dashboardID,
-		PageID:                     pageID,
-		ModelID:                    modelID,
-		VisualWindowCommand:        signals.VisualWindowCommand,
-		VisualSpatialWindowCommand: signals.VisualSpatialWindowCommand,
-		InteractionCommand:         signals.InteractionCommand,
-		SpatialInteractionCommand:  signals.SpatialInteractionCommand,
+		DashboardID:               dashboardID,
+		PageID:                    pageID,
+		ModelID:                   modelID,
+		VisualWindowCommand:       signals.VisualWindowCommand,
+		InteractionCommand:        signals.InteractionCommand,
+		SpatialInteractionCommand: signals.SpatialInteractionCommand,
 	}
 	if h.CommandGuard != nil {
 		if err := h.CommandGuard(r, metrics, request, signals); err != nil {
@@ -88,7 +81,7 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 	if broker == nil {
 		broker = pagestream.NewBroker()
 	}
-	coordinatorContext := h.analyticalContext(context.WithoutCancel(r.Context()))
+	coordinatorContext := h.analyticalStreamContext(context.WithoutCancel(r.Context()), streamID)
 	coordinator := registry.Ensure(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
 	})
@@ -212,12 +205,6 @@ func streamPreparation(prepared command.PreparedRefresh) dashboardstream.Refresh
 		Command: prepared.Plan.Command,
 		Targets: targets,
 		Plan:    prepared.Plan,
-	}
-	if prepared.Plan.Command == "visual_spatial_window" && len(prepared.Plan.Targets) == 1 {
-		request := prepared.Plan.Targets[0].SpatialRequest
-		preparation.SequenceKey = "spatial:" + request.VisualID
-		preparation.Sequence = request.RequestSeq
-		preparation.SequenceEpoch = request.ResetVersion
 	}
 	if prepared.Plan.Command == "visual_window" && len(prepared.Plan.Targets) == 1 {
 		request := prepared.Plan.Targets[0].WindowRequest

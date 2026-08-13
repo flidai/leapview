@@ -388,7 +388,6 @@ enum VisualizationSpatialSelectionGesture {
 enum VisualizationDataStateKind {
   inline: "inline",
   windowed: "windowed",
-  spatialWindowed: "spatial_windowed",
   spatialTiled: "spatial_tiled",
 }
 
@@ -1268,32 +1267,6 @@ model VisualizationSpatialBounds {
   `north`: float64;
 }
 
-model VisualizationSpatialWindowBlock {
-  `id`: string;
-  `bounds`: VisualizationSpatialBounds;
-  `zoom`: float64;
-  `width`: int32;
-  `height`: int32;
-  `precision`: VisualizationSpatialPrecision;
-  `rows`: unknown[][];
-  `requestSeq`: int64;
-  `resetVersion`: int64;
-}
-
-@apigen.contract(#{ kind: "visualization-command", tags: #["visualization", "spatial-window"] })
-model VisualizationSpatialWindowRequest {
-  `visualID`: string;
-  `specRevision`: string;
-  `dataRevision`: int64;
-  `requestSeq`: int64;
-  `resetVersion`: int64;
-  `bounds`: VisualizationSpatialBounds;
-  `zoom`: float64;
-  `width`: int32;
-  `height`: int32;
-  `windowID`: string;
-}
-
 @discriminator("kind")
 model VisualizationDataState {
   `kind`: string;
@@ -1317,17 +1290,6 @@ model WindowedVisualizationDataState extends VisualizationDataState {
   `resetVersion`: int64;
   `sort`: VisualizationSort[];
   `blocks`: Record<VisualizationWindowBlock>;
-}
-
-model SpatialWindowedVisualizationDataState extends VisualizationDataState {
-  `kind`: "spatial_windowed";
-  `schema`: VisualizationDatasetSchema;
-  `cardinality`: VisualizationCardinality;
-  `extent`: VisualizationSpatialBounds;
-  `rowCap`: int64;
-  `featureCap`: int64;
-  `resetVersion`: int64;
-  `window`?: VisualizationSpatialWindowBlock;
 }
 
 model VisualizationSpatialScaleDomain {

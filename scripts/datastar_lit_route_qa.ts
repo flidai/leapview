@@ -448,11 +448,6 @@ type SpatialTileSnapshot = {
   zoomControlHeight: number
 }
 
-type SpatialWindowSnapshot = {
-  status: string; message: string; dataRevision: number; requestSeq: number; windowID: string; precision: string
-  rows: number; rowCap: number; featureCap: number; zoomControlWidth: number; zoomControlHeight: number
-}
-
 async function verifySpatialShowcaseMaps(): Promise<void> {
   const path = '/workspaces/visuals/dashboards/visual-showcase/pages/chart-map'
   const visualIDs = ['customer_point_map', 'customer_revenue_heat_map', 'customer_density_map']
@@ -641,91 +636,6 @@ function percentile(values: number[], quantile: number): number {
   if (values.length === 0) return 0
   const ordered = [...values].sort((left, right) => left - right)
   return ordered[Math.max(0, Math.ceil(ordered.length * quantile) - 1)]!
-}
-
-async function spatialWindowSnapshot(page: Page): Promise<SpatialWindowSnapshot> {
-  return page.evaluate(() => {
-    const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
-    const host = dashboard?.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: any; shadowRoot: ShadowRoot }
-    const envelope = host?.envelope
-    const state = envelope?.dataState
-    const window = state?.window
-    const zoom = host?.shadowRoot?.querySelector('button.maplibregl-ctrl-zoom-in') as HTMLButtonElement | null
-    const style = zoom ? getComputedStyle(zoom) : undefined
-    return {
-      status: String(envelope?.status?.kind ?? ''),
-      message: String(envelope?.status?.message ?? ''),
-      dataRevision: Number(envelope?.dataRevision ?? 0),
-      requestSeq: Number(window?.requestSeq ?? 0),
-      windowID: String(window?.id ?? ''),
-      precision: String(window?.precision ?? ''),
-      rows: Array.isArray(window?.rows) ? window.rows.length : 0,
-      rowCap: Number(state?.rowCap ?? 0),
-      featureCap: Number(state?.featureCap ?? 0),
-      zoomControlWidth: Number.parseFloat(style?.width ?? '0'),
-      zoomControlHeight: Number.parseFloat(style?.height ?? '0'),
-    }
-  })
-}
-
-async function waitForSpatialRevision(page: Page, previous: SpatialWindowSnapshot): Promise<void> {
-  const timeoutAt = Date.now() + 120_000
-  const quietWindowMs = 400
-  let readySignature = ''
-  let readySince = 0
-  let current = previous
-
-  while (Date.now() < timeoutAt) {
-    current = await spatialWindowSnapshot(page)
-    const ready = current.dataRevision > previous.dataRevision
-      && current.requestSeq > previous.requestSeq
-      && current.status !== 'loading'
-      && !current.message
-    const signature = `${current.dataRevision}:${current.requestSeq}:${current.windowID}:${current.status}`
-    if (!ready) {
-      readySignature = ''
-      readySince = 0
-    } else if (signature !== readySignature) {
-      readySignature = signature
-      readySince = Date.now()
-    } else if (Date.now() - readySince >= quietWindowMs) {
-      return
-    }
-    await page.waitForTimeout(50)
-  }
-
-  throw new Error(`spatial window did not settle after revision ${JSON.stringify(previous)}; latest ${JSON.stringify(current)}`)
-}
-
-async function waitForSpatialReset(page: Page, previous: SpatialWindowSnapshot, initial: SpatialWindowSnapshot): Promise<void> {
-  await page.waitForFunction(({ dataRevision, requestSeq, windowID, precision }) => {
-    const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
-    const host = dashboard?.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: any }
-    const envelope = host?.envelope
-    const window = envelope?.dataState?.window
-    return envelope?.dataRevision > dataRevision
-      && window?.requestSeq > requestSeq
-      && window?.id === windowID
-      && window?.precision === precision
-      && envelope?.status?.kind !== 'loading'
-  }, {
-    dataRevision: previous.dataRevision,
-    requestSeq: previous.requestSeq,
-    windowID: initial.windowID,
-    precision: initial.precision,
-  }, { timeout: 120_000 })
-}
-
-function assertSpatialWindow(path: string, snapshot: SpatialWindowSnapshot): void {
-  if (!['partial', 'ready'].includes(snapshot.status) || snapshot.message) {
-    throw new Error(`${path}: invalid spatial status ${JSON.stringify(snapshot)}`)
-  }
-  if (!snapshot.windowID || snapshot.dataRevision < 1 || snapshot.requestSeq < 1 || snapshot.rows < 1) {
-    throw new Error(`${path}: incomplete spatial window ${JSON.stringify(snapshot)}`)
-  }
-  if (snapshot.rows > snapshot.featureCap) {
-    throw new Error(`${path}: rendered rows=${snapshot.rows} exceeds featureCap=${snapshot.featureCap}`)
-  }
 }
 
 function collectBlockingConsoleMessages(page: Page): string[] {

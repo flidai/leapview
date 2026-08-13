@@ -103,40 +103,6 @@ func TestValidateSpecEnforcesGeographicLayerRequirements(t *testing.T) {
 	}
 }
 
-func TestValidateEnvelopeEnforcesSpatialWindowInvariants(t *testing.T) {
-	fields := []VisualizationField{
-		{ID: "lat", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Latitude"},
-		{ID: "lon", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Longitude"},
-	}
-	base := VisualizationSpecBase{Kind: "geographic", Title: "Stores", Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: fields}}, DataBudget: VisualizationDataBudget{MaxRows: 1_000_000, RequiredCompleteness: VisualizationCompletenessPartial}, Accessibility: VisualizationAccessibility{Title: "Stores", Description: "Stores"}, Interactions: []VisualizationInteraction{}}
-	layerBase := VisualizationGeographicLayerBase{ID: "stores", Kind: "point", Tooltip: []VisualizationFieldRef{}, Position: VisualizationMapLayerPositionBelowLabels, Visibility: VisualizationMapVisibility{MaximumZoom: 24}}
-	spec := VisualizationSpec{Value: &GeographicVisualizationSpec{VisualizationSpecBase: base, Kind: "geographic", Layers: []VisualizationGeographicLayer{{Value: &VisualizationPointLayer{VisualizationGeographicLayerBase: layerBase, Kind: "point", Latitude: VisualizationFieldRef{Dataset: "primary", Field: "lat"}, Longitude: VisualizationFieldRef{Dataset: "primary", Field: "lon"}, Size: VisualizationMapSizeScale{MinimumRadius: 5, MaximumRadius: 28}, Cluster: VisualizationMapCluster{Radius: 50, MinimumPoints: 2}}}}, Presentation: GeographicVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionHidden), Theme: VisualizationMapThemeAuto, LabelDensity: VisualizationMapLabelDensityNormal, Camera: VisualizationMapCamera{Mode: VisualizationMapCameraModeFitData, MaximumZoom: 14}}}}
-	revision, err := ComputeSpecRevision(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := SpatialWindowedVisualizationDataState{VisualizationDataStateBase: VisualizationDataStateBase{Kind: "spatial_windowed", SpecRevision: revision.String(), DataRevision: 3, Generation: 1}, Kind: "spatial_windowed", Schema: base.Datasets[0], Cardinality: VisualizationCardinality{Kind: VisualizationCardinalityKindUnknown}, Extent: VisualizationSpatialBounds{West: 170, South: -40, East: -170, North: 20}, RowCap: 1_000_000, FeatureCap: 5000, Window: &VisualizationSpatialWindowBlock{ID: "z4-a", Bounds: VisualizationSpatialBounds{West: 170, South: -30, East: -175, North: 10}, Zoom: 4, Width: 800, Height: 500, Precision: VisualizationSpatialPrecisionAggregated, Rows: [][]any{{-20.0, 175.0}}, RequestSeq: 2}}
-	envelope := VisualizationEnvelope{SchemaVersion: CurrentSchemaVersion, VisualID: "stores", RendererID: "maplibre", SpecRevision: revision.String(), DataRevision: 3, Spec: spec, DataState: VisualizationDataState{Value: &state}, Selection: []VisualizationSelectionEntry{}, Status: VisualizationStatus{Kind: VisualizationStatusKindReady}, Diagnostics: []VisualizationDiagnostic{}}
-	if err := ValidateEnvelope(envelope); err != nil {
-		t.Fatalf("valid spatial envelope: %v", err)
-	}
-	state.Window.RequestSeq = 0
-	if err := ValidateEnvelope(envelope); err == nil {
-		t.Fatal("non-positive spatial request sequence accepted")
-	}
-	state.Window.RequestSeq = 2
-	state.Window.Width = 16_385
-	if err := ValidateEnvelope(envelope); err == nil {
-		t.Fatal("oversized spatial viewport accepted")
-	}
-	state.Window.Width = 800
-	state.Window.Rows = append(state.Window.Rows, []any{-10.0, 176.0})
-	state.FeatureCap = 1
-	if err := ValidateEnvelope(envelope); err == nil {
-		t.Fatal("spatial feature cap overflow accepted")
-	}
-}
-
 func TestValidateEnvelopeAcceptsRowFreeSpatialTiledState(t *testing.T) {
 	fields := []VisualizationField{
 		{ID: "lat", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Latitude"},

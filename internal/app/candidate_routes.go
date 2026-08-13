@@ -118,8 +118,6 @@ func candidateDashboardCommand(deps candidateRouteDependencies, w http.ResponseW
 			handler.ClearSelection(w, r)
 		case "visual-window":
 			handler.VisualWindow(w, r)
-		case "visual-spatial-window":
-			handler.VisualSpatialWindow(w, r)
 		default:
 			http.NotFound(w, r)
 		}

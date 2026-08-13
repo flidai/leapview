@@ -153,19 +153,6 @@ func TestPrepareSpatialSelectValidatesGeometryAndUsesExplicitTargets(t *testing.
 	}
 }
 
-func TestPrepareVisualSpatialWindowRejectsTiledVisual(t *testing.T) {
-	definition, _, _ := (fakeMetrics{}).Report("dash")
-	mapDefinition := definition.Visualizations["customer_map"]
-	request := dashboard.SpatialWindowRequest{
-		VisualID: "customer_map", SpecRevision: mapDefinition.SpecRevision, DataRevision: 9, RequestSeq: 2, ResetVersion: 1,
-		Bounds: dashboard.SpatialBounds{West: 170, South: -20, East: -170, North: 25}, Zoom: 3.25, Width: 960, Height: 540,
-		WindowID: "170.000000,-20.000000,-170.000000,25.000000@3.250:960x540",
-	}
-	if _, err := (Service{Metrics: fakeMetrics{}}).PrepareVisualSpatialWindow(Request{DashboardID: "dash", PageID: "overview", VisualSpatialWindowCommand: request}, dashboard.Filters{}.WithDefaults()); err == nil {
-		t.Fatal("legacy viewport command was accepted for a tiled visual")
-	}
-}
-
 func TestPrepareVisualWindowValidatesTypedIdentityAndCoordinates(t *testing.T) {
 	definition, _, _ := (fakeMetrics{}).Report("dash")
 	request := dashboard.VisualizationWindowRequest{

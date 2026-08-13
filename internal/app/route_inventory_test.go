@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "8b59a4559725dfd3ada01c46bb1cf4a05ba6e438637b6ac9c356d694798d3156"
+	const expectedRouteContractDigest = "a5270d0cd631e5324b4113d31c42fd0604e740b08384826996d134580570afb2"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -353,7 +353,6 @@ POST /public/dashboards/{publicId}/commands/filter-options
 POST /public/dashboards/{publicId}/commands/navigate
 POST /public/dashboards/{publicId}/commands/select
 POST /public/dashboards/{publicId}/commands/spatial-select
-POST /public/dashboards/{publicId}/commands/visual-spatial-window
 POST /public/dashboards/{publicId}/commands/visual-window
 POST /static/*
 POST /workspaces/{workspace}/access/remove
@@ -367,7 +366,6 @@ POST /workspaces/{workspace}/commands/filter-options
 POST /workspaces/{workspace}/commands/navigate
 POST /workspaces/{workspace}/commands/select
 POST /workspaces/{workspace}/commands/spatial-select
-POST /workspaces/{workspace}/commands/visual-spatial-window
 POST /workspaces/{workspace}/commands/visual-window
 POST /workspaces/search
 POST /workspaces/{workspace}/search

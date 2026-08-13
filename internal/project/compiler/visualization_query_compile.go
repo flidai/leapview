@@ -168,33 +168,6 @@ func compiledSpatialBinding(modelID string, authored reportdef.Visual, model *se
 			FeatureCap: 5000, MaximumBytes: 512 * 1024, MetatileSize: 4,
 			CellRadius: tiledCellRadius(authored.Geo.Layers),
 		}
-	} else if limit > 20_000 {
-		latitudeAlias, longitudeAlias, found, err := authoredViewportCoordinates(authored.Geo.Layers)
-		if err != nil {
-			return visualizationdefinition.QueryBinding{}, err
-		}
-		if found {
-			if model != nil {
-				for _, field := range authored.Query.Measures {
-					measure, err := model.ResolveMeasure(field.Field)
-					if err != nil {
-						return visualizationdefinition.QueryBinding{}, fmt.Errorf("windowed geographic measure %q must be an atomic measure: %w", field.Field, err)
-					}
-					switch measure.Aggregation {
-					case "count", "sum", "min", "max":
-					default:
-						return visualizationdefinition.QueryBinding{}, fmt.Errorf("windowed geographic measure %q uses non-reaggregatable %q aggregation", field.Field, measure.Aggregation)
-					}
-				}
-			}
-			fields := compiledVisualFields(authored.Query)
-			latitude, latitudeOK := fieldBindingByAlias(fields, latitudeAlias)
-			longitude, longitudeOK := fieldBindingByAlias(fields, longitudeAlias)
-			if !latitudeOK || !longitudeOK {
-				return visualizationdefinition.QueryBinding{}, fmt.Errorf("spatial viewport coordinates %q and %q must reference compiled query aliases", latitudeAlias, longitudeAlias)
-			}
-			spatial.Viewport = &visualizationdefinition.SpatialViewportBinding{Latitude: latitude, Longitude: longitude, FeatureCap: 5000, RawMinimumZoom: 10}
-		}
 	}
 	return visualizationdefinition.QueryBinding{
 		Kind: visualizationdefinition.QuerySpatial, ResultShape: visualizationdefinition.ResultGeographicFeatures, ModelID: modelID, DatasetID: "primary", Identity: interactionIdentity(authored.Interaction.PointSelection), Spatial: spatial,
@@ -263,27 +236,6 @@ func tiledCellRadius(layers []reportdef.VisualGeoLayer) int32 {
 		}
 	}
 	return int32(math.Round(math.Max(32, math.Min(64, radius))))
-}
-
-func authoredViewportCoordinates(layers []reportdef.VisualGeoLayer) (latitude, longitude string, found bool, err error) {
-	for _, layer := range layers {
-		switch layer.Kind {
-		case "point", "heat", "density", "path":
-		default:
-			continue
-		}
-		if strings.TrimSpace(layer.Latitude) == "" || strings.TrimSpace(layer.Longitude) == "" {
-			continue
-		}
-		if !found {
-			latitude, longitude, found = layer.Latitude, layer.Longitude, true
-			continue
-		}
-		if latitude != layer.Latitude || longitude != layer.Longitude {
-			return "", "", false, fmt.Errorf("windowed geographic coordinate layers must share one latitude/longitude pair")
-		}
-	}
-	return latitude, longitude, found, nil
 }
 
 func fieldBindingByAlias(fields []visualizationdefinition.FieldBinding, alias string) (visualizationdefinition.FieldBinding, bool) {

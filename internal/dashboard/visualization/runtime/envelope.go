@@ -155,55 +155,6 @@ func validateFrameColumns(visualID string, got, want []string) error {
 	return nil
 }
 
-// SpatialEnvelopeFromFrame packages an already governed and bounded spatial
-// query result. Spatial aggregation belongs to the database planner; this
-// boundary validates and serializes it without filtering or re-aggregating.
-func SpatialEnvelopeFromFrame(definition visualizationdefinition.Definition, frame Frame, selections []dashboard.InteractionSelectionEntry, request dashboard.SpatialWindowRequest, precision ir.VisualizationSpatialPrecision, cardinality int64, dataRevision, generation int64) (ir.VisualizationEnvelope, error) {
-	if err := definition.Validate(); err != nil {
-		return ir.VisualizationEnvelope{}, err
-	}
-	geographic, ok := definition.Spec.Value.(*ir.GeographicVisualizationSpec)
-	if !ok || definition.Query.Kind != visualizationdefinition.QuerySpatial || definition.Query.Spatial == nil || definition.Query.Spatial.Viewport == nil {
-		return ir.VisualizationEnvelope{}, fmt.Errorf("visualization %q has no compiled spatial viewport", definition.ID)
-	}
-	schema, err := compiledDatasetSchema(geographic.VisualizationSpecBase, definition.Query.DatasetID)
-	if err != nil {
-		return ir.VisualizationEnvelope{}, err
-	}
-	columns := make([]string, len(schema.Fields))
-	for index, field := range schema.Fields {
-		columns[index] = field.ID
-	}
-	if err := validateFrameColumns(definition.ID, frame.Columns, columns); err != nil {
-		return ir.VisualizationEnvelope{}, err
-	}
-	featureCap := definition.Query.Spatial.Viewport.FeatureCap
-	state := ir.SpatialWindowedVisualizationDataState{
-		VisualizationDataStateBase: ir.VisualizationDataStateBase{Kind: "spatial_windowed", SpecRevision: definition.SpecRevision, DataRevision: dataRevision, Generation: generation},
-		Kind:                       "spatial_windowed", Schema: schema, Cardinality: ir.VisualizationCardinality{Kind: ir.VisualizationCardinalityKindExact, Count: &cardinality},
-		Extent: request.Bounds, RowCap: definition.Query.Spatial.Limit, FeatureCap: featureCap, ResetVersion: request.ResetVersion,
-		Window: &ir.VisualizationSpatialWindowBlock{ID: request.WindowID, Bounds: request.Bounds, Zoom: request.Zoom, Width: request.Width, Height: request.Height, Precision: precision, Rows: frame.Rows, RequestSeq: request.RequestSeq, ResetVersion: request.ResetVersion},
-	}
-	status := ir.VisualizationStatusKindReady
-	if len(frame.Rows) == 0 {
-		status = ir.VisualizationStatusKindNoData
-	} else if precision == ir.VisualizationSpatialPrecisionAggregated {
-		status = ir.VisualizationStatusKindPartial
-	}
-	envelope := ir.VisualizationEnvelope{
-		SchemaVersion: ir.CurrentSchemaVersion, VisualID: definition.ID, RendererID: definition.RendererID, SpecRevision: definition.SpecRevision, Spec: definition.Spec,
-		DataRevision: dataRevision, DataState: ir.VisualizationDataState{Value: &state}, Highlights: []ir.VisualizationHighlightState{}, Status: ir.VisualizationStatus{Kind: status}, Diagnostics: []ir.VisualizationDiagnostic{},
-	}
-	envelope.Selection, err = compiledSelections(definition.Spec, selections, dataRevision)
-	if err != nil {
-		return ir.VisualizationEnvelope{}, err
-	}
-	if err := ir.ValidateEnvelope(envelope); err != nil {
-		return ir.VisualizationEnvelope{}, fmt.Errorf("compiled spatial visualization %q: %w", definition.ID, err)
-	}
-	return envelope, nil
-}
-
 func SpatialTiledEnvelopeFromMetadata(definition visualizationdefinition.Definition, metadata SpatialTiledMetadata, selections []dashboard.InteractionSelectionEntry, dataRevision, generation int64) (ir.VisualizationEnvelope, error) {
 	if err := definition.Validate(); err != nil {
 		return ir.VisualizationEnvelope{}, err
@@ -389,21 +340,6 @@ func EmptyEnvelopeFromDefinition(definition visualizationdefinition.Definition, 
 			Kind:                       "spatial_tiled", Schema: schema, Cardinality: ir.VisualizationCardinality{Kind: ir.VisualizationCardinalityKindExact, Count: &count},
 			Extent: ir.VisualizationSpatialBounds{West: -180, South: -85.0511287798066, East: 180, North: 85.0511287798066}, RawDomains: []ir.VisualizationSpatialScaleDomain{}, AggregateDomains: []ir.VisualizationSpatialScaleDomain{},
 			TileURL: "/tiles/unavailable/{z}/{x}/{y}.mvt", MinimumZoom: tiles.MinimumZoom, MaximumZoom: tiles.MaximumZoom, RawMinimumZoom: tiles.RawMinimumZoom, FeatureCap: tiles.FeatureCap, MaximumTileBytes: tiles.MaximumBytes,
-		}
-		envelope.DataState = ir.VisualizationDataState{Value: &state}
-	} else if definition.Query.Kind == visualizationdefinition.QuerySpatial && definition.Query.Spatial != nil && definition.Query.Spatial.Viewport != nil {
-		geographic, ok := definition.Spec.Value.(*ir.GeographicVisualizationSpec)
-		if !ok {
-			return ir.VisualizationEnvelope{}, fmt.Errorf("compiled spatial visualization %q is not geographic", definition.ID)
-		}
-		extent := ir.VisualizationSpatialBounds{West: -180, South: -85, East: 180, North: 85}
-		if asset := geographic.Presentation.Basemap; asset != nil && len(asset.Bounds) == 4 {
-			extent = ir.VisualizationSpatialBounds{West: asset.Bounds[0], South: asset.Bounds[1], East: asset.Bounds[2], North: asset.Bounds[3]}
-		}
-		state := ir.SpatialWindowedVisualizationDataState{
-			VisualizationDataStateBase: ir.VisualizationDataStateBase{Kind: "spatial_windowed", SpecRevision: definition.SpecRevision, DataRevision: dataRevision, Generation: generation},
-			Kind:                       "spatial_windowed", Schema: schema, Cardinality: ir.VisualizationCardinality{Kind: ir.VisualizationCardinalityKindUnknown}, Extent: extent,
-			RowCap: base.DataBudget.MaxRows, FeatureCap: 5000, ResetVersion: resetVersion,
 		}
 		envelope.DataState = ir.VisualizationDataState{Value: &state}
 	} else if definition.Query.Kind == visualizationdefinition.QueryDetail || definition.Query.Kind == visualizationdefinition.QueryMatrix || definition.Query.Kind == visualizationdefinition.QueryPivot {

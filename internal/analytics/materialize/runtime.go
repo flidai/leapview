@@ -66,6 +66,21 @@ type Runtime struct {
 	closeErr           error
 }
 
+// LookupImmutableBytes, StoreImmutableBytes, and CoalesceImmutableBytes expose
+// the serving-generation result-cache scope to byte-oriented consumers such
+// as vector tiles without leaking cache implementation details.
+func (r *Runtime) LookupImmutableBytes(key string) ([]byte, bool, error) {
+	return r.queryCache.lookupBytes(key)
+}
+
+func (r *Runtime) StoreImmutableBytes(key string, value []byte) bool {
+	return r.queryCache.storeBytes(key, value) == resultcache.StoreStored
+}
+
+func (r *Runtime) CoalesceImmutableBytes(ctx context.Context, key string, execute func() error) (bool, error) {
+	return r.queryCache.coalesceBytes(ctx, key, execute)
+}
+
 type Database interface {
 	Executor
 	Close() error
@@ -559,7 +574,6 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 		dataquery.OperationDashboardHistogram,
 		dataquery.OperationDashboardDistribution,
 		dataquery.OperationDashboardFilterOptions,
-		dataquery.OperationDashboardSpatial,
 		dataquery.OperationDashboardSpatialTile,
 		dataquery.OperationDashboardSpatialTileBudget,
 		dataquery.OperationDashboardSpatialMetadata:

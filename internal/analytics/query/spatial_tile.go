@@ -6,6 +6,15 @@ import (
 	"strings"
 )
 
+func containsOutputColumn(columns []string, target string) bool {
+	for _, column := range columns {
+		if column == target {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	SpatialTileMinimumZoom           = 0
 	SpatialTileMaximumZoom           = 18

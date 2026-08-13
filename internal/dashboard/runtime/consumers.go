@@ -40,7 +40,7 @@ func (s *QueryService) ExecuteConsumersPage(ctx context.Context, request consume
 	for _, target := range request.Targets {
 		item := consumer.LogicalQuery{Target: target}
 		switch target.Kind {
-		case consumer.KindVisual, consumer.KindSpatial:
+		case consumer.KindVisual:
 			if !pageVisuals[target.ID] {
 				return fmt.Errorf("visual %q is not on page %q", target.ID, page.ID)
 			}
@@ -184,20 +184,11 @@ func (s *QueryService) executeConsumerJob(ctx context.Context, request consumer.
 	switch job.Queries[0].Target.Kind {
 	case consumer.KindVisual:
 		s.executeVisualConsumerJob(jobCtx, request, job, startedAt, emit)
-	case consumer.KindSpatial:
-		for _, query := range job.Queries {
-			s.executeSpatialConsumer(jobCtx, request, query.Target, startedAt, emit)
-		}
 	case consumer.KindWindow:
 		for _, query := range job.Queries {
 			s.executeTableConsumer(jobCtx, request, query.Target, startedAt, emit)
 		}
 	}
-}
-
-func (s *QueryService) executeSpatialConsumer(ctx context.Context, request consumer.Request, target consumer.Target, startedAt time.Time, publish consumer.Publisher) {
-	envelope, err := s.snapshots.querySpatialVisualPage(ctx, request.DashboardID, request.PageID, request.Filters, target.SpatialRequest)
-	publish(consumer.Result{Target: target, Envelope: envelope, Err: err, Duration: time.Since(startedAt)})
 }
 
 func (s *QueryService) executeVisualConsumerJob(ctx context.Context, request consumer.Request, job consumer.Job, startedAt time.Time, publish consumer.Publisher) {

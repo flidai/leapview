@@ -93,6 +93,9 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	initialFilters.CompiledState = &filterState
 	initialFilters.ServingStateID = sessionKey.ServingStateID
 	streamID := h.scopedStreamID(lddatastar.StreamID(clientID, dashboardID, activePage.ID, streamInstanceID))
+	if h.SpatialTileStreamClosed != nil {
+		defer h.SpatialTileStreamClosed(metrics, streamID)
+	}
 	request := command.Request{
 		DashboardID: dashboardID,
 		PageID:      activePage.ID,
@@ -141,7 +144,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if registry == nil {
 		registry = dashboardstream.NewRegistry()
 	}
-	coordinatorContext := h.analyticalContext(r.Context())
+	coordinatorContext := h.analyticalStreamContext(r.Context(), streamID)
 	coordinator, closeCoordinator := registry.Open(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
 	})

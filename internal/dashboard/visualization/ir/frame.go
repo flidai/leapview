@@ -45,11 +45,6 @@ func ValidateEnvelope(envelope VisualizationEnvelope) error {
 			return fmt.Errorf("visualization data budget maxRows must be positive")
 		}
 		return validateWindowedState(*state, base.DataBudget)
-	case *SpatialWindowedVisualizationDataState:
-		if base.DataBudget.MaxRows <= 0 {
-			return fmt.Errorf("visualization data budget maxRows must be positive")
-		}
-		return validateSpatialWindowedState(*state, base.DataBudget)
 	case *SpatialTiledVisualizationDataState:
 		if base.DataBudget.MaxRows != 0 {
 			return fmt.Errorf("spatial tiled visualization must not declare a row transport budget")
@@ -1450,39 +1445,6 @@ func validateWindowedState(state WindowedVisualizationDataState, budget Visualiz
 		if err := validateRows(state.Schema, columns, block.Rows); err != nil {
 			return fmt.Errorf("window block %q: %w", key, err)
 		}
-	}
-	return nil
-}
-
-func validateSpatialWindowedState(state SpatialWindowedVisualizationDataState, budget VisualizationDataBudget) error {
-	if err := validateSchema(state.Schema); err != nil {
-		return err
-	}
-	if state.RowCap <= 0 || state.RowCap > budget.MaxRows || state.FeatureCap <= 0 || state.FeatureCap > 5000 || state.ResetVersion < 0 {
-		return fmt.Errorf("invalid spatial window budgets")
-	}
-	if err := validateSpatialBounds(state.Extent); err != nil {
-		return fmt.Errorf("invalid spatial extent: %w", err)
-	}
-	if state.Window == nil {
-		return nil
-	}
-	window := state.Window
-	if window.ID == "" || window.RequestSeq <= 0 || window.ResetVersion != state.ResetVersion || window.Width <= 0 || window.Width > 16384 || window.Height <= 0 || window.Height > 16384 || window.Zoom < 0 || window.Zoom > 24 || int64(len(window.Rows)) > state.FeatureCap {
-		return fmt.Errorf("invalid or stale spatial window")
-	}
-	if err := validateSpatialBounds(window.Bounds); err != nil {
-		return fmt.Errorf("invalid spatial window bounds: %w", err)
-	}
-	if window.Precision != VisualizationSpatialPrecisionRaw && window.Precision != VisualizationSpatialPrecisionAggregated {
-		return fmt.Errorf("unsupported spatial precision %q", window.Precision)
-	}
-	columns := make([]string, len(state.Schema.Fields))
-	for index, field := range state.Schema.Fields {
-		columns[index] = field.ID
-	}
-	if err := validateRows(state.Schema, columns, window.Rows); err != nil {
-		return fmt.Errorf("spatial window %q: %w", window.ID, err)
 	}
 	return nil
 }

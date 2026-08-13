@@ -2,11 +2,31 @@ package query
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
+
+func spatialScaleFixture(t testing.TB, rows int) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"CREATE SCHEMA model",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, ordered_at TIMESTAMP, revenue DOUBLE, status VARCHAR, latitude DOUBLE, longitude DOUBLE)",
+		fmt.Sprintf("INSERT INTO model.orders SELECT 'order-' || i, 'customer-' || i, TIMESTAMP '2026-01-01', 1, 'paid', -84 + (i %% 168000) / 1000.0, -179 + (i %% 358000) / 1000.0 FROM range(%d) t(i)", rows),
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	return db
+}
 
 func TestSpatialBucketRunsNonAdditiveMeasuresAtFinalCellGrain(t *testing.T) {
 	model := testModel()
@@ -289,10 +309,22 @@ func TestSpatialTileBudgetMeasuresRevisionWideEncodedBytes(t *testing.T) {
 	}
 }
 
-func BenchmarkSpatialInitialViewportMillionRowsMVT(b *testing.B) {
+// BenchmarkSpatialInitialViewportMillionRows preserves the pre-migration
+// fixture and benchmark identity while measuring governed aggregation plus MVT
+// encoding for the initial visible metatile.
+func BenchmarkSpatialInitialViewportMillionRows(b *testing.B) {
 	db := spatialMVTScaleFixture(b, 1_000_000)
 	defer db.Close()
 	plan := spatialAggregateTilePlan(b, 0, 0, 0)
+	benchmarkSpatialTilePlan(b, db, plan)
+}
+
+func BenchmarkSpatialForcedAggregateFallbackMillionRowsMVT(b *testing.B) {
+	db := spatialMVTScaleFixture(b, 1_000_000)
+	defer db.Close()
+	// A revision-wide raw budget failure selects this aggregate plan for the
+	// complete zoom level; no child tile is allowed to choose independently.
+	plan := spatialAggregateTilePlan(b, 8, 60, 128)
 	benchmarkSpatialTilePlan(b, db, plan)
 }
 

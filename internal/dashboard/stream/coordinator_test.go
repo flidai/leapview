@@ -229,7 +229,7 @@ func TestCoordinatorRejectsStaleSequencedPreparationWithoutSupersedingCurrentWor
 
 	begin := func(sequence, epoch int64) (Refresh, error) {
 		return coordinator.BeginPrepared(func(current dashboard.Filters) (RefreshPreparation, error) {
-			return RefreshPreparation{Filters: current, Command: "visual_spatial_window", SequenceKey: "spatial:customer_map", Sequence: sequence, SequenceEpoch: epoch}, nil
+			return RefreshPreparation{Filters: current, Command: "visual_window", SequenceKey: "window:orders", Sequence: sequence, SequenceEpoch: epoch}, nil
 		}, func(RefreshPreparation) RefreshWork {
 			return func(ctx context.Context, _ RefreshPublisher) {
 				select {

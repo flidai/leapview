@@ -16,6 +16,12 @@ type Telemetry struct {
 	frameRows            *prometheus.HistogramVec
 	frameBytes           *prometheus.HistogramVec
 	cardinality          *prometheus.HistogramVec
+	tileRequests         *prometheus.CounterVec
+	tileCacheOutcomes    *prometheus.CounterVec
+	tileDuration         *prometheus.HistogramVec
+	tileBytes            *prometheus.HistogramVec
+	tileFeatures         *prometheus.HistogramVec
+	tileFallbacks        *prometheus.CounterVec
 	publicDocuments      *prometheus.CounterVec
 	publicStreams        *prometheus.GaugeVec
 	publicCommands       *prometheus.CounterVec
@@ -62,6 +68,27 @@ func New(registerer prometheus.Registerer) *Telemetry {
 			Name: "leapview_visualization_cardinality",
 			Help: "Reported visualization result cardinality.",
 		}, []string{"kind"}),
+		tileRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "leapview_spatial_tile_requests_total", Help: "Spatial tile request outcomes.",
+		}, []string{"outcome"}),
+		tileCacheOutcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "leapview_spatial_tile_cache_outcomes_total", Help: "Spatial child-tile byte cache outcomes.",
+		}, []string{"outcome"}),
+		tileDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "leapview_spatial_tile_stage_duration_seconds", Help: "Spatial tile query and encoding duration.",
+			Buckets: []float64{0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+		}, []string{"stage", "precision"}),
+		tileBytes: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "leapview_spatial_tile_size_bytes", Help: "Uncompressed MVT bytes by precision.",
+			Buckets: []float64{0, 1024, 4096, 16384, 65536, 131072, 262144, 524288},
+		}, []string{"precision"}),
+		tileFeatures: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "leapview_spatial_tile_features", Help: "Encoded feature count by precision.",
+			Buckets: []float64{0, 1, 10, 50, 100, 250, 500, 1000, 2500, 5000},
+		}, []string{"precision"}),
+		tileFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "leapview_spatial_tile_raw_fallbacks_total", Help: "Tiles served at aggregate precision because the raw revision-wide budget did not fit.",
+		}, []string{"precision"}),
 		publicDocuments: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "leapview_public_dashboard_documents_total",
 			Help: "Public dashboard document load outcomes.",
@@ -90,6 +117,12 @@ func New(registerer prometheus.Registerer) *Telemetry {
 			telemetry.frameRows,
 			telemetry.frameBytes,
 			telemetry.cardinality,
+			telemetry.tileRequests,
+			telemetry.tileCacheOutcomes,
+			telemetry.tileDuration,
+			telemetry.tileBytes,
+			telemetry.tileFeatures,
+			telemetry.tileFallbacks,
 			telemetry.publicDocuments,
 			telemetry.publicStreams,
 			telemetry.publicCommands,
@@ -97,6 +130,27 @@ func New(registerer prometheus.Registerer) *Telemetry {
 		)
 	}
 	return telemetry
+}
+
+func (t *Telemetry) SpatialTileObserved(outcome, cache, precision string, queryMS, encodingMS int64, encodedBytes, features int, fallback bool) {
+	if t == nil {
+		return
+	}
+	if outcome != "success" {
+		outcome = "error"
+	}
+	precision = spatialPrecisionLabel(precision)
+	t.tileRequests.WithLabelValues(outcome).Inc()
+	if outcome == "success" {
+		t.tileCacheOutcomes.WithLabelValues(cacheLabel(cache)).Inc()
+		t.tileDuration.WithLabelValues("query", precision).Observe(float64(max(queryMS, 0)) / 1000)
+		t.tileDuration.WithLabelValues("encoding", precision).Observe(float64(max(encodingMS, 0)) / 1000)
+		t.tileBytes.WithLabelValues(precision).Observe(float64(max(encodedBytes, 0)))
+		t.tileFeatures.WithLabelValues(precision).Observe(float64(max(features, 0)))
+		if fallback {
+			t.tileFallbacks.WithLabelValues(precision).Inc()
+		}
+	}
 }
 
 func (t *Telemetry) DashboardRefreshStarted(command string) {
@@ -266,6 +320,15 @@ func targetOutcomeLabel(value string) string {
 		return normalizedLabel(value)
 	default:
 		return "other"
+	}
+}
+
+func spatialPrecisionLabel(value string) string {
+	switch normalizedLabel(value) {
+	case "raw", "aggregated":
+		return normalizedLabel(value)
+	default:
+		return "unknown"
 	}
 }
 

@@ -70276,102 +70276,6 @@ components:
                 weekStart: monday
           id: example
         tileURL: example
-    SpatialWindowedVisualizationDataState:
-      type: object
-      allOf:
-        - $ref: '#/components/schemas/VisualizationDataStateBase'
-      required:
-        - kind
-        - schema
-        - cardinality
-        - extent
-        - rowCap
-        - featureCap
-        - resetVersion
-      properties:
-        kind:
-          type: string
-          enum:
-            - spatial_windowed
-          example: example
-        schema:
-          $ref: '#/components/schemas/VisualizationDatasetSchema'
-        cardinality:
-          $ref: '#/components/schemas/VisualizationCardinality'
-        extent:
-          $ref: '#/components/schemas/VisualizationSpatialBounds'
-        rowCap:
-          type: integer
-          format: int64
-          example: 1
-        featureCap:
-          type: integer
-          format: int64
-          example: 1
-        resetVersion:
-          type: integer
-          format: int64
-          example: 1
-        window:
-          $ref: '#/components/schemas/VisualizationSpatialWindowBlock'
-      example:
-        cardinality:
-          count: 1
-          kind: unknown
-        extent:
-          east: !!float 1
-          north: !!float 1
-          south: !!float 1
-          west: !!float 1
-        featureCap: 1
-        kind: example
-        resetVersion: 1
-        rowCap: 1
-        schema:
-          fields:
-            - dataType: string
-              geographic:
-                geometryAsset: example
-                identifierSystem: example
-                joinField: example
-                unmatchedPolicy: example
-              grid:
-                columnValue: example
-                formatting: []
-                group: example
-                measure: example
-              id: example
-              label: example
-              nullable: true
-              provenance:
-                calculationID: example
-                kind: modeled
-                sourceRefs:
-                  - example
-              role: dimension
-              sourceRef: example
-              time:
-                calendar: example
-                grain: example
-                meaning: instant
-                timezone: example
-                weekStart: monday
-          id: example
-        window:
-          bounds:
-            east: !!float 1
-            north: !!float 1
-            south: !!float 1
-            west: !!float 1
-          height: 1
-          id: example
-          precision: raw
-          requestSeq: 1
-          resetVersion: 1
-          rows:
-            - - example
-          width: 1
-          zoom: !!float 1
     StatusResponse:
       type: object
       required:
@@ -71797,14 +71701,12 @@ components:
       oneOf:
         - $ref: '#/components/schemas/InlineVisualizationDataState'
         - $ref: '#/components/schemas/WindowedVisualizationDataState'
-        - $ref: '#/components/schemas/SpatialWindowedVisualizationDataState'
         - $ref: '#/components/schemas/SpatialTiledVisualizationDataState'
       discriminator:
         propertyName: kind
         mapping:
           inline: '#/components/schemas/InlineVisualizationDataState'
           spatial_tiled: '#/components/schemas/SpatialTiledVisualizationDataState'
-          spatial_windowed: '#/components/schemas/SpatialWindowedVisualizationDataState'
           windowed: '#/components/schemas/WindowedVisualizationDataState'
     VisualizationDataStateBase:
       type: object
@@ -73952,12 +73854,6 @@ components:
         points:
           - latitude: !!float 1
             longitude: !!float 1
-    VisualizationSpatialPrecision:
-      type: string
-      enum:
-        - raw
-        - aggregated
-      example: raw
     VisualizationSpatialRadiusSelection:
       type: object
       allOf:
@@ -74103,68 +73999,6 @@ components:
       example:
         interactionID: example
         visualID: example
-    VisualizationSpatialWindowBlock:
-      type: object
-      required:
-        - id
-        - bounds
-        - zoom
-        - width
-        - height
-        - precision
-        - rows
-        - requestSeq
-        - resetVersion
-      properties:
-        id:
-          type: string
-          example: example
-        bounds:
-          $ref: '#/components/schemas/VisualizationSpatialBounds'
-        zoom:
-          type: number
-          format: double
-          example: !!float 1
-        width:
-          type: integer
-          format: int32
-          example: 1
-        height:
-          type: integer
-          format: int32
-          example: 1
-        precision:
-          $ref: '#/components/schemas/VisualizationSpatialPrecision'
-        rows:
-          type: array
-          items:
-            type: array
-            items: {}
-          example:
-            - - example
-        requestSeq:
-          type: integer
-          format: int64
-          example: 1
-        resetVersion:
-          type: integer
-          format: int64
-          example: 1
-      example:
-        bounds:
-          east: !!float 1
-          north: !!float 1
-          south: !!float 1
-          west: !!float 1
-        height: 1
-        id: example
-        precision: raw
-        requestSeq: 1
-        resetVersion: 1
-        rows:
-          - - example
-        width: 1
-        zoom: !!float 1
     VisualizationSpec:
       oneOf:
         - $ref: '#/components/schemas/CartesianVisualizationSpec'

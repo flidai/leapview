@@ -11,16 +11,14 @@ import (
 type Kind string
 
 const (
-	KindVisual  Kind = "visual"
-	KindWindow  Kind = "visual_window"
-	KindSpatial Kind = "spatial"
+	KindVisual Kind = "visual"
+	KindWindow Kind = "visual_window"
 )
 
 type Target struct {
-	Kind           Kind
-	ID             string
-	WindowRequest  dashboard.TableRequest
-	SpatialRequest dashboard.SpatialWindowRequest
+	Kind          Kind
+	ID            string
+	WindowRequest dashboard.TableRequest
 	// ExactCardinality is resolved from the authored table contract. The
 	// default bounded mode never schedules a separate COUNT(*) query.
 	ExactCardinality bool
@@ -29,7 +27,7 @@ type Target struct {
 // Key is the renderer-neutral identity used by status, audit, and
 // observability surfaces. Kind remains internal execution metadata.
 func (t Target) Key() string {
-	if t.Kind == KindVisual || t.Kind == KindWindow || t.Kind == KindSpatial {
+	if t.Kind == KindVisual || t.Kind == KindWindow {
 		return "visual:" + t.ID
 	}
 	return string(t.Kind) + ":" + t.ID

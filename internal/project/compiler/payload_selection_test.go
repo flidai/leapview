@@ -143,8 +143,8 @@ func TestGeographicVisualCompilesTiledCoordinateLayers(t *testing.T) {
 	if definition.Query.Kind != visualizationdefinition.QuerySpatial || definition.Query.Spatial == nil {
 		t.Fatalf("geographic query binding = %#v, want explicit spatial binding", definition.Query)
 	}
-	if definition.Query.Spatial.Viewport != nil || definition.Query.Spatial.Tiles == nil {
-		t.Fatalf("coordinate map delivery = viewport %#v, tiles %#v", definition.Query.Spatial.Viewport, definition.Query.Spatial.Tiles)
+	if definition.Query.Spatial.Tiles == nil {
+		t.Fatal("coordinate map did not compile tiled delivery")
 	}
 	tiles := definition.Query.Spatial.Tiles
 	if tiles.MinimumZoom != 0 || tiles.MaximumZoom != 18 || tiles.RawMinimumZoom != 5 || tiles.FeatureCap != 5000 || tiles.MaximumBytes != 512*1024 || tiles.MetatileSize != 4 || tiles.CellRadius != 48 {

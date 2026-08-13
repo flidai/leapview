@@ -451,15 +451,6 @@ func envelopeRows(envelope visualizationir.VisualizationEnvelope) []dashboard.Da
 			rows = append(rows, block.Rows...)
 		}
 		return envelopeDatums(columns, rows)
-	case *visualizationir.SpatialWindowedVisualizationDataState:
-		if state.Window == nil {
-			return nil
-		}
-		columns := make([]string, len(state.Schema.Fields))
-		for index, field := range state.Schema.Fields {
-			columns[index] = field.ID
-		}
-		return envelopeDatums(columns, state.Window.Rows)
 	default:
 		return nil
 	}
@@ -494,8 +485,6 @@ func normalizeEnvelopeRevision(envelope *visualizationir.VisualizationEnvelope, 
 			state.Datasets[index].DataRevision, state.Datasets[index].Generation = dataRevision, generation
 		}
 	case *visualizationir.WindowedVisualizationDataState:
-		state.DataRevision, state.Generation = dataRevision, generation
-	case *visualizationir.SpatialWindowedVisualizationDataState:
 		state.DataRevision, state.Generation = dataRevision, generation
 	case *visualizationir.SpatialTiledVisualizationDataState:
 		state.DataRevision, state.Generation = dataRevision, generation

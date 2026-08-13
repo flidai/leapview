@@ -85,13 +85,6 @@ func WithStreamRevision(envelope VisualizationEnvelope, dataRevision, generation
 		state := *value
 		state.DataRevision, state.Generation = dataRevision, generation
 		revised.DataState.Value = &state
-	case *SpatialWindowedVisualizationDataState:
-		if value == nil {
-			return VisualizationEnvelope{}, fmt.Errorf("visualization spatial windowed data state is nil")
-		}
-		state := *value
-		state.DataRevision, state.Generation = dataRevision, generation
-		revised.DataState.Value = &state
 	case *SpatialTiledVisualizationDataState:
 		if value == nil {
 			return VisualizationEnvelope{}, fmt.Errorf("visualization spatial tiled data state is nil")
@@ -160,11 +153,6 @@ func (visitor *dataStateRevisionVisitor) VisitInlineVisualizationDataState(value
 }
 
 func (visitor *dataStateRevisionVisitor) VisitWindowedVisualizationDataState(value *WindowedVisualizationDataState) error {
-	visitor.set(value.SpecRevision, value.DataRevision, value.Generation)
-	return nil
-}
-
-func (visitor *dataStateRevisionVisitor) VisitSpatialWindowedVisualizationDataState(value *SpatialWindowedVisualizationDataState) error {
 	visitor.set(value.SpecRevision, value.DataRevision, value.Generation)
 	return nil
 }

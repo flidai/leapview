@@ -20,9 +20,7 @@ export function interactionCommandForRowIndex(
   if (!Number.isSafeInteger(rowIndex) || rowIndex < 0) return undefined
   const dataset = envelope.dataState.kind === 'inline'
     ? envelope.dataState.datasets.find((candidate) => candidate.id === datasetID)
-    : envelope.dataState.kind === 'spatial_windowed' && envelope.dataState.schema.id === datasetID && envelope.dataState.window
-      ? { columns: envelope.dataState.schema.fields.map((field) => field.id), rows: envelope.dataState.window.rows }
-      : undefined
+    : undefined
   const row = dataset?.rows[rowIndex]
   if (!dataset || !row || row.length !== dataset.columns.length) return undefined
   return interactionCommandForRow(envelope, datasetID, row)
@@ -75,9 +73,7 @@ export function interactionOptions(envelope: VisualizationEnvelope): Interaction
   if (!interaction || !datasetID) return []
   const dataset = envelope.dataState.kind === 'inline'
     ? envelope.dataState.datasets.find((candidate) => candidate.id === datasetID)
-    : envelope.dataState.kind === 'spatial_windowed' && envelope.dataState.schema.id === datasetID && envelope.dataState.window
-      ? { rows: envelope.dataState.window.rows }
-      : undefined
+    : undefined
   if (!dataset) return []
   const unique = new Map<string, InteractionOption>()
   for (let rowIndex = 0; rowIndex < dataset.rows.length; rowIndex++) {

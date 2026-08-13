@@ -311,18 +311,6 @@ type SpatialTiledVisualizationDataState struct {
 	MaximumTileBytes int64                             `json:"maximumTileBytes"`
 }
 
-type SpatialWindowedVisualizationDataState struct {
-	VisualizationDataStateBase
-	Kind         string                           `json:"kind"`
-	Schema       VisualizationDatasetSchema       `json:"schema"`
-	Cardinality  VisualizationCardinality         `json:"cardinality"`
-	Extent       VisualizationSpatialBounds       `json:"extent"`
-	RowCap       int64                            `json:"rowCap"`
-	FeatureCap   int64                            `json:"featureCap"`
-	ResetVersion int64                            `json:"resetVersion"`
-	Window       *VisualizationSpatialWindowBlock `json:"window,omitempty"`
-}
-
 type TableBackgroundScaleFormattingRule struct {
 	TableVisualizationFormattingRuleBase
 	Kind      string   `json:"kind"`
@@ -1084,10 +1072,9 @@ type VisualizationDataState struct {
 	Value VisualizationDataStateVariant
 }
 
-func (*InlineVisualizationDataState) isVisualizationDataStateVariant()          {}
-func (*SpatialTiledVisualizationDataState) isVisualizationDataStateVariant()    {}
-func (*SpatialWindowedVisualizationDataState) isVisualizationDataStateVariant() {}
-func (*WindowedVisualizationDataState) isVisualizationDataStateVariant()        {}
+func (*InlineVisualizationDataState) isVisualizationDataStateVariant()       {}
+func (*SpatialTiledVisualizationDataState) isVisualizationDataStateVariant() {}
+func (*WindowedVisualizationDataState) isVisualizationDataStateVariant()     {}
 
 func (value VisualizationDataState) MarshalJSON() ([]byte, error) {
 	switch variant := value.Value.(type) {
@@ -1097,11 +1084,6 @@ func (value VisualizationDataState) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(variant)
 	case *SpatialTiledVisualizationDataState:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationDataState variant is nil")
-		}
-		return json.Marshal(variant)
-	case *SpatialWindowedVisualizationDataState:
 		if variant == nil {
 			return nil, fmt.Errorf("VisualizationDataState variant is nil")
 		}
@@ -1213,42 +1195,6 @@ func (value *VisualizationDataState) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("decode VisualizationDataState variant %q: %w", tag.Value, err)
 		}
 		value.Value = &variant
-	case "spatial_windowed":
-		if _, ok := fields["cardinality"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property cardinality is missing", tag.Value)
-		}
-		if _, ok := fields["dataRevision"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property dataRevision is missing", tag.Value)
-		}
-		if _, ok := fields["extent"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property extent is missing", tag.Value)
-		}
-		if _, ok := fields["featureCap"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property featureCap is missing", tag.Value)
-		}
-		if _, ok := fields["generation"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property generation is missing", tag.Value)
-		}
-		if _, ok := fields["kind"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property kind is missing", tag.Value)
-		}
-		if _, ok := fields["resetVersion"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property resetVersion is missing", tag.Value)
-		}
-		if _, ok := fields["rowCap"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property rowCap is missing", tag.Value)
-		}
-		if _, ok := fields["schema"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property schema is missing", tag.Value)
-		}
-		if _, ok := fields["specRevision"]; !ok {
-			return fmt.Errorf("decode VisualizationDataState variant %q: required property specRevision is missing", tag.Value)
-		}
-		var variant SpatialWindowedVisualizationDataState
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode VisualizationDataState variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
 	case "windowed":
 		if _, ok := fields["availableRows"]; !ok {
 			return fmt.Errorf("decode VisualizationDataState variant %q: required property availableRows is missing", tag.Value)
@@ -1300,7 +1246,6 @@ func (value *VisualizationDataState) UnmarshalJSON(data []byte) error {
 type VisualizationDataStateVisitor interface {
 	VisitInlineVisualizationDataState(*InlineVisualizationDataState) error
 	VisitSpatialTiledVisualizationDataState(*SpatialTiledVisualizationDataState) error
-	VisitSpatialWindowedVisualizationDataState(*SpatialWindowedVisualizationDataState) error
 	VisitWindowedVisualizationDataState(*WindowedVisualizationDataState) error
 }
 
@@ -1322,11 +1267,6 @@ func (value *VisualizationDataState) Visit(visitor VisualizationDataStateVisitor
 			return fmt.Errorf("VisualizationDataState variant is nil")
 		}
 		return visitor.VisitSpatialTiledVisualizationDataState(variant)
-	case *SpatialWindowedVisualizationDataState:
-		if variant == nil {
-			return fmt.Errorf("VisualizationDataState variant is nil")
-		}
-		return visitor.VisitSpatialWindowedVisualizationDataState(variant)
 	case *WindowedVisualizationDataState:
 		if variant == nil {
 			return fmt.Errorf("VisualizationDataState variant is nil")
@@ -1354,11 +1294,6 @@ func (value *VisualizationDataState) Kind() (string, error) {
 			return "", fmt.Errorf("VisualizationDataState variant is nil")
 		}
 		return "spatial_tiled", nil
-	case *SpatialWindowedVisualizationDataState:
-		if variant == nil {
-			return "", fmt.Errorf("VisualizationDataState variant is nil")
-		}
-		return "spatial_windowed", nil
 	case *WindowedVisualizationDataState:
 		if variant == nil {
 			return "", fmt.Errorf("VisualizationDataState variant is nil")
@@ -1386,11 +1321,6 @@ func (value *VisualizationDataState) Base() (*VisualizationDataStateBase, error)
 			return nil, fmt.Errorf("VisualizationDataState variant is nil")
 		}
 		return &variant.VisualizationDataStateBase, nil
-	case *SpatialWindowedVisualizationDataState:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationDataState variant is nil")
-		}
-		return &variant.VisualizationDataStateBase, nil
 	case *WindowedVisualizationDataState:
 		if variant == nil {
 			return nil, fmt.Errorf("VisualizationDataState variant is nil")
@@ -1413,10 +1343,9 @@ type VisualizationDataStateBase struct {
 type VisualizationDataStateKind string
 
 const (
-	VisualizationDataStateKindInline          VisualizationDataStateKind = "inline"
-	VisualizationDataStateKindWindowed        VisualizationDataStateKind = "windowed"
-	VisualizationDataStateKindSpatialWindowed VisualizationDataStateKind = "spatial_windowed"
-	VisualizationDataStateKindSpatialTiled    VisualizationDataStateKind = "spatial_tiled"
+	VisualizationDataStateKindInline       VisualizationDataStateKind = "inline"
+	VisualizationDataStateKindWindowed     VisualizationDataStateKind = "windowed"
+	VisualizationDataStateKindSpatialTiled VisualizationDataStateKind = "spatial_tiled"
 )
 
 type VisualizationDataStateTransport struct {
@@ -3047,13 +2976,6 @@ type VisualizationSpatialLassoSelection struct {
 	Points []VisualizationSpatialCoordinate `json:"points"`
 }
 
-type VisualizationSpatialPrecision string
-
-const (
-	VisualizationSpatialPrecisionRaw        VisualizationSpatialPrecision = "raw"
-	VisualizationSpatialPrecisionAggregated VisualizationSpatialPrecision = "aggregated"
-)
-
 type VisualizationSpatialRadiusSelection struct {
 	VisualizationSpatialSelectionGeometryBase
 	Kind         string                         `json:"kind"`
@@ -3299,31 +3221,6 @@ type VisualizationSpatialSelectionState struct {
 	VisualID      string                                `json:"visualID"`
 	InteractionID string                                `json:"interactionID"`
 	Geometry      VisualizationSpatialSelectionGeometry `json:"geometry"`
-}
-
-type VisualizationSpatialWindowBlock struct {
-	ID           string                        `json:"id"`
-	Bounds       VisualizationSpatialBounds    `json:"bounds"`
-	Zoom         float64                       `json:"zoom"`
-	Width        int32                         `json:"width"`
-	Height       int32                         `json:"height"`
-	Precision    VisualizationSpatialPrecision `json:"precision"`
-	Rows         [][]any                       `json:"rows"`
-	RequestSeq   int64                         `json:"requestSeq"`
-	ResetVersion int64                         `json:"resetVersion"`
-}
-
-type VisualizationSpatialWindowRequest struct {
-	VisualID     string                     `json:"visualID"`
-	SpecRevision string                     `json:"specRevision"`
-	DataRevision int64                      `json:"dataRevision"`
-	RequestSeq   int64                      `json:"requestSeq"`
-	ResetVersion int64                      `json:"resetVersion"`
-	Bounds       VisualizationSpatialBounds `json:"bounds"`
-	Zoom         float64                    `json:"zoom"`
-	Width        int32                      `json:"width"`
-	Height       int32                      `json:"height"`
-	WindowID     string                     `json:"windowID"`
 }
 
 type VisualizationSpecVariant interface {

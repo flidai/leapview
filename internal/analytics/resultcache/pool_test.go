@@ -101,6 +101,18 @@ func TestByteEntriesAreImmutableAndShareCacheBudgets(t *testing.T) {
 	}
 }
 
+func TestByteEntriesRetainValidEmptyPayloads(t *testing.T) {
+	pool, _ := New(testLimits())
+	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	if outcome := scope.StoreBytes("empty-tile", scope.Generation(), []byte{}); outcome != StoreStored {
+		t.Fatalf("store empty bytes outcome = %q", outcome)
+	}
+	value, _, hit, err := scope.LookupBytes("empty-tile")
+	if err != nil || !hit || len(value) != 0 {
+		t.Fatalf("empty lookup = %v hit=%v err=%v", value, hit, err)
+	}
+}
+
 func BenchmarkWarmTileByteLookup(b *testing.B) {
 	pool, err := New(testLimits())
 	if err != nil {

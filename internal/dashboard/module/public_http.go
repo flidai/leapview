@@ -205,8 +205,6 @@ func (m *Module) PublicDashboardCommand(commandName string) http.HandlerFunc {
 			handler.ClearSelection(recorder, r.WithContext(ctx))
 		case "visual_window":
 			handler.VisualWindow(recorder, r.WithContext(ctx))
-		case "visual_spatial_window":
-			handler.VisualSpatialWindow(recorder, r.WithContext(ctx))
 		default:
 			http.NotFound(recorder, r)
 		}

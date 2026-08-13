@@ -56,7 +56,7 @@ function validTransportHeader(transport: VisualizationDataStateTransport | undef
   return transport !== undefined
     && transport.schemaVersion === 1
     && transport.encoding === 'json'
-		&& (transport.kind === 'inline' || transport.kind === 'windowed' || transport.kind === 'spatial_windowed' || transport.kind === 'spatial_tiled')
+		&& (transport.kind === 'inline' || transport.kind === 'windowed' || transport.kind === 'spatial_tiled')
     && transport.specRevision === signal.specRevision
     && transport.dataRevision === signal.dataRevision
     && Number.isSafeInteger(transport.dataRevision) && transport.dataRevision >= 0

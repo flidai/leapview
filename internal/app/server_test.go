@@ -118,10 +118,6 @@ func (fakeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pa
 	return fakeVisualizationWindow(ctx, fakeMetrics{}, dashboardID, pageID, filters, request)
 }
 
-func (fakeMetrics) QueryVisualizationSpatialWindow(context.Context, string, string, dashboard.Filters, visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	return visualizationir.VisualizationEnvelope{}, nil
-}
-
 type fakeWindowSource interface {
 	queryWindow(context.Context, string, string, dashboard.Filters, dashboard.TableRequest) (dashboard.Table, error)
 	VisualizationDefinition(string, string) (visualizationdefinition.Definition, bool)

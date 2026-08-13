@@ -721,8 +721,6 @@ model DashboardEnvelope {
   `status`: DashboardStatus;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "visualWindowCommand" })
   `visualWindowCommand`: LeapViewVisualization.VisualizationWindowRequest;
-  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "visualSpatialWindowCommand" })
-  `visualSpatialWindowCommand`: LeapViewVisualization.VisualizationSpatialWindowRequest;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "urlParams" })
   `urlParams`: Record<unknown>;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "merge", `x-leapview-signal-key`: "visuals" })

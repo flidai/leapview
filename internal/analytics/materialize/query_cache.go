@@ -167,6 +167,40 @@ func (c *queryResultCache) coalesce(ctx context.Context, key string, execute fun
 	})
 }
 
+func (c *queryResultCache) lookupBytes(key string) ([]byte, bool, error) {
+	if c == nil || c.scope == nil {
+		return nil, false, fmt.Errorf("result cache scope is required")
+	}
+	value, _, ok, err := c.scope.LookupBytes(key)
+	if err == nil {
+		c.syncStats()
+	}
+	return value, ok, err
+}
+
+func (c *queryResultCache) storeBytes(key string, value []byte) resultcache.StoreOutcome {
+	if c == nil || c.scope == nil {
+		return resultcache.StoreClosed
+	}
+	_, token, _, err := c.scope.LookupBytes(key)
+	if err != nil {
+		return resultcache.StoreClosed
+	}
+	outcome := c.scope.StoreBytes(key, token, value)
+	c.syncStats()
+	return outcome
+}
+
+func (c *queryResultCache) coalesceBytes(ctx context.Context, key string, execute func() error) (bool, error) {
+	if c == nil || c.scope == nil {
+		return false, fmt.Errorf("result cache scope is required")
+	}
+	_, shared, err := c.scope.Coalesce(ctx, "immutable-bytes:"+key, func() (any, error) {
+		return struct{}{}, execute()
+	})
+	return shared, err
+}
+
 func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Query) (dataquery.Result, string, uint64, bool, error) {
 	key, generation, err := c.cacheKey(request)
 	if err != nil {
@@ -204,7 +238,6 @@ func (c *queryResultCache) cacheKey(request dataquery.Query) (string, uint64, er
 		Limit:                        request.Limit,
 		BinCount:                     request.BinCount,
 		IncludeTotal:                 request.IncludeTotal,
-		Spatial:                      request.Spatial,
 		SpatialTile:                  request.SpatialTile,
 		SpatialTileBudget:            request.SpatialTileBudget,
 		SpatialTileGenerationVersion: spatialTileGenerationVersion,
@@ -246,7 +279,6 @@ type queryResultCacheKey struct {
 	Limit                        int
 	BinCount                     int
 	IncludeTotal                 bool
-	Spatial                      *dataquery.SpatialWindow
 	SpatialTile                  *dataquery.SpatialTile
 	SpatialTileBudget            *dataquery.SpatialTileBudget
 	SpatialTileGenerationVersion int

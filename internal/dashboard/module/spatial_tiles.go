@@ -46,9 +46,11 @@ func (m *Module) VisualizationTile(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := metrics.QueryVisualizationTile(ctx, workspaceID, dashboardID, visualID, revision, zoom, x, y)
 	if err != nil {
+		m.observeSpatialTile("error", dashboardruntime.SpatialTileResult{})
 		spatialTileFailure(w, http.StatusNotFound, "tile revision unavailable")
 		return
 	}
+	m.observeSpatialTile("success", result)
 	writeSpatialTile(w, r, result, "private, immutable")
 }
 
@@ -82,10 +84,18 @@ func (m *Module) PublicVisualizationTile(w http.ResponseWriter, r *http.Request)
 	}
 	result, err := metrics.QueryPublicVisualizationTile(ctx, publicID, resolved.Publication.Dashboard, visualID, revision, zoom, x, y)
 	if err != nil {
+		m.observeSpatialTile("error", dashboardruntime.SpatialTileResult{})
 		spatialTileFailure(w, http.StatusNotFound, "tile revision unavailable")
 		return
 	}
+	m.observeSpatialTile("success", result)
 	writeSpatialTile(w, r, result, "public, immutable")
+}
+
+func (m *Module) observeSpatialTile(outcome string, result dashboardruntime.SpatialTileResult) {
+	if m != nil && m.dashboardTelemetry != nil {
+		m.dashboardTelemetry.SpatialTileObserved(outcome, result.CacheOutcome, result.Precision, result.QueryMS, result.EncodingMS, len(result.Bytes), result.Features, result.Fallback)
+	}
 }
 
 func writeSpatialTile(w http.ResponseWriter, r *http.Request, result dashboardruntime.SpatialTileResult, cacheControl string) {

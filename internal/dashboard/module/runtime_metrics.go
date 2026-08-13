@@ -69,7 +69,6 @@ type visualizationRuntime interface {
 	NormalizeVisualizationWindow(dashboardID string, request dashboard.TableRequest) dashboard.TableRequest
 	QueryVisualization(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error)
 	QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error)
-	QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error)
 }
 
 type spatialTileRuntime interface {
@@ -308,19 +307,6 @@ func (m runtimeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardI
 	return port.QueryVisualizationWindow(ctx, dashboardID, pageID, filters, request)
 }
 
-func (m runtimeMetrics) QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	runtime, release, err := m.activeForDashboardRefresh(ctx)
-	if err != nil {
-		return visualizationir.VisualizationEnvelope{}, err
-	}
-	defer release()
-	port, ok := runtime.(visualizationRuntime)
-	if !ok {
-		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide visualization data")
-	}
-	return port.QueryVisualizationSpatialWindow(ctx, dashboardID, pageID, filters, request)
-}
-
 func (m runtimeMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
 	runtime, release, err := m.active(ctx)
 	if err != nil {
@@ -332,6 +318,17 @@ func (m runtimeMetrics) QueryVisualizationTile(ctx context.Context, workspaceID,
 		return dashboardruntime.SpatialTileResult{}, fmt.Errorf("active runtime does not provide spatial tiles")
 	}
 	return port.QueryVisualizationTile(ctx, dashboardID, visualID, revision, zoom, x, y)
+}
+
+func (m runtimeMetrics) ExpireVisualizationTileStream(streamID string) {
+	runtime, release, err := m.active(context.Background())
+	if err != nil {
+		return
+	}
+	defer release()
+	if expirer, ok := runtime.(interface{ ExpireVisualizationTileStream(string) }); ok {
+		expirer.ExpireVisualizationTileStream(streamID)
+	}
 }
 
 func (m runtimeMetrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {

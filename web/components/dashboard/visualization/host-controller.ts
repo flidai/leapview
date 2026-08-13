@@ -101,7 +101,7 @@ export class RendererRegistry {
     if (!registration.kinds.includes(envelope.spec.kind)) {
       throw new Error(`renderer ${JSON.stringify(envelope.rendererID)} does not support kind ${JSON.stringify(envelope.spec.kind)}`)
     }
-    if ((envelope.dataState.kind === 'windowed' || envelope.dataState.kind === 'spatial_windowed') && !registration.capabilities.windowed) {
+    if (envelope.dataState.kind === 'windowed' && !registration.capabilities.windowed) {
       throw new Error(`renderer ${JSON.stringify(envelope.rendererID)} does not support windowed data`)
     }
     return registration

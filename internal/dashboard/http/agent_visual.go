@@ -180,17 +180,6 @@ func dashboardVisualRows(
 		}
 		completeness := dashboardWindowCompleteness(len(rows), state.AvailableRows, start, state.Cardinality)
 		return state.Schema.ID, state.Schema.Fields, rows, completeness, nil
-	case *visualizationir.SpatialWindowedVisualizationDataState:
-		rows := [][]any{}
-		if state.Window != nil {
-			rows = dashboardVisualPage(state.Window.Rows, start, limit)
-		}
-		available := int64(len(rows))
-		if state.Cardinality.Count != nil {
-			available = *state.Cardinality.Count
-		}
-		completeness := dashboardWindowCompleteness(len(rows), available, start, state.Cardinality)
-		return state.Schema.ID, state.Schema.Fields, rows, completeness, nil
 	default:
 		return "", nil, nil, dashboardVisualCompleteness{}, fmt.Errorf("visualization %q has unsupported data state %T", envelope.VisualID, envelope.DataState.Value)
 	}

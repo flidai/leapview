@@ -105,18 +105,16 @@ type PivotQueryBinding = MatrixQueryBinding
 
 // SpatialQueryBinding is the compiler-resolved query contract for a
 // geographic visualization. Tiles is present when every data-bound layer can
-// use the governed MVT runtime. Viewport remains during the compatibility
-// window and is removed once all active streams have tiled parity.
+// use the governed MVT runtime.
 type SpatialQueryBinding struct {
-	TableID    string                  `json:"tableID" yaml:"table_id"`
-	Dimensions []FieldBinding          `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
-	Series     *FieldBinding           `json:"series,omitempty" yaml:"series,omitempty"`
-	Measures   []FieldBinding          `json:"measures,omitempty" yaml:"measures,omitempty"`
-	Time       *TimeBinding            `json:"time,omitempty" yaml:"time,omitempty"`
-	Sort       []Sort                  `json:"sort,omitempty" yaml:"sort,omitempty"`
-	Limit      int64                   `json:"limit" yaml:"limit"`
-	Viewport   *SpatialViewportBinding `json:"viewport,omitempty" yaml:"viewport,omitempty"`
-	Tiles      *SpatialTileBinding     `json:"tiles,omitempty" yaml:"tiles,omitempty"`
+	TableID    string              `json:"tableID" yaml:"table_id"`
+	Dimensions []FieldBinding      `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
+	Series     *FieldBinding       `json:"series,omitempty" yaml:"series,omitempty"`
+	Measures   []FieldBinding      `json:"measures,omitempty" yaml:"measures,omitempty"`
+	Time       *TimeBinding        `json:"time,omitempty" yaml:"time,omitempty"`
+	Sort       []Sort              `json:"sort,omitempty" yaml:"sort,omitempty"`
+	Limit      int64               `json:"limit" yaml:"limit"`
+	Tiles      *SpatialTileBinding `json:"tiles,omitempty" yaml:"tiles,omitempty"`
 }
 
 // SpatialTileBinding identifies the compiler-resolved coordinate pair and
@@ -131,16 +129,6 @@ type SpatialTileBinding struct {
 	MaximumBytes   int64        `json:"maximumBytes" yaml:"maximum_bytes"`
 	MetatileSize   int32        `json:"metatileSize" yaml:"metatile_size"`
 	CellRadius     int32        `json:"cellRadius" yaml:"cell_radius"`
-}
-
-// SpatialViewportBinding identifies the one compiler-resolved coordinate pair
-// used to govern viewport requests. All coordinate layers in a windowed map
-// must use this pair.
-type SpatialViewportBinding struct {
-	Latitude       FieldBinding `json:"latitude" yaml:"latitude"`
-	Longitude      FieldBinding `json:"longitude" yaml:"longitude"`
-	FeatureCap     int64        `json:"featureCap" yaml:"feature_cap"`
-	RawMinimumZoom float64      `json:"rawMinimumZoom" yaml:"raw_minimum_zoom"`
 }
 
 type Sort struct {
@@ -164,20 +152,6 @@ func (query QueryBinding) Validate() error {
 	view, err := query.validationView()
 	if err != nil {
 		return err
-	}
-	if viewport := view.viewport; viewport != nil {
-		if view.tiles != nil {
-			return fmt.Errorf("spatial query cannot use viewport and tiled delivery together")
-		}
-		if viewport.FeatureCap <= 0 || viewport.FeatureCap > view.limit {
-			return fmt.Errorf("spatial viewport requires a positive feature cap no greater than its row limit")
-		}
-		if viewport.RawMinimumZoom < 0 || viewport.RawMinimumZoom > 24 {
-			return fmt.Errorf("spatial viewport raw minimum zoom must be between 0 and 24")
-		}
-		if !containsFieldBinding(view.fields, viewport.Latitude) || !containsFieldBinding(view.fields, viewport.Longitude) {
-			return fmt.Errorf("spatial viewport coordinates must reference compiled query fields")
-		}
 	}
 	if tiles := view.tiles; tiles != nil {
 		if view.limit != 0 {
@@ -279,13 +253,12 @@ func containsFieldBinding(fields []FieldBinding, target FieldBinding) bool {
 }
 
 type queryBindingView struct {
-	tableID  string
-	fields   []FieldBinding
-	sorts    []Sort
-	time     *TimeBinding
-	limit    int64
-	viewport *SpatialViewportBinding
-	tiles    *SpatialTileBinding
+	tableID string
+	fields  []FieldBinding
+	sorts   []Sort
+	time    *TimeBinding
+	limit   int64
+	tiles   *SpatialTileBinding
 }
 
 func (query QueryBinding) validationView() (queryBindingView, error) {
@@ -333,7 +306,7 @@ func (query QueryBinding) validationView() (queryBindingView, error) {
 		if query.Spatial == nil {
 			return queryBindingView{}, fmt.Errorf("spatial query binding requires spatial branch")
 		}
-		view.tableID, view.sorts, view.limit, view.viewport, view.tiles = query.Spatial.TableID, query.Spatial.Sort, query.Spatial.Limit, query.Spatial.Viewport, query.Spatial.Tiles
+		view.tableID, view.sorts, view.limit, view.tiles = query.Spatial.TableID, query.Spatial.Sort, query.Spatial.Limit, query.Spatial.Tiles
 		addAggregateFields(query.Spatial.Dimensions, query.Spatial.Series, query.Spatial.Time, query.Spatial.Measures)
 	default:
 		return queryBindingView{}, fmt.Errorf("unsupported visualization query kind %q", query.Kind)
