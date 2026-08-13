@@ -16,6 +16,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPrincipalIsHumanExcludesServicePrincipals(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		principal Principal
+		want      bool
+	}{
+		{name: "user", principal: Principal{Kind: access.PrincipalKindUser}, want: true},
+		{name: "local developer", principal: Principal{DevBypass: true}, want: true},
+		{name: "service principal", principal: Principal{Kind: access.PrincipalKindServicePrincipal}, want: false},
+		{name: "publication", principal: Principal{Kind: access.PrincipalKindDashboardPublication}, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.principal.IsHuman(); got != test.want {
+				t.Fatalf("IsHuman() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestPrivilegeWorkspaceIDUsesConfiguredWorkspaceWhenRouteHasNoScope(t *testing.T) {
 	auth := &Auth{workspaceID: "default-workspace"}
 

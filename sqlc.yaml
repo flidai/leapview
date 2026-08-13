@@ -162,6 +162,7 @@ sql:
     queries:
       - "internal/dashboard/publication/sqlite/queries"
       - "internal/dashboard/session/sqlite/queries"
+      - "internal/dashboard/usage/sqlite/queries"
     schema: "internal/platform/migrations"
     gen:
       go:

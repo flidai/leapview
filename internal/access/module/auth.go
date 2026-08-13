@@ -55,6 +55,13 @@ type Principal struct {
 	DevBypass   bool                 `json:"-"`
 }
 
+// IsHuman reports whether the principal represents an interactive person whose
+// product usage may be counted. The local development bypass behaves as a
+// human user; service principals and workload identities do not.
+func (principal Principal) IsHuman() bool {
+	return principal.DevBypass || principal.Kind == access.PrincipalKindUser
+}
+
 type oidcClient interface {
 	AuthCodeURL(state, nonce string) string
 	Authenticate(ctx context.Context, code, expectedNonce string) (oidcauth.Claims, error)

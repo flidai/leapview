@@ -621,6 +621,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		var err error
 		routes.workspaceModule, err = workspacemodule.Build(ctx, workspacemodule.Config{
 			Database:            database,
+			Logger:              platform.logger,
 			Directory:           persistence.workspaceDirectory,
 			ReadModel:           persistence.workspaceReadModel,
 			AccessService:       routes.accessModule.WorkspaceAccessService(),
@@ -669,6 +670,30 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return accessmodule.APICredentialFromContext(r.Context())
 			},
 			AuthorizeObject: routes.accessModule.AuthorizeObject,
+			DashboardPopularity: func(ctx context.Context, dashboardCount int) (map[string]workspacemodule.PopularityLevel, error) {
+				if routes.dashboardModule == nil {
+					return nil, nil
+				}
+				levels, err := routes.dashboardModule.Popularity(ctx, dashboardCount)
+				if err != nil {
+					return nil, err
+				}
+				popularity := make(map[string]workspacemodule.PopularityLevel, len(levels))
+				for dashboardID, level := range levels {
+					popularity[dashboardID] = workspacemodule.PopularityLevel(level)
+				}
+				return popularity, nil
+			},
+			DashboardRefreshedAt: func(ctx context.Context, workspaceID, environment, modelID string) (string, bool, error) {
+				if routes.refreshModule == nil {
+					return "", false, nil
+				}
+				version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, environment, modelID)
+				if err != nil || !ok {
+					return "", ok, err
+				}
+				return version.RefreshedAt.UTC().Format(time.RFC3339), true, nil
+			},
 		})
 		if err != nil {
 			return fmt.Errorf("build workspace module: %w", err)
@@ -738,6 +763,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 						return ""
 					}
 					return principal.ID
+				},
+				CurrentUsagePrincipal: func(r *http.Request) (string, bool) {
+					principal, ok := routes.accessModule.CurrentPrincipal(r)
+					if !ok || !principal.IsHuman() {
+						return "", false
+					}
+					return principal.ID, true
 				},
 				AuthorizeListObject: func(ctx context.Context, principalID string, object accessmodule.ObjectRef) (bool, error) {
 					return authorizeListObject(routes.accessModule, platform.auth != nil, ctx, principalID, object)

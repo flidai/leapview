@@ -16,7 +16,9 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
+	"github.com/flidai/leapview/internal/dashboard/usage"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
@@ -154,6 +156,31 @@ func TestUpdatesPreservesDrawerAgentStateOnReconnect(t *testing.T) {
 	}
 	if bootstrapCalls != 0 {
 		t.Fatalf("AgentBootstrap calls = %d, want 0 on reconnect", bootstrapCalls)
+	}
+}
+
+func TestUpdatesRecordsOneHumanViewForNewSession(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	views := []usage.View{}
+	handler := Handler{
+		Metrics: fakeMetrics{}, SessionStore: dashboardsession.NewMemoryStore(),
+		CurrentUsagePrincipal: func(*nethttp.Request) (string, bool) { return "alice", true },
+		RecordDashboardView: func(_ context.Context, view usage.View) error {
+			views = append(views, view)
+			return nil
+		},
+	}
+	path := "/updates?workspace=workspace&dashboard=dash&page=overview&clientId=client&streamInstance=stream"
+	for range 2 {
+		req := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, path, nil)
+		handler.Updates(httptest.NewRecorder(), req)
+	}
+	if len(views) != 1 {
+		t.Fatalf("recorded views = %#v, want one new-session view", views)
+	}
+	if got := views[0]; got.WorkspaceID != "workspace" || got.DashboardID != "dash" || got.PageID != "overview" || got.PrincipalID != "alice" {
+		t.Fatalf("recorded view = %#v", got)
 	}
 }
 
