@@ -1,4 +1,5 @@
 import { chromium, expect, type Page } from '@playwright/test'
+import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 type RouteExpectation = {
   path: string
@@ -500,9 +501,9 @@ async function verifySpatialShowcaseMaps(): Promise<void> {
       const summary = await page.evaluate((visualID) => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
         const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as Array<HTMLElement & { envelope?: any; shadowRoot: ShadowRoot }>
-        return hosts.find((candidate) => candidate.envelope?.visualID === visualID)?.shadowRoot?.textContent ?? ''
+        return hosts.find((candidate) => candidate.envelope?.visualID === visualID)?.shadowRoot?.querySelector('[data-map-data-table] > summary')?.textContent ?? ''
       }, visualIDs[0])
-      if (/visible features:\s*\d+ raw points?,\s*\d+ aggregate cells?/.test(summary)) {
+      if (hasMixedSpatialPrecision(summary)) {
         throw new Error(`${path}: point map mixed raw and aggregate granularity after zoom step ${step + 1}: ${summary.trim()}`)
       }
     }
