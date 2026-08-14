@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -331,15 +332,46 @@ func TestMCPAcceptsOAuthTokensAndRejectsGeneralAPITokens(t *testing.T) {
 		t.Fatalf("restricted OAuth token status = %d body=%s", response.Code, response.Body.String())
 	}
 
-	foreignWorkspace := mcpRequest(t, handler, oauthToken, "2025-11-25", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"catalog_get","arguments":{"ref":{"workspaceId":"other","type":"workspace","id":"other"}}}}`)
-	if foreignWorkspace.Code != http.StatusOK || !strings.Contains(foreignWorkspace.Body.String(), `"isError":true`) {
-		t.Fatalf("foreign workspace response = %d body=%s", foreignWorkspace.Code, foreignWorkspace.Body.String())
+	foreignCalls := map[string]string{
+		"catalog_get":            `{"ref":{"workspaceId":"other","type":"workspace","id":"other"}}`,
+		"catalog_list":           `{"parent":{"workspaceId":"other","type":"workspace","id":"other"}}`,
+		"query_semantic_model":   `{"workspace":"other","model":"test","measures":[{"field":"order_count"}]}`,
+		"query_dashboard_visual": `{"workspace":"other","dashboard":"executive-sales","page":"overview","visual":"orders"}`,
+		"query_visual":           `{"workspace":"other","type":"bar","model":"test","dataset":"orders","measures":[{"field":"order_count"}]}`,
+	}
+	for name, arguments := range foreignCalls {
+		body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"tools/call","params":{"name":%q,"arguments":%s}}`, name, name, arguments)
+		response := mcpRequest(t, handler, oauthToken, "2025-11-25", body)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"isError":true`) {
+			t.Fatalf("foreign workspace %s response = %d body=%s", name, response.Code, response.Body.String())
+		}
+	}
+	authorizedCatalog := mcpRequest(t, handler, oauthToken, "2025-11-25", `{"jsonrpc":"2.0","id":"authorized-catalog","method":"tools/call","params":{"name":"catalog_list","arguments":{}}}`)
+	if authorizedCatalog.Code != http.StatusOK || strings.Contains(authorizedCatalog.Body.String(), `"id":"other"`) {
+		t.Fatalf("authorized catalog leaked foreign workspace: %d body=%s", authorizedCatalog.Code, authorizedCatalog.Body.String())
 	}
 	audits, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{WorkspaceID: "other", Action: "agent_tool.called"})
 	if err != nil {
 		t.Fatalf("list MCP tool audits: %v", err)
 	}
-	if len(audits) != 1 || audits[0].Status != "denied" || audits[0].TargetID != "catalog_get" {
+	deniedTargets := map[string]bool{}
+	for _, audit := range audits {
+		if audit.Status == "denied" {
+			deniedTargets[audit.TargetID] = true
+		}
+	}
+	wantDeniedTargets := map[string]string{
+		"catalog_get":            "catalog_get",
+		"query_semantic_model":   "querySemanticModel",
+		"query_dashboard_visual": "queryDashboardVisualData",
+		"query_visual":           "query_visual",
+	}
+	for name, target := range wantDeniedTargets {
+		if !deniedTargets[target] {
+			t.Errorf("foreign workspace call %s was not audited with target %s: %#v", name, target, audits)
+		}
+	}
+	if len(deniedTargets) != len(wantDeniedTargets) {
 		t.Fatalf("MCP credential denial was not audited: %#v", audits)
 	}
 

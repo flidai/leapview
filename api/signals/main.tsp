@@ -25,6 +25,13 @@ enum RouteKind {
   login: "login",
 }
 
+/** Relative instance-wide dashboard usage over the rolling popularity window. */
+enum PopularityLevel {
+  low: "low",
+  medium: "medium",
+  high: "high",
+}
+
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminAgentSignal {
@@ -412,9 +419,18 @@ model CatalogDashboardSignal {
   `description`?: string;
   `href`: string;
   `id`: string;
+  `lastRefreshedAt`?: string;
   `pageCount`: int64;
+  `popularity`?: PopularityLevel;
   `semanticModel`?: string;
   `tags`?: string[];
+  `title`: string;
+  `workspace`: string;
+  `workspaceId`: string;
+}
+
+model CatalogWorkspaceFilterSignal {
+  `id`: string;
   `title`: string;
 }
 
@@ -440,6 +456,7 @@ model CatalogPageSignal {
 	`listFilter`?: string;
 	`listQuery`?: string;
 	`title`: string;
+	`workspaceFilters`: CatalogWorkspaceFilterSignal[];
 }
 
 model ChatArtifactSignal {

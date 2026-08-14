@@ -125,6 +125,16 @@ func TestNormalizeQueryKeepsTextualTypeTermsWhenExplicitFiltersArePresent(t *tes
 	}
 }
 
+func TestNormalizeQueryRemovesRedundantTypeTermsMatchingExplicitFilters(t *testing.T) {
+	got, err := normalizeQuery(Subject{}, Query{Text: "executive dashboard", Types: []Type{TypeDashboard}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != "executive" || !slices.Equal(got.Types, []Type{TypeDashboard}) {
+		t.Fatalf("normalized query = %#v, want executive dashboard search", got)
+	}
+}
+
 func TestNormalizeQueryConstrainsResultsToAllowedTypes(t *testing.T) {
 	tests := map[string]struct {
 		query     Query

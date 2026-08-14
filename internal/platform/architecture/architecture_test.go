@@ -2514,6 +2514,48 @@ func TestDevelopmentServerTracksCompiledFallbackProcess(t *testing.T) {
 	}
 }
 
+func TestDevelopmentServerDefaultsAgentToAmbientDeepSeekCredential(t *testing.T) {
+	root := repoRoot(t)
+	server, err := os.ReadFile(filepath.Join(root, "scripts", "dev-server.sh"))
+	if err != nil {
+		t.Fatalf("read development server script: %v", err)
+	}
+	serverText := string(server)
+	for _, want := range []string{
+		`if [[ -z "${LEAPVIEW_AGENT_API_KEY:-}" && -n "${DEEPSEEK_API_KEY:-}" ]]; then`,
+		`LEAPVIEW_AGENT_API_KEY="$DEEPSEEK_API_KEY"`,
+		`LEAPVIEW_AGENT_BASE_URL="${LEAPVIEW_AGENT_BASE_URL:-https://api.deepseek.com}"`,
+		`LEAPVIEW_AGENT_MODEL="${LEAPVIEW_AGENT_MODEL:-deepseek-v4-flash}"`,
+	} {
+		if !strings.Contains(serverText, want) {
+			t.Fatalf("development server must configure the default DeepSeek agent without overriding explicit agent credentials: missing %q", want)
+		}
+	}
+}
+
+func TestDevelopmentServerRunsAgentMCPSmokeCheckAfterPublishing(t *testing.T) {
+	root := repoRoot(t)
+	server, err := os.ReadFile(filepath.Join(root, "scripts", "dev-server.sh"))
+	if err != nil {
+		t.Fatalf("read development server script: %v", err)
+	}
+	serverText := string(server)
+	for _, want := range []string{
+		"mcp_smoke()",
+		`"method":"tools/list"`,
+		`"name":"catalog_list"`,
+		`name:"query_semantic_model"`,
+		`mcp_smoke "$port"`,
+	} {
+		if !strings.Contains(serverText, want) {
+			t.Fatalf("development server must smoke-test the live MCP tool surface after publishing: missing %q", want)
+		}
+	}
+	if strings.Index(serverText, `go run ./cmd/leapview publish`) > strings.Index(serverText, `mcp_smoke "$port"`) {
+		t.Fatal("development MCP smoke check must run after candidate publication")
+	}
+}
+
 func TestDevelopmentPublishingCanonicalizesSharedDatasetRoots(t *testing.T) {
 	root := repoRoot(t)
 	server, err := os.ReadFile(filepath.Join(root, "scripts", "dev-server.sh"))
@@ -2599,7 +2641,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	goApplicationCI := workflowJobBlock(t, text, "go-application-validation")
 	frontendCI := workflowJobBlock(t, text, "frontend-validation")
 	for name, block := range map[string]string{
-		"apigen-validation":        apigenCI,
+		"apigen-validation":         apigenCI,
 		"go-packages-validation":    goPackagesCI,
 		"go-application-validation": goApplicationCI,
 		"frontend-validation":       frontendCI,

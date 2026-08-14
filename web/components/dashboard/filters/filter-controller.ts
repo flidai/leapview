@@ -25,6 +25,7 @@ export class DashboardFilterController {
   private optimistic: DashboardFilterState = cloneState(emptyState)
   private queue: PendingCommand[] = []
   private inFlight: DashboardFilterCommand | null = null
+  private pendingBindingsByMutation = new Map<string, string[]>()
   private mode: 'immediate' | 'deferred' = 'immediate'
   private defaults: Record<string, DashboardFilterExpression> = {}
 
@@ -44,6 +45,7 @@ export class DashboardFilterController {
   }
 
   reconcile(state: DashboardFilterState) {
+    if (this.inFlight) this.pendingBindingsByMutation.delete(this.inFlight.clientMutationID)
     this.canonical = cloneState(state)
     this.optimistic = cloneState(state)
     this.inFlight = null
@@ -63,6 +65,17 @@ export class DashboardFilterController {
 
   get pending(): boolean {
     return this.inFlight !== null || this.queue.length > 0
+  }
+
+  pendingFor(bindingKey: string): boolean {
+    for (const keys of this.pendingBindingsByMutation.values()) {
+      if (keys.includes(bindingKey)) return true
+    }
+    return false
+  }
+
+  get pendingBindingKeys(): string[] {
+    return [...new Set([...this.pendingBindingsByMutation.values()].flat())].sort()
   }
 
   expression(bindingKey: string): DashboardFilterExpression {
@@ -119,9 +132,22 @@ export class DashboardFilterController {
   }
 
   private enqueue(command: PendingCommand) {
+    this.pendingBindingsByMutation.set(command.clientMutationID, this.affectedBindings(command))
     this.queue.push(command)
     this.projectCommand(command)
     this.flush()
+  }
+
+  private affectedBindings(command: PendingCommand): string[] {
+    switch (command.kind) {
+      case 'mutate':
+        return command.bindingKey ? [command.bindingKey] : []
+      case 'reset':
+        return [...command.bindingKeys]
+      case 'apply':
+      case 'cancel':
+        return [...this.optimistic.dirtyBindings]
+    }
   }
 
   private flush() {
@@ -234,5 +260,44 @@ function cloneState(state: DashboardFilterState): DashboardFilterState {
 }
 
 function cloneExpression(expression: DashboardFilterExpression): DashboardFilterExpression {
-  return JSON.parse(JSON.stringify(expression)) as DashboardFilterExpression
+  switch (expression.kind) {
+    case 'unfiltered':
+      return { kind: 'unfiltered' }
+    case 'null_check':
+      return { kind: 'null_check', operator: expression.operator }
+    case 'set':
+      return {
+        kind: 'set',
+        operator: expression.operator,
+        values: expression.values.map(value => cloneNested(value)),
+      }
+    case 'comparison':
+      return {
+        kind: 'comparison',
+        operator: expression.operator,
+        value: cloneNested(expression.value),
+      }
+    case 'range':
+      return {
+        kind: 'range',
+        ...(expression.lower ? { lower: cloneNested(expression.lower) } : {}),
+        ...(expression.upper ? { upper: cloneNested(expression.upper) } : {}),
+      }
+    case 'relative_period':
+      return {
+        kind: 'relative_period',
+        direction: expression.direction,
+        count: expression.count,
+        unit: expression.unit,
+        includeCurrent: expression.includeCurrent,
+        anchor: expression.anchor,
+        ...(expression.anchorValue ? { anchorValue: cloneNested(expression.anchorValue) } : {}),
+      }
+    default:
+      return { kind: 'unfiltered' }
+  }
+}
+
+function cloneNested<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }
