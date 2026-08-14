@@ -178,7 +178,7 @@ func TestDataExplorerExploreBuildsGovernedSemanticTable(t *testing.T) {
 	requests := []dataquery.Query{}
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), dataQueries: &requests}
 	store := testStore(t)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 
 	command := dataExplorerCommandFromQuery("test", "")
 	command.Mode = uisignals.Pointer("explore")
