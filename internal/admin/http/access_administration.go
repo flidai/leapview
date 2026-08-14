@@ -42,7 +42,7 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 			actorID = principal.ID
 		}
 	}
-	result, err := adminsettings.ApplyAccessAdministrationCommand(r.Context(), h.SettingsRepository, actorID, h.ReadModel.DefaultWorkspaceID, command)
+	result, err := adminsettings.ApplyAccessAdministrationCommand(r.Context(), h.SettingsRepository, actorID, command)
 	if err != nil {
 		selectedPrincipalID, selectedGroupID := command.PrincipalID, command.GroupID
 		if section == "principals" {
@@ -105,7 +105,7 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 }
 
 func (h Handler) loadAccessAdministration(ctx context.Context, actorID, selectedPrincipalID, selectedGroupID string) (adminsettings.AccessAdministrationSignal, error) {
-	state, err := adminsettings.LoadAccessAdministration(ctx, h.SettingsRepository, actorID, h.ReadModel.DefaultWorkspaceID, selectedPrincipalID, selectedGroupID)
+	state, err := adminsettings.LoadAccessAdministration(ctx, h.SettingsRepository, actorID, selectedPrincipalID, selectedGroupID)
 	if err != nil || h.WorkspaceSettings == nil {
 		return state, err
 	}
@@ -138,7 +138,7 @@ func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettin
 		}
 		return r.WithContext(ctx), nil
 	}
-	workspaceID := firstAccessCommandValue(command.WorkspaceID, commandDefaultWorkspace(r))
+	workspaceID := command.WorkspaceID
 	switch command.Action {
 	case "create_principal":
 		return begin(accessgen.GenUIActionCreatePrincipal(), func() (context.Context, error) {
@@ -203,17 +203,4 @@ func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettin
 	default:
 		return r, nethttp.ErrNotSupported
 	}
-}
-
-func commandDefaultWorkspace(r *nethttp.Request) string {
-	return strings.TrimSpace(r.URL.Query().Get("workspace"))
-}
-
-func firstAccessCommandValue(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }

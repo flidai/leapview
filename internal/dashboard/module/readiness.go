@@ -18,8 +18,11 @@ func MetricsMetadataReady(metrics queryruntime.Metrics, workspaceID string) erro
 }
 
 func metricsMetadataReady(metrics queryruntime.Metrics, workspaceID string) error {
+	if metrics == nil || workspaceID == "" {
+		return fmt.Errorf("workspace metrics and workspace ID are required")
+	}
 	catalog := metrics.Catalog()
-	if workspaceID != "" && catalog.Workspace.ID != "" && catalog.Workspace.ID != workspaceID {
+	if catalog.Workspace.ID != workspaceID {
 		return fmt.Errorf("catalog workspace = %q, want %q", catalog.Workspace.ID, workspaceID)
 	}
 	if len(catalog.Models) == 0 && len(catalog.Dashboards) == 0 {
@@ -61,20 +64,20 @@ func (m *Module) RuntimeReady(ctx context.Context, workspaceID string) error {
 	if readiness, ok := m.runtimeMetrics.(runtimeReadiness); ok {
 		return readiness.RuntimeReady(ctx, workspaceID)
 	}
-	metrics, ok := metricsForWorkspace(m.runtimeMetrics, m.defaultWorkspaceID, workspaceID)
+	metrics, ok := metricsForWorkspace(m.runtimeMetrics, workspaceID)
 	if !ok || metrics == nil {
 		return fmt.Errorf("runtime for workspace %q is not configured", workspaceID)
 	}
 	return MetricsMetadataReady(metrics, workspaceID)
 }
 
-func metricsForWorkspace(metrics queryruntime.Metrics, defaultWorkspaceID, workspaceID string) (queryruntime.Metrics, bool) {
+func metricsForWorkspace(metrics queryruntime.Metrics, workspaceID string) (queryruntime.Metrics, bool) {
+	if workspaceID == "" {
+		return nil, false
+	}
 	if provider, ok := metrics.(queryruntime.WorkspaceMetrics); ok {
 		return provider.MetricsForWorkspace(workspaceID)
 	}
-	if defaultWorkspaceID != "" && workspaceID == defaultWorkspaceID {
-		return metrics, true
-	}
 	catalog := metrics.Catalog()
-	return metrics, catalog.Workspace.ID == "" || catalog.Workspace.ID == workspaceID
+	return metrics, catalog.Workspace.ID == workspaceID
 }

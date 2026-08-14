@@ -28,6 +28,22 @@ func CommandPost(binding uicommand.Binding, path string, signalPaths ...string) 
 	return request("post", path, signalPaths, jsString(binding.OperationID()))
 }
 
+// CommandPostWorkspace posts a generated UI command to a workspace-scoped
+// route. The workspace expression is evaluated by Datastar at dispatch time,
+// allowing a page that lists multiple workspaces to keep authorization tied to
+// the command's actual workspace rather than a process-wide default.
+func CommandPostWorkspace(binding uicommand.Binding, suffix, workspaceExpression string, signalPaths ...string) string {
+	workspaceExpression = strings.TrimSpace(workspaceExpression)
+	if workspaceExpression == "" {
+		// Keep the route workspace-scoped even when a caller supplied an empty
+		// expression; the resulting path cannot accidentally hit an unscoped
+		// mutation endpoint.
+		workspaceExpression = "''"
+	}
+	pathExpression := "'/workspaces/' + encodeURIComponent(" + workspaceExpression + ") + " + jsString(suffix)
+	return requestWithPathExpression("post", pathExpression, signalPaths, jsString(binding.OperationID()))
+}
+
 func CommandPatch(binding uicommand.Binding, path, revision string, signalPaths ...string) string {
 	return requestWithHeaders("patch", path, signalPaths, "window.LeapViewCommand.headers("+jsString(binding.OperationID())+", "+jsString(revision)+")")
 }
@@ -87,14 +103,22 @@ func operationArrayExpression(bindings []uicommand.Binding) string {
 }
 
 func request(method, path string, signalPaths []string, operationExpression string) string {
+	return requestWithPathExpression(method, jsString(path), signalPaths, operationExpression)
+}
+
+func requestWithHeaders(method, path string, signalPaths []string, headers string) string {
+	return requestWithPathExpressionAndHeaders(method, jsString(path), signalPaths, headers)
+}
+
+func requestWithPathExpression(method, pathExpression string, signalPaths []string, operationExpression string) string {
 	headers := "window.LeapViewCommand.headers()"
 	if strings.TrimSpace(operationExpression) != "" {
 		headers = "window.LeapViewCommand.headers(" + operationExpression + ")"
 	}
-	return requestWithHeaders(method, path, signalPaths, headers)
+	return requestWithPathExpressionAndHeaders(method, pathExpression, signalPaths, headers)
 }
 
-func requestWithHeaders(method, path string, signalPaths []string, headers string) string {
+func requestWithPathExpressionAndHeaders(method, pathExpression string, signalPaths []string, headers string) string {
 	options := "headers: " + headers
 	if len(signalPaths) > 0 {
 		patterns := make([]string, 0, len(signalPaths))
@@ -104,7 +128,7 @@ func requestWithHeaders(method, path string, signalPaths []string, headers strin
 		include := "/^(?:" + strings.Join(patterns, "|") + ")(?:[.]|$)/"
 		options = "filterSignals: {include: " + include + "}, " + options
 	}
-	return "@" + method + "('" + jsSingleQuoted(path) + "', {" + options + "})"
+	return "@" + method + "(" + pathExpression + ", {" + options + "})"
 }
 
 func jsSingleQuoted(value string) string {

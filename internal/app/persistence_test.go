@@ -30,7 +30,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 			publicURL = options.MCPOAuth.PublicURL
 		}
 		module, err := accessmodule.Build(context.Background(), accessmodule.Config{
-			Database: store.SQLDB(), WorkspaceID: options.DefaultWorkspaceID,
+			Database:     store.SQLDB(),
 			ExistingAuth: options.Auth, PublicURL: publicURL,
 			MCPIssuerURL: options.MCPOAuth.IssuerURL,
 			WorkspaceIDs: func(ctx context.Context) ([]string, error) {

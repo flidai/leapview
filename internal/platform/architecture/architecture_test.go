@@ -723,10 +723,14 @@ func TestApplicationOwnsProductConfigurationContract(t *testing.T) {
 	if packageDirExists(root, "internal/platform/config/spec") {
 		t.Fatal("platform retains the product configuration contract")
 	}
+
+}
+
+func TestProductionCodeDoesNotDefineDefaultWorkspace(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
-		if (file.pkgDir == "internal/platform" || strings.HasPrefix(file.pkgDir, "internal/platform/")) &&
-			strings.Contains(file.body, "DefaultWorkspaceID") {
-			t.Errorf("%s retains the application default workspace setting", file.path)
+		body := strings.ToLower(file.body)
+		if strings.Contains(body, "defaultworkspace") || strings.Contains(body, "default workspace") {
+			t.Errorf("%s retains forbidden default-workspace semantics", file.path)
 		}
 	}
 }

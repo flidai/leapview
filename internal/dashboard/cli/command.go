@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -20,10 +21,10 @@ type options struct {
 }
 
 // Command constructs the dashboard inspection and query command.
-func Command(ctx context.Context, client cliapi.Client, defaultWorkspaceID string) *cobra.Command {
-	values := &options{workspaceID: defaultWorkspaceID}
+func Command(ctx context.Context, client cliapi.Client) *cobra.Command {
+	values := &options{}
 	parent := &cobra.Command{Use: "dashboards", Short: "Inspect dashboards"}
-	parent.PersistentFlags().StringVar(&values.workspaceID, "workspace", values.workspaceID, "workspace id")
+	parent.PersistentFlags().StringVar(&values.workspaceID, "workspace", "", "workspace id")
 
 	list := requestCommand(ctx, client, values, "list", "List dashboards", 0, func(ctx context.Context, api *dashboardgen.GenClient, _ []string) (dashboardgen.GenSchemaDashboardListResponse, error) {
 		response, err := api.ListDashboards(ctx, dashboardgen.GenListDashboardsClientRequest{
@@ -120,6 +121,9 @@ func requestCommand[T any](
 		Use:   use,
 		Short: short,
 		RunE: func(command *cobra.Command, args []string) error {
+			if err := requireWorkspace(values.workspaceID); err != nil {
+				return err
+			}
 			if err := values.pagination.Validate(command); err != nil {
 				return err
 			}
@@ -139,6 +143,13 @@ func requestCommand[T any](
 	}
 	values.remote.AddFlags(command)
 	return command
+}
+
+func requireWorkspace(workspaceID string) error {
+	if strings.TrimSpace(workspaceID) == "" {
+		return fmt.Errorf("--workspace is required")
+	}
+	return nil
 }
 
 func dashboardClient(ctx context.Context, client cliapi.Client, credentials cliapi.Credentials) (*dashboardgen.GenClient, error) {

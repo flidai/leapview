@@ -19,5 +19,5 @@ func testAuth(store *platform.Store, workspaceID string, cfg AuthConfig) *access
 			Role:        access.RolePlatformAdmin,
 		})
 	}
-	return NewAuth(repo, workspaceID, cfg)
+	return NewAuth(repo, cfg)
 }

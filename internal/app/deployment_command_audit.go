@@ -10,7 +10,6 @@ import (
 
 func candidateSourceBlobAuditRecorder(
 	accessModule *accessmodule.Module,
-	workspaceID string,
 ) func(context.Context, deploymentmodule.CandidateSourceBlobAuditEvent) error {
 	return func(ctx context.Context, event deploymentmodule.CandidateSourceBlobAuditEvent) error {
 		if accessModule == nil {
@@ -21,8 +20,8 @@ func candidateSourceBlobAuditRecorder(
 			return fmt.Errorf("candidate source blob audit privilege %q is invalid", event.Privilege)
 		}
 		return accessModule.RecordAudit(ctx, accessmodule.AuditEventInput{
-			WorkspaceID: workspaceID, PrincipalID: event.PrincipalID,
-			Action: event.Action, TargetType: "project", TargetID: event.ProjectID,
+			PrincipalID: event.PrincipalID,
+			Action:      event.Action, TargetType: "project", TargetID: event.ProjectID,
 			Privilege: privilege, Status: event.Status,
 			RequestID: event.RequestID, CorrelationID: event.CorrelationID,
 			MetadataJSON: event.MetadataJSON,

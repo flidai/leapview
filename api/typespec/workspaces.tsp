@@ -153,6 +153,23 @@ model AssetLineageResponse {
   downstream: string[];
 }
 
+model DashboardAppearancePatchRequest {
+  icon?: string;
+  color?: string;
+}
+
+model DashboardAppearanceResponse {
+  icon: string;
+  color: string;
+  revision: int64;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "standard" })
+model DashboardAppearanceUpdatedAuditPayload {
+  @apigen.auditPublic
+  fields: string[];
+}
+
 alias ListWorkspacesOK = OkJson<WorkspaceListResponse>;
 
 @tag("Workspaces")
@@ -221,3 +238,19 @@ op getWorkspaceAsset(@path workspace: string, @path assetId: string): OkJson<Ass
 @extension("x-leapview-object-scope", "workspace-asset")
 @apigen.cli(#{ command: #["assets", "lineage"], args: #[#{ source: "path", name: "workspace", displayName: "workspace" }, #{ source: "path", name: "assetId", displayName: "asset-id" }], output: #{ mode: "raw" } })
 op getWorkspaceAssetLineage(@path workspace: string, @path assetId: string): OkJson<AssetLineageResponse> | CommonErrors;
+
+@tag("Workspaces")
+@summary("Update a dashboard's catalog appearance")
+@route("/workspaces/{workspace}/dashboards/{dashboard}/appearance")
+@put
+@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_WORKSPACE" })
+@apigen.command(#{ auditAction: "dashboard.appearance.updated", guarantee: "best-effort", failures: #[
+  #{ kind: "invalid", statusCode: 422, code: "INVALID_DASHBOARD_APPEARANCE", publicDetail: "The selected dashboard appearance is invalid." },
+] })
+@apigen.auditPayload(DashboardAppearanceUpdatedAuditPayload)
+@apigen.ui("dashboard.appearance.update")
+op updateDashboardAppearance(
+  @path @apigen.target workspace: string,
+  @path dashboard: string,
+  @body body: DashboardAppearancePatchRequest,
+): OkJson<DashboardAppearanceResponse> | CommonErrors;

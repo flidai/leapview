@@ -16,7 +16,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/workspace"
 	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
@@ -706,14 +705,14 @@ func newAuthSpecHarnessWithAuthWorkspace(t *testing.T, authConfig AuthConfig, au
 	t.Cleanup(func() { _ = store.Close() })
 	workspaceID := metrics.Catalog().Workspace.ID
 	if workspaceID == "" {
-		workspaceID = config.DefaultWorkspaceID
+		t.Fatal("auth-spec runtime catalog has no workspace ID")
 	}
 	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
 	if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: metrics.Catalog().Workspace.Title, Description: metrics.Catalog().Workspace.Description}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}
 	if authWorkspaceID != "" && authWorkspaceID != workspaceID {
-		if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(authWorkspaceID), Title: "Default Workspace"}); err != nil {
+		if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(authWorkspaceID), Title: "Auth Workspace"}); err != nil {
 			t.Fatalf("ensure auth workspace: %v", err)
 		}
 	}
@@ -722,8 +721,8 @@ func newAuthSpecHarnessWithAuthWorkspace(t *testing.T, authConfig AuthConfig, au
 	if authWorkspaceID == "" {
 		authWorkspaceID = workspaceID
 	}
-	auth := NewAuth(repo, authWorkspaceID, authConfig)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: workspaceID}))
+	auth := NewAuth(repo, authConfig)
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: workspaceID}))
 	h.store = store
 	h.handler = server.Routes()
 	h.server = httptestNewServer(t, h.handler)

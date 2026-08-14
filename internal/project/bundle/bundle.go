@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/platform/digest"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
@@ -39,6 +40,7 @@ type Validation struct {
 	ProjectWorkspaces         []string
 	AccessPolicy              workspace.AccessPolicy
 	DashboardPublicationsJSON string
+	DashboardAppearancesJSON  string
 	ManagedDataRevisions      map[string]string
 	Graph                     workspace.AssetGraph
 }
@@ -548,6 +550,17 @@ func ValidateArtifactWithOptions(path string, workspaceID string, servingStateID
 		os.RemoveAll(root)
 		return Validation{}, err
 	}
+	appearances := map[string]dashboardappearance.Patch{}
+	for _, dashboard := range compiled.Manifest.Catalog.Dashboards {
+		if dashboard.Appearance.Icon != nil || dashboard.Appearance.Color != nil {
+			appearances[dashboard.ID] = dashboard.Appearance
+		}
+	}
+	appearancesJSON, err := json.Marshal(appearances)
+	if err != nil {
+		os.RemoveAll(root)
+		return Validation{}, err
+	}
 	return Validation{
 		Digest:                    digest,
 		ManifestJSON:              string(manifestJSON),
@@ -557,6 +570,7 @@ func ValidateArtifactWithOptions(path string, workspaceID string, servingStateID
 		ProjectWorkspaces:         append([]string(nil), compiled.ProjectWorkspaces...),
 		AccessPolicy:              compiled.Manifest.Access,
 		DashboardPublicationsJSON: string(publicationsJSON),
+		DashboardAppearancesJSON:  string(appearancesJSON),
 		ManagedDataRevisions:      cloneStringMap(compiled.ManagedDataRevisions),
 		Graph:                     compiled.Graph,
 	}, nil

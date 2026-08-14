@@ -39,9 +39,10 @@ func (transport *semanticFakeTransport) DoAPIGen(_ context.Context, request apig
 func TestSemanticModelsCommandOwnsSemanticQuery(t *testing.T) {
 	stop := errors.New("stop after request")
 	client := &semanticFakeClient{transport: semanticFakeTransport{err: stop}}
-	command := SemanticModelsCommand(context.Background(), client, "sales")
+	command := SemanticModelsCommand(context.Background(), client)
 	command.SetArgs([]string{
 		"query", "orders",
+		"--workspace", "sales",
 		"--target", "https://example.test", "--token", "secret",
 		"--body-json", `{"dimensions":[{"field":"state"}]}`,
 	})
@@ -60,5 +61,13 @@ func TestSemanticModelsCommandOwnsSemanticQuery(t *testing.T) {
 	body := request.Body.(*dashboardgen.GenSchemaSemanticQueryRequest)
 	if body.Dimensions == nil || len(*body.Dimensions) != 1 || (*body.Dimensions)[0].Field != "state" {
 		t.Fatalf("body = %#v", body)
+	}
+}
+
+func TestSemanticModelsCommandRequiresWorkspace(t *testing.T) {
+	command := SemanticModelsCommand(context.Background(), &semanticFakeClient{})
+	command.SetArgs([]string{"list"})
+	if err := command.Execute(); err == nil {
+		t.Fatal("semantic-model command accepted missing workspace")
 	}
 }

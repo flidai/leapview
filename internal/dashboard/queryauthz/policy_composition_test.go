@@ -31,7 +31,7 @@ func TestApplyDataPoliciesUsesOneAlgebraAcrossQueryKinds(t *testing.T) {
 	ratings := model.Tables["ratings"]
 	ratings.Dimensions["country"] = semanticDimension("string")
 	model.Tables["ratings"] = ratings
-	metrics := New(semanticModelMetrics{model: model}, Options{Repo: repository, DefaultWorkspaceID: "sales"})
+	metrics := New(semanticModelMetrics{model: model}, Options{Repo: repository})
 
 	tests := []struct {
 		name    string

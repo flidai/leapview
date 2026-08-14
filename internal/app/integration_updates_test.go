@@ -69,7 +69,7 @@ func TestUpdatesIgnoresMalformedDatastarSignals(t *testing.T) {
 	h := newHarness(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
-	req := httptest.NewRequestWithContext(ctx, http.MethodGet, h.workspaceUpdatesPath()+"?route=dashboard&workspace="+h.workspaceIDOrDefault()+"&dashboard=executive-sales&page=overview&datastar=%7Bnot-json", nil)
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, h.workspaceUpdatesPath()+"?route=dashboard&workspace="+h.requiredWorkspaceID()+"&dashboard=executive-sales&page=overview&datastar=%7Bnot-json", nil)
 	rec := httptest.NewRecorder()
 
 	h.handler.ServeHTTP(rec, req)

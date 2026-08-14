@@ -20,7 +20,6 @@ type AccessAdministrationSignal struct {
 	Activity            []AccessActivitySignal       `json:"activity"`
 	SelectedPrincipalID string                       `json:"selectedPrincipalId,omitempty"`
 	SelectedGroupID     string                       `json:"selectedGroupId,omitempty"`
-	DefaultWorkspaceID  string                       `json:"defaultWorkspaceId,omitempty"`
 	TemporaryPassword   string                       `json:"temporaryPassword,omitempty"`
 	RedirectTo          string                       `json:"redirectTo,omitempty"`
 	Message             string                       `json:"message,omitempty"`
@@ -165,12 +164,11 @@ func normalizeAccessAdministrationIDs(values []string) []string {
 	return result
 }
 
-func LoadAccessAdministration(ctx context.Context, repository access.Repository, actorID, defaultWorkspaceID, selectedPrincipalID, selectedGroupID string) (AccessAdministrationSignal, error) {
+func LoadAccessAdministration(ctx context.Context, repository access.Repository, actorID, selectedPrincipalID, selectedGroupID string) (AccessAdministrationSignal, error) {
 	state := AccessAdministrationSignal{
 		Principals: []AccessPrincipalSignal{}, Groups: []AccessGroupSignal{}, Sessions: []AccessSessionSignal{},
 		RoleAssignments: []AccessRoleAssignmentSignal{}, Activity: []AccessActivitySignal{},
 		SelectedPrincipalID: strings.TrimSpace(selectedPrincipalID), SelectedGroupID: strings.TrimSpace(selectedGroupID),
-		DefaultWorkspaceID: strings.TrimSpace(defaultWorkspaceID),
 	}
 	if repository == nil {
 		state.Error = "Access administration is unavailable."
@@ -313,7 +311,7 @@ func LoadAccessAdministration(ctx context.Context, repository access.Repository,
 	return state, nil
 }
 
-func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Repository, actorID, defaultWorkspaceID string, command AccessAdministrationCommand) (AccessAdministrationResult, error) {
+func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Repository, actorID string, command AccessAdministrationCommand) (AccessAdministrationResult, error) {
 	if repository == nil {
 		return AccessAdministrationResult{}, errors.New("access administration is unavailable")
 	}
@@ -433,9 +431,6 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 			result.Message = "All active sessions revoked."
 		case "create_group":
 			workspaceID := command.WorkspaceID
-			if workspaceID == "" {
-				workspaceID = strings.TrimSpace(defaultWorkspaceID)
-			}
 			if workspaceID == "" || command.DisplayName == "" {
 				return event, errors.New("workspace and group name are required")
 			}

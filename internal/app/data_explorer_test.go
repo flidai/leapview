@@ -178,7 +178,7 @@ func TestDataExplorerExploreBuildsGovernedSemanticTable(t *testing.T) {
 	requests := []dataquery.Query{}
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), dataQueries: &requests}
 	store := testStore(t)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 
 	command := dataExplorerCommandFromQuery("test", "")
 	command.Mode = uisignals.Pointer("explore")
@@ -298,7 +298,7 @@ func TestDataExplorerRouteRendersSignalsAndWiring(t *testing.T) {
 	duckDBDir := seedDataExplorerDuckDB(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), duckDBDir: duckDBDir}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test", DuckDBDir: duckDBDir}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test", DuckDBDir: duckDBDir}))
 
 	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=test&object=model_table:model_table:olist.orders", nil)
 	rec := httptest.NewRecorder()
@@ -331,7 +331,7 @@ func TestDataExplorerRouteRendersSignalsAndWiring(t *testing.T) {
 }
 
 func TestWorkspaceDataExplorerRouteRedirectsToGlobalRoute(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, assemblyConfig{DefaultWorkspaceID: "test"})
+	server := assembleRuntime(fakeMetrics{}, assemblyConfig{WorkspaceID: "test"})
 
 	req := dataExplorerTestRequest(http.MethodGet, "/workspaces/test/data?object=source:olist.orders", nil)
 	rec := httptest.NewRecorder()
@@ -352,10 +352,10 @@ func TestGlobalDataExplorerSelectsDuplicateKeysByWorkspace(t *testing.T) {
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), duckDBDir: duckDBDir}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "ops", metrics)
-	server := assembleRuntime(NewMultiWorkspaceMetrics("test", map[string]QueryMetrics{
+	server := assembleRuntime(NewMultiWorkspaceMetrics(map[string]QueryMetrics{
 		"test": metrics,
 		"ops":  metrics,
-	}), testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: duckDBDir}))
+	}), testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: duckDBDir}))
 
 	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=ops&object=model_table:model_table:olist.orders", nil)
 	_, explorer, err := server.globalDataExplorerState(req, dataExplorerCommandFromQuery("ops", "model_table:model_table:olist.orders"))
@@ -374,7 +374,7 @@ func TestGlobalDataExplorerSelectsDuplicateKeysByWorkspace(t *testing.T) {
 }
 
 func TestGlobalDataExplorerFallsBackToRuntimeCatalogWithoutActiveAssetDeployment(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, assemblyConfig{DefaultWorkspaceID: "test-workspace"})
+	server := assembleRuntime(fakeMetrics{}, assemblyConfig{WorkspaceID: "test-workspace"})
 	req := dataExplorerTestRequest(http.MethodGet, "/data", nil)
 
 	page, explorer, err := server.globalDataExplorerState(req, dataExplorerCommandFromQuery("", ""))
@@ -401,7 +401,7 @@ func TestDataExplorerPreviewsModelTable(t *testing.T) {
 	duckDBDir := seedDataExplorerDuckDB(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: dataDir, duckDBDir: duckDBDir}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: duckDBDir}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: duckDBDir}))
 
 	cases := []struct {
 		name     string
@@ -445,7 +445,7 @@ func TestDataExplorerModelTablePreviewUsesRuntimeBackedModelTable(t *testing.T) 
 	appDuckDBDir := t.TempDir()
 	metrics := dataExplorerFixtureMetrics{dataDir: dataDir, duckDBDir: runtimeDuckDBDir, modelID: "sales", sourceKey: "olist.payments"}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "sales", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "sales", DuckDBDir: appDuckDBDir}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "sales", DuckDBDir: appDuckDBDir}))
 
 	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=sales&object=model_table:model_table:sales.orders", nil)
 	_, explorer, err := server.globalDataExplorerState(req, dataExplorerCommandFromQuery("sales", "model_table:model_table:sales.orders"))
@@ -473,7 +473,7 @@ func TestDataExplorerCommandPublishesPatch(t *testing.T) {
 	store := testStore(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t)}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 	updates, unsubscribe := server.runtime.broker.Subscribe("data-explorer:test-client")
 	defer unsubscribe()
 
@@ -510,7 +510,7 @@ func TestDataExplorerModelTablePreviewIgnoresInvalidSortColumn(t *testing.T) {
 	store := testStore(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), dataQueries: &requests}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 
 	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=test&object=model_table:model_table:olist.orders", nil)
 	command := dataExplorerCommandFromQuery("test", "model_table:model_table:olist.orders")
@@ -537,7 +537,7 @@ func TestDataExplorerModelTablePreviewAcceptsExposedSortColumn(t *testing.T) {
 	store := testStore(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), dataQueries: &requests}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 
 	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=test&object=model_table:model_table:olist.orders", nil)
 	command := dataExplorerCommandFromQuery("test", "model_table:model_table:olist.orders")
@@ -561,7 +561,7 @@ func TestDataExplorerCommandReusesPostedPreviewTotalsForScroll(t *testing.T) {
 	store := testStore(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t)}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 	updates, unsubscribe := server.runtime.broker.Subscribe("data-explorer:test-client")
 	defer unsubscribe()
 
@@ -651,7 +651,7 @@ func TestDataExplorerCommandDoesNotPublishCanceledPreview(t *testing.T) {
 	store := testStore(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), semanticPreviewError: context.Canceled}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 	updates, unsubscribe := server.runtime.broker.Subscribe("data-explorer:test-client")
 	defer unsubscribe()
 
@@ -676,7 +676,7 @@ func TestDataExplorerCommandColumnWidthsReuseCurrentPreview(t *testing.T) {
 	store := testStore(t)
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t), semanticPreviewError: errors.New("preview should not run for column widths")}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 	updates, unsubscribe := server.runtime.broker.Subscribe("data-explorer:test-client")
 	defer unsubscribe()
 
@@ -754,7 +754,7 @@ func TestDataExplorerBrowserCommandRequiresAndAcceptsCSRF(t *testing.T) {
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
 	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t)}
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test", DuckDBDir: seedDataExplorerDuckDB(t)}))
 	updates, unsubscribe := server.runtime.broker.Subscribe("data-explorer:test-client")
 	defer unsubscribe()
 

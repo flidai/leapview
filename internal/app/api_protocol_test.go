@@ -430,7 +430,7 @@ func TestPublicProtocolAlwaysRequiresBearerCredentials(t *testing.T) {
 }
 
 func TestPublicProtocolValidatesConfiguredDevelopmentBearer(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, assemblyConfig{Auth: NewAuth(nil, "", AuthConfig{DevBypass: true, DevAPIToken: "local-secret"})})
+	server := assembleRuntime(fakeMetrics{}, assemblyConfig{Auth: NewAuth(nil, AuthConfig{DevBypass: true, DevAPIToken: "local-secret"})})
 	handler := server.publicProtocolMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))

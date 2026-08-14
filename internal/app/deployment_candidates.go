@@ -26,10 +26,6 @@ func resolveServingStateRepository(persistence persistenceInputs) (servingStateR
 	return nil, fmt.Errorf("serving state repository is not configured")
 }
 
-func workspaceID(value string) string {
-	return value
-}
-
 func defaultServingEnvironment(environment string) servingstatemodule.Environment {
 	return servingstatemodule.NormalizeEnvironment(servingstatemodule.Environment(environment))
 }

@@ -1,6 +1,5 @@
 import {
   Box,
-  Boxes,
   ChartArea,
   ChartBar,
   ChartCandlestick,
@@ -34,6 +33,7 @@ import {
   TableCellsSplit,
   TableProperties,
   Workflow,
+  Waypoints,
   type IconNode,
 } from 'lucide'
 import type { AgentContextSignal, AgentReferenceSignal, ChatTranscriptItemSignal } from '../../generated/signals'
@@ -178,7 +178,7 @@ function referenceKindIcon(kind: string): ReferenceIcon {
     case 'dashboard': return { name: 'dashboard', icon: LayoutDashboard }
     case 'page': return { name: 'page', icon: PanelsTopLeft }
     case 'filter': return { name: 'filter', icon: Filter }
-    case 'semantic_model': return { name: 'semantic-model', icon: Boxes }
+    case 'semantic_model': return { name: 'semantic-model', icon: Waypoints }
     case 'dataset':
     case 'semantic_table': return { name: 'semantic-table', icon: Database }
     case 'measure': return { name: 'measure', icon: Sigma }

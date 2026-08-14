@@ -3,7 +3,6 @@ import { property, state } from 'lit/decorators.js'
 import {
   ArrowUpDown,
   BarChart3,
-  Boxes,
   Braces,
   CheckCircle2,
   ChevronDown,
@@ -23,6 +22,7 @@ import {
   Sigma,
   Table2,
   Waves,
+  Waypoints,
   XCircle,
 } from 'lucide'
 import {
@@ -46,6 +46,7 @@ type RecordCell = {
   description?: string
   href?: string
   icon?: string
+  iconTreatment?: 'plain' | 'framed'
   tone?: RecordCellTone
   action?: string
   statusLabel?: string
@@ -128,6 +129,13 @@ function cellHref(column: RecordColumn, value: unknown, row: RecordRow): string 
 
 function cellIcon(value: unknown): string {
   return typeof value === 'object' && value && 'icon' in value ? String((value as RecordCell).icon ?? '') : ''
+}
+
+function cellIconTreatment(value: unknown): 'plain' | 'framed' {
+  if (typeof value === 'object' && value && 'iconTreatment' in value) {
+    return (value as RecordCell).iconTreatment ?? 'framed'
+  }
+  return 'framed'
 }
 
 function cellTone(value: unknown): RecordCellTone {
@@ -507,9 +515,10 @@ class RecordTable extends LitElement {
     const label = cellLabel(value)
     const description = cellDescription(value)
     const icon = cellIcon(value)
+    const iconTreatment = cellIconTreatment(value)
     const content = html`
       <span class=${icon ? 'record-entity' : 'record-entity record-entity-no-icon'}>
-        ${icon ? this.renderIcon(icon, `record-entity-icon record-icon-${iconToken(icon)}`) : nothing}
+        ${icon ? this.renderIcon(icon, `record-entity-icon is-${iconTreatment} record-icon-${iconToken(icon)}`) : nothing}
         <span class="record-entity-copy">
           <span class="record-entity-label">${label}</span>
           ${description ? html`<span class="record-entity-description">${description}</span>` : nothing}
@@ -752,7 +761,7 @@ function iconForName(name: string): any {
     case 'table':
       return Table2
     case 'semantic_model':
-      return Boxes
+      return Waypoints
     case 'source':
     case 'schema':
       return Server
@@ -1356,6 +1365,12 @@ const recordTableStyles = `
     border-color: var(--lv-asset-source-border, var(--lv-line-muted));
     background: var(--lv-asset-source-bg, var(--lv-bg-panel-muted));
     color: var(--lv-asset-source-accent, var(--lv-fg-muted));
+  }
+
+  lv-record-table .record-entity-icon.is-plain,
+  lv-record-table .variant-primary .record-entity-icon.is-plain {
+    border: 0;
+    background: transparent;
   }
 
   lv-record-table .record-entity-copy {

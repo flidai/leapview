@@ -22,8 +22,8 @@ const authReturnCookieName = accessmodule.AuthReturnCookieName
 const csrfCookieName = accessmodule.CSRFCookieName
 const oidcStateCookieName = accessmodule.OIDCStateCookieName
 
-func NewAuth(repo access.Repository, workspaceID string, config AuthConfig) *accessmodule.Auth {
-	return accessmodule.NewAuth(repo, workspaceID, config)
+func NewAuth(repo access.Repository, config AuthConfig) *accessmodule.Auth {
+	return accessmodule.NewAuth(repo, config)
 }
 
 func withPrincipal(ctx context.Context, principal Principal) context.Context {

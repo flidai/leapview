@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/project/manifest"
@@ -211,9 +212,17 @@ func DashboardProjection(definition *manifest.Workspace) *dashboarddefinition.Wo
 			semanticModel = report.SemanticModel
 			pageCount = len(report.Pages)
 		}
+		appearanceValue := dashboardappearance.Value{}
+		if item.Appearance.Icon != nil {
+			appearanceValue.Icon = dashboardappearance.StoredValue(*item.Appearance.Icon)
+		}
+		if item.Appearance.Color != nil {
+			appearanceValue.Color = dashboardappearance.StoredValue(*item.Appearance.Color)
+		}
 		catalogView.Dashboards = append(catalogView.Dashboards, catalog.Dashboard{
 			ID: item.ID, Title: item.Title, Description: item.Description, Tags: append([]string(nil), item.Tags...),
 			SemanticModel: semanticModel, PageCount: pageCount,
+			Appearance: dashboardappearance.Resolve(appearanceValue),
 		})
 	}
 	return &dashboarddefinition.Workspace{Catalog: catalogView, Models: definition.Models, Dashboards: definition.DashboardDefinitions}

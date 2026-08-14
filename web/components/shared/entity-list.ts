@@ -8,6 +8,8 @@ import {
   Cable,
   ChartColumn,
   ChartNoAxesColumnIncreasing,
+  ChevronDown,
+  ChevronRight,
   Component,
   Database,
   Download,
@@ -19,6 +21,7 @@ import {
   TableProperties,
   UsersRound,
   UserRound,
+  Waypoints,
   Workflow,
   type IconNode,
 } from 'lucide'
@@ -29,11 +32,18 @@ export type EntityListItem = {
   id: string
   title: string
   description?: string
-  href: string
+  href?: string
   avatarUrl?: string
   icon?: string
+  iconNode?: IconNode
+  iconColor?: string
+  iconButtonLabel?: string
+  workspaceId?: string
+  dashboardId?: string
+  iconTreatment?: 'plain' | 'framed' | 'none'
   meta?: string
   category?: string
+  group?: string
   columns?: Record<string, string | number>
   columnTitles?: Record<string, string>
   sortValues?: Record<string, string | number>
@@ -99,7 +109,7 @@ const entityListStyles = `
 
   .entity-search svg {
     position: absolute;
-    left: var(--base-size-12);
+    left: var(--base-size-12, 12px);
     width: var(--base-size-16);
     height: var(--base-size-16);
     color: var(--lv-fg-muted);
@@ -109,7 +119,7 @@ const entityListStyles = `
   .entity-search input[type='search'],
   .entity-filter {
     box-sizing: border-box;
-    height: var(--control-medium-size);
+    height: var(--control-medium-size, 32px);
     border: var(--lv-border-muted);
     border-radius: var(--lv-radius-default);
     background: var(--lv-bg-panel);
@@ -120,7 +130,7 @@ const entityListStyles = `
   .entity-search input[type='search'] {
     width: 100%;
     min-width: 0;
-    padding: 0 var(--base-size-12) 0 var(--base-size-36);
+    padding: 0 var(--base-size-12, 12px) 0 var(--base-size-36, 36px);
     outline: 0;
   }
 
@@ -264,6 +274,77 @@ const entityListStyles = `
     transition: background-color var(--motion-transition-stateChange);
   }
 
+  .entity-list-group-row th {
+    height: 2.75rem;
+    padding: var(--base-size-4);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel-muted);
+  }
+
+  .entity-list-group-row + .entity-list-table-row {
+    border-top: 0;
+  }
+
+  .entity-list-group-toggle {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    align-items: center;
+    gap: var(--base-size-8);
+    border: 0;
+    border-radius: var(--lv-radius-default);
+    background: transparent;
+    color: var(--lv-fg-default);
+    padding: var(--base-size-6) var(--base-size-8);
+    cursor: pointer;
+    font: var(--lv-type-body-compact);
+    text-align: left;
+  }
+
+  .entity-list-group-toggle:focus-visible {
+    outline: 0;
+  }
+
+  .entity-list-group-chevron,
+  .entity-list-group-icon {
+    display: inline-grid;
+    flex: 0 0 auto;
+    place-items: center;
+    color: var(--lv-fg-muted);
+  }
+
+  .entity-list-group-chevron {
+    width: var(--base-size-24, 24px);
+    height: var(--base-size-24, 24px);
+    margin-block: calc(var(--base-size-4, 4px) * -1);
+    border-radius: var(--lv-radius-default);
+    transition: background-color var(--motion-transition-stateChange), color var(--motion-transition-stateChange);
+  }
+
+  .entity-list-group-toggle:hover .entity-list-group-chevron,
+  .entity-list-group-toggle:focus-visible .entity-list-group-chevron,
+  .entity-list-group.is-collapsed .entity-list-group-chevron {
+    background: var(--lv-bg-control-hover);
+    color: var(--lv-fg-default);
+  }
+
+  .entity-list-group-toggle:focus-visible .entity-list-group-chevron {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
+  }
+
+  .entity-list-group-label {
+    overflow: hidden;
+    font-weight: var(--base-text-weight-semibold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .entity-list-group-count {
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+  }
+
   .entity-list-table-row:hover,
   .entity-list-table-row:focus-within {
     background: var(--lv-bg-control-hover);
@@ -276,29 +357,72 @@ const entityListStyles = `
   }
 
   .entity-list-icon {
-    width: var(--control-medium-size);
-    height: var(--control-medium-size);
-    border: var(--lv-border-muted);
+    width: var(--control-medium-size, 32px);
+    height: var(--control-medium-size, 32px);
+    flex: 0 0 var(--control-medium-size, 32px);
+    border: 0;
     border-radius: var(--lv-radius-default);
+    background: transparent;
+    color: var(--lv-fg-muted);
+  }
+
+  .entity-list-icon svg {
+    width: var(--base-size-20, 20px);
+    height: var(--base-size-20, 20px);
+  }
+
+  .entity-list-icon.is-framed {
+    border: var(--lv-border-muted);
     background: var(--lv-bg-panel-muted);
     color: var(--lv-fg-link);
   }
 
+  button.entity-list-icon { padding: 0; cursor: pointer; }
+  button.entity-list-icon:hover { filter: brightness(1.08); }
+  button.entity-list-icon:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+  ${['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'coral'].map((color) => `
+  .entity-list-icon.is-framed.color-${color} {
+    border-color: var(--display-${color}-borderColor-muted, ${color === 'purple' ? 'var(--lv-asset-dashboard-border)' : 'var(--lv-line-muted)'});
+    background: var(--display-${color}-bgColor-muted, ${color === 'purple' ? 'var(--lv-asset-dashboard-bg)' : 'var(--lv-bg-panel-muted)'});
+    color: var(--display-${color}-fgColor, ${color === 'purple' ? 'var(--lv-asset-dashboard-accent)' : 'var(--lv-fg-muted)'});
+  }`).join('\n')}
+
+  .entity-list-icon-spacer {
+    display: block;
+    width: var(--control-medium-size, 32px);
+    height: var(--control-medium-size, 32px);
+    flex: 0 0 var(--control-medium-size, 32px);
+  }
+
+  .entity-list-group .entity-list-table-row .entity-list-identity {
+    padding-left: var(--base-size-24, 24px);
+  }
+
   .entity-list-icon-connection {
-    border-color: var(--lv-asset-connection-border, var(--lv-line-muted));
-    background: var(--lv-asset-connection-bg, var(--lv-bg-panel-muted));
     color: var(--lv-asset-connection-accent, var(--lv-fg-muted));
   }
 
   .entity-list-icon-source {
-    border-color: var(--lv-asset-source-border, var(--lv-line-muted));
-    background: var(--lv-asset-source-bg, var(--lv-bg-panel-muted));
     color: var(--lv-asset-source-accent, var(--lv-fg-muted));
   }
 
+  .entity-list-icon-connection.is-framed {
+    border-color: var(--lv-asset-connection-border, var(--lv-line-muted));
+    background: var(--lv-asset-connection-bg, var(--lv-bg-panel-muted));
+  }
+
+  .entity-list-icon-source.is-framed {
+    border-color: var(--lv-asset-source-border, var(--lv-line-muted));
+    background: var(--lv-asset-source-bg, var(--lv-bg-panel-muted));
+  }
+
+  .entity-list-icon-dashboard.is-framed {
+    border-color: var(--lv-asset-dashboard-border, var(--lv-line-muted));
+    background: var(--lv-asset-dashboard-bg, var(--lv-bg-panel-muted));
+    color: var(--lv-asset-dashboard-accent, var(--lv-fg-muted));
+  }
+
   .entity-list-icon-application {
-    width: var(--base-size-24);
-    height: var(--base-size-24);
     border-radius: var(--lv-radius-full);
   }
 
@@ -310,6 +434,17 @@ const entityListStyles = `
     border-radius: var(--lv-radius-default);
     color: inherit;
     text-decoration: none;
+  }
+
+  .entity-list-identity-row {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--base-size-8);
+  }
+
+  .entity-list-identity-row .entity-list-identity {
+    flex: 1 1 auto;
   }
 
   .entity-list-copy {
@@ -431,11 +566,14 @@ class EntityList extends LitElement {
   @property({ attribute: 'empty-text' }) emptyText = 'No results found.'
   @property({ attribute: 'initial-query' }) initialQuery = ''
   @property({ attribute: 'active-filter' }) activeFilter = ''
+  @property({ attribute: 'group-by' }) groupBy = ''
+  @property({ attribute: 'group-icon' }) groupIcon = ''
   @property({ type: Boolean, attribute: 'client-filter' }) clientFilter = false
   @state() private query = ''
   @state() private filter = ''
   @state() private sortColumnId = ''
   @state() private sortDirection: 'asc' | 'desc' = 'asc'
+  @state() private collapsedGroups: string[] = []
 
   createRenderRoot(): HTMLElement {
     return this
@@ -533,7 +671,9 @@ class EntityList extends LitElement {
                   })}
                 </tr>
               </thead>
-              <tbody>${items.map((item) => this.renderItem(item, columns))}</tbody>
+              ${this.groupBy
+                ? this.groupedItems(items).map((group) => this.renderGroup(group, columns))
+                : html`<tbody>${items.map((item) => this.renderItem(item, columns))}</tbody>`}
             </table>
           </div>
         ` : html`<div class="entity-list-empty" role="status">${this.query.trim() ? 'No results match your search.' : this.emptyText}</div>`}
@@ -553,7 +693,7 @@ class EntityList extends LitElement {
       visible = visible.filter((item) => {
         if (filter && filter !== 'all' && item.category?.toLocaleLowerCase() !== filter) return false
         if (!query) return true
-        const searchable = [item.title, item.description, item.meta, ...Object.values(item.columns ?? {})]
+        const searchable = [item.title, item.description, item.meta, item.group, ...Object.values(item.columns ?? {})]
           .filter((value) => value != null)
           .join(' ')
           .toLocaleLowerCase()
@@ -583,27 +723,94 @@ class EntityList extends LitElement {
     return column.id === 'name' ? item.title : item.columns?.[column.id] ?? ''
   }
 
+  private groupedItems(items: EntityListItem[]): Array<{ key: string; label: string; items: EntityListItem[] }> {
+    const groups = new Map<string, { key: string; label: string; items: EntityListItem[] }>()
+    for (const item of items) {
+      const value = this.groupValue(item)
+      const label = value || 'Ungrouped'
+      const key = value || '__ungrouped__'
+      const group = groups.get(key) ?? { key, label, items: [] }
+      group.items.push(item)
+      groups.set(key, group)
+    }
+    return Array.from(groups.values())
+  }
+
+  private groupValue(item: EntityListItem): string {
+    if (this.groupBy === 'group') return String(item.group ?? '').trim()
+    if (this.groupBy === 'category') return String(item.category ?? '').trim()
+    if (this.groupBy === 'name') return String(item.title ?? '').trim()
+    return String(item.columns?.[this.groupBy] ?? '').trim()
+  }
+
+  private renderGroup(group: { key: string; label: string; items: EntityListItem[] }, columns: EntityListColumn[]) {
+    const collapsed = this.collapsedGroups.includes(group.key)
+    return html`
+      <tbody class=${collapsed ? 'entity-list-group is-collapsed' : 'entity-list-group'} data-group=${group.key}>
+        <tr class="entity-list-group-row">
+          <th colspan=${columns.length} scope="rowgroup">
+            <button
+              type="button"
+              class="entity-list-group-toggle"
+              aria-expanded=${collapsed ? 'false' : 'true'}
+              @click=${() => this.toggleGroup(group.key)}
+            >
+              <span class="entity-list-group-chevron" aria-hidden="true">${lucideIcon(collapsed ? ChevronRight : ChevronDown, { size: 14, strokeWidth: 2 })}</span>
+              ${this.groupIcon ? html`<span class="entity-list-group-icon" aria-hidden="true">${lucideIcon(entityIcon(this.groupIcon), { size: 16, strokeWidth: 1.8 })}</span>` : ''}
+              <span class="entity-list-group-label">${group.label}</span>
+              <span class="entity-list-group-count" aria-label=${`${group.items.length} ${group.items.length === 1 ? 'item' : 'items'}`}>${group.items.length}</span>
+            </button>
+          </th>
+        </tr>
+        ${collapsed ? '' : group.items.map((item) => this.renderItem(item, columns))}
+      </tbody>
+    `
+  }
+
+  private toggleGroup(groupKey: string): void {
+    const collapsed = new Set(this.collapsedGroups)
+    if (collapsed.has(groupKey)) collapsed.delete(groupKey)
+    else collapsed.add(groupKey)
+    this.collapsedGroups = Array.from(collapsed)
+  }
+
   private sortValue(item: EntityListItem, column: EntityListColumn): string | number {
     return item.sortValues?.[column.id] ?? this.itemValue(item, column)
   }
 
   private renderItem(item: EntityListItem, columns: EntityListColumn[]) {
     const badgesColumn = columns.some((column) => column.render === 'badges')
+    const iconTreatment = item.iconTreatment ?? (item.icon ? 'plain' : 'none')
+    const iconColorClass = iconTreatment === 'framed'
+      ? ` color-${item.iconColor || 'purple'}`
+      : item.iconColor ? ` color-${item.iconColor}` : ''
+    const icon = item.icon === 'user'
+        ? html`<lv-user-avatar .name=${item.title} .imageUrl=${item.avatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>`
+        : iconTreatment === 'none'
+          ? html`<span class="entity-list-icon-spacer" aria-hidden="true"></span>`
+          : item.iconButtonLabel
+            ? html`<button type="button" class=${`entity-list-icon is-${iconTreatment} entity-list-icon-${item.icon || 'default'}${iconColorClass}`} aria-label=${item.iconButtonLabel} @click=${(event: Event) => this.activateIcon(event, item)}>${lucideIcon(item.iconNode ?? entityIcon(item.icon))}</button>`
+            : html`<span class=${`entity-list-icon is-${iconTreatment} entity-list-icon-${item.icon || 'default'}${iconColorClass}`} aria-hidden="true">${lucideIcon(item.iconNode ?? entityIcon(item.icon))}</span>`
+    const copy = html`
+      <span class="entity-list-copy">
+        <span class="entity-list-title-row">
+          <span class="entity-list-title">${item.title}</span>
+          ${badgesColumn ? '' : (item.badges ?? []).map((badge) => this.renderBadge(badge))}
+        </span>
+        ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
+      </span>
+    `
+    const identity = item.iconButtonLabel
+      ? html`<span class="entity-list-identity-row">${icon}${item.href ? html`<a class="entity-list-identity" href=${item.href}>${copy}</a>` : html`<span class="entity-list-identity">${copy}</span>`}</span>`
+      : html`${icon}${copy}`
     return html`
       <tr class="entity-list-table-row">
         <th scope="row">
-          <a class="entity-list-identity" href=${item.href}>
-            ${item.icon === 'user'
-              ? html`<lv-user-avatar .name=${item.title} .imageUrl=${item.avatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>`
-              : html`<span class=${`entity-list-icon entity-list-icon-${item.icon || 'default'}`} aria-hidden="true">${lucideIcon(entityIcon(item.icon))}</span>`}
-            <span class="entity-list-copy">
-              <span class="entity-list-title-row">
-                <span class="entity-list-title">${item.title}</span>
-                ${badgesColumn ? '' : (item.badges ?? []).map((badge) => this.renderBadge(badge))}
-              </span>
-              ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
-            </span>
-          </a>
+          ${item.iconButtonLabel
+            ? identity
+            : item.href
+            ? html`<a class="entity-list-identity" href=${item.href}>${identity}</a>`
+            : html`<span class="entity-list-identity">${identity}</span>`}
         </th>
         ${columns.slice(1).map((column) => {
           const value = item.columns?.[column.id]
@@ -631,6 +838,16 @@ class EntityList extends LitElement {
         ${lucideIcon(badgeIcon(badge.icon), { size: 16, strokeWidth: 2.5 })}
       </span>
     `
+  }
+
+  private activateIcon(event: Event, item: EntityListItem): void {
+    event.preventDefault()
+    event.stopPropagation()
+    this.dispatchEvent(new CustomEvent('lv-entity-list-icon-activate', {
+      bubbles: true,
+      composed: true,
+      detail: { item, anchor: event.currentTarget },
+    }))
   }
 
   private exportCSV = () => {
@@ -709,8 +926,10 @@ function entityIcon(type = ''): IconNode {
     case 'source': return Cable
     case 'catalog': return BookOpen
     case 'model_table': return TableProperties
-    case 'semantic_model': return Database
+    case 'semantic_model': return Waypoints
     case 'table': return Table2
+    case 'schema': return Database
+    case 'view': return TableProperties
     case 'visual': return ChartColumn
     case 'workflow': return Workflow
     case 'component': return Component

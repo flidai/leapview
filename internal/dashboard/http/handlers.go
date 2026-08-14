@@ -148,9 +148,6 @@ func requestWorkspaceID(h Handler, r *nethttp.Request) string {
 	if workspaceID := r.URL.Query().Get("workspace"); workspaceID != "" {
 		return workspaceID
 	}
-	if metrics, ok := h.metricsForRequest(r); ok {
-		return metrics.Catalog().Workspace.ID
-	}
 	return ""
 }
 
@@ -199,15 +196,16 @@ func DashboardObjectRefs(r *nethttp.Request, workspaceID string) []access.Object
 
 func (h Handler) Dashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	workspaceID := chi.URLParam(r, "workspace")
+	if strings.TrimSpace(workspaceID) == "" {
+		nethttp.NotFound(w, r)
+		return
+	}
 	metrics, ok := h.metricsForRequest(r)
 	if !ok {
 		nethttp.NotFound(w, r)
 		return
 	}
 	dashboardID := chi.URLParam(r, "dashboard")
-	if workspaceID == "" {
-		workspaceID = metrics.Catalog().Workspace.ID
-	}
 	pages := metrics.Pages(dashboardID)
 	if len(pages) == 0 {
 		nethttp.NotFound(w, r)
@@ -266,14 +264,17 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 
 func (h Handler) metricsForRequest(r *nethttp.Request) (Metrics, bool) {
 	workspaceID := chi.URLParam(r, "workspace")
-	if workspaceID == "" {
+	if strings.TrimSpace(workspaceID) == "" {
 		workspaceID = r.URL.Query().Get("workspace")
 	}
-	if workspaceID != "" && h.MetricsForWorkspace != nil {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, false
+	}
+	if h.MetricsForWorkspace != nil {
 		return h.MetricsForWorkspace(workspaceID)
 	}
 	if h.Metrics == nil {
 		return nil, false
 	}
-	return h.Metrics, true
+	return h.Metrics, h.Metrics.Catalog().Workspace.ID == workspaceID
 }

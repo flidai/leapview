@@ -15,7 +15,7 @@ import (
 )
 
 func TestApplicationLayoutUsesCurrentPrincipalIdentity(t *testing.T) {
-	auth := accessmodule.NewAuth(nil, "", accessmodule.AuthConfig{DevBypass: true})
+	auth := accessmodule.NewAuth(nil, accessmodule.AuthConfig{DevBypass: true})
 	access, err := accessmodule.Build(t.Context(), accessmodule.Config{ExistingAuth: auth})
 	if err != nil {
 		t.Fatal(err)

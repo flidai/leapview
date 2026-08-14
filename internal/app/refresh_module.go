@@ -43,7 +43,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 				return refreshmodule.HTTPPrincipal{ID: principal.ID}, ok
 			},
 			WorkspaceID: func(value string) string {
-				return workspaceID(value)
+				return value
 			},
 			Environment: func(*http.Request) string {
 				return string(defaultServingEnvironment(policy.defaultEnvironment))

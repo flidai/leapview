@@ -30,7 +30,6 @@ import (
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
@@ -170,7 +169,7 @@ func newStoreBackedHarness(t *testing.T, opts ...harnessOption) *harness {
 
 	workspaceID := metrics.Catalog().Workspace.ID
 	if workspaceID == "" {
-		workspaceID = config.DefaultWorkspaceID
+		t.Fatal("integration runtime catalog has no workspace ID")
 	}
 	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
 	if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: metrics.Catalog().Workspace.Title, Description: metrics.Catalog().Workspace.Description}); err != nil {
@@ -182,10 +181,10 @@ func newStoreBackedHarness(t *testing.T, opts ...harnessOption) *harness {
 	}
 	seedIntegrationActiveDeployment(t, store, workspaceID, catalogPath)
 
-	auth := NewAuth(accessRepo, workspaceID, AuthConfig{DevBypass: true})
+	auth := NewAuth(accessRepo, AuthConfig{DevBypass: true})
 	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{
-		Auth:               auth,
-		DefaultWorkspaceID: workspaceID,
+		Auth:        auth,
+		WorkspaceID: workspaceID,
 	}))
 	h.handler = server.Routes()
 	h.store = store
@@ -383,7 +382,7 @@ func (h *harness) getUpdatesWithQueryTimeout(t *testing.T, dashboardID, pageID s
 	}
 	values := url.Values{}
 	values.Set("route", "dashboard")
-	values.Set("workspace", h.workspaceIDOrDefault())
+	values.Set("workspace", h.requiredWorkspaceID())
 	values.Set("dashboard", dashboardID)
 	values.Set("page", pageID)
 	if streamInstanceID := streamInstanceIDFromSignals(signals); streamInstanceID != "" {
@@ -451,7 +450,7 @@ func (h *harness) openUpdatesStream(t *testing.T, dashboardID, pageID string, si
 	}
 	values := url.Values{}
 	values.Set("route", "dashboard")
-	values.Set("workspace", h.workspaceIDOrDefault())
+	values.Set("workspace", h.requiredWorkspaceID())
 	values.Set("dashboard", dashboardID)
 	values.Set("page", pageID)
 	if streamInstanceID := streamInstanceIDFromSignals(signals); streamInstanceID != "" {
@@ -674,16 +673,16 @@ func (h *harness) workspaceCommandPath(path string) string {
 		return path
 	}
 	if strings.HasPrefix(path, "/commands/") {
-		return "/workspaces/" + h.workspaceIDOrDefault() + path
+		return "/workspaces/" + h.requiredWorkspaceID() + path
 	}
 	return path
 }
 
-func (h *harness) workspaceIDOrDefault() string {
-	if h.workspaceID != "" {
-		return h.workspaceID
+func (h *harness) requiredWorkspaceID() string {
+	if h.workspaceID == "" {
+		panic("integration harness has no workspace ID")
 	}
-	return config.DefaultWorkspaceID
+	return h.workspaceID
 }
 
 type streamClient struct {

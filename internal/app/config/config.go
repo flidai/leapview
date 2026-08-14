@@ -19,8 +19,7 @@ import (
 type Profile string
 
 const (
-	ProfileServe       Profile = "serve"
-	DefaultWorkspaceID         = "leapview"
+	ProfileServe Profile = "serve"
 )
 
 // ListenAddress is the validated HTTP listen endpoint used consistently by

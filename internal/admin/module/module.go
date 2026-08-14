@@ -100,7 +100,6 @@ type Config struct {
 	Publications          PublicationService
 	AgentConfigCommand    uicommand.Binding
 	PublicationCommands   map[string]uicommand.Binding
-	DefaultWorkspaceID    string
 	AuthConfigured        bool
 	LocalPasswordEnabled  bool
 	AccessConfigured      bool
@@ -144,7 +143,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
 		StorageService: adminstorage.Service{
 			CatalogPath: config.Storage.CatalogPath, DataPath: config.Storage.DataPath,
-			Environment: config.Storage.Environment, ControlPlane: config.Storage.ControlPlane,
 			Analytics: config.Storage.Analytics, Admitter: config.Storage.Admitter,
 		},
 		QueryAuditReader: adminhttp.QueryAuditReaderProvider(config.QueryAuditReader), CSRFToken: config.CSRFToken,
@@ -161,8 +159,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		AgentConfigCommand:  config.AgentConfigCommand,
 		PublicationCommands: config.PublicationCommands,
 		ProductCommands:     config.ProductUICommands.Bindings,
-		DefaultWorkspaceID:  config.DefaultWorkspaceID, AuthConfigured: config.AuthConfigured,
-		AccessConfigured: config.AccessConfigured,
+		AuthConfigured:      config.AuthConfigured,
+		AccessConfigured:    config.AccessConfigured,
 	}
 	m.handler = adminhttp.Handler{
 		ReadModel: readModel, Layout: config.Layout,

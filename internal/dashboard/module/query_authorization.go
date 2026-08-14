@@ -15,7 +15,6 @@ type QueryPrincipal struct {
 
 type QueryAuthorizationConfig struct {
 	Repository            access.DataAuthorizationService
-	DefaultWorkspaceID    string
 	PrincipalFromContext  func(context.Context) (QueryPrincipal, bool)
 	CredentialFromContext func(context.Context) (access.APICredential, bool)
 	TokenAllows           func(access.APIToken, string, access.Privilege) bool
@@ -26,7 +25,7 @@ func WithQueryAuthorization(metrics queryruntime.Metrics, config QueryAuthorizat
 		return metrics
 	}
 	return queryauthz.New(metrics, queryauthz.Options{
-		Repo: config.Repository, DefaultWorkspaceID: config.DefaultWorkspaceID,
+		Repo: config.Repository,
 		PrincipalFromContext: func(ctx context.Context) (queryauthz.Principal, bool) {
 			if config.PrincipalFromContext == nil {
 				return queryauthz.Principal{}, false

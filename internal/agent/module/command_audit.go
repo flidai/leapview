@@ -36,9 +36,6 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 		surface = "api"
 	}
 	workspaceID := strings.TrimSpace(input.Scope.WorkspaceID)
-	if workspaceID == "" {
-		workspaceID = strings.TrimSpace(m.defaultWorkspaceID)
-	}
 	metadata, err := encodeAgentCommandAuditPayload(operationID, agentgen.GenSchemaAgentCommandAuditPayload{
 		OperationId: operationID,
 		WorkspaceId: workspaceID,

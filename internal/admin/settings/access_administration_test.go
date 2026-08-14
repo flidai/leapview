@@ -51,7 +51,7 @@ func TestLoadAccessAdministrationDerivesSourceAwareCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state, err := LoadAccessAdministration(ctx, repository, actor.Principal.ID, "test", local.Principal.ID, externalGroup.ID)
+	state, err := LoadAccessAdministration(ctx, repository, actor.Principal.ID, local.Principal.ID, externalGroup.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestApplyAccessAdministrationCommandRevokesAllPrincipalSessions(t *testing.
 			t.Fatal(err)
 		}
 	}
-	result, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, "test", AccessAdministrationCommand{Action: "revoke_all_sessions", PrincipalID: target.Principal.ID})
+	result, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, AccessAdministrationCommand{Action: "revoke_all_sessions", PrincipalID: target.Principal.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,21 +119,21 @@ func TestApplyAccessAdministrationCommandCreatesAndBlocksLocalUser(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, "test", AccessAdministrationCommand{Action: "create_principal", Email: "new@example.com", DisplayName: "New User"})
+	created, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, AccessAdministrationCommand{Action: "create_principal", Email: "new@example.com", DisplayName: "New User"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created.SelectedPrincipalID == "" || created.TemporaryPassword == "" {
 		t.Fatalf("create result = %#v", created)
 	}
-	if _, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, "test", AccessAdministrationCommand{Action: "block_principal", PrincipalID: created.SelectedPrincipalID}); err != nil {
+	if _, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, AccessAdministrationCommand{Action: "block_principal", PrincipalID: created.SelectedPrincipalID}); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := repository.PrincipalByID(ctx, created.SelectedPrincipalID)
 	if err != nil || stored.BlockedAt == "" {
 		t.Fatalf("blocked principal = %#v, %v", stored, err)
 	}
-	if _, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, "test", AccessAdministrationCommand{Action: "block_principal", PrincipalID: actor.Principal.ID}); err == nil {
+	if _, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, AccessAdministrationCommand{Action: "block_principal", PrincipalID: actor.Principal.ID}); err == nil {
 		t.Fatal("self-block succeeded")
 	}
 }
@@ -157,7 +157,7 @@ func TestApplyAccessAdministrationCommandAddsMultipleGroupMembers(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, "test", AccessAdministrationCommand{
+	result, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, AccessAdministrationCommand{
 		Action: "add_group_member", GroupID: group.ID, PrincipalIDs: []string{" " + first.Principal.ID + " ", second.Principal.ID, first.Principal.ID},
 	})
 	if err != nil {

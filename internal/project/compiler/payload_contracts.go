@@ -1,6 +1,7 @@
 package compiler
 
 import dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+import dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 
 type catalogPayloadV1 struct {
 	Workspace      catalogWorkspacePayloadV1   `json:"Workspace"`
@@ -22,11 +23,12 @@ type catalogModelPayloadV1 struct {
 }
 
 type catalogDashboardPayloadV1 struct {
-	ID          string   `json:"ID"`
-	Title       string   `json:"Title"`
-	Path        string   `json:"Path"`
-	Description string   `json:"Description"`
-	Tags        []string `json:"Tags"`
+	ID          string                    `json:"ID"`
+	Title       string                    `json:"Title"`
+	Path        string                    `json:"Path"`
+	Description string                    `json:"Description"`
+	Tags        []string                  `json:"Tags"`
+	Appearance  dashboardappearance.Patch `json:"Appearance,omitempty"`
 }
 
 type connectionPayloadV1 struct {

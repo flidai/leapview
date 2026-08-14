@@ -249,7 +249,7 @@ func TestLogoutSurfacesRevocationAuditFailure(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	req.AddCookie(&http.Cookie{Name: "lv_session", Value: token})
 	rec := httptest.NewRecorder()
-	NewAuth(repo, "test", AuthConfig{}).Logout(rec, req)
+	NewAuth(repo, AuthConfig{}).Logout(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("logout status = %d, want %d", rec.Code, http.StatusInternalServerError)
@@ -276,8 +276,8 @@ func TestAPITokenOnlyAuthChallengesInsteadOfOIDCRedirect(t *testing.T) {
 	store := testStore(t)
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 
-		Auth:               testAuth(store, "test", AuthConfig{APITokenOnly: true}),
-		DefaultWorkspaceID: "test",
+		Auth:        testAuth(store, "test", AuthConfig{APITokenOnly: true}),
+		WorkspaceID: "test",
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/chats", nil)
 	rec := httptest.NewRecorder()
@@ -517,7 +517,7 @@ func TestReadinessFailsWhenActiveWorkspaceRuntimeIsMissing(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("readyz status = %d, want %d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, `"workspaceRuntime:missing"`) || !strings.Contains(body, `catalog workspace`) {
+	if body := rec.Body.String(); !strings.Contains(body, `"workspaceRuntime:missing"`) || !strings.Contains(body, `runtime for workspace \"missing\" is not configured`) {
 		t.Fatalf("readyz body missing runtime failure:\n%s", body)
 	}
 }
@@ -563,8 +563,8 @@ func TestDeploymentAPIRateLimitPreservesAuth(t *testing.T) {
 
 		Auth: auth,
 
-		DefaultWorkspaceID: "test",
-		RateLimits:         RateLimitConfig{Enabled: true, APILimit: 1, APIWindow: time.Minute},
+		WorkspaceID: "test",
+		RateLimits:  RateLimitConfig{Enabled: true, APILimit: 1, APIWindow: time.Minute},
 	}))
 	handler := server.Routes()
 
@@ -597,8 +597,8 @@ func TestDevBypassStillUsesGrantPrivileges(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
 	repo := accesssqlite.NewRepository(store.SQLDB())
-	auth := NewAuth(repo, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	auth := NewAuth(repo, AuthConfig{DevBypass: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/test/assets", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -1038,7 +1038,7 @@ func TestLocalPasswordMustChangeBlocksProtectedRoutesUntilChanged(t *testing.T) 
 		LocalAuth: true,
 		CSRFKey:   "0123456789abcdef0123456789abcdef",
 	})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	sessionSecret, err := repo.CreateSession(ctx, created.Principal.ID, time.Hour)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
@@ -1168,7 +1168,7 @@ func TestAuthAuditsDisabledPrincipalCredentialFailures(t *testing.T) {
 	if _, err := repo.DisableSCIMUser(ctx, user.Principal.ID); err != nil {
 		t.Fatalf("disable SCIM user: %v", err)
 	}
-	auth := NewAuth(repo, "test", AuthConfig{CSRFKey: "0123456789abcdef0123456789abcdef"})
+	auth := NewAuth(repo, AuthConfig{CSRFKey: "0123456789abcdef0123456789abcdef"})
 
 	apiReq := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/test", nil)
 	apiReq.Header.Set("Authorization", "Bearer "+apiSecret)
@@ -1224,7 +1224,7 @@ func TestInvalidBearerDoesNotFallBackToSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	auth := NewAuth(repo, "test", AuthConfig{CSRFKey: "0123456789abcdef0123456789abcdef"})
+	auth := NewAuth(repo, AuthConfig{CSRFKey: "0123456789abcdef0123456789abcdef"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/test", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
@@ -1277,7 +1277,7 @@ func TestCSRFBearerBypassDoesNotApplyWhenSessionCookiePresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create api token: %v", err)
 	}
-	auth := NewAuth(repo, "test", AuthConfig{CSRFKey: "0123456789abcdef0123456789abcdef"})
+	auth := NewAuth(repo, AuthConfig{CSRFKey: "0123456789abcdef0123456789abcdef"})
 	handler := auth.CSRFMiddleware(auth.Middleware("", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})))

@@ -22,6 +22,7 @@ type APIGenHandler interface {
 	ListWorkspaceAssets(stdhttp.ResponseWriter, *stdhttp.Request)
 	GetWorkspaceAsset(stdhttp.ResponseWriter, *stdhttp.Request)
 	GetWorkspaceAssetLineage(stdhttp.ResponseWriter, *stdhttp.Request)
+	UpdateDashboardAppearance(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
 }
 
 type APIGenDispatcher struct{ handler APIGenHandler }
@@ -76,6 +77,10 @@ func (d *APIGenDispatcher) GetWorkspaceAsset(w stdhttp.ResponseWriter, r *stdhtt
 
 func (d *APIGenDispatcher) GetWorkspaceAssetLineage(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.GetWorkspaceAssetLineage(w, r)
+}
+
+func (d *APIGenDispatcher) UpdateDashboardAppearance(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, dashboard string) {
+	d.handler.UpdateDashboardAppearance(w, r, workspace, dashboard)
 }
 
 type APIGenTransportErrorResponder struct{ Logger *slog.Logger }

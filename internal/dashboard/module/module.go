@@ -50,7 +50,6 @@ type Module struct {
 	dashboardTelemetry            DashboardTelemetry
 	logger                        *slog.Logger
 	runtimeMetrics                queryruntime.Metrics
-	defaultWorkspaceID            string
 	coordinators                  *dashboardstream.Registry
 	usageReader                   usage.Reader
 	usageNow                      func() time.Time
@@ -60,21 +59,20 @@ type Module struct {
 }
 
 type Config struct {
-	Database           *sql.DB
-	HTTP               HTTPConfig
-	Semantic           SemanticConfig
-	ServingSnapshot    func(context.Context, string) (string, error)
-	PublicTelemetry    PublicTelemetry
-	Logger             *slog.Logger
-	Trace              *pagestream.TraceStore
-	PublicURL          string
-	CurrentActor       func(*http.Request) string
-	RecordAudit        func(context.Context, access.AuditEventInput) error
-	UsageRecorder      usage.Recorder
-	UsageReader        usage.Reader
-	UsageNow           func() time.Time
-	RuntimeMetrics     queryruntime.Metrics
-	DefaultWorkspaceID string
+	Database        *sql.DB
+	HTTP            HTTPConfig
+	Semantic        SemanticConfig
+	ServingSnapshot func(context.Context, string) (string, error)
+	PublicTelemetry PublicTelemetry
+	Logger          *slog.Logger
+	Trace           *pagestream.TraceStore
+	PublicURL       string
+	CurrentActor    func(*http.Request) string
+	RecordAudit     func(context.Context, access.AuditEventInput) error
+	UsageRecorder   usage.Recorder
+	UsageReader     usage.Reader
+	UsageNow        func() time.Time
+	RuntimeMetrics  queryruntime.Metrics
 }
 
 type HTTPConfig struct {
@@ -278,9 +276,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		recordPublicationCommandAudit: publicationCommandAudit,
 		streams:                       publication.NewMemoryStreamRegistry(), publicBroker: config.HTTP.Broker,
 		publicTelemetry: config.PublicTelemetry, dashboardTelemetry: config.HTTP.Telemetry, logger: config.Logger,
-		runtimeMetrics: config.RuntimeMetrics, defaultWorkspaceID: config.DefaultWorkspaceID,
-		coordinators: coordinators,
-		usageReader:  usageReader, usageNow: usageNow,
+		runtimeMetrics: config.RuntimeMetrics,
+		coordinators:   coordinators,
+		usageReader:    usageReader, usageNow: usageNow,
 	}
 	if config.Database != nil {
 		module.publications = publicationsqlite.NewRepository(config.Database)

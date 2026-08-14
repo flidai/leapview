@@ -17,11 +17,11 @@ func (m runtimeMetrics) ExecuteConsumersPage(ctx context.Context, request consum
 }
 
 func (m multiWorkspaceMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {
-	return executeConsumersFrom(ctx, m.defaultMetrics(), request, publish)
+	return executeConsumersFrom(ctx, nil, request, publish)
 }
 
 func (m *dynamicRuntimeMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {
-	return executeConsumersFrom(ctx, m.defaultMetrics(), request, publish)
+	return executeConsumersFrom(ctx, nil, request, publish)
 }
 
 func (m admittedMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {

@@ -18,7 +18,7 @@ func TestAuditedQueryMetricsRecordsSuccessWithoutRows(t *testing.T) {
 	}
 	defer store.Close()
 
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test"}))
 	request := dataquery.ModelTableRows("test", "orders", []string{"order_id", "status"}, nil, 0, 2, false)
 	request.WorkspaceID = "test"
 	request.Surface = dataquery.SurfaceDataExplorer
@@ -64,7 +64,7 @@ func TestAuditedQueryMetricsRecordsExecutionError(t *testing.T) {
 	}
 	defer store.Close()
 
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test"}))
 	ctx = withPrincipal(ctx, Principal{ID: "principal_admin@example.test"})
 	request := dataquery.Query{
 		WorkspaceID: "test",

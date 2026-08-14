@@ -39,7 +39,6 @@ func TestCandidateQueryCapabilityRejectsOwnershipWorkspaceAndIdentityExpansion(t
 				PrincipalFromContext: func(context.Context) (Principal, bool) {
 					return Principal{ID: "author_1"}, true
 				},
-				DefaultWorkspaceID: "sales",
 			})
 			ctx := WithCandidateQueryCapability(t.Context(), capability)
 
@@ -60,7 +59,6 @@ func TestCandidateIdentityCannotBeInjectedWithoutServerCapability(t *testing.T) 
 		PrincipalFromContext: func(context.Context) (Principal, bool) {
 			return Principal{ID: "author_1"}, true
 		},
-		DefaultWorkspaceID: "sales",
 	})
 	request := candidateGovernanceRequest()
 	request.CandidateID = "cand_injected"
@@ -80,7 +78,6 @@ func TestCandidateQueryCapabilityAddsRestrictionsAndEffectivePolicyFingerprint(t
 		PrincipalFromContext: func(context.Context) (Principal, bool) {
 			return Principal{ID: "author_1"}, true
 		},
-		DefaultWorkspaceID: "sales",
 	})
 	capability := CandidateQueryCapability{
 		CandidateID: "cand_1", OwnerPrincipalID: "author_1",
@@ -128,7 +125,6 @@ func TestCandidateQueryCapabilityAppliesOnlyRelevantObjectRestrictions(t *testin
 		PrincipalFromContext: func(context.Context) (Principal, bool) {
 			return Principal{ID: "author_1"}, true
 		},
-		DefaultWorkspaceID: "sales",
 	})
 	capability := CandidateQueryCapability{
 		CandidateID: "cand_1", OwnerPrincipalID: "author_1", WorkspaceID: "sales",
@@ -161,7 +157,6 @@ func TestCandidateQueryCapabilityCannotDeleteOrShadowActiveRestrictions(t *testi
 		PrincipalFromContext: func(context.Context) (Principal, bool) {
 			return Principal{ID: "author_1"}, true
 		},
-		DefaultWorkspaceID: "sales",
 	})
 	capability := CandidateQueryCapability{
 		CandidateID: "cand_1", OwnerPrincipalID: "author_1",

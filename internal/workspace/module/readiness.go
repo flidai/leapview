@@ -27,14 +27,5 @@ func (m *Module) ActiveRuntimeWorkspaces(ctx context.Context) ([]string, error) 
 		}
 		return out, nil
 	}
-	if m.defaultWorkspaceID != "" {
-		return []string{m.defaultWorkspaceID}, nil
-	}
-	if m.rootMetrics != nil {
-		catalog := m.rootMetrics.Catalog()
-		if catalog.Workspace.ID != "" && (len(catalog.Dashboards) > 0 || len(catalog.Models) > 0) {
-			return []string{catalog.Workspace.ID}, nil
-		}
-	}
 	return nil, nil
 }

@@ -342,6 +342,10 @@ package contracts
 })
 
 #DashboardSpec: close({
+	appearance?: close({
+		icon?:  #ObjectID | "default"
+		color?: "gray" | "blue" | "green" | "yellow" | "orange" | "red" | "purple" | "pink" | "coral" | "default"
+	})
 	semanticModel!: #Identifier
 	filters?: close({
 		[#Identifier]: #FilterDefinition

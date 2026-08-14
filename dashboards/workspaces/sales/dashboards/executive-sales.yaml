@@ -7,6 +7,9 @@ metadata:
   description: Revenue, AOV, category, and order volume overview.
   tags: [sales, revenue]
 spec:
+  appearance:
+    icon: chart-no-axes-combined
+    color: purple
   semanticModel: sales
   filters:
     purchase_date:

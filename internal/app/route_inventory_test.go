@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "a5270d0cd631e5324b4113d31c42fd0604e740b08384826996d134580570afb2"
+	const expectedRouteContractDigest = "bbd7254d0cf0ff84e2caca0991a0ee63af5560d78852469be79ff14bffae7e41"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -180,6 +180,9 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.Contains(path, "/access/") || strings.HasSuffix(path, "/access/upsert") || strings.HasSuffix(path, "/access/remove"):
 		authenticated.owner = "workspace"
 		authenticated.privilege = "MANAGE_GRANTS"
+	case path == "/workspaces/{workspace}/catalog/appearance":
+		authenticated.owner = "workspace"
+		authenticated.privilege = "MANAGE_WORKSPACE"
 	case path == "/" || path == "/catalog/search" || path == "/data" || path == "/data/command" ||
 		strings.HasPrefix(path, "/workspaces") || strings.HasPrefix(path, "/connections"):
 		authenticated.owner = "workspace"
@@ -260,6 +263,7 @@ GET /admin/queries
 GET /admin/security
 GET /admin/service-accounts
 GET /admin/storage
+GET /admin/storage/tables/{schema}/{table}
 GET /admin/system
 GET /admin/workspaces
 GET /api/docs
@@ -327,7 +331,6 @@ POST /admin/groups/search
 POST /admin/principals/search
 POST /admin/queries/command
 POST /admin/service-accounts/command
-POST /admin/storage/select-table
 POST /auth/desktop/disconnect
 POST /auth/desktop/redeem
 POST /auth/local/login
@@ -336,6 +339,7 @@ POST /auth/logout
 POST /chat/turns
 POST /chats/turns
 POST /candidates/{candidate}/workspaces/{workspace}/commands/{command}
+POST /workspaces/{workspace}/catalog/appearance
 POST /catalog/search
 POST /connections/search
 POST /data/command

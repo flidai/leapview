@@ -31,7 +31,7 @@ func TestPublicationArrowFailsBeforeStreamingWhenAuditCannotPersist(t *testing.T
 
 	model := governanceTestModel()
 	backend := &publicationArrowMetrics{model: model}
-	metrics := New(backend, Options{Repo: accesssqlite.NewRepository(store.SQLDB()), DefaultWorkspaceID: "test"})
+	metrics := New(backend, Options{Repo: accesssqlite.NewRepository(store.SQLDB())})
 	ctx = WithDashboardPublicationCapability(ctx, DashboardPublicationCapability{
 		WorkspaceID: "test", Publication: "website", Dashboard: "dashboard", ModelID: model.Name,
 		DependencyAssetIDs: []string{
@@ -75,7 +75,7 @@ func TestPublicationArrowPersistsStartedAuditBeforeStreaming(t *testing.T) {
 		}
 		return nil
 	}}
-	metrics := New(backend, Options{Repo: repo, DefaultWorkspaceID: "test"})
+	metrics := New(backend, Options{Repo: repo})
 	ctx = WithDashboardPublicationCapability(ctx, DashboardPublicationCapability{
 		WorkspaceID: "test", Publication: "website", Dashboard: "dashboard", ModelID: model.Name,
 		DependencyAssetIDs: []string{

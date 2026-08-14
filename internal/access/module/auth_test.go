@@ -35,17 +35,17 @@ func TestPrincipalIsHumanExcludesServicePrincipals(t *testing.T) {
 	}
 }
 
-func TestPrivilegeWorkspaceIDUsesConfiguredWorkspaceWhenRouteHasNoScope(t *testing.T) {
-	auth := &Auth{workspaceID: "default-workspace"}
+func TestPrivilegeWorkspaceIDFailsClosedWhenRouteHasNoScope(t *testing.T) {
+	auth := &Auth{}
 
 	request := httptest.NewRequest("POST", "/api/v1/principals", nil)
-	if got := auth.privilegeWorkspaceID(request); got != "default-workspace" {
-		t.Fatalf("unscoped route workspace = %q, want configured default", got)
+	if got := auth.privilegeWorkspaceID(request); got != "" {
+		t.Fatalf("unscoped route workspace = %q, want empty", got)
 	}
 }
 
 func TestPrivilegeWorkspaceIDPreservesExplicitAPIWorkspace(t *testing.T) {
-	auth := &Auth{workspaceID: "default-workspace"}
+	auth := &Auth{}
 
 	request := httptest.NewRequest("GET", "/api/v1/workspaces/acme/groups", nil)
 	routeContext := chi.NewRouteContext()
@@ -54,6 +54,15 @@ func TestPrivilegeWorkspaceIDPreservesExplicitAPIWorkspace(t *testing.T) {
 
 	if got := auth.privilegeWorkspaceID(request); got != "acme" {
 		t.Fatalf("workspace API route workspace = %q, want acme", got)
+	}
+}
+
+func TestPrivilegeWorkspaceIDPreservesExplicitConnectionAssetWorkspace(t *testing.T) {
+	auth := &Auth{}
+	request := httptest.NewRequest("GET", "/updates?route=connection_asset&assetWorkspace=acme", nil)
+
+	if got := auth.privilegeWorkspaceID(request); got != "acme" {
+		t.Fatalf("connection asset workspace = %q, want acme", got)
 	}
 }
 
@@ -89,7 +98,7 @@ func contextWithRouteContext(request *http.Request, routeContext *chi.Context) c
 }
 
 func TestAuthorizationObjectsIncludePlatformForSessionAuthentication(t *testing.T) {
-	objects := authorizationObjects(nil, "", nil, access.PrivilegeViewAudit)
+	objects := authorizationObjects(nil, nil, access.PrivilegeViewAudit)
 	if len(objects) != 1 || objects[0] != access.PlatformObject() {
 		t.Fatalf("authorization objects = %#v, want platform object", objects)
 	}
@@ -100,20 +109,20 @@ func TestAuthorizationObjectsDoNotExpandWorkspaceScopedAPITokenToPlatform(t *tes
 		WorkspaceID: "acme",
 		Privileges:  []access.Privilege{access.PrivilegeViewAudit},
 	}}
-	objects := authorizationObjects([]string{"acme"}, "", credential, access.PrivilegeViewAudit)
+	objects := authorizationObjects([]string{"acme"}, credential, access.PrivilegeViewAudit)
 	if len(objects) != 1 || objects[0] != access.WorkspaceObject("acme") {
 		t.Fatalf("authorization objects = %#v, want only acme workspace", objects)
 	}
 }
 
-func TestAuthorizationObjectsIncludeConfiguredWorkspaceBeforeItIsPersisted(t *testing.T) {
+func TestAuthorizationObjectsIgnoreUnregisteredWorkspace(t *testing.T) {
 	credential := &access.APICredential{Token: access.APIToken{
 		WorkspaceID: "test",
 		Privileges:  []access.Privilege{access.PrivilegeViewAudit},
 	}}
-	objects := authorizationObjects(nil, "test", credential, access.PrivilegeViewAudit)
-	if len(objects) != 1 || objects[0] != access.WorkspaceObject("test") {
-		t.Fatalf("authorization objects = %#v, want configured test workspace", objects)
+	objects := authorizationObjects(nil, credential, access.PrivilegeViewAudit)
+	if len(objects) != 0 {
+		t.Fatalf("authorization objects = %#v, want no phantom workspace", objects)
 	}
 }
 

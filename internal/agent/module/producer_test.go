@@ -28,7 +28,7 @@ func (s *runJobStore) Cancel(context.Context, string) error { return nil }
 
 func TestEnqueueRunRejectsNonTransactionalFallback(t *testing.T) {
 	store := &runJobStore{}
-	module, err := Build(t.Context(), Config{Jobs: store, DefaultWorkspaceID: "default"})
+	module, err := Build(t.Context(), Config{Jobs: store})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,14 +86,14 @@ func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
 	}
 }
 
-func TestRunWorkspaceFallsBackToDefaultThenGlobal(t *testing.T) {
-	if got := runWorkspaceID(agent.Scope{WorkspaceID: "scope", Credential: agent.CredentialScope{WorkspaceID: "credential"}}, "default", "_global"); got != "scope" {
+func TestRunWorkspaceUsesExplicitScopeThenCredentialThenGlobal(t *testing.T) {
+	if got := runWorkspaceID(agent.Scope{WorkspaceID: "scope", Credential: agent.CredentialScope{WorkspaceID: "credential"}}, "_global"); got != "scope" {
 		t.Fatalf("scope workspace = %q", got)
 	}
-	if got := runWorkspaceID(agent.Scope{}, "default", "_global"); got != "default" {
-		t.Fatalf("default workspace = %q", got)
+	if got := runWorkspaceID(agent.Scope{Credential: agent.CredentialScope{WorkspaceID: "credential"}}, "_global"); got != "credential" {
+		t.Fatalf("credential workspace = %q", got)
 	}
-	if got := runWorkspaceID(agent.Scope{}, "", "_global"); got != "_global" {
+	if got := runWorkspaceID(agent.Scope{}, "_global"); got != "_global" {
 		t.Fatalf("global workspace = %q", got)
 	}
 }

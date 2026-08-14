@@ -84,7 +84,7 @@ func cursorSnapshot(workspaces *workspacemodule.Module, releases *releasemodule.
 		switch segment {
 		case "workspaces":
 			if workspaces != nil {
-				snapshot, err := workspaces.ActiveServingStateID(r.Context(), workspaceID(segments[index+1]))
+				snapshot, err := workspaces.ActiveServingStateID(r.Context(), segments[index+1])
 				if err == nil && snapshot != "" {
 					return snapshot
 				}

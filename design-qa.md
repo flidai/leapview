@@ -143,6 +143,36 @@ final result: passed
 
 ---
 
+# Dashboard icon picker selected-color design QA
+
+## Comparison target
+
+- Source visual truth: `/home/codex/.codex/attachments/78ce5ab9-0427-4644-a7ce-e390b21e6103/codex-clipboard-f197bf84-69ea-4938-a7c4-6a36d6823dc0.png`
+- Browser-rendered implementation: `/home/codex/.codex/worktrees/00bd/leapview/.tmp/product-design/dashboard-picker-selected-color-detail.png`
+- Combined comparison evidence: `/home/codex/.codex/worktrees/00bd/leapview/.tmp/product-design/dashboard-picker-selected-color-comparison.png`
+- Browser viewport: 900 × 700 CSS px at device scale factor 1; focused picker capture: 360 × 406 px.
+- State: dashboard appearance picker open in dark mode with blue selected.
+
+## Evidence review
+
+The picker now follows the source's direct color relationship: choosing a color updates the entire icon grid to that same Primer display color. Color dots, search, virtualized icon grid, selected-icon background, and reset action retain the existing LeapView layout and interaction behavior.
+
+- Computed icon color changed from orange `rgb(237, 131, 38)` to blue `rgb(77, 160, 255)` after selection.
+- Every visible icon resolved to the same active blue color.
+- The picker exposed `color-blue`, and the blue swatch exposed `aria-pressed="true"`.
+- Hover and focus preserve the active foreground color while adding only the shared control background.
+- No browser console errors or warnings occurred during the final capture.
+- Focused catalog DOM, TypeScript, Primer-alignment, and diff checks passed.
+- The first browser capture exposed a selector collision between the picker state class and swatch class that applied an inset blue frame to the whole popover. Scoping the swatch rule removed it; the final comparison has only the normal Primer border and floating shadow.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain for the requested selected-color behavior.
+
+final result: passed
+
+---
+
 # Administration detail shell design QA
 
 ## Comparison target
@@ -167,7 +197,7 @@ final result: passed
 - Colors and tokens: surfaces, text, borders, accent notice, status badges, and controls all use existing application tokens. No new raw color system was introduced.
 - Images and icons: no raster assets were needed. Initials avatars are product UI, while informational and blocking actions use the existing Lucide icon library.
 - Copy and content: notices explain whether LeapView or an external identity source owns the record. Local records retain editable operations; managed records remain read-only where appropriate.
-- Reuse: users and groups render through the same `renderAdministrationDetailShell` composition, with domain-specific sections and operations supplied as content.
+- Reuse: users, groups, and storage tables render through the shared `renderEntityDetail` composition, with domain-specific identity treatments, sections, and operations supplied as content.
 
 ## Comparison history
 
@@ -187,6 +217,66 @@ final result: passed
 
 - LeapView's established typography is denser than the generated design reference; retaining the product tokens keeps this screen consistent with the rest of settings.
 - The captured user is the signed-in system user, so unsafe self-blocking is intentionally absent even though the reference illustrates a Block access action.
+
+final result: passed
+
+---
+
+# Shared-list icon hierarchy design QA
+
+**Comparison target**
+
+- Source visual truth, bare project icons: `/home/codex/.codex/attachments/8a8ad5b2-6ec8-482a-9dbe-3cb528fdd05b/codex-clipboard-52456127-9256-4c06-900f-2115973a43e9.png`
+- Source visual truth, framed initiative icons: `/home/codex/.codex/attachments/b6acd30a-b323-4afe-9342-ba85df88a3a5/codex-clipboard-2bb57380-fa55-44f7-80bc-d7e6f4f696e1.png`
+- Combined comparison evidence: `/home/codex/.codex/worktrees/00bd/leapview/.tmp/product-design/icon-hierarchy-v2-comparison.png`
+- Browser-rendered implementations: `.tmp/product-design/workspace-assets-after.png`, `.tmp/product-design/icon-hierarchy-dashboards-v2.png`, and `.tmp/product-design/icon-hierarchy-workspaces-v2.png`.
+- Browser viewport: 1280 × 820 CSS px at device scale factor 1, dark color scheme.
+- Source pixels: projects 2048 × 614; initiatives 2052 × 616. Implementation captures: 1280 × 820 CSS px.
+- State: populated list pages with default search/filter state and the Operations workspace asset inventory.
+
+**Full-view comparison evidence**
+
+The combined comparison shows the corrected hierarchy in the same dark-table context as the references. The dedicated, user-facing dashboard catalog carries the stronger framed identity used by Linear initiatives. Workspace identities and every asset inside a workspace inventory, including dashboards, use bare type glyphs like Linear projects. Existing LeapView typography, density, columns, and content remain unchanged.
+
+**Focused region comparison evidence**
+
+The individual route captures were inspected at original resolution because the leading visuals are small in the combined view. On `/workspaces/operations`, dashboard, model-table, and semantic-model assets all use a 0 px border and transparent background so the glyph communicates asset type consistently. The dedicated dashboard catalog uses the framed, customizable identity treatment, while workspace catalog entries are bare.
+
+**Findings**
+
+- No actionable P0, P1, or P2 differences remain.
+- Fonts and typography: unchanged LeapView type tokens preserve hierarchy and truncation behavior.
+- Spacing and layout rhythm: every treatment keeps the existing 32 px leading track, so names and columns remain aligned across list types. Framed and plain treatments do not change row height.
+- Colors and visual tokens: plain workspace and workspace-item glyphs retain their semantic accent colors; dashboards in the dedicated catalog use the selected Primer display color with the existing framed treatment in both themes.
+- Image quality and asset fidelity: all non-avatar visuals use the existing Lucide icon library. Principal images and initials continue through the existing avatar component; no placeholder or handcrafted assets were added.
+- Copy and content: unchanged.
+
+**Interaction and browser checks**
+
+- Captured dashboards, workspaces, and the Operations workspace inventory from the running development app.
+- Verified plain icons compute to a transparent background and 0 px border.
+- Verified dedicated dashboard-catalog icons compute to a token-backed colored background and 1 px border; dashboard assets inside workspace inventories remain plain.
+- Existing search, filtering, sorting, links, and avatar fallbacks remain covered by route-level DOM suites.
+- Browser console errors across all final captures: none.
+
+**Comparison history**
+
+- Pass 1 implemented framed workspaces and bare dashboards, which did not match the product hierarchy clarified in review.
+- Pass 2 moved framed, customizable identity to the dedicated dashboard catalog and kept workspace inventories consistently type-oriented with plain glyphs.
+
+**Implementation checklist**
+
+- Shared entity-list items expose an explicit `plain`, `framed`, or `none` icon treatment.
+- Plain is the default whenever an icon is supplied.
+- Dashboards use framed, customizable glyphs in the dedicated dashboard catalog.
+- Workspaces, all workspace assets (including dashboards), connections, sources, applications, and groups use plain glyphs.
+- Principals continue to use avatars or initials.
+- Storage rows use plain table/view glyphs.
+- Light/dark token behavior and compact/mobile list regressions are covered.
+
+**Follow-up polish**
+
+- The complete Lucide catalog is intentionally available by default. Its icon-node payload can be split or loaded on demand in a separate performance change without altering the picker contract.
 
 final result: passed
 ---
@@ -240,3 +330,5 @@ No actionable P0, P1, or P2 visual differences remain. The implementation follow
 Typography, tokens, icons, and copy are unchanged by the viewport-containment fix. Mobile retains its fixed, viewport-bounded sheet behavior.
 
 final result: passed
+
+---

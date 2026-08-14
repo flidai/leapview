@@ -159,10 +159,10 @@ func newDuckLakeHarness(t *testing.T, opts ...func(*assemblyConfig)) *duckLakeHa
 		t.Fatalf("reload registry for %s: %v", initial.ID, reloadErr)
 	}
 	t.Cleanup(func() { _ = registry.Close() })
-	runtimeMetrics := NewDynamicRuntimeMetrics("", func(workspaceID string) runtimehost.Provider {
+	runtimeMetrics := NewDynamicRuntimeMetrics(func(workspaceID string) runtimehost.Provider {
 		return registry.ProviderForWorkspace(servingstate.WorkspaceID(workspaceID))
 	})
-	auth := NewAuth(accessRepo, "", AuthConfig{DevBypass: true})
+	auth := NewAuth(accessRepo, AuthConfig{DevBypass: true})
 	options := testStoreOptions(store, assemblyConfig{
 		ServingStateRepo: deploymentRepo,
 		WorkspaceRepo:    workspaceRepo,
@@ -175,7 +175,7 @@ func newDuckLakeHarness(t *testing.T, opts ...func(*assemblyConfig)) *duckLakeHa
 		DuckLakeDataPath:    dataPath,
 		AnalyticsModule:     analyticsmodule.NewSurface(duckDBEnvironment, nil),
 		ManagedDataResolver: staticIntegrationManagedDataResolver{root: dataDir},
-		DefaultWorkspaceID:  workspaceID,
+		WorkspaceID:         workspaceID,
 		DefaultEnvironment:  string(servingstate.DefaultEnvironment),
 		Workload: func() *workload.Controller {
 			controller, err := workload.New(workload.DefaultConfig())
@@ -544,7 +544,7 @@ func TestAdminStorageReflectsDuckLakeAfterCleanup(t *testing.T) {
 		t.Fatalf("write legacy duckdb file: %v", err)
 	}
 	body := h.getAuthenticatedHydrated(t, "/admin/storage")
-	for _, want := range []string{"DuckLake catalog", "model", "orders", "Snapshots", "Tables"} {
+	for _, want := range []string{"Storage", "model", "orders", "Total data size"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("admin storage missing %q:\n%s", want, body)
 		}
@@ -825,19 +825,19 @@ func (h *duckLakeHarness) startReplacementRegistry(t *testing.T) {
 		t.Fatalf("reload replacement registry: %v", err)
 	}
 	h.registry = registry
-	server := assembleRuntime(NewDynamicRuntimeMetrics("", func(workspaceID string) runtimehost.Provider {
+	server := assembleRuntime(NewDynamicRuntimeMetrics(func(workspaceID string) runtimehost.Provider {
 		return registry.ProviderForWorkspace(servingstate.WorkspaceID(workspaceID))
 	}), testStoreOptions(h.store, assemblyConfig{
 		ServingStateRepo: h.deployments,
 		WorkspaceRepo:    workspacesqlite.NewRepository(h.store.SQLDB()),
 		AssetCatalog:     workspace.NewAssetCatalogService(workspacesqlite.NewRepository(h.store.SQLDB())),
-		Auth:             NewAuth(accesssqlite.NewRepository(h.store.SQLDB()), "", AuthConfig{DevBypass: true}),
+		Auth:             NewAuth(accesssqlite.NewRepository(h.store.SQLDB()), AuthConfig{DevBypass: true}),
 		Reloader:         registry,
 
 		DuckLakeCatalogPath: h.catalogPath,
 		DuckLakeDataPath:    h.dataPath,
 		AnalyticsModule:     analyticsmodule.NewSurface(h.database, nil),
-		DefaultWorkspaceID:  "sales",
+		WorkspaceID:         "sales",
 		DefaultEnvironment:  string(servingstate.DefaultEnvironment),
 	}))
 	backgroundCtx, stopBackground := context.WithCancel(context.Background())

@@ -599,7 +599,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: MANAGE_GRANTS
+        privilege: MANAGE_PLATFORM
     patch:
       operationId: updateAgentConfig
       summary: Update the agent configuration
@@ -901,10 +901,10 @@ paths:
         owner: LeapViewAPI.Agent
         ui:
           action_id: agent.config.update
-        privilege: MANAGE_GRANTS
+        privilege: MANAGE_PLATFORM
       x-authz:
         mode: privilege
-        privilege: MANAGE_GRANTS
+        privilege: MANAGE_PLATFORM
   /api/v1/agent/conversations:
     get:
       operationId: listAgentConversations
@@ -39302,6 +39302,311 @@ paths:
         mode: privilege
         privilege: VIEW_ITEM
       x-leapview-object-scope: dashboard
+  /api/v1/workspaces/{workspace}/dashboards/{dashboard}/appearance:
+    put:
+      operationId: updateDashboardAppearance
+      summary: Update a dashboard's catalog appearance
+      parameters:
+        - name: workspace
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: dashboard
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardAppearanceResponse'
+              example:
+                color: example
+                icon: example
+                revision: 1
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Workspaces
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardAppearancePatchRequest'
+            example:
+              color: example
+              icon: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: best-effort
+          payload:
+            fields:
+              - name: fields
+                sensitivity: public
+            retention: standard
+            schema:
+              ref: DashboardAppearanceUpdatedAuditPayload
+            schema_version: !!float 1
+          required: true
+          success_action: dashboard.appearance.updated
+        authz_mode: privilege
+        failures:
+          - code: INVALID_DASHBOARD_APPEARANCE
+            kind: invalid
+            public_detail: The selected dashboard appearance is invalid.
+            status_code: !!float 422
+        owner: LeapViewAPI.Workspace
+        target:
+          parameter: workspace
+          type: workspace
+        ui:
+          action_id: dashboard.appearance.update
+        privilege: MANAGE_WORKSPACE
+      x-authz:
+        mode: privilege
+        privilege: MANAGE_WORKSPACE
   /api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}:
     get:
       operationId: getDashboardPage
@@ -60697,6 +61002,53 @@ components:
           example: example
       example:
         theme: example
+    DashboardAppearancePatchRequest:
+      type: object
+      properties:
+        icon:
+          type: string
+          example: example
+        color:
+          type: string
+          example: example
+      example:
+        color: example
+        icon: example
+    DashboardAppearanceResponse:
+      type: object
+      required:
+        - icon
+        - color
+        - revision
+      properties:
+        icon:
+          type: string
+          example: example
+        color:
+          type: string
+          example: example
+        revision:
+          type: integer
+          format: int64
+          example: 1
+      example:
+        color: example
+        icon: example
+        revision: 1
+    DashboardAppearanceUpdatedAuditPayload:
+      type: object
+      required:
+        - fields
+      properties:
+        fields:
+          type: array
+          items:
+            type: string
+          example:
+            - example
+      example:
+        fields:
+          - example
     DashboardAppliedFilterInput:
       type: object
       required:

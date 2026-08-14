@@ -13,7 +13,7 @@ func validateCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
 
 func planCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 	client := capabilityAPIClient{}
-	return projectcli.PlanCommand(ctx, workspaceActiveGraphLoader{client: client}, opts.workspaceID)
+	return projectcli.PlanCommand(ctx, workspaceActiveGraphLoader{client: client})
 }
 
 func schemaCommand(_ *rootOptions) *cobra.Command {

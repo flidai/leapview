@@ -63,7 +63,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/product/logo/{digest}", guard.Protect("", m.GetProductLogo))
 	r.Get("/admin/agent", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.Agent))
 	r.Get("/admin/storage", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.Storage))
-	r.Post("/admin/storage/select-table", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.StorageTableSelect))
+	r.Get("/admin/storage/tables/{schema}/{table}", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.StorageTable))
 	r.Get("/admin/queries", guard.ProtectGlobal(access.PrivilegeViewAudit, h.Queries))
 	r.Post("/admin/queries/command", guard.ProtectGlobal(access.PrivilegeViewAudit, h.QueryCommand))
 	r.Get("/admin/audit", guard.ProtectGlobal(access.PrivilegeViewAudit, h.Audit))

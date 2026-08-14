@@ -848,12 +848,12 @@ func TestHomeRouteAggregatesDBBackedWorkspaceCatalogs(t *testing.T) {
 			t.Fatalf("ensure workspace: %v", err)
 		}
 	}
-	metrics := NewMultiWorkspaceMetrics("operations", map[string]QueryMetrics{
+	metrics := NewMultiWorkspaceMetrics(map[string]QueryMetrics{
 		"operations": namedWorkspaceMetrics{workspaceID: "operations", dashboardID: "fulfillment-operations", title: "Fulfillment Operations"},
 		"sales":      namedWorkspaceMetrics{workspaceID: "sales", dashboardID: "executive-sales", title: "Executive Sales"},
 		"visuals":    namedWorkspaceMetrics{workspaceID: "visuals", dashboardID: "visual-showcase", title: "Visual Showcase"},
 	})
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceRepo: workspaceRepo, DefaultWorkspaceID: "operations"}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceRepo: workspaceRepo, WorkspaceID: "operations"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -931,23 +931,20 @@ func TestDashboardRouteRedirectsToFirstPage(t *testing.T) {
 	}
 }
 
-func TestServerDoesNotResolveBlankWorkspaceToDefault(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, assemblyConfig{DefaultWorkspaceID: "test"})
+func TestServerRejectsBlankWorkspaceMetricsLookup(t *testing.T) {
+	server := assembleRuntime(fakeMetrics{}, assemblyConfig{WorkspaceID: "test"})
 
-	if got := server.workspaceID(""); got != "" {
-		t.Fatalf("workspaceID(\"\") = %q, want blank", got)
-	}
 	if _, ok := server.metricsForWorkspace(""); ok {
 		t.Fatal("metricsForWorkspace(\"\") returned metrics, want no implicit workspace")
 	}
 }
 
 func TestWorkspaceScopedDashboardRoutesRejectCrossWorkspaceLookup(t *testing.T) {
-	metrics := NewMultiWorkspaceMetrics("sales", map[string]QueryMetrics{
+	metrics := NewMultiWorkspaceMetrics(map[string]QueryMetrics{
 		"sales":      namedWorkspaceMetrics{workspaceID: "sales", dashboardID: "executive-sales", title: "Executive Sales"},
 		"operations": namedWorkspaceMetrics{workspaceID: "operations", dashboardID: "fulfillment-operations", title: "Fulfillment Operations"},
 	})
-	server := assembleRuntime(metrics, assemblyConfig{DefaultWorkspaceID: "sales"})
+	server := assembleRuntime(metrics, assemblyConfig{WorkspaceID: "sales"})
 
 	okReq := httptest.NewRequest(http.MethodGet, "/workspaces/operations/dashboards/fulfillment-operations/pages/overview", nil)
 	okRec := httptest.NewRecorder()
@@ -1326,7 +1323,7 @@ func TestDashboardRefreshCommandDoesNotPersistRefreshRun(t *testing.T) {
 	principal := testPrincipal(t, ctx, store, "editor@example.com", "Editor", "editor")
 	token := testAPIToken(t, ctx, store, principal.ID, "dashboard-refresh")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	body := strings.NewReader(`{"runtime":{"clientId":"test-client","dashboardId":"executive-sales","pageId":"operations","modelId":"test"},"visualWindowCommand":{"blockID":"all","start":0,"limit":50,"sort":[]}}`)
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/commands/refresh", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -1351,7 +1348,7 @@ func TestDashboardRefreshCommandDoesNotPersistRefreshRun(t *testing.T) {
 func TestWorkspaceAssetDetailsUpdatesExcludeRefreshesTableAndUnusedRefreshFields(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", emptyPageRuntimeAssetMetrics{})
-	server := assembleRuntime(emptyPageRuntimeAssetMetrics{}, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(emptyPageRuntimeAssetMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test"}))
 	assetID := workspace.NewAssetID(workspace.AssetTypeSemanticModel, "olist")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1401,7 +1398,7 @@ func TestWorkspaceAssetDetailsUpdatesExcludeRefreshesTableAndUnusedRefreshFields
 func TestLegacySemanticModelRefreshRouteIsRemoved(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", emptyPageRuntimeAssetMetrics{})
-	server := assembleRuntime(emptyPageRuntimeAssetMetrics{}, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(emptyPageRuntimeAssetMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test"}))
 	assetID := workspace.NewAssetID(workspace.AssetTypeSemanticModel, "olist")
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/assets/"+string(assetID)+"/refresh", nil)
 	rec := httptest.NewRecorder()

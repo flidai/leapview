@@ -31,15 +31,17 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 				return next, true
 			case routeCatalog:
 				return routes.accessModule.ProtectAnyWorkspaceNamed("VIEW_ITEM", next), true
-			case routeDashboard, routeWorkspace, routeWorkspaceAsset, routeConnections, routeConnectionAsset, routeData:
+			case routeWorkspace, routeConnections:
+				return routes.accessModule.ProtectAnyWorkspaceNamed("VIEW_ITEM", next), true
+			case routeDashboard, routeWorkspaceAsset, routeConnectionAsset, routeData:
 				return routes.accessModule.ProtectNamed("VIEW_ITEM", next), true
 			case routeChat:
-				return routes.accessModule.ProtectNamed("VIEW_AGENT", next), true
+				return routes.accessModule.ProtectAnyWorkspaceNamed("VIEW_AGENT", next), true
 			case routeAdmin:
 				switch strings.TrimSpace(section) {
 				case "profile", "security", "api-tokens":
 					return routes.accessModule.ProtectNamed("", next), true
-				case "general", "service-accounts", "authentication", "storage", "agent", "system":
+				case "general", "service-accounts", "authentication", "storage", "storage-detail", "agent", "system":
 					return routes.accessModule.ProtectPlatformNamed("MANAGE_PLATFORM", next), true
 				case "workspaces-admin":
 					return routes.accessModule.ProtectGlobalNamed("MANAGE_WORKSPACE", next), true
@@ -60,14 +62,11 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 			routeData:      http.HandlerFunc(routes.workspaceModule.HTTP().DataExplorerUpdates),
 			routeAdmin: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				adminHTTP := routes.adminModule.HTTP()
-				switch strings.TrimSpace(r.URL.Query().Get("section")) {
-				case "queries":
+				if strings.TrimSpace(r.URL.Query().Get("section")) == "queries" {
 					adminHTTP.QueryUpdates(w, r)
-				case "storage":
-					adminHTTP.StorageSignalUpdates(w, r)
-				default:
-					adminHTTP.BootstrapUpdates(w, r)
+					return
 				}
+				adminHTTP.BootstrapUpdates(w, r)
 			}),
 			routeWorkspaceAsset: http.HandlerFunc(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				workspaceAssetUpdates(routes.workspaceModule, runtime.pageStreamTrace, w, r)

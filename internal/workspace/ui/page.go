@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	workspacegen "github.com/flidai/leapview/internal/workspace/api/gen"
 	catalog "github.com/flidai/leapview/internal/workspace/navigation"
 	uisignals "github.com/flidai/leapview/internal/workspace/ui/signals"
 	g "maragu.dev/gomponents"
@@ -82,6 +84,7 @@ func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSign
 		Content: g.El("lv-catalog-page",
 			g.Attr("slot", "page"),
 			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.QueryPost("/catalog/search", "entityListQuery", "entityListFilter")),
+			g.Attr("data-on:lv-dashboard-appearance-change", "$dashboardAppearanceCommand = evt.detail; "+uiactions.CommandPostWorkspace(workspacegen.GenUIActionUpdateDashboardAppearance(), "/catalog/appearance", "$dashboardAppearanceCommand.workspaceId", "dashboardAppearanceCommand", "entityListQuery")),
 		),
 	})
 }
@@ -142,8 +145,9 @@ func CatalogBootstrapSignalsForCatalogsWithOptions(catalogs []catalog.Catalog, o
 func CatalogBootstrapSignalsForPage(catalog catalog.Catalog, page uisignals.CatalogPageSignal, providers ...webpage.Provider) map[string]any {
 	layout := webpage.Resolve(firstProvider(providers), catalogLayoutContext(catalog))
 	return webpage.WithSignal(layout, map[string]any{
-		"page":   page,
-		"status": dashboard.Status{},
+		"page":                       page,
+		"status":                     dashboard.Status{},
+		"dashboardAppearanceCommand": map[string]any{},
 	})
 }
 
@@ -203,7 +207,11 @@ func catalogPageBase(query string) uisignals.CatalogPageSignal {
 }
 
 func catalogDashboardSignal(workspace catalog.Workspace, report catalog.Dashboard, id string, metadata CatalogDashboardMetadata) uisignals.CatalogDashboardSignal {
+	appearance := dashboardappearance.Resolve(report.Appearance)
 	return uisignals.CatalogDashboardSignal{
+		AppearanceColor: appearance.Color,
+		AppearanceIcon:  appearance.Icon,
+		DashboardID:     report.ID,
 		ID:              id,
 		Title:           report.Title,
 		Description:     uisignals.Optional(report.Description),

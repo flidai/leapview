@@ -37,10 +37,9 @@ type dashboardRefreshRuntime struct {
 }
 
 type dynamicRuntimeMetrics struct {
-	defaultID string
-	factory   func(workspaceID string) runtimehost.Provider
-	mu        sync.Mutex
-	metrics   map[string]Metrics
+	factory func(workspaceID string) runtimehost.Provider
+	mu      sync.Mutex
+	metrics map[string]Metrics
 }
 
 type catalogRuntime interface {
@@ -95,11 +94,10 @@ func NewRuntimeMetrics(provider runtimehost.Provider, workspaceID string) Metric
 	return runtimeMetrics{provider: provider, workspaceID: workspaceID}
 }
 
-func NewDynamicRuntimeMetrics(defaultWorkspaceID string, factory func(workspaceID string) runtimehost.Provider) Metrics {
+func NewDynamicRuntimeMetrics(factory func(workspaceID string) runtimehost.Provider) Metrics {
 	return &dynamicRuntimeMetrics{
-		defaultID: defaultWorkspaceID,
-		factory:   factory,
-		metrics:   map[string]Metrics{},
+		factory: factory,
+		metrics: map[string]Metrics{},
 	}
 }
 
@@ -115,7 +113,7 @@ func (m *dynamicRuntimeMetrics) RuntimeReady(ctx context.Context, workspaceID st
 }
 
 func (m *dynamicRuntimeMetrics) MetricsForWorkspace(workspaceID string) (Metrics, bool) {
-	if workspaceID == "" || m.factory == nil {
+	if strings.TrimSpace(workspaceID) == "" || m.factory == nil {
 		return nil, false
 	}
 	m.mu.Lock()
@@ -132,7 +130,9 @@ func (m *dynamicRuntimeMetrics) MetricsForWorkspace(workspaceID string) (Metrics
 	return metrics, true
 }
 
-func (m *dynamicRuntimeMetrics) defaultMetrics() Metrics {
+// unboundMetrics intentionally never selects a workspace. Callers must first
+// resolve a workspace through MetricsForWorkspace.
+func (m *dynamicRuntimeMetrics) unboundMetrics() Metrics {
 	return nil
 }
 
@@ -390,8 +390,8 @@ func (m runtimeMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.
 	if !ok {
 		return dataquery.Result{}, fmt.Errorf("active runtime does not provide semantic query data")
 	}
-	if request.WorkspaceID == "" {
-		request.WorkspaceID = m.workspaceID
+	if strings.TrimSpace(request.WorkspaceID) == "" {
+		return dataquery.Result{}, fmt.Errorf("workspace ID is required")
 	}
 	return port.ExecuteDataQuery(ctx, request)
 }
@@ -406,8 +406,8 @@ func (m runtimeMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataq
 	if !ok {
 		return dataquery.Result{}, fmt.Errorf("active runtime does not provide native Arrow query data")
 	}
-	if request.WorkspaceID == "" {
-		request.WorkspaceID = m.workspaceID
+	if strings.TrimSpace(request.WorkspaceID) == "" {
+		return dataquery.Result{}, fmt.Errorf("workspace ID is required")
 	}
 	return port.ExecuteDataQueryArrow(ctx, request, sink)
 }

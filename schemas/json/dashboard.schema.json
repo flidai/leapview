@@ -479,6 +479,36 @@
     "#DashboardSpec": {
       "additionalProperties": false,
       "properties": {
+        "appearance": {
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "enum": [
+                "gray",
+                "blue",
+                "green",
+                "yellow",
+                "orange",
+                "red",
+                "purple",
+                "pink",
+                "coral",
+                "default"
+              ]
+            },
+            "icon": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/%23ObjectID"
+                },
+                {
+                  "const": "default"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
         "filter_application": {
           "$ref": "#/$defs/%23FilterApplication"
         },

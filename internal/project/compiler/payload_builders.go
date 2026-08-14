@@ -43,6 +43,7 @@ func catalogDashboardsPayload(dashboards []manifest.CatalogDashboard) []catalogD
 			Path:        dashboard.Path,
 			Description: dashboard.Description,
 			Tags:        dashboard.Tags,
+			Appearance:  dashboard.Appearance,
 		})
 	}
 	return out

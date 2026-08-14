@@ -66,6 +66,19 @@ func TestListPagesUseDebouncedPostSearchCommands(t *testing.T) {
 	}
 }
 
+func TestCatalogPageScopesDashboardAppearanceCommandToEventWorkspace(t *testing.T) {
+	_, workspaceCatalog, _, _ := testWorkspaceAssetFixtures()
+	var out strings.Builder
+	if err := CatalogPage(workspaceCatalog).Render(&out); err != nil {
+		t.Fatal(err)
+	}
+	rendered := html.UnescapeString(out.String())
+	want := `@post('/workspaces/' + encodeURIComponent($dashboardAppearanceCommand.workspaceId) + '/catalog/appearance'`
+	if !strings.Contains(rendered, want) {
+		t.Fatalf("catalog page appearance command is not workspace-scoped: %s", rendered)
+	}
+}
+
 func TestListResultPatchesOnlyReplaceServerOwnedRows(t *testing.T) {
 	workspace, workspaceCatalog, assets, edges := testWorkspaceAssetFixtures()
 	tests := []struct {

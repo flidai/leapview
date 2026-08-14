@@ -48,8 +48,8 @@ func TestProductionDashboardWrappersForwardGovernedConsumerPlan(t *testing.T) {
 	}
 	t.Cleanup(controller.Close)
 	metrics := dashboardmodule.WithQueryAudit(
-		dashboardmodule.WithAdmission(queryauthz.New(underlying, queryauthz.Options{}), controller, ""),
-		nil, "", nil,
+		dashboardmodule.WithAdmission(queryauthz.New(underlying, queryauthz.Options{}), controller),
+		nil, nil,
 	)
 
 	visuals := 0
@@ -80,8 +80,8 @@ func TestProductionDashboardWrappersForwardGovernedFilterOptions(t *testing.T) {
 	}
 	t.Cleanup(controller.Close)
 	metrics := dashboardmodule.WithQueryAudit(
-		dashboardmodule.WithAdmission(queryauthz.New(underlying, queryauthz.Options{}), controller, ""),
-		nil, "", nil,
+		dashboardmodule.WithAdmission(queryauthz.New(underlying, queryauthz.Options{}), controller),
+		nil, nil,
 	)
 
 	provider, ok := metrics.(interface {

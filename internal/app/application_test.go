@@ -267,7 +267,7 @@ func (l LifecycleFunc) Stop(ctx context.Context) error  { return l.stop(ctx) }
 func TestAssembleRuntimeRejectsCapabilityBuildFailure(t *testing.T) {
 	store := testStore(t)
 	options := testStoreOptions(store, assemblyConfig{
-		DefaultWorkspaceID: "test",
+		WorkspaceID: "test",
 		DeploymentConfig: deploymentmodule.Config{
 			Database: store.SQLDB(),
 		},

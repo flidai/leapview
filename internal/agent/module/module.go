@@ -34,7 +34,6 @@ type Module struct {
 	handler                  *agenthttp.Handler
 	service                  *agent.Service
 	jobs                     JobStore
-	defaultWorkspaceID       string
 	runWorkloadClass         string
 	globalWorkspaceID        string
 	search                   SearchPort
@@ -88,7 +87,6 @@ type Config struct {
 	Model                    ModelConfig
 	Service                  *agent.Service
 	Jobs                     JobStore
-	DefaultWorkspaceID       string
 	RunWorkloadClass         string
 	GlobalWorkspaceID        string
 	Search                   SearchPort
@@ -220,7 +218,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	m := &Module{
 		service: service, jobs: config.Jobs,
-		defaultWorkspaceID: config.DefaultWorkspaceID, runWorkloadClass: config.RunWorkloadClass,
+		runWorkloadClass:  config.RunWorkloadClass,
 		globalWorkspaceID: config.GlobalWorkspaceID, search: config.Search, environment: config.Environment,
 		dashboardMetrics: config.DashboardMetrics, authorizeAnyObject: config.AuthorizeAnyObject,
 		skipContextAuthorization: config.SkipContextAuthorization,

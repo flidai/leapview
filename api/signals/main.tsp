@@ -254,104 +254,18 @@ model AdminQueryHistorySignal {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
-model AdminStorageColumnSignal {
-  `beginSnapshot`: int64;
-  `containsNan`: string;
-  `containsNull`: string;
-  `default`: string;
-  `defaultValueDialect`: string;
-  `defaultValueType`: string;
-  `extraStats`: string;
-  `id`: int64;
-  `initialDefault`: string;
-  `maxValue`: string;
-  `minValue`: string;
-  `name`: string;
-  `nullable`: string;
-  `ordinal`: int64;
-  `type`: string;
-}
-
-@apigen.contract(#{ kind: "ui-command", tags: #["admin", "command"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "admin" })
-model AdminStorageCommand {
-  `databaseId`: string;
-  `schema`: string;
-  `table`: string;
-}
-
-model AdminStorageFileSignal {
-  `beginSnapshot`: int64;
-  `endSnapshot`: int64;
-  `format`: string;
-  `id`: int64;
-  `path`: string;
-  `recordCount`: int64;
-  `recordCountLabel`: string;
-  `sizeBytes`: int64;
-  `sizeLabel`: string;
-}
-
-model AdminStorageServingStateSignal {
-  `activatedAt`: string;
-  `active`: boolean;
-  `digest`: string;
-  `environment`: string;
-  `servingStateId`: string;
-  `snapshotId`: int64;
-  `status`: string;
-  `workspaceId`: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminStorageSignal {
-  `selectedKey`: string;
-  `selectedTable`?: AdminStorageTableSignal;
-  `servingStates`: AdminStorageServingStateSignal[];
-  `snapshots`: AdminStorageSnapshotSignal[];
   `status`: string;
   `summary`: AdminStorageSummary;
   `tables`: AdminStorageTableSignal[];
-  `warnings`: string[];
-}
-
-model AdminStorageSnapshotSignal {
-  `author`: string;
-  `changes`: string;
-  `extraInfo`: string;
-  `id`: int64;
-  `message`: string;
-  `protected`: boolean;
-  `schemaVersion`: int64;
-  `servingStateCount`: int64;
-  `time`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminStorageSummary {
-  `catalogPath`: string;
-  `catalogSizeLabel`: string;
   `dataFileCount`: int64;
-  `dataPath`: string;
-  `dataSizeLabel`: string;
-  `databaseCount`: int64;
-  `snapshotCount`: int64;
   `tableCount`: int64;
   `totalDataSizeLabel`: string;
-  `totalSizeLabel`: string;
-}
-
-model AdminStorageTableHistorySignal {
-  `author`: string;
-  `changes`: string;
-  `extraInfo`: string;
-  `message`: string;
-  `schemaVersion`: int64;
-  `snapshotId`: int64;
-  `source`: string;
-  `time`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
@@ -359,27 +273,14 @@ model AdminStorageTableHistorySignal {
 model AdminStorageTableSignal {
   `beginSnapshot`: int64;
   `columnCount`: int64;
-  `columns`?: AdminStorageColumnSignal[];
-  `databaseId`: string;
-  `databaseName`: string;
-  `databasePath`: string;
-  `duckLakePath`: string;
-  `endSnapshot`: int64;
   `fileCount`: int64;
-  `files`?: AdminStorageFileSignal[];
-  `history`?: AdminStorageTableHistorySignal[];
   `key`: string;
-  `modelId`: string;
-  `modelName`: string;
   `name`: string;
   `rowCount`: int64;
   `rowCountLabel`: string;
   `schema`: string;
-  `servingStates`?: AdminStorageServingStateSignal[];
   `sizeBytes`: int64;
   `sizeLabel`: string;
-  `tableId`: int64;
-  `tableUuid`: string;
   `type`: string;
 }
 
@@ -416,7 +317,10 @@ model AssetLineageNodeSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["catalog", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "catalog" })
 model CatalogDashboardSignal {
-  `description`?: string;
+	`appearanceColor`: string;
+	`appearanceIcon`: string;
+	`description`?: string;
+	`dashboardId`: string;
   `href`: string;
   `id`: string;
   `lastRefreshedAt`?: string;

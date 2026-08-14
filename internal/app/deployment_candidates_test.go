@@ -346,7 +346,7 @@ func TestWorkspaceAssetAPIListsActiveDeploymentAssets(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/test/assets?type=connection", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -489,7 +489,7 @@ func TestWorkspaceGraphAPIsFilterUnauthorizedNodesBeforeEdgesAndLineage(t *testi
 		Privileges:  []access.Privilege{access.PrivilegeUseWorkspace, access.PrivilegeViewItem},
 	})
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	get := func(path string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -525,7 +525,7 @@ func TestWorkspaceAssetAPIIncludeAllReturnsFullActiveServingStateGraph(t *testin
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	defaultReq := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/test/assets", nil)
 	defaultReq.Header.Set("Authorization", "Bearer dev")
@@ -576,7 +576,7 @@ func TestWorkspaceActiveServingStateGraphAPIReturnsPayloadsAndEdges(t *testing.T
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/test/active-asset-graph?environment=dev", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -618,7 +618,7 @@ func TestWorkspaceListUsesActiveDeploymentCatalogMetadata(t *testing.T) {
 		t.Fatalf("ensure stale workspace row: %v", err)
 	}
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -649,7 +649,7 @@ func TestWorkspaceListPageDoesNotRenderWorkspaceScopedChat(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/workspaces", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -678,7 +678,7 @@ func TestWorkspacePageDefaultsToTopLevelAssets(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/test", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -706,7 +706,7 @@ func TestWorkspaceAssetSearchStaysWorkspaceFacing(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/test?q=orders_enriched", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -728,7 +728,7 @@ func TestWorkspaceAssetFilterUpdatesWorkspacePage(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -776,7 +776,7 @@ func TestWorkspaceConnectionFilterRedirectsToGlobalConnections(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/test?type=connection&q=olist", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -796,7 +796,7 @@ func TestWorkspaceSourceFilterRedirectsToConnectionSources(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/test?type=source&q=orders", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -816,7 +816,7 @@ func TestConnectionsPageRendersGlobalConnectionSurface(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/connections?q=olist", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -851,7 +851,7 @@ func TestConnectionsPageFiltersSources(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/connections?type=source&q=orders", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -877,7 +877,7 @@ func TestConnectionsSearchCommandPatchesOnlyResultRows(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodPost, "/connections/search", strings.NewReader(`{"entityListQuery":"orders","entityListFilter":"source"}`))
 	req.Header.Set("Authorization", "Bearer dev")
@@ -917,7 +917,7 @@ func TestConnectionAssetRoutesUseConnectionSurface(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	connectionID := activeAssetID(t, store, "test", "connection", "olist")
 
 	redirectReq := httptest.NewRequest(http.MethodGet, "/connections/"+connectionID, nil)
@@ -970,7 +970,7 @@ func TestConnectionSourceAssetRoutesUseConnectionScopedSurface(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	connectionID := activeAssetID(t, store, "test", "connection", "olist")
 	sourceID := activeAssetID(t, store, "test", "source", "olist.orders")
 
@@ -1040,7 +1040,7 @@ func TestWorkspaceConnectionAssetRedirectsToConnectionSurface(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	connectionID := activeAssetID(t, store, "test", "connection", "olist")
 
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/test/assets/"+connectionID+"/details", nil)
@@ -1061,7 +1061,7 @@ func TestWorkspaceSourceAssetRedirectsToConnectionScopedSourceSurface(t *testing
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	connectionID := activeAssetID(t, store, "test", "connection", "olist")
 	sourceID := activeAssetID(t, store, "test", "source", "olist.orders")
 
@@ -1083,7 +1083,7 @@ func TestWorkspaceAssetVersionsRouteShowsConfigHistory(t *testing.T) {
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	assetID := activeAssetIDByType(t, store, "test", "dashboard")
 
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/test/assets/"+assetID+"/versions", nil)
@@ -1104,7 +1104,7 @@ func TestConnectionsPageDoesNotFallbackToRuntimeAssetsWithoutActiveDeployment(t 
 	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
 	store := testStore(t)
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(runtimeAssetMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(runtimeAssetMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/connections", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -1129,7 +1129,7 @@ func TestAssetViewsDefaultToConfiguredEnvironment(t *testing.T) {
 	store := testStore(t)
 	seedEnvironmentAssetDeployment(t, store, "test", "dev", "Dev Dashboard", "Dev Connection")
 	seedEnvironmentAssetDeployment(t, store, "test", "prod", "Prod Dashboard", "Prod Connection")
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test", DefaultEnvironment: "prod"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", DefaultEnvironment: "prod"}))
 
 	for _, tc := range []struct {
 		name string
@@ -1189,7 +1189,7 @@ func TestWorkspaceAssetsDoesNotRefreshCleanGraphWithoutPageItems(t *testing.T) {
 		t.Fatalf("activate: %v", err)
 	}
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(emptyPageRuntimeAssetMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(emptyPageRuntimeAssetMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/test", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -1248,7 +1248,7 @@ func TestWorkspacePermissionsRouteIsRemoved(t *testing.T) {
 	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer", "viewer")
 	token := testAPIToken(t, ctx, store, principal.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/test/permissions", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -1271,7 +1271,7 @@ func TestWorkspaceRoleBindingAPIUpsertsPrincipalRole(t *testing.T) {
 	}
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	missingKeyReq := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/role-bindings", bytes.NewBufferString(`{"subjectType":"principal","subjectId":"`+analyst.ID+`","role":"viewer"}`))
 	missingKeyReq.Header.Set("Authorization", "Bearer "+token)
@@ -1379,7 +1379,7 @@ func TestWorkspaceRoleBindingAPIRejectsViewerWithoutMutation(t *testing.T) {
 	}
 	token := testAPIToken(t, ctx, store, viewer.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/role-bindings", bytes.NewBufferString(`{"subjectType":"principal","subjectId":"`+analyst.ID+`","role":"viewer"}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -1435,7 +1435,7 @@ func TestGroupDeleteIsWorkspaceScopedAndCleansMembershipsAndBindings(t *testing.
 	}
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/test/role-bindings", nil)
 	listReq.Header.Set("Authorization", "Bearer "+token)
@@ -1495,7 +1495,7 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 	analyst := testPrincipal(t, ctx, store, "analyst@example.com", "Analyst", "")
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	signals := `{"workspaceAccess":{"command":{"email":"","role":"data_deployer","subjectType":"principal","subjectId":"` + analyst.ID + `"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(signals))
@@ -1591,7 +1591,7 @@ func TestWorkspaceAccessCommandCreatesBatchAtomically(t *testing.T) {
 	second := testPrincipal(t, ctx, store, "second@example.com", "Second", "")
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	signals := `{"workspaceAccess":{"command":{"role":"viewer","subjects":[{"subjectType":"principal","subjectId":"` + first.ID + `"},{"subjectType":"principal","subjectId":"` + second.ID + `"}]}}}`
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(signals))
@@ -1664,7 +1664,7 @@ func TestWorkspaceAccessSearchReturnsPrincipalsAndGroups(t *testing.T) {
 	}
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	signals := `{"workspaceAccess":{"search":"finance"}}`
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/test/access/search", nil)
@@ -1704,7 +1704,7 @@ func TestWorkspaceAssetAccessCommandCreatesAndRemovesGrant(t *testing.T) {
 	owner := testPrincipal(t, ctx, store, "owner@example.com", "Owner", "owner")
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 	repo := testAccessRepository(store)
 	group, err := repo.UpsertSCIMGroup(ctx, access.SCIMGroupInput{ID: "group_scim_sales", ExternalID: "sales", Name: "Sales Analysts"})
 	if err != nil {
@@ -1803,7 +1803,7 @@ func TestWorkspaceAccessCommandRejectsViewer(t *testing.T) {
 	viewer := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer", "viewer")
 	token := testAPIToken(t, ctx, store, viewer.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	signals := `{"workspaceAccess":{"command":{"email":"analyst@example.com","role":"viewer"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(signals))
@@ -1823,7 +1823,7 @@ func TestWorkspaceAccessCommandPatchesInvalidInput(t *testing.T) {
 	owner := testPrincipal(t, ctx, store, "owner@example.com", "Owner", "owner")
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
 	signals := `{"workspaceAccess":{"command":{"email":"","role":"viewer"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(signals))

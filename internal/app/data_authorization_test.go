@@ -86,7 +86,7 @@ func TestAgentToolAuthorizationRecordsAuditEvent(t *testing.T) {
 	if _, err := repo.CreateGrant(ctx, access.GrantInput{Object: access.WorkspaceObject("test"), SubjectType: access.SubjectPrincipal, SubjectID: principal.ID, Privilege: access.PrivilegeQueryData}); err != nil {
 		t.Fatalf("grant query: %v", err)
 	}
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test"}))
 	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{RequestID: "tool_call_1", CorrelationID: "agent_corr"})
 	_, ok := server.routes.agentModule.VisualToolProvider().Authorize(
 		ctx,

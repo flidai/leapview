@@ -87,7 +87,8 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 			candidateDashboardCommand(candidates, w, request)
 		}))
 		routes.workspaceModule.MountAuthenticated(r, workspacemodule.RouteGuard{
-			Protect: routes.accessModule.Protect, ProtectWithObjects: routes.accessModule.ProtectWithObjects, AssetObjectRefs: routes.workspaceModule.AssetObjectRefs,
+			Protect: routes.accessModule.Protect, ProtectAnyWorkspace: routes.accessModule.ProtectAnyWorkspace,
+			ProtectWithObjects: routes.accessModule.ProtectWithObjects, AssetObjectRefs: routes.workspaceModule.AssetObjectRefs,
 		})
 		routes.agentModule.MountAuthenticated(r, agentmodule.RouteGuard{
 			Protect: routes.accessModule.Protect, ProtectGlobal: routes.accessModule.ProtectGlobal,

@@ -52,7 +52,7 @@ type assemblyConfig struct {
 	DuckDBDir             string
 	DuckLakeCatalogPath   string
 	DuckLakeDataPath      string
-	DefaultWorkspaceID    string
+	WorkspaceID           string
 	DefaultEnvironment    string
 	SCIMBearerToken       string
 	MetricsBearerToken    string
@@ -77,6 +77,31 @@ type assemblyConfig struct {
 	QueryAudit            *analyticsmodule.QueryAuditSurface
 	Product               *adminmodule.ProductService
 	ProductStatus         adminmodule.ProductStatus
+}
+
+// registeredTestMetrics makes the test fixture's declared workspace explicit
+// while preserving any real multi-workspace routing supplied by the test.
+type registeredTestMetrics struct {
+	QueryMetrics
+	workspaceID string
+}
+
+func (m registeredTestMetrics) MetricsForWorkspace(workspaceID string) (QueryMetrics, bool) {
+	if provider, ok := m.QueryMetrics.(workspaceMetrics); ok {
+		if metrics, found := provider.MetricsForWorkspace(workspaceID); found {
+			return metrics, true
+		}
+	}
+	if m.QueryMetrics == nil {
+		return nil, false
+	}
+	if catalogWorkspaceID := m.QueryMetrics.Catalog().Workspace.ID; catalogWorkspaceID != "" && catalogWorkspaceID == workspaceID {
+		return m.QueryMetrics, true
+	}
+	if m.workspaceID != "" && m.workspaceID == workspaceID {
+		return m.QueryMetrics, true
+	}
+	return nil, false
 }
 
 // appTestHarness is a test fixture facade for legacy app-package tests.
@@ -110,10 +135,6 @@ func (s *appTestHarness) workloadController() workloadControl {
 	return workloadController(&s.runtime.workloads)
 }
 
-func (s *appTestHarness) workspaceID(value string) string {
-	return workspaceID(value)
-}
-
 func (s *appTestHarness) requestServingEnvironment(r *http.Request) servingstatemodule.Environment {
 	return requestServingEnvironment(s.policy.defaultEnvironment, r)
 }
@@ -123,7 +144,7 @@ func (s *appTestHarness) publicProtocolMiddleware(next http.Handler) http.Handle
 }
 
 func (s *appTestHarness) metricsForWorkspace(workspaceID string) (QueryMetrics, bool) {
-	return metricsForWorkspace(s.runtime.metrics, s.policy.defaultWorkspaceID, workspaceID)
+	return metricsForWorkspace(s.runtime.metrics, workspaceID)
 }
 
 func assembleRuntime(metrics QueryMetrics, options assemblyConfig) *appTestHarness {
@@ -149,6 +170,11 @@ func apiGenDispatcherForTest(server *appTestHarness) apiGenDispatcher {
 }
 
 func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options assemblyConfig) (*appTestHarness, error) {
+	if options.WorkspaceID != "" {
+		// Tests must register every workspace they address explicitly. This mirrors
+		// production's workspace catalog without reintroducing an implicit fallback.
+		metrics = registeredTestMetrics{QueryMetrics: metrics, workspaceID: options.WorkspaceID}
+	}
 	instanceID := "lvinst_test"
 	publicURL := options.PublicURL
 	if publicURL == "" {
@@ -157,9 +183,23 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 	if options.AccessModule == nil {
 		var err error
 		options.AccessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Database: options.Database, WorkspaceID: options.DefaultWorkspaceID,
+			Database:     options.Database,
 			ExistingAuth: options.Auth, Auth: accessmodule.AuthConfig{Disabled: options.Auth == nil},
 			Assets: options.Assets, InstanceID: instanceID, PublicURL: publicURL,
+			WorkspaceIDs: func(ctx context.Context) ([]string, error) {
+				workspaceIDs := make([]string, 0, 1)
+				if options.WorkspaceID != "" {
+					workspaceIDs = append(workspaceIDs, options.WorkspaceID)
+				}
+				if options.WorkspaceDirectory != nil {
+					directoryWorkspaceIDs, err := options.WorkspaceDirectory.WorkspaceIDs(ctx)
+					if err != nil {
+						return nil, err
+					}
+					workspaceIDs = append(workspaceIDs, directoryWorkspaceIDs...)
+				}
+				return workspaceIDs, nil
+			},
 		})
 		if err != nil {
 			return nil, err
@@ -189,7 +229,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		runtimeAssemblyInputs{
 			InstanceID: instanceID,
 			DuckDBDir:  options.DuckDBDir, DuckLakeCatalogPath: options.DuckLakeCatalogPath,
-			DuckLakeDataPath: options.DuckLakeDataPath, DefaultWorkspaceID: options.DefaultWorkspaceID,
+			DuckLakeDataPath:   options.DuckLakeDataPath,
 			DefaultEnvironment: options.DefaultEnvironment, SCIMBearerToken: options.SCIMBearerToken,
 			MetricsBearerToken: options.MetricsBearerToken, AllowedHosts: options.AllowedHosts, Assets: options.Assets,
 		},
@@ -213,12 +253,12 @@ func NewRuntimeMetrics(provider runtimehost.Provider, workspaceID string) QueryM
 	return dashboardmodule.NewRuntimeMetrics(provider, workspaceID)
 }
 
-func NewDynamicRuntimeMetrics(defaultWorkspaceID string, factory func(string) runtimehost.Provider) QueryMetrics {
-	return dashboardmodule.NewDynamicRuntimeMetrics(defaultWorkspaceID, factory)
+func NewDynamicRuntimeMetrics(factory func(string) runtimehost.Provider) QueryMetrics {
+	return dashboardmodule.NewDynamicRuntimeMetrics(factory)
 }
 
-func NewMultiWorkspaceMetrics(defaultWorkspaceID string, workspaces map[string]QueryMetrics) QueryMetrics {
-	return dashboardmodule.NewMultiWorkspaceMetrics(defaultWorkspaceID, workspaces)
+func NewMultiWorkspaceMetrics(workspaces map[string]QueryMetrics) QueryMetrics {
+	return dashboardmodule.NewMultiWorkspaceMetrics(workspaces)
 }
 
 func firstNonEmpty(values ...string) string {

@@ -12,8 +12,14 @@ import (
 )
 
 type ActivationHooks struct {
-	ApplyAccessSnapshot   func(context.Context, transaction.Transaction, string) error
-	ReconcilePublications func(context.Context, transaction.Transaction, PublicationActivationInput) error
+	ApplyAccessSnapshot       func(context.Context, transaction.Transaction, string) error
+	ReconcilePublications     func(context.Context, transaction.Transaction, PublicationActivationInput) error
+	ApplyDashboardAppearances func(context.Context, transaction.Transaction, DashboardAppearanceActivationInput) error
+}
+
+type DashboardAppearanceActivationInput struct {
+	ProjectID, WorkspaceID, ServingStateID, ActorID string
+	Appearances                                     map[string]json.RawMessage
 }
 
 type PublicationActivationInput struct {
@@ -40,6 +46,14 @@ func newPersistence(
 			return hooks.ReconcilePublications(ctx, tx, PublicationActivationInput{
 				ProjectID: input.ProjectID, WorkspaceID: input.WorkspaceID, ServingStateID: input.ServingStateID,
 				ActorID: input.ActorID, Publications: input.Publications,
+			})
+		}
+	}
+	if hooks.ApplyDashboardAppearances != nil {
+		sqliteHooks.ApplyDashboardAppearances = func(ctx context.Context, tx transaction.Transaction, input deploymentsqlite.DashboardAppearanceActivationInput) error {
+			return hooks.ApplyDashboardAppearances(ctx, tx, DashboardAppearanceActivationInput{
+				ProjectID: input.ProjectID, WorkspaceID: input.WorkspaceID, ServingStateID: input.ServingStateID,
+				ActorID: input.ActorID, Appearances: input.Appearances,
 			})
 		}
 	}

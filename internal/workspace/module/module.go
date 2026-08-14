@@ -10,10 +10,12 @@ import (
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/workspace"
+	appearancesqlite "github.com/flidai/leapview/internal/workspace/appearance/sqlite"
 	workspacehttp "github.com/flidai/leapview/internal/workspace/http"
 	catalog "github.com/flidai/leapview/internal/workspace/navigation"
 	"github.com/flidai/leapview/internal/workspace/ui"
@@ -28,8 +30,11 @@ type Module struct {
 	assetCatalog         workspace.AssetCatalogReader
 	rootMetrics          queryruntime.Metrics
 	runtimeEnvironment   string
-	defaultWorkspaceID   string
 	layout               func(*http.Request) webpage.Provider
+	appearance           *appearancesqlite.Repository
+	currentPrincipal     func(*http.Request) (Principal, bool)
+	recordAudit          func(context.Context, access.AuditEventInput) error
+	logger               *slog.Logger
 	roleBindingUpsert    access.Privilege
 	roleBindingDelete    access.Privilege
 	grantUpsert          access.Privilege
@@ -37,7 +42,6 @@ type Module struct {
 	dashboardPopularity  DashboardPopularityProvider
 	dashboardRefreshedAt DashboardLastRefreshedProvider
 	environment          func(*http.Request) string
-	logger               *slog.Logger
 }
 
 type Principal struct {
@@ -94,9 +98,10 @@ type Config struct {
 	MetricsForWorkspace  func(string) (queryruntime.Metrics, bool)
 	RootMetrics          queryruntime.Metrics
 	CurrentPrincipal     func(*http.Request) (Principal, bool)
+	RecordAudit          func(context.Context, access.AuditEventInput) error
+	Logger               *slog.Logger
 	AuthConfigured       bool
 	RuntimeEnvironment   string
-	DefaultWorkspaceID   string
 	RefreshState         RefreshStateProvider
 	RefreshRunner        AssetRefreshRunner
 	Broker               *pagestream.Broker
@@ -107,7 +112,6 @@ type Config struct {
 	AuthorizeObject      func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error)
 	DashboardPopularity  DashboardPopularityProvider
 	DashboardRefreshedAt DashboardLastRefreshedProvider
-	Logger               *slog.Logger
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -139,14 +143,20 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if config.Database != nil && config.RecordAudit == nil {
+		return nil, fmt.Errorf("workspace dashboard appearance command audit recorder is required")
+	}
 	m := &Module{
 		readModel: readModel, currentCredential: config.CurrentCredential,
-		rootMetrics: config.RootMetrics, runtimeEnvironment: config.RuntimeEnvironment,
-		defaultWorkspaceID: config.DefaultWorkspaceID, layout: config.Layout,
+		rootMetrics: config.RootMetrics, runtimeEnvironment: config.RuntimeEnvironment, layout: config.Layout,
 		roleBindingUpsert: roleBindingUpsert, roleBindingDelete: roleBindingDelete,
 		grantUpsert: grantUpsert, grantDelete: grantDelete,
+		currentPrincipal: config.CurrentPrincipal, recordAudit: config.RecordAudit, logger: logger,
 		dashboardPopularity: config.DashboardPopularity, dashboardRefreshedAt: config.DashboardRefreshedAt,
-		environment: config.Environment, logger: logger,
+		environment: config.Environment,
+	}
+	if config.Database != nil {
+		m.appearance = appearancesqlite.NewRepository(config.Database)
 	}
 	m.assetCatalog = config.AssetCatalog
 	if m.assetCatalog == nil && readModel != nil {
@@ -251,6 +261,7 @@ func navigationCatalog(source dashboardcatalog.Catalog) catalog.Catalog {
 		result.Dashboards = append(result.Dashboards, catalog.Dashboard{
 			ID: dashboard.ID, Title: dashboard.Title, Description: dashboard.Description,
 			SemanticModel: dashboard.SemanticModel, Tags: append([]string(nil), dashboard.Tags...), PageCount: dashboard.PageCount,
+			Appearance: dashboard.Appearance,
 		})
 	}
 	return result
@@ -379,7 +390,11 @@ func (m *Module) Home(w http.ResponseWriter, r *http.Request) {
 	if m.handler.CSRFToken != nil {
 		csrfToken = m.handler.CSRFToken(r)
 	}
-	catalogs := m.CatalogsForVisibleWorkspaces(r)
+	catalogs, err := m.catalogsWithAppearances(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if err := ui.CatalogPageForCatalogsWithOptions(catalogs, ui.CatalogListOptions{
 		Query: strings.TrimSpace(r.URL.Query().Get("q")), Metadata: m.catalogDashboardMetadata(r, catalogs),
 	}, csrfToken, providers...).Render(w); err != nil {
@@ -403,7 +418,10 @@ func (m *Module) CatalogBootstrapSignals(r *http.Request, provider webpage.Provi
 	if signals.Filter != nil {
 		filter = strings.TrimSpace(*signals.Filter)
 	}
-	catalogs := m.CatalogsForVisibleWorkspaces(r)
+	catalogs, err := m.catalogsWithAppearances(r)
+	if err != nil {
+		return nil, err
+	}
 	return ui.CatalogBootstrapSignalsForCatalogsWithOptions(catalogs, ui.CatalogListOptions{
 		Query: query, WorkspaceFilter: filter, Metadata: m.catalogDashboardMetadata(r, catalogs),
 	}, provider), nil
@@ -426,8 +444,35 @@ func (m *Module) CatalogSearch(w http.ResponseWriter, r *http.Request) {
 	if signals.Filter != nil {
 		filter = strings.TrimSpace(*signals.Filter)
 	}
-	catalogs := m.CatalogsForVisibleWorkspaces(r)
+	catalogs, err := m.catalogsWithAppearances(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	_ = pagestream.PatchResponse(w, r, ui.CatalogListPatchForCatalogs(catalogs, ui.CatalogListOptions{
 		Query: query, WorkspaceFilter: filter, Metadata: m.catalogDashboardMetadata(r, catalogs),
 	}))
+}
+
+func (m *Module) catalogsWithAppearances(r *http.Request) ([]catalog.Catalog, error) {
+	catalogs := m.CatalogsForVisibleWorkspaces(r)
+	if m.appearance == nil {
+		return catalogs, nil
+	}
+	records, err := m.appearance.List(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	for catalogIndex := range catalogs {
+		workspaceID := catalogs[catalogIndex].Workspace.ID
+		for dashboardIndex := range catalogs[catalogIndex].Dashboards {
+			dashboard := &catalogs[catalogIndex].Dashboards[dashboardIndex]
+			if record, ok := records[dashboardappearance.Key{WorkspaceID: workspaceID, DashboardID: dashboard.ID}]; ok {
+				dashboard.Appearance = dashboardappearance.Resolve(record.Value)
+			} else {
+				dashboard.Appearance = dashboardappearance.Resolve(dashboard.Appearance)
+			}
+		}
+	}
+	return catalogs, nil
 }

@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { CircleSlash2, Info, Pencil, UserPlus, X } from 'lucide'
 import { DatastarLit } from '../shared/datastar-lit'
+import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
 import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, WorkspaceRegistrySignal } from '../../generated/signals'
 import '../shared/entity-list'
@@ -30,7 +31,6 @@ const tableStyles = css`
   .toolbar, .form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
   label { display: grid; gap: var(--base-size-4); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
   .empty { padding: var(--base-size-20) var(--base-size-12); color: var(--lv-fg-muted); }
-  .badge { display: inline-flex; padding: var(--base-size-2) var(--base-size-6); border-radius: var(--lv-radius-full); background: var(--lv-bg-selected); font: var(--lv-type-caption); }
   .actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .notice { border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); }
   .danger { color: var(--lv-fg-danger); }
@@ -51,17 +51,8 @@ const tableStyles = css`
   .primary:hover { border-color: var(--lv-button-accent-border-hover); background: var(--lv-button-accent-bg-hover); }
   .password-result { display: grid; gap: var(--base-size-12); }
   .password-value { display: block; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); font-family: var(--fontStack-monospace); overflow-wrap: anywhere; user-select: all; }
-  .detail-surface { gap: 0; }
-  .back-link { width: fit-content; margin-bottom: var(--base-size-24); color: var(--lv-fg-muted); }
-  .detail-header { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-24); padding: var(--base-size-8) 0 var(--base-size-32); border-bottom: var(--lv-border-muted); }
-  .identity { display: flex; min-width: 0; align-items: center; gap: var(--base-size-12); }
-  .identity-copy { display: grid; min-width: 0; gap: var(--base-size-4); }
-  .identity-copy h1 { overflow: hidden; margin: 0; font: var(--lv-type-page-title); text-overflow: ellipsis; white-space: nowrap; }
-  .avatar { display: inline-flex; width: var(--base-size-64); height: var(--base-size-64); flex: 0 0 var(--base-size-64); align-items: center; justify-content: center; border-radius: var(--lv-radius-full); background: var(--lv-bg-selected); color: var(--lv-fg-accent); font-weight: var(--base-text-weight-semibold); }
-  .identity-badges { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-6); }
   .status-active { color: var(--lv-fg-success); }
   .status-blocked, .status-disabled { color: var(--lv-fg-danger); }
-  .header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--base-size-8); }
   .primary-detail-action { display: inline-flex; align-items: center; gap: var(--base-size-6); color: var(--lv-fg-link); }
   .action-menu { position: relative; }
   .action-menu summary { display: inline-flex; min-height: var(--lv-control-small); box-sizing: border-box; align-items: center; border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-bg-control); padding: var(--base-size-4) var(--base-size-8); cursor: pointer; list-style: none; }
@@ -70,12 +61,7 @@ const tableStyles = css`
   .action-menu-popover { position: absolute; z-index: 2; top: calc(100% + var(--base-size-4)); right: 0; display: grid; width: max-content; min-width: 180px; gap: var(--base-size-4); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-6); }
   .action-menu-popover button { width: 100%; border-color: transparent; background: transparent; text-align: left; }
   .action-menu-popover button:hover { background: var(--lv-bg-control-hover); }
-  .detail-notice { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--base-size-12); margin-top: var(--base-size-24); border-block: var(--lv-border-muted); border-left: var(--lv-border-width) solid var(--lv-fg-accent); padding: var(--base-size-16) var(--base-size-20); color: var(--lv-fg-muted); }
-  .detail-notice strong { color: var(--lv-fg-default); }
-  .detail-notice-icon { color: var(--lv-fg-accent); }
-  .detail-sections { display: grid; }
   .detail-section { display: grid; min-width: 0; align-content: start; gap: var(--base-size-16); border-top: var(--lv-border-muted); padding: var(--base-size-24) 0; }
-  .detail-notice + .detail-sections .detail-section:first-child { border-top: 0; }
   .detail-section .table-wrap { border: 0; border-radius: 0; }
   .detail-section table { min-width: 540px; }
   .detail-section th, .detail-section td { padding-inline: 0 var(--base-size-16); }
@@ -86,10 +72,6 @@ const tableStyles = css`
   .card-header-copy { display: grid; gap: var(--base-size-4); }
   .section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-12); }
   .section-action { display: inline-flex; align-items: center; gap: var(--base-size-6); }
-  .facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--base-size-48); row-gap: var(--base-size-16); margin: 0; }
-  .fact { display: grid; min-width: 0; grid-template-columns: minmax(7rem, 0.8fr) minmax(0, 1.2fr); align-items: baseline; gap: var(--base-size-16); }
-  .fact dt { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-  .fact dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
   .inline-value { display: flex; min-width: 0; align-items: center; gap: var(--base-size-6); }
   .inline-value code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .text-button { min-height: auto; flex: 0 0 auto; border-color: transparent; background: transparent; color: var(--lv-fg-link); padding: var(--base-size-2); }
@@ -104,62 +86,20 @@ const tableStyles = css`
   .activity-dot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--lv-fg-muted); }
   .activity-copy { display: grid; gap: var(--base-size-2); }
   @media (max-width: 760px) {
-    .back-link { margin-bottom: var(--base-size-16); }
-    .detail-header { align-items: stretch; flex-direction: column; padding-bottom: var(--base-size-24); }
-    .avatar { width: var(--base-size-48); height: var(--base-size-48); flex-basis: var(--base-size-48); }
-    .header-actions { justify-content: flex-start; }
-    .facts { grid-template-columns: minmax(0, 1fr); }
-    .fact { grid-template-columns: minmax(6.5rem, 0.7fr) minmax(0, 1.3fr); }
-    .detail-notice { padding-inline: var(--base-size-12); }
     .detail-section { padding-block: var(--base-size-20); }
     .detail-empty-row { grid-template-columns: minmax(6.5rem, 0.7fr) minmax(0, 1.3fr); }
     .activity-item { grid-template-columns: 10px minmax(0, 1fr); }
     .activity-item > time { grid-column: 2; }
   }
   @media (max-width: 480px) {
-    .fact, .detail-empty-row { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
-    .identity-copy h1 { white-space: normal; }
+    .detail-empty-row { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
   }
 `
 
 const emptyAccessAdministration: AccessAdministrationSignal = { principals: [], groups: [], workspaces: [], sessions: [], roleAssignments: [], activity: [], loading: true }
 
-interface AdministrationDetailShellOptions {
-  label: string
-  feedback: unknown
-  backHref: string
-  backLabel: string
-  avatar: string
-  title: string
-  subtitle?: string
-  badges: unknown
-  actions?: unknown
-  notice?: unknown
-  sections: unknown
-}
-
-function renderAdministrationDetailShell(options: AdministrationDetailShellOptions) {
-  return html`<section class="surface detail-surface" aria-label=${options.label}>
-    ${options.feedback}
-    <a class="back-link" href=${options.backHref}>← ${options.backLabel}</a>
-    <header class="detail-header">
-      <div class="identity">
-        <span class="avatar" aria-hidden="true">${options.avatar}</span>
-        <div class="identity-copy">
-          <h1>${options.title}</h1>
-          ${options.subtitle ? html`<span class="muted">${options.subtitle}</span>` : nothing}
-          <div class="identity-badges">${options.badges}</div>
-        </div>
-      </div>
-      ${options.actions ? html`<div class="header-actions">${options.actions}</div>` : nothing}
-    </header>
-    ${options.notice || nothing}
-    <div class="detail-sections">${options.sections}</div>
-  </section>`
-}
-
 abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) {
-  static styles = tableStyles
+  static styles = [entityDetailStyles, tableStyles]
   @property({ type: Boolean }) createOpen = false
   @state() private passwordCopied = false
   private dismissedTemporaryPassword = ''
@@ -279,7 +219,7 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
         </details>` : nothing}`
     const notice = principal.identitySource === 'external' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>${source} owns this identity.</strong> Profile fields and synchronized memberships are read-only in LeapView. Block access locally or revoke sessions here; update or permanently remove the user in ${source}.</p></div>`
       : principal.identitySource === 'system' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>System-managed account.</strong> Profile fields are read-only because this account is provisioned by LeapView configuration. Block access locally or revoke sessions here; update it through its provisioning source.</p></div>` : nothing
-    return renderAdministrationDetailShell({
+    return renderEntityDetail({
       label: 'User administration', feedback: this.feedback(), backHref: '/admin/principals', backLabel: 'All users',
       avatar: principalInitials(principal), title: principal.displayName || principal.email || principal.id, subtitle: principal.email,
       badges: html`<span class="badge">${source}</span><span class=${`badge status-${status.toLowerCase()}`} data-user-status>${status}</span>`,
@@ -369,7 +309,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
 
   private renderCreate(signal: AccessAdministrationSignal) {
     const workspaces = signal.workspaces || []
-    const selectedWorkspace = signal.defaultWorkspaceId || workspaces[0]?.id || ''
+    const selectedWorkspace = workspaces[0]?.id || ''
     return html`<dialog data-access-create-dialog aria-labelledby="create-group-title" @cancel=${this.cancelCreate} @click=${this.closeOnBackdrop}>
       <section class="modal">
         <header class="modal-header">
@@ -405,7 +345,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
         </div>
       </details>` : nothing
     const notice = !local ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>${provider.toUpperCase()} owns this group.</strong> Its profile and membership are synchronized and read-only in LeapView. Update or remove it through its provisioning source.</p></div>` : nothing
-    return html`${renderAdministrationDetailShell({
+    return html`${renderEntityDetail({
       label: 'Group administration', feedback: this.feedback(), backHref: '/admin/groups', backLabel: 'All groups',
       avatar: initialsForValue(group.name || group.id), title: group.name || group.id,
       subtitle: group.workspaceId ? `${workspaces.get(group.workspaceId) || group.workspaceId} workspace` : group.externalId ? `External ID ${group.externalId}` : undefined,
@@ -591,6 +531,7 @@ function workspaceListItems(signal: WorkspaceRegistrySignal): EntityListItem[] {
       description: item.description,
       href: item.href || item.links.workspace,
       icon: 'workspace',
+      iconTreatment: 'plain',
       columns: {
         owner: item.owner?.displayName || 'Unassigned',
         administrators: administrators.length ? administrators.join(', ') : 'None',

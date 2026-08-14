@@ -170,6 +170,12 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	if contract.Command == nil && isGlobalAgentQuery(operationID) {
 		return a.module.ProtectGlobal(privilege, next.ServeHTTP), true
 	}
+	if isCrossWorkspaceCollection(operationID) {
+		return a.module.ProtectAnyWorkspace(privilege, next.ServeHTTP), true
+	}
+	if isCrossWorkspaceGrantManagement(contract) {
+		return a.module.ProtectAnyWorkspace(privilege, next.ServeHTTP), true
+	}
 	resolver, ok := a.objectResolverForContract(contract)
 	if !ok {
 		return nil, false
@@ -179,6 +185,23 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 		protected = a.module.CSRFMiddleware(protected)
 	}
 	return protected, true
+}
+
+func isCrossWorkspaceCollection(operationID string) bool {
+	switch operationID {
+	case "listWorkspaces":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCrossWorkspaceGrantManagement(contract APIGenOperationContract) bool {
+	if strings.Contains(contract.Path, "{workspace}") {
+		return false
+	}
+	scope, _ := contract.Extensions[apiGenObjectScopeExtension].(string)
+	return scope == "grant-management"
 }
 
 func apiGenRequiresCSRF(operationID string) bool {

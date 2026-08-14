@@ -155,22 +155,11 @@ type AdminPrincipalRef struct {
 }
 
 type AdminStorageData = adminview.AdminStorageData
-type AdminStorageDatabase = adminview.AdminStorageDatabase
 type AdminStorageTable = adminview.AdminStorageTable
-type AdminStorageColumn = adminview.AdminStorageColumn
 type AdminStorageFile = adminview.AdminStorageFile
-type AdminStorageTableHistory = adminview.AdminStorageTableHistory
-type AdminStorageSnapshot = adminview.AdminStorageSnapshot
-type AdminStorageServingState = adminview.AdminStorageServingState
 type AdminStorageSignal = uisignals.AdminStorageSignal
 type AdminStorageSummary = uisignals.AdminStorageSummary
 type AdminStorageTableSignal = uisignals.AdminStorageTableSignal
-type AdminStorageColumnSignal = uisignals.AdminStorageColumnSignal
-type AdminStorageFileSignal = uisignals.AdminStorageFileSignal
-type AdminStorageTableHistorySignal = uisignals.AdminStorageTableHistorySignal
-type AdminStorageSnapshotSignal = uisignals.AdminStorageSnapshotSignal
-type AdminStorageServingStateSignal = uisignals.AdminStorageServingStateSignal
-type AdminStorageCommand = uisignals.AdminStorageCommand
 type adminRecordTable = uisignals.RecordTableSignal
 type adminRecordTableColumn = uisignals.RecordTableColumnSignal
 
@@ -188,14 +177,13 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	if active == "group-detail" && data.SelectedGroup != nil {
 		adminUpdatesURL = updatesURL(uisignals.RouteAdmin, "section", active, "group", data.SelectedGroup.ID)
 	}
+	if active == "storage-detail" && len(data.Storage.Tables) == 1 {
+		table := data.Storage.Tables[0]
+		adminUpdatesURL = updatesURL(uisignals.RouteAdmin, "section", active, "schema", table.Schema, "table", table.Name)
+	}
 	adminAttrs := []g.Node{
 		g.Attr("slot", "page"),
 		g.Attr("section", active),
-	}
-	if active == "storage" {
-		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-storage-table-select", "$adminStorageCommand = evt.detail; "+uiactions.EventPost("/admin/storage/select-table")),
-		)
 	}
 	if active == "profile" || active == "security" || active == "api-tokens" {
 		adminAttrs = append(adminAttrs, personalsettings.CommandAttributes("/admin/personal-settings/command?section="+url.QueryEscape(active))...)
@@ -299,10 +287,6 @@ func AdminBootstrapSignals(active string, data AdminData, providers ...webpage.P
 	if active == "agent" {
 		signals["adminAgentCommand"] = map[string]string{"systemPrompt": data.Agent.SystemPrompt}
 	}
-	if active == "storage" {
-		signals["adminStorage"] = page.Storage
-		signals["adminStorageCommand"] = AdminStorageCommand{}
-	}
 	if active == "queries" {
 		queryHistory := AdminQueryHistorySignalFromData(data.QueryHistory)
 		signals["adminQueryHistory"] = queryHistory
@@ -335,9 +319,13 @@ func AdminListResultsPatch(active string, data AdminData) map[string]any {
 }
 
 func adminLayoutContext(active string) webpage.Context {
+	pageID := active
+	if active == "storage-detail" {
+		pageID = "storage"
+	}
 	return webpage.Context{
 		Active: "admin", SectionTitle: "Workspace", PageTitle: "Published assets",
-		PageID: active, Compact: true,
+		PageID: pageID, Compact: true,
 	}
 }
 
@@ -432,16 +420,35 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		})
 	case "storage":
 		page.HeaderTitle = "Storage"
-		page.HeaderDetail = "Review managed data capacity and health."
-		page.Storage = uisignals.Pointer(AdminStorageSignalFromData(data.Storage, AdminStorageCommand{}))
-		if data.Storage.Status != "" {
-			page.Empty = uisignals.Pointer(data.Storage.Status)
+		page.HeaderDetail = "Browse tables and views across schemas."
+		page.Storage = uisignals.Pointer(AdminStorageSignalFromData(data.Storage))
+		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{{
+			Label: "Total data size", Value: data.Storage.TotalDataSizeLabel,
+			Detail: uisignals.Optional(fmt.Sprintf("%d active files", data.Storage.DataFileCount)),
+		}})
+	case "storage-detail":
+		page.HeaderTitle = "Storage"
+		page.HeaderDetail = "Physical storage and active data files."
+		if len(data.Storage.Tables) != 1 {
+			page.Empty = uisignals.Pointer("Storage table not found.")
+			return page
 		}
+		table := data.Storage.Tables[0]
+		page.HeaderTitle = table.Name
 		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{
-			{Label: "Catalog path", Value: data.Storage.CatalogPath},
-			{Label: "Data path", Value: data.Storage.DataPath},
-			{Label: "Snapshots", Value: fmt.Sprint(data.Storage.SnapshotCount)},
-			{Label: "Tables", Value: fmt.Sprint(data.Storage.TableCount)},
+			{Label: "Data size", Value: table.SizeLabel},
+			{Label: "Active files", Value: fmt.Sprint(table.FileCount)},
+			{Label: "Stored rows", Value: table.RowCountLabel},
+			{Label: "Begin snapshot", Value: fmt.Sprint(table.BeginSnapshot)},
+		})
+		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{
+			{Title: "Storage", Facts: uisignals.Pointer([]uisignals.DefinitionFactSignal{
+				{Label: "Schema", Value: table.Schema},
+				{Label: "Object type", Value: table.Type},
+				{Label: "DuckLake path", Value: table.DuckLakePath},
+				{Label: "Table UUID", Value: table.TableUUID},
+			})},
+			{Title: "Active files", Table: uisignals.Pointer(adminStorageFilesGrid(table.Files))},
 		})
 	case "queries":
 		page.HeaderTitle = "Query history"
@@ -806,6 +813,31 @@ func adminGroupMembersGrid(group AdminGroup, principals []AdminPrincipal) adminR
 	}
 }
 
+func adminStorageFilesGrid(files []AdminStorageFile) adminRecordTable {
+	rows := make([]map[string]any, 0, len(files))
+	for _, file := range files {
+		rows = append(rows, map[string]any{
+			"path":     file.Path,
+			"format":   strings.ToUpper(file.Format),
+			"rows":     map[string]any{"label": file.RecordCountLabel, "value": file.RecordCount},
+			"size":     map[string]any{"label": file.SizeLabel, "value": file.SizeBytes},
+			"snapshot": file.BeginSnapshot,
+		})
+	}
+	return adminRecordTable{
+		Columns: []adminRecordTableColumn{
+			{ID: "path", Header: "File path", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("320px")},
+			{ID: "format", Header: "Format", Width: uisignals.Pointer("90px")},
+			{ID: "rows", Header: "Rows", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("right"), Width: uisignals.Pointer("110px")},
+			{ID: "size", Header: "Data size", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("right"), Width: uisignals.Pointer("110px")},
+			{ID: "snapshot", Header: "Begin snapshot", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("right"), Width: uisignals.Pointer("130px")},
+		},
+		Rows:     rows,
+		Empty:    "No active data files were found for this table.",
+		MinWidth: uisignals.Pointer("760px"),
+	}
+}
+
 func adminQueryEventsGrid(events []AdminQueryEvent) adminRecordTable {
 	rows := make([]map[string]any, 0, len(events))
 	for _, event := range events {
@@ -1004,6 +1036,8 @@ func adminPageTitle(active string) string {
 		return "Agent"
 	case "storage":
 		return "Storage"
+	case "storage-detail":
+		return "Storage table"
 	case "queries":
 		return "Query history"
 	case "audit":
@@ -1019,172 +1053,47 @@ func adminPageTitle(active string) string {
 
 func normalizeAdminSection(active string) string {
 	switch strings.TrimSpace(active) {
-	case "profile", "security", "api-tokens", "general", "workspaces-admin", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "queries", "audit", "system", "publications":
+	case "profile", "security", "api-tokens", "general", "workspaces-admin", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-detail", "queries", "audit", "system", "publications":
 		return strings.TrimSpace(active)
 	default:
 		return "profile"
 	}
 }
 
-func AdminStorageSignalFromData(data AdminStorageData, command AdminStorageCommand) AdminStorageSignal {
+func AdminStorageSignalFromData(data AdminStorageData) AdminStorageSignal {
 	tables := make([]AdminStorageTableSignal, 0, len(data.Tables))
-	var selected *AdminStorageTableSignal
 	for _, table := range data.Tables {
-		signalTable := AdminStorageTableSignalFromTable(table)
-		tables = append(tables, signalTable)
-		if selected == nil && adminStorageCommandMatches(command, table) {
-			copy := signalTable
-			selected = &copy
-		}
-	}
-	if selected == nil && len(tables) > 0 {
-		copy := tables[0]
-		selected = &copy
-	}
-	selectedKey := ""
-	if selected != nil {
-		selectedKey = selected.Key
+		tables = append(tables, AdminStorageTableSignalFromTable(table))
 	}
 	return AdminStorageSignal{
 		Summary: AdminStorageSummary{
-			CatalogPath:        data.CatalogPath,
-			DataPath:           data.DataPath,
-			CatalogSizeLabel:   data.CatalogSizeLabel,
-			DataSizeLabel:      data.DataSizeLabel,
-			TotalSizeLabel:     data.TotalSizeLabel,
 			TotalDataSizeLabel: data.TotalDataSizeLabel,
-			DatabaseCount:      int64(data.DatabaseCount),
 			TableCount:         int64(data.TableCount),
-			SnapshotCount:      int64(data.SnapshotCount),
 			DataFileCount:      int64(data.DataFileCount),
 		},
-		Status:        data.Status,
-		Warnings:      data.Warnings,
-		Tables:        tables,
-		Snapshots:     adminStorageSnapshotSignals(data.Snapshots),
-		ServingStates: adminStorageServingStateSignals(data.ServingStates),
-		SelectedKey:   selectedKey,
-		SelectedTable: selected,
+		Status: data.Status,
+		Tables: tables,
 	}
 }
 
 func AdminStorageTableSignalFromTable(table AdminStorageTable) AdminStorageTableSignal {
-	columns := make([]AdminStorageColumnSignal, 0, len(table.Columns))
-	for _, column := range table.Columns {
-		columns = append(columns, AdminStorageColumnSignal{
-			ID:                  column.ID,
-			Name:                column.Name,
-			Type:                column.Type,
-			Ordinal:             int64(column.Ordinal),
-			Nullable:            column.Nullable,
-			Default:             column.Default,
-			InitialDefault:      column.InitialDefault,
-			DefaultValueType:    column.DefaultValueType,
-			DefaultValueDialect: column.DefaultValueDialect,
-			BeginSnapshot:       column.BeginSnapshot,
-			ContainsNull:        column.ContainsNull,
-			ContainsNaN:         column.ContainsNaN,
-			MinValue:            column.MinValue,
-			MaxValue:            column.MaxValue,
-			ExtraStats:          column.ExtraStats,
-		})
-	}
-	files := make([]AdminStorageFileSignal, 0, len(table.Files))
-	for _, file := range table.Files {
-		files = append(files, AdminStorageFileSignal{
-			ID:               file.ID,
-			Path:             file.Path,
-			Format:           file.Format,
-			RecordCount:      file.RecordCount,
-			RecordCountLabel: file.RecordCountLabel,
-			SizeBytes:        file.SizeBytes,
-			SizeLabel:        file.SizeLabel,
-			BeginSnapshot:    file.BeginSnapshot,
-			EndSnapshot:      file.EndSnapshot,
-		})
-	}
-	history := make([]AdminStorageTableHistorySignal, 0, len(table.History))
-	for _, event := range table.History {
-		history = append(history, AdminStorageTableHistorySignal{
-			SnapshotID:    event.SnapshotID,
-			Time:          event.Time,
-			SchemaVersion: event.SchemaVersion,
-			Source:        event.Source,
-			Changes:       event.Changes,
-			Author:        event.Author,
-			Message:       event.Message,
-			ExtraInfo:     event.ExtraInfo,
-		})
-	}
 	return AdminStorageTableSignal{
-		Key:           AdminStorageTableKey(table.DatabaseID, table.Schema, table.Name),
-		DatabaseID:    table.DatabaseID,
-		DatabaseName:  table.DatabaseName,
-		DatabasePath:  table.DatabasePath,
-		ModelID:       table.ModelID,
-		ModelName:     table.ModelName,
+		Key:           AdminStorageTableKey(table.Schema, table.Name),
 		Schema:        table.Schema,
 		Name:          table.Name,
 		Type:          table.Type,
-		TableID:       table.TableID,
-		TableUUID:     table.TableUUID,
-		DuckLakePath:  table.DuckLakePath,
 		BeginSnapshot: table.BeginSnapshot,
-		EndSnapshot:   table.EndSnapshot,
 		RowCount:      table.RowCount,
 		RowCountLabel: table.RowCountLabel,
 		ColumnCount:   int64(table.ColumnCount),
 		FileCount:     int64(table.FileCount),
 		SizeBytes:     table.SizeBytes,
 		SizeLabel:     table.SizeLabel,
-		Columns:       uisignals.OptionalSlice(columns),
-		Files:         uisignals.OptionalSlice(files),
-		History:       uisignals.OptionalSlice(history),
-		ServingStates: uisignals.OptionalSlice(adminStorageServingStateSignals(table.ServingStates)),
 	}
 }
 
-func adminStorageSnapshotSignals(snapshots []AdminStorageSnapshot) []AdminStorageSnapshotSignal {
-	out := make([]AdminStorageSnapshotSignal, 0, len(snapshots))
-	for _, snapshot := range snapshots {
-		out = append(out, AdminStorageSnapshotSignal{
-			ID:                snapshot.ID,
-			Time:              snapshot.Time,
-			SchemaVersion:     snapshot.SchemaVersion,
-			Author:            snapshot.Author,
-			Message:           snapshot.Message,
-			Changes:           snapshot.Changes,
-			ExtraInfo:         snapshot.ExtraInfo,
-			Protected:         snapshot.Protected,
-			ServingStateCount: int64(snapshot.ServingStateCount),
-		})
-	}
-	return out
-}
-
-func adminStorageServingStateSignals(servingStates []AdminStorageServingState) []AdminStorageServingStateSignal {
-	out := make([]AdminStorageServingStateSignal, 0, len(servingStates))
-	for _, servingState := range servingStates {
-		out = append(out, AdminStorageServingStateSignal{
-			WorkspaceID:    servingState.WorkspaceID,
-			Environment:    servingState.Environment,
-			ServingStateID: servingState.ServingStateID,
-			Status:         servingState.Status,
-			SnapshotID:     servingState.SnapshotID,
-			Digest:         servingState.Digest,
-			Active:         servingState.Active,
-			ActivatedAt:    servingState.ActivatedAt,
-		})
-	}
-	return out
-}
-
-func AdminStorageTableKey(databaseID, schemaName, tableName string) string {
-	return databaseID + "\x00" + schemaName + "\x00" + tableName
-}
-
-func adminStorageCommandMatches(command AdminStorageCommand, table AdminStorageTable) bool {
-	return command.DatabaseID == table.DatabaseID && command.Schema == table.Schema && command.Table == table.Name
+func AdminStorageTableKey(schemaName, tableName string) string {
+	return schemaName + "\x00" + tableName
 }
 
 func configuredLabel(configured bool) string {

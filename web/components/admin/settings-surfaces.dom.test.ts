@@ -106,6 +106,9 @@ test('workspace registry uses the shared searchable entity list', async () => {
         initialRows,
         filteredRows: rows(),
         firstHref: element.shadowRoot.querySelector('.entity-list-identity')?.getAttribute('href'),
+        workspaceIconsArePlain: Array.from(element.shadowRoot.querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
+        workspaceIconBorderWidth: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
+        workspaceIconBackground: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
       }
     })
 
@@ -122,6 +125,9 @@ test('workspace registry uses the shared searchable entity list', async () => {
     expect(result.filteredRows).toHaveLength(1)
     expect(result.filteredRows[0]).toContain('Retail Store operations')
     expect(result.firstHref).toBe('/workspaces/retail')
+    expect(result.workspaceIconsArePlain).toBe(true)
+    expect(result.workspaceIconBorderWidth).toBe('0px')
+    expect(result.workspaceIconBackground).toBe('rgba(0, 0, 0, 0)')
   } finally { await page.close() }
 })
 
@@ -349,7 +355,6 @@ test('group administration creates a local group in the selected workspace', asy
       const state = {
         principals: [], groups: [], sessions: [], loading: false,
         workspaces: [{ id: 'operations', name: 'Operations' }, { id: 'sales', name: 'Sales' }],
-        defaultWorkspaceId: 'operations',
       }
       runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccess: state }, getPath: (path: string) => path === 'adminAccess' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
       const element = document.querySelector('lv-group-administration') as any
