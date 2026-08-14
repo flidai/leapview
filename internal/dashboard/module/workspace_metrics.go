@@ -43,6 +43,17 @@ func (m multiWorkspaceMetrics) ExpireVisualizationTileStream(streamID string) {
 	}
 }
 
+func (m multiWorkspaceMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	if metrics, ok := m.MetricsForWorkspace(workspaceID); ok {
+		if tiled, ok := metrics.(interface {
+			QueryVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
+		}); ok {
+			return tiled.QueryVisualizationTile(ctx, workspaceID, dashboardID, visualID, revision, zoom, x, y)
+		}
+	}
+	return dashboardruntime.SpatialTileResult{}, fmt.Errorf("workspace spatial tile runtime is not configured")
+}
+
 func (m multiWorkspaceMetrics) Catalog() dashboard.Catalog {
 	return dashboard.Catalog{}
 }
@@ -92,10 +103,6 @@ func (m multiWorkspaceMetrics) QueryVisualization(ctx context.Context, dashboard
 }
 
 func (m multiWorkspaceMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
-}
-
-func (m multiWorkspaceMetrics) QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
 	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
 }
 
@@ -220,13 +227,6 @@ func (m *dynamicRuntimeMetrics) QueryVisualization(ctx context.Context, dashboar
 func (m *dynamicRuntimeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
 	if metrics := m.unboundMetrics(); metrics != nil {
 		return metrics.QueryVisualizationWindow(ctx, dashboardID, pageID, filters, request)
-	}
-	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
-}
-
-func (m *dynamicRuntimeMetrics) QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	if metrics := m.unboundMetrics(); metrics != nil {
-		return metrics.QueryVisualizationSpatialWindow(ctx, dashboardID, pageID, filters, request)
 	}
 	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
 }

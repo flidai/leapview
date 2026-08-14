@@ -51,7 +51,7 @@ func TestSpatialTileHTTPAuthorizationExpiryAndPublicationInvalidation(t *testing
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
 	metrics := &spatialTileAcceptanceMetrics{}
-	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test-workspace"}))
+	server := assembleRuntime(NewMultiWorkspaceMetrics(map[string]QueryMetrics{"test-workspace": metrics}), testStoreOptions(store, assemblyConfig{}))
 
 	request := func(path string) *httptest.ResponseRecorder {
 		recorder := httptest.NewRecorder()
@@ -248,7 +248,7 @@ func TestPublicDashboardDocumentsUseDedicatedRateLimitBucket(t *testing.T) {
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 		WorkspaceID: "test-workspace",
-		RateLimits:         RateLimitConfig{Enabled: true, PublicPageLimit: 1, PublicPageWindow: time.Minute},
+		RateLimits:  RateLimitConfig{Enabled: true, PublicPageLimit: 1, PublicPageWindow: time.Minute},
 	}))
 	handler := server.Routes()
 	path := "/public/dashboards/opaque-public-id-12345678901234"

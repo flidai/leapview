@@ -68,7 +68,6 @@ type visualizationRuntime interface {
 	NormalizeVisualizationWindow(dashboardID string, request dashboard.TableRequest) dashboard.TableRequest
 	QueryVisualization(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error)
 	QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error)
-	QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error)
 }
 
 type spatialTileRuntime interface {
@@ -306,19 +305,6 @@ func (m runtimeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardI
 		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide visualization data")
 	}
 	return port.QueryVisualizationWindow(ctx, dashboardID, pageID, filters, request)
-}
-
-func (m runtimeMetrics) QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	runtime, release, err := m.activeForDashboardRefresh(ctx)
-	if err != nil {
-		return visualizationir.VisualizationEnvelope{}, err
-	}
-	defer release()
-	port, ok := runtime.(visualizationRuntime)
-	if !ok {
-		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide visualization data")
-	}
-	return port.QueryVisualizationSpatialWindow(ctx, dashboardID, pageID, filters, request)
 }
 
 func (m runtimeMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
