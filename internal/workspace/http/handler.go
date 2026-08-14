@@ -83,7 +83,7 @@ func (h Handler) AccessSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (signals workspaceAccessSignalPayload) command() ui.WorkspaceAccessCommand {
 	command := signals.WorkspaceAccess.Command
-	if command.Email == "" && command.Role == "" && command.PrincipalID == "" && command.BindingID == "" && command.SubjectType == "" && command.SubjectID == "" {
+	if command.Email == "" && command.Role == "" && command.PrincipalID == "" && command.BindingID == "" && command.SubjectType == "" && command.SubjectID == "" && len(command.Subjects) == 0 {
 		command = signals.WorkspaceAccessCommand
 	}
 	return command
@@ -701,53 +701,128 @@ func (h Handler) AccessUpsert(w nethttp.ResponseWriter, r *nethttp.Request) {
 	} else if repo == nil {
 		status = ui.WorkspaceAccessStatus{Error: errWorkspaceAccessNotConfigured.Error()}
 	} else if object, ok := assetAccessObject(r, workspaceID); ok {
-		subjectType, subjectID, err := h.resolveAccessSubject(r, repo, command)
+		subjects := workspaceAccessSubjects(command)
+		if len(subjects) > 0 {
+			inputs := make([]access.GrantInput, 0, len(subjects))
+			for _, subject := range subjects {
+				subjectCommand := command
+				subjectCommand.SubjectType, subjectCommand.SubjectID = subject.SubjectType, subject.SubjectID
+				subjectType, subjectID, resolveErr := h.resolveAccessSubject(r, repo, subjectCommand)
+				if resolveErr != nil {
+					err = resolveErr
+					break
+				}
+				inputs = append(inputs, access.GrantInput{Object: object, SubjectType: subjectType, SubjectID: subjectID, Privilege: access.Privilege(strings.TrimSpace(firstNonEmpty(command.Privilege, command.Role)))})
+			}
+			batch, ok := h.GrantCommands.(access.GrantBatchCommander)
+			if err == nil && !ok {
+				err = fmt.Errorf("atomic grant batch commands are unavailable")
+			} else if err == nil {
+				_, err = batch.CreateGrants(r.Context(), h.grantInvocation(r), inputs)
+			}
+			if err == nil {
+				status.Message = workspaceAccessBatchMessage(len(inputs))
+			}
+		} else {
+			subjectType, subjectID, resolveErr := h.resolveAccessSubject(r, repo, command)
+			if resolveErr != nil {
+				err = resolveErr
+			} else if h.GrantCommands == nil {
+				err = fmt.Errorf("grant commands are unavailable")
+			} else {
+				_, err = h.GrantCommands.CreateGrant(r.Context(), h.grantInvocation(r), access.GrantInput{
+					Object: object, SubjectType: subjectType, SubjectID: subjectID,
+					Privilege: access.Privilege(strings.TrimSpace(firstNonEmpty(command.Privilege, command.Role))),
+				})
+			}
+		}
 		if err != nil {
-			status = ui.WorkspaceAccessStatus{Error: err.Error()}
-		} else if h.GrantCommands == nil {
-			status = ui.WorkspaceAccessStatus{Error: "grant commands are unavailable"}
-		} else if _, err := h.GrantCommands.CreateGrant(r.Context(), h.grantInvocation(r), access.GrantInput{
-			Object:      object,
-			SubjectType: subjectType,
-			SubjectID:   subjectID,
-			Privilege:   access.Privilege(strings.TrimSpace(firstNonEmpty(command.Privilege, command.Role))),
-		}); err != nil {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
 		}
 	} else {
-		subjectType, subjectID, err := h.resolveAccessSubject(r, repo, command)
+		subjects := workspaceAccessSubjects(command)
+		if strings.TrimSpace(command.BindingID) == "" && len(subjects) > 0 {
+			inputs := make([]access.RoleBindingInput, 0, len(subjects))
+			for _, subject := range subjects {
+				subjectCommand := command
+				subjectCommand.SubjectType, subjectCommand.SubjectID = subject.SubjectType, subject.SubjectID
+				subjectType, subjectID, resolveErr := h.resolveAccessSubject(r, repo, subjectCommand)
+				if resolveErr != nil {
+					err = resolveErr
+					break
+				}
+				inputs = append(inputs, access.RoleBindingInput{WorkspaceID: workspaceID, SubjectType: subjectType, SubjectID: subjectID, Role: command.Role})
+			}
+			batch, ok := h.RoleBindingCommands.(access.RoleBindingBatchCommander)
+			if err == nil && !ok {
+				err = fmt.Errorf("atomic role binding batch commands are unavailable")
+			} else if err == nil {
+				_, err = batch.CreateRoleBindings(r.Context(), h.roleBindingInvocation(r), inputs)
+			}
+			if err == nil {
+				status.Message = workspaceAccessBatchMessage(len(inputs))
+			}
+		} else {
+			subjectType, subjectID, resolveErr := h.resolveAccessSubject(r, repo, command)
+			if resolveErr != nil {
+				err = resolveErr
+			} else {
+				input := access.RoleBindingInput{WorkspaceID: workspaceID, SubjectType: subjectType, SubjectID: subjectID, Role: command.Role}
+				if h.RoleBindingCommands == nil {
+					err = fmt.Errorf("role binding commands are unavailable")
+				} else if strings.TrimSpace(command.BindingID) != "" {
+					invocation := h.roleBindingInvocation(r)
+					bindings, revisionErr := repo.ListRoleBindings(r.Context(), workspaceID)
+					if revisionErr == nil {
+						for _, binding := range bindings {
+							if binding.ID != command.BindingID {
+								continue
+							}
+							invocation.ConcurrencyToken, revisionErr = access.RoleBindingRevision(binding)
+							break
+						}
+					}
+					if revisionErr != nil {
+						err = revisionErr
+					} else {
+						_, err = h.RoleBindingCommands.UpdateRoleBinding(r.Context(), invocation, workspaceID, command.BindingID, input)
+					}
+				} else {
+					_, err = h.RoleBindingCommands.CreateRoleBinding(r.Context(), h.roleBindingInvocation(r), input)
+				}
+			}
+		}
 		if err != nil {
 			status = ui.WorkspaceAccessStatus{Error: err.Error()}
-		} else {
-			input := access.RoleBindingInput{WorkspaceID: workspaceID, SubjectType: subjectType, SubjectID: subjectID, Role: command.Role}
-			if h.RoleBindingCommands == nil {
-				err = fmt.Errorf("role binding commands are unavailable")
-			} else if strings.TrimSpace(command.BindingID) != "" {
-				invocation := h.roleBindingInvocation(r)
-				bindings, revisionErr := repo.ListRoleBindings(r.Context(), workspaceID)
-				if revisionErr == nil {
-					for _, binding := range bindings {
-						if binding.ID != command.BindingID {
-							continue
-						}
-						invocation.ConcurrencyToken, revisionErr = access.RoleBindingRevision(binding)
-						break
-					}
-				}
-				if revisionErr != nil {
-					err = revisionErr
-				} else {
-					_, err = h.RoleBindingCommands.UpdateRoleBinding(r.Context(), invocation, workspaceID, command.BindingID, input)
-				}
-			} else {
-				_, err = h.RoleBindingCommands.CreateRoleBinding(r.Context(), h.roleBindingInvocation(r), input)
-			}
-			if err != nil {
-				status = ui.WorkspaceAccessStatus{Error: err.Error()}
-			}
 		}
 	}
 	h.patchWorkspaceAccess(w, r, workspaceID, status)
+}
+
+func workspaceAccessSubjects(command ui.WorkspaceAccessCommand) []ui.WorkspaceAccessSubject {
+	seen := make(map[string]struct{}, len(command.Subjects))
+	result := make([]ui.WorkspaceAccessSubject, 0, len(command.Subjects))
+	for _, subject := range command.Subjects {
+		subject.SubjectType = strings.TrimSpace(subject.SubjectType)
+		subject.SubjectID = strings.TrimSpace(subject.SubjectID)
+		if subject.SubjectID == "" {
+			continue
+		}
+		key := subject.SubjectType + "\x00" + subject.SubjectID
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, subject)
+	}
+	return result
+}
+
+func workspaceAccessBatchMessage(count int) string {
+	if count == 1 {
+		return "Access granted to 1 subject."
+	}
+	return fmt.Sprintf("Access granted to %d subjects.", count)
 }
 
 func (h Handler) resolveAccessSubject(r *nethttp.Request, repo access.WorkspaceAccessService, command ui.WorkspaceAccessCommand) (access.SubjectType, string, error) {

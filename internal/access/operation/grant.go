@@ -35,6 +35,66 @@ func (c *GrantCommands) CreateGrant(ctx context.Context, invocation access.Grant
 	return row, err
 }
 
+func (c *GrantCommands) CreateGrants(ctx context.Context, invocation access.GrantInvocation, inputs []access.GrantInput) ([]access.Grant, error) {
+	operationID := accessgen.GenCommandOperationCreateGrant().APIGenOperationID()
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("operation %q requires at least one grant", operationID)
+	}
+	workspaceID := strings.TrimSpace(inputs[0].Object.WorkspaceID)
+	for _, input := range inputs {
+		if strings.TrimSpace(input.Object.WorkspaceID) != workspaceID {
+			return nil, fmt.Errorf("operation %q requires one workspace per batch", operationID)
+		}
+	}
+	if invocation.Surface == access.OperationSurfaceUI {
+		if err := uicommand.VerifyClaim(invocation.OperationClaims, operationID); err != nil {
+			return nil, err
+		}
+	}
+	if c == nil || c.repository == nil {
+		return nil, fmt.Errorf("operation %q repository is required", operationID)
+	}
+	repository, err := c.repository()
+	if err != nil {
+		return nil, err
+	}
+	transactional, ok := repository.(access.AuditedMutationBatchRepository)
+	if !ok {
+		return nil, fmt.Errorf("%w: grant repository does not support transactional batch auditing", access.ErrAuditTransaction)
+	}
+	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]access.Grant, 0, len(inputs))
+	err = accessgen.ExecuteGenCreateGrantCommand(ctx, executor, accessgen.GenCreateGrantCommandInvocation{
+		Surface: invocation.Surface, Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+		RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+	}, apigencommand.Execution{Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
+		return transactional.RunAuditedMutationBatch(ctx, func(repository access.Repository) ([]access.AuditEventInput, error) {
+			rows = rows[:0]
+			events := make([]access.AuditEventInput, 0, len(inputs))
+			for _, input := range inputs {
+				row, mutationErr := repository.CreateGrant(ctx, input)
+				if mutationErr != nil {
+					return nil, mutationErr
+				}
+				event, auditErr := grantAuditInput(contract, operationID, invocation, row, accessgen.EncodeGenCreateGrantAuditPayload)
+				if auditErr != nil {
+					return nil, auditErr
+				}
+				rows = append(rows, row)
+				events = append(events, event)
+			}
+			return events, nil
+		})
+	}})
+	if err != nil {
+		return nil, err
+	}
+	return rows, err
+}
+
 func (c *GrantCommands) UpdateGrant(ctx context.Context, invocation access.GrantInvocation, workspaceID, grantID string, input access.GrantInput) (access.Grant, error) {
 	var row access.Grant
 	operationID := accessgen.GenCommandOperationUpdateGrant().APIGenOperationID()

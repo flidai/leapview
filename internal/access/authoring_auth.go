@@ -395,7 +395,7 @@ func (service *AuthoringAuthService) ExchangeWorkloadIdentity(ctx context.Contex
 		return AuthoringTokenSet{}, fmt.Errorf("%w: must be between zero and %s", ErrInvalidWorkloadLifetime, service.workloadMaxTTL)
 	}
 	principal, err := service.repository.PrincipalForServicePrincipalSecret(ctx, strings.TrimSpace(input.ClientID), input.ClientSecret)
-	if err != nil || principal.Kind != PrincipalKindServicePrincipal || principal.DisabledAt != "" {
+	if err != nil || principal.Kind != PrincipalKindServicePrincipal || principal.AccessDisabled() {
 		return AuthoringTokenSet{}, ErrInvalidAuthoringPrincipal
 	}
 	now := service.now().UTC()
@@ -450,7 +450,7 @@ func (service *AuthoringAuthService) Resolve(ctx context.Context, accessToken st
 	if err != nil {
 		return AuthoringCredential{}, ErrInvalidAuthoringCredential
 	}
-	if credential.Principal.DisabledAt != "" || credential.Session.RevokedAt.IsZero() == false {
+	if credential.Principal.AccessDisabled() || credential.Session.RevokedAt.IsZero() == false {
 		return AuthoringCredential{}, ErrInvalidAuthoringCredential
 	}
 	if !now.Before(credential.AccessExpiresAt) || (!credential.Session.ExpiresAt.IsZero() && !now.Before(credential.Session.ExpiresAt)) {
@@ -552,7 +552,7 @@ func (service *AuthoringAuthService) randomUserCode() (string, error) {
 func validHumanAuthoringPrincipal(principal Principal) bool {
 	return strings.TrimSpace(principal.ID) != "" &&
 		principal.Kind == PrincipalKindUser &&
-		strings.TrimSpace(principal.DisabledAt) == ""
+		!principal.AccessDisabled()
 }
 
 func tokenSet(accessToken, refreshToken string, now time.Time, credential AuthoringCredential) AuthoringTokenSet {

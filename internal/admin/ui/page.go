@@ -228,6 +228,33 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			g.Attr("data-on:lv-service-account-command", "$adminServiceAccountCommand = evt.detail; evt.detail.action == 'select' ? ("+serviceAccountSelect+") : ("+serviceAccountMutation+")"),
 		)
 	}
+	if active == "principals" || active == "groups" || active == "principal-detail" || active == "group-detail" {
+		accessCommands := map[string]uicommand.Binding{
+			"create_principal":    accessgen.GenUIActionCreatePrincipal(),
+			"update_principal":    accessgen.GenUIActionUpdatePrincipal(),
+			"delete_principal":    accessgen.GenUIActionDeletePrincipal(),
+			"block_principal":     accessgen.GenUIActionDisablePrincipal(),
+			"unblock_principal":   accessgen.GenUIActionEnablePrincipal(),
+			"reset_password":      accessgen.GenUIActionResetPrincipalPassword(),
+			"revoke_session":      accessgen.GenUIActionRevokePrincipalSession(),
+			"revoke_all_sessions": accessgen.GenUIActionRevokePrincipalSession(),
+			"create_group":        accessgen.GenUIActionCreateGroup(),
+			"update_group":        accessgen.GenUIActionUpdateGroup(),
+			"delete_group":        accessgen.GenUIActionDeleteGroup(),
+			"add_group_member":    accessgen.GenUIActionAddGroupMember(),
+			"remove_group_member": accessgen.GenUIActionRemoveGroupMember(),
+		}
+		commandQuery := url.Values{"section": []string{active}}
+		if data.SelectedPrincipal != nil {
+			commandQuery.Set("principal", data.SelectedPrincipal.ID)
+		}
+		if data.SelectedGroup != nil {
+			commandQuery.Set("group", data.SelectedGroup.ID)
+		}
+		adminAttrs = append(adminAttrs,
+			g.Attr("data-on:lv-access-admin-command", "$adminAccessCommand = evt.detail; $adminAccess.loading = true; $adminAccess.error = ''; "+uiactions.CommandPostSwitch("evt.detail.action", accessCommands, "/admin/access/command?"+commandQuery.Encode(), "adminAccessCommand")),
+		)
+	}
 	if active == "audit" {
 		adminAttrs = append(adminAttrs,
 			g.Attr("data-on:lv-audit-log-command", "$adminAuditLogCommand = evt.detail; "+uiactions.QueryPost("/admin/audit/command", "adminAuditLogCommand", "adminAuditLog")),
@@ -363,7 +390,7 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		page.HeaderDetail = "Review workspaces, ownership, and deployment state."
 	case "principal-detail":
 		page.HeaderTitle = "Principals"
-		page.HeaderDetail = "Read-only principal access."
+		page.HeaderDetail = "Manage principal identity, access status, and sessions."
 		if data.SelectedPrincipal == nil {
 			page.Empty = uisignals.Pointer("Principal not found.")
 			return page
@@ -371,16 +398,7 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		principal := *data.SelectedPrincipal
 		name := adminDisplayLabel(principal.DisplayName, principal.Email, principal.ID)
 		page.HeaderTitle = "Principals / " + name
-		page.HeaderDetail = "Read-only principal identity and group memberships."
-		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{
-			{Label: "Email", Value: principal.Email},
-			{Label: "Principal ID", Value: principal.ID},
-			{Label: "Direct roles", Value: strings.Join(principal.DirectRoles, ", ")},
-			{Label: "Group count", Value: fmt.Sprint(len(principal.Groups))},
-			{Label: "Created", Value: principal.CreatedAt},
-			{Label: "Updated", Value: principal.UpdatedAt},
-		})
-		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Groups", Table: uisignals.Pointer(adminPrincipalGroupsGrid(principal, data.Groups))}})
+		page.HeaderDetail = "Manage identity and access with controls appropriate to its source."
 	case "groups":
 		page.HeaderTitle = "Groups"
 		page.HeaderDetail = "Organize users and assign access collectively."
@@ -394,7 +412,7 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		page.HeaderDetail = "Review login and provisioning configuration."
 	case "group-detail":
 		page.HeaderTitle = "Groups"
-		page.HeaderDetail = "Read-only group membership."
+		page.HeaderDetail = "Manage group identity and membership."
 		if data.SelectedGroup == nil {
 			page.Empty = uisignals.Pointer("Group not found.")
 			return page
@@ -402,15 +420,7 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		group := *data.SelectedGroup
 		name := adminDisplayLabel(group.Name, group.ExternalID, group.ID)
 		page.HeaderTitle = "Groups / " + name
-		page.HeaderDetail = "Read-only group membership and role assignments."
-		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{
-			{Label: "Provider", Value: group.Provider},
-			{Label: "External ID", Value: group.ExternalID},
-			{Label: "Group ID", Value: group.ID},
-			{Label: "Roles", Value: strings.Join(group.Roles, ", ")},
-			{Label: "Member count", Value: fmt.Sprint(len(group.Members))},
-		})
-		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Members", Table: uisignals.Pointer(adminGroupMembersGrid(group, data.Principals))}})
+		page.HeaderDetail = "Local groups are editable; synchronized groups remain read-only."
 	case "agent":
 		page.HeaderTitle = "Agent"
 		page.HeaderDetail = "Review agent availability and configuration."

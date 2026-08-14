@@ -1583,6 +1583,12 @@ model WorkspaceAccessCommand {
   `role`: string;
   `subjectId`: string;
   `subjectType`: string;
+  `subjects`: WorkspaceAccessSubject[];
+}
+
+model WorkspaceAccessSubject {
+  `subjectId`: string;
+  `subjectType`: string;
 }
 
 model WorkspaceAccessCandidate {

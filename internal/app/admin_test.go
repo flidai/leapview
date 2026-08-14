@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +26,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
 type synchronizedResponseRecorder struct {
@@ -93,7 +96,7 @@ func TestAdminRoutesExposeOnlyPersonalSettingsToViewer(t *testing.T) {
 	}
 }
 
-func TestAdminPagesRenderReadOnlyAccessData(t *testing.T) {
+func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
@@ -120,10 +123,10 @@ func TestAdminPagesRenderReadOnlyAccessData(t *testing.T) {
 	}{
 		{path: "/admin", status: http.StatusSeeOther, want: []string{"/admin/profile"}},
 		{path: "/admin/profile", want: []string{"<lv-admin-page", `section="profile"`, `/updates?route=admin&amp;section=profile`}},
-		{path: "/admin/principals", want: []string{"<lv-admin-page", `section="principals"`, `/updates?route=admin&amp;section=principals`}},
-		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`}},
-		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`}},
-		{path: "/admin/groups/group_finance", want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=group_finance&amp;route=admin&amp;section=group-detail`}},
+		{path: "/admin/principals", want: []string{"<lv-admin-page", `section="principals"`, `/updates?route=admin&amp;section=principals`, "/admin/access/command", "createPrincipal"}},
+		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`, "/admin/access/command", "resetPrincipalPassword"}},
+		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`, "/admin/access/command", "createGroup"}},
+		{path: "/admin/groups/group_finance", want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=group_finance&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
 		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`, "/admin/agent/config", "updateAgentConfig"}},
 		{path: "/admin/storage", want: []string{"<lv-admin-page", `section="storage"`, `/updates?route=admin&amp;section=storage`, "/admin/storage/select-table"}},
 		{path: "/admin/queries", want: []string{"<lv-admin-page", `section="queries"`, `/updates?route=admin&amp;section=queries`, "/admin/queries/command"}},
@@ -150,11 +153,133 @@ func TestAdminPagesRenderReadOnlyAccessData(t *testing.T) {
 		if tc.status != 0 {
 			continue
 		}
-		for _, notWant := range []string{"/admin/access", "Assign role", "Remove access", "<form", "data-on:lv-workspace-access-upsert", "refresh-materializations"} {
+		for _, notWant := range []string{"Assign role", "Remove access", "<form", "data-on:lv-workspace-access-upsert", "refresh-materializations"} {
 			if strings.Contains(body, notWant) {
 				t.Fatalf("%s rendered write control %q:\n%s", tc.path, notWant, body)
 			}
 		}
+	}
+}
+
+func TestAdminAccessCommandBlocksPrincipalAndReturnsSignalPatch(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
+	repo := testAccessRepository(store)
+	target, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "member@example.com", DisplayName: "Member"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	body := strings.NewReader(`{"adminAccessCommand":{"action":"block_principal","principalId":"` + target.Principal.ID + `"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=principal-detail&principal="+target.Principal.ID, body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(uicommand.HeaderOperationID, "disablePrincipal")
+	rec := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"adminAccess"`) || !strings.Contains(rec.Body.String(), `"blockedAt"`) {
+		t.Fatalf("command response = %d %s", rec.Code, rec.Body.String())
+	}
+	stored, err := repo.PrincipalByID(ctx, target.Principal.ID)
+	if err != nil || stored.BlockedAt == "" {
+		t.Fatalf("blocked principal = %#v, %v", stored, err)
+	}
+}
+
+func TestAdminAccessCommandDeletesPrincipalAndReturnsClientRedirectSignal(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
+	repo := testAccessRepository(store)
+	target, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "delete-me@example.com", DisplayName: "Delete Me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	body := strings.NewReader(`{"adminAccessCommand":{"action":"delete_principal","principalId":"` + target.Principal.ID + `"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=principal-detail&principal="+target.Principal.ID, body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(uicommand.HeaderOperationID, "deletePrincipal")
+	rec := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"redirectTo":"/admin/principals"`) {
+		t.Fatalf("command response = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := repo.PrincipalByID(ctx, target.Principal.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted principal lookup error = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestAdminAccessCommandCreatesGroupAndReturnsDetailRedirectSignal(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
+	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	body := strings.NewReader(`{"adminAccessCommand":{"action":"create_group","workspaceId":"test","displayName":"Revenue analysts"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=groups", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(uicommand.HeaderOperationID, "createGroup")
+	rec := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"redirectTo":"/admin/groups/group_`) {
+		t.Fatalf("command response = %d %s", rec.Code, rec.Body.String())
+	}
+	groups, err := testAccessRepository(store).ListGroups(ctx, "test")
+	if err != nil || !slices.ContainsFunc(groups, func(group access.Group) bool { return group.Name == "Revenue analysts" }) {
+		t.Fatalf("groups = %#v, err=%v", groups, err)
+	}
+}
+
+func TestAdminAccessCommandAddsMultipleGroupMembers(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
+	repo := testAccessRepository(store)
+	first, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "first@example.com", DisplayName: "First"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "second@example.com", DisplayName: "Second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := repo.UpsertGroup(ctx, access.GroupInput{WorkspaceID: "test", Name: "Analysts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	body := strings.NewReader(`{"adminAccessCommand":{"action":"add_group_member","workspaceId":"test","groupId":"` + group.ID + `","principalIds":["` + first.Principal.ID + `","` + second.Principal.ID + `"]}}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=group-detail&group="+group.ID, body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(uicommand.HeaderOperationID, "addGroupMember")
+	rec := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"message":"2 members added."`) {
+		t.Fatalf("command response = %d %s", rec.Code, rec.Body.String())
+	}
+	members, err := repo.ListGroupMembers(ctx, "test", group.ID)
+	if err != nil || len(members) != 2 {
+		t.Fatalf("members = %#v, err=%v", members, err)
 	}
 }
 

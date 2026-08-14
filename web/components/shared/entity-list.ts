@@ -12,6 +12,7 @@ import {
   Database,
   Download,
   LayoutDashboard,
+  Plus,
   Plug,
   Search,
   Table2,
@@ -60,6 +61,12 @@ export type EntityListFilter = {
   href?: string
 }
 
+export type EntityListAction = {
+  id: string
+  label: string
+  emphasis?: 'primary' | 'default'
+}
+
 const entityListStyles = `
   .entity-list {
     display: grid;
@@ -77,6 +84,8 @@ const entityListStyles = `
   .entity-toolbar-actions {
     display: flex;
     margin-left: auto;
+    align-items: center;
+    gap: var(--base-size-8);
   }
 
   .entity-search {
@@ -122,7 +131,8 @@ const entityListStyles = `
 
   .entity-search input[type='search']:focus-visible,
   .entity-filter:focus-visible,
-  .entity-export:focus-visible {
+  .entity-export:focus-visible,
+  .entity-action:focus-visible {
     outline: var(--focus-outline);
     outline-offset: var(--focus-outline-offset);
   }
@@ -132,7 +142,8 @@ const entityListStyles = `
     padding: 0 var(--base-size-8);
   }
 
-  .entity-export {
+  .entity-export,
+  .entity-action {
     display: inline-flex;
     min-height: var(--lv-button-height);
     align-items: center;
@@ -151,6 +162,17 @@ const entityListStyles = `
   .entity-export:hover {
     border-color: var(--lv-button-border-hover);
     background: var(--lv-button-bg-hover);
+  }
+
+  .entity-action-primary {
+    border-color: var(--lv-button-accent-border-rest);
+    background: var(--lv-button-accent-bg-rest);
+    color: var(--lv-button-accent-fg-rest);
+  }
+
+  .entity-action-primary:hover {
+    border-color: var(--lv-button-accent-border-hover);
+    background: var(--lv-button-accent-bg-hover);
   }
 
   .entity-list-items {
@@ -402,6 +424,7 @@ class EntityList extends LitElement {
   @property({ attribute: false }) items: EntityListItem[] = []
   @property({ attribute: false }) columns: EntityListColumn[] = []
   @property({ attribute: false }) filters: EntityListFilter[] = []
+  @property({ attribute: false }) actions: EntityListAction[] = []
   @property({ attribute: 'list-label' }) listLabel = 'List'
   @property({ attribute: 'export-filename' }) exportFilename = ''
   @property({ attribute: 'search-placeholder' }) searchPlaceholder = 'Search'
@@ -457,12 +480,22 @@ class EntityList extends LitElement {
               </select>
             </label>
           ` : ''}
-          ${this.exportFilename ? html`
+          ${this.exportFilename || this.actions.length ? html`
             <div class="entity-toolbar-actions">
-              <button class="entity-export" type="button" @click=${this.exportCSV}>
+              ${this.exportFilename ? html`<button class="entity-export" type="button" @click=${this.exportCSV}>
                 ${lucideIcon(Download, { size: 14, strokeWidth: 2 })}
                 <span>Export CSV</span>
-              </button>
+              </button>` : ''}
+              ${this.actions.map((action) => html`
+                <button
+                  class=${`entity-action ${action.emphasis === 'primary' ? 'entity-action-primary' : ''}`}
+                  type="button"
+                  @click=${() => this.emitAction(action)}
+                >
+                  ${lucideIcon(Plus, { size: 14, strokeWidth: 2 })}
+                  <span>${action.label}</span>
+                </button>
+              `)}
             </div>
           ` : ''}
         </div>
@@ -612,6 +645,14 @@ class EntityList extends LitElement {
     link.download = this.exportFilename
     link.click()
     URL.revokeObjectURL(link.href)
+  }
+
+  private emitAction(action: EntityListAction): void {
+    this.dispatchEvent(new CustomEvent('lv-entity-list-action', {
+      bubbles: true,
+      composed: true,
+      detail: { id: action.id },
+    }))
   }
 
   private toggleSort(columnId: string): void {

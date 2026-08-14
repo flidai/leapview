@@ -400,6 +400,7 @@ test('members directory list delegates search and filtering to the page stream',
           text: cell.textContent?.trim(),
           title: cell.getAttribute('title'),
         })),
+        toolbarActions: Array.from(root.querySelectorAll('.entity-toolbar-actions button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim()),
       }
       const input = root.querySelector('input[type="search"]') as HTMLInputElement
       input.value = 'analyst'
@@ -427,6 +428,7 @@ test('members directory list delegates search and filtering to the page stream',
     expect(state.initial.lastSeenCells[0]?.text).toMatch(/^5m ago$/)
     expect(state.initial.lastSeenCells[0]?.title).toContain('UTC')
     expect(state.initial.lastSeenCells[1]).toEqual({ text: 'Never', title: '' })
+    expect(state.initial.toolbarActions).toEqual(['Export CSV', 'Create local user'])
     expect(state.initial.rows).toHaveLength(2)
     // The list emits both changes but keeps the last server payload visible
     // until the page stream sends the filtered groups back.
@@ -469,6 +471,7 @@ test('groups admin uses the reusable entity list and delegates search to the pag
         after: rows(),
         filterOptions: Array.from(root.querySelectorAll('.entity-filter option')).map((option) => option.textContent?.trim()),
         href: root.querySelector('.entity-list-identity')?.getAttribute('href'),
+        toolbarActions: Array.from(root.querySelectorAll('.entity-toolbar-actions button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim()),
       }
     })
 
@@ -477,6 +480,33 @@ test('groups admin uses the reusable entity list and delegates search to the pag
     expect(state.after).toEqual(state.before)
     expect(state.filterOptions).toEqual(['All', 'Local', 'Scim'])
     expect(state.href).toBe('/admin/groups/operations')
+    expect(state.toolbarActions).toEqual(['Export CSV', 'Create group'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('group detail lets the shared detail shell own the page heading and summary', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        kind: 'admin', title: 'Groups', active: 'group-detail', headerTitle: 'Groups / Analysts', headerDetail: 'Local groups are editable.',
+        metrics: [{ label: 'Provider', value: 'local' }, { label: 'Member count', value: '1' }],
+      } })
+      const admin = document.querySelector('lv-admin-page') as any
+      await admin.updateComplete
+      const root = admin.shadowRoot as ShadowRoot
+      return {
+        pageHeader: Boolean(root.querySelector('.page-header')),
+        metrics: Boolean(root.querySelector('.metrics')),
+        detail: Boolean(root.querySelector('lv-group-administration')),
+      }
+    })
+    expect(state).toEqual({ pageHeader: false, metrics: false, detail: true })
   } finally {
     await page.close()
   }

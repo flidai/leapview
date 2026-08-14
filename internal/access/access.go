@@ -299,9 +299,17 @@ type Principal struct {
 	Email       string
 	DisplayName string
 	DisabledAt  string
+	BlockedAt   string
 	CreatedAt   string
 	UpdatedAt   string
 	LastSeenAt  string
+}
+
+// AccessDisabled reports the effective access state. DisabledAt is controlled
+// by the identity lifecycle authority, while BlockedAt is a LeapView-owned
+// emergency override. Either state rejects credentials and authorization.
+func (principal Principal) AccessDisabled() bool {
+	return strings.TrimSpace(principal.DisabledAt) != "" || strings.TrimSpace(principal.BlockedAt) != ""
 }
 
 type ThemeMode string

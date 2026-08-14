@@ -175,6 +175,7 @@ func mapPrincipal(row platformdb.Principal) access.Principal {
 		Email:       row.Email,
 		DisplayName: row.DisplayName,
 		DisabledAt:  nullString(row.DisabledAt),
+		BlockedAt:   nullString(row.BlockedAt),
 		CreatedAt:   row.CreatedAt,
 		UpdatedAt:   row.UpdatedAt,
 	}

@@ -34,6 +34,12 @@ type RoleBindingCommander interface {
 
 type RoleBindingOperations = RoleBindingCommander
 
+// RoleBindingBatchCommander atomically creates multiple bindings under one
+// generated command invocation while retaining one audit event per binding.
+type RoleBindingBatchCommander interface {
+	CreateRoleBindings(context.Context, RoleBindingInvocation, []RoleBindingInput) ([]RoleBinding, error)
+}
+
 // GrantInvocation attributes a transport-neutral grant command to its actor
 // and invoking surface.
 type GrantInvocation = RoleBindingInvocation
@@ -47,6 +53,12 @@ type GrantCommander interface {
 }
 
 type GrantOperations = GrantCommander
+
+// GrantBatchCommander atomically creates multiple object grants under one
+// generated command invocation while retaining one audit event per grant.
+type GrantBatchCommander interface {
+	CreateGrants(context.Context, GrantInvocation, []GrantInput) ([]Grant, error)
+}
 
 // WorkspaceCommandPrivileges is the capability-neutral authorization policy
 // consumed by workspace UI routes. Access derives it from generated command
