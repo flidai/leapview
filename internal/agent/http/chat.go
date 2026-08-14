@@ -442,17 +442,18 @@ func chatSignalPatch(signal ui.ChatViewState, embedded bool) pagestream.SignalPa
 
 func (h *Handler) resolveChatTurnContext(r *nethttp.Request, scope agent.Scope, candidate agent.TurnContext) (*agent.TurnContext, bool, error) {
 	surface := strings.ToLower(strings.TrimSpace(candidate.Surface))
+	embedded := surface == "dashboard" || surface == "data"
 	if surface == "" || (surface == "chat" && len(candidate.References) == 0) {
 		return nil, false, nil
 	}
 	if h.options.ResolveTurnContext == nil {
-		return nil, surface == "dashboard", errors.New("turn context resolver is not configured")
+		return nil, embedded, errors.New("turn context resolver is not configured")
 	}
 	resolved, err := h.options.ResolveTurnContext(r, scope, candidate)
 	if err != nil {
-		return nil, surface == "dashboard", err
+		return nil, embedded, err
 	}
-	return &resolved, surface == "dashboard", nil
+	return &resolved, embedded, nil
 }
 
 func firstNonEmptyString(values ...string) string {

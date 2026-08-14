@@ -65,11 +65,27 @@ func (h Handler) globalDataExplorerStateWithCurrent(r *nethttp.Request, command 
 		command.ObjectKey = uisignals.Optional(selected.Key)
 		command.Sort = dataPreviewSortForColumns(uisignals.ValueOrZero(selected.Columns), command.Sort)
 	}
+	exploreWorkspaceID := firstNonEmpty(uisignals.ValueOrZero(command.Explore.WorkspaceID), uisignals.ValueOrZero(command.WorkspaceID))
+	if exploreWorkspaceID == "" && len(workspaces) > 0 {
+		exploreWorkspaceID = workspaces[0].ID
+	}
+	exploreCommand := normalizeDataExploreCommand(*command.Explore, exploreWorkspaceID)
+	command.Explore = &exploreCommand
+	explore := h.dataExploreState(r.Context(), exploreCommand)
+	command.Explore = &explore.Command
+	if uisignals.ValueOrZero(command.Mode) == "explore" {
+		if queryObject := dataExploreObjectForDataset(objects, explore.Command); queryObject != nil {
+			selected = queryObject
+			command.WorkspaceID = uisignals.Optional(queryObject.WorkspaceID)
+			command.ObjectKey = uisignals.Optional(queryObject.Key)
+		}
+	}
 	explorer := uisignals.DataExplorerSignal{
 		Objects:             objects,
 		SelectedWorkspaceID: command.WorkspaceID,
 		SelectedKey:         command.ObjectKey,
 		Command:             command,
+		Explore:             explore,
 		Warnings:            uisignals.OptionalSlice(warnings),
 		Preview: uisignals.DataPreviewSignal{
 			Columns:       []uisignals.DataPreviewColumnSignal{},
@@ -85,7 +101,10 @@ func (h Handler) globalDataExplorerStateWithCurrent(r *nethttp.Request, command 
 	if selected != nil {
 		copy := *selected
 		explorer.SelectedObject = &copy
-		if metrics, ok := h.metricsForWorkspace(copy.WorkspaceID); ok && metrics != nil {
+		if uisignals.ValueOrZero(command.Mode) == "explore" {
+			// Browse state stays available when the user returns, but Explore does
+			// not spend a second query on the hidden row preview.
+		} else if metrics, ok := h.metricsForWorkspace(copy.WorkspaceID); ok && metrics != nil {
 			explorer.Preview = h.dataPreview(r.Context(), metrics, copy, command, current)
 		} else {
 			explorer.Preview.Error = uisignals.Pointer(fmt.Sprintf("workspace %q metrics are not configured", copy.WorkspaceID))
@@ -94,7 +113,7 @@ func (h Handler) globalDataExplorerStateWithCurrent(r *nethttp.Request, command 
 	page := uisignals.DataExplorerPageSignal{
 		Kind:                uisignals.RouteData,
 		Title:               "Data Explorer",
-		Description:         uisignals.Pointer("Inspect source rows, materialized model tables, and semantic row views."),
+		Description:         uisignals.Pointer("Browse model data, select fields, and build governed result tables."),
 		WorkspaceID:         command.WorkspaceID,
 		SelectedWorkspaceID: command.WorkspaceID,
 		SelectedObject:      command.ObjectKey,
@@ -106,41 +125,570 @@ func (h Handler) globalDataExplorerStateWithCurrent(r *nethttp.Request, command 
 	return page, explorer, nil
 }
 
+func (h Handler) dataExploreState(ctx context.Context, command uisignals.DataExploreCommand) uisignals.DataExploreSignal {
+	result := uisignals.DataExploreResultSignal{
+		Columns: []uisignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{},
+		RequestSeq: command.RequestSeq,
+	}
+	state := uisignals.DataExploreSignal{
+		Command: command, Models: []uisignals.DataExploreModelSignal{}, Datasets: []uisignals.DataExploreDatasetSignal{},
+		Fields: []uisignals.DataExploreFieldSignal{}, Result: result,
+	}
+	workspaceID := uisignals.ValueOrZero(command.WorkspaceID)
+	metrics, ok := h.metricsForWorkspace(workspaceID)
+	if !ok || metrics == nil {
+		state.Result.Error = uisignals.Pointer(fmt.Sprintf("workspace %q metrics are not configured", workspaceID))
+		return state
+	}
+	models := append([]navigationModel(nil), dataExploreNavigationModels(metrics)...)
+	projections := map[string]DataExplorerModel{}
+	for _, summary := range models {
+		model, ok := metrics.DataExplorerModel(summary.ID)
+		if !ok {
+			continue
+		}
+		projections[summary.ID] = model
+		datasets := dataExploreDatasets(model)
+		state.Models = append(state.Models, uisignals.DataExploreModelSignal{
+			ID: summary.ID, Title: firstNonEmpty(summary.Title, model.Title, summary.ID),
+			Description: uisignals.Optional(firstNonEmpty(summary.Description, model.Description)), Datasets: datasets,
+		})
+	}
+	if len(state.Models) == 0 {
+		state.Result.Error = uisignals.Pointer("No semantic models are available in this workspace.")
+		return state
+	}
+	modelID := uisignals.ValueOrZero(command.ModelID)
+	selectedModelIndex := -1
+	for index := range state.Models {
+		if state.Models[index].ID == modelID {
+			selectedModelIndex = index
+			break
+		}
+	}
+	if selectedModelIndex < 0 {
+		selectedModelIndex = 0
+		modelID = state.Models[0].ID
+	}
+	selectedModel := state.Models[selectedModelIndex]
+	state.SelectedModel = &selectedModel
+	state.Datasets = append([]uisignals.DataExploreDatasetSignal(nil), selectedModel.Datasets...)
+	command.ModelID = uisignals.Optional(modelID)
+	model := projections[modelID]
+	if len(state.Datasets) == 0 {
+		state.Command = command
+		state.Result.Error = uisignals.Pointer("This semantic model has no explorable datasets.")
+		return state
+	}
+	datasetID := uisignals.ValueOrZero(command.DatasetID)
+	selectedDatasetIndex := -1
+	for index := range state.Datasets {
+		if state.Datasets[index].ID == datasetID {
+			selectedDatasetIndex = index
+			break
+		}
+	}
+	if selectedDatasetIndex < 0 {
+		selectedDatasetIndex = 0
+		datasetID = state.Datasets[0].ID
+	}
+	selectedDataset := state.Datasets[selectedDatasetIndex]
+	command.DatasetID = uisignals.Optional(datasetID)
+	rebaseWarning := ""
+	if resolvedDatasetID, changed := resolveDataExploreBase(model, datasetID, command); changed {
+		rebaseWarning = fmt.Sprintf("Grain changed from %s to %s to support the selected fields.", dataExploreLabel(datasetID), dataExploreLabel(resolvedDatasetID))
+		datasetID = resolvedDatasetID
+		command.DatasetID = uisignals.Optional(datasetID)
+		for index := range state.Datasets {
+			if state.Datasets[index].ID == datasetID {
+				selectedDataset = state.Datasets[index]
+				break
+			}
+		}
+	}
+	state.SelectedDataset = &selectedDataset
+
+	state.Fields = dataExploreFields(model, command, datasetID)
+	validDimensions, validMeasures := dataExploreFieldSets(state.Fields)
+	command.Dimensions = validDataExploreSelection(command.Dimensions, validDimensions)
+	command.Measures = validDataExploreSelection(command.Measures, validMeasures)
+	command.Filters = validDataExploreFilters(command.Filters, validDimensions)
+	command.Sort = validDataExploreSort(command.Sort, command.Dimensions, command.Measures)
+	state.Command = command
+	if len(command.Dimensions) == 0 && len(command.Measures) == 0 && command.Time == nil {
+		if rebaseWarning != "" {
+			state.Result.Warnings = append(state.Result.Warnings, rebaseWarning)
+		}
+		return state
+	}
+
+	request := DataExploreRequest{
+		WorkspaceID: workspaceID, ModelID: modelID, DatasetID: datasetID,
+		Dimensions: append([]string(nil), command.Dimensions...), Measures: append([]string(nil), command.Measures...),
+		Limit: int(command.Limit),
+	}
+	if command.Time != nil {
+		request.Time = DataExploreTime{Field: command.Time.Field, Grain: command.Time.Grain, Alias: uisignals.ValueOrZero(command.Time.Alias)}
+	}
+	for _, filter := range command.Filters {
+		request.Filters = append(request.Filters, DataExploreFilter{
+			Field: filter.Field, Fact: uisignals.ValueOrZero(filter.Fact), Operator: filter.Operator,
+			Values: append([]string(nil), filter.Values...),
+		})
+	}
+	for _, sortSpec := range command.Sort {
+		request.Sort = append(request.Sort, DataExploreSort{Field: sortSpec.Field, Direction: sortSpec.Direction})
+	}
+	executed, err := metrics.ExecuteDataExplore(ctx, request)
+	if err != nil {
+		state.Result.Error = uisignals.Pointer(err.Error())
+		state.Result.Warnings = appendDataExploreWarning(state.Result.Warnings, rebaseWarning)
+		return state
+	}
+	labels := dataExploreResultLabels(state.Fields, command)
+	columns := make([]uisignals.DataPreviewColumnSignal, 0, len(executed.Columns))
+	for _, column := range executed.Columns {
+		columns = append(columns, uisignals.DataPreviewColumnSignal{Key: column, Label: firstNonEmpty(labels[column], column)})
+	}
+	state.Result = uisignals.DataExploreResultSignal{
+		Columns: columns, Rows: executed.Rows, SQL: uisignals.Optional(executed.SQL), Plan: uisignals.Optional(executed.Plan),
+		DurationMS: executed.DurationMS, RowsReturned: int64(executed.RowsReturned), Truncated: executed.Truncated,
+		Warnings: appendDataExploreWarning(executed.Warnings, rebaseWarning), RequestSeq: command.RequestSeq,
+	}
+	return state
+}
+
+type navigationModel struct {
+	ID          string
+	Title       string
+	Description string
+}
+
+func dataExploreNavigationModels(metrics Metrics) []navigationModel {
+	models := make([]navigationModel, 0, len(metrics.Catalog().Models))
+	for _, model := range metrics.Catalog().Models {
+		models = append(models, navigationModel{ID: model.ID, Title: model.Title, Description: model.Description})
+	}
+	sort.SliceStable(models, func(i, j int) bool {
+		return strings.ToLower(firstNonEmpty(models[i].Title, models[i].ID)) < strings.ToLower(firstNonEmpty(models[j].Title, models[j].ID))
+	})
+	return models
+}
+
+func dataExploreDatasets(model DataExplorerModel) []uisignals.DataExploreDatasetSignal {
+	ids := make([]string, 0, len(model.Tables))
+	for id := range model.Tables {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]uisignals.DataExploreDatasetSignal, 0, len(ids))
+	for _, id := range ids {
+		table := model.Tables[id]
+		fieldCount := len(table.Dimensions)
+		for _, measure := range model.Measures {
+			if !measure.Hidden && measure.Fact == id {
+				fieldCount++
+			}
+		}
+		out = append(out, uisignals.DataExploreDatasetSignal{
+			ID: id, Title: dataExploreLabel(id), Description: uisignals.Optional(table.Description),
+			Grain: uisignals.Optional(table.Grain), FieldCount: int64(fieldCount),
+		})
+	}
+	return out
+}
+
+func dataExploreFields(model DataExplorerModel, command uisignals.DataExploreCommand, baseTable string) []uisignals.DataExploreFieldSignal {
+	selectedDimensions := stringSet(command.Dimensions)
+	selectedMeasures := stringSet(command.Measures)
+	tables := make([]string, 0, len(model.Tables))
+	for table := range model.Tables {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+	out := []uisignals.DataExploreFieldSignal{}
+	for _, tableID := range tables {
+		table := model.Tables[tableID]
+		fields := make([]string, 0, len(table.Dimensions))
+		for field := range table.Dimensions {
+			fields = append(fields, field)
+		}
+		sort.Strings(fields)
+		for _, name := range fields {
+			dimension := table.Dimensions[name]
+			id := tableID + "." + name
+			compatible, reason, path := dataExploreFieldCompatibility(model, baseTable, tableID)
+			rebaseDatasetID := ""
+			if !compatible {
+				rebaseDatasetID = dataExploreFieldRebase(model, command, baseTable, id, "dimension")
+				if rebaseDatasetID != "" {
+					reason = fmt.Sprintf("Select %s and change grain from %s to %s.", firstNonEmpty(dimension.Label, dataExploreLabel(name)), dataExploreLabel(baseTable), dataExploreLabel(rebaseDatasetID))
+				}
+			}
+			out = append(out, uisignals.DataExploreFieldSignal{
+				ID: id, Label: firstNonEmpty(dimension.Label, dataExploreLabel(name)), Kind: "dimension", ModelTable: tableID,
+				Description: uisignals.Optional(dimension.Description), Type: uisignals.Optional(dimension.Type),
+				Selected: selectedDimensions[id], Compatible: compatible,
+				CompatibilityReason: uisignals.Optional(reason), RelationshipPath: uisignals.OptionalSlice(path),
+				RebaseDatasetID: uisignals.Optional(rebaseDatasetID),
+			})
+		}
+	}
+	measureIDs := make([]string, 0, len(model.Measures))
+	for id, measure := range model.Measures {
+		if !measure.Hidden {
+			measureIDs = append(measureIDs, id)
+		}
+	}
+	sort.Strings(measureIDs)
+	for _, id := range measureIDs {
+		measure := model.Measures[id]
+		compatible := measure.Fact == baseTable
+		reason := ""
+		rebaseDatasetID := ""
+		if !compatible {
+			rebaseDatasetID = dataExploreFieldRebase(model, command, baseTable, id, "measure")
+			if rebaseDatasetID != "" {
+				reason = fmt.Sprintf("Select %s and change grain from %s to %s.", firstNonEmpty(measure.Label, dataExploreLabel(id)), dataExploreLabel(baseTable), dataExploreLabel(rebaseDatasetID))
+			} else {
+				reason = fmt.Sprintf("Measure belongs to %s and cannot be combined safely with the selected fields.", dataExploreLabel(measure.Fact))
+			}
+		}
+		out = append(out, uisignals.DataExploreFieldSignal{
+			ID: id, Label: firstNonEmpty(measure.Label, dataExploreLabel(id)), Kind: "measure", ModelTable: measure.Fact,
+			Description: uisignals.Optional(measure.Description), Fact: uisignals.Optional(measure.Fact),
+			Type: uisignals.Optional(measure.Type), Selected: selectedMeasures[id], Compatible: compatible,
+			CompatibilityReason: uisignals.Optional(reason), RebaseDatasetID: uisignals.Optional(rebaseDatasetID),
+		})
+	}
+	return out
+}
+
+func resolveDataExploreBase(model DataExplorerModel, currentBase string, command uisignals.DataExploreCommand) (string, bool) {
+	currentBase = strings.TrimSpace(currentBase)
+	targets, measureFacts := dataExploreCommandTargets(model, command)
+	if dataExploreBaseScore(model, currentBase, targets, measureFacts) >= 0 {
+		return currentBase, false
+	}
+	bestBase, bestScore, tied := "", -1, false
+	for candidate := range model.Tables {
+		score := dataExploreBaseScore(model, candidate, targets, measureFacts)
+		if score < 0 {
+			continue
+		}
+		switch {
+		case bestScore < 0 || score < bestScore:
+			bestBase, bestScore, tied = candidate, score, false
+		case score == bestScore:
+			tied = true
+		}
+	}
+	if bestBase == "" || tied || bestBase == currentBase {
+		return currentBase, false
+	}
+	return bestBase, true
+}
+
+func dataExploreCommandTargets(model DataExplorerModel, command uisignals.DataExploreCommand) ([]string, []string) {
+	targetSet := map[string]bool{}
+	measureSet := map[string]bool{}
+	addDimension := func(id string) {
+		table, field := keyParts(strings.TrimSpace(id))
+		if dimensions, ok := model.Tables[table]; ok {
+			if _, ok := dimensions.Dimensions[field]; ok {
+				targetSet[table] = true
+			}
+		}
+	}
+	for _, id := range command.Dimensions {
+		addDimension(id)
+	}
+	for _, filter := range command.Filters {
+		addDimension(filter.Field)
+	}
+	if command.Time != nil {
+		addDimension(command.Time.Field)
+	}
+	for _, id := range command.Measures {
+		if measure, ok := model.Measures[strings.TrimSpace(id)]; ok && !measure.Hidden {
+			measureSet[measure.Fact] = true
+		}
+	}
+	targets := make([]string, 0, len(targetSet))
+	for table := range targetSet {
+		targets = append(targets, table)
+	}
+	measureFacts := make([]string, 0, len(measureSet))
+	for fact := range measureSet {
+		measureFacts = append(measureFacts, fact)
+	}
+	sort.Strings(targets)
+	sort.Strings(measureFacts)
+	return targets, measureFacts
+}
+
+func dataExploreBaseScore(model DataExplorerModel, candidate string, targets, measureFacts []string) int {
+	if _, ok := model.Tables[candidate]; !ok {
+		return -1
+	}
+	for _, fact := range measureFacts {
+		if fact != candidate {
+			return -1
+		}
+	}
+	score := 0
+	for _, target := range targets {
+		if target == candidate {
+			continue
+		}
+		paths := dataExploreSafeRelationshipPaths(model, candidate, target)
+		if len(paths) != 1 {
+			return -1
+		}
+		score += len(paths[0])
+	}
+	return score
+}
+
+func dataExploreFieldRebase(model DataExplorerModel, command uisignals.DataExploreCommand, currentBase, fieldID, kind string) string {
+	hypothetical := command
+	if kind == "measure" {
+		hypothetical.Measures = appendUniqueDataExploreValue(hypothetical.Measures, fieldID)
+	} else {
+		hypothetical.Dimensions = appendUniqueDataExploreValue(hypothetical.Dimensions, fieldID)
+	}
+	base, changed := resolveDataExploreBase(model, currentBase, hypothetical)
+	if !changed {
+		return ""
+	}
+	return base
+}
+
+func appendUniqueDataExploreValue(values []string, value string) []string {
+	out := append([]string(nil), values...)
+	for _, current := range out {
+		if current == value {
+			return out
+		}
+	}
+	return append(out, value)
+}
+
+func appendDataExploreWarning(warnings []string, warning string) []string {
+	out := append([]string(nil), warnings...)
+	if strings.TrimSpace(warning) != "" {
+		out = append(out, warning)
+	}
+	return out
+}
+
+func dataExploreObjectForDataset(objects []uisignals.DataExplorerObjectSignal, command uisignals.DataExploreCommand) *uisignals.DataExplorerObjectSignal {
+	workspaceID := uisignals.ValueOrZero(command.WorkspaceID)
+	modelID := uisignals.ValueOrZero(command.ModelID)
+	datasetID := uisignals.ValueOrZero(command.DatasetID)
+	for index := range objects {
+		object := &objects[index]
+		if object.WorkspaceID == workspaceID && object.Layer == "model_table" && uisignals.ValueOrZero(object.ModelID) == modelID && uisignals.ValueOrZero(object.Table) == datasetID {
+			return object
+		}
+	}
+	return nil
+}
+
+func dataExploreFieldCompatibility(model DataExplorerModel, baseTable, targetTable string) (bool, string, []string) {
+	baseTable = strings.TrimSpace(baseTable)
+	targetTable = strings.TrimSpace(targetTable)
+	if baseTable == targetTable {
+		return true, "", []string{}
+	}
+	paths := dataExploreSafeRelationshipPaths(model, baseTable, targetTable)
+	switch len(paths) {
+	case 0:
+		return false, fmt.Sprintf("Not available from %s because no grain-preserving relationship path reaches %s.", dataExploreLabel(baseTable), dataExploreLabel(targetTable)), nil
+	case 1:
+		return true, "", paths[0]
+	default:
+		return false, fmt.Sprintf("Not available from %s because more than one relationship path reaches %s.", dataExploreLabel(baseTable), dataExploreLabel(targetTable)), nil
+	}
+}
+
+func dataExploreSafeRelationshipPaths(model DataExplorerModel, baseTable, targetTable string) [][]string {
+	type candidate struct {
+		table   string
+		path    []string
+		visited map[string]bool
+	}
+	matches := [][]string{}
+	var walk func(candidate)
+	walk = func(current candidate) {
+		if len(matches) > 1 {
+			return
+		}
+		edges := dataExploreSafeEdgesFrom(model, current.table)
+		for _, edge := range edges {
+			if current.visited[edge.table] {
+				continue
+			}
+			path := append(append([]string{}, current.path...), edge.relationship.ID)
+			if edge.table == targetTable {
+				matches = append(matches, path)
+				continue
+			}
+			visited := map[string]bool{}
+			for table, value := range current.visited {
+				visited[table] = value
+			}
+			visited[edge.table] = true
+			walk(candidate{table: edge.table, path: path, visited: visited})
+		}
+	}
+	walk(candidate{table: baseTable, visited: map[string]bool{baseTable: true}})
+	return matches
+}
+
+type dataExploreRelationshipEdge struct {
+	table        string
+	relationship DataExplorerRelationship
+}
+
+func dataExploreSafeEdgesFrom(model DataExplorerModel, table string) []dataExploreRelationshipEdge {
+	edges := []dataExploreRelationshipEdge{}
+	for _, relationship := range model.Relationships {
+		fromTable, _ := keyParts(relationship.From)
+		toTable, _ := keyParts(relationship.To)
+		if fromTable == table && (relationship.Cardinality == "many_to_one" || relationship.Cardinality == "one_to_one") {
+			edges = append(edges, dataExploreRelationshipEdge{table: toTable, relationship: relationship})
+		} else if toTable == table && relationship.Cardinality == "one_to_one" {
+			edges = append(edges, dataExploreRelationshipEdge{table: fromTable, relationship: relationship})
+		}
+	}
+	sort.SliceStable(edges, func(i, j int) bool {
+		if edges[i].table != edges[j].table {
+			return edges[i].table < edges[j].table
+		}
+		return edges[i].relationship.ID < edges[j].relationship.ID
+	})
+	return edges
+}
+
+func dataExploreFieldSets(fields []uisignals.DataExploreFieldSignal) (map[string]bool, map[string]bool) {
+	dimensions, measures := map[string]bool{}, map[string]bool{}
+	for _, field := range fields {
+		if !field.Compatible {
+			continue
+		}
+		if field.Kind == "measure" {
+			measures[field.ID] = true
+		} else {
+			dimensions[field.ID] = true
+		}
+	}
+	return dimensions, measures
+}
+
+func validDataExploreSelection(values []string, valid map[string]bool) []string {
+	out := []string{}
+	for _, value := range uniqueDataExploreValues(values) {
+		if valid[value] {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func validDataExploreFilters(filters []uisignals.DataExploreFilterSignal, dimensions map[string]bool) []uisignals.DataExploreFilterSignal {
+	allowedOperators := map[string]bool{
+		"equals": true, "in": true, "contains": true, "not_contains": true, "starts_with": true,
+		"greater_than_or_equal": true, "less_than": true, "is_null": true, "is_not_null": true,
+	}
+	out := []uisignals.DataExploreFilterSignal{}
+	for _, filter := range filters {
+		filter.Field = strings.TrimSpace(filter.Field)
+		filter.Operator = strings.ToLower(strings.TrimSpace(filter.Operator))
+		if !dimensions[filter.Field] || !allowedOperators[filter.Operator] {
+			continue
+		}
+		filter.Values = uniqueDataExploreValues(filter.Values)
+		if filter.Operator != "is_null" && filter.Operator != "is_not_null" && len(filter.Values) == 0 {
+			continue
+		}
+		out = append(out, filter)
+	}
+	return out
+}
+
+func validDataExploreSort(sortSpec []uisignals.DataExploreSortSignal, dimensions, measures []string) []uisignals.DataExploreSortSignal {
+	selected := stringSet(append(append([]string(nil), dimensions...), measures...))
+	out := []uisignals.DataExploreSortSignal{}
+	for _, sort := range sortSpec {
+		sort.Field = strings.TrimSpace(sort.Field)
+		sort.Direction = strings.ToLower(strings.TrimSpace(sort.Direction))
+		if !selected[sort.Field] || (sort.Direction != "asc" && sort.Direction != "desc") {
+			continue
+		}
+		out = append(out, sort)
+	}
+	return out
+}
+
+func dataExploreResultLabels(fields []uisignals.DataExploreFieldSignal, command uisignals.DataExploreCommand) map[string]string {
+	labels := map[string]string{}
+	selected := append(append([]string(nil), command.Dimensions...), command.Measures...)
+	fieldLabels := map[string]string{}
+	lastCounts := map[string]int{}
+	for _, id := range selected {
+		last := id
+		if index := strings.LastIndex(id, "."); index >= 0 {
+			last = id[index+1:]
+		}
+		lastCounts[last]++
+	}
+	for _, field := range fields {
+		fieldLabels[field.ID] = field.Label
+	}
+	for _, id := range selected {
+		last, table := id, ""
+		if index := strings.LastIndex(id, "."); index >= 0 {
+			table, last = id[:index], id[index+1:]
+		}
+		alias := last
+		if lastCounts[last] > 1 && table != "" {
+			alias = table + "__" + last
+		}
+		labels[alias] = firstNonEmpty(fieldLabels[id], dataExploreLabel(last))
+	}
+	return labels
+}
+
+func dataExploreLabel(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "_", " ")
+	if value == "" {
+		return "-"
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
+}
+
+func stringSet(values []string) map[string]bool {
+	out := make(map[string]bool, len(values))
+	for _, value := range values {
+		out[value] = true
+	}
+	return out
+}
+
 func dataExplorerObjects(workspaceID, workspaceTitle string, metrics Metrics, assets []workspace.AssetView, edges []workspace.AssetEdgeView) ([]uisignals.DataExplorerObjectSignal, []string) {
 	out := []uisignals.DataExplorerObjectSignal{}
 	warnings := []string{}
 	for _, asset := range assets {
 		modelID, name := keyParts(asset.Key)
 		switch asset.Type {
-		case string(workspace.AssetTypeSource):
-			modelID, sourceKey, source, ok := dataExplorerSourceForAsset(metrics, asset.Key)
-			if !ok {
-				warnings = append(warnings, fmt.Sprintf("Source %q in workspace %q is not exposed by an active semantic model.", asset.Key, workspaceID))
-				continue
-			}
-			columns := dataColumnsFromSource(source)
-			out = append(out, uisignals.DataExplorerObjectSignal{
-				Key:            dataObjectKey("source", modelID+"."+asset.Key),
-				WorkspaceID:    workspaceID,
-				WorkspaceTitle: uisignals.Optional(workspaceTitle),
-				AssetID:        uisignals.Optional(asset.ID),
-				Layer:          "source",
-				ModelID:        uisignals.Optional(modelID),
-				Source:         uisignals.Optional(sourceKey),
-				Title:          asset.Title,
-				Description:    uisignals.Optional(asset.Description),
-				DetailHref:     uisignals.Optional(assetnav.CanonicalAssetSectionHref(workspaceID, asset, "details", edges)),
-				ColumnCount:    int64(len(columns)),
-				RowCountLabel:  uisignals.Pointer("Unknown"),
-				Columns:        uisignals.OptionalSlice(columns),
-			})
 		case string(workspace.AssetTypeModelTable):
 			model, _ := metrics.DataExplorerModel(modelID)
 			table := DataExplorerTable{}
 			if model.Tables != nil {
 				table = model.Tables[name]
 			}
-			columns := dataColumnsFromTable(table, false)
+			columns := dataColumnsFromTable(table)
 			out = append(out, uisignals.DataExplorerObjectSignal{
 				Key:            dataObjectKey("model_table", asset.ID),
 				WorkspaceID:    workspaceID,
@@ -150,27 +698,12 @@ func dataExplorerObjects(workspaceID, workspaceTitle string, metrics Metrics, as
 				ModelID:        uisignals.Optional(modelID),
 				Table:          uisignals.Optional(name),
 				Title:          asset.Title,
-				Description:    uisignals.Optional(asset.Description),
+				Description:    uisignals.Optional(firstNonEmpty(asset.Description, table.Description)),
 				DetailHref:     uisignals.Optional(assetnav.CanonicalAssetSectionHref(workspaceID, asset, "details", edges)),
+				Grain:          uisignals.Optional(table.Grain),
 				ColumnCount:    int64(len(columns)),
 				RowCountLabel:  uisignals.Pointer("Unknown"),
 				Columns:        uisignals.OptionalSlice(columns),
-			})
-			semanticColumns := dataColumnsFromTable(table, true)
-			out = append(out, uisignals.DataExplorerObjectSignal{
-				Key:            dataObjectKey("semantic_view", modelID+"."+name),
-				WorkspaceID:    workspaceID,
-				WorkspaceTitle: uisignals.Optional(workspaceTitle),
-				AssetID:        uisignals.Optional(asset.ID),
-				Layer:          "semantic_view",
-				ModelID:        uisignals.Optional(modelID),
-				Table:          uisignals.Optional(name),
-				Title:          asset.Title + " semantic view",
-				Description:    uisignals.Pointer("Exposed row fields from the semantic model."),
-				DetailHref:     uisignals.Optional(assetnav.CanonicalAssetSectionHref(workspaceID, asset, "details", edges)),
-				ColumnCount:    int64(len(semanticColumns)),
-				RowCountLabel:  uisignals.Pointer("Unknown"),
-				Columns:        uisignals.OptionalSlice(semanticColumns),
 			})
 		}
 	}
@@ -250,29 +783,6 @@ func dataExplorerObjectsFromMetrics(workspaceID, workspaceTitle string, metrics 
 		if !ok {
 			continue
 		}
-		sourceNames := make([]string, 0, len(model.Sources))
-		for name := range model.Sources {
-			sourceNames = append(sourceNames, name)
-		}
-		sort.Strings(sourceNames)
-		for _, name := range sourceNames {
-			source := model.Sources[name]
-			columns := dataColumnsFromSource(source)
-			assetID := "source:" + modelSummary.ID + "." + name
-			out = append(out, uisignals.DataExplorerObjectSignal{
-				Key:            dataObjectKey("source", assetID),
-				WorkspaceID:    workspaceID,
-				WorkspaceTitle: uisignals.Optional(workspaceTitle),
-				AssetID:        uisignals.Optional(assetID),
-				Layer:          "source",
-				ModelID:        uisignals.Optional(modelSummary.ID),
-				Source:         uisignals.Optional(name),
-				Title:          firstNonEmpty(name, assetID),
-				ColumnCount:    int64(len(columns)),
-				RowCountLabel:  uisignals.Pointer("Unknown"),
-				Columns:        uisignals.OptionalSlice(columns),
-			})
-		}
 		tableNames := make([]string, 0, len(model.Tables))
 		for name := range model.Tables {
 			tableNames = append(tableNames, name)
@@ -281,7 +791,7 @@ func dataExplorerObjectsFromMetrics(workspaceID, workspaceTitle string, metrics 
 		for _, name := range tableNames {
 			table := model.Tables[name]
 			assetID := "model_table:" + modelSummary.ID + "." + name
-			columns := dataColumnsFromTable(table, false)
+			columns := dataColumnsFromTable(table)
 			out = append(out, uisignals.DataExplorerObjectSignal{
 				Key:            dataObjectKey("model_table", assetID),
 				WorkspaceID:    workspaceID,
@@ -291,24 +801,11 @@ func dataExplorerObjectsFromMetrics(workspaceID, workspaceTitle string, metrics 
 				ModelID:        uisignals.Optional(modelSummary.ID),
 				Table:          uisignals.Optional(name),
 				Title:          name,
+				Description:    uisignals.Optional(table.Description),
+				Grain:          uisignals.Optional(table.Grain),
 				ColumnCount:    int64(len(columns)),
 				RowCountLabel:  uisignals.Pointer("Unknown"),
 				Columns:        uisignals.OptionalSlice(columns),
-			})
-			semanticColumns := dataColumnsFromTable(table, true)
-			out = append(out, uisignals.DataExplorerObjectSignal{
-				Key:            dataObjectKey("semantic_view", modelSummary.ID+"."+name),
-				WorkspaceID:    workspaceID,
-				WorkspaceTitle: uisignals.Optional(workspaceTitle),
-				AssetID:        uisignals.Optional(assetID),
-				Layer:          "semantic_view",
-				ModelID:        uisignals.Optional(modelSummary.ID),
-				Table:          uisignals.Optional(name),
-				Title:          name + " semantic view",
-				Description:    uisignals.Pointer("Exposed row fields from the semantic model."),
-				ColumnCount:    int64(len(semanticColumns)),
-				RowCountLabel:  uisignals.Pointer("Unknown"),
-				Columns:        uisignals.OptionalSlice(semanticColumns),
 			})
 		}
 	}
@@ -596,25 +1093,12 @@ func dataColumnsFromSource(source DataExplorerSource) []uisignals.DataPreviewCol
 	out := make([]uisignals.DataPreviewColumnSignal, 0, len(names))
 	for _, name := range names {
 		field := source.Fields[name]
-		out = append(out, uisignals.DataPreviewColumnSignal{Key: name, Label: name, Type: uisignals.Optional(field.Type)})
+		out = append(out, uisignals.DataPreviewColumnSignal{Key: name, Label: name, Type: uisignals.Optional(field.Type), Description: uisignals.Optional(field.Description)})
 	}
 	return out
 }
 
-func dataColumnsFromTable(table DataExplorerTable, semanticOnly bool) []uisignals.DataPreviewColumnSignal {
-	if semanticOnly {
-		names := make([]string, 0, len(table.Dimensions))
-		for name := range table.Dimensions {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		out := make([]uisignals.DataPreviewColumnSignal, 0, len(names))
-		for _, name := range names {
-			dimension := table.Dimensions[name]
-			out = append(out, uisignals.DataPreviewColumnSignal{Key: name, Label: firstNonEmpty(dimension.Label, name), Type: uisignals.Optional(dimension.Type)})
-		}
-		return out
-	}
+func dataColumnsFromTable(table DataExplorerTable) []uisignals.DataPreviewColumnSignal {
 	if len(table.Schema) > 0 {
 		return dataColumnsFromSchema(table.Schema)
 	}
@@ -626,7 +1110,7 @@ func dataColumnsFromTable(table DataExplorerTable, semanticOnly bool) []uisignal
 	out := make([]uisignals.DataPreviewColumnSignal, 0, len(names))
 	for _, name := range names {
 		column := table.Columns[name]
-		out = append(out, uisignals.DataPreviewColumnSignal{Key: name, Label: firstNonEmpty(column.Name, name), Type: uisignals.Optional(column.Type)})
+		out = append(out, uisignals.DataPreviewColumnSignal{Key: name, Label: firstNonEmpty(column.Name, name), Type: uisignals.Optional(column.Type), Description: uisignals.Optional(column.Description)})
 	}
 	return out
 }
@@ -638,7 +1122,11 @@ func dataColumnsFromSchema(columns []DataExplorerColumn) []uisignals.DataPreview
 		return sorted[i].Ordinal < sorted[j].Ordinal
 	})
 	for _, column := range sorted {
-		out = append(out, uisignals.DataPreviewColumnSignal{Key: column.Name, Label: column.Name, Type: uisignals.Optional(column.PhysicalType)})
+		out = append(out, uisignals.DataPreviewColumnSignal{
+			Key: column.Name, Label: column.Name, Type: uisignals.Optional(column.PhysicalType),
+			Description: uisignals.Optional(column.Comment), Nullable: column.Nullable,
+			DefaultValue: uisignals.Optional(column.Default), PrimaryKey: uisignals.Optional(column.PrimaryKey),
+		})
 	}
 	return out
 }

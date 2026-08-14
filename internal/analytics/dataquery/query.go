@@ -213,6 +213,7 @@ const (
 	OperationAPIPreview             = "api_preview"
 	OperationAgentQuery             = "agent_query"
 	OperationPreviewWindow          = "preview_window"
+	OperationSemanticExplore        = "semantic_explore"
 
 	StatusSuccess  = "success"
 	StatusError    = "error"

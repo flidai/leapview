@@ -9,7 +9,7 @@ const emptyPreview: DataPreviewSignal = {
   totalRows: 0,
   availableRows: 0,
   chunkSize: 100,
-  rowHeight: 34,
+  rowHeight: 32,
   resetVersion: 0,
   blocks: {},
   totalRowLabel: 'Unknown',
@@ -48,12 +48,14 @@ class DataPreviewTable extends LitElement {
     lv-windowed-table {
       min-width: 0;
       min-height: 0;
+      --lv-windowed-table-surface: var(--lv-bg-app);
     }
   `
 
   render() {
     return html`
       <lv-windowed-table
+        compact
         .table=${this.tablePayload()}
         @lv-windowed-table-request=${this.forwardWindowCommand}
         @lv-windowed-table-columns=${this.forwardColumnCommand}
@@ -78,7 +80,7 @@ class DataPreviewTable extends LitElement {
       totalRows: preview.totalRows ?? parseTotalRows(preview.totalRowLabel) ?? 0,
       availableRows: preview.availableRows ?? preview.totalRows ?? 0,
       chunkSize: preview.chunkSize ?? command.count ?? command.limit ?? 100,
-      rowHeight: preview.rowHeight ?? 34,
+      rowHeight: preview.rowHeight ?? 32,
       resetVersion: preview.resetVersion ?? command.resetVersion ?? 0,
       sort: {
         key: preview.sort?.column ?? command.sort?.column ?? '',

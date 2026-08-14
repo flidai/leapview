@@ -25,6 +25,8 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 	switch strings.ToLower(strings.TrimSpace(candidate.Surface)) {
 	case "dashboard":
 		return m.resolveDashboardTurnContext(r.Context(), scope, candidate)
+	case "data":
+		return m.resolveDataTurnContext(r.Context(), scope, candidate)
 	case "chat":
 		if m.search == nil {
 			return agent.TurnContext{}, errors.New("search is not configured")
@@ -77,6 +79,109 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 	default:
 		return agent.TurnContext{}, errors.New("unsupported agent context surface")
 	}
+}
+
+func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
+	workspaceID := strings.TrimSpace(candidate.WorkspaceID)
+	modelID := strings.TrimSpace(candidate.ModelID)
+	datasetID := strings.TrimSpace(candidate.DatasetID)
+	if workspaceID == "" || modelID == "" || datasetID == "" {
+		return agent.TurnContext{}, errors.New("data context requires workspace, semantic model, and dataset")
+	}
+	scope.WorkspaceID = workspaceID
+	if !contextCredentialAllowsPrivilege(scope, access.PrivilegeViewItem) {
+		return agent.TurnContext{}, errors.New("credential cannot view this data")
+	}
+	workspaceObject := access.WorkspaceObject(workspaceID)
+	modelObject := access.ItemObjectWithParent(access.SecurableSemanticModel, workspaceID, modelID, workspaceObject)
+	datasetObject := access.ItemObjectWithParent(access.SecurableDataset, workspaceID, modelID+"/"+datasetID, modelObject)
+	if !scope.DevAuthBypass {
+		allowed, err := m.authorizeDashboardTurnContext(ctx, scope.PrincipalID, datasetObject, modelObject, workspaceObject)
+		if err != nil {
+			return agent.TurnContext{}, fmt.Errorf("authorize data context: %w", err)
+		}
+		if !allowed {
+			return agent.TurnContext{}, errors.New("data context is not accessible")
+		}
+	}
+	if m.dashboardMetrics == nil {
+		return agent.TurnContext{}, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	metrics, ok := m.dashboardMetrics(workspaceID)
+	if !ok || metrics == nil {
+		return agent.TurnContext{}, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	model, ok := metrics.SemanticModel(modelID)
+	if !ok || model == nil {
+		return agent.TurnContext{}, fmt.Errorf("unknown semantic model %q", modelID)
+	}
+	if _, ok := model.Tables[datasetID]; !ok {
+		return agent.TurnContext{}, fmt.Errorf("unknown dataset %q", datasetID)
+	}
+	exploration := candidate.NormalizedDataExploration()
+	if err := validateDataExploration(model, exploration); err != nil {
+		return agent.TurnContext{}, err
+	}
+	return agent.TurnContext{
+		Surface: "data", WorkspaceID: workspaceID, ModelID: modelID, DatasetID: datasetID,
+		Exploration: exploration,
+	}, nil
+}
+
+func validateDataExploration(model interface {
+	ValidateQueryDimension(string) error
+	ValidateAggregateMember(string) error
+}, exploration *agent.DataExploration) error {
+	if exploration == nil {
+		return nil
+	}
+	for _, dimension := range exploration.Dimensions {
+		if err := model.ValidateQueryDimension(dimension); err != nil {
+			return fmt.Errorf("invalid exploration dimension %q: %w", dimension, err)
+		}
+	}
+	for _, measure := range exploration.Measures {
+		if err := model.ValidateAggregateMember(measure); err != nil {
+			return fmt.Errorf("invalid exploration measure %q: %w", measure, err)
+		}
+	}
+	allowedFilterOperators := map[string]bool{
+		"equals": true, "in": true, "contains": true, "not_contains": true, "starts_with": true,
+		"greater_than_or_equal": true, "less_than": true, "is_null": true, "is_not_null": true,
+	}
+	for _, filter := range exploration.Filters {
+		if err := model.ValidateQueryDimension(filter.Field); err != nil {
+			return fmt.Errorf("invalid exploration filter field %q: %w", filter.Field, err)
+		}
+		if !allowedFilterOperators[filter.Operator] {
+			return fmt.Errorf("invalid exploration filter operator %q", filter.Operator)
+		}
+		valueFree := filter.Operator == "is_null" || filter.Operator == "is_not_null"
+		if valueFree != (len(filter.Values) == 0) {
+			return fmt.Errorf("invalid values for exploration filter operator %q", filter.Operator)
+		}
+	}
+	if exploration.Time != nil {
+		if err := model.ValidateQueryDimension(exploration.Time.Field); err != nil {
+			return fmt.Errorf("invalid exploration time field %q: %w", exploration.Time.Field, err)
+		}
+		if !map[string]bool{"day": true, "week": true, "month": true, "quarter": true, "year": true}[exploration.Time.Grain] {
+			return fmt.Errorf("invalid exploration time grain %q", exploration.Time.Grain)
+		}
+	}
+	selected := map[string]struct{}{}
+	for _, field := range append(append([]string(nil), exploration.Dimensions...), exploration.Measures...) {
+		selected[field] = struct{}{}
+	}
+	for _, sort := range exploration.Sort {
+		if _, ok := selected[sort.Field]; !ok {
+			return fmt.Errorf("exploration sort field %q is not selected", sort.Field)
+		}
+		if sort.Direction != "asc" && sort.Direction != "desc" {
+			return fmt.Errorf("invalid exploration sort direction %q", sort.Direction)
+		}
+	}
+	return nil
 }
 
 func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {

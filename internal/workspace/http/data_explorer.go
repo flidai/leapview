@@ -1,8 +1,10 @@
 package http
 
 import (
+	"encoding/json"
 	nethttp "net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
@@ -14,7 +16,7 @@ import (
 const (
 	dataExplorerDefaultLimit = 100
 	dataExplorerMaxLimit     = 1000
-	dataExplorerRowHeight    = 34
+	dataExplorerRowHeight    = 32
 )
 
 const (
@@ -30,14 +32,14 @@ type dataExplorerCommandSignals struct {
 }
 
 func (h Handler) DataExplorer(w nethttp.ResponseWriter, r *nethttp.Request) {
-	page, explorer, err := h.globalDataExplorerState(r, dataExplorerCommandFromQuery(r.URL.Query().Get("workspace"), r.URL.Query().Get("object")))
+	page, explorer, err := h.globalDataExplorerState(r, dataExplorerCommandFromURL(r.URL.Query()))
 	if err != nil {
 		nethttp.Error(w, err.Error(), statusForNotFound(err))
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.DataExplorerPage(h.catalogForWorkspacesPage(r, nil), page, explorer, h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
+	if err := ui.DataExplorerPageWithAgent(h.catalogForWorkspacesPage(r, nil), page, explorer, h.dataExplorerAgentBootstrap(r, explorer), h.AgentCommands, h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }
@@ -66,12 +68,12 @@ func (h Handler) DataExplorerUpdates(w nethttp.ResponseWriter, r *nethttp.Reques
 		trace = broker.TraceStore()
 	}
 	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(trace, streamID, "data-explorer.bootstrap"))
-	page, explorer, err := h.globalDataExplorerState(r, dataExplorerCommandFromQuery(r.URL.Query().Get("workspace"), r.URL.Query().Get("object")))
+	page, explorer, err := h.globalDataExplorerState(r, dataExplorerCommandFromURL(r.URL.Query()))
 	if err != nil {
 		nethttp.Error(w, err.Error(), statusForNotFound(err))
 		return
 	}
-	if err := updates.Patch(ui.DataExplorerBootstrapSignals(h.catalogForWorkspacesPage(r, nil), page, explorer, h.chromeOptions(r)...)); err != nil {
+	if err := updates.Patch(ui.DataExplorerBootstrapSignalsWithAgent(h.catalogForWorkspacesPage(r, nil), page, explorer, h.dataExplorerAgentBootstrap(r, explorer), h.chromeOptions(r)...)); err != nil {
 		return
 	}
 	if broker != nil {
@@ -79,6 +81,14 @@ func (h Handler) DataExplorerUpdates(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 	updates.Wait(r.Context())
+}
+
+func (h Handler) dataExplorerAgentBootstrap(r *nethttp.Request, explorer uisignals.DataExplorerSignal) ui.DataExplorerAgentBootstrap {
+	if h.AgentBootstrap == nil {
+		return ui.DataExplorerAgentBootstrap{}
+	}
+	workspaceID := uisignals.ValueOrZero(explorer.Explore.Command.WorkspaceID)
+	return h.AgentBootstrap(r, workspaceID)
 }
 
 func (h Handler) DataExplorerCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -111,6 +121,7 @@ func (h Handler) DataExplorerCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 		broker.Publish(dataExplorerStreamID(clientID), pagestream.SignalPatch{
 			"dataExplorer":        explorer,
 			"dataExplorerCommand": explorer.Command,
+			"agentContext":        ui.DataExplorerAgentContext(explorer),
 		})
 	}
 	w.WriteHeader(nethttp.StatusNoContent)
@@ -125,6 +136,7 @@ func dataExplorerStreamID(clientID string) string {
 
 func dataExplorerCommandFromQuery(workspaceID, object string) uisignals.DataExplorerCommand {
 	return normalizeDataExplorerCommand(uisignals.DataExplorerCommand{
+		Mode:        uisignals.Pointer("browse"),
 		WorkspaceID: uisignals.Optional(strings.TrimSpace(workspaceID)),
 		ObjectKey:   uisignals.Optional(strings.TrimSpace(object)),
 		Limit:       dataExplorerDefaultLimit,
@@ -133,11 +145,83 @@ func dataExplorerCommandFromQuery(workspaceID, object string) uisignals.DataExpl
 	})
 }
 
+func dataExplorerCommandFromURL(values url.Values) uisignals.DataExplorerCommand {
+	command := dataExplorerCommandFromQuery(values.Get("workspace"), values.Get("object"))
+	if strings.EqualFold(strings.TrimSpace(values.Get("mode")), "explore") {
+		command.Mode = uisignals.Pointer("explore")
+		command.Explore = &uisignals.DataExploreCommand{
+			WorkspaceID: uisignals.Optional(strings.TrimSpace(values.Get("workspace"))),
+			ModelID:     uisignals.Optional(strings.TrimSpace(values.Get("model"))),
+			DatasetID:   uisignals.Optional(strings.TrimSpace(values.Get("dataset"))),
+			Dimensions:  splitDataExploreValues(values["dimension"]),
+			Measures:    splitDataExploreValues(values["measure"]),
+			Filters:     dataExploreFiltersFromURL(values["filter"]), Sort: dataExploreSortFromURL(values["sort"]),
+			Time: dataExploreTimeFromURL(values.Get("time")), Limit: dataExploreLimitFromURL(values.Get("limit")),
+		}
+	}
+	return normalizeDataExplorerCommand(command)
+}
+
+func dataExploreFiltersFromURL(values []string) []uisignals.DataExploreFilterSignal {
+	out := []uisignals.DataExploreFilterSignal{}
+	for _, value := range values {
+		var filter uisignals.DataExploreFilterSignal
+		if json.Unmarshal([]byte(value), &filter) == nil {
+			out = append(out, filter)
+		}
+	}
+	return out
+}
+
+func dataExploreSortFromURL(values []string) []uisignals.DataExploreSortSignal {
+	out := []uisignals.DataExploreSortSignal{}
+	for _, value := range values {
+		var sortSpec uisignals.DataExploreSortSignal
+		if json.Unmarshal([]byte(value), &sortSpec) == nil {
+			out = append(out, sortSpec)
+		}
+	}
+	return out
+}
+
+func dataExploreTimeFromURL(value string) *uisignals.DataExploreTimeSignal {
+	var timeSpec uisignals.DataExploreTimeSignal
+	if strings.TrimSpace(value) == "" || json.Unmarshal([]byte(value), &timeSpec) != nil {
+		return nil
+	}
+	return &timeSpec
+}
+
+func dataExploreLimitFromURL(value string) int64 {
+	limit, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || limit <= 0 {
+		return dataExplorerDefaultLimit
+	}
+	return limit
+}
+
+func splitDataExploreValues(values []string) []string {
+	out := []string{}
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
 func DataExplorerCommandFromQuery(workspaceID, object string) uisignals.DataExplorerCommand {
 	return dataExplorerCommandFromQuery(workspaceID, object)
 }
 
 func normalizeDataExplorerCommand(command uisignals.DataExplorerCommand) uisignals.DataExplorerCommand {
+	mode := strings.ToLower(strings.TrimSpace(uisignals.ValueOrZero(command.Mode)))
+	if mode != "explore" {
+		mode = "browse"
+	}
+	command.Mode = uisignals.Pointer(mode)
 	command.WorkspaceID = uisignals.Optional(strings.TrimSpace(uisignals.ValueOrZero(command.WorkspaceID)))
 	command.ObjectKey = uisignals.Optional(strings.TrimSpace(uisignals.ValueOrZero(command.ObjectKey)))
 	if command.Limit <= 0 {
@@ -177,7 +261,50 @@ func normalizeDataExplorerCommand(command uisignals.DataExplorerCommand) uisigna
 	if len(columnWidths) > 0 {
 		command.ColumnWidths = &columnWidths
 	}
+	if command.Explore == nil {
+		command.Explore = &uisignals.DataExploreCommand{}
+	}
+	explore := normalizeDataExploreCommand(*command.Explore, uisignals.ValueOrZero(command.WorkspaceID))
+	command.Explore = &explore
 	return command
+}
+
+func normalizeDataExploreCommand(command uisignals.DataExploreCommand, fallbackWorkspaceID string) uisignals.DataExploreCommand {
+	command.WorkspaceID = uisignals.Optional(firstNonEmpty(strings.TrimSpace(uisignals.ValueOrZero(command.WorkspaceID)), fallbackWorkspaceID))
+	command.ModelID = uisignals.Optional(strings.TrimSpace(uisignals.ValueOrZero(command.ModelID)))
+	command.DatasetID = uisignals.Optional(strings.TrimSpace(uisignals.ValueOrZero(command.DatasetID)))
+	command.Dimensions = uniqueDataExploreValues(command.Dimensions)
+	command.Measures = uniqueDataExploreValues(command.Measures)
+	if command.Filters == nil {
+		command.Filters = []uisignals.DataExploreFilterSignal{}
+	}
+	if command.Sort == nil {
+		command.Sort = []uisignals.DataExploreSortSignal{}
+	}
+	if command.Limit <= 0 {
+		command.Limit = dataExplorerDefaultLimit
+	}
+	if command.Limit > dataExplorerMaxLimit {
+		command.Limit = dataExplorerMaxLimit
+	}
+	return command
+}
+
+func uniqueDataExploreValues(values []string) []string {
+	out := []string{}
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func normalizeDataExplorerColumnWidths(widths map[string]float64) map[string]float64 {
@@ -199,7 +326,7 @@ func normalizeDataExplorerColumnWidths(widths map[string]float64) map[string]flo
 }
 
 func dataExplorerResizeOnlyPatch(current uisignals.DataExplorerSignal, nextCommand uisignals.DataExplorerCommand) (uisignals.DataExplorerSignal, bool) {
-	if len(uisignals.ValueOrZero(nextCommand.ColumnWidths)) == 0 || current.SelectedObject == nil {
+	if uisignals.ValueOrZero(nextCommand.Mode) == "explore" || len(uisignals.ValueOrZero(nextCommand.ColumnWidths)) == 0 || current.SelectedObject == nil {
 		return uisignals.DataExplorerSignal{}, false
 	}
 	next := normalizeDataExplorerCommand(nextCommand)
@@ -214,7 +341,8 @@ func dataExplorerResizeOnlyPatch(current uisignals.DataExplorerSignal, nextComma
 }
 
 func dataExplorerCommandsEqualExceptColumnWidths(left, right uisignals.DataExplorerCommand) bool {
-	return uisignals.ValueOrZero(left.WorkspaceID) == uisignals.ValueOrZero(right.WorkspaceID) &&
+	return uisignals.ValueOrZero(left.Mode) == uisignals.ValueOrZero(right.Mode) &&
+		uisignals.ValueOrZero(left.WorkspaceID) == uisignals.ValueOrZero(right.WorkspaceID) &&
 		uisignals.ValueOrZero(left.ObjectKey) == uisignals.ValueOrZero(right.ObjectKey) &&
 		left.Offset == right.Offset &&
 		left.Limit == right.Limit &&

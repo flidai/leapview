@@ -619,6 +619,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return fmt.Errorf("resolve generated access command privileges: %w", privilegeErr)
 		}
 		var err error
+		agentUICommands := routes.agentModule.UICommandBindings()
 		routes.workspaceModule, err = workspacemodule.Build(ctx, workspacemodule.Config{
 			Database:            database,
 			Logger:              platform.logger,
@@ -646,6 +647,14 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return metricsForWorkspace(runtime.metrics, policy.defaultWorkspaceID, workspaceID)
 			},
 			RootMetrics: runtime.metrics,
+			AgentBootstrap: func(r *http.Request, workspaceID string) workspacemodule.DataExplorerAgentBootstrap {
+				state := routes.agentModule.DashboardBootstrap(r, workspaceID)
+				return workspacemodule.DataExplorerAgentBootstrap{Agent: state.Agent, Visuals: state.Visuals}
+			},
+			AgentCommands: workspacemodule.DataExplorerAgentCommandBindings{
+				CreateConversation: agentUICommands.CreateConversation,
+				CreateRun:          agentUICommands.CreateRun,
+			},
 			CurrentPrincipal: func(r *http.Request) (workspacemodule.Principal, bool) {
 				principal, ok := routes.accessModule.CurrentPrincipal(r)
 				return workspacemodule.Principal{
