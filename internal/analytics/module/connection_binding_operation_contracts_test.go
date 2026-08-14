@@ -15,13 +15,14 @@ func TestConnectionBindingOperationClassifications(t *testing.T) {
 		auditAction string
 		privilege   string
 		idempotency string
+		uiAction    string
 	}{
-		"createTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingCreated), privilege: "MANAGE_CONNECTION_METADATA", idempotency: "required"},
-		"updateTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingUpdated), privilege: "MANAGE_CONNECTION_METADATA"},
-		"testTargetConnectionBinding":    {auditAction: string(connectionbinding.RefreshTest), privilege: "TEST_CONNECTION", idempotency: "required"},
-		"refreshTargetConnectionBinding": {auditAction: string(connectionbinding.RefreshRequested), privilege: "TEST_CONNECTION", idempotency: "required"},
-		"enableTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingEnabled), privilege: "MANAGE_CONNECTION_METADATA", idempotency: "required"},
-		"disableTargetConnectionBinding": {auditAction: string(connectionbinding.AuditBindingDisabled), privilege: "MANAGE_CONNECTION_METADATA", idempotency: "required"},
+		"createTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingCreated), privilege: "MANAGE_CONNECTION_METADATA", idempotency: "required", uiAction: "connection.binding.configure"},
+		"updateTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingUpdated), privilege: "MANAGE_CONNECTION_METADATA", uiAction: "connection.binding.update"},
+		"testTargetConnectionBinding":    {auditAction: string(connectionbinding.RefreshTest), privilege: "TEST_CONNECTION", idempotency: "required", uiAction: "connection.binding.test"},
+		"refreshTargetConnectionBinding": {auditAction: string(connectionbinding.RefreshRequested), privilege: "TEST_CONNECTION", idempotency: "required", uiAction: "connection.binding.refresh"},
+		"enableTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingEnabled), privilege: "MANAGE_CONNECTION_METADATA", idempotency: "required", uiAction: "connection.binding.enable"},
+		"disableTargetConnectionBinding": {auditAction: string(connectionbinding.AuditBindingDisabled), privilege: "MANAGE_CONNECTION_METADATA", idempotency: "required", uiAction: "connection.binding.disable"},
 	}
 	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]
@@ -37,7 +38,8 @@ func TestConnectionBindingOperationClassifications(t *testing.T) {
 			contract.Command.Target.Type != "workspace" ||
 			contract.Command.Privilege != expected.privilege ||
 			contract.Command.Idempotency != expected.idempotency ||
-			len(contract.Command.AdditionalExposures) != 0 {
+			contract.Command.UI == nil ||
+			contract.Command.UI.ActionID != expected.uiAction {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
 	}

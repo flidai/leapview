@@ -524,6 +524,8 @@ model ComposerSignal {
 model ConnectionsPageEnvelope {
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
   `chrome`: ChromeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "connectionAdmin" })
+  `connectionAdmin`: ConnectionAdministrationSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
   `page`: ConnectionsPageSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
@@ -535,12 +537,99 @@ model ConnectionsPageEnvelope {
 @apigen.contract(#{ kind: "ui-signal", tags: #["connections", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "connections" })
 model ConnectionsPageSignal {
-  `assetList`?: WorkspaceAssetListSignal;
+  `connections`: ConnectionSummarySignal[];
   `description`?: string;
   `environment`?: string;
   `kind`: RouteKind;
+  `query`?: string;
   `title`: string;
   `workspaceId`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["connections", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "connections" })
+model ConnectionSummarySignal {
+  `credentialStatus`: string;
+  `description`?: string;
+  `detailHref`: string;
+  `id`: string;
+  `kind`: string;
+  `lifecycle`: ConnectionLifecycleSignal;
+  `scope`: string;
+  `sourceCount`: int64;
+  `title`: string;
+}
+
+model ConnectionAdministrationCommandSignal {
+  `action`: string;
+  `assetId`: string;
+  `authenticationMode`: string;
+  `confirmationToken`: string;
+  `connectorKind`: string;
+  `credentialEnvironment`: string;
+  `credentialProjectId`: string;
+  `database`: string;
+  `expectedRevision`: int64;
+  `host`: string;
+  `logicalConnection`: string;
+  `objectScope`: string;
+  `options`: string;
+  `port`: string;
+  `secretKey`: string;
+  `secretPath`: string;
+  `sourceIdentity`: string;
+  `surface`: string;
+  `tlsMode`: string;
+}
+
+model ConnectionAdministrationSignal {
+  `command`: ConnectionAdministrationCommandSignal;
+  `status`: ConnectionAdministrationStatusSignal;
+}
+
+model ConnectionAdministrationStatusSignal {
+  `error`: string;
+  `loading`: boolean;
+  `message`: string;
+}
+
+model ConnectionLifecycleActionSignal {
+  `destructive`: boolean;
+  `id`: string;
+  `label`: string;
+  `primary`: boolean;
+}
+
+model ConnectionLifecycleSignal {
+  `actions`: ConnectionLifecycleActionSignal[];
+  `assetId`: string;
+  `authenticationMode`: string;
+  `bindingId`: string;
+  `canManage`: boolean;
+  `canTest`: boolean;
+  `connectorKind`: string;
+  `credentialEnvironment`: string;
+  `credentialProjectId`: string;
+  `database`: string;
+  `diagnosticCode`: string;
+  `enabled`: boolean;
+  `exists`: boolean;
+  `health`: string;
+  `host`: string;
+  `lastValidatedAt`: string;
+  `logicalConnection`: string;
+  `objectScope`: string;
+  `options`: string;
+  `port`: string;
+  `revision`: int64;
+  `secretKey`: string;
+  `secretPath`: string;
+  `sourceIdentity`: string;
+  `state`: string;
+  `statusLabel`: string;
+  `tlsMode`: string;
+  `tone`: string;
+  `validatedVersion`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "signal"] })
@@ -1711,6 +1800,8 @@ model WorkspaceAssetListSignal {
 model WorkspaceAssetPageEnvelope {
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
   `chrome`: ChromeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "connectionAdmin" })
+  `connectionAdmin`?: ConnectionAdministrationSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
   `page`: WorkspaceAssetPageSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
@@ -1727,7 +1818,9 @@ model WorkspaceAssetPageSignal {
   `asset`: WorkspaceAssetSummarySignal;
   `assetId`: string;
   `breadcrumbs`: WorkspaceBreadcrumbSignal[];
+  `connectionLifecycle`?: ConnectionLifecycleSignal;
   `details`?: WorkspaceAssetDetailsSignal;
+  `drawerParent`?: WorkspaceAssetPageSignal;
   `environment`?: string;
   `kind`: RouteKind;
   `lineage`?: WorkspaceAssetLineageSignal;

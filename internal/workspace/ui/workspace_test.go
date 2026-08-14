@@ -47,7 +47,7 @@ func TestListPagesUseDebouncedPostSearchCommands(t *testing.T) {
 		{name: "catalog", page: CatalogPage(catalog), path: "/catalog/search"},
 		{name: "workspaces", page: WorkspacesPage(catalog, []workspaceview.WorkspaceView{workspace}, "Owner"), path: "/workspaces/search"},
 		{name: "workspace assets", page: WorkspacePage(catalog, workspace, assets, "", "", "Owner", WorkspaceAccessResponse{}, "", testAccessCommandBindings()), path: "/workspaces/leapview/search"},
-		{name: "connections", page: ConnectionsPage(catalog, workspace.ID, assets, edges, "", "", "Owner"), path: "/connections/search"},
+		{name: "connections", page: ConnectionsPage(catalog, workspace.ID, assets, edges, "", "Owner"), path: "/connections/search"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -90,7 +90,7 @@ func TestListResultPatchesOnlyReplaceServerOwnedRows(t *testing.T) {
 		{name: "catalog", patch: CatalogListPatchForCatalogsQuery([]catalog.Catalog{workspaceCatalog}, "sales"), field: "dashboards"},
 		{name: "workspaces", patch: WorkspacesListResultsPatch([]workspaceview.WorkspaceView{workspace}), field: "workspaces"},
 		{name: "workspace assets", patch: WorkspaceAssetListResultsPatch(workspace.ID, assets, edges), field: "assetList", nested: "assets"},
-		{name: "connections", patch: ConnectionsListResultsPatch("platform", assets, edges), field: "assetList", nested: "assets"},
+		{name: "connections", patch: ConnectionsListResultsPatch(assets, edges), field: "connections"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -889,36 +889,33 @@ func TestConnectionAssetDetailsRenderConnectionSurface(t *testing.T) {
 	}
 }
 
-func TestConnectionsPageUsesConnectionAssetTabs(t *testing.T) {
+func TestConnectionsPageListsOnlyConnectionsWithConnectionFields(t *testing.T) {
 	workspace, catalog, assets, edges := testWorkspaceAssetFixtures()
-	visibleAssets := []workspaceview.AssetView{}
-	for _, asset := range assets {
-		if asset.Type == "connection" || asset.Type == "source" {
-			visibleAssets = append(visibleAssets, asset)
-		}
-	}
 
 	var out strings.Builder
-	err := ConnectionsPage(catalog, workspace.ID, visibleAssets, edges, "source", "", "Owner").Render(&out)
+	err := ConnectionsPage(catalog, workspace.ID, assets, edges, "", "Owner").Render(&out)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rendered := html.UnescapeString(out.String())
-	rendered += bootstrapJSON(ConnectionsBootstrapSignals(catalog, workspace.ID, visibleAssets, edges, "source", "", "Owner"))
+	rendered += bootstrapJSON(ConnectionsBootstrapSignals(catalog, workspace.ID, assets, edges, "", "Owner"))
 
 	for _, want := range []string{
 		`<lv-connections-page`,
 		`data-on:lv-entity-list-query__debounce.200ms=`,
 		`@post('/connections/search'`,
-		`"searchHref":"/connections"`,
-		`"href":"/connections?type=connection"`,
-		`"active":true,"href":"/connections?type=source"`,
-		`"/connections/connection:olist.olist/sources/source:olist.orders/details"`,
-		`"parentHref":"/connections/connection:olist.olist/details"`,
-		`"typeLabel":"Source"`,
+		`"connections":[`,
+		`"kind":"local"`,
+		`"sourceCount":1`,
+		`"credentialStatus":"Not configured"`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("connections page did not render %q:\n%s", want, rendered)
+		}
+	}
+	for _, notWant := range []string{`"typeLabel":"Source"`, `?type=source`, `"title":"orders"`} {
+		if strings.Contains(rendered, notWant) {
+			t.Fatalf("connections page mixed source content %q:\n%s", notWant, rendered)
 		}
 	}
 	if strings.Contains(rendered, `data-workspace-asset-toolbar`) {
@@ -926,29 +923,81 @@ func TestConnectionsPageUsesConnectionAssetTabs(t *testing.T) {
 	}
 }
 
+func TestConnectionLifecycleUsesOneStateDrivenPrimaryAction(t *testing.T) {
+	_, _, assets, edges := testWorkspaceAssetFixtures()
+	connection := testAssetByID(t, assets, "connection")
+	logical := ConnectionLogicalName(connection, assets, edges)
+	tests := []struct {
+		name        string
+		binding     *ConnectionBindingView
+		wantState   string
+		wantPrimary string
+	}{
+		{name: "missing", wantState: "missing", wantPrimary: "configure"},
+		{name: "pending", binding: &ConnectionBindingView{ID: logical, LogicalConnection: logical, Enabled: true, Health: "pending", Revision: 1}, wantState: "pending", wantPrimary: "test"},
+		{name: "healthy", binding: &ConnectionBindingView{ID: logical, LogicalConnection: logical, Enabled: true, Health: "healthy", Revision: 2}, wantState: "healthy", wantPrimary: "refresh"},
+		{name: "degraded", binding: &ConnectionBindingView{ID: logical, LogicalConnection: logical, Enabled: true, Health: "degraded", Revision: 3}, wantState: "degraded", wantPrimary: "refresh"},
+		{name: "disabled", binding: &ConnectionBindingView{ID: logical, LogicalConnection: logical, Health: "disabled", Revision: 4}, wantState: "disabled", wantPrimary: "enable"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			administration := ConnectionAdministrationView{
+				Bindings: map[string]ConnectionBindingView{}, CanManage: true, CanTest: true,
+				RequiresBinding: map[string]bool{logical: true},
+			}
+			if test.binding != nil {
+				administration.Bindings[logical] = *test.binding
+			}
+			lifecycle := ConnectionLifecycleForAsset(connection, assets, edges, administration)
+			if lifecycle.State != test.wantState {
+				t.Fatalf("state = %q, want %q", lifecycle.State, test.wantState)
+			}
+			primary := ""
+			primaryCount := 0
+			for _, action := range lifecycle.Actions {
+				if action.Primary {
+					primary, primaryCount = action.ID, primaryCount+1
+				}
+			}
+			if primary != test.wantPrimary || primaryCount != 1 {
+				t.Fatalf("primary action = %q count=%d, want %q count=1: %#v", primary, primaryCount, test.wantPrimary, lifecycle.Actions)
+			}
+		})
+	}
+}
+
 func TestConnectionSourceAssetDetailsRenderConnectionChrome(t *testing.T) {
 	workspace, catalog, assets, edges := testWorkspaceAssetFixtures()
 	source := testAssetByID(t, assets, "source")
 	connection := testAssetByID(t, assets, "connection")
+	logical := ConnectionLogicalName(connection, assets, edges)
+	administration := ConnectionAdministrationView{
+		Bindings: map[string]ConnectionBindingView{}, CanManage: true, CanTest: true,
+		RequiresBinding: map[string]bool{logical: false},
+	}
 
 	var out strings.Builder
-	err := ConnectionSourceAssetPage(catalog, workspace, connection, source, assets, edges, "details", "Owner").Render(&out)
+	err := ConnectionSourceAssetPageWithAdministrationForEnvironment(catalog, workspace, connection, source, assets, edges, "details", "dev", "Owner", AssetVersionsState{}, administration, ConnectionCommandBindings{}, "csrf", nil).Render(&out)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rendered := html.UnescapeString(out.String())
-	rendered += bootstrapJSON(ConnectionSourceAssetBootstrapSignals(catalog, workspace, connection, source, assets, edges, "details", "Owner", AssetVersionsState{}))
+	rendered += bootstrapJSON(ConnectionSourceAssetBootstrapSignalsWithAdministrationForEnvironment(catalog, workspace, connection, source, assets, edges, "details", "dev", "Owner", AssetVersionsState{}, administration, testLayoutProvider()))
 
 	for _, want := range []string{
 		`<lv-workspace-asset-page`,
+		`"drawerParent":`,
 		`assetWorkspace=leapview`,
 		"Connections",
 		"Olist connection",
 		"Sources",
 		"orders",
 		"Fields",
-		`"href":"/connections?type=source"`,
 		`"href":"/connections/connection:olist.olist/sources/source:olist.orders/lineage"`,
+		`"state":"not_required"`,
+		`"statusLabel":"Not required"`,
+		`"chrome":`,
+		`"active":"connections"`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("connection-scoped source details did not render %q:\n%s", want, rendered)

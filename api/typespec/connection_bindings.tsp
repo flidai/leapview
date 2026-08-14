@@ -204,6 +204,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionBindingConflictFailure)
   @apigen.failsWith(ConnectionTestFailedFailure)
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
+  @apigen.ui("connection.binding.configure")
   @apigen.command(#{
     auditAction: "connection.binding.created",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
@@ -253,6 +254,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionBindingDisabledFailure)
   @apigen.failsWith(ConfirmationRequiredFailure)
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
+  @apigen.ui("connection.binding.update")
   @apigen.command(#{
     auditAction: "connection.binding.updated",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
@@ -278,6 +280,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionBindingDisabledFailure)
   @apigen.failsWith(ConnectionTestFailedFailure)
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
+  @apigen.ui("connection.binding.test")
   @apigen.command(#{
     auditAction: "credential.test.requested",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
@@ -302,6 +305,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionBindingDisabledFailure)
   @apigen.failsWith(ConnectionTestFailedFailure)
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
+  @apigen.ui("connection.binding.refresh")
   @apigen.command(#{
     auditAction: "credential.refresh.requested",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
@@ -324,6 +328,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionBindingNotFoundFailure)
   @apigen.failsWith(ConnectionBindingConflictFailure)
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
+  @apigen.ui("connection.binding.enable")
   @apigen.command(#{
     auditAction: "connection.binding.enabled",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
@@ -347,6 +352,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionBindingConflictFailure)
   @apigen.failsWith(ConnectionBindingDisabledFailure)
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
+  @apigen.ui("connection.binding.disable")
   @apigen.command(#{
     auditAction: "connection.binding.disabled",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],

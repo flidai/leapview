@@ -34,7 +34,7 @@ type PackageRule struct {
 var PublicContractPrefixes = map[string][]string{
 	"access":       {"internal/access", "internal/access/api", "internal/access/policy", "internal/access/snapshot", "internal/access/ui/signals"},
 	"agent":        {"internal/agent/api", "internal/agent/ui/signals"},
-	"analytics":    {"internal/analytics/model", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery"},
+	"analytics":    {"internal/analytics/model", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery"},
 	"dashboard":    {"internal/dashboard", "internal/dashboard/api", "internal/dashboard/appearance", "internal/dashboard/catalog", "internal/dashboard/definition", "internal/dashboard/filter", "internal/dashboard/publication", "internal/dashboard/report", "internal/dashboard/reportmodel", "internal/dashboard/queryruntime", "internal/dashboard/ui/signals", "internal/dashboard/visualization/definition", "internal/dashboard/visualization/format", "internal/dashboard/visualization/geometry", "internal/dashboard/visualization/ir", "internal/dashboard/visualization/mapasset", "internal/dashboard/visualization/runtime"},
 	"manageddata":  {"internal/manageddata", "internal/manageddata/binding", "internal/manageddata/runtimebinding"},
 	"workspace":    {"internal/workspace", "internal/workspace/api", "internal/workspace/navigation", "internal/workspace/search"},
@@ -158,6 +158,7 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/project/compiler", Capability: "project", Layer: LayerUseCase},
 	{Prefix: "internal/project/artifact", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/analytics/runtime", Capability: "analytics", Layer: LayerContract},
+	{Prefix: "internal/analytics/connectionadmin", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/infisical", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/environment", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/dashboard/analyticsruntime", Capability: "dashboard", Layer: LayerAdapter},

@@ -682,6 +682,28 @@ func dataExplorerObjects(workspaceID, workspaceTitle string, metrics Metrics, as
 	for _, asset := range assets {
 		modelID, name := keyParts(asset.Key)
 		switch asset.Type {
+		case string(workspace.AssetTypeSource):
+			sourceModelID, sourceName, source, ok := dataExplorerSourceForAsset(metrics, asset.Key)
+			if !ok {
+				warnings = append(warnings, fmt.Sprintf("Source %q is not available in the workspace runtime catalog.", asset.Title))
+				continue
+			}
+			columns := dataColumnsFromSource(source)
+			out = append(out, uisignals.DataExplorerObjectSignal{
+				Key:            dataObjectKey("source", asset.ID),
+				WorkspaceID:    workspaceID,
+				WorkspaceTitle: uisignals.Optional(workspaceTitle),
+				AssetID:        uisignals.Optional(asset.ID),
+				Layer:          "source",
+				ModelID:        uisignals.Optional(sourceModelID),
+				Table:          uisignals.Optional(sourceName),
+				Title:          asset.Title,
+				Description:    uisignals.Optional(asset.Description),
+				DetailHref:     uisignals.Optional(assetnav.CanonicalAssetSectionHref(workspaceID, asset, "details", edges)),
+				ColumnCount:    int64(len(columns)),
+				RowCountLabel:  uisignals.Pointer("Preview unavailable"),
+				Columns:        uisignals.OptionalSlice(columns),
+			})
 		case string(workspace.AssetTypeModelTable):
 			model, _ := metrics.DataExplorerModel(modelID)
 			table := DataExplorerTable{}

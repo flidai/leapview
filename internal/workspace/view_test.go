@@ -19,8 +19,11 @@ func TestWorkspaceViewHelpersFilterAndNavigateAssets(t *testing.T) {
 	if filtered := FilterWorkspaceAssets(assets, "connection", "duck"); len(filtered) != 1 || filtered[0].ID != "connection:duckdb" {
 		t.Fatalf("workspace dependency filter = %#v", filtered)
 	}
-	if filtered := FilterConnectionAssets(assets, "source", "ord"); len(filtered) != 1 || filtered[0].ID != "source:orders" {
-		t.Fatalf("filtered connection assets = %#v", filtered)
+	if filtered := FilterConnections(assets, "duck"); len(filtered) != 1 || filtered[0].ID != "connection:duckdb" {
+		t.Fatalf("filtered connections = %#v", filtered)
+	}
+	if filtered := FilterConnections(assets, "ord"); len(filtered) != 0 {
+		t.Fatalf("connection search leaked sources = %#v", filtered)
 	}
 	edges := []AssetEdgeView{{FromAssetID: "source:orders", ToAssetID: "connection:duckdb", Type: string(AssetEdgeUsesConnection)}}
 	if got := SourceConnectionID("source:orders", edges); got != "connection:duckdb" {

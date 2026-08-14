@@ -16,6 +16,7 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accessapi "github.com/flidai/leapview/internal/access/api"
+	"github.com/flidai/leapview/internal/analytics/connectionadmin"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -30,20 +31,25 @@ import (
 )
 
 type Handler struct {
-	WorkspaceID         func(string) string
-	Environment         func(*nethttp.Request) string
-	ReadModel           ReadModel
-	RefreshState        RefreshStateProvider
-	RefreshRunner       AssetRefreshRunner
-	Broker              *pagestream.Broker
-	CSRFToken           func(*nethttp.Request) string
-	CurrentRoleLabel    func(*nethttp.Request) string
-	RoleBindingCommands access.RoleBindingCommander
-	GrantCommands       access.GrantOperations
-	AccessCommands      ui.AccessCommandBindings
-	AgentBootstrap      func(*nethttp.Request, string) ui.DataExplorerAgentBootstrap
-	AgentCommands       ui.DataExplorerAgentCommandBindings
-	Layout              func(*nethttp.Request) webpage.Provider
+	WorkspaceID              func(string) string
+	Environment              func(*nethttp.Request) string
+	ReadModel                ReadModel
+	RefreshState             RefreshStateProvider
+	RefreshRunner            AssetRefreshRunner
+	Broker                   *pagestream.Broker
+	CSRFToken                func(*nethttp.Request) string
+	CurrentRoleLabel         func(*nethttp.Request) string
+	RoleBindingCommands      access.RoleBindingCommander
+	GrantCommands            access.GrantOperations
+	AccessCommands           ui.AccessCommandBindings
+	ConnectionAdministration connectionadmin.Administration
+	ConnectionAuthorize      ConnectionPrivilegeAuthorizer
+	ConnectionCommands       ui.ConnectionCommandBindings
+	ConnectionTargetID       string
+	ConnectionWorkspaceID    string
+	AgentBootstrap           func(*nethttp.Request, string) ui.DataExplorerAgentBootstrap
+	AgentCommands            ui.DataExplorerAgentCommandBindings
+	Layout                   func(*nethttp.Request) webpage.Provider
 }
 
 type workspaceAccessSignalPayload struct {
@@ -159,15 +165,13 @@ func (h Handler) ConnectionsSearch(w nethttp.ResponseWriter, r *nethttp.Request)
 		nethttp.Error(w, err.Error(), statusForNotFound(err))
 		return
 	}
-	activeType, query := "", ""
-	if signals.Filter != nil {
-		activeType = workspace.NormalizeConnectionAssetType(*signals.Filter)
-	}
+	query := ""
 	if signals.Query != nil {
 		query = strings.TrimSpace(*signals.Query)
 	}
-	filtered := workspace.FilterConnectionAssets(assets, activeType, query)
-	_ = pagestream.PatchResponse(w, r, ui.ConnectionsListResultsPatch("platform", filtered, edges))
+	filtered := workspace.FilterConnections(assets, query)
+	administration := h.connectionAdministrationView(r, assets, edges, uisignals.ConnectionAdministrationStatusSignal{})
+	_ = pagestream.PatchResponse(w, r, ui.ConnectionsListResultsPatchWithAdministration(filtered, edges, administration))
 }
 
 func (h Handler) WorkspaceAssets(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -177,7 +181,7 @@ func (h Handler) WorkspaceAssets(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Redirect(w, r, assetnav.ConnectionsHref(r.URL.Query().Get("q")), nethttp.StatusFound)
 		return
 	case "source":
-		nethttp.Redirect(w, r, assetnav.ConnectionsHrefWithType("source", r.URL.Query().Get("q")), nethttp.StatusFound)
+		nethttp.Redirect(w, r, assetnav.ConnectionsHref(""), nethttp.StatusFound)
 		return
 	}
 	assets, _, err := h.assetsAndEdges(r, workspaceID)
@@ -293,11 +297,11 @@ func (h Handler) Connections(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, err.Error(), statusForNotFound(err))
 		return
 	}
-	activeType := workspace.NormalizeConnectionAssetType(r.URL.Query().Get("type"))
-	filtered := workspace.FilterConnectionAssets(assets, activeType, r.URL.Query().Get("q"))
+	filtered := workspace.FilterConnections(assets, r.URL.Query().Get("q"))
+	administration := h.connectionAdministrationView(r, assets, edges, uisignals.ConnectionAdministrationStatusSignal{})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.ConnectionsPageForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, activeType, r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
+	if err := ui.ConnectionsPageWithAdministrationForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, r.URL.Query().Get("q"), h.environment(r), h.currentRoleLabel(r), h.csrfToken(r), administration, h.ConnectionCommands, h.chromeOptions(r)...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }
@@ -356,7 +360,6 @@ func (h Handler) ConnectionsBootstrapUpdates(w nethttp.ResponseWriter, r *nethtt
 		nethttp.Error(w, err.Error(), statusForNotFound(err))
 		return
 	}
-	activeType := workspace.NormalizeConnectionAssetType(r.URL.Query().Get("type"))
 	query := r.URL.Query().Get("q")
 	var listSignals struct {
 		Query  *string `json:"entityListQuery"`
@@ -369,11 +372,9 @@ func (h Handler) ConnectionsBootstrapUpdates(w nethttp.ResponseWriter, r *nethtt
 	if listSignals.Query != nil {
 		query = strings.TrimSpace(*listSignals.Query)
 	}
-	if listSignals.Filter != nil {
-		activeType = workspace.NormalizeConnectionAssetType(*listSignals.Filter)
-	}
-	filtered := workspace.FilterConnectionAssets(assets, activeType, query)
-	h.patchAndWait(w, r, ui.ConnectionsBootstrapSignalsForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, activeType, query, h.environment(r), h.currentRoleLabel(r), h.chromeOptions(r)...))
+	filtered := workspace.FilterConnections(assets, query)
+	administration := h.connectionAdministrationView(r, assets, edges, uisignals.ConnectionAdministrationStatusSignal{})
+	h.patchAndWait(w, r, ui.ConnectionsBootstrapSignalsWithAdministrationForEnvironment(h.catalogForWorkspacesPage(r, nil), "platform", filtered, edges, query, h.environment(r), h.currentRoleLabel(r), administration, h.chromeOptions(r)...))
 }
 
 func (h Handler) ConnectionSource(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -429,7 +430,8 @@ func (h Handler) ConnectionSourceSection(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.ConnectionSourceAssetPageWithVersionsForEnvironment(h.catalogForWorkspacesPage(r, nil), platformAssetWorkspaceView(), connection, source, assets, edges, section, h.environment(r), h.currentRoleLabel(r), versions).Render(w); err != nil {
+	administration := h.connectionAdministrationView(r, assets, edges, uisignals.ConnectionAdministrationStatusSignal{})
+	if err := ui.ConnectionSourceAssetPageWithAdministrationForEnvironment(h.catalogForWorkspacesPage(r, nil), platformAssetWorkspaceView(), connection, source, assets, edges, section, h.environment(r), h.currentRoleLabel(r), versions, administration, h.ConnectionCommands, h.csrfToken(r), h.chromeOptions(r)).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }
@@ -469,7 +471,8 @@ func (h Handler) ConnectionAssetSection(w nethttp.ResponseWriter, r *nethttp.Req
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	if err := ui.ConnectionAssetPageWithVersionsForEnvironment(h.catalogForWorkspacesPage(r, nil), platformAssetWorkspaceView(), selected, assets, edges, section, h.environment(r), h.currentRoleLabel(r), versions).Render(w); err != nil {
+	administration := h.connectionAdministrationView(r, assets, edges, uisignals.ConnectionAdministrationStatusSignal{})
+	if err := ui.ConnectionAssetPageWithAdministrationForEnvironment(h.catalogForWorkspacesPage(r, nil), platformAssetWorkspaceView(), selected, assets, edges, section, h.environment(r), h.currentRoleLabel(r), versions, administration, h.ConnectionCommands, h.csrfToken(r), h.chromeOptions(r)).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }
@@ -1131,11 +1134,13 @@ func (h Handler) AssetUpdatesStream(w nethttp.ResponseWriter, r *nethttp.Request
 		if selected.Type == string(workspace.AssetTypeSource) {
 			connectionID := assetnav.SourceConnectionID(selected.ID, edges)
 			if connection, ok := workspace.AssetByID(assets, connectionID); ok {
-				patch = ui.ConnectionSourceAssetBootstrapSignalsForEnvironment(h.catalogForWorkspacesPage(r, nil), platformAssetWorkspaceView(), connection, selected, assets, edges, section, h.environment(r), h.currentRoleLabel(r), versions)
+				administration := h.connectionAdministrationView(r, assets, edges, uisignals.ConnectionAdministrationStatusSignal{})
+				patch = ui.ConnectionSourceAssetBootstrapSignalsWithAdministrationForEnvironment(h.catalogForWorkspacesPage(r, nil), platformAssetWorkspaceView(), connection, selected, assets, edges, section, h.environment(r), h.currentRoleLabel(r), versions, administration, h.chromeOptions(r)...)
 			}
 		}
 		if patch == nil {
-			patch = ui.ConnectionAssetBootstrapSignalsForEnvironment(h.catalogForWorkspacesPage(r, nil), platformAssetWorkspaceView(), selected, assets, edges, section, h.environment(r), h.currentRoleLabel(r), versions)
+			administration := h.connectionAdministrationView(r, assets, edges, uisignals.ConnectionAdministrationStatusSignal{})
+			patch = ui.ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(h.catalogForWorkspacesPage(r, nil), platformAssetWorkspaceView(), selected, assets, edges, section, h.environment(r), h.currentRoleLabel(r), versions, administration, h.chromeOptions(r)...)
 		}
 	} else {
 		patch = ui.WorkspaceAssetBootstrapSignalsForEnvironment(h.catalogForWorkspace(workspaceID), h.workspaceResponse(r, workspaceID), selected, assets, edges, section, h.environment(r), h.currentRoleLabel(r), refresh, versions, h.chromeOptions(r)...)

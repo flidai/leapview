@@ -30,6 +30,16 @@ beforeAll(async () => {
       response.end(testDocument('asset'))
       return
     }
+    if (url.pathname === '/connection') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument('connection'))
+      return
+    }
+    if (url.pathname === '/source') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument('source'))
+      return
+    }
     const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
     const file = normalize(join(fileRoot, url.pathname))
     if (!file.startsWith(fileRoot)) {
@@ -190,6 +200,7 @@ for (const viewport of [
         return {
           connectionsTitle: connections.shadowRoot.querySelector('h1')?.textContent?.trim(),
           connectionsHasSource: connections.shadowRoot.textContent?.includes('Orders source') ?? false,
+          connectionsHeaders: Array.from(connections.shadowRoot.querySelectorAll('thead th .entity-list-sort-button > span:first-child')).map((header) => header.textContent?.trim()),
           connectionsHasEntityList: Boolean(connections.shadowRoot.querySelector('.entity-list-items')),
           connectionsHasRecordTable: Boolean(connections.shadowRoot.querySelector('lv-record-table')),
           connectionsFilterOptions: Array.from(connections.shadowRoot.querySelectorAll('.entity-filter option')).map((option) => option.textContent?.trim()),
@@ -201,10 +212,11 @@ for (const viewport of [
       })
       expect(connectionsState).toEqual({
         connectionsTitle: 'Connections',
-        connectionsHasSource: true,
+        connectionsHasSource: false,
+        connectionsHeaders: ['Name', 'Kind / provider', 'Scope', 'Sources', 'Credentials'],
         connectionsHasEntityList: true,
         connectionsHasRecordTable: false,
-        connectionsFilterOptions: ['All', 'Connection', 'Source'],
+        connectionsFilterOptions: [],
         connectionsIconsArePlain: true,
         connectionsIsStyled: true,
         connectionsPageCentered: true,
@@ -727,7 +739,103 @@ test('workspace asset page does not render versions as a product surface', async
   }
 })
 
-function testDocument(root: 'workspace' | 'connections' | 'asset'): string {
+test('connection administration configures missing bindings from a drawer', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/connections`)
+    await page.waitForFunction(() => customElements.get('lv-connection-administration'))
+    await page.evaluate(() => {
+      const root = document.querySelector('lv-connections-page') as any
+      root.addEventListener('lv-connection-administration-save', (event: CustomEvent) => { (window as any).__connectionSave = event.detail })
+    })
+    await page.getByRole('button', { name: 'Configure connection' }).click()
+    const drawer = page.locator('lv-drawer')
+    expect(await drawer.getByText('Edit connection').isVisible()).toBe(false)
+    await drawer.getByLabel('Credential project').fill('leapview')
+    await drawer.getByLabel('Credential environment').fill('production')
+    await drawer.getByLabel('Secret path').fill('/connections/olist')
+    await drawer.getByLabel('Secret key').fill('credentials')
+    await drawer.getByRole('button', { name: 'Configure', exact: true }).click()
+    await page.waitForFunction(() => Boolean((window as any).__connectionSave))
+    const command = await page.evaluate(() => (window as any).__connectionSave)
+    expect(command).toMatchObject({
+      action: 'create',
+      assetId: 'connection:olist',
+      connectorKind: 's3',
+      logicalConnection: 'olist',
+      surface: 'list',
+      credentialProjectId: 'leapview',
+      credentialEnvironment: 'production',
+      secretPath: '/connections/olist',
+      secretKey: 'credentials',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('connection detail exposes the state-driven primary lifecycle action', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/connection`)
+    await page.waitForFunction(() => customElements.get('lv-connection-administration'))
+    await page.evaluate(() => {
+      const root = document.querySelector('lv-workspace-asset-page') as any
+      root.addEventListener('lv-connection-administration-action', (event: CustomEvent) => { (window as any).__connectionAction = event.detail })
+    })
+    const detail = page.locator('lv-workspace-asset-page').locator('.connection-detail-route .detail-surface')
+    expect(await detail.getByRole('link', { name: 'All connections' }).getAttribute('href')).toBe('/connections')
+    expect(await detail.getByRole('heading', { level: 1 }).textContent()).toBe('Olist connection')
+    expect(await page.locator('lv-workspace-asset-page').locator('.asset-page').count()).toBe(0)
+    expect(await page.getByText('Pending test', { exact: true }).isVisible()).toBe(true)
+    await page.getByRole('button', { name: 'Test connection', exact: true }).click()
+    await page.waitForFunction(() => Boolean((window as any).__connectionAction))
+    expect(await page.evaluate(() => (window as any).__connectionAction)).toMatchObject({
+      action: 'test',
+      assetId: 'connection:olist',
+      logicalConnection: 'olist',
+      surface: 'detail',
+      expectedRevision: 1,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('connection source detail opens as a non-modal drawer over its connection', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/source`)
+    await page.waitForFunction(() => customElements.get('lv-workspace-asset-page') && customElements.get('lv-drawer'))
+    await page.locator('lv-workspace-asset-page').evaluate((element: any) => element.updateComplete)
+    const state = await page.evaluate(async () => {
+      const asset = document.querySelector('lv-workspace-asset-page') as any
+      const drawer = asset.shadowRoot.querySelector('lv-drawer') as any
+      await drawer.updateComplete
+      return {
+        backgroundTitle: asset.shadowRoot.querySelector('.connection-detail-route .detail-header h1')?.textContent?.trim(),
+        drawerTitle: drawer.querySelector('[slot="title"] h1')?.textContent?.trim(),
+        drawerSubtitle: drawer.querySelector('[slot="subtitle"]')?.textContent?.trim(),
+        drawerOpen: drawer.open,
+        drawerModal: drawer.shadowRoot.querySelector('[role="dialog"]')?.getAttribute('aria-modal'),
+        tabs: Array.from(drawer.querySelectorAll('.tabs a')).map((tab) => tab.textContent?.replace(/\s+/g, ' ').trim()),
+        text: drawer.textContent?.replace(/\s+/g, ' ').trim(),
+      }
+    })
+    expect(state.backgroundTitle).toBe('Olist connection')
+    expect(state.drawerTitle).toBe('Orders')
+    expect(state.drawerSubtitle).toBe('Source in Olist connection')
+    expect(state.drawerOpen).toBe(true)
+    expect(state.drawerModal).toBeNull()
+    expect(state.tabs).toEqual(['Details', 'Data', 'Lineage 1'])
+    expect(state.text).toMatch(/Format csv Path orders\.csv Fields 2/)
+    expect(state.text).toMatch(/Fields \(2\).*order_id.*VARCHAR/)
+  } finally {
+    await page.close()
+  }
+})
+
+function testDocument(root: 'workspace' | 'connections' | 'connection' | 'asset' | 'source'): string {
   const assetList = {
     workspaceId: 'leapview',
     searchHref: '/workspaces/leapview',
@@ -771,18 +879,19 @@ function testDocument(root: 'workspace' | 'connections' | 'asset'): string {
   const connectionsPage = {
     kind: 'connections',
     title: 'Connections',
-    description: 'Connection-scoped data assets.',
+    description: 'Data connections.',
     workspaceId: 'leapview',
-    assetList: {
-      ...assetList,
-      searchHref: '/connections',
-      tabs: [
-        { id: '', label: 'All', href: '/connections', active: true },
-        { id: 'connection', label: 'Connection', href: '/connections?type=connection', active: false },
-        { id: 'source', label: 'Source', href: '/connections?type=source', active: false },
-      ],
-      assets: [{ ...assetList.assets[0], title: 'Orders source', type: 'source', typeLabel: 'Source', detailHref: '/connections/connection:olist/sources/source:orders/details' }],
-    },
+    connections: [{
+      id: 'connection:olist',
+      title: 'Olist connection',
+      description: 'Local ecommerce files.',
+      detailHref: '/connections/connection:olist/details',
+      kind: 'local',
+      scope: 'project',
+      sourceCount: 2,
+      credentialStatus: 'Not configured',
+      lifecycle: missingConnectionLifecycle(),
+    }],
   }
   const assetPage = {
     kind: 'workspace_asset',
@@ -843,6 +952,96 @@ function testDocument(root: 'workspace' | 'connections' | 'asset'): string {
       }],
     },
   }
+  const connectionAsset = {
+    id: 'connection:olist',
+    title: 'Olist connection',
+    description: 'Local ecommerce files.',
+    type: 'connection',
+    typeLabel: 'Connection',
+    key: 'olist',
+    detailHref: '/connections/connection:olist/details',
+    openHref: '/connections/connection:olist/details',
+  }
+  const sourceAsset = {
+    id: 'source:orders',
+    title: 'Orders',
+    type: 'source',
+    typeLabel: 'Source',
+    key: 'orders',
+    detailHref: '/connections/connection:olist/sources/source:orders/details',
+    openHref: '/connections/connection:olist/sources/source:orders/details',
+  }
+  const connectionPage = {
+    kind: 'connection_asset',
+    title: 'Olist connection',
+    workspaceId: 'leapview',
+    assetId: connectionAsset.id,
+    activeSection: 'details',
+    asset: connectionAsset,
+    connectionLifecycle: {
+      ...missingConnectionLifecycle(),
+      exists: true,
+      bindingId: 'olist',
+      enabled: true,
+      health: 'pending',
+      revision: 1,
+      state: 'pending',
+      statusLabel: 'Pending test',
+      actions: [
+        { id: 'test', label: 'Test connection', primary: true, destructive: false },
+        { id: 'edit', label: 'Edit', primary: false, destructive: false },
+        { id: 'disable', label: 'Disable', primary: false, destructive: true },
+      ],
+    },
+    breadcrumbs: [{ label: 'Connections', href: '/connections' }, { label: 'Olist connection', current: true }],
+    actions: [],
+    tabs: [
+      { id: 'details', label: 'Details', href: connectionAsset.detailHref, active: true },
+      { id: 'lineage', label: 'Lineage', href: '/connections/connection:olist/lineage', active: false, count: 2 },
+    ],
+    details: {
+      overview: [{ label: 'Kind', value: 'local' }, { label: 'Sources', value: '2' }],
+      sections: [{
+        title: 'Sources (2)',
+        table: {
+          columns: [{ id: 'source', header: 'Source' }, { id: 'format', header: 'Format' }, { id: 'path', header: 'Path' }],
+          rows: [{ source: 'Orders', format: 'csv', path: 'orders.csv' }],
+          empty: 'No sources.',
+        },
+      }],
+    },
+  }
+  const sourcePage = {
+    kind: 'connection_asset',
+    title: 'Orders',
+    workspaceId: 'leapview',
+    assetId: sourceAsset.id,
+    activeSection: 'details',
+    asset: sourceAsset,
+    drawerParent: connectionPage,
+    breadcrumbs: [],
+    actions: [],
+    tabs: [
+      { id: 'details', label: 'Details', href: sourceAsset.detailHref, active: true },
+      { id: 'data', label: 'Data', href: '/data?workspace=leapview&object=source%3Aorders', active: false },
+      { id: 'lineage', label: 'Lineage', href: '/connections/connection:olist/sources/source:orders/lineage', active: false, count: 1 },
+    ],
+    details: {
+      overview: [
+        { label: 'Format', value: 'csv' },
+        { label: 'Path', value: 'orders.csv', code: true },
+        { label: 'Fields', value: '2' },
+      ],
+      sections: [{
+        title: 'Fields (2)',
+        table: {
+          columns: [{ id: 'name', header: 'Name' }, { id: 'physical_type', header: 'Physical type' }],
+          rows: [{ name: 'order_id', physical_type: 'VARCHAR' }],
+          empty: 'No fields.',
+        },
+      }],
+    },
+  }
   const access = {
     workspace: { ID: 'leapview', Title: 'LeapView Workspace' },
     roles: [{ Name: 'viewer' }, { Name: 'workspace_admin' }, { Name: 'data_deployer' }],
@@ -874,8 +1073,16 @@ function testDocument(root: 'workspace' | 'connections' | 'asset'): string {
     search: 'ana',
     searchStatus: { loading: false, error: '' },
   }
+  const connectionAdmin = {
+    command: { action: '', assetId: '', authenticationMode: '', confirmationToken: '', connectorKind: '', credentialEnvironment: '', credentialProjectId: '', database: '', expectedRevision: 0, host: '', logicalConnection: '', objectScope: '', options: '', port: '', secretKey: '', secretPath: '', sourceIdentity: '', surface: '', tlsMode: '' },
+    status: { loading: false, error: '', message: '' },
+  }
   const route = root === 'connections'
-    ? { signals: { page: connectionsPage }, element: '<lv-connections-page></lv-connections-page>' }
+    ? { signals: { page: connectionsPage, connectionAdmin }, element: '<lv-connections-page></lv-connections-page>' }
+    : root === 'connection'
+      ? { signals: { page: connectionPage, connectionAdmin }, element: '<lv-workspace-asset-page></lv-workspace-asset-page>' }
+    : root === 'source'
+      ? { signals: { page: sourcePage }, element: '<lv-workspace-asset-page></lv-workspace-asset-page>' }
     : root === 'asset'
       ? { signals: { page: assetPage }, element: '<lv-workspace-asset-page></lv-workspace-asset-page>' }
       : { signals: { page: workspacePage, workspaceAccess: access }, element: '<lv-workspace-page></lv-workspace-page>' }
@@ -899,6 +1106,40 @@ function testDocument(root: 'workspace' | 'connections' | 'asset'): string {
       </body>
     </html>
   `
+}
+
+function missingConnectionLifecycle() {
+  return {
+    actions: [{ id: 'configure', label: 'Configure', primary: true, destructive: false }],
+    assetId: 'connection:olist',
+    authenticationMode: '',
+    bindingId: '',
+    canManage: true,
+    canTest: true,
+    connectorKind: 's3',
+    credentialEnvironment: '',
+    credentialProjectId: '',
+    database: '',
+    diagnosticCode: '',
+    enabled: false,
+    exists: false,
+    health: '',
+    host: '',
+    lastValidatedAt: '',
+    logicalConnection: 'olist',
+    objectScope: '',
+    options: '',
+    port: '',
+    revision: 0,
+    secretKey: '',
+    secretPath: '',
+    sourceIdentity: '',
+    state: 'missing',
+    statusLabel: 'Not configured',
+    tlsMode: '',
+    tone: 'warning',
+    validatedVersion: '',
+  }
 }
 
 function escapeHTML(value: string): string {

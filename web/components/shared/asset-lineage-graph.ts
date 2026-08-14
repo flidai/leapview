@@ -139,7 +139,6 @@ class AssetLineageGraph extends LitElement {
             ],
           }),
         ),
-        React.createElement(LineageInspectorPanel, { key: selectedNode?.id ?? 'empty', node: selectedNode }),
       ),
     )
   }
@@ -165,7 +164,7 @@ const assetLineageGraphStyles = `
 
   lv-asset-lineage-graph .asset-lineage-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(17rem, 20rem);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   lv-asset-lineage-graph .asset-lineage-flow {
@@ -176,94 +175,6 @@ const assetLineageGraphStyles = `
       linear-gradient(var(--lv-bg-page), var(--lv-bg-page)),
       radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--lv-fg-muted), transparent 87%) 1px, transparent 0);
     background-size: auto, 18px 18px;
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel {
-    display: grid;
-    align-content: start;
-    gap: var(--base-size-16);
-    min-width: 0;
-    border-left: var(--borderWidth-thin) solid var(--lv-line-muted);
-    background: var(--lv-bg-panel);
-    padding: var(--base-size-16);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-eyebrow {
-    color: var(--lv-fg-muted);
-    font: var(--lv-type-caption);
-    text-transform: uppercase;
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-title {
-    overflow: hidden;
-    margin: var(--base-size-4) 0 0;
-    color: var(--lv-fg-default);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font: var(--lv-type-body-compact);
-    font-weight: var(--base-text-weight-semibold);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-key {
-    overflow: hidden;
-    margin-top: var(--base-size-6);
-    color: var(--lv-fg-muted);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font: var(--lv-type-code-inline);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-stats {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--base-size-8);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-stat {
-    display: grid;
-    gap: var(--base-size-4);
-    min-width: 0;
-    border: var(--borderWidth-thin) solid var(--lv-line-muted);
-    border-radius: var(--borderRadius-default);
-    background: var(--lv-bg-panel-muted);
-    padding: var(--base-size-8);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-stat span {
-    color: var(--lv-fg-muted);
-    font: var(--lv-type-caption);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-stat strong {
-    color: var(--lv-fg-default);
-    font: var(--lv-type-body-compact);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-summary {
-    min-width: 0;
-    color: var(--lv-fg-muted);
-    font: var(--lv-type-body);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 2rem;
-    border: var(--borderWidth-thin) solid var(--lv-line-accent);
-    border-radius: var(--borderRadius-default);
-    background: var(--lv-line-accent);
-    color: var(--lv-fg-on-emphasis);
-    padding: 0 var(--base-size-12);
-    font: var(--lv-type-body);
-    font-weight: var(--base-text-weight-medium);
-    text-decoration: none;
-  }
-
-  lv-asset-lineage-graph .asset-lineage-panel-action:hover,
-  lv-asset-lineage-graph .asset-lineage-panel-action:focus-visible {
-    outline: 0;
-    filter: brightness(1.06);
   }
 
   lv-asset-lineage-graph .react-flow {
@@ -492,17 +403,6 @@ const assetLineageGraphStyles = `
     font: var(--lv-type-caption);
   }
 
-  @media (max-width: 860px) {
-    lv-asset-lineage-graph .asset-lineage-layout {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(26rem, 1fr) auto;
-    }
-
-    lv-asset-lineage-graph .asset-lineage-panel {
-      border-top: var(--borderWidth-thin) solid var(--lv-line-muted);
-      border-left: 0;
-    }
-  }
 `
 
 function toFlowNode(node: LineageNode, layout: LineageLayout, pathState: LineagePathState, onSelect: (id: string) => void): Node<LineageNodeData> {
@@ -668,49 +568,6 @@ function LineageNodeComponent({ data }: { data: LineageNodeData }) {
     React.createElement('div', { className: 'asset-lineage-node-title', title: data.label }, data.label),
     data.meta ? React.createElement('div', { className: 'asset-lineage-node-meta' }, data.meta) : null,
     React.createElement(Handle, { type: 'source', position: Position.Right }),
-  )
-}
-
-function LineageInspectorPanel({ node }: { node?: LineageNode }) {
-  if (!node) {
-    return React.createElement(
-      'aside',
-      { className: 'asset-lineage-panel', 'aria-label': 'Selected lineage asset' },
-      React.createElement('div', null,
-        React.createElement('div', { className: 'asset-lineage-panel-eyebrow' }, 'Lineage'),
-        React.createElement('p', { className: 'asset-lineage-panel-summary' }, 'Select a node to inspect its lineage context.'),
-      ),
-    )
-  }
-  return React.createElement(
-    'aside',
-    { className: 'asset-lineage-panel', 'aria-label': 'Selected lineage asset' },
-    React.createElement('div', null,
-      React.createElement('div', { className: 'asset-lineage-panel-eyebrow' }, kindLabel(node.kind)),
-      React.createElement('h2', { className: 'asset-lineage-panel-title', title: node.label }, node.label),
-      node.meta ? React.createElement('div', { className: 'asset-lineage-panel-key', title: node.meta }, node.meta) : null,
-    ),
-    React.createElement('div', { className: 'asset-lineage-panel-stats' },
-      panelStat('Visible upstream', node.visibleUpstreamCount ?? 0),
-      panelStat('Visible downstream', node.visibleDownstreamCount ?? 0),
-      panelStat('Uses', node.usesCount ?? 0),
-      panelStat('Used by', node.usedByCount ?? 0),
-    ),
-    React.createElement(
-      'div',
-      { className: 'asset-lineage-panel-summary' },
-      node.containedCount
-        ? `${node.containedCount} contained assets: ${node.containedSummary ?? 'mixed assets'}`
-        : 'No directly contained assets.',
-    ),
-    node.href ? React.createElement('a', { className: 'asset-lineage-panel-action', href: node.href }, 'Open details') : null,
-  )
-}
-
-function panelStat(label: string, value: number) {
-  return React.createElement('div', { className: 'asset-lineage-panel-stat' },
-    React.createElement('span', null, label),
-    React.createElement('strong', null, String(value)),
   )
 }
 

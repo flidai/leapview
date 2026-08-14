@@ -616,6 +616,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		var err error
 		agentUICommands := routes.agentModule.UICommandBindings()
+		connectionUICommands := runtime.analyticsModule.ConnectionUICommandBindings()
+		connectionWorkspaceID := ""
+		if runtime.metrics != nil {
+			connectionWorkspaceID = runtime.metrics.Catalog().Workspace.ID
+		}
 		routes.workspaceModule, err = workspacemodule.Build(ctx, workspacemodule.Config{
 			Database:            database,
 			Logger:              platform.logger,
@@ -632,7 +637,18 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				CreateGrant:       accessUICommands.CreateGrant,
 				DeleteGrant:       accessUICommands.DeleteGrant,
 			},
-			AssetCatalog: persistence.workspaceAssetCatalog,
+			ConnectionAdministration: connectionAdministration,
+			ConnectionAuthorize: func(ctx context.Context, principalID string, privilege accessmodule.Privilege, workspaceID string) (bool, error) {
+				return routes.accessModule.AuthorizeObject(ctx, principalID, privilege, accessmodule.WorkspaceObject(workspaceID))
+			},
+			ConnectionCommands: workspacemodule.ConnectionCommandBindings{
+				Create: connectionUICommands.Create, Update: connectionUICommands.Update,
+				Test: connectionUICommands.Test, Refresh: connectionUICommands.Refresh,
+				Enable: connectionUICommands.Enable, Disable: connectionUICommands.Disable,
+			},
+			ConnectionTargetID:    storage.instanceID,
+			ConnectionWorkspaceID: connectionWorkspaceID,
+			AssetCatalog:          persistence.workspaceAssetCatalog,
 			WorkspaceID: func(value string) string {
 				return value
 			},

@@ -53,6 +53,10 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	}
 	r.Get("/connections", protectAnyWorkspace(access.PrivilegeViewItem, h.Connections))
 	r.Post("/connections/search", protectAnyWorkspace(access.PrivilegeViewItem, h.ConnectionsSearch))
+	if h.ConnectionAdministration != nil {
+		r.Post("/connections/administration/configuration", protectAnyWorkspace(access.PrivilegeViewItem, h.ConnectionConfiguration))
+		r.Post("/connections/administration/lifecycle", protectAnyWorkspace(access.PrivilegeViewItem, h.ConnectionLifecycle))
+	}
 	r.Get("/connections/{connection}/sources/{source}", protectAnyWorkspace(access.PrivilegeViewItem, h.ConnectionSource))
 	r.Get("/connections/{connection}/sources/{source}/{section}", protectAnyWorkspace(access.PrivilegeViewItem, h.ConnectionSourceSection))
 	r.Get("/connections/{asset}", protectAnyWorkspace(access.PrivilegeViewItem, h.ConnectionAsset))

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/analytics/connectionadmin"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
@@ -74,6 +75,7 @@ func (f AssetRefreshFunc) RefreshAsset(ctx context.Context, input AssetRefreshIn
 }
 
 type AccessCommandBindings = ui.AccessCommandBindings
+type ConnectionCommandBindings = ui.ConnectionCommandBindings
 type DataExplorerAgentBootstrap = ui.DataExplorerAgentBootstrap
 type DataExplorerAgentCommandBindings = ui.DataExplorerAgentCommandBindings
 type PopularityLevel = uisignals.PopularityLevel
@@ -81,37 +83,42 @@ type DashboardPopularityProvider func(context.Context, int) (map[string]Populari
 type DashboardLastRefreshedProvider func(context.Context, string, string, string) (string, bool, error)
 
 type Config struct {
-	Database             *sql.DB
-	Directory            Directory
-	ReadModel            ReadModel
-	Securables           SecurableRegistrar
-	WorkspaceID          func(string) string
-	Environment          func(*http.Request) string
-	AccessService        access.WorkspaceAccessService
-	RoleBindingCommands  access.RoleBindingOperations
-	GrantCommands        access.GrantOperations
-	CommandPrivileges    access.WorkspaceCommandPrivileges
-	AccessCommands       ui.AccessCommandBindings
-	AgentBootstrap       func(*http.Request, string) ui.DataExplorerAgentBootstrap
-	AgentCommands        ui.DataExplorerAgentCommandBindings
-	AssetCatalog         workspace.AssetCatalogReader
-	MetricsForWorkspace  func(string) (queryruntime.Metrics, bool)
-	RootMetrics          queryruntime.Metrics
-	CurrentPrincipal     func(*http.Request) (Principal, bool)
-	RecordAudit          func(context.Context, access.AuditEventInput) error
-	Logger               *slog.Logger
-	AuthConfigured       bool
-	RuntimeEnvironment   string
-	RefreshState         RefreshStateProvider
-	RefreshRunner        AssetRefreshRunner
-	Broker               *pagestream.Broker
-	CSRFToken            func(*http.Request) string
-	CurrentRoleLabel     func(*http.Request) string
-	Layout               func(*http.Request) webpage.Provider
-	CurrentCredential    func(*http.Request) (access.APICredential, bool)
-	AuthorizeObject      func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error)
-	DashboardPopularity  DashboardPopularityProvider
-	DashboardRefreshedAt DashboardLastRefreshedProvider
+	Database                 *sql.DB
+	Directory                Directory
+	ReadModel                ReadModel
+	Securables               SecurableRegistrar
+	WorkspaceID              func(string) string
+	Environment              func(*http.Request) string
+	AccessService            access.WorkspaceAccessService
+	RoleBindingCommands      access.RoleBindingOperations
+	GrantCommands            access.GrantOperations
+	CommandPrivileges        access.WorkspaceCommandPrivileges
+	AccessCommands           ui.AccessCommandBindings
+	ConnectionAdministration connectionadmin.Administration
+	ConnectionAuthorize      func(context.Context, string, access.Privilege, string) (bool, error)
+	ConnectionCommands       ui.ConnectionCommandBindings
+	ConnectionTargetID       string
+	ConnectionWorkspaceID    string
+	AgentBootstrap           func(*http.Request, string) ui.DataExplorerAgentBootstrap
+	AgentCommands            ui.DataExplorerAgentCommandBindings
+	AssetCatalog             workspace.AssetCatalogReader
+	MetricsForWorkspace      func(string) (queryruntime.Metrics, bool)
+	RootMetrics              queryruntime.Metrics
+	CurrentPrincipal         func(*http.Request) (Principal, bool)
+	RecordAudit              func(context.Context, access.AuditEventInput) error
+	AuthConfigured           bool
+	RuntimeEnvironment       string
+	RefreshState             RefreshStateProvider
+	RefreshRunner            AssetRefreshRunner
+	Broker                   *pagestream.Broker
+	CSRFToken                func(*http.Request) string
+	CurrentRoleLabel         func(*http.Request) string
+	Layout                   func(*http.Request) webpage.Provider
+	CurrentCredential        func(*http.Request) (access.APICredential, bool)
+	AuthorizeObject          func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error)
+	DashboardPopularity      DashboardPopularityProvider
+	DashboardRefreshedAt     DashboardLastRefreshedProvider
+	Logger                   *slog.Logger
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -216,11 +223,16 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		RefreshState:  moduleRefreshState{module: m, upstream: config.RefreshState},
 		RefreshRunner: refreshRunner, Broker: config.Broker,
 		CSRFToken: config.CSRFToken, CurrentRoleLabel: config.CurrentRoleLabel, Layout: config.Layout,
-		RoleBindingCommands: config.RoleBindingCommands,
-		GrantCommands:       config.GrantCommands,
-		AccessCommands:      config.AccessCommands,
-		AgentBootstrap:      config.AgentBootstrap,
-		AgentCommands:       config.AgentCommands,
+		RoleBindingCommands:      config.RoleBindingCommands,
+		GrantCommands:            config.GrantCommands,
+		AccessCommands:           config.AccessCommands,
+		ConnectionAdministration: config.ConnectionAdministration,
+		ConnectionAuthorize:      config.ConnectionAuthorize,
+		ConnectionCommands:       config.ConnectionCommands,
+		ConnectionTargetID:       config.ConnectionTargetID,
+		ConnectionWorkspaceID:    config.ConnectionWorkspaceID,
+		AgentBootstrap:           config.AgentBootstrap,
+		AgentCommands:            config.AgentCommands,
 	}
 	m.search = buildSearch(config.Database, config.AuthorizeObject)
 	return m, nil
