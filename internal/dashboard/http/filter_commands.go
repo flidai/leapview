@@ -127,7 +127,7 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if broker == nil {
 		broker = pagestream.NewBroker()
 	}
-	coordinator := registry.Ensure(streamID, h.analyticalContext(context.WithoutCancel(r.Context())), func(event dashboardstream.RefreshEvent) {
+	coordinator := registry.Ensure(streamID, h.analyticalStreamContext(context.WithoutCancel(r.Context()), streamID), func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
 	})
 	h.observeRefreshes(coordinator, dashboardID, pageID)

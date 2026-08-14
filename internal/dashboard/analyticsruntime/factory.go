@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticscontract "github.com/flidai/leapview/internal/analytics/runtime"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 )
@@ -44,8 +45,9 @@ func (f Factory) OpenDashboardWorkspaceDataRuntimes(ctx context.Context, config 
 	}
 	runtime, err := options.Workspaces.OpenWorkspace(ctx, analyticscontract.WorkspaceRequest{
 		Models: config.Definition.Models, SnapshotID: options.SnapshotID,
-		ResultLimits:   options.ResultLimits,
-		ServingStateID: options.ServingStateID, WorkspaceID: options.WorkspaceID, Environment: options.Environment,
+		RequiredExtensions: requiredWorkspaceExtensions(config.Definition),
+		ResultLimits:       options.ResultLimits,
+		ServingStateID:     options.ServingStateID, WorkspaceID: options.WorkspaceID, Environment: options.Environment,
 		SemanticDigest: options.SemanticModelDigest, ArtifactDigest: options.ArtifactDigest, SourceDataDigest: options.SourceDataDigest,
 		CandidateID: options.CandidateID, AuthorizationFingerprint: options.AuthorizationFingerprint,
 		BindingFingerprint: options.BindingFingerprint,
@@ -59,6 +61,17 @@ func (f Factory) OpenDashboardWorkspaceDataRuntimes(ctx context.Context, config 
 		runtimes[modelID] = workspaceRuntime{modelID: modelID, runtime: runtime, close: sharedClose, data: reportdef.NewDataQueryService(modelID, runtime)}
 	}
 	return runtimes, nil
+}
+
+func requiredWorkspaceExtensions(definition *dashboarddefinition.Workspace) []string {
+	for _, dashboard := range definition.Dashboards {
+		for _, visual := range dashboard.Visualizations {
+			if visual.Query.Spatial != nil && visual.Query.Spatial.Tiles != nil {
+				return []string{"spatial"}
+			}
+		}
+	}
+	return nil
 }
 
 type sharedCloser struct {

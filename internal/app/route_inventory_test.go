@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "8b59a4559725dfd3ada01c46bb1cf4a05ba6e438637b6ac9c356d694798d3156"
+	const expectedRouteContractDigest = "a5270d0cd631e5324b4113d31c42fd0604e740b08384826996d134580570afb2"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -298,6 +298,7 @@ GET /metrics
 GET /public/dashboards/{publicId}
 GET /public/dashboards/{publicId}/pages/{page}
 GET /public/dashboards/{publicId}/updates
+GET /public/dashboards/{publicId}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /readyz
 GET /static/*
 GET /updates
@@ -308,6 +309,7 @@ GET /workspaces/{workspace}/assets/{asset}
 GET /workspaces/{workspace}/assets/{asset}/{section}
 GET /workspaces/{workspace}/dashboards/{dashboard}
 GET /workspaces/{workspace}/dashboards/{dashboard}/pages/{page}
+GET /workspaces/{workspace}/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /workspaces/{workspace}/data
 HEAD /metrics
 HEAD /static/*
@@ -351,7 +353,6 @@ POST /public/dashboards/{publicId}/commands/filter-options
 POST /public/dashboards/{publicId}/commands/navigate
 POST /public/dashboards/{publicId}/commands/select
 POST /public/dashboards/{publicId}/commands/spatial-select
-POST /public/dashboards/{publicId}/commands/visual-spatial-window
 POST /public/dashboards/{publicId}/commands/visual-window
 POST /static/*
 POST /workspaces/{workspace}/access/remove
@@ -365,7 +366,6 @@ POST /workspaces/{workspace}/commands/filter-options
 POST /workspaces/{workspace}/commands/navigate
 POST /workspaces/{workspace}/commands/select
 POST /workspaces/{workspace}/commands/spatial-select
-POST /workspaces/{workspace}/commands/visual-spatial-window
 POST /workspaces/{workspace}/commands/visual-window
 POST /workspaces/search
 POST /workspaces/{workspace}/search

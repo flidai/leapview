@@ -152,7 +152,7 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if registry == nil {
 		registry = dashboardstream.NewRegistry()
 	}
-	coordinator := registry.Ensure(sourceStreamID, h.analyticalContext(context.WithoutCancel(r.Context())), func(event dashboardstream.RefreshEvent) {
+	coordinator := registry.Ensure(sourceStreamID, h.analyticalStreamContext(context.WithoutCancel(r.Context()), sourceStreamID), func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(sourceStreamID, lddatastar.RefreshEventEnvelope(event))
 	})
 	h.observeRefreshes(coordinator, dashboardID, targetPage.ID)

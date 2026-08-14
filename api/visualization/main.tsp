@@ -388,7 +388,7 @@ enum VisualizationSpatialSelectionGesture {
 enum VisualizationDataStateKind {
   inline: "inline",
   windowed: "windowed",
-  spatialWindowed: "spatial_windowed",
+  spatialTiled: "spatial_tiled",
 }
 
 enum VisualizationDataStateTransportEncoding {
@@ -1267,32 +1267,6 @@ model VisualizationSpatialBounds {
   `north`: float64;
 }
 
-model VisualizationSpatialWindowBlock {
-  `id`: string;
-  `bounds`: VisualizationSpatialBounds;
-  `zoom`: float64;
-  `width`: int32;
-  `height`: int32;
-  `precision`: VisualizationSpatialPrecision;
-  `rows`: unknown[][];
-  `requestSeq`: int64;
-  `resetVersion`: int64;
-}
-
-@apigen.contract(#{ kind: "visualization-command", tags: #["visualization", "spatial-window"] })
-model VisualizationSpatialWindowRequest {
-  `visualID`: string;
-  `specRevision`: string;
-  `dataRevision`: int64;
-  `requestSeq`: int64;
-  `resetVersion`: int64;
-  `bounds`: VisualizationSpatialBounds;
-  `zoom`: float64;
-  `width`: int32;
-  `height`: int32;
-  `windowID`: string;
-}
-
 @discriminator("kind")
 model VisualizationDataState {
   `kind`: string;
@@ -1318,15 +1292,35 @@ model WindowedVisualizationDataState extends VisualizationDataState {
   `blocks`: Record<VisualizationWindowBlock>;
 }
 
-model SpatialWindowedVisualizationDataState extends VisualizationDataState {
-  `kind`: "spatial_windowed";
+model VisualizationSpatialScaleDomain {
+  `field`: string;
+  `minimum`?: float64;
+  `maximum`?: float64;
+  `total`?: float64;
+}
+
+/**
+ * Row-free metadata and transport contract for server-generated vector tiles.
+ * Tile URLs are opaque, revision-scoped capabilities; this state deliberately
+ * contains neither query rows nor authored filter values.
+ */
+model SpatialTiledVisualizationDataState extends VisualizationDataState {
+  `kind`: "spatial_tiled";
   `schema`: VisualizationDatasetSchema;
   `cardinality`: VisualizationCardinality;
   `extent`: VisualizationSpatialBounds;
-  `rowCap`: int64;
+  `rawDomains`: VisualizationSpatialScaleDomain[];
+  `aggregateDomains`: VisualizationSpatialScaleDomain[];
+  `tileURL`: string;
+  `minimumZoom`: int32;
+  `maximumZoom`: int32;
+  /**
+   * First zoom rendered at raw coordinate grain. A value of maximumZoom + 1
+   * means the revision remains aggregate at every supported zoom.
+   */
+  `rawMinimumZoom`: int32;
   `featureCap`: int64;
-  `resetVersion`: int64;
-  `window`?: VisualizationSpatialWindowBlock;
+  `maximumTileBytes`: int64;
 }
 
 /**
@@ -1396,7 +1390,7 @@ model VisualizationDiagnostic {
 @apigen.contract(#{ kind: "visualization-envelope", tags: #["visualization", "ir"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "visualization-envelope" })
 model VisualizationEnvelope {
-  `schemaVersion`: 9;
+  `schemaVersion`: 10;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;

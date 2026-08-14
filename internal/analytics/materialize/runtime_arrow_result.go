@@ -36,6 +36,9 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 				defer lease.Release()
 				queryCtx = leasedCtx
 			}
+			if extensionErr := r.ensureRequiredExtensions(queryCtx); extensionErr != nil {
+				return dataquery.Result{PlanningMS: planned.planningMS}, extensionErr
+			}
 			queryCtx, connectionWait := dataquery.WithConnectionWaitCounter(queryCtx)
 			databaseStarted := time.Now()
 			data, queryErr := r.captureArrowPlan(queryCtx, planned.plan)
@@ -183,22 +186,50 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 		planned.plan, err = planner.PlanHistogram(semanticquery.RawValueRequest{Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measure: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, request.BinCount)
 	case dataquery.KindSemanticDistribution:
 		planned.plan, err = planner.PlanDistribution(semanticquery.RawValueRequest{Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measure: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, dataQuerySorts(request.Sort), request.Limit)
-	case dataquery.KindSemanticSpatial:
-		if request.Spatial == nil {
-			err = fmt.Errorf("semantic spatial query requires spatial window")
+	case dataquery.KindSemanticSpatialTile:
+		if request.SpatialTile == nil {
+			err = fmt.Errorf("semantic spatial tile query requires tile coordinates")
 			break
 		}
-		planned.plan, err = planner.PlanSpatial(semanticquery.SpatialRequest{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measures: dataQueryFields(request.Measures),
+		tile := request.SpatialTile
+		if tile.Precision == dataquery.SpatialTilePrecisionRaw {
+			planned.plan, err = planner.PlanSpatialTileRaw(semanticquery.SpatialTileRawRequest{
+				Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measures: dataQueryFields(request.Measures), Identity: dataQueryFields(tile.Identity),
+				Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+				Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+				Latitude: semanticquery.Field{Field: tile.Latitude.Field, Alias: tile.Latitude.Alias}, Longitude: semanticquery.Field{Field: tile.Longitude.Field, Alias: tile.Longitude.Alias},
+				Zoom: tile.Zoom, MetatileX: tile.MetatileX, MetatileY: tile.MetatileY, MetatileSize: tile.MetatileSize, FeatureCap: tile.FeatureCap, Buffer: tile.Buffer,
+			})
+		} else {
+			planned.plan, err = planner.PlanSpatialTileAggregate(semanticquery.SpatialTileRequest{
+				Table: request.Target, Measures: dataQueryFields(request.Measures), Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+				Latitude: semanticquery.Field{Field: tile.Latitude.Field, Alias: tile.Latitude.Alias}, Longitude: semanticquery.Field{Field: tile.Longitude.Field, Alias: tile.Longitude.Alias},
+				Zoom: tile.Zoom, TargetZoom: tile.TargetZoom, MetatileX: tile.MetatileX, MetatileY: tile.MetatileY, MetatileSize: tile.MetatileSize, CellPixels: tile.CellPixels, Buffer: tile.Buffer,
+			})
+		}
+	case dataquery.KindSemanticSpatialTileBudget:
+		if request.SpatialTileBudget == nil {
+			err = fmt.Errorf("semantic spatial tile budget query requires a budget probe")
+			break
+		}
+		budget := request.SpatialTileBudget
+		planned.plan, err = planner.PlanSpatialTileBudget(semanticquery.SpatialTileBudgetRequest{
+			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measures: dataQueryFields(request.Measures), Identity: dataQueryFields(budget.Identity),
 			Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
-			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
-			Latitude:  semanticquery.Field{Field: request.Spatial.Latitude.Field, Alias: request.Spatial.Latitude.Alias},
-			Longitude: semanticquery.Field{Field: request.Spatial.Longitude.Field, Alias: request.Spatial.Longitude.Alias},
-			West:      request.Spatial.West, South: request.Spatial.South, East: request.Spatial.East, North: request.Spatial.North,
-			Width: request.Spatial.Width, Height: request.Spatial.Height, FeatureCap: request.Spatial.FeatureCap,
-			Precision: semanticquery.SpatialPrecision(request.Spatial.Precision),
+			Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+			Latitude: semanticquery.Field{Field: budget.Latitude.Field, Alias: budget.Latitude.Alias}, Longitude: semanticquery.Field{Field: budget.Longitude.Field, Alias: budget.Longitude.Alias},
+			Zoom: budget.Zoom, FeatureCap: budget.FeatureCap, MaximumBytes: budget.MaximumBytes, Buffer: budget.Buffer,
 		})
-		planned.totalFromData = true
+	case dataquery.KindSemanticSpatialMetadata:
+		if request.SpatialMetadata == nil {
+			err = fmt.Errorf("semantic spatial metadata query requires coordinates")
+			break
+		}
+		planned.plan, err = planner.PlanSpatialMetadata(semanticquery.SpatialMetadataRequest{
+			Table: request.Target, Measures: dataQueryFields(request.Measures), Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+			Latitude: semanticquery.Field{Field: request.SpatialMetadata.Latitude.Field, Alias: request.SpatialMetadata.Latitude.Alias}, Longitude: semanticquery.Field{Field: request.SpatialMetadata.Longitude.Field, Alias: request.SpatialMetadata.Longitude.Alias},
+			FeatureCap: request.SpatialMetadata.FeatureCap, RawMinimumZoom: request.SpatialMetadata.RawMinimumZoom, MaximumZoom: request.SpatialMetadata.MaximumZoom,
+		})
 	default:
 		err = fmt.Errorf("unsupported data query kind %q", request.Kind)
 	}
@@ -222,11 +253,7 @@ func arrowResultTotal(request dataquery.Query, result *arrowresult.Result, expec
 	if len(rows) == 0 {
 		return 0, request.Offset == 0, nil
 	}
-	totalColumn := totalRowsColumn
-	if request.Kind == dataquery.KindSemanticSpatial {
-		totalColumn = semanticquery.SpatialTotalColumn
-	}
-	value, ok := rows[0][totalColumn]
+	value, ok := rows[0][totalRowsColumn]
 	if !ok {
 		value = rows[0]["value"]
 	}
@@ -245,8 +272,6 @@ func decodeArrowQueryResult(request dataquery.Query, lease *arrowresult.Lease, m
 	transportTotalColumn := ""
 	if request.IncludeTotal {
 		transportTotalColumn = totalRowsColumn
-	} else if request.Kind == dataquery.KindSemanticSpatial {
-		transportTotalColumn = semanticquery.SpatialTotalColumn
 	}
 	if transportTotalColumn != "" {
 		for _, row := range rows {

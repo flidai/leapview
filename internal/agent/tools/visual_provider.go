@@ -408,10 +408,6 @@ func agentVisualReturnedRows(envelope visualizationir.VisualizationEnvelope) int
 			total += len(block.Rows)
 		}
 		return total
-	case *visualizationir.SpatialWindowedVisualizationDataState:
-		if state.Window != nil {
-			return len(state.Window.Rows)
-		}
 	}
 	return 0
 }

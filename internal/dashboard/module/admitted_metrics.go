@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/workload"
 )
@@ -79,8 +80,26 @@ func (m admittedMetrics) QueryVisualizationWindow(ctx context.Context, dashboard
 	return m.Metrics.QueryVisualizationWindow(m.readContext(ctx), dashboardID, pageID, filters, request)
 }
 
-func (m admittedMetrics) QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	return m.Metrics.QueryVisualizationSpatialWindow(m.readContext(ctx), dashboardID, pageID, filters, request)
+func (m admittedMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	port, ok := m.Metrics.(visualizationTileMetrics)
+	if !ok {
+		return dashboardruntime.SpatialTileResult{}, errors.New("spatial tile metrics are not configured")
+	}
+	return port.QueryVisualizationTile(m.readContext(ctx), workspaceID, dashboardID, visualID, revision, zoom, x, y)
+}
+
+func (m admittedMetrics) ExpireVisualizationTileStream(streamID string) {
+	if expirer, ok := m.Metrics.(interface{ ExpireVisualizationTileStream(string) }); ok {
+		expirer.ExpireVisualizationTileStream(streamID)
+	}
+}
+
+func (m admittedMetrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	port, ok := m.Metrics.(publicVisualizationTileMetrics)
+	if !ok {
+		return dashboardruntime.SpatialTileResult{}, errors.New("public spatial tile metrics are not configured")
+	}
+	return port.QueryPublicVisualizationTile(m.readContext(ctx), publicID, dashboardID, visualID, revision, zoom, x, y)
 }
 
 func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {

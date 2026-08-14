@@ -13,16 +13,15 @@ import (
 )
 
 type Signals struct {
-	Runtime                    Runtime                       `json:"runtime"`
-	VisualWindowCommand        VisualizationWindowRequest    `json:"visualWindowCommand"`
-	VisualSpatialWindowCommand SpatialWindowRequest          `json:"visualSpatialWindowCommand"`
-	InteractionCommand         InteractionCommand            `json:"interactionCommand"`
-	SpatialInteractionCommand  SpatialSelectionCommand       `json:"spatialInteractionCommand"`
-	FilterCommand              dashboardfilter.Command       `json:"filterCommand"`
-	FilterOptionRequest        dashboardfilter.OptionRequest `json:"filterOptionRequest"`
-	NavigationCommand          NavigationCommand             `json:"navigationCommand"`
-	InteractionSelections      []InteractionSelection        `json:"interactionSelections"`
-	SpatialSelections          []SpatialInteractionSelection `json:"spatialSelections"`
+	Runtime                   Runtime                       `json:"runtime"`
+	VisualWindowCommand       VisualizationWindowRequest    `json:"visualWindowCommand"`
+	InteractionCommand        InteractionCommand            `json:"interactionCommand"`
+	SpatialInteractionCommand SpatialSelectionCommand       `json:"spatialInteractionCommand"`
+	FilterCommand             dashboardfilter.Command       `json:"filterCommand"`
+	FilterOptionRequest       dashboardfilter.OptionRequest `json:"filterOptionRequest"`
+	NavigationCommand         NavigationCommand             `json:"navigationCommand"`
+	InteractionSelections     []InteractionSelection        `json:"interactionSelections"`
+	SpatialSelections         []SpatialInteractionSelection `json:"spatialSelections"`
 }
 
 type NavigationCommand struct {
@@ -35,7 +34,6 @@ type NavigationCommand struct {
 // keep dashboard orchestration readable without creating a second wire model.
 type VisualizationWindowRequest = visualizationir.VisualizationWindowRequest
 type SpatialBounds = visualizationir.VisualizationSpatialBounds
-type SpatialWindowRequest = visualizationir.VisualizationSpatialWindowRequest
 
 type Catalog = catalog.Catalog
 type CatalogWorkspace = catalog.Workspace

@@ -1421,16 +1421,8 @@ func envelopeRows(t *testing.T, envelope visualizationir.VisualizationEnvelope) 
 			t.Fatalf("visualization %q datasets = %d, want 1", envelope.VisualID, len(state.Datasets))
 		}
 		columns, rows = state.Datasets[0].Columns, state.Datasets[0].Rows
-	case *visualizationir.SpatialWindowedVisualizationDataState:
-		if state.Window == nil {
-			return nil
-		}
-		for _, field := range state.Schema.Fields {
-			columns = append(columns, field.ID)
-		}
-		rows = state.Window.Rows
 	default:
-		t.Fatalf("visualization %q data state = %T, want inline or spatial", envelope.VisualID, envelope.DataState.Value)
+		t.Fatalf("visualization %q data state = %T, want inline", envelope.VisualID, envelope.DataState.Value)
 	}
 	data := make([]dashboard.Datum, len(rows))
 	for rowIndex, row := range rows {

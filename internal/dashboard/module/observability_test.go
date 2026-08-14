@@ -11,6 +11,8 @@ func (testDashboardTelemetry) DashboardRefreshFinished(string, string, int, map[
 func (testDashboardTelemetry) DashboardRefreshEventObserved(string, string)                     {}
 func (testDashboardTelemetry) VisualizationFrameObserved(string, int, int, int)                 {}
 func (testDashboardTelemetry) DashboardCacheObserved(string)                                    {}
+func (testDashboardTelemetry) SpatialTileObserved(string, string, string, int64, int64, int, int, bool) {
+}
 
 func TestBuildWiresProgressiveObservers(t *testing.T) {
 	module, err := Build(t.Context(), Config{HTTP: HTTPConfig{

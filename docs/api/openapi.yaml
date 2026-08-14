@@ -70143,7 +70143,7 @@ components:
         lastSeenAt: "2026-01-02T15:04:05Z"
         profileId: example
         revokedAt: "2026-01-02T15:04:05Z"
-    SpatialWindowedVisualizationDataState:
+    SpatialTiledVisualizationDataState:
       type: object
       allOf:
         - $ref: '#/components/schemas/VisualizationDataStateBase'
@@ -70152,14 +70152,19 @@ components:
         - schema
         - cardinality
         - extent
-        - rowCap
+        - rawDomains
+        - aggregateDomains
+        - tileURL
+        - minimumZoom
+        - maximumZoom
+        - rawMinimumZoom
         - featureCap
-        - resetVersion
+        - maximumTileBytes
       properties:
         kind:
           type: string
           enum:
-            - spatial_windowed
+            - spatial_tiled
           example: example
         schema:
           $ref: '#/components/schemas/VisualizationDatasetSchema'
@@ -70167,21 +70172,60 @@ components:
           $ref: '#/components/schemas/VisualizationCardinality'
         extent:
           $ref: '#/components/schemas/VisualizationSpatialBounds'
-        rowCap:
+        rawDomains:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationSpatialScaleDomain'
+          example:
+            - field: example
+              maximum: !!float 1
+              minimum: !!float 1
+              total: !!float 1
+        aggregateDomains:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationSpatialScaleDomain'
+          example:
+            - field: example
+              maximum: !!float 1
+              minimum: !!float 1
+              total: !!float 1
+        tileURL:
+          type: string
+          example: example
+        minimumZoom:
           type: integer
-          format: int64
+          format: int32
+          example: 1
+        maximumZoom:
+          type: integer
+          format: int32
+          example: 1
+        rawMinimumZoom:
+          type: integer
+          format: int32
+          description: |-
+            First zoom rendered at raw coordinate grain. A value of maximumZoom + 1
+            means the revision remains aggregate at every supported zoom.
           example: 1
         featureCap:
           type: integer
           format: int64
           example: 1
-        resetVersion:
+        maximumTileBytes:
           type: integer
           format: int64
           example: 1
-        window:
-          $ref: '#/components/schemas/VisualizationSpatialWindowBlock'
+      description: |-
+        Row-free metadata and transport contract for server-generated vector tiles.
+        Tile URLs are opaque, revision-scoped capabilities; this state deliberately
+        contains neither query rows nor authored filter values.
       example:
+        aggregateDomains:
+          - field: example
+            maximum: !!float 1
+            minimum: !!float 1
+            total: !!float 1
         cardinality:
           count: 1
           kind: unknown
@@ -70192,8 +70236,15 @@ components:
           west: !!float 1
         featureCap: 1
         kind: example
-        resetVersion: 1
-        rowCap: 1
+        maximumTileBytes: 1
+        maximumZoom: 1
+        minimumZoom: 1
+        rawDomains:
+          - field: example
+            maximum: !!float 1
+            minimum: !!float 1
+            total: !!float 1
+        rawMinimumZoom: 1
         schema:
           fields:
             - dataType: string
@@ -70224,21 +70275,7 @@ components:
                 timezone: example
                 weekStart: monday
           id: example
-        window:
-          bounds:
-            east: !!float 1
-            north: !!float 1
-            south: !!float 1
-            west: !!float 1
-          height: 1
-          id: example
-          precision: raw
-          requestSeq: 1
-          resetVersion: 1
-          rows:
-            - - example
-          width: 1
-          zoom: !!float 1
+        tileURL: example
     StatusResponse:
       type: object
       required:
@@ -71664,12 +71701,12 @@ components:
       oneOf:
         - $ref: '#/components/schemas/InlineVisualizationDataState'
         - $ref: '#/components/schemas/WindowedVisualizationDataState'
-        - $ref: '#/components/schemas/SpatialWindowedVisualizationDataState'
+        - $ref: '#/components/schemas/SpatialTiledVisualizationDataState'
       discriminator:
         propertyName: kind
         mapping:
           inline: '#/components/schemas/InlineVisualizationDataState'
-          spatial_windowed: '#/components/schemas/SpatialWindowedVisualizationDataState'
+          spatial_tiled: '#/components/schemas/SpatialTiledVisualizationDataState'
           windowed: '#/components/schemas/WindowedVisualizationDataState'
     VisualizationDataStateBase:
       type: object
@@ -73817,12 +73854,6 @@ components:
         points:
           - latitude: !!float 1
             longitude: !!float 1
-    VisualizationSpatialPrecision:
-      type: string
-      enum:
-        - raw
-        - aggregated
-      example: raw
     VisualizationSpatialRadiusSelection:
       type: object
       allOf:
@@ -73849,6 +73880,31 @@ components:
           longitude: !!float 1
         kind: example
         radiusMeters: !!float 1
+    VisualizationSpatialScaleDomain:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          type: string
+          example: example
+        minimum:
+          type: number
+          format: double
+          example: !!float 1
+        maximum:
+          type: number
+          format: double
+          example: !!float 1
+        total:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        field: example
+        maximum: !!float 1
+        minimum: !!float 1
+        total: !!float 1
     VisualizationSpatialSelectionGeometry:
       oneOf:
         - $ref: '#/components/schemas/VisualizationSpatialBoxSelection'
@@ -73943,68 +73999,6 @@ components:
       example:
         interactionID: example
         visualID: example
-    VisualizationSpatialWindowBlock:
-      type: object
-      required:
-        - id
-        - bounds
-        - zoom
-        - width
-        - height
-        - precision
-        - rows
-        - requestSeq
-        - resetVersion
-      properties:
-        id:
-          type: string
-          example: example
-        bounds:
-          $ref: '#/components/schemas/VisualizationSpatialBounds'
-        zoom:
-          type: number
-          format: double
-          example: !!float 1
-        width:
-          type: integer
-          format: int32
-          example: 1
-        height:
-          type: integer
-          format: int32
-          example: 1
-        precision:
-          $ref: '#/components/schemas/VisualizationSpatialPrecision'
-        rows:
-          type: array
-          items:
-            type: array
-            items: {}
-          example:
-            - - example
-        requestSeq:
-          type: integer
-          format: int64
-          example: 1
-        resetVersion:
-          type: integer
-          format: int64
-          example: 1
-      example:
-        bounds:
-          east: !!float 1
-          north: !!float 1
-          south: !!float 1
-          west: !!float 1
-        height: 1
-        id: example
-        precision: raw
-        requestSeq: 1
-        resetVersion: 1
-        rows:
-          - - example
-        width: 1
-        zoom: !!float 1
     VisualizationSpec:
       oneOf:
         - $ref: '#/components/schemas/CartesianVisualizationSpec'

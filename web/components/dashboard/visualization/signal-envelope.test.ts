@@ -36,9 +36,9 @@ test('dashboard visualization signal decoder reuses data on status-only patches'
 test('dashboard visualization signal decoder fails closed on transport and payload mismatches', () => {
   const decoder = new DashboardVisualizationSignalDecoder()
   const state = {
-    specRevision: 'spec-1', dataRevision: 1, generation: 1, kind: 'spatial_windowed',
+    specRevision: 'spec-1', dataRevision: 1, generation: 1, kind: 'spatial_tiled',
     schema: { id: 'primary', fields: [] }, cardinality: { kind: 'exact', count: 0 },
-    extent: { west: -1, south: -1, east: 1, north: 1 }, rowCap: 1, featureCap: 1, resetVersion: 0,
+    extent: { west: -1, south: -1, east: 1, north: 1 }, rawDomains: [], aggregateDomains: [], tileURL: '/tiles/{z}/{x}/{y}.mvt', minimumZoom: 0, maximumZoom: 18, rawMinimumZoom: 10, featureCap: 5000, maximumTileBytes: 524288,
   }
   const valid = visualizationSignal(state)
 
@@ -56,7 +56,7 @@ test('dashboard visualization signal decoder ignores incomplete unknown visual p
 })
 
 function visualizationSignal(state: Record<string, unknown>): DashboardVisualizationSignal {
-  const kind = state.kind as 'inline' | 'windowed' | 'spatial_windowed'
+  const kind = state.kind as 'inline' | 'windowed' | 'spatial_tiled'
   const specRevision = state.specRevision as string
   const dataRevision = state.dataRevision as number
   const generation = state.generation as number

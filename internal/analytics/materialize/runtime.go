@@ -29,6 +29,7 @@ type RuntimeConfig struct {
 	QueryCacheNamespace string
 	QueryCache          *resultcache.Scope
 	ResultLimits        dataquery.ResultLimits
+	RequiredExtensions  []string
 	TableRelation       semanticquery.TableRelation
 
 	Database Database
@@ -51,17 +52,33 @@ type ModelTableQuery struct {
 }
 
 type Runtime struct {
-	modelID      string
-	model        *semanticmodel.Model
-	planner      *semanticquery.Planner
-	db           Database
-	sources      SourcePreparer
-	queryCache   *queryResultCache
-	resultLimits dataquery.ResultLimits
-	lastRefresh  time.Time
-	dbOwned      bool
-	closeOnce    sync.Once
-	closeErr     error
+	modelID            string
+	model              *semanticmodel.Model
+	planner            *semanticquery.Planner
+	db                 Database
+	sources            SourcePreparer
+	queryCache         *queryResultCache
+	resultLimits       dataquery.ResultLimits
+	requiredExtensions []string
+	lastRefresh        time.Time
+	dbOwned            bool
+	closeOnce          sync.Once
+	closeErr           error
+}
+
+// LookupImmutableBytes, StoreImmutableBytes, and CoalesceImmutableBytes expose
+// the serving-generation result-cache scope to byte-oriented consumers such
+// as vector tiles without leaking cache implementation details.
+func (r *Runtime) LookupImmutableBytes(key string) ([]byte, bool, error) {
+	return r.queryCache.lookupBytes(key)
+}
+
+func (r *Runtime) StoreImmutableBytes(key string, value []byte) bool {
+	return r.queryCache.storeBytes(key, value) == resultcache.StoreStored
+}
+
+func (r *Runtime) CoalesceImmutableBytes(ctx context.Context, key string, execute func() error) (bool, error) {
+	return r.queryCache.coalesceBytes(ctx, key, execute)
 }
 
 type Database interface {
@@ -153,10 +170,40 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	}
 	runtime = &Runtime{
 		modelID: config.ModelID, model: config.Model, planner: planner, db: config.Database,
-		sources:    config.Sources,
+		sources: config.Sources, requiredExtensions: normalizedExtensions(config.RequiredExtensions),
 		queryCache: cache, resultLimits: limits, dbOwned: config.OwnDatabase,
 	}
 	return runtime, nil
+}
+
+func normalizedExtensions(names []string) []string {
+	unique := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name = strings.TrimSpace(name); name != "" {
+			unique[name] = struct{}{}
+		}
+	}
+	ordered := make([]string, 0, len(unique))
+	for name := range unique {
+		ordered = append(ordered, name)
+	}
+	sort.Strings(ordered)
+	return ordered
+}
+
+func (r *Runtime) ensureRequiredExtensions(ctx context.Context) error {
+	extensions, ok := r.db.(interface {
+		EnsureExtension(context.Context, string) error
+	})
+	if !ok {
+		return nil
+	}
+	for _, name := range r.requiredExtensions {
+		if err := extensions.EnsureExtension(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *Runtime) queryPlanner() *semanticquery.Planner {
@@ -331,6 +378,9 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 		if lease != nil {
 			defer lease.Release()
 			execCtx = leasedCtx
+		}
+		if err := r.ensureRequiredExtensions(execCtx); err != nil {
+			return dataquery.Result{PlanningMS: planningMS}, err
 		}
 		execCtx, connectionWait := dataquery.WithConnectionWaitCounter(execCtx)
 		databaseStarted := time.Now()
@@ -524,7 +574,9 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 		dataquery.OperationDashboardHistogram,
 		dataquery.OperationDashboardDistribution,
 		dataquery.OperationDashboardFilterOptions,
-		dataquery.OperationDashboardSpatial:
+		dataquery.OperationDashboardSpatialTile,
+		dataquery.OperationDashboardSpatialTileBudget,
+		dataquery.OperationDashboardSpatialMetadata:
 		return true
 	default:
 		return false

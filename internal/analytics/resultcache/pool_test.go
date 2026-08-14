@@ -79,6 +79,65 @@ func TestOversizedEntryIsSkipped(t *testing.T) {
 	}
 }
 
+func TestByteEntriesAreImmutableAndShareCacheBudgets(t *testing.T) {
+	pool, _ := New(testLimits())
+	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	original := []byte{1, 2, 3}
+	if outcome := scope.StoreBytes("tile", scope.Generation(), original); outcome != StoreStored {
+		t.Fatalf("store bytes outcome = %q", outcome)
+	}
+	original[0] = 9
+	first, _, hit, err := scope.LookupBytes("tile")
+	if err != nil || !hit || first[0] != 1 {
+		t.Fatalf("first lookup = %v hit=%v err=%v", first, hit, err)
+	}
+	first[1] = 9
+	second, _, hit, err := scope.LookupBytes("tile")
+	if err != nil || !hit || second[1] != 2 {
+		t.Fatalf("second lookup = %v hit=%v err=%v", second, hit, err)
+	}
+	if stats := scope.Stats(); stats.Entries != 1 || stats.Bytes == 0 {
+		t.Fatalf("byte entry stats = %#v", stats)
+	}
+}
+
+func TestByteEntriesRetainValidEmptyPayloads(t *testing.T) {
+	pool, _ := New(testLimits())
+	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	if outcome := scope.StoreBytes("empty-tile", scope.Generation(), []byte{}); outcome != StoreStored {
+		t.Fatalf("store empty bytes outcome = %q", outcome)
+	}
+	value, _, hit, err := scope.LookupBytes("empty-tile")
+	if err != nil || !hit || len(value) != 0 {
+		t.Fatalf("empty lookup = %v hit=%v err=%v", value, hit, err)
+	}
+}
+
+func BenchmarkWarmTileByteLookup(b *testing.B) {
+	pool, err := New(testLimits())
+	if err != nil {
+		b.Fatal(err)
+	}
+	scope, err := pool.OpenScope(ScopeID{WorkspaceID: "maps", RuntimeID: "serving-1"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer scope.Close()
+	tile := make([]byte, 128*1024)
+	if outcome := scope.StoreBytes("z10/376/512", scope.Generation(), tile); outcome != StoreStored {
+		b.Fatalf("store outcome = %q", outcome)
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(tile)))
+	b.ResetTimer()
+	for range b.N {
+		value, _, hit, err := scope.LookupBytes("z10/376/512")
+		if err != nil || !hit || len(value) != len(tile) {
+			b.Fatalf("warm lookup hit=%v bytes=%d err=%v", hit, len(value), err)
+		}
+	}
+}
+
 func TestCoalesceCancellationDoesNotPoisonLiveWaiter(t *testing.T) {
 	pool, _ := New(testLimits())
 	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})

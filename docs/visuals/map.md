@@ -56,7 +56,7 @@ visuals:
 
 Point layers bind numeric latitude and longitude query aliases. An optional value controls marker size without exposing MapLibre configuration. This variation pins the light basemap explicitly; coordinate layers include a subtle geographic reference grid when no basemap asset is present.
 
-The Visual Showcase includes a dedicated `chart-map-scale` page backed by exactly one million deterministic locations. It demonstrates the production spatial-window path: LeapView aggregates the governed viewport at low zoom, returns raw governed points only when the visible cardinality fits, and never sends more than 5,000 rendered features to the browser.
+The Visual Showcase includes a dedicated `chart-map-scale` page backed by exactly one million deterministic locations. It demonstrates the production vector-tile path: MapLibre requests only visible tiles, LeapView aggregates at low zoom, and high-zoom tiles return raw governed points only when the tile cardinality fits the 5,000-feature budget.
 
 {{< visual id="order_point_map" >}}
 
@@ -72,7 +72,6 @@ visuals:
         longitude: orders.longitude
       measures:
         revenue: null
-      limit: 100
     geo:
       theme: light
       camera: {mode: fit_data, padding: 32, max_zoom: 9}
@@ -91,7 +90,7 @@ visuals:
 
 ## Heat
 
-Heat layers aggregate a numeric value around each coordinate. Keep the query bounded so the browser receives a predictable frame.
+Heat layers aggregate a numeric value around each coordinate. LeapView serves coordinate-bound heat layers as governed vector tiles, keeping browser transfer bounded independently of source cardinality.
 
 {{< visual id="revenue_heat_map" >}}
 
@@ -106,7 +105,6 @@ visuals:
         longitude: orders.longitude
       measures:
         revenue: null
-      limit: 100
     geo:
       theme: dark
       layers:
@@ -135,7 +133,6 @@ visuals:
         longitude: orders.longitude
       measures:
         order_count: null
-      limit: 100
     geo:
       layers:
         - id: orders

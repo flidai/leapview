@@ -93,6 +93,26 @@ func TestTelemetryUsesBoundedLabelsAndRecordsRefreshLifecycle(t *testing.T) {
 	}
 }
 
+func TestSpatialTileTelemetryUsesOnlyBoundedLabels(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	telemetry := New(registry)
+	telemetry.SpatialTileObserved("success", "hit", "raw", 0, 0, 128, 12, false)
+	telemetry.SpatialTileObserved("success", "coalesced", "aggregated", 8, 2, 4096, 42, true)
+	telemetry.SpatialTileObserved("tenant-secret", "user-secret", "visual-secret", 0, 0, 0, 0, false)
+	for name, want := range map[string]uint64{
+		"leapview_spatial_tile_stage_duration_seconds": 4,
+		"leapview_spatial_tile_size_bytes":             2,
+		"leapview_spatial_tile_features":               2,
+	} {
+		if got := histogramSampleCount(t, registry, name); got != want {
+			t.Fatalf("%s sample count = %d, want %d", name, got, want)
+		}
+	}
+	if got := spatialPrecisionLabel("visual-user-123"); got != "unknown" {
+		t.Fatalf("unbounded precision label = %q", got)
+	}
+}
+
 func TestPublicTelemetryPreservesMetricContract(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	telemetry := New(registry)

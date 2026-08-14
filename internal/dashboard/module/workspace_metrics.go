@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
@@ -39,6 +40,14 @@ func (m multiWorkspaceMetrics) defaultMetrics() Metrics {
 		return metrics
 	}
 	return nil
+}
+
+func (m multiWorkspaceMetrics) ExpireVisualizationTileStream(streamID string) {
+	for _, metrics := range m.workspaces {
+		if expirer, ok := metrics.(interface{ ExpireVisualizationTileStream(string) }); ok {
+			expirer.ExpireVisualizationTileStream(streamID)
+		}
+	}
 }
 
 func (m multiWorkspaceMetrics) Catalog() dashboard.Catalog {
@@ -128,13 +137,6 @@ func (m multiWorkspaceMetrics) QueryVisualization(ctx context.Context, dashboard
 func (m multiWorkspaceMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
 	if metrics := m.defaultMetrics(); metrics != nil {
 		return metrics.QueryVisualizationWindow(ctx, dashboardID, pageID, filters, request)
-	}
-	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
-}
-
-func (m multiWorkspaceMetrics) QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	if metrics := m.defaultMetrics(); metrics != nil {
-		return metrics.QueryVisualizationSpatialWindow(ctx, dashboardID, pageID, filters, request)
 	}
 	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
 }
@@ -273,11 +275,40 @@ func (m *dynamicRuntimeMetrics) QueryVisualizationWindow(ctx context.Context, da
 	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
 }
 
-func (m *dynamicRuntimeMetrics) QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	if metrics := m.defaultMetrics(); metrics != nil {
-		return metrics.QueryVisualizationSpatialWindow(ctx, dashboardID, pageID, filters, request)
+func (m *dynamicRuntimeMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	if metrics, ok := m.MetricsForWorkspace(workspaceID); ok {
+		if tiled, ok := metrics.(interface {
+			QueryVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
+		}); ok {
+			return tiled.QueryVisualizationTile(ctx, workspaceID, dashboardID, visualID, revision, zoom, x, y)
+		}
 	}
-	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
+	return dashboardruntime.SpatialTileResult{}, fmt.Errorf("workspace spatial tile runtime is not configured")
+}
+
+func (m *dynamicRuntimeMetrics) ExpireVisualizationTileStream(streamID string) {
+	m.mu.Lock()
+	metricsByWorkspace := make([]Metrics, 0, len(m.metrics))
+	for _, metrics := range m.metrics {
+		metricsByWorkspace = append(metricsByWorkspace, metrics)
+	}
+	m.mu.Unlock()
+	for _, metrics := range metricsByWorkspace {
+		if expirer, ok := metrics.(interface{ ExpireVisualizationTileStream(string) }); ok {
+			expirer.ExpireVisualizationTileStream(streamID)
+		}
+	}
+}
+
+func (m *dynamicRuntimeMetrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	if metrics := m.defaultMetrics(); metrics != nil {
+		if tiled, ok := metrics.(interface {
+			QueryPublicVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
+		}); ok {
+			return tiled.QueryPublicVisualizationTile(ctx, publicID, dashboardID, visualID, revision, zoom, x, y)
+		}
+	}
+	return dashboardruntime.SpatialTileResult{}, fmt.Errorf("public spatial tile runtime is not configured")
 }
 
 func (m *dynamicRuntimeMetrics) QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {

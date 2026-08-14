@@ -54,7 +54,7 @@ class TanStackHandle implements RendererHandle {
 export function tableSignal(envelope: VisualizationEnvelope): TableSignal {
   const spec = envelope.spec
   if (spec.kind !== 'table' && spec.kind !== 'matrix' && spec.kind !== 'pivot') throw new Error(`TanStack cannot render ${spec.kind}`)
-  if (envelope.dataState.kind === 'spatial_windowed') throw new Error('TanStack cannot render spatial map data')
+	if (envelope.dataState.kind === 'spatial_tiled') throw new Error('TanStack cannot render spatial map data')
   const schema = envelope.dataState.kind === 'windowed' ? envelope.dataState.schema : spec.datasets[0]
   const fields = new Map((schema?.fields ?? []).map((field) => [field.id, field]))
   const fieldRefs = spec.kind === 'table' ? spec.columns.map((column) => column.field) : (schema?.fields ?? []).map((field) => ({ dataset: schema?.id ?? 'primary', field: field.id }))
@@ -204,7 +204,7 @@ function inlineBlocks(envelope: VisualizationEnvelope, state: Extract<Visualizat
 
 function tableHighlight(envelope: VisualizationEnvelope, datasetID: string): TableSignal['highlight'] {
   const state = envelope.dataState
-  if (state.kind === 'spatial_windowed') return { active: false, announcement: '' }
+	if (state.kind === 'spatial_tiled') return { active: false, announcement: '' }
   const rows = state.kind === 'inline'
     ? state.datasets.find((dataset) => dataset.id === datasetID)?.rows ?? []
     : Object.values(state.blocks).flatMap((block) => block.rows)

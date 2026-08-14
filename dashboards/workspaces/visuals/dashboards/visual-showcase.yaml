@@ -1170,7 +1170,6 @@ spec:
             direction: desc
           - field: zip_prefix
             direction: asc
-        limit: 20000
       geo:
         controls:
           zoom: true
@@ -1190,7 +1189,7 @@ spec:
             cluster:
               enabled: true
               radius: 48
-              max_zoom: 10
+              max_zoom: 5
               minimum_points: 2
               show_count: true
       interaction:
@@ -1235,7 +1234,6 @@ spec:
             direction: desc
           - field: zip_prefix
             direction: asc
-        limit: 20000
       geo:
         theme: dark
         controls:
@@ -1268,7 +1266,6 @@ spec:
             direction: desc
           - field: zip_prefix
             direction: asc
-        limit: 20000
       geo:
         controls:
           zoom: true
@@ -1323,7 +1320,6 @@ spec:
         sort:
           - field: point_id
             direction: asc
-        limit: 1000000
       geo:
         controls:
           zoom: true

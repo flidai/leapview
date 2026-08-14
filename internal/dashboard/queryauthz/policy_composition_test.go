@@ -48,11 +48,6 @@ func TestApplyDataPoliciesUsesOneAlgebraAcrossQueryKinds(t *testing.T) {
 				Measures: []dataquery.Field{{Field: "rating_count"}}},
 		},
 		{
-			name: "spatial",
-			request: dataquery.Query{WorkspaceID: "sales", ModelID: model.Name, Kind: dataquery.KindSemanticSpatial, Target: "ratings",
-				Fields: []dataquery.Field{{Field: "ratings.rating"}}},
-		},
-		{
 			name: "multi-fact aggregate",
 			request: dataquery.Query{WorkspaceID: "sales", ModelID: model.Name, Kind: dataquery.KindSemanticAggregate,
 				Measures: []dataquery.Field{{Field: "rating_count"}, {Field: "tag_count"}}},

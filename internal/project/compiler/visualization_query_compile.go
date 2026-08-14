@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -125,37 +126,47 @@ func compiledVisualResultShape(authored reportdef.Visual) (visualizationdefiniti
 }
 
 func compiledSpatialBinding(modelID string, authored reportdef.Visual, model *semanticmodel.Model) (visualizationdefinition.QueryBinding, error) {
+	tiled, err := geographicUsesTiledDelivery(authored)
+	if err != nil {
+		return visualizationdefinition.QueryBinding{}, err
+	}
 	limit := compiledVisualLimit(authored)
+	if tiled {
+		limit = 0
+	}
 	spatial := &visualizationdefinition.SpatialQueryBinding{
 		TableID: authored.Query.Table, Dimensions: compiledFields(authored.Query.Dimensions), Measures: compiledFields(authored.Query.Measures),
 		Series: compiledOptionalField(authored.Query.Series), Time: compiledTime(authored.Query.Time), Sort: compiledSort(authored.Query.Sort), Limit: limit,
 	}
-	if limit > 20_000 {
-		latitudeAlias, longitudeAlias, found, err := authoredViewportCoordinates(authored.Geo.Layers)
+	if tiled {
+		latitudeAlias, longitudeAlias, found, err := authoredTiledCoordinates(authored.Geo.Layers)
 		if err != nil {
 			return visualizationdefinition.QueryBinding{}, err
 		}
-		if found {
-			if model != nil {
-				for _, field := range authored.Query.Measures {
-					measure, err := model.ResolveMeasure(field.Field)
-					if err != nil {
-						return visualizationdefinition.QueryBinding{}, fmt.Errorf("windowed geographic measure %q must be an atomic measure: %w", field.Field, err)
-					}
-					switch measure.Aggregation {
-					case "count", "sum", "min", "max":
-					default:
-						return visualizationdefinition.QueryBinding{}, fmt.Errorf("windowed geographic measure %q uses non-reaggregatable %q aggregation", field.Field, measure.Aggregation)
-					}
-				}
+		if !found {
+			return visualizationdefinition.QueryBinding{}, fmt.Errorf("tiled geographic visual requires a point, heat, or density coordinate layer")
+		}
+		fields := compiledVisualFields(authored.Query)
+		latitude, latitudeOK := fieldBindingByAlias(fields, latitudeAlias)
+		longitude, longitudeOK := fieldBindingByAlias(fields, longitudeAlias)
+		if !latitudeOK || !longitudeOK {
+			return visualizationdefinition.QueryBinding{}, fmt.Errorf("spatial tile coordinates %q and %q must reference compiled query aliases", latitudeAlias, longitudeAlias)
+		}
+		if spatial.TableID == "" && model != nil {
+			latitudeDimension, latitudeErr := model.ResolveDimension(latitude.FieldID)
+			longitudeDimension, longitudeErr := model.ResolveDimension(longitude.FieldID)
+			if latitudeErr == nil && longitudeErr == nil && latitudeDimension.Table == longitudeDimension.Table {
+				spatial.TableID = latitudeDimension.Table
 			}
-			fields := compiledVisualFields(authored.Query)
-			latitude, latitudeOK := fieldBindingByAlias(fields, latitudeAlias)
-			longitude, longitudeOK := fieldBindingByAlias(fields, longitudeAlias)
-			if !latitudeOK || !longitudeOK {
-				return visualizationdefinition.QueryBinding{}, fmt.Errorf("spatial viewport coordinates %q and %q must reference compiled query aliases", latitudeAlias, longitudeAlias)
-			}
-			spatial.Viewport = &visualizationdefinition.SpatialViewportBinding{Latitude: latitude, Longitude: longitude, FeatureCap: 5000, RawMinimumZoom: 10}
+		}
+		if spatial.TableID == "" {
+			return visualizationdefinition.QueryBinding{}, fmt.Errorf("tiled geographic visual must set query.table when its coordinate fields do not resolve to one fact table")
+		}
+		spatial.Tiles = &visualizationdefinition.SpatialTileBinding{
+			Latitude: latitude, Longitude: longitude,
+			MinimumZoom: 0, MaximumZoom: 18, RawMinimumZoom: 5,
+			FeatureCap: 5000, MaximumBytes: 512 * 1024, MetatileSize: 4,
+			CellRadius: tiledCellRadius(authored.Geo.Layers),
 		}
 	}
 	return visualizationdefinition.QueryBinding{
@@ -163,10 +174,37 @@ func compiledSpatialBinding(modelID string, authored reportdef.Visual, model *se
 	}, nil
 }
 
-func authoredViewportCoordinates(layers []reportdef.VisualGeoLayer) (latitude, longitude string, found bool, err error) {
+func geographicUsesTiledDelivery(authored reportdef.Visual) (bool, error) {
+	hasTiled, hasInline := false, false
+	for _, layer := range authored.Geo.Layers {
+		switch layer.Kind {
+		case "point", "heat", "density":
+			hasTiled = true
+		case "choropleth", "path":
+			hasInline = true
+		case "reference":
+			// Reference geometry remains an independent overlay.
+		}
+	}
+	if hasTiled && hasInline {
+		return false, fmt.Errorf("geographic visual cannot mix tiled point/heat/density layers with inline choropleth/path data layers; split them into separate visuals or move geometry to a reference overlay")
+	}
+	if !hasTiled {
+		return false, nil
+	}
+	if authored.Query.Limit > 0 {
+		return false, fmt.Errorf("tiled geographic visual must not set query.limit; tile budgets govern transport independently of source cardinality")
+	}
+	if authored.DataBudget.MaxRows > 0 {
+		return false, fmt.Errorf("tiled geographic visual must not set data_budget.max_rows; tile budgets govern transport independently of source cardinality")
+	}
+	return true, nil
+}
+
+func authoredTiledCoordinates(layers []reportdef.VisualGeoLayer) (latitude, longitude string, found bool, err error) {
 	for _, layer := range layers {
 		switch layer.Kind {
-		case "point", "heat", "density", "path":
+		case "point", "heat", "density":
 		default:
 			continue
 		}
@@ -178,10 +216,26 @@ func authoredViewportCoordinates(layers []reportdef.VisualGeoLayer) (latitude, l
 			continue
 		}
 		if latitude != layer.Latitude || longitude != layer.Longitude {
-			return "", "", false, fmt.Errorf("windowed geographic coordinate layers must share one latitude/longitude pair")
+			return "", "", false, fmt.Errorf("tiled geographic coordinate layers must share one latitude/longitude pair")
 		}
 	}
 	return latitude, longitude, found, nil
+}
+
+func tiledCellRadius(layers []reportdef.VisualGeoLayer) int32 {
+	radius := 0.0
+	for _, layer := range layers {
+		switch layer.Kind {
+		case "point":
+			radius = math.Max(radius, layer.Size.MaximumRadius)
+			if layer.Cluster.Enabled {
+				radius = math.Max(radius, float64(layer.Cluster.Radius))
+			}
+		case "heat", "density":
+			radius = math.Max(radius, layer.Heat.Radius)
+		}
+	}
+	return int32(math.Round(math.Max(32, math.Min(64, radius))))
 }
 
 func fieldBindingByAlias(fields []visualizationdefinition.FieldBinding, alias string) (visualizationdefinition.FieldBinding, bool) {

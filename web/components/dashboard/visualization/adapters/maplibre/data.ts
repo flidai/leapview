@@ -6,9 +6,6 @@ export type GeographicDataset = { id: string; columns: string[]; rows: unknown[]
 
 export function geographicDataset(envelope: VisualizationEnvelope, datasetID: string): GeographicDataset | undefined {
   if (envelope.dataState.kind === 'inline') return envelope.dataState.datasets.find((candidate) => candidate.id === datasetID)
-  if (envelope.dataState.kind === 'spatial_windowed' && envelope.dataState.schema.id === datasetID && envelope.dataState.window) {
-    return { id: datasetID, columns: envelope.dataState.schema.fields.map((field) => field.id), rows: envelope.dataState.window.rows }
-  }
   return undefined
 }
 
@@ -59,7 +56,6 @@ export function coordinateGeometry(envelope: VisualizationEnvelope, layer: Visua
   const labelIndex = coordinateLayer.label ? dataset.columns.indexOf(coordinateLayer.label.field) : -1
   const features: Feature<Geometry>[] = []
   const highlight = projectVisualizationHighlights(envelope, dataset.id, dataset.columns, dataset.rows)
-  const selectableRows = envelope.dataState.kind !== 'spatial_windowed' || envelope.dataState.window?.precision === 'raw'
   for (let index = 0; index < dataset.rows.length; index++) {
     const row = dataset.rows[index]!
     const latitude = row[latitudeIndex], longitude = row[longitudeIndex]
@@ -72,7 +68,7 @@ export function coordinateGeometry(envelope: VisualizationEnvelope, layer: Visua
       __lv_has_selection: envelope.selection.length > 0,
       __lv_highlighted: highlight.matchedRows.has(index),
       __lv_has_highlight: highlight.active,
-      ...((layer.kind === 'point' || layer.tooltip.length > 0) && selectableRows ? rowLocator(dataset.id, index, layer.id) : {}),
+      ...((layer.kind === 'point' || layer.tooltip.length > 0) ? rowLocator(dataset.id, index, layer.id) : {}),
     } })
   }
   return { type: 'FeatureCollection', features }
@@ -97,18 +93,20 @@ export function pathGeometry(envelope: VisualizationEnvelope, layer: Extract<Vis
     grouped.set(key, points)
   }
   const features: Feature<Geometry>[] = []
-  const locatableRows = envelope.dataState.kind !== 'spatial_windowed' || envelope.dataState.window?.precision === 'raw'
   for (const [id, points] of grouped) {
     points.sort((a, b) => String(a.order).localeCompare(String(b.order), undefined, { numeric: true }))
     if (points.length < 2) continue
     const last = points.at(-1)!
-    features.push({ type: 'Feature', id, geometry: { type: 'LineString', coordinates: points.map((point) => point.coordinate) }, properties: {
+    // MapLibre's GeoJSON worker accepts string feature IDs into source tiles,
+    // but does not paint those LineStrings. Keep the semantic path identity in
+    // __lv_path and use the deterministic result order for the renderer ID.
+    features.push({ type: 'Feature', id: features.length, geometry: { type: 'LineString', coordinates: points.map((point) => point.coordinate) }, properties: {
       __lv_value: last.value ?? 1,
       __lv_category: last.category ?? null,
       __lv_path: id,
       __lv_highlighted: points.some((point) => highlight.matchedRows.has(point.rowIndex)),
       __lv_has_highlight: highlight.active,
-      ...(locatableRows ? rowLocator(dataset.id, last.rowIndex, layer.id) : {}),
+      ...rowLocator(dataset.id, last.rowIndex, layer.id),
     } })
   }
   return { type: 'FeatureCollection', features }

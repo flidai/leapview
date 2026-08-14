@@ -2615,6 +2615,8 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Go application tests (PR)",
 		"frontend-validation:",
 		"name: Frontend tests (PR)",
+		"spatial-tile-benchmarks:",
+		"name: Spatial tile benchmarks (PR)",
 		"runs-on: ubuntu-24.04",
 		"uses: ./.github/actions/setup-ci",
 		"run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
@@ -2625,11 +2627,12 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
-		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation]",
+		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, spatial-tile-benchmarks]",
 		"APIGEN_RESULT: ${{ needs.apigen-validation.result }}",
 		"GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}",
 		"GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}",
 		"FRONTEND_RESULT: ${{ needs.frontend-validation.result }}",
+		"SPATIAL_BENCHMARK_RESULT: ${{ needs.spatial-tile-benchmarks.result }}",
 		"Validation is deferred to the top of this stack.",
 	} {
 		if !strings.Contains(text, want) {

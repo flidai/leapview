@@ -19,10 +19,12 @@ import (
 )
 
 type VisualizationDataService struct {
-	mu       *sync.RWMutex
-	reports  *ReportService
-	runtimes map[string]*modelRuntime
-	filters  *FilterService
+	mu          *sync.RWMutex
+	reports     *ReportService
+	runtimes    map[string]*modelRuntime
+	filters     *FilterService
+	tiles       *spatialTileRegistry
+	workspaceID string
 }
 
 func (s *VisualizationDataService) visuals(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, keys []string) (map[string]visualizationir.VisualizationEnvelope, error) {
@@ -75,88 +77,6 @@ func (s *VisualizationDataService) visuals(ctx context.Context, runtime *modelRu
 		visuals[key] = envelope
 	}
 	return visuals, nil
-}
-
-func (s *VisualizationDataService) spatialEnvelope(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, request dashboard.SpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	definition, ok := report.Visualizations[request.VisualID]
-	if !ok {
-		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("unknown spatial visual %q", request.VisualID)
-	}
-	visual, err := newVisualPlan(definition)
-	if err != nil {
-		return visualizationir.VisualizationEnvelope{}, err
-	}
-	if _, ok := definition.Spec.Value.(*visualizationir.GeographicVisualizationSpec); !ok {
-		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("visual %q is not geographic", request.VisualID)
-	}
-	spatial := definition.Query.Spatial
-	if definition.Query.Kind != visualizationdefinition.QuerySpatial || spatial == nil || spatial.Viewport == nil {
-		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("visual %q has no compiled spatial viewport", request.VisualID)
-	}
-	queryFilters, err := s.filters.semanticFilters(ctx, runtime, report, filters, "visual", request.VisualID)
-	if err != nil {
-		return visualizationir.VisualizationEnvelope{}, err
-	}
-	precision := dataquery.SpatialPrecisionAggregated
-	if request.Zoom >= spatial.Viewport.RawMinimumZoom {
-		precision = dataquery.SpatialPrecisionRaw
-	}
-	execute := func(next dataquery.SpatialPrecision) (dataquery.Result, error) {
-		query := dataquery.Query{
-			Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatial, ModelID: definition.Query.ModelID, Kind: dataquery.KindSemanticSpatial, Target: spatial.TableID,
-			Fields: fieldBindingsToDataFields(spatial.Dimensions), Measures: fieldBindingsToDataFields(spatial.Measures), Filters: reportFiltersToDataFilters(queryFilters),
-			Sort: reportSortToDataSort(aliasedVisualSorts(visual)),
-			Spatial: &dataquery.SpatialWindow{
-				Latitude: dataquery.Field{Field: spatial.Viewport.Latitude.FieldID, Alias: spatial.Viewport.Latitude.Alias}, Longitude: dataquery.Field{Field: spatial.Viewport.Longitude.FieldID, Alias: spatial.Viewport.Longitude.Alias},
-				West: request.Bounds.West, South: request.Bounds.South, East: request.Bounds.East, North: request.Bounds.North, Width: int(request.Width), Height: int(request.Height), FeatureCap: int(spatial.Viewport.FeatureCap), Precision: next,
-			},
-		}
-		if spatial.Time != nil {
-			query.Time = dataquery.Time{Field: spatial.Time.FieldID, Alias: spatial.Time.Alias, Grain: spatial.Time.Grain}
-		}
-		return runtime.data.ExecuteDataQuery(ctx, query)
-	}
-	result, err := execute(precision)
-	if err != nil {
-		return visualizationir.VisualizationEnvelope{}, err
-	}
-	if precision == dataquery.SpatialPrecisionRaw && result.TotalRowsKnown && result.TotalRows > int(spatial.Viewport.FeatureCap) {
-		precision = dataquery.SpatialPrecisionAggregated
-		result, err = execute(precision)
-		if err != nil {
-			return visualizationir.VisualizationEnvelope{}, err
-		}
-	}
-	base, err := visualizationir.SpecificationBase(definition.Spec)
-	if err != nil || len(base.Datasets) != 1 {
-		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("spatial visual %q has invalid compiled dataset", request.VisualID)
-	}
-	columns := make([]string, len(base.Datasets[0].Fields))
-	for index, field := range base.Datasets[0].Fields {
-		columns[index] = field.ID
-	}
-	rows := make([][]any, len(result.Rows))
-	for index, row := range result.Rows {
-		rows[index] = make([]any, len(columns))
-		for columnIndex, column := range columns {
-			rows[index][columnIndex] = normalizeDatumValue(row[column])
-		}
-	}
-	cardinality := int64(result.TotalRows)
-	irPrecision := visualizationir.VisualizationSpatialPrecision(precision)
-	envelope, err := visualizationruntime.SpatialEnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: columns, Rows: rows}, selectedEntries(filters, "visual", request.VisualID), request, irPrecision, cardinality, 0, 0)
-	if err != nil {
-		return visualizationir.VisualizationEnvelope{}, err
-	}
-	envelope.Highlights, err = selectedHighlights(runtime, report, filters, request.VisualID)
-	if err != nil {
-		return visualizationir.VisualizationEnvelope{}, err
-	}
-	envelope.SpatialSelection = selectedSpatialState(filters, request.VisualID)
-	if err := visualizationir.ValidateEnvelope(envelope); err != nil {
-		return visualizationir.VisualizationEnvelope{}, err
-	}
-	return envelope, nil
 }
 
 func fieldBindingsToDataFields(bindings []visualizationdefinition.FieldBinding) []dataquery.Field {

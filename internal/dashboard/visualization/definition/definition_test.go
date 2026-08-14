@@ -57,11 +57,11 @@ func TestQueryBindingRejectsMissingAndConflictingBranches(t *testing.T) {
 			Detail:    &DetailQueryBinding{TableID: "orders", Fields: []FieldBinding{{FieldID: "orders.id", Alias: "id"}}, Limit: 100},
 			Aggregate: &AggregateQueryBinding{TableID: "orders", Measures: []FieldBinding{{FieldID: "orders.count", Alias: "value"}}, Limit: 1},
 		},
-		"spatial viewport without coordinates": {
+		"spatial tiles without coordinates": {
 			Kind: QuerySpatial, ResultShape: ResultGeographicFeatures, ModelID: "sales", DatasetID: "primary",
 			Spatial: &SpatialQueryBinding{
-				TableID: "orders", Dimensions: []FieldBinding{{FieldID: "orders.state", Alias: "state"}}, Limit: 1_000_000,
-				Viewport: &SpatialViewportBinding{FeatureCap: 5000},
+				TableID: "orders", Dimensions: []FieldBinding{{FieldID: "orders.state", Alias: "state"}},
+				Tiles: &SpatialTileBinding{FeatureCap: 5000, MaximumBytes: 512 * 1024, MetatileSize: 4, CellRadius: 48, MaximumZoom: 18},
 			},
 		},
 	} {
@@ -177,10 +177,9 @@ func TestGeographicDefinitionOwnsExplicitSpatialQuery(t *testing.T) {
 				{FieldID: "orders.longitude", Alias: "longitude"},
 			},
 			Measures: []FieldBinding{{FieldID: "orders.revenue", Alias: "revenue"}},
-			Limit:    1_000_000,
-			Viewport: &SpatialViewportBinding{
+			Tiles: &SpatialTileBinding{
 				Latitude: FieldBinding{FieldID: "orders.latitude", Alias: "latitude"}, Longitude: FieldBinding{FieldID: "orders.longitude", Alias: "longitude"},
-				FeatureCap: 5000, RawMinimumZoom: 10,
+				FeatureCap: 5000, MaximumBytes: 512 * 1024, MetatileSize: 4, CellRadius: 48, MaximumZoom: 18, RawMinimumZoom: 10,
 			},
 		},
 	}
@@ -212,7 +211,7 @@ func geographicSpec() ir.VisualizationSpec {
 	return ir.VisualizationSpec{Value: &ir.GeographicVisualizationSpec{
 		VisualizationSpecBase: ir.VisualizationSpecBase{
 			Kind: "geographic", Title: "Orders", Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{latitude, longitude}}},
-			DataBudget:    ir.VisualizationDataBudget{MaxRows: 1_000_000, RequiredCompleteness: ir.VisualizationCompletenessPartial},
+			DataBudget:    ir.VisualizationDataBudget{RequiredCompleteness: ir.VisualizationCompletenessComplete},
 			Accessibility: ir.VisualizationAccessibility{Title: "Orders", Description: "Order locations"}, Interactions: []ir.VisualizationInteraction{},
 		},
 		Kind: "geographic",

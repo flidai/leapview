@@ -128,10 +128,49 @@ jobs:
       - name: Verify generated artifacts
         run: task generated:check
 
+  spatial-tile-benchmarks:
+    name: Spatial tile benchmarks (PR)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.stack == null ||
+      github.event.pull_request.stack.position == github.event.pull_request.stack.size
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Record cold, pan, raw, and forced-fallback benchmarks
+        run: |
+          go test ./internal/analytics/query -run '^$' -bench '^BenchmarkSpatial' -benchmem -benchtime=1x -count=10 | tee spatial-tile-backend.txt
+
+      - name: Record warm child-tile byte-cache benchmark
+        run: |
+          go test ./internal/analytics/resultcache -run '^$' -bench '^BenchmarkWarmTileByteLookup$' -benchmem -benchtime=100x -count=10 | tee spatial-tile-cache.txt
+
+      - name: Upload spatial benchmark evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spatial-tile-benchmarks
+          path: |
+            spatial-tile-backend.txt
+            spatial-tile-cache.txt
+          retention-days: 30
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, spatial-tile-benchmarks]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -141,8 +180,9 @@ jobs:
           GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}
           GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
+          SPATIAL_BENCHMARK_RESULT: ${{ needs.spatial-tile-benchmarks.result }}
         run: |
-          if [[ "${APIGEN_RESULT}" = skipped && "${GO_PACKAGES_RESULT}" = skipped && "${GO_APPLICATION_RESULT}" = skipped && "${FRONTEND_RESULT}" = skipped ]]; then
+          if [[ "${APIGEN_RESULT}" = skipped && "${GO_PACKAGES_RESULT}" = skipped && "${GO_APPLICATION_RESULT}" = skipped && "${FRONTEND_RESULT}" = skipped && "${SPATIAL_BENCHMARK_RESULT}" = skipped ]]; then
             printf '%s\n' 'Validation is deferred to the top of this stack.' >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
@@ -160,5 +200,9 @@ jobs:
           }
           test "${FRONTEND_RESULT}" = success || {
             printf 'Frontend validation: %s\n' "${FRONTEND_RESULT}" >&2
+            exit 1
+          }
+          test "${SPATIAL_BENCHMARK_RESULT}" = success || {
+            printf 'Spatial tile benchmarks: %s\n' "${SPATIAL_BENCHMARK_RESULT}" >&2
             exit 1
           }

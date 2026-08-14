@@ -82,7 +82,7 @@ func TestTablePayloadIncludesFactLocalRowSelectionContract(t *testing.T) {
 	}
 }
 
-func TestGeographicVisualCompilesEveryLayerKind(t *testing.T) {
+func TestGeographicVisualCompilesTiledCoordinateLayers(t *testing.T) {
 	dashboardDefinition := &report.Dashboard{SemanticModel: "model", Visuals: report.ChartVisualizations(map[string]report.Visual{
 		"detail": {
 			Type: "bar", Query: report.VisualQuery{Table: "orders", Dimensions: []report.FieldRef{{Field: "orders.state", Alias: "state"}}, Measures: []report.FieldRef{{Field: "orders.revenue", Alias: "revenue"}}},
@@ -102,7 +102,6 @@ func TestGeographicVisualCompilesEveryLayerKind(t *testing.T) {
 				Camera:   report.VisualGeoCamera{Mode: "fit_data", Padding: 32, MinimumZoom: 2, MaximumZoom: 14},
 				Controls: report.VisualGeoControls{Zoom: true, Reset: true, Compass: true},
 				Layers: []report.VisualGeoLayer{
-					{ID: "states", Kind: "choropleth", GeometryAsset: "brazil_states", Join: "state", Value: "revenue", Tooltip: []string{"state", "revenue"}, Color: report.VisualGeoColorScale{Kind: "sequential", Palette: "blue"}},
 					{ID: "stores", Kind: "point", Latitude: "latitude", Longitude: "longitude", Value: "revenue", Label: "state", Size: report.VisualGeoSizeScale{MinimumRadius: 5, MaximumRadius: 28}, Cluster: report.VisualGeoCluster{Enabled: true, Radius: 48, MaximumZoom: 10, ShowCount: true}},
 					{ID: "demand", Kind: "heat", Latitude: "latitude", Longitude: "longitude", Value: "revenue"},
 					{ID: "density", Kind: "density", Latitude: "latitude", Longitude: "longitude"},
@@ -138,14 +137,18 @@ func TestGeographicVisualCompilesEveryLayerKind(t *testing.T) {
 	if !ok {
 		t.Fatalf("geographic spec = %#v", definition.Spec.Value)
 	}
-	if got, want := spec.DataBudget.MaxRows, int64(20_000); got != want {
+	if got, want := spec.DataBudget.MaxRows, int64(0); got != want {
 		t.Fatalf("geographic data budget = %d, want %d", got, want)
 	}
 	if definition.Query.Kind != visualizationdefinition.QuerySpatial || definition.Query.Spatial == nil {
 		t.Fatalf("geographic query binding = %#v, want explicit spatial binding", definition.Query)
 	}
-	if definition.Query.Spatial.Viewport != nil {
-		t.Fatalf("20,000-row map unexpectedly compiled viewport strategy: %#v", definition.Query.Spatial.Viewport)
+	if definition.Query.Spatial.Tiles == nil {
+		t.Fatal("coordinate map did not compile tiled delivery")
+	}
+	tiles := definition.Query.Spatial.Tiles
+	if tiles.MinimumZoom != 0 || tiles.MaximumZoom != 18 || tiles.RawMinimumZoom != 5 || tiles.FeatureCap != 5000 || tiles.MaximumBytes != 512*1024 || tiles.MetatileSize != 4 || tiles.CellRadius != 48 {
+		t.Fatalf("tile policy = %#v", tiles)
 	}
 	if got, want := spec.Presentation.Legend, visualizationir.VisualizationLegendPositionHidden; got != want {
 		t.Fatalf("geographic legend = %q, want %q", got, want)
@@ -156,11 +159,10 @@ func TestGeographicVisualCompilesEveryLayerKind(t *testing.T) {
 	if spec.Presentation.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || !spec.Presentation.Controls.Reset {
 		t.Fatalf("geographic presentation = %#v", spec.Presentation)
 	}
-	if got, want := len(spec.Layers), 4; got != want {
+	if got, want := len(spec.Layers), 3; got != want {
 		t.Fatalf("layers = %d, want %d", got, want)
 	}
 	for index, want := range []string{
-		"choropleth",
 		"point",
 		"heat",
 		"density",
@@ -173,13 +175,9 @@ func TestGeographicVisualCompilesEveryLayerKind(t *testing.T) {
 			t.Fatalf("layer %d kind = %q, want %q", index, got, want)
 		}
 	}
-	choropleth, ok := spec.Layers[0].Value.(*visualizationir.VisualizationChoroplethLayer)
-	if !ok || choropleth.Geometry.Digest == "" || len(choropleth.Tooltip) != 2 {
-		t.Fatalf("choropleth layer = %#v", spec.Layers[0].Value)
-	}
-	point, ok := spec.Layers[1].Value.(*visualizationir.VisualizationPointLayer)
+	point, ok := spec.Layers[0].Value.(*visualizationir.VisualizationPointLayer)
 	if !ok || point.Latitude.Field != "latitude" || point.Longitude.Field != "longitude" || !point.Cluster.Enabled || point.Size.MaximumRadius != 28 {
-		t.Fatalf("point layer = %#v", spec.Layers[1].Value)
+		t.Fatalf("point layer = %#v", spec.Layers[0].Value)
 	}
 	if got, want := len(spec.Interactions), 1; got != want {
 		t.Fatalf("geographic interactions = %d, want %d", got, want)
@@ -213,10 +211,52 @@ func TestGeographicVisualCompilesEveryLayerKind(t *testing.T) {
 	}
 }
 
+func TestGeographicVisualRejectsMixedTiledAndInlineDataLayers(t *testing.T) {
+	dashboardDefinition := &report.Dashboard{SemanticModel: "model", Visuals: report.ChartVisualizations(map[string]report.Visual{"locations": {
+		Type: "map",
+		Query: report.VisualQuery{Table: "orders", Dimensions: []report.FieldRef{
+			{Field: "orders.state", Alias: "state"},
+			{Field: "orders.latitude", Alias: "latitude"},
+			{Field: "orders.longitude", Alias: "longitude"},
+		}},
+		Geo: report.VisualGeo{Layers: []report.VisualGeoLayer{
+			{ID: "states", Kind: "choropleth", GeometryAsset: "brazil_states", Join: "state"},
+			{ID: "stores", Kind: "point", Latitude: "latitude", Longitude: "longitude"},
+		}},
+	}})}
+
+	_, err := compileVisualizationDefinitions(dashboardDefinition)
+	if err == nil || !strings.Contains(err.Error(), "cannot mix tiled point/heat/density layers") {
+		t.Fatalf("mixed geographic layers error = %v", err)
+	}
+}
+
+func TestGeographicVisualRejectsAuthoredRowBudgetsWhenTiled(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*report.Visual)
+		want   string
+	}{
+		{name: "query limit", mutate: func(visual *report.Visual) { visual.Query.Limit = 20_000 }, want: "must not set query.limit"},
+		{name: "data budget", mutate: func(visual *report.Visual) { visual.DataBudget.MaxRows = 20_000 }, want: "must not set data_budget.max_rows"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			visual := report.Visual{Type: "map", Query: report.VisualQuery{Table: "orders", Dimensions: []report.FieldRef{
+				{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"},
+			}}, Geo: report.VisualGeo{Layers: []report.VisualGeoLayer{{ID: "stores", Kind: "point", Latitude: "latitude", Longitude: "longitude"}}}}
+			test.mutate(&visual)
+			_, err := compileVisualizationDefinitions(&report.Dashboard{SemanticModel: "model", Visuals: report.ChartVisualizations(map[string]report.Visual{"locations": visual})})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("row budget error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestGeographicVisualCanExplicitlyDisableTheDefaultBasemap(t *testing.T) {
 	dashboardDefinition := &report.Dashboard{SemanticModel: "model", Visuals: report.ChartVisualizations(map[string]report.Visual{"locations": {
 		Type: "map", Query: report.VisualQuery{
-			Table: "orders", Dimensions: []report.FieldRef{{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}}, Measures: []report.FieldRef{{Field: "orders.revenue", Alias: "revenue"}}, Limit: 100,
+			Table: "orders", Dimensions: []report.FieldRef{{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}}, Measures: []report.FieldRef{{Field: "orders.revenue", Alias: "revenue"}},
 		},
 		Geo: report.VisualGeo{Basemap: "blank", Layers: []report.VisualGeoLayer{{ID: "stores", Kind: "point", Latitude: "latitude", Longitude: "longitude"}}},
 	}})}

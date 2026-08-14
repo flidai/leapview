@@ -10,12 +10,14 @@ import (
 type Kind string
 
 const (
-	KindSemanticAggregate    Kind = "semantic_aggregate"
-	KindSemanticRows         Kind = "semantic_rows"
-	KindModelTableRows       Kind = "model_table_rows"
-	KindSemanticHistogram    Kind = "semantic_histogram"
-	KindSemanticDistribution Kind = "semantic_distribution"
-	KindSemanticSpatial      Kind = "semantic_spatial"
+	KindSemanticAggregate         Kind = "semantic_aggregate"
+	KindSemanticRows              Kind = "semantic_rows"
+	KindModelTableRows            Kind = "model_table_rows"
+	KindSemanticHistogram         Kind = "semantic_histogram"
+	KindSemanticDistribution      Kind = "semantic_distribution"
+	KindSemanticSpatialTile       Kind = "semantic_spatial_tile"
+	KindSemanticSpatialTileBudget Kind = "semantic_spatial_tile_budget"
+	KindSemanticSpatialMetadata   Kind = "semantic_spatial_metadata"
 )
 
 type Query struct {
@@ -51,27 +53,52 @@ type Query struct {
 	Limit               int
 	BinCount            int
 	IncludeTotal        bool
-	Spatial             *SpatialWindow
+	SpatialTile         *SpatialTile
+	SpatialTileBudget   *SpatialTileBudget
+	SpatialMetadata     *SpatialMetadata
 }
 
-type SpatialPrecision string
+type SpatialTilePrecision string
 
 const (
-	SpatialPrecisionRaw        SpatialPrecision = "raw"
-	SpatialPrecisionAggregated SpatialPrecision = "aggregated"
+	SpatialTilePrecisionRaw        SpatialTilePrecision = "raw"
+	SpatialTilePrecisionAggregated SpatialTilePrecision = "aggregated"
 )
 
-type SpatialWindow struct {
-	Latitude   Field
-	Longitude  Field
-	West       float64
-	South      float64
-	East       float64
-	North      float64
-	Width      int
-	Height     int
-	FeatureCap int
-	Precision  SpatialPrecision
+type SpatialTile struct {
+	Latitude     Field
+	Longitude    Field
+	Identity     []Field
+	Zoom         int
+	TargetZoom   int
+	MetatileX    int
+	MetatileY    int
+	MetatileSize int
+	CellPixels   int
+	Buffer       int
+	FeatureCap   int
+	Precision    SpatialTilePrecision
+}
+
+// SpatialTileBudget describes one revision-wide raw-precision probe. Unlike a
+// metatile query, it evaluates every governed XYZ tile at Zoom and returns only
+// the maximum feature count and encoded MVT byte length.
+type SpatialTileBudget struct {
+	Latitude     Field
+	Longitude    Field
+	Identity     []Field
+	Zoom         int
+	Buffer       int
+	FeatureCap   int
+	MaximumBytes int64
+}
+
+type SpatialMetadata struct {
+	Latitude       Field
+	Longitude      Field
+	FeatureCap     int
+	RawMinimumZoom int
+	MaximumZoom    int
 }
 
 type Field struct {
@@ -202,18 +229,20 @@ const (
 	SurfaceDataExplorer    = "data_explorer"
 	SurfacePublicDashboard = "public_dashboard"
 
-	OperationDashboardAggregate     = "dashboard_aggregate"
-	OperationDashboardRows          = "dashboard_rows"
-	OperationDashboardCount         = "dashboard_count"
-	OperationDashboardHistogram     = "dashboard_histogram"
-	OperationDashboardDistribution  = "dashboard_distribution"
-	OperationDashboardFilterOptions = "dashboard_filter_options"
-	OperationDashboardSpatial       = "dashboard_spatial"
-	OperationAPIQuery               = "api_query"
-	OperationAPIPreview             = "api_preview"
-	OperationAgentQuery             = "agent_query"
-	OperationPreviewWindow          = "preview_window"
-	OperationSemanticExplore        = "semantic_explore"
+	OperationDashboardAggregate         = "dashboard_aggregate"
+	OperationDashboardRows              = "dashboard_rows"
+	OperationDashboardCount             = "dashboard_count"
+	OperationDashboardHistogram         = "dashboard_histogram"
+	OperationDashboardDistribution      = "dashboard_distribution"
+	OperationDashboardFilterOptions     = "dashboard_filter_options"
+	OperationDashboardSpatialTile       = "dashboard_spatial_tile"
+	OperationDashboardSpatialTileBudget = "dashboard_spatial_tile_budget"
+	OperationDashboardSpatialMetadata   = "dashboard_spatial_metadata"
+	OperationAPIQuery                   = "api_query"
+	OperationAPIPreview                 = "api_preview"
+	OperationAgentQuery                 = "agent_query"
+	OperationPreviewWindow              = "preview_window"
+	OperationSemanticExplore            = "semantic_explore"
 
 	StatusSuccess  = "success"
 	StatusError    = "error"
@@ -242,6 +271,7 @@ type Metadata struct {
 	ObjectType    string
 	ObjectID      string
 	CorrelationID string
+	StreamID      string
 }
 
 type metadataContextKey struct{}
@@ -341,16 +371,32 @@ func (q Query) Validate() error {
 		if q.Kind == KindSemanticHistogram && q.BinCount <= 0 {
 			return fmt.Errorf("semantic histogram query requires a positive bin count")
 		}
-	case KindSemanticSpatial:
-		if strings.TrimSpace(q.Target) == "" || len(q.Fields) == 0 || q.Spatial == nil {
-			return fmt.Errorf("semantic spatial query requires target, selected fields, and spatial window")
+	case KindSemanticSpatialTile:
+		if len(q.Fields) == 0 || q.SpatialTile == nil {
+			return fmt.Errorf("semantic spatial tile query requires selected fields and tile coordinates")
 		}
-		spatial := q.Spatial
-		if strings.TrimSpace(spatial.Latitude.Field) == "" || strings.TrimSpace(spatial.Longitude.Field) == "" || spatial.Width <= 0 || spatial.Height <= 0 || spatial.FeatureCap <= 0 {
-			return fmt.Errorf("semantic spatial query requires coordinates, viewport dimensions, and feature cap")
+		tile := q.SpatialTile
+		if strings.TrimSpace(tile.Latitude.Field) == "" || strings.TrimSpace(tile.Longitude.Field) == "" || tile.MetatileSize <= 0 || tile.FeatureCap <= 0 {
+			return fmt.Errorf("semantic spatial tile query requires coordinates, metatile size, and feature cap")
 		}
-		if spatial.Precision != SpatialPrecisionRaw && spatial.Precision != SpatialPrecisionAggregated {
-			return fmt.Errorf("unsupported semantic spatial precision %q", spatial.Precision)
+		if tile.Precision != SpatialTilePrecisionRaw && tile.Precision != SpatialTilePrecisionAggregated {
+			return fmt.Errorf("unsupported semantic spatial tile precision %q", tile.Precision)
+		}
+	case KindSemanticSpatialTileBudget:
+		if len(q.Fields) == 0 || q.SpatialTileBudget == nil {
+			return fmt.Errorf("semantic spatial tile budget query requires selected fields and a budget probe")
+		}
+		budget := q.SpatialTileBudget
+		if strings.TrimSpace(budget.Latitude.Field) == "" || strings.TrimSpace(budget.Longitude.Field) == "" || budget.Zoom < 0 || budget.Zoom > 18 || budget.Buffer < 0 || budget.FeatureCap <= 0 || budget.MaximumBytes <= 0 {
+			return fmt.Errorf("semantic spatial tile budget query requires coordinates, zoom, buffer, and feature cap")
+		}
+	case KindSemanticSpatialMetadata:
+		if len(q.Fields) == 0 || q.SpatialMetadata == nil || strings.TrimSpace(q.SpatialMetadata.Latitude.Field) == "" || strings.TrimSpace(q.SpatialMetadata.Longitude.Field) == "" {
+			return fmt.Errorf("semantic spatial metadata query requires selected fields and coordinates")
+		}
+		metadata := q.SpatialMetadata
+		if metadata.FeatureCap <= 0 || metadata.RawMinimumZoom < 0 || metadata.MaximumZoom < metadata.RawMinimumZoom || metadata.MaximumZoom > 18 {
+			return fmt.Errorf("semantic spatial metadata requires valid global raw-tile budgets")
 		}
 	default:
 		return fmt.Errorf("unsupported data query kind %q", q.Kind)

@@ -23,7 +23,7 @@ func TestVerifyFileFailsClosedOnDigestMismatch(t *testing.T) {
 }
 
 func TestGlyphPackageCoversBasemapScriptsObservedAtRuntime(t *testing.T) {
-	want := []string{"0-255", "256-511", "512-767", "768-1023", "1024-1279", "1280-1535", "1536-1791", "4096-4351", "11520-11775"}
+	want := []string{"0-255", "256-511", "512-767", "768-1023", "1024-1279", "1280-1535", "1536-1791", "3840-4095", "4096-4351", "11520-11775"}
 	present := make(map[string]bool, len(glyphRanges))
 	for _, value := range glyphRanges {
 		present[value] = true

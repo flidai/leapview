@@ -387,6 +387,7 @@ type WorkspaceRuntimeConfig struct {
 	CandidateID              string
 	AuthorizationFingerprint string
 	BindingFingerprint       string
+	RequiredExtensions       []string
 	SkipInitialRefresh       bool
 	QueryCache               *resultcache.Scope
 	ResultLimits             dataquery.ResultLimits
@@ -465,6 +466,7 @@ func OpenWorkspaceMaterializeRuntime(ctx context.Context, config WorkspaceRuntim
 			TableRelation:       tableRelation,
 			QueryCache:          config.QueryCache,
 			ResultLimits:        config.ResultLimits,
+			RequiredExtensions:  config.RequiredExtensions,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("compile semantic model %q runtime: %w", modelID, err)

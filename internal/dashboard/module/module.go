@@ -47,6 +47,7 @@ type Module struct {
 	streams                       publication.StreamRegistry
 	publicBroker                  dashboardhttp.SignalBroker
 	publicTelemetry               PublicTelemetry
+	dashboardTelemetry            DashboardTelemetry
 	logger                        *slog.Logger
 	runtimeMetrics                queryruntime.Metrics
 	defaultWorkspaceID            string
@@ -133,6 +134,7 @@ type DashboardTelemetry interface {
 	DashboardRefreshEventObserved(string, string)
 	VisualizationFrameObserved(kind string, rows, cardinality, encodedBytes int)
 	DashboardCacheObserved(string)
+	SpatialTileObserved(outcome, cache, precision string, queryMS, encodingMS int64, encodedBytes, features int, fallback bool)
 }
 
 type Telemetry interface {
@@ -229,6 +231,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		QueryFreshness: config.HTTP.QueryFreshness,
 		AgentBootstrap: config.HTTP.AgentBootstrap,
 		AgentCommands:  config.HTTP.AgentCommands,
+		SpatialTileStreamClosed: func(metrics dashboardhttp.Metrics, streamID string) {
+			if expirer, ok := metrics.(interface{ ExpireVisualizationTileStream(string) }); ok {
+				expirer.ExpireVisualizationTileStream(streamID)
+			}
+		},
 	}
 	if usageRecorder != nil {
 		handler.RecordDashboardView = usageRecorder.RecordView
@@ -270,7 +277,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		publicURL: config.PublicURL, currentActor: config.CurrentActor,
 		recordPublicationCommandAudit: publicationCommandAudit,
 		streams:                       publication.NewMemoryStreamRegistry(), publicBroker: config.HTTP.Broker,
-		publicTelemetry: config.PublicTelemetry, logger: config.Logger,
+		publicTelemetry: config.PublicTelemetry, dashboardTelemetry: config.HTTP.Telemetry, logger: config.Logger,
 		runtimeMetrics: config.RuntimeMetrics, defaultWorkspaceID: config.DefaultWorkspaceID,
 		coordinators: coordinators,
 		usageReader:  usageReader, usageNow: usageNow,
@@ -306,15 +313,6 @@ func observeVisualizationFrame(telemetry DashboardTelemetry, event dashboardstre
 			rows += len(block.Rows)
 		}
 		cardinality = int(state.AvailableRows)
-		if state.Cardinality.Count != nil {
-			cardinality = int(*state.Cardinality.Count)
-		}
-	case *visualizationir.SpatialWindowedVisualizationDataState:
-		kind = "spatial_windowed"
-		if state.Window != nil {
-			rows = len(state.Window.Rows)
-		}
-		cardinality = rows
 		if state.Cardinality.Count != nil {
 			cardinality = int(*state.Cardinality.Count)
 		}

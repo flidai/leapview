@@ -19,6 +19,7 @@ import (
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
@@ -389,7 +390,7 @@ func (m Metrics) authorizeDataQuery(ctx context.Context, principalID string, pri
 
 func (m Metrics) resolvedDependencyObjects(request dataquery.Query, includePublicInteractions bool) ([]access.ObjectRef, []access.ObjectRef, error) {
 	switch request.Kind {
-	case dataquery.KindSemanticAggregate, dataquery.KindSemanticSpatial:
+	case dataquery.KindSemanticAggregate, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget, dataquery.KindSemanticSpatialMetadata:
 	case dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution:
 		if !includePublicInteractions {
 			return nil, nil, nil
@@ -695,8 +696,29 @@ func (m Metrics) QueryVisualizationWindow(ctx context.Context, dashboardID, page
 	return m.Metrics.QueryVisualizationWindow(dataquery.WithGovernor(ctx, m), dashboardID, pageID, filters, request)
 }
 
-func (m Metrics) QueryVisualizationSpatialWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationSpatialWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	return m.Metrics.QueryVisualizationSpatialWindow(dataquery.WithGovernor(ctx, m), dashboardID, pageID, filters, request)
+func (m Metrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	scopedMetrics, found := m.MetricsForWorkspace(workspaceID)
+	scoped, ok := scopedMetrics.(Metrics)
+	if !found || !ok {
+		return dashboardruntime.SpatialTileResult{}, errors.New("workspace spatial tile metrics are not configured")
+	}
+	port, ok := scoped.Metrics.(interface {
+		QueryVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
+	})
+	if !ok {
+		return dashboardruntime.SpatialTileResult{}, errors.New("spatial tile metrics are not configured")
+	}
+	return port.QueryVisualizationTile(dataquery.WithGovernor(ctx, scoped), workspaceID, dashboardID, visualID, revision, zoom, x, y)
+}
+
+func (m Metrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	port, ok := m.Metrics.(interface {
+		QueryPublicVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
+	})
+	if !ok {
+		return dashboardruntime.SpatialTileResult{}, errors.New("public spatial tile metrics are not configured")
+	}
+	return port.QueryPublicVisualizationTile(dataquery.WithGovernor(ctx, m), publicID, dashboardID, visualID, revision, zoom, x, y)
 }
 
 func (m Metrics) applyDataPolicies(ctx context.Context, request dataquery.Query, objects []access.ObjectRef) (dataquery.Query, []access.DataPolicy, error) {

@@ -11,18 +11,86 @@ import (
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/command"
 	lddatastar "github.com/flidai/leapview/internal/dashboard/datastar"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 )
+
+type spatialTileAcceptanceMetrics struct {
+	fakeMetrics
+}
+
+func (*spatialTileAcceptanceMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	metadata := dataquery.MetadataFromContext(ctx)
+	if workspaceID != "test-workspace" || dashboardID != "executive-sales" || visualID != "orders" || revision != "active-auth" || metadata.PrincipalID == "" {
+		return dashboardruntime.SpatialTileResult{}, errors.New("tile revision scope unavailable")
+	}
+	return dashboardruntime.SpatialTileResult{Bytes: []byte{0x1a, 0x00}, Features: 1, Precision: "raw", CacheOutcome: "hit"}, nil
+}
+
+func (*spatialTileAcceptanceMetrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	metadata := dataquery.MetadataFromContext(ctx)
+	wantPrincipal := access.DashboardPublicationSubjectID("test-workspace", "website")
+	if publicID != "opaque-public-id-12345678901234" || dashboardID != "executive-sales" || visualID != "orders" || revision != "active-public" || metadata.PrincipalID != wantPrincipal || metadata.Surface != dataquery.SurfacePublicDashboard {
+		return dashboardruntime.SpatialTileResult{}, errors.New("tile revision scope unavailable")
+	}
+	return dashboardruntime.SpatialTileResult{Bytes: []byte{0x1a, 0x00}, Features: 1, Precision: "aggregate", CacheOutcome: "miss"}, nil
+}
+
+func TestSpatialTileHTTPAuthorizationExpiryAndPublicationInvalidation(t *testing.T) {
+	store := testStore(t)
+	seedActivePublication(t, store, "opaque-public-id-12345678901234")
+	metrics := &spatialTileAcceptanceMetrics{}
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{DefaultWorkspaceID: "test-workspace"}))
+
+	request := func(path string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		server.Routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		return recorder
+	}
+	publicPath := "/public/dashboards/opaque-public-id-12345678901234/visuals/orders/tiles/active-public/2/1/1.mvt"
+	public := request(publicPath)
+	if public.Code != http.StatusOK || public.Header().Get("Cache-Control") != "public, immutable" || public.Header().Get("X-LeapView-Tile-Precision") != "aggregate" {
+		t.Fatalf("public tile = %d headers=%v body=%q", public.Code, public.Header(), public.Body.Bytes())
+	}
+
+	for name, path := range map[string]string{
+		"expired revision":    "/public/dashboards/opaque-public-id-12345678901234/visuals/orders/tiles/expired/2/1/1.mvt",
+		"cross-public replay": "/public/dashboards/another-publication/visuals/orders/tiles/active-public/2/1/1.mvt",
+		"malformed xyz":       "/public/dashboards/opaque-public-id-12345678901234/visuals/orders/tiles/active-public/2/4/1.mvt",
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := request(path)
+			if response.Code != http.StatusNotFound && name != "malformed xyz" {
+				t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+			}
+			if name == "malformed xyz" && response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+			}
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
+			}
+		})
+	}
+
+	if _, err := store.SQLDB().Exec(`UPDATE dashboard_publications SET suspended_at = CURRENT_TIMESTAMP WHERE id = 'pub_website'`); err != nil {
+		t.Fatal(err)
+	}
+	invalidated := request(publicPath)
+	if invalidated.Code != http.StatusNotFound || invalidated.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("invalidated publication tile = %d headers=%v body=%s", invalidated.Code, invalidated.Header(), invalidated.Body.String())
+	}
+}
 
 func TestPublicDashboardDocumentsAreAnonymousAndRouteAware(t *testing.T) {
 	store := testStore(t)

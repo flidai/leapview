@@ -183,6 +183,19 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		return visualExamplesArtifact{}, err
 	}
 	workspaces := analyticsruntime.WorkspaceFactoryFunc(func(ctx context.Context, request analyticsruntime.WorkspaceRequest) (analyticsruntime.Workspace, error) {
+		if len(request.RequiredExtensions) > 0 {
+			lease, err := database.Acquire(refreshLease.Context())
+			if err != nil {
+				return nil, err
+			}
+			for _, extension := range request.RequiredExtensions {
+				if err := database.EnsureExtension(lease.Context(), extension); err != nil {
+					lease.Release()
+					return nil, err
+				}
+			}
+			lease.Release()
+		}
 		return analyticsduckdb.OpenWorkspaceMaterializeRuntime(ctx, analyticsduckdb.WorkspaceRuntimeConfig{
 			Models: request.Models, Database: database,
 			CredentialResolver: analyticsduckdb.NonSecretCredentialResolver{},
@@ -216,8 +229,8 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		payloads := make([]visualdocs.Payload, 0, len(examplesByPage[document.Source]))
 		for _, example := range examplesByPage[document.Source] {
 			envelope, ok := patch.Visuals[example.ID]
-			if !ok || len(envelopeRows(envelope)) == 0 {
-				return visualExamplesArtifact{}, fmt.Errorf("query %s did not return visual %q data", document.Source, example.ID)
+			if !ok || !envelopeHasData(envelope) {
+				return visualExamplesArtifact{}, fmt.Errorf("query %s did not return visual %q data (present=%t status=%v diagnostics=%v)", document.Source, example.ID, ok, envelope.Status.Message, envelope.Diagnostics)
 			}
 			if err := validateVisualEnvelope(example, envelope); err != nil {
 				return visualExamplesArtifact{}, err
@@ -352,7 +365,20 @@ func stringSet(values ...string) map[string]struct{} {
 }
 
 func validateVisualEnvelope(example visualExample, envelope visualizationir.VisualizationEnvelope) error {
+	if state, ok := envelope.DataState.Value.(*visualizationir.SpatialTiledVisualizationDataState); ok {
+		if state.Cardinality.Kind != "exact" || state.Cardinality.Count == nil || *state.Cardinality.Count <= 0 {
+			return fmt.Errorf("visual example %q has no tiled coordinate data", example.ID)
+		}
+		return nil
+	}
 	return validateVisualData(example, envelopeRows(envelope))
+}
+
+func envelopeHasData(envelope visualizationir.VisualizationEnvelope) bool {
+	if state, ok := envelope.DataState.Value.(*visualizationir.SpatialTiledVisualizationDataState); ok {
+		return state.Cardinality.Kind == "exact" && state.Cardinality.Count != nil && *state.Cardinality.Count > 0
+	}
+	return len(envelopeRows(envelope)) > 0
 }
 
 func validateVisualData(example visualExample, payload []dashboard.Datum) error {
@@ -425,15 +451,6 @@ func envelopeRows(envelope visualizationir.VisualizationEnvelope) []dashboard.Da
 			rows = append(rows, block.Rows...)
 		}
 		return envelopeDatums(columns, rows)
-	case *visualizationir.SpatialWindowedVisualizationDataState:
-		if state.Window == nil {
-			return nil
-		}
-		columns := make([]string, len(state.Schema.Fields))
-		for index, field := range state.Schema.Fields {
-			columns[index] = field.ID
-		}
-		return envelopeDatums(columns, state.Window.Rows)
 	default:
 		return nil
 	}
@@ -469,8 +486,9 @@ func normalizeEnvelopeRevision(envelope *visualizationir.VisualizationEnvelope, 
 		}
 	case *visualizationir.WindowedVisualizationDataState:
 		state.DataRevision, state.Generation = dataRevision, generation
-	case *visualizationir.SpatialWindowedVisualizationDataState:
+	case *visualizationir.SpatialTiledVisualizationDataState:
 		state.DataRevision, state.Generation = dataRevision, generation
+		state.TileURL = "/workspaces/visual_examples/dashboards/visual_examples/visuals/" + envelope.VisualID + "/tiles/documentation/{z}/{x}/{y}.mvt"
 	}
 }
 

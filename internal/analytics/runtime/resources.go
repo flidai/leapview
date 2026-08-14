@@ -42,6 +42,7 @@ type WorkspaceRequest struct {
 	CandidateID              string
 	AuthorizationFingerprint string
 	BindingFingerprint       string
+	RequiredExtensions       []string
 	ResultLimits             dataquery.ResultLimits
 }
 

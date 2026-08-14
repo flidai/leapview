@@ -97,16 +97,15 @@ func DashboardInitialEnvelope(clientID, streamInstanceID string, catalog dashboa
 		FilterValidation: DashboardFilterValidationResult{
 			Accepted: true, CurrentRevision: int64(filterState.Revision), ClientMutationID: "",
 		},
-		InteractionSelections:      dashboardInteractionSelections(initialFilters.Selections),
-		InteractionRevision:        int64(initialFilters.InteractionRevision),
-		SpatialSelections:          dashboardSpatialSelections(initialFilters.SpatialSelections),
-		NavigationCommand:          DashboardNavigationCommand{},
-		URLParams:                  report.URLParamsFromFiltersForPage(activePage.ID, initialFilters),
-		InteractionCommand:         DashboardInteractionCommandFromDashboard(dashboard.InteractionCommand{Toggle: true, Mappings: []dashboard.InteractionCommandMapping{}}),
-		VisualWindowCommand:        DashboardVisualWindowRequestFromDashboard(tableRequest),
-		VisualSpatialWindowCommand: DashboardVisualSpatialWindowRequestFromDashboard(dashboard.SpatialWindowRequest{}),
-		Visuals:                    InitialVisualizationEnvelopes(definitions, activePage, tableRequest, initialFilters),
-		Status:                     DashboardStatusFromDashboard(dashboard.Status{}),
+		InteractionSelections: dashboardInteractionSelections(initialFilters.Selections),
+		InteractionRevision:   int64(initialFilters.InteractionRevision),
+		SpatialSelections:     dashboardSpatialSelections(initialFilters.SpatialSelections),
+		NavigationCommand:     DashboardNavigationCommand{},
+		URLParams:             report.URLParamsFromFiltersForPage(activePage.ID, initialFilters),
+		InteractionCommand:    DashboardInteractionCommandFromDashboard(dashboard.InteractionCommand{Toggle: true, Mappings: []dashboard.InteractionCommandMapping{}}),
+		VisualWindowCommand:   DashboardVisualWindowRequestFromDashboard(tableRequest),
+		Visuals:               InitialVisualizationEnvelopes(definitions, activePage, tableRequest, initialFilters),
+		Status:                DashboardStatusFromDashboard(dashboard.Status{}),
 	}
 }
 

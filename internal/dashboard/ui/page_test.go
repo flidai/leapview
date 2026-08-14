@@ -155,7 +155,6 @@ func TestPageInitialSignalsArePageScoped(t *testing.T) {
 		"data-on:lv-interaction-select":           {"runtime", "interactionCommand"},
 		"data-on:lv-interaction-spatial-select":   {"runtime", "spatialInteractionCommand"},
 		"data-on:lv-visualization-window-request": {"runtime", "visualWindowCommand"},
-		"data-on:lv-visual-spatial-window-change": {"runtime", "visualSpatialWindowCommand"},
 		"data-on:lv-filter-command":               {"runtime", "filterCommand"},
 		"data-on:lv-filter-options-request":       {"runtime", "filterOptionRequest"},
 		"data-on:lv-selection-clear":              {"runtime"},

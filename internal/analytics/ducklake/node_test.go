@@ -105,6 +105,12 @@ func TestEnvironmentAdmitsQuackExtension(t *testing.T) {
 	}
 }
 
+func TestSpatialExtensionIsApprovedForGovernedTileExecution(t *testing.T) {
+	if _, ok := approvedExtensions["spatial"]; !ok {
+		t.Fatal("spatial extension is not approved")
+	}
+}
+
 func TestCommitRetryClassificationIsTypedAndNarrow(t *testing.T) {
 	transient := classifyCommitError(errors.New("database is locked by another writer"))
 	var conflict *TransientCommitError

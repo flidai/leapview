@@ -16,9 +16,8 @@ import (
 type TargetKind = consumer.Kind
 
 const (
-	TargetVisual  TargetKind = consumer.KindVisual
-	TargetWindow  TargetKind = consumer.KindWindow
-	TargetSpatial TargetKind = consumer.KindSpatial
+	TargetVisual TargetKind = consumer.KindVisual
+	TargetWindow TargetKind = consumer.KindWindow
 )
 
 type Target = consumer.Target
@@ -246,42 +245,6 @@ func internalTableRequest(window dashboard.VisualizationWindowRequest) dashboard
 	return request
 }
 
-func (s Service) PrepareVisualSpatialWindow(request Request, authoritative dashboard.Filters) (PreparedRefresh, error) {
-	filters := report.NormalizeFilters(s.Metrics, request.DashboardID, request.PageID, authoritative)
-	spatial := request.VisualSpatialWindowCommand
-	definition, _, ok := s.Metrics.Report(request.DashboardID)
-	if !ok {
-		return PreparedRefresh{}, fmt.Errorf("dashboard %q is not published", request.DashboardID)
-	}
-	visual, ok := definition.Visualizations[spatial.VisualID]
-	if !ok {
-		return PreparedRefresh{}, fmt.Errorf("unknown spatial visual %q", spatial.VisualID)
-	}
-	if _, ok := visual.Spec.Value.(*visualizationir.GeographicVisualizationSpec); !ok {
-		return PreparedRefresh{}, fmt.Errorf("visual %q is not geographic", spatial.VisualID)
-	}
-	if visual.Query.Kind != visualizationdefinition.QuerySpatial || visual.Query.Spatial == nil || visual.Query.Spatial.Viewport == nil {
-		return PreparedRefresh{}, fmt.Errorf("visual %q does not use spatial windowing", spatial.VisualID)
-	}
-	if spatial.SpecRevision != visual.SpecRevision {
-		return PreparedRefresh{}, fmt.Errorf("spatial visual %q specification revision is stale", spatial.VisualID)
-	}
-	values := []float64{spatial.Bounds.West, spatial.Bounds.South, spatial.Bounds.East, spatial.Bounds.North, spatial.Zoom}
-	for _, value := range values {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return PreparedRefresh{}, fmt.Errorf("spatial viewport values must be finite")
-		}
-	}
-	if spatial.RequestSeq <= 0 || spatial.DataRevision < 0 || spatial.ResetVersion < 0 || spatial.Width <= 0 || spatial.Width > 16384 || spatial.Height <= 0 || spatial.Height > 16384 || spatial.Zoom < 0 || spatial.Zoom > 24 || spatial.Bounds.West < -180 || spatial.Bounds.West > 180 || spatial.Bounds.East < -180 || spatial.Bounds.East > 180 || spatial.Bounds.South < -90 || spatial.Bounds.South > 90 || spatial.Bounds.North < -90 || spatial.Bounds.North > 90 || spatial.Bounds.South > spatial.Bounds.North {
-		return PreparedRefresh{}, fmt.Errorf("invalid spatial viewport for visual %q", spatial.VisualID)
-	}
-	wantWindowID := fmt.Sprintf("%.6f,%.6f,%.6f,%.6f@%.3f:%dx%d", spatial.Bounds.West, spatial.Bounds.South, spatial.Bounds.East, spatial.Bounds.North, spatial.Zoom, spatial.Width, spatial.Height)
-	if spatial.WindowID != wantWindowID {
-		return PreparedRefresh{}, fmt.Errorf("spatial visual %q window identity mismatch", spatial.VisualID)
-	}
-	return PreparedRefresh{Filters: filters, Plan: RefreshPlan{Command: "visual_spatial_window", Targets: []Target{{Kind: TargetSpatial, ID: spatial.VisualID, SpatialRequest: spatial}}}}, nil
-}
-
 func (s Service) fullPlan(request Request, commandName string) RefreshPlan {
 	definition, _, ok := s.Metrics.Report(request.DashboardID)
 	if !ok {
@@ -299,9 +262,7 @@ func (s Service) fullPlan(request Request, commandName string) RefreshPlan {
 		switch {
 		case item.Visual != "":
 			if compiled, ok := definition.Visualizations[item.Visual]; ok {
-				if spatial, windowed := spatialTarget(compiled, request.VisualSpatialWindowCommand, commandName != "initial"); windowed {
-					target = spatial
-				} else if isGridVisualization(compiled) {
+				if isGridVisualization(compiled) {
 					requestForTable := tableRequest
 					requestForTable.Table = item.Visual
 					target = Target{Kind: TargetWindow, ID: item.Visual, WindowRequest: requestForTable}
@@ -358,9 +319,7 @@ func (s Service) selectionTargets(request Request, sourceKind, sourceID string) 
 		if !ok {
 			return nil, fmt.Errorf("interaction references unknown target %q", id)
 		}
-		if spatial, windowed := spatialTarget(targetDefinition, request.VisualSpatialWindowCommand, true); windowed {
-			target = spatial
-		} else if isGridVisualization(targetDefinition) {
+		if isGridVisualization(targetDefinition) {
 			requestForTable := tableRequest
 			requestForTable.Table = id
 			target = Target{Kind: TargetWindow, ID: id, WindowRequest: requestForTable}
@@ -434,9 +393,7 @@ func (s Service) targetsForIDs(request Request, ids []string) ([]Target, error) 
 			return nil, fmt.Errorf("interaction references unknown target %q", id)
 		}
 		var target Target
-		if spatial, windowed := spatialTarget(targetDefinition, request.VisualSpatialWindowCommand, true); windowed {
-			target = spatial
-		} else if isGridVisualization(targetDefinition) {
+		if isGridVisualization(targetDefinition) {
 			requestForTable := tableRequest
 			requestForTable.Table = id
 			target = Target{Kind: TargetWindow, ID: id, WindowRequest: requestForTable}
@@ -479,24 +436,4 @@ func visualizationIDsForPage(definition dashboarddefinition.Definition, pageID s
 		}
 	}
 	return ids, nil
-}
-
-func spatialTarget(definition visualizationdefinition.Definition, current dashboard.SpatialWindowRequest, reset bool) (Target, bool) {
-	if definition.Query.Kind != visualizationdefinition.QuerySpatial || definition.Query.Spatial == nil || definition.Query.Spatial.Viewport == nil {
-		return Target{}, false
-	}
-	_, ok := definition.Spec.Value.(*visualizationir.GeographicVisualizationSpec)
-	if !ok {
-		return Target{}, false
-	}
-	if current.VisualID != definition.ID || current.SpecRevision != definition.SpecRevision || current.Width <= 0 || current.Height <= 0 {
-		current = dashboard.SpatialWindowRequest{VisualID: definition.ID, SpecRevision: definition.SpecRevision, RequestSeq: 1, ResetVersion: 1, Bounds: dashboard.SpatialBounds{West: -180, South: -85, East: 180, North: 85}, Zoom: 1, Width: 1024, Height: 768}
-	} else {
-		current.RequestSeq++
-		if reset {
-			current.ResetVersion++
-		}
-	}
-	current.WindowID = fmt.Sprintf("%.6f,%.6f,%.6f,%.6f@%.3f:%dx%d", current.Bounds.West, current.Bounds.South, current.Bounds.East, current.Bounds.North, current.Zoom, current.Width, current.Height)
-	return Target{Kind: TargetSpatial, ID: definition.ID, SpatialRequest: current}, true
 }

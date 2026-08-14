@@ -209,10 +209,6 @@ func DashboardVisualWindowRequestFromDashboard(value dashboard.TableRequest) vis
 	}
 }
 
-func DashboardVisualSpatialWindowRequestFromDashboard(value dashboard.SpatialWindowRequest) visualizationir.VisualizationSpatialWindowRequest {
-	return value
-}
-
 func DashboardTabularVisualFromDefinitionAtRevision(definition visualizationdefinition.Definition, value dashboard.Table, dataRevision, generation int64) visualizationir.VisualizationEnvelope {
 	envelope, err := visualizationruntime.WindowEnvelopeFromDefinition(definition, value, dataRevision, generation)
 	if err != nil {
