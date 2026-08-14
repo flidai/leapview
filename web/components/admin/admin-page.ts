@@ -312,7 +312,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       font-weight: var(--base-text-weight-semibold);
     }
 
-    .facts {
+    .card-facts {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
       gap: var(--base-size-12);
@@ -784,15 +784,14 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
         ${page.metrics?.length ? html`
           <section class="section detail-section" aria-label="Overview">
             <h2>Overview</h2>
-            <div class="metrics">
+            <dl class="facts">
               ${page.metrics.map((metric) => html`
-                <div class="metric">
-                  <span class="label">${metric.label}</span>
-                  <span class="value">${metric.value || '-'}</span>
-                  ${metric.detail ? html`<span class="meta">${metric.detail}</span>` : nothing}
+                <div class="fact">
+                  <dt>${metric.label}</dt>
+                  <dd>${metric.value || '-'}</dd>
                 </div>
               `)}
-            </div>
+            </dl>
           </section>
         ` : nothing}
         ${page.sections?.map((section) => renderSection(section, true))}
@@ -1330,12 +1329,19 @@ function renderSection(section: AdminContentSectionSignal, detail = false) {
       <h2>${section.title}</h2>
       ${section.table?.columns?.length
         ? html`<div class="panel table-panel"><lv-record-table variant="compact" .table=${section.table}></lv-record-table></div>`
-        : html`<div class="facts">${section.facts?.map((fact) => html`
-          <div class="metric">
-            <span class="label">${fact.label}</span>
-            <span class="value">${fact.value || '-'}</span>
-          </div>
-        `)}</div>`}
+        : detail
+          ? html`<dl class="facts">${section.facts?.map((fact) => html`
+              <div class="fact">
+                <dt>${fact.label}</dt>
+                <dd>${fact.value || '-'}</dd>
+              </div>
+            `)}</dl>`
+          : html`<div class="card-facts">${section.facts?.map((fact) => html`
+              <div class="metric">
+                <span class="label">${fact.label}</span>
+                <span class="value">${fact.value || '-'}</span>
+              </div>
+            `)}</div>`}
     </section>
   `
 }

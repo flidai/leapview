@@ -1415,8 +1415,9 @@ test('storage table detail emphasizes physical storage and active files', async 
         sharedLayout: Boolean(root.querySelector('.detail-surface .detail-sections')),
         avatarClass: root.querySelector('.avatar')?.className,
         badges: Array.from(root.querySelectorAll('.identity-badges .badge')).map((badge) => badge.textContent?.trim()),
-        metricText: Array.from(root.querySelectorAll('.metrics .metric')).map((metric) => metric.textContent?.replace(/\s+/g, ' ').trim()),
-        factText: Array.from(root.querySelectorAll('.facts .metric')).map((fact) => fact.textContent?.replace(/\s+/g, ' ').trim()),
+        metricText: Array.from(root.querySelectorAll('.detail-section[aria-label="Overview"] .fact')).map((metric) => metric.textContent?.replace(/\s+/g, ' ').trim()),
+        factText: Array.from(root.querySelectorAll('.detail-section[aria-label="Storage"] .fact')).map((fact) => fact.textContent?.replace(/\s+/g, ' ').trim()),
+        cardCount: root.querySelectorAll('.detail-surface .metric').length,
         sectionTitles: Array.from(root.querySelectorAll('.section > h2')).map((heading) => heading.textContent?.trim()),
         fileHeaders: Array.from(files.querySelectorAll('th')).map((header: Element) => header.textContent?.replace(/\s+/g, ' ').trim()),
         fileText: files.textContent?.replace(/\s+/g, ' ').trim(),
@@ -1430,6 +1431,7 @@ test('storage table detail emphasizes physical storage and active files', async 
     expect(state.badges).toEqual(['model', 'table'])
     expect(state.metricText).toEqual(['Data size 12 MiB', 'Active files 1', 'Stored rows 1,000', 'Begin snapshot 7'])
     expect(state.factText).toEqual(['Schema model', 'Object type table', 'DuckLake path model/orders/', 'Table UUID table-uuid'])
+    expect(state.cardCount).toBe(0)
     expect(state.sectionTitles).toEqual(['Overview', 'Storage', 'Active files'])
     expect(state.fileHeaders).toEqual(['File path', 'Format', 'Rows', 'Data size', 'Begin snapshot'])
     expect(state.fileText).toContain('model/orders/file.parquet')
