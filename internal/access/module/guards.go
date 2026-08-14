@@ -61,7 +61,7 @@ func (m *Module) ProtectViewItem(handler http.HandlerFunc) http.HandlerFunc {
 func (m *Module) ProtectIngestData(next http.Handler) http.Handler {
 	// TUS upload URLs identify an already-authorized upload session rather than
 	// a workspace. Authorize the credential across its explicit scopes instead
-	// of relying on a process-wide default workspace.
+	// of relying on an implicit process-wide scope.
 	return m.protectAnyWorkspace(access.PrivilegeIngestData, next)
 }
 
