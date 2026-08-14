@@ -42,6 +42,71 @@ func (c *RoleBindingCommands) CreateRoleBinding(ctx context.Context, invocation 
 	return row, err
 }
 
+func (c *RoleBindingCommands) CreateRoleBindings(ctx context.Context, invocation access.RoleBindingInvocation, inputs []access.RoleBindingInput) ([]access.RoleBinding, error) {
+	operationID := accessgen.GenCommandOperationCreateRoleBinding().APIGenOperationID()
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("operation %q requires at least one role binding", operationID)
+	}
+	workspaceID := strings.TrimSpace(inputs[0].WorkspaceID)
+	for _, input := range inputs {
+		if strings.TrimSpace(input.WorkspaceID) != workspaceID {
+			return nil, fmt.Errorf("operation %q requires one workspace per batch", operationID)
+		}
+	}
+	if invocation.Surface == access.OperationSurfaceUI {
+		if err := uicommand.VerifyClaim(invocation.OperationClaims, operationID); err != nil {
+			return nil, err
+		}
+	}
+	if c == nil || c.repository == nil {
+		return nil, fmt.Errorf("operation %q repository is required", operationID)
+	}
+	repository, err := c.repository()
+	if err != nil {
+		return nil, err
+	}
+	transactional, ok := repository.(access.AuditedMutationBatchRepository)
+	if !ok {
+		return nil, fmt.Errorf("%w: role binding repository does not support transactional batch auditing", access.ErrAuditTransaction)
+	}
+	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]access.RoleBinding, 0, len(inputs))
+	err = accessgen.ExecuteGenCreateRoleBindingCommand(ctx, executor, accessgen.GenCreateRoleBindingCommandInvocation{
+		Surface: invocation.Surface, Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+		RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+	}, apigencommand.Execution{Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
+		return transactional.RunAuditedMutationBatch(ctx, func(repository access.Repository) ([]access.AuditEventInput, error) {
+			rows = rows[:0]
+			events := make([]access.AuditEventInput, 0, len(inputs))
+			for _, input := range inputs {
+				row, mutationErr := repository.CreateRoleBinding(ctx, input)
+				if mutationErr != nil {
+					return nil, mutationErr
+				}
+				event, auditErr := roleBindingAuditInput(contract, operationID, invocation, row, func(operationID string, invocation access.RoleBindingInvocation, row access.RoleBinding) (string, error) {
+					return accessgen.EncodeGenCreateRoleBindingAuditPayload(accessgen.GenSchemaRoleBindingCreatedAuditPayload{
+						OperationId: operationID, Role: row.Role, SubjectId: row.SubjectID,
+						SubjectType: string(row.SubjectType), Surface: string(invocation.Surface),
+					})
+				})
+				if auditErr != nil {
+					return nil, auditErr
+				}
+				rows = append(rows, row)
+				events = append(events, event)
+			}
+			return events, nil
+		})
+	}})
+	if err != nil {
+		return nil, err
+	}
+	return rows, err
+}
+
 func (c *RoleBindingCommands) UpdateRoleBinding(ctx context.Context, invocation access.RoleBindingInvocation, workspaceID, bindingID string, input access.RoleBindingInput) (access.RoleBinding, error) {
 	var row access.RoleBinding
 	operationID := accessgen.GenCommandOperationUpdateRoleBinding().APIGenOperationID()

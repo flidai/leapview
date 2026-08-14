@@ -46,6 +46,12 @@ SELECT * FROM principals WHERE lower(email) = lower(?) AND email <> '' LIMIT 1;
 
 -- name: DisablePrincipal :exec
 UPDATE principals
+SET blocked_at = COALESCE(blocked_at, CURRENT_TIMESTAMP),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;
+
+-- name: DisableProvisionedPrincipal :exec
+UPDATE principals
 SET disabled_at = COALESCE(disabled_at, CURRENT_TIMESTAMP),
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
@@ -476,7 +482,7 @@ WITH params AS (
   SELECT CAST(sqlc.arg(email) AS TEXT) AS email, CAST(sqlc.arg(search) AS TEXT) AS search
 )
 SELECT principals.id, principals.email, principals.display_name,
-       principals.created_at, principals.updated_at, principals.kind, principals.disabled_at
+       principals.created_at, principals.updated_at, principals.kind, principals.disabled_at, principals.blocked_at
 FROM principals CROSS JOIN params
 WHERE (params.email = '' OR lower(principals.email) = lower(params.email))
   AND (params.search = '' OR lower(principals.email) LIKE '%' || lower(params.search) || '%'
@@ -499,7 +505,7 @@ WITH params AS (
   GROUP BY principal_id
 )
 SELECT principals.id, principals.email, principals.display_name,
-       principals.created_at, principals.updated_at, principals.kind, principals.disabled_at,
+       principals.created_at, principals.updated_at, principals.kind, principals.disabled_at, principals.blocked_at,
        CASE WHEN principals.kind = 'user' THEN COALESCE(latest_human_activity.last_seen_at, '') ELSE '' END AS last_seen_at
 FROM principals CROSS JOIN params
 LEFT JOIN latest_human_activity ON latest_human_activity.principal_id = principals.id
@@ -511,10 +517,11 @@ ORDER BY principals.email, principals.id;
 
 -- name: SearchPrincipals :many
 SELECT principals.id, principals.email, principals.display_name,
-       principals.created_at, principals.updated_at, principals.kind, principals.disabled_at
+       principals.created_at, principals.updated_at, principals.kind, principals.disabled_at, principals.blocked_at
 FROM principals
 WHERE principals.kind = 'user'
   AND (principals.disabled_at IS NULL OR principals.disabled_at = '')
+  AND (principals.blocked_at IS NULL OR principals.blocked_at = '')
   AND (lower(principals.email) LIKE '%' || lower(sqlc.arg(search)) || '%'
        OR lower(principals.display_name) LIKE '%' || lower(sqlc.arg(search)) || '%')
 ORDER BY lower(principals.display_name), principals.email, principals.id
@@ -536,7 +543,7 @@ ON CONFLICT(principal_id) DO UPDATE SET
   password_changed_at = NULL;
 
 -- name: GetLocalCredentialByEmail :one
-SELECT p.id, p.kind, p.email, p.display_name, p.disabled_at, p.created_at, p.updated_at,
+SELECT p.id, p.kind, p.email, p.display_name, p.disabled_at, p.blocked_at, p.created_at, p.updated_at,
        c.password_verifier, c.must_change_password, c.created_at AS credential_created_at,
        c.updated_at AS credential_updated_at, c.password_changed_at
 FROM principals p
@@ -545,7 +552,7 @@ WHERE lower(p.email) = lower(sqlc.arg(email)) AND p.email <> ''
 LIMIT 1;
 
 -- name: GetLocalCredentialByPrincipalID :one
-SELECT p.id, p.kind, p.email, p.display_name, p.disabled_at, p.created_at, p.updated_at,
+SELECT p.id, p.kind, p.email, p.display_name, p.disabled_at, p.blocked_at, p.created_at, p.updated_at,
        c.password_verifier, c.must_change_password, c.created_at AS credential_created_at,
        c.updated_at AS credential_updated_at, c.password_changed_at
 FROM principals p
@@ -564,6 +571,9 @@ LEFT JOIN groups g ON g.id = rb.group_id
 ORDER BY rb.workspace_id, rb.created_at, rb.id;
 
 -- name: EnablePrincipal :exec
+UPDATE principals SET blocked_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = sqlc.arg(id);
+
+-- name: EnableProvisionedPrincipal :exec
 UPDATE principals SET disabled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = sqlc.arg(id);
 
 -- name: ListAllGroups :many
@@ -841,7 +851,7 @@ SELECT
   s.kind, s.client_id, s.principal_id, s.target_id, s.project_id,
   s.privileges_json, s.created_at AS session_created_at,
   s.last_used_at, s.expires_at AS session_expires_at, s.revoked_at,
-  p.id, p.kind AS principal_kind, p.email, p.display_name, p.disabled_at,
+  p.id, p.kind AS principal_kind, p.email, p.display_name, p.disabled_at, p.blocked_at,
   p.created_at AS principal_created_at, p.updated_at AS principal_updated_at
 FROM oauth_authoring_credentials c
 JOIN oauth_authoring_sessions s ON s.id = c.session_id
@@ -855,7 +865,7 @@ SELECT
   s.kind, s.client_id, s.principal_id, s.target_id, s.project_id,
   s.privileges_json, s.created_at AS session_created_at,
   s.last_used_at, s.expires_at AS session_expires_at, s.revoked_at,
-  p.id, p.kind AS principal_kind, p.email, p.display_name, p.disabled_at,
+  p.id, p.kind AS principal_kind, p.email, p.display_name, p.disabled_at, p.blocked_at,
   p.created_at AS principal_created_at, p.updated_at AS principal_updated_at
 FROM oauth_authoring_credentials c
 JOIN oauth_authoring_sessions s ON s.id = c.session_id

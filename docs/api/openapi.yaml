@@ -7578,6 +7578,7 @@ paths:
                   updatedAt: "2026-01-02T15:04:05Z"
                   url: example
                   width: 1
+                blockedAt: "2026-01-02T15:04:05Z"
                 capabilities:
                   canChangePassword: true
                   canManageApiTokens: true
@@ -7860,6 +7861,7 @@ paths:
                   updatedAt: "2026-01-02T15:04:05Z"
                   url: example
                   width: 1
+                blockedAt: "2026-01-02T15:04:05Z"
                 capabilities:
                   canChangePassword: true
                   canManageApiTokens: true
@@ -11620,11 +11622,23 @@ paths:
                 $ref: '#/components/schemas/PrincipalListResponse'
               example:
                 items:
-                  - createdAt: "2026-01-02T15:04:05Z"
+                  - blockedAt: "2026-01-02T15:04:05Z"
+                    capabilities:
+                      canBlock: true
+                      canDelete: true
+                      canManageAuthorization: true
+                      canManageSessions: true
+                      canResetPassword: true
+                      canUnblock: true
+                      canUpdateProfile: true
+                    createdAt: "2026-01-02T15:04:05Z"
                     disabledAt: "2026-01-02T15:04:05Z"
                     displayName: example
                     email: example
                     id: example
+                    identityManagement:
+                      provider: example
+                      source: local
                     kind: example
                     updatedAt: "2026-01-02T15:04:05Z"
                 page:
@@ -11896,6 +11910,7 @@ paths:
                 $ref: '#/components/schemas/LocalPasswordResetResponse'
               example:
                 principal:
+                  blockedAt: "2026-01-02T15:04:05Z"
                   createdAt: "2026-01-02T15:04:05Z"
                   disabledAt: "2026-01-02T15:04:05Z"
                   displayName: example
@@ -12151,6 +12166,8 @@ paths:
               email: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -12171,6 +12188,8 @@ paths:
             status_code: !!float 409
         idempotency: required
         owner: LeapViewAPI.Access
+        ui:
+          action_id: principal.create
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -12428,6 +12447,8 @@ paths:
         - Access
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -12462,6 +12483,8 @@ paths:
         target:
           parameter: principal
           type: principal
+        ui:
+          action_id: principal.delete
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -12483,13 +12506,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PrincipalResponse'
+                $ref: '#/components/schemas/PrincipalAdministrationResponse'
               example:
+                blockedAt: "2026-01-02T15:04:05Z"
+                capabilities:
+                  canBlock: true
+                  canDelete: true
+                  canManageAuthorization: true
+                  canManageSessions: true
+                  canResetPassword: true
+                  canUnblock: true
+                  canUpdateProfile: true
                 createdAt: "2026-01-02T15:04:05Z"
                 disabledAt: "2026-01-02T15:04:05Z"
                 displayName: example
                 email: example
                 id: example
+                identityManagement:
+                  provider: example
+                  source: local
                 kind: example
                 updatedAt: "2026-01-02T15:04:05Z"
         '400':
@@ -12755,13 +12790,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PrincipalResponse'
+                $ref: '#/components/schemas/PrincipalAdministrationResponse'
               example:
+                blockedAt: "2026-01-02T15:04:05Z"
+                capabilities:
+                  canBlock: true
+                  canDelete: true
+                  canManageAuthorization: true
+                  canManageSessions: true
+                  canResetPassword: true
+                  canUnblock: true
+                  canUpdateProfile: true
                 createdAt: "2026-01-02T15:04:05Z"
                 disabledAt: "2026-01-02T15:04:05Z"
                 displayName: example
                 email: example
                 id: example
+                identityManagement:
+                  provider: example
+                  source: local
                 kind: example
                 updatedAt: "2026-01-02T15:04:05Z"
         '400':
@@ -13010,6 +13057,8 @@ paths:
               displayName: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -13041,6 +13090,8 @@ paths:
         target:
           parameter: principal
           type: principal
+        ui:
+          action_id: principal.update
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -13327,7 +13378,8 @@ paths:
   /api/v1/principals/{principal}/disable:
     post:
       operationId: disablePrincipal
-      summary: Disable a principal and reject its credentials
+      summary: Block a principal in LeapView and reject its credentials
+      description: Sets an independent LeapView administrator block. External provisioning cannot clear this block.
       parameters:
         - name: principal
           in: path
@@ -13349,13 +13401,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PrincipalResponse'
+                $ref: '#/components/schemas/PrincipalAdministrationResponse'
               example:
+                blockedAt: "2026-01-02T15:04:05Z"
+                capabilities:
+                  canBlock: true
+                  canDelete: true
+                  canManageAuthorization: true
+                  canManageSessions: true
+                  canResetPassword: true
+                  canUnblock: true
+                  canUpdateProfile: true
                 createdAt: "2026-01-02T15:04:05Z"
                 disabledAt: "2026-01-02T15:04:05Z"
                 displayName: example
                 email: example
                 id: example
+                identityManagement:
+                  provider: example
+                  source: local
                 kind: example
                 updatedAt: "2026-01-02T15:04:05Z"
         '400':
@@ -13596,6 +13660,8 @@ paths:
         - Access
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -13611,7 +13677,7 @@ paths:
               ref: PrincipalUpdatedAuditPayload
             schema_version: !!float 1
           required: true
-          success_action: principal.disabled
+          success_action: principal.blocked
         authz_mode: privilege
         failures:
           - code: PRINCIPAL_NOT_MUTABLE
@@ -13627,6 +13693,8 @@ paths:
         target:
           parameter: principal
           type: principal
+        ui:
+          action_id: principal.block
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -13635,7 +13703,8 @@ paths:
   /api/v1/principals/{principal}/enable:
     post:
       operationId: enablePrincipal
-      summary: Re-enable a disabled principal
+      summary: Remove a principal's LeapView administrator block
+      description: Clears only the LeapView administrator block. An externally disabled principal remains disabled.
       parameters:
         - name: principal
           in: path
@@ -13657,13 +13726,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PrincipalResponse'
+                $ref: '#/components/schemas/PrincipalAdministrationResponse'
               example:
+                blockedAt: "2026-01-02T15:04:05Z"
+                capabilities:
+                  canBlock: true
+                  canDelete: true
+                  canManageAuthorization: true
+                  canManageSessions: true
+                  canResetPassword: true
+                  canUnblock: true
+                  canUpdateProfile: true
                 createdAt: "2026-01-02T15:04:05Z"
                 disabledAt: "2026-01-02T15:04:05Z"
                 displayName: example
                 email: example
                 id: example
+                identityManagement:
+                  provider: example
+                  source: local
                 kind: example
                 updatedAt: "2026-01-02T15:04:05Z"
         '400':
@@ -13904,6 +13985,8 @@ paths:
         - Access
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -13919,7 +14002,7 @@ paths:
               ref: PrincipalUpdatedAuditPayload
             schema_version: !!float 1
           required: true
-          success_action: principal.enabled
+          success_action: principal.unblocked
         authz_mode: privilege
         failures:
           - code: PRINCIPAL_NOT_MUTABLE
@@ -13935,6 +14018,8 @@ paths:
         target:
           parameter: principal
           type: principal
+        ui:
+          action_id: principal.unblock
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -13968,6 +14053,7 @@ paths:
                 $ref: '#/components/schemas/LocalPasswordResetResponse'
               example:
                 principal:
+                  blockedAt: "2026-01-02T15:04:05Z"
                   createdAt: "2026-01-02T15:04:05Z"
                   disabledAt: "2026-01-02T15:04:05Z"
                   displayName: example
@@ -14214,6 +14300,8 @@ paths:
         - Access
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -14237,6 +14325,8 @@ paths:
         target:
           parameter: principal
           type: principal
+        ui:
+          action_id: principal.password.reset
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -14793,6 +14883,8 @@ paths:
         - Access
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -14815,6 +14907,8 @@ paths:
         target:
           parameter: principal
           type: principal
+        ui:
+          action_id: principal.session.revoke
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -31579,7 +31673,8 @@ paths:
                 $ref: '#/components/schemas/ServicePrincipalListResponse'
               example:
                 items:
-                  - createdAt: "2026-01-02T15:04:05Z"
+                  - blockedAt: "2026-01-02T15:04:05Z"
+                    createdAt: "2026-01-02T15:04:05Z"
                     disabledAt: "2026-01-02T15:04:05Z"
                     displayName: example
                     email: example
@@ -31853,6 +31948,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/PrincipalResponse'
               example:
+                blockedAt: "2026-01-02T15:04:05Z"
                 createdAt: "2026-01-02T15:04:05Z"
                 disabledAt: "2026-01-02T15:04:05Z"
                 displayName: example
@@ -32435,6 +32531,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/PrincipalResponse'
               example:
+                blockedAt: "2026-01-02T15:04:05Z"
                 createdAt: "2026-01-02T15:04:05Z"
                 disabledAt: "2026-01-02T15:04:05Z"
                 displayName: example
@@ -32706,6 +32803,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/PrincipalResponse'
               example:
+                blockedAt: "2026-01-02T15:04:05Z"
                 createdAt: "2026-01-02T15:04:05Z"
                 disabledAt: "2026-01-02T15:04:05Z"
                 displayName: example
@@ -44605,11 +44703,19 @@ paths:
                 $ref: '#/components/schemas/GroupListResponse'
               example:
                 items:
-                  - createdAt: "2026-01-02T15:04:05Z"
+                  - capabilities:
+                      canDelete: true
+                      canManageAuthorization: true
+                      canManageMembers: true
+                      canUpdate: true
+                    createdAt: "2026-01-02T15:04:05Z"
                     displayName: example
+                    externalId: example
                     id: example
                     name: example
+                    provider: example
                     updatedAt: "2026-01-02T15:04:05Z"
+                    workspaceId: example
                 page:
                   nextCursor: example
         '400':
@@ -44883,11 +44989,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/GroupResponse'
               example:
+                capabilities:
+                  canDelete: true
+                  canManageAuthorization: true
+                  canManageMembers: true
+                  canUpdate: true
                 createdAt: "2026-01-02T15:04:05Z"
                 displayName: example
+                externalId: example
                 id: example
                 name: example
+                provider: example
                 updatedAt: "2026-01-02T15:04:05Z"
+                workspaceId: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -45135,6 +45249,8 @@ paths:
               name: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -45162,6 +45278,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: group.create
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -45424,6 +45542,8 @@ paths:
         - Access
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -45442,6 +45562,10 @@ paths:
           success_action: group.deleted
         authz_mode: privilege
         failures:
+          - code: GROUP_NOT_MUTABLE
+            kind: invalid
+            public_detail: This group is managed by an external provisioning system.
+            status_code: !!float 422
           - code: GROUP_NOT_FOUND
             kind: not_found
             public_detail: Group not found.
@@ -45450,6 +45574,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: group.delete
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -45478,11 +45604,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/GroupResponse'
               example:
+                capabilities:
+                  canDelete: true
+                  canManageAuthorization: true
+                  canManageMembers: true
+                  canUpdate: true
                 createdAt: "2026-01-02T15:04:05Z"
                 displayName: example
+                externalId: example
                 id: example
                 name: example
+                provider: example
                 updatedAt: "2026-01-02T15:04:05Z"
+                workspaceId: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -45753,11 +45887,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/GroupResponse'
               example:
+                capabilities:
+                  canDelete: true
+                  canManageAuthorization: true
+                  canManageMembers: true
+                  canUpdate: true
                 createdAt: "2026-01-02T15:04:05Z"
                 displayName: example
+                externalId: example
                 id: example
                 name: example
+                provider: example
                 updatedAt: "2026-01-02T15:04:05Z"
+                workspaceId: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -46004,6 +46146,8 @@ paths:
               displayName: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -46023,6 +46167,10 @@ paths:
         authz_mode: privilege
         concurrency: if-match
         failures:
+          - code: GROUP_NOT_MUTABLE
+            kind: invalid
+            public_detail: This group is managed by an external provisioning system.
+            status_code: !!float 422
           - code: GROUP_NOT_FOUND
             kind: not_found
             public_detail: Group not found.
@@ -46031,6 +46179,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: group.update
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -46080,7 +46230,8 @@ paths:
                 $ref: '#/components/schemas/GroupMemberListResponse'
               example:
                 items:
-                  - createdAt: "2026-01-02T15:04:05Z"
+                  - blockedAt: "2026-01-02T15:04:05Z"
+                    createdAt: "2026-01-02T15:04:05Z"
                     disabledAt: "2026-01-02T15:04:05Z"
                     displayName: example
                     email: example
@@ -46593,6 +46744,8 @@ paths:
         - Access
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -46609,6 +46762,10 @@ paths:
           success_action: group.member_removed
         authz_mode: privilege
         failures:
+          - code: GROUP_NOT_MUTABLE
+            kind: invalid
+            public_detail: This group is managed by an external provisioning system.
+            status_code: !!float 422
           - code: GROUP_MEMBER_NOT_FOUND
             kind: not_found
             public_detail: Group member not found.
@@ -46617,6 +46774,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: group.member.remove
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -46890,6 +47049,8 @@ paths:
         - Access
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -46906,6 +47067,10 @@ paths:
           success_action: group.member_added
         authz_mode: privilege
         failures:
+          - code: GROUP_NOT_MUTABLE
+            kind: invalid
+            public_detail: This group is managed by an external provisioning system.
+            status_code: !!float 422
           - code: GROUP_MEMBER_NOT_FOUND
             kind: not_found
             public_detail: Group or principal not found.
@@ -46914,6 +47079,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: group.member.add
         privilege: MANAGE_GRANTS
       x-authz:
         mode: privilege
@@ -60436,6 +60603,12 @@ components:
         disabledAt:
           type: string
           format: date-time
+          description: Lifecycle disable owned by the identity provisioning authority, such as SCIM active=false.
+          example: "2026-01-02T15:04:05Z"
+        blockedAt:
+          type: string
+          format: date-time
+          description: LeapView administrator block. This is independent from externally managed lifecycle state.
           example: "2026-01-02T15:04:05Z"
         createdAt:
           type: string
@@ -60461,6 +60634,7 @@ components:
           updatedAt: "2026-01-02T15:04:05Z"
           url: example
           width: 1
+        blockedAt: "2026-01-02T15:04:05Z"
         capabilities:
           canChangePassword: true
           canManageApiTokens: true
@@ -63872,6 +64046,31 @@ components:
         rowHeight: 1
         showHeader: true
         striped: true
+    GroupAdministrationCapabilities:
+      type: object
+      required:
+        - canUpdate
+        - canDelete
+        - canManageMembers
+        - canManageAuthorization
+      properties:
+        canUpdate:
+          type: boolean
+          example: true
+        canDelete:
+          type: boolean
+          example: true
+        canManageMembers:
+          type: boolean
+          example: true
+        canManageAuthorization:
+          type: boolean
+          example: true
+      example:
+        canDelete: true
+        canManageAuthorization: true
+        canManageMembers: true
+        canUpdate: true
     GroupAuditPayload:
       type: object
       required:
@@ -63917,20 +64116,36 @@ components:
           items:
             $ref: '#/components/schemas/GroupResponse'
           example:
-            - createdAt: "2026-01-02T15:04:05Z"
+            - capabilities:
+                canDelete: true
+                canManageAuthorization: true
+                canManageMembers: true
+                canUpdate: true
+              createdAt: "2026-01-02T15:04:05Z"
               displayName: example
+              externalId: example
               id: example
               name: example
+              provider: example
               updatedAt: "2026-01-02T15:04:05Z"
+              workspaceId: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - createdAt: "2026-01-02T15:04:05Z"
+          - capabilities:
+              canDelete: true
+              canManageAuthorization: true
+              canManageMembers: true
+              canUpdate: true
+            createdAt: "2026-01-02T15:04:05Z"
             displayName: example
+            externalId: example
             id: example
             name: example
+            provider: example
             updatedAt: "2026-01-02T15:04:05Z"
+            workspaceId: example
         page:
           nextCursor: example
     GroupMemberAuditPayload:
@@ -63959,7 +64174,8 @@ components:
           items:
             $ref: '#/components/schemas/PrincipalResponse'
           example:
-            - createdAt: "2026-01-02T15:04:05Z"
+            - blockedAt: "2026-01-02T15:04:05Z"
+              createdAt: "2026-01-02T15:04:05Z"
               disabledAt: "2026-01-02T15:04:05Z"
               displayName: example
               email: example
@@ -63970,7 +64186,8 @@ components:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - createdAt: "2026-01-02T15:04:05Z"
+          - blockedAt: "2026-01-02T15:04:05Z"
+            createdAt: "2026-01-02T15:04:05Z"
             disabledAt: "2026-01-02T15:04:05Z"
             displayName: example
             email: example
@@ -63991,12 +64208,25 @@ components:
       type: object
       required:
         - id
+        - workspaceId
+        - provider
+        - externalId
         - name
         - displayName
+        - capabilities
         - createdAt
         - updatedAt
       properties:
         id:
+          type: string
+          example: example
+        workspaceId:
+          type: string
+          example: example
+        provider:
+          type: string
+          example: example
+        externalId:
           type: string
           example: example
         name:
@@ -64005,6 +64235,8 @@ components:
         displayName:
           type: string
           example: example
+        capabilities:
+          $ref: '#/components/schemas/GroupAdministrationCapabilities'
         createdAt:
           type: string
           format: date-time
@@ -64014,11 +64246,19 @@ components:
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
+        capabilities:
+          canDelete: true
+          canManageAuthorization: true
+          canManageMembers: true
+          canUpdate: true
         createdAt: "2026-01-02T15:04:05Z"
         displayName: example
+        externalId: example
         id: example
         name: example
+        provider: example
         updatedAt: "2026-01-02T15:04:05Z"
+        workspaceId: example
     HierarchyVisualizationPresentation:
       type: object
       allOf:
@@ -64328,6 +64568,7 @@ components:
           example: example
       example:
         principal:
+          blockedAt: "2026-01-02T15:04:05Z"
           createdAt: "2026-01-02T15:04:05Z"
           disabledAt: "2026-01-02T15:04:05Z"
           displayName: example
@@ -65814,6 +66055,112 @@ components:
         value:
           dataset: example
           field: example
+    PrincipalAdministrationCapabilities:
+      type: object
+      required:
+        - canUpdateProfile
+        - canResetPassword
+        - canBlock
+        - canUnblock
+        - canDelete
+        - canManageSessions
+        - canManageAuthorization
+      properties:
+        canUpdateProfile:
+          type: boolean
+          example: true
+        canResetPassword:
+          type: boolean
+          example: true
+        canBlock:
+          type: boolean
+          example: true
+        canUnblock:
+          type: boolean
+          example: true
+        canDelete:
+          type: boolean
+          example: true
+        canManageSessions:
+          type: boolean
+          example: true
+        canManageAuthorization:
+          type: boolean
+          example: true
+      example:
+        canBlock: true
+        canDelete: true
+        canManageAuthorization: true
+        canManageSessions: true
+        canResetPassword: true
+        canUnblock: true
+        canUpdateProfile: true
+    PrincipalAdministrationResponse:
+      type: object
+      required:
+        - id
+        - kind
+        - email
+        - displayName
+        - createdAt
+        - updatedAt
+        - identityManagement
+        - capabilities
+      properties:
+        id:
+          type: string
+          example: example
+        kind:
+          type: string
+          example: example
+        email:
+          type: string
+          example: example
+        displayName:
+          type: string
+          example: example
+        disabledAt:
+          type: string
+          format: date-time
+          description: Lifecycle disable owned by the identity provisioning authority, such as SCIM active=false.
+          example: "2026-01-02T15:04:05Z"
+        blockedAt:
+          type: string
+          format: date-time
+          description: LeapView administrator block. This is independent from externally managed lifecycle state.
+          example: "2026-01-02T15:04:05Z"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        identityManagement:
+          $ref: '#/components/schemas/IdentityManagementResponse'
+        capabilities:
+          $ref: '#/components/schemas/PrincipalAdministrationCapabilities'
+      example:
+        blockedAt: "2026-01-02T15:04:05Z"
+        capabilities:
+          canBlock: true
+          canDelete: true
+          canManageAuthorization: true
+          canManageSessions: true
+          canResetPassword: true
+          canUnblock: true
+          canUpdateProfile: true
+        createdAt: "2026-01-02T15:04:05Z"
+        disabledAt: "2026-01-02T15:04:05Z"
+        displayName: example
+        email: example
+        id: example
+        identityManagement:
+          provider: example
+          source: local
+        kind: example
+        updatedAt: "2026-01-02T15:04:05Z"
     PrincipalCreateRequest:
       type: object
       required:
@@ -65867,24 +66214,48 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/PrincipalResponse'
+            $ref: '#/components/schemas/PrincipalAdministrationResponse'
           example:
-            - createdAt: "2026-01-02T15:04:05Z"
+            - blockedAt: "2026-01-02T15:04:05Z"
+              capabilities:
+                canBlock: true
+                canDelete: true
+                canManageAuthorization: true
+                canManageSessions: true
+                canResetPassword: true
+                canUnblock: true
+                canUpdateProfile: true
+              createdAt: "2026-01-02T15:04:05Z"
               disabledAt: "2026-01-02T15:04:05Z"
               displayName: example
               email: example
               id: example
+              identityManagement:
+                provider: example
+                source: local
               kind: example
               updatedAt: "2026-01-02T15:04:05Z"
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - createdAt: "2026-01-02T15:04:05Z"
+          - blockedAt: "2026-01-02T15:04:05Z"
+            capabilities:
+              canBlock: true
+              canDelete: true
+              canManageAuthorization: true
+              canManageSessions: true
+              canResetPassword: true
+              canUnblock: true
+              canUpdateProfile: true
+            createdAt: "2026-01-02T15:04:05Z"
             disabledAt: "2026-01-02T15:04:05Z"
             displayName: example
             email: example
             id: example
+            identityManagement:
+              provider: example
+              source: local
             kind: example
             updatedAt: "2026-01-02T15:04:05Z"
         page:
@@ -65932,6 +66303,12 @@ components:
         disabledAt:
           type: string
           format: date-time
+          description: Lifecycle disable owned by the identity provisioning authority, such as SCIM active=false.
+          example: "2026-01-02T15:04:05Z"
+        blockedAt:
+          type: string
+          format: date-time
+          description: LeapView administrator block. This is independent from externally managed lifecycle state.
           example: "2026-01-02T15:04:05Z"
         createdAt:
           type: string
@@ -65942,6 +66319,7 @@ components:
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
+        blockedAt: "2026-01-02T15:04:05Z"
         createdAt: "2026-01-02T15:04:05Z"
         disabledAt: "2026-01-02T15:04:05Z"
         displayName: example
@@ -69516,7 +69894,8 @@ components:
           items:
             $ref: '#/components/schemas/PrincipalResponse'
           example:
-            - createdAt: "2026-01-02T15:04:05Z"
+            - blockedAt: "2026-01-02T15:04:05Z"
+              createdAt: "2026-01-02T15:04:05Z"
               disabledAt: "2026-01-02T15:04:05Z"
               displayName: example
               email: example
@@ -69527,7 +69906,8 @@ components:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - createdAt: "2026-01-02T15:04:05Z"
+          - blockedAt: "2026-01-02T15:04:05Z"
+            createdAt: "2026-01-02T15:04:05Z"
             disabledAt: "2026-01-02T15:04:05Z"
             displayName: example
             email: example

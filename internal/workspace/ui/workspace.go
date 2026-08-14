@@ -155,7 +155,7 @@ type workspaceAccessSignalState struct {
 func WorkspaceAccessSignals(access WorkspaceAccessResponse) workspaceAccessSignalState {
 	return workspaceAccessSignalState{
 		WorkspaceAccessResponse: access,
-		Command:                 WorkspaceAccessCommand{},
+		Command:                 WorkspaceAccessCommand{Subjects: []uisignals.WorkspaceAccessSubject{}},
 	}
 }
 

@@ -1,10 +1,12 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -16,6 +18,132 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
+
+func TestPrincipalAdministrationResponsesExposeSourceAwareCapabilities(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	local, err := repository.CreateLocalUser(t.Context(), access.LocalUserInput{
+		Email: "local-admin@example.test", DisplayName: "Local Admin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	external, err := repository.ResolveExternalPrincipal(t.Context(), access.ExternalIdentityInput{
+		Provider: "oidc", TenantID: "https://issuer.example", Subject: "external-admin",
+		Email: "external-admin@example.test", DisplayName: "External Admin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }}
+
+	for _, test := range []struct {
+		name      string
+		principal access.Principal
+		source    string
+		provider  string
+		canUpdate bool
+		canReset  bool
+		canDelete bool
+	}{
+		{name: "local", principal: local.Principal, source: "local", canUpdate: true, canReset: true, canDelete: true},
+		{name: "external", principal: external, source: "external", provider: "oidc"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			handler.GetPrincipal(recorder, principalRequest(stdhttp.MethodGet, "/api/v1/principals/"+test.principal.ID, test.principal.ID))
+			if recorder.Code != stdhttp.StatusOK {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			var response struct {
+				IdentityManagement struct {
+					Source   string `json:"source"`
+					Provider string `json:"provider"`
+				} `json:"identityManagement"`
+				Capabilities struct {
+					CanUpdateProfile       bool `json:"canUpdateProfile"`
+					CanResetPassword       bool `json:"canResetPassword"`
+					CanBlock               bool `json:"canBlock"`
+					CanDelete              bool `json:"canDelete"`
+					CanManageSessions      bool `json:"canManageSessions"`
+					CanManageAuthorization bool `json:"canManageAuthorization"`
+				} `json:"capabilities"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.IdentityManagement.Source != test.source || response.IdentityManagement.Provider != test.provider {
+				t.Fatalf("identity management=%#v", response.IdentityManagement)
+			}
+			if response.Capabilities.CanUpdateProfile != test.canUpdate || response.Capabilities.CanResetPassword != test.canReset || response.Capabilities.CanDelete != test.canDelete {
+				t.Fatalf("mutation capabilities=%#v", response.Capabilities)
+			}
+			if !response.Capabilities.CanBlock || !response.Capabilities.CanManageSessions || !response.Capabilities.CanManageAuthorization {
+				t.Fatalf("common capabilities=%#v", response.Capabilities)
+			}
+		})
+	}
+}
+
+func TestExternalPrincipalProfileAndDeletionAreManagedByProvider(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	external, err := repository.ResolveExternalPrincipal(t.Context(), access.ExternalIdentityInput{
+		Provider: "scim", Subject: "managed-user", Email: "managed@example.test", DisplayName: "Managed User",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }}
+
+	updateRequest := principalRequest(stdhttp.MethodPatch, "/api/v1/principals/"+external.ID, external.ID)
+	updateRequest.Body = io.NopCloser(bytes.NewBufferString(`{"displayName":"Locally Changed"}`))
+	updateRequest.Header.Set("Content-Type", "application/json")
+	updateRequest.Header.Set("If-Match", resourceETag(principalDTO(external)))
+	updateRecorder := httptest.NewRecorder()
+	handler.UpdatePrincipal(updateRecorder, updateRequest)
+	if updateRecorder.Code != stdhttp.StatusUnprocessableEntity {
+		t.Fatalf("update status=%d body=%s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	handler.DeletePrincipal(deleteRecorder, principalRequest(stdhttp.MethodDelete, "/api/v1/principals/"+external.ID, external.ID))
+	if deleteRecorder.Code != stdhttp.StatusUnprocessableEntity {
+		t.Fatalf("delete status=%d body=%s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+}
+
+func TestGroupAdministrationCapabilitiesFollowProviderOwnership(t *testing.T) {
+	for _, test := range []struct {
+		provider string
+		mutable  bool
+	}{
+		{provider: "local", mutable: true},
+		{provider: "scim", mutable: false},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			response := groupDTO(access.Group{ID: "group", WorkspaceID: "sales", Provider: test.provider, ExternalID: "analysts", Name: "Analysts"})
+			capabilities, ok := response["capabilities"].(map[string]bool)
+			if !ok {
+				t.Fatalf("capabilities=%#v", response["capabilities"])
+			}
+			if capabilities["canUpdate"] != test.mutable || capabilities["canDelete"] != test.mutable || capabilities["canManageMembers"] != test.mutable {
+				t.Fatalf("mutable capabilities=%#v", capabilities)
+			}
+			if !capabilities["canManageAuthorization"] {
+				t.Fatalf("authorization capability=%#v", capabilities)
+			}
+		})
+	}
+}
 
 func TestPrincipalLifecycleIsAuditedAndDisableRejectsCredentials(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
@@ -30,12 +158,13 @@ func TestPrincipalLifecycleIsAuditedAndDisableRejectsCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{
-		ID: "member", Kind: access.PrincipalKindUser, Email: "member@example.test", DisplayName: "Member",
+	targetReset, err := repository.CreateLocalUser(t.Context(), access.LocalUserInput{
+		Email: "member@example.test", DisplayName: "Member",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	target := targetReset.Principal
 	sessionToken, err := repository.CreateSession(t.Context(), target.ID, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +209,7 @@ INSERT INTO oauth_authoring_credentials (
 	if err := json.Unmarshal(disableRecorder.Body.Bytes(), &disabled); err != nil {
 		t.Fatal(err)
 	}
-	if disabled["disabledAt"] == nil || disableRecorder.Header().Get("ETag") == "" {
+	if disabled["blockedAt"] == nil || disableRecorder.Header().Get("ETag") == "" {
 		t.Fatalf("disabled principal response=%v headers=%v", disabled, disableRecorder.Header())
 	}
 	if _, err := repository.PrincipalForToken(t.Context(), sessionToken); err == nil {
@@ -96,8 +225,8 @@ INSERT INTO oauth_authoring_credentials (
 	if err := json.Unmarshal(enableRecorder.Body.Bytes(), &enabled); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := enabled["disabledAt"]; exists {
-		t.Fatalf("enabled principal retained disabledAt: %v", enabled)
+	if _, exists := enabled["blockedAt"]; exists {
+		t.Fatalf("enabled principal retained blockedAt: %v", enabled)
 	}
 	if _, err := repository.PrincipalForToken(t.Context(), sessionToken); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("browser session revived after enable: %v", err)
@@ -130,7 +259,7 @@ WHERE c.id = ?`, "credential_before_disable").Scan(&active, &revokedAt); err != 
 		t.Fatalf("deleted principal lookup error=%v, want sql.ErrNoRows", err)
 	}
 
-	for _, action := range []string{"principal.disabled", "principal.enabled", "principal.deleted"} {
+	for _, action := range []string{"principal.blocked", "principal.unblocked", "principal.deleted"} {
 		events, err := repository.ListAuditEvents(t.Context(), access.AuditEventFilter{Action: action, TargetID: target.ID})
 		if err != nil {
 			t.Fatal(err)
@@ -189,12 +318,13 @@ func TestPrincipalDeletionMapsOwnedSecurableToConflictAndRollsBack(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{
-		ID: "owner", Kind: access.PrincipalKindUser, Email: "owner@example.test",
+	ownerReset, err := repository.CreateLocalUser(t.Context(), access.LocalUserInput{
+		Email: "owner@example.test", DisplayName: "Owner",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	owner := ownerReset.Principal
 	object := access.ItemObject(access.SecurableDashboard, "test", "owned")
 	if _, err := repository.UpsertSecurableObject(t.Context(), object, owner.ID); err != nil {
 		t.Fatal(err)

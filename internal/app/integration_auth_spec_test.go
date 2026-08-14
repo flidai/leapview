@@ -189,7 +189,7 @@ func TestAuthSpecGroupSharingFollowsMembershipChanges(t *testing.T) {
 	}
 }
 
-func TestAuthSpecWorkspaceGroupAPICannotDeleteGlobalSCIMGroup(t *testing.T) {
+func TestAuthSpecWorkspaceGroupAPIExposesGlobalSCIMGroupReadOnly(t *testing.T) {
 	h, repo := newAuthSpecHarness(t)
 	ctx := context.Background()
 
@@ -204,15 +204,15 @@ func TestAuthSpecWorkspaceGroupAPICannotDeleteGlobalSCIMGroup(t *testing.T) {
 	}
 
 	status, body := h.authSpecDo(t, http.MethodDelete, "/api/v1/workspaces/sales/groups/"+group.ID, adminToken, "")
-	if status != http.StatusNotFound {
-		t.Fatalf("delete global SCIM group through workspace API status=%d want=404 body=%s", status, body)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("delete global SCIM group through workspace API status=%d want=422 body=%s", status, body)
 	}
 	status, body = h.authSpecDo(t, http.MethodGet, "/api/v1/workspaces/sales/groups", adminToken, "")
 	if status != http.StatusOK {
 		t.Fatalf("list workspace groups status=%d body=%s", status, body)
 	}
-	if strings.Contains(body, group.ID) {
-		t.Fatalf("workspace group collection exposed global SCIM group: %s", body)
+	if !strings.Contains(body, group.ID) || !strings.Contains(body, `"provider":"scim"`) || !strings.Contains(body, `"canManageMembers":false`) {
+		t.Fatalf("workspace group collection did not expose read-only SCIM group: %s", body)
 	}
 	scimGroups, err := repo.ListSCIMGroups(ctx, access.SCIMGroupFilter{ID: group.ID})
 	if err != nil {

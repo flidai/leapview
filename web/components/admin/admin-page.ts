@@ -46,6 +46,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   @state() private copiedQueryDetailValue = ''
   @state() private publicationBusy = ''
   @state() private publicationMessage = ''
+  @state() private accessCreateDialog: 'principal' | 'group' | '' = ''
   private queryFilterTimer: ReturnType<typeof setTimeout> | null = null
   private lastQueryHistoryKey = ''
 
@@ -618,6 +619,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
         this.closeQueryDetail()
       }
     }
+    if (this.accessCreateDialog === 'principal' && this.page?.active !== 'principals') this.accessCreateDialog = ''
+    if (this.accessCreateDialog === 'group' && this.page?.active !== 'groups') this.accessCreateDialog = ''
   }
 
   get page(): AdminPageSignal | null {
@@ -646,15 +649,15 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     const mainClass = [
       'main',
       page.active === 'storage' ? 'main-storage' : '',
-      page.active === 'principals' || page.active === 'groups' || page.active === 'workspaces-admin' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'workspaces-admin' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
     ].filter(Boolean).join(' ')
     return html`
       <div class="route">
         <section class=${mainClass} aria-label="Admin">
-          ${page.active === 'storage' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
+          ${page.active === 'storage' || page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
           ${page.empty && page.active !== 'storage' ? html`<div class="panel"><div class="empty">${page.empty}</div></div>` : nothing}
-          ${page.metrics?.length && page.active !== 'storage' && page.active !== 'queries' ? html`
+          ${page.metrics?.length && page.active !== 'storage' && page.active !== 'queries' && page.active !== 'group-detail' ? html`
             <div class="metrics">
               ${page.metrics.map((metric) => html`
                 <div class="metric">
@@ -671,40 +674,41 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
                 .items=${adminPrincipalListItems(page)}
                 .columns=${adminPrincipalListColumns()}
                 .filters=${adminPrincipalListFilters()}
+                .actions=${[{ id: 'create-principal', label: 'Create local user', emphasis: 'primary' }]}
                 initial-query=${page.listQuery ?? ''}
                 active-filter=${page.listFilter ?? 'all'}
                 search-placeholder=${page.directoryList.searchPlaceholder}
                 list-label="Members"
                 empty-text="No members match the current filters."
                 export-filename="members.csv"
+                @lv-entity-list-action=${this.handleEntityListAction}
               ></lv-entity-list>`
             : page.active === 'groups'
-              ? html`<lv-entity-list .items=${adminGroupListItems(page)} .columns=${adminGroupListColumns()} .filters=${adminGroupListFilters(page)} initial-query=${page.listQuery ?? ''} active-filter=${page.listFilter ?? 'all'} search-placeholder="Search groups by name or ID" empty-text="No groups found."></lv-entity-list>`
+              ? html`<lv-entity-list .items=${adminGroupListItems(page)} .columns=${adminGroupListColumns()} .filters=${adminGroupListFilters(page)} .actions=${[{ id: 'create-group', label: 'Create group', emphasis: 'primary' }]} initial-query=${page.listQuery ?? ''} active-filter=${page.listFilter ?? 'all'} search-placeholder="Search groups by name or ID" empty-text="No groups found." export-filename="groups.csv" @lv-entity-list-action=${this.handleEntityListAction}></lv-entity-list>`
             : isPersonalSettings(page.active) ? html`<lv-personal-settings></lv-personal-settings>`
               : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
                 : page.active === 'workspaces-admin' ? html`<lv-workspace-registry></lv-workspace-registry>`
                   : page.active === 'service-accounts' ? html`<lv-service-accounts></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
-                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.sections?.map(renderSection)}
+                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map(renderSection)}
         </section>
       </div>
     `
   }
 
   private renderLocalUserAdmin(page: AdminPageSignal) {
-    if (page.active === 'principal-detail') {
-      const principalId = principalIDFromPage(page)
-      if (!principalId) return nothing
-      return html`
-        <section class="local-user-panel" aria-label="Reset local password">
-          <form method="post" action=${`/api/v1/principals/${encodeURIComponent(principalId)}/password-reset`}>
-            <input type="hidden" name="gorilla.csrf.Token" value=${csrfToken()}>
-            <button class="local-user-action" type="submit">Reset local password</button>
-          </form>
-        </section>
-      `
-    }
+    if (page.active === 'principals' || page.active === 'principal-detail') return html`<lv-principal-administration .createOpen=${this.accessCreateDialog === 'principal'} @lv-access-create-close=${this.closeAccessCreateDialog}></lv-principal-administration>`
+    if (page.active === 'groups' || page.active === 'group-detail') return html`<lv-group-administration .createOpen=${this.accessCreateDialog === 'group'} @lv-access-create-close=${this.closeAccessCreateDialog}></lv-group-administration>`
     return nothing
+  }
+
+  private handleEntityListAction(event: CustomEvent<{ id: string }>): void {
+    if (event.detail.id === 'create-principal') this.accessCreateDialog = 'principal'
+    if (event.detail.id === 'create-group') this.accessCreateDialog = 'group'
+  }
+
+  private closeAccessCreateDialog = (): void => {
+    this.accessCreateDialog = ''
   }
 
   private renderAgent(page: AdminPageSignal) {
@@ -1259,16 +1263,6 @@ function formatQueryJSON(value: string): string {
 function storageHasPayload(storage: AdminStorageSignal | null | undefined): storage is AdminStorageSignal {
   if (!storage) return false
   return Boolean(storage.tables?.length || storage.status || storage.selectedKey || storage.selectedTable || storage.warnings?.length)
-}
-
-function csrfToken(): string {
-  const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content.trim() ?? ''
-  return token
-}
-
-function principalIDFromPage(page: AdminPageSignal): string {
-  const metric = page.metrics?.find((item) => item.label === 'Principal ID')
-  return metric?.value ?? ''
 }
 
 function renderSection(section: AdminContentSectionSignal) {

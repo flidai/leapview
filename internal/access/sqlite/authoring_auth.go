@@ -160,7 +160,7 @@ func (r *Repository) IssueDeviceCredential(ctx context.Context, issue access.Dev
 		return access.AuthoringCredential{}, err
 	}
 	principal := mapPrincipal(principalRow)
-	if principal.DisabledAt != "" {
+	if principal.AccessDisabled() {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringPrincipal
 	}
 	affected, err := queries.ConsumeDeviceAuthorization(ctx, platformdb.ConsumeDeviceAuthorizationParams{
@@ -207,7 +207,7 @@ func (r *Repository) CreateWorkloadCredential(ctx context.Context, issue access.
 		return access.AuthoringCredential{}, err
 	}
 	principal := mapPrincipal(principalRow)
-	if principal.Kind != access.PrincipalKindServicePrincipal || principal.DisabledAt != "" {
+	if principal.Kind != access.PrincipalKindServicePrincipal || principal.AccessDisabled() {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringPrincipal
 	}
 	if err := createAuthoringSession(ctx, queries, issue.Session); err != nil {
@@ -533,7 +533,7 @@ func mapAccessCredential(row platformdb.GetAuthoringCredentialByAccessHashRow) (
 		row.CredentialID, row.SessionID, row.AccessExpiresAt, row.RefreshExpiresAt,
 		row.Kind, row.ClientID, row.PrincipalID, row.TargetID, row.ProjectID, row.PrivilegesJson,
 		row.SessionCreatedAt, row.LastUsedAt, row.SessionExpiresAt, row.RevokedAt,
-		row.ID, row.PrincipalKind, row.Email, row.DisplayName, row.DisabledAt,
+		row.ID, row.PrincipalKind, row.Email, row.DisplayName, row.DisabledAt, row.BlockedAt,
 		row.PrincipalCreatedAt, row.PrincipalUpdatedAt,
 	)
 }
@@ -543,7 +543,7 @@ func mapRefreshCredential(row platformdb.GetAuthoringCredentialByRefreshHashRow)
 		row.CredentialID, row.SessionID, row.AccessExpiresAt, row.RefreshExpiresAt,
 		row.Kind, row.ClientID, row.PrincipalID, row.TargetID, row.ProjectID, row.PrivilegesJson,
 		row.SessionCreatedAt, row.LastUsedAt, row.SessionExpiresAt, row.RevokedAt,
-		row.ID, row.PrincipalKind, row.Email, row.DisplayName, row.DisabledAt,
+		row.ID, row.PrincipalKind, row.Email, row.DisplayName, row.DisabledAt, row.BlockedAt,
 		row.PrincipalCreatedAt, row.PrincipalUpdatedAt,
 	)
 }
@@ -552,7 +552,7 @@ func mapCredential(
 	credentialID, sessionID, accessExpiresValue string, refreshExpiresValue sql.NullString,
 	kind, clientID, principalID, targetID, projectID, privilegesJSON, sessionCreatedValue string,
 	lastUsedValue sql.NullString, sessionExpiresValue string, revokedValue sql.NullString,
-	id, principalKind, email, displayName string, disabledValue sql.NullString,
+	id, principalKind, email, displayName string, disabledValue, blockedValue sql.NullString,
 	principalCreatedAt, principalUpdatedAt string,
 ) (access.AuthoringCredential, error) {
 	scope, err := mapAuthoringScope(targetID, projectID, privilegesJSON)
@@ -587,7 +587,7 @@ func mapCredential(
 		ID: credentialID,
 		Principal: access.Principal{
 			ID: id, Kind: access.PrincipalKind(principalKind), Email: email, DisplayName: displayName,
-			DisabledAt: disabledValue.String, CreatedAt: principalCreatedAt, UpdatedAt: principalUpdatedAt,
+			DisabledAt: disabledValue.String, BlockedAt: blockedValue.String, CreatedAt: principalCreatedAt, UpdatedAt: principalUpdatedAt,
 		},
 		Session: access.AuthoringSession{
 			ID: sessionID, Kind: access.AuthoringSessionKind(kind), ClientID: clientID,

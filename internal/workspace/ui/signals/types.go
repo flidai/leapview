@@ -50,7 +50,7 @@ func WorkspaceAccessSignals(access WorkspaceAccessResponse) WorkspaceAccessSigna
 		Candidates:   candidates,
 		CanManage:    access.CanManage,
 		Status:       access.Status,
-		Command:      WorkspaceAccessCommand{},
+		Command:      WorkspaceAccessCommand{Subjects: []WorkspaceAccessSubject{}},
 		Search:       access.Search,
 		SearchStatus: access.SearchStatus,
 	}

@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "a036e041883c45a9b12636dd9e9a4c9845f1a3c4038372773819284ca4423334"
+	const expectedRouteContractDigest = "8b59a4559725dfd3ada01c46bb1cf4a05ba6e438637b6ac9c356d694798d3156"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -147,7 +147,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/admin/workspaces":
 		authenticated.owner = "admin"
 		authenticated.privilege = "MANAGE_WORKSPACE"
-	case strings.HasPrefix(path, "/admin/principals") || strings.HasPrefix(path, "/admin/groups"):
+	case path == "/admin/access/command" || strings.HasPrefix(path, "/admin/principals") || strings.HasPrefix(path, "/admin/groups"):
 		authenticated.owner = "admin"
 		authenticated.privilege = "MANAGE_GRANTS"
 	case strings.HasPrefix(path, "/admin"):
@@ -317,6 +317,7 @@ PATCH /admin/agent/config
 PATCH /metrics
 PATCH /static/*
 POST /admin/audit/command
+POST /admin/access/command
 POST /admin/personal-settings/command
 POST /admin/product-settings/command
 POST /admin/publications/command

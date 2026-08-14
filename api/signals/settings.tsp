@@ -76,6 +76,95 @@ model ServiceAccountSecretSignal { `id`: string; `servicePrincipalId`: string; `
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model AccessAdministrationSignal {
+  `principals`: AccessPrincipalSignal[];
+  `groups`: AccessGroupSignal[];
+  `workspaces`?: AccessWorkspaceSignal[];
+  `sessions`: AccessSessionSignal[];
+  `roleAssignments`: AccessRoleAssignmentSignal[];
+  `activity`: AccessActivitySignal[];
+  `selectedPrincipalId`?: string;
+  `selectedGroupId`?: string;
+  `defaultWorkspaceId`?: string;
+  `temporaryPassword`?: string;
+  `redirectTo`?: string;
+  `message`?: string;
+  `error`?: string;
+  `loading`: boolean;
+}
+
+model AccessWorkspaceSignal {
+  `id`: string;
+  `name`: string;
+}
+
+model AccessPrincipalCapabilitiesSignal {
+  `canUpdateProfile`: boolean;
+  `canResetPassword`: boolean;
+  `canBlock`: boolean;
+  `canUnblock`: boolean;
+  `canDelete`: boolean;
+  `canManageSessions`: boolean;
+}
+
+model AccessPrincipalSignal {
+  `id`: string;
+  `kind`: string;
+  `email`: string;
+  `displayName`: string;
+  `identitySource`: string;
+  `identityProvider`?: string;
+  `hasLocalPassword`: boolean;
+  `disabledAt`?: string;
+  `blockedAt`?: string;
+  `createdAt`?: string;
+  `updatedAt`?: string;
+  `lastSeenAt`?: string;
+  `revision`?: string;
+  `groups`: AccessGroupReferenceSignal[];
+  `capabilities`: AccessPrincipalCapabilitiesSignal;
+}
+
+model AccessGroupCapabilitiesSignal {
+  `canUpdate`: boolean;
+  `canDelete`: boolean;
+  `canManageMembers`: boolean;
+}
+
+model AccessGroupSignal {
+  `id`: string;
+  `workspaceId`?: string;
+  `name`: string;
+  `provider`: string;
+  `externalId`?: string;
+  `createdAt`?: string;
+  `revision`?: string;
+  `members`: AccessPrincipalReferenceSignal[];
+  `capabilities`: AccessGroupCapabilitiesSignal;
+}
+
+model AccessGroupReferenceSignal { `id`: string; `name`: string; `provider`: string; }
+model AccessPrincipalReferenceSignal { `id`: string; `email`: string; `displayName`: string; }
+model AccessSessionSignal { `id`: string; `kind`: string; `createdAt`?: string; `lastSeenAt`?: string; `expiresAt`?: string; }
+model AccessRoleAssignmentSignal { `workspaceId`: string; `role`: string; `sourceType`: string; `sourceId`: string; `sourceName`: string; }
+model AccessActivitySignal { `id`: string; `action`: string; `actorId`?: string; `actorName`?: string; `status`?: string; `createdAt`: string; }
+
+@apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "admin" })
+model AccessAdministrationCommand {
+  `action`: string;
+  `principalId`?: string;
+  `principalIds`?: string[];
+  `groupId`?: string;
+  `sessionId`?: string;
+  `workspaceId`?: string;
+  `email`?: string;
+  `displayName`?: string;
+  `revision`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AuditLogSignal {
   `items`: AuditEventSignal[];
   `filters`: AuditLogFilters;

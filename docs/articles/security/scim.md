@@ -30,6 +30,8 @@ SCIM users become ordinary user principals. SCIM groups are global directory gro
 
 LeapView preserves identity and audit continuity during deactivation. Setting `active=false` or deleting a SCIM user disables the principal, removes SCIM group memberships, and revokes sessions and API tokens. It is a soft disable rather than erasing historical attribution.
 
+Administrators can also place an independent LeapView access block on an active principal. This emergency block revokes credentials and denies authorization, but does not alter the directory's `active` value. A later SCIM synchronization cannot clear the LeapView block; an administrator must remove it explicitly. Removing the block does not reactivate a principal that remains disabled by SCIM.
+
 Directory profile changes should update mutable metadata without changing the principal identity. Configure immutable external identifiers correctly in the provider to avoid duplicate accounts.
 
 ## Separate provisioning and authorization
@@ -43,6 +45,8 @@ This separation means:
 - direct user grants remain effective until removed separately;
 - OIDC group claims do not compete with SCIM membership;
 - service principals remain managed through the LeapView access API.
+
+The administration API therefore exposes SCIM profiles, groups, and memberships as read-only resources. Profile edits, group deletion, and membership changes must be made in the directory, while LeapView role bindings and grants remain writable.
 
 Prefer binding stable directory groups to roles. Avoid granting every synchronized employee a default workspace merely because they exist in the tenant.
 

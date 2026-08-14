@@ -85,6 +85,57 @@ func TestDisableThenEnableDoesNotRevivePrincipalCredentials(t *testing.T) {
 	}
 }
 
+func TestLocalPrincipalBlockSurvivesSCIMReactivation(t *testing.T) {
+	store, repository := openAccessRepo(t, t.Context())
+	user, err := repository.UpsertSCIMUser(t.Context(), access.SCIMUserInput{
+		ExternalID: "directory-user", UserName: "directory@example.test", DisplayName: "Directory User", Active: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.DisablePrincipal(t.Context(), user.Principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	var disabledAt, blockedAt sql.NullString
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT disabled_at, blocked_at FROM principals WHERE id = ?`, user.Principal.ID).Scan(&disabledAt, &blockedAt); err != nil {
+		t.Fatal(err)
+	}
+	if disabledAt.Valid || !blockedAt.Valid {
+		t.Fatalf("after local block disabledAt=%#v blockedAt=%#v", disabledAt, blockedAt)
+	}
+
+	if _, err := repository.UpsertSCIMUser(t.Context(), access.SCIMUserInput{
+		ID: user.Principal.ID, ExternalID: "directory-user", UserName: "directory@example.test", DisplayName: "Directory User", Active: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.UpsertSCIMUser(t.Context(), access.SCIMUserInput{
+		ID: user.Principal.ID, ExternalID: "directory-user", UserName: "directory@example.test", DisplayName: "Directory User", Active: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT disabled_at, blocked_at FROM principals WHERE id = ?`, user.Principal.ID).Scan(&disabledAt, &blockedAt); err != nil {
+		t.Fatal(err)
+	}
+	if disabledAt.Valid || !blockedAt.Valid {
+		t.Fatalf("after SCIM reactivation disabledAt=%#v blockedAt=%#v", disabledAt, blockedAt)
+	}
+
+	token, err := repository.CreateSession(t.Context(), user.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.PrincipalForToken(t.Context(), token); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("locally blocked SCIM principal authenticated: %v", err)
+	}
+	if _, err := repository.EnablePrincipal(t.Context(), user.Principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.PrincipalForToken(t.Context(), token); err != nil {
+		t.Fatalf("unblocked active SCIM principal did not authenticate: %v", err)
+	}
+}
+
 func TestDisablePrincipalRollsBackStatusAndRevocationsTogether(t *testing.T) {
 	store, repository := openAccessRepo(t, t.Context())
 	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{
@@ -141,7 +192,7 @@ END`); err != nil {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.DisabledAt != "" {
+	if stored.BlockedAt != "" {
 		t.Fatalf("principal status was not rolled back: %#v", stored)
 	}
 	if _, err := repository.PrincipalForToken(t.Context(), browserSecret); err != nil {

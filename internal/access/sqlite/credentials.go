@@ -45,7 +45,7 @@ func (r *Repository) PrincipalForToken(ctx context.Context, token string) (acces
 		return access.Principal{}, err
 	}
 	principal := mapPrincipal(row)
-	if principal.DisabledAt != "" {
+	if principal.AccessDisabled() {
 		return access.Principal{}, sql.ErrNoRows
 	}
 	return principal, nil
@@ -61,7 +61,7 @@ func (r *Repository) DisabledPrincipalForSessionToken(ctx context.Context, token
 		return "", "", err
 	}
 	principal := mapPrincipal(row)
-	if principal.DisabledAt == "" {
+	if !principal.AccessDisabled() {
 		return "", "", sql.ErrNoRows
 	}
 	return principal.ID, session.ID, nil
@@ -222,7 +222,7 @@ func (r *Repository) CredentialForAPIToken(ctx context.Context, token string) (a
 		return access.APICredential{}, err
 	}
 	principal := mapPrincipal(row)
-	if principal.DisabledAt != "" {
+	if principal.AccessDisabled() {
 		return access.APICredential{}, sql.ErrNoRows
 	}
 	return access.APICredential{
@@ -241,7 +241,7 @@ func (r *Repository) DisabledPrincipalForAPIToken(ctx context.Context, token str
 		return "", "", err
 	}
 	principal := mapPrincipal(row)
-	if principal.DisabledAt == "" {
+	if !principal.AccessDisabled() {
 		return "", "", sql.ErrNoRows
 	}
 	return principal.ID, apiToken.ID, nil
@@ -451,7 +451,7 @@ func (r *Repository) PrincipalForServicePrincipalSecret(ctx context.Context, ser
 		return access.Principal{}, err
 	}
 	mapped := mapPrincipal(principal)
-	if mapped.DisabledAt != "" {
+	if mapped.AccessDisabled() {
 		return access.Principal{}, sql.ErrNoRows
 	}
 	return mapped, nil

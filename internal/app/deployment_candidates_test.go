@@ -1582,6 +1582,57 @@ func TestWorkspaceAccessCommandUpsertsAndPatchesSignals(t *testing.T) {
 	}
 }
 
+func TestWorkspaceAccessCommandCreatesBatchAtomically(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	owner := testPrincipal(t, ctx, store, "owner@example.com", "Owner", "owner")
+	repo := testAccessRepository(store)
+	first := testPrincipal(t, ctx, store, "first@example.com", "First", "")
+	second := testPrincipal(t, ctx, store, "second@example.com", "Second", "")
+	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+
+	signals := `{"workspaceAccess":{"command":{"role":"viewer","subjects":[{"subjectType":"principal","subjectId":"` + first.ID + `"},{"subjectType":"principal","subjectId":"` + second.ID + `"}]}}}`
+	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(signals))
+	claimUICommands(req, accessgen.GenUIActionCreateRoleBinding())
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Access granted to 2 subjects.") {
+		t.Fatalf("batch status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	bindings, err := repo.ListRoleBindings(ctx, "test")
+	if err != nil || len(bindings) != 3 {
+		t.Fatalf("bindings = %#v, err=%v", bindings, err)
+	}
+	audits, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{WorkspaceID: "test", Action: "role_binding.created"})
+	if err != nil || len(audits) != 2 {
+		t.Fatalf("batch audits = %#v, err=%v", audits, err)
+	}
+	for _, event := range audits {
+		assertOperationAuditMetadata(t, event, "createRoleBinding", "ui")
+	}
+
+	invalidSignals := `{"workspaceAccess":{"command":{"role":"editor","subjects":[{"subjectType":"principal","subjectId":"` + first.ID + `"},{"subjectType":"principal","subjectId":"missing-principal"}]}}}`
+	invalidReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(invalidSignals))
+	claimUICommands(invalidReq, accessgen.GenUIActionCreateRoleBinding())
+	invalidReq.Header.Set("Authorization", "Bearer "+token)
+	invalidRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(invalidRec, invalidReq)
+	if invalidRec.Code != http.StatusOK || !strings.Contains(invalidRec.Body.String(), "error") {
+		t.Fatalf("invalid batch status = %d body=%s", invalidRec.Code, invalidRec.Body.String())
+	}
+	bindings, err = repo.ListRoleBindings(ctx, "test")
+	if err != nil || len(bindings) != 3 {
+		t.Fatalf("failed batch was not rolled back: bindings=%#v err=%v", bindings, err)
+	}
+	audits, err = repo.ListAuditEvents(ctx, access.AuditEventFilter{WorkspaceID: "test", Action: "role_binding.created"})
+	if err != nil || len(audits) != 2 {
+		t.Fatalf("failed batch wrote audits: audits=%#v err=%v", audits, err)
+	}
+}
+
 func assertOperationAuditMetadata(t *testing.T, event access.AuditEvent, operationID, surface string) {
 	t.Helper()
 	var envelope struct {
@@ -1680,30 +1731,19 @@ func TestWorkspaceAssetAccessCommandCreatesAndRemovesGrant(t *testing.T) {
 		}
 	}
 
-	groupSignals := `{"workspaceAccess":{"command":{"subjectType":"group","subjectId":"` + group.ID + `","privilege":"QUERY_DATA"}}}`
-	groupReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/assets/semantic_model:test.sales/access/upsert", bytes.NewBufferString(groupSignals))
-	claimUICommands(groupReq, accessgen.GenUIActionCreateGrant())
-	groupReq.Header.Set("Authorization", "Bearer "+token)
-	groupRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(groupRec, groupReq)
-	if groupRec.Code != http.StatusOK {
-		t.Fatalf("group asset access upsert status = %d body=%s", groupRec.Code, groupRec.Body.String())
+	batchSignals := `{"workspaceAccess":{"command":{"privilege":"QUERY_DATA","subjects":[{"subjectType":"group","subjectId":"` + group.ID + `"},{"subjectType":"service_principal","subjectId":"` + servicePrincipal.ID + `"}]}}}`
+	batchReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/assets/semantic_model:test.sales/access/upsert", bytes.NewBufferString(batchSignals))
+	claimUICommands(batchReq, accessgen.GenUIActionCreateGrant())
+	batchReq.Header.Set("Authorization", "Bearer "+token)
+	batchRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(batchRec, batchReq)
+	if batchRec.Code != http.StatusOK || !strings.Contains(batchRec.Body.String(), "Access granted to 2 subjects.") {
+		t.Fatalf("asset batch access upsert status = %d body=%s", batchRec.Code, batchRec.Body.String())
 	}
-	if !strings.Contains(groupRec.Body.String(), "Sales Analysts") {
-		t.Fatalf("group access patch did not render group name:\n%s", groupRec.Body.String())
-	}
-
-	servicePrincipalSignals := `{"workspaceAccess":{"command":{"subjectType":"service_principal","subjectId":"` + servicePrincipal.ID + `","privilege":"DEPLOY"}}}`
-	servicePrincipalReq := httptest.NewRequest(http.MethodPost, "/workspaces/test/assets/semantic_model:test.sales/access/upsert", bytes.NewBufferString(servicePrincipalSignals))
-	claimUICommands(servicePrincipalReq, accessgen.GenUIActionCreateGrant())
-	servicePrincipalReq.Header.Set("Authorization", "Bearer "+token)
-	servicePrincipalRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(servicePrincipalRec, servicePrincipalReq)
-	if servicePrincipalRec.Code != http.StatusOK {
-		t.Fatalf("service principal asset access upsert status = %d body=%s", servicePrincipalRec.Code, servicePrincipalRec.Body.String())
-	}
-	if !strings.Contains(servicePrincipalRec.Body.String(), "CI Publisher") {
-		t.Fatalf("service principal access patch did not render display name:\n%s", servicePrincipalRec.Body.String())
+	for _, want := range []string{"Sales Analysts", "CI Publisher"} {
+		if !strings.Contains(batchRec.Body.String(), want) {
+			t.Fatalf("asset batch access patch did not render %q:\n%s", want, batchRec.Body.String())
+		}
 	}
 
 	grants, err := repo.ListGrants(ctx, access.ItemObject(access.SecurableSemanticModel, "test", "test.sales"))
@@ -1720,7 +1760,7 @@ func TestWorkspaceAssetAccessCommandCreatesAndRemovesGrant(t *testing.T) {
 		if grant.SubjectType == access.SubjectGroup && grant.SubjectID == group.ID && grant.Privilege == access.PrivilegeQueryData {
 			foundGroupGrant = true
 		}
-		if grant.SubjectType == access.SubjectServicePrincipal && grant.SubjectID == servicePrincipal.ID && grant.Privilege == access.PrivilegeDeploy {
+		if grant.SubjectType == access.SubjectServicePrincipal && grant.SubjectID == servicePrincipal.ID && grant.Privilege == access.PrivilegeQueryData {
 			foundServicePrincipalGrant = true
 		}
 	}
