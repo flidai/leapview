@@ -87,7 +87,7 @@ func TestStorageTableDetailFocusesOnStorageAndActiveFiles(t *testing.T) {
 	if !ok {
 		t.Fatalf("page = %T, want AdminPageSignal", signals["page"])
 	}
-	if page.Active != "storage-detail" || page.HeaderTitle != "Storage / model.orders" || page.Storage != nil {
+	if page.Active != "storage-detail" || page.HeaderTitle != "orders" || page.Storage != nil {
 		t.Fatalf("storage detail page = %#v", page)
 	}
 	if page.Metrics == nil || page.Sections == nil {

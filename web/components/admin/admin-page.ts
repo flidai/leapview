@@ -1,8 +1,9 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
-import { ArrowLeft, CheckCircle2, Clock3, Copy, XCircle } from 'lucide'
+import { CheckCircle2, Clock3, Copy, Table2, XCircle } from 'lucide'
 import type { AdminPageSignal, AdminContentSectionSignal, AdminPublicationSignal, AdminQueryDetailSignal, AdminQueryHistoryFilters, AdminQueryHistorySignal, AdminStorageSignal, FilterMenuCommand, FilterMenuSignal, RecordTableSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
+import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import { checkSignalContract } from '../shared/signal-contract'
@@ -48,7 +49,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   private queryFilterTimer: ReturnType<typeof setTimeout> | null = null
   private lastQueryHistoryKey = ''
 
-  static styles = [pageHeaderStyles, css`
+  static styles = [pageHeaderStyles, entityDetailStyles, css`
     :host {
       display: block;
       min-width: 0;
@@ -210,23 +211,15 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       gap: var(--base-size-12);
     }
 
-    .storage-back {
-      display: inline-flex;
-      width: fit-content;
-      align-items: center;
-      gap: var(--base-size-6);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-      text-decoration: none;
+    .detail-section {
+      gap: var(--base-size-16);
+      border-top: var(--lv-border-muted);
+      padding: var(--base-size-24) 0;
     }
 
-    .storage-back:hover {
-      color: var(--lv-fg-default);
-    }
-
-    .storage-back svg {
-      width: var(--base-size-16);
-      height: var(--base-size-16);
+    .detail-section .table-panel {
+      border: 0;
+      border-radius: 0;
     }
 
     .publication-list {
@@ -661,9 +654,9 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     return html`
       <div class="route">
         <section class=${mainClass} aria-label="Admin">
-          ${page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
+          ${page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'storage-detail' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
           ${page.empty ? html`<div class="panel"><div class="empty">${page.empty}</div></div>` : nothing}
-          ${page.metrics?.length && page.active !== 'queries' && page.active !== 'principal-detail' && page.active !== 'group-detail' ? html`
+          ${page.metrics?.length && page.active !== 'queries' && page.active !== 'principal-detail' && page.active !== 'group-detail' && page.active !== 'storage-detail' ? html`
             <div class="metrics">
               ${page.metrics.map((metric) => html`
                 <div class="metric">
@@ -696,7 +689,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
                 : page.active === 'workspaces-admin' ? html`<lv-workspace-registry></lv-workspace-registry>`
                   : page.active === 'service-accounts' ? html`<lv-service-accounts></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
-                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-detail' ? this.renderStorageDetail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map(renderSection)}
+                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-detail' ? this.renderStorageDetail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map((section) => renderSection(section))}
         </section>
       </div>
     `
@@ -774,13 +767,37 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   }
 
   private renderStorageDetail(page: AdminPageSignal) {
-    return html`
-      <a class="storage-back" href="/admin/storage">
-        ${lucideIcon(ArrowLeft, { size: 16, strokeWidth: 2 })}
-        <span>Back to Storage</span>
-      </a>
-      ${page.sections?.map(renderSection)}
-    `
+    if (page.empty) return nothing
+    const storageFacts = page.sections?.find((section) => section.title === 'Storage')?.facts ?? []
+    const schema = storageFacts.find((fact) => fact.label === 'Schema')?.value ?? ''
+    const objectType = storageFacts.find((fact) => fact.label === 'Object type')?.value ?? 'table'
+    return renderEntityDetail({
+      label: 'Storage table details',
+      backHref: '/admin/storage',
+      backLabel: 'All storage tables',
+      avatar: lucideIcon(Table2, { size: 32, strokeWidth: 1.75 }),
+      avatarTreatment: 'plain',
+      title: page.headerTitle || page.title,
+      subtitle: page.headerDetail,
+      badges: html`${schema ? html`<span class="badge">${schema}</span>` : nothing}<span class="badge">${objectType}</span>`,
+      sections: html`
+        ${page.metrics?.length ? html`
+          <section class="section detail-section" aria-label="Overview">
+            <h2>Overview</h2>
+            <div class="metrics">
+              ${page.metrics.map((metric) => html`
+                <div class="metric">
+                  <span class="label">${metric.label}</span>
+                  <span class="value">${metric.value || '-'}</span>
+                  ${metric.detail ? html`<span class="meta">${metric.detail}</span>` : nothing}
+                </div>
+              `)}
+            </div>
+          </section>
+        ` : nothing}
+        ${page.sections?.map((section) => renderSection(section, true))}
+      `,
+    })
   }
 
   private renderQueries(page: AdminPageSignal) {
@@ -1307,9 +1324,9 @@ function formatQueryJSON(value: string): string {
   }
 }
 
-function renderSection(section: AdminContentSectionSignal) {
+function renderSection(section: AdminContentSectionSignal, detail = false) {
   return html`
-    <section class="section" aria-label=${section.title}>
+    <section class=${detail ? 'section detail-section' : 'section'} aria-label=${section.title}>
       <h2>${section.title}</h2>
       ${section.table?.columns?.length
         ? html`<div class="panel table-panel"><lv-record-table variant="compact" .table=${section.table}></lv-record-table></div>`

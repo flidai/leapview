@@ -197,7 +197,7 @@ final result: passed
 - Colors and tokens: surfaces, text, borders, accent notice, status badges, and controls all use existing application tokens. No new raw color system was introduced.
 - Images and icons: no raster assets were needed. Initials avatars are product UI, while informational and blocking actions use the existing Lucide icon library.
 - Copy and content: notices explain whether LeapView or an external identity source owns the record. Local records retain editable operations; managed records remain read-only where appropriate.
-- Reuse: users and groups render through the same `renderAdministrationDetailShell` composition, with domain-specific sections and operations supplied as content.
+- Reuse: users, groups, and storage tables render through the shared `renderEntityDetail` composition, with domain-specific identity treatments, sections, and operations supplied as content.
 
 ## Comparison history
 

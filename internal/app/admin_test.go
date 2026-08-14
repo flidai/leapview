@@ -170,7 +170,7 @@ func TestAdminAccessCommandBlocksPrincipalAndReturnsSignalPatch(t *testing.T) {
 	}
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"block_principal","principalId":"` + target.Principal.ID + `"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=principal-detail&principal="+target.Principal.ID, body)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -200,7 +200,7 @@ func TestAdminAccessCommandDeletesPrincipalAndReturnsClientRedirectSignal(t *tes
 	}
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"delete_principal","principalId":"` + target.Principal.ID + `"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=principal-detail&principal="+target.Principal.ID, body)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -224,7 +224,7 @@ func TestAdminAccessCommandCreatesGroupAndReturnsDetailRedirectSignal(t *testing
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"create_group","workspaceId":"test","displayName":"Revenue analysts"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=groups", body)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -262,7 +262,7 @@ func TestAdminAccessCommandAddsMultipleGroupMembers(t *testing.T) {
 	}
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"add_group_member","workspaceId":"test","groupId":"` + group.ID + `","principalIds":["` + first.Principal.ID + `","` + second.Principal.ID + `"]}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=group-detail&group="+group.ID, body)
 	req.Header.Set("Authorization", "Bearer "+token)

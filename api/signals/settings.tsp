@@ -85,7 +85,6 @@ model AccessAdministrationSignal {
   `activity`: AccessActivitySignal[];
   `selectedPrincipalId`?: string;
   `selectedGroupId`?: string;
-  `defaultWorkspaceId`?: string;
   `temporaryPassword`?: string;
   `redirectTo`?: string;
   `message`?: string;

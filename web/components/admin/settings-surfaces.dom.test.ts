@@ -355,7 +355,6 @@ test('group administration creates a local group in the selected workspace', asy
       const state = {
         principals: [], groups: [], sessions: [], loading: false,
         workspaces: [{ id: 'operations', name: 'Operations' }, { id: 'sales', name: 'Sales' }],
-        defaultWorkspaceId: 'operations',
       }
       runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccess: state }, getPath: (path: string) => path === 'adminAccess' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
       const element = document.querySelector('lv-group-administration') as any

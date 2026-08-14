@@ -1591,7 +1591,7 @@ func TestWorkspaceAccessCommandCreatesBatchAtomically(t *testing.T) {
 	second := testPrincipal(t, ctx, store, "second@example.com", "Second", "")
 	token := testAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultWorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	signals := `{"workspaceAccess":{"command":{"role":"viewer","subjects":[{"subjectType":"principal","subjectId":"` + first.ID + `"},{"subjectType":"principal","subjectId":"` + second.ID + `"}]}}}`
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/test/access/upsert", bytes.NewBufferString(signals))

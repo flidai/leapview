@@ -1369,7 +1369,7 @@ test('storage table detail emphasizes physical storage and active files', async 
         kind: 'admin',
         title: 'Storage table',
         active: 'storage-detail',
-        headerTitle: 'Storage / model.orders',
+        headerTitle: 'orders',
         headerDetail: 'Physical storage and active data files.',
         metrics: [
           { label: 'Data size', value: '12 MiB' },
@@ -1411,7 +1411,10 @@ test('storage table detail emphasizes physical storage and active files', async 
       await files.updateComplete
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
-        backHref: root.querySelector<HTMLAnchorElement>('.storage-back')?.getAttribute('href'),
+        backHref: root.querySelector<HTMLAnchorElement>('.back-link')?.getAttribute('href'),
+        sharedLayout: Boolean(root.querySelector('.detail-surface .detail-sections')),
+        avatarClass: root.querySelector('.avatar')?.className,
+        badges: Array.from(root.querySelectorAll('.identity-badges .badge')).map((badge) => badge.textContent?.trim()),
         metricText: Array.from(root.querySelectorAll('.metrics .metric')).map((metric) => metric.textContent?.replace(/\s+/g, ' ').trim()),
         factText: Array.from(root.querySelectorAll('.facts .metric')).map((fact) => fact.textContent?.replace(/\s+/g, ' ').trim()),
         sectionTitles: Array.from(root.querySelectorAll('.section > h2')).map((heading) => heading.textContent?.trim()),
@@ -1420,11 +1423,14 @@ test('storage table detail emphasizes physical storage and active files', async 
       }
     })
 
-    expect(state.title).toBe('Storage / model.orders')
+    expect(state.title).toBe('orders')
     expect(state.backHref).toBe('/admin/storage')
+    expect(state.sharedLayout).toBe(true)
+    expect(state.avatarClass).toContain('avatar-plain')
+    expect(state.badges).toEqual(['model', 'table'])
     expect(state.metricText).toEqual(['Data size 12 MiB', 'Active files 1', 'Stored rows 1,000', 'Begin snapshot 7'])
     expect(state.factText).toEqual(['Schema model', 'Object type table', 'DuckLake path model/orders/', 'Table UUID table-uuid'])
-    expect(state.sectionTitles).toEqual(['Storage', 'Active files'])
+    expect(state.sectionTitles).toEqual(['Overview', 'Storage', 'Active files'])
     expect(state.fileHeaders).toEqual(['File path', 'Format', 'Rows', 'Data size', 'Begin snapshot'])
     expect(state.fileText).toContain('model/orders/file.parquet')
     expect(state.fileText).toContain('PARQUET')

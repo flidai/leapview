@@ -434,7 +434,7 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 			return page
 		}
 		table := data.Storage.Tables[0]
-		page.HeaderTitle = "Storage / " + table.Schema + "." + table.Name
+		page.HeaderTitle = table.Name
 		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{
 			{Label: "Data size", Value: table.SizeLabel},
 			{Label: "Active files", Value: fmt.Sprint(table.FileCount)},
