@@ -39,6 +39,18 @@ test('filter controller serializes commands and rebases queued mutations after r
   expect(sent[1]?.baseRevision).toBe(5)
 })
 
+test('filter controller reports pending state only for affected bindings', () => {
+  let mutation = 0
+  const controller = new DashboardFilterController(() => {}, () => `mutation-${++mutation}`)
+  controller.reconcile(state(4))
+
+  controller.mutate('state', setExpression('CA'))
+
+  expect(controller.pending).toBe(true)
+  expect(controller.pendingFor('state')).toBe(true)
+  expect(controller.pendingFor('category')).toBe(false)
+})
+
 test('filter controller normalizes sparse empty collections at the signal boundary', () => {
   const sent: DashboardFilterCommand[] = []
   const controller = new DashboardFilterController((command) => sent.push(command), () => 'mutation-id')
@@ -53,6 +65,29 @@ test('filter controller normalizes sparse empty collections at the signal bounda
 
   expect(sent[0]?.baseRevision).toBe(3)
   expect(controller.projected.dirtyBindings).toEqual([])
+})
+
+test('filter controller removes stale union fields from streamed unfiltered expressions', () => {
+  const controller = new DashboardFilterController(() => {})
+  const staleUnfiltered = {
+    kind: 'unfiltered',
+    operator: 'in',
+    values: [{ kind: 'boolean', value: true }],
+  } as unknown as DashboardFilterExpression
+  controller.reconcile({
+    revision: 6,
+    defaultsRevision: 'defaults',
+    appliedControls: {
+      delivered: { expression: staleUnfiltered, resolvedExpression: staleUnfiltered },
+    },
+    draftControls: {},
+    dirtyBindings: [],
+  })
+
+  expect(controller.projected.appliedControls.delivered).toEqual({
+    expression: { kind: 'unfiltered' },
+    resolvedExpression: { kind: 'unfiltered' },
+  })
 })
 
 test('filter controller projects optimistic state without replacing unrelated controls', () => {

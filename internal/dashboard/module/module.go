@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
@@ -25,6 +26,8 @@ import (
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	dashboardui "github.com/flidai/leapview/internal/dashboard/ui"
 	dashboardsignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	"github.com/flidai/leapview/internal/dashboard/usage"
+	dashboardusagesqlite "github.com/flidai/leapview/internal/dashboard/usage/sqlite"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
@@ -48,6 +51,8 @@ type Module struct {
 	runtimeMetrics                queryruntime.Metrics
 	defaultWorkspaceID            string
 	coordinators                  *dashboardstream.Registry
+	usageReader                   usage.Reader
+	usageNow                      func() time.Time
 	lifecycleMu                   sync.Mutex
 	lifecycleCancel               context.CancelFunc
 	lifecycleWG                   sync.WaitGroup
@@ -64,28 +69,32 @@ type Config struct {
 	PublicURL          string
 	CurrentActor       func(*http.Request) string
 	RecordAudit        func(context.Context, access.AuditEventInput) error
+	UsageRecorder      usage.Recorder
+	UsageReader        usage.Reader
+	UsageNow           func() time.Time
 	RuntimeMetrics     queryruntime.Metrics
 	DefaultWorkspaceID string
 }
 
 type HTTPConfig struct {
-	Metrics             queryruntime.Metrics
-	MetricsForWorkspace func(string) (queryruntime.Metrics, bool)
-	Admission           workload.Admitter
-	Broker              SignalBroker
-	Logger              *slog.Logger
-	Telemetry           DashboardTelemetry
-	CurrentPrincipalID  func(*http.Request) string
-	AuthorizeListObject func(context.Context, string, access.ObjectRef) (bool, error)
-	CSRFToken           func(*http.Request) string
-	Layout              func(*http.Request) webpage.Provider
-	Environment         func(*http.Request) string
-	DataRefreshedAt     func(context.Context, string, string, string) string
-	QueryFreshness      func(context.Context, string, string, string) (api.QueryFreshness, bool)
-	AgentBootstrap      func(*http.Request, string) dashboardui.AgentBootstrap
-	AgentCommands       dashboardui.AgentCommandBindings
-	Presentation        dashboardui.Presentation
-	Assets              staticasset.Resolver
+	Metrics               queryruntime.Metrics
+	MetricsForWorkspace   func(string) (queryruntime.Metrics, bool)
+	Admission             workload.Admitter
+	Broker                SignalBroker
+	Logger                *slog.Logger
+	Telemetry             DashboardTelemetry
+	CurrentPrincipalID    func(*http.Request) string
+	CurrentUsagePrincipal func(*http.Request) (string, bool)
+	AuthorizeListObject   func(context.Context, string, access.ObjectRef) (bool, error)
+	CSRFToken             func(*http.Request) string
+	Layout                func(*http.Request) webpage.Provider
+	Environment           func(*http.Request) string
+	DataRefreshedAt       func(context.Context, string, string, string) string
+	QueryFreshness        func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	AgentBootstrap        func(*http.Request, string) dashboardui.AgentBootstrap
+	AgentCommands         dashboardui.AgentCommandBindings
+	Presentation          dashboardui.Presentation
+	Assets                staticasset.Resolver
 }
 
 type SemanticConfig struct {
@@ -152,6 +161,20 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.Database != nil {
 		sessionStore = dashboardsessionsqlite.NewStore(config.Database)
 	}
+	usageRecorder, usageReader := config.UsageRecorder, config.UsageReader
+	if config.Database != nil && (usageRecorder == nil || usageReader == nil) {
+		repository := dashboardusagesqlite.NewRepository(config.Database)
+		if usageRecorder == nil {
+			usageRecorder = repository
+		}
+		if usageReader == nil {
+			usageReader = repository
+		}
+	}
+	usageNow := config.UsageNow
+	if usageNow == nil {
+		usageNow = time.Now
+	}
 	metricsForHTTP := func(workspaceID string) (dashboardhttp.Metrics, bool) {
 		if config.HTTP.MetricsForWorkspace == nil {
 			return nil, false
@@ -198,13 +221,17 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		OptionCursorSecret: optionCursorSecret,
 		OptionCache:        dashboardfilter.NewOptionCache(4096),
 		CurrentPrincipalID: config.HTTP.CurrentPrincipalID, AuthorizeListObject: config.HTTP.AuthorizeListObject,
-		CSRFToken: config.HTTP.CSRFToken, Layout: config.HTTP.Layout,
+		CurrentUsagePrincipal: config.HTTP.CurrentUsagePrincipal,
+		CSRFToken:             config.HTTP.CSRFToken, Layout: config.HTTP.Layout,
 		Presentation: config.HTTP.Presentation,
 		Assets:       config.HTTP.Assets,
 		Environment:  config.HTTP.Environment, DataRefreshedAt: config.HTTP.DataRefreshedAt,
 		QueryFreshness: config.HTTP.QueryFreshness,
 		AgentBootstrap: config.HTTP.AgentBootstrap,
 		AgentCommands:  config.HTTP.AgentCommands,
+	}
+	if usageRecorder != nil {
+		handler.RecordDashboardView = usageRecorder.RecordView
 	}
 	handler.SessionKey = func(r *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) dashboardsession.Key {
 		workspaceID := chi.URLParam(r, "workspace")
@@ -246,6 +273,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		publicTelemetry: config.PublicTelemetry, logger: config.Logger,
 		runtimeMetrics: config.RuntimeMetrics, defaultWorkspaceID: config.DefaultWorkspaceID,
 		coordinators: coordinators,
+		usageReader:  usageReader, usageNow: usageNow,
 	}
 	if config.Database != nil {
 		module.publications = publicationsqlite.NewRepository(config.Database)
@@ -299,3 +327,29 @@ func observeVisualizationFrame(telemetry DashboardTelemetry, event dashboardstre
 
 func (m *Module) HTTP() dashboardhttp.Handler      { return m.handler }
 func (m *Module) SemanticAPI() semanticapi.Handler { return m.semantic }
+
+type PopularityLevel string
+
+const (
+	PopularityLow    PopularityLevel = "low"
+	PopularityMedium PopularityLevel = "medium"
+	PopularityHigh   PopularityLevel = "high"
+)
+
+// Popularity ranks dashboard usage across the instance for a configured
+// dashboard population. Persistence and ranking stay owned by this capability;
+// catalog consumers receive only the resulting module contract.
+func (m *Module) Popularity(ctx context.Context, dashboardCount int) (map[string]PopularityLevel, error) {
+	if m == nil || m.usageReader == nil {
+		return nil, nil
+	}
+	summaries, err := m.usageReader.ListSummaries(ctx, m.usageNow().UTC().Add(-usage.PopularityWindow))
+	if err != nil {
+		return nil, err
+	}
+	levels := make(map[string]PopularityLevel)
+	for _, ranked := range usage.RankPopularity(summaries, dashboardCount) {
+		levels[ranked.CatalogID()] = PopularityLevel(ranked.Level)
+	}
+	return levels, nil
+}

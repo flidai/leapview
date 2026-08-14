@@ -20,6 +20,54 @@ test('dashboard fixtures satisfy the fail-closed visualization contract', () => 
   }
 })
 
+test('dashboard refresh loading does not mark unrelated filter controls stale', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const slicer = element.shadowRoot.querySelector('lv-slicer') as any
+      await slicer.updateComplete
+      const leaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
+      await leaf.updateComplete
+      return {
+        stale: leaf.stale,
+        pending: leaf.pending,
+        disabled: leaf.shadowRoot.querySelector('fieldset')?.disabled,
+        status: leaf.shadowRoot.querySelector('.status')?.textContent?.trim(),
+      }
+    })
+    expect(result).toEqual({ stale: false, pending: false, disabled: false, status: undefined })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard coalesces duplicate option requests for one binding context', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const requests = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const seen: unknown[] = []
+      element.addEventListener('lv-filter-options-request', (event: CustomEvent) => seen.push(event.detail))
+      for (let index = 0; index < 2; index++) {
+        element.dispatchEvent(new CustomEvent('lv-filter-options-needed', {
+          bubbles: true,
+          composed: true,
+          detail: { bindingKey: 'fb_state', search: '', limit: 50 },
+        }))
+      }
+      await element.updateComplete
+      return seen
+    })
+    expect(requests).toHaveLength(1)
+  } finally {
+    await page.close()
+  }
+})
+
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
@@ -1297,12 +1345,12 @@ test('mobile report header combines page and filter controls without stacked rai
       const active = dock.shadowRoot.activeElement
       return {
         insideDrawer: active instanceof HTMLElement,
-        focusedClass: active?.className,
+        insidePanel: dock.shadowRoot.querySelector('.panel').contains(active),
         backgroundFocused: element.shadowRoot.activeElement?.classList.contains('agent-toggle') ?? false,
       }
     })
     expect(wrappedFocus.insideDrawer).toBe(true)
-    expect(wrappedFocus.focusedClass).toContain('close-button')
+    expect(wrappedFocus.insidePanel).toBe(true)
     expect(wrappedFocus.backgroundFocused).toBe(false)
 
     await page.keyboard.press('Escape')
@@ -1470,12 +1518,16 @@ test('filter pane groups scope and exposes clear, reset, apply, and cancel actio
         groups: Array.from(dock.shadowRoot.querySelectorAll('.group-title')).map(node => node.textContent?.trim()),
         activeCards: cards.filter(card => card.hasAttribute('active')).map(card => card.binding.key),
         dirtyCards: cards.filter(card => card.hasAttribute('dirty')).map(card => card.binding.key),
+        resetCards: cards
+          .filter(card => card.shadowRoot.querySelector('button[aria-label="Reset State to default"]'))
+          .map(card => card.binding.key),
         events,
       }
     })
     expect(result.groups).toEqual(['Filters on all pages', 'Filters on this page'])
     expect(result.activeCards).toEqual(['report_state', 'page_state'])
     expect(result.dirtyCards).toEqual(['report_state'])
+    expect(result.resetCards).toEqual(['page_state'])
     expect(result.events).toEqual([
       { type: 'lv-filter-clear', detail: { bindingKey: 'report_state' } },
       { type: 'lv-filter-reset-binding', detail: { bindingKey: 'page_state' } },
@@ -1529,13 +1581,248 @@ test('range and text leaves expose visible input semantics', async () => {
         operator: text.shadowRoot.querySelector('.operator')?.textContent?.trim(),
         placeholder: text.shadowRoot.querySelector('input')?.getAttribute('placeholder'),
         rangeLabels: Array.from(range.shadowRoot.querySelectorAll('.field-label')).map(node => node.textContent?.trim()),
+        rangePlaceholders: Array.from(range.shadowRoot.querySelectorAll('.range input')).map(node => node.getAttribute('placeholder')),
       }
     })
     expect(result).toEqual({
       operator: 'Contains',
       placeholder: 'Enter value',
       rangeLabels: ['Minimum', 'Maximum'],
+      rangePlaceholders: ['No minimum', 'No maximum'],
     })
+  } finally {
+    await page.close()
+  }
+})
+
+test('range filters keep open bounds blank and commit the compound edit once', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    const result = await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.definition = {
+        id: 'delivery_days', label: 'Delivery days', field: 'orders.delivery_days', valueKind: 'integer',
+        predicates: [{ kind: 'range', operators: [] }],
+        options: { kind: 'none', limit: 0, values: [] },
+      }
+      leaf.binding = {
+        key: 'delivery_days', id: 'delivery_days', filter: 'delivery_days', scope: 'page', pageID: 'filters',
+        default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1,
+        readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'numeric_range', search: false, selectAll: false,
+        showCounts: false, showSummary: true, compact: false,
+      }
+      const outside = document.createElement('button')
+      outside.textContent = 'Outside'
+      const mutations: unknown[] = []
+      leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => mutations.push(event.detail))
+      document.body.append(leaf, outside)
+      await leaf.updateComplete
+
+      const inputs = () => Array.from(leaf.shadowRoot.querySelectorAll('.range input')) as HTMLInputElement[]
+      const [minimum, maximum] = inputs()
+      minimum.focus()
+      minimum.value = '1'
+      minimum.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      maximum.focus()
+      await leaf.updateComplete
+      const afterTabbing = { values: inputs().map(input => input.value), mutations: mutations.length }
+
+      // An unrelated canonical render must not overwrite an in-progress range edit.
+      leaf.expression = { kind: 'unfiltered' }
+      await leaf.updateComplete
+      const afterCanonicalRender = inputs().map(input => input.value)
+
+      outside.focus()
+      await leaf.updateComplete
+      const afterCommit = { values: inputs().map(input => input.value), mutations: [...mutations] }
+      return { afterTabbing, afterCanonicalRender, afterCommit }
+    })
+    expect(result).toEqual({
+      afterTabbing: { values: ['1', ''], mutations: 0 },
+      afterCanonicalRender: ['1', ''],
+      afterCommit: {
+        values: ['1', ''],
+        mutations: [{
+          bindingKey: 'delivery_days',
+          expression: {
+            kind: 'range',
+            lower: { value: { kind: 'integer', value: '1' }, inclusive: true },
+          },
+        }],
+      },
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('range filters reject reversed bounds without replacing the draft', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    const result = await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.definition = {
+        id: 'delivery_days', label: 'Delivery days', field: 'orders.delivery_days', valueKind: 'integer',
+        predicates: [{ kind: 'range', operators: [] }],
+        options: { kind: 'none', limit: 0, values: [] },
+      }
+      leaf.binding = {
+        key: 'delivery_days', id: 'delivery_days', filter: 'delivery_days', scope: 'page', pageID: 'filters',
+        default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1,
+        readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'numeric_range', search: false, selectAll: false,
+        showCounts: false, showSummary: false, compact: false,
+      }
+      const mutations: unknown[] = []
+      leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => mutations.push(event.detail))
+      document.body.append(leaf)
+      await leaf.updateComplete
+      const inputs = Array.from(leaf.shadowRoot.querySelectorAll('.range input')) as HTMLInputElement[]
+      inputs[0].value = '10'
+      inputs[0].dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      inputs[1].value = '5'
+      inputs[1].dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      inputs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }))
+      await leaf.updateComplete
+      return {
+        values: Array.from(leaf.shadowRoot.querySelectorAll('.range input')).map((input: HTMLInputElement) => input.value),
+        error: leaf.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim() ?? null,
+        invalid: Array.from(leaf.shadowRoot.querySelectorAll('.range input')).map((input: HTMLInputElement) => input.getAttribute('aria-invalid')),
+        mutations,
+      }
+    })
+    expect(result).toEqual({
+      values: ['10', '5'],
+      error: 'Minimum must be less than or equal to maximum.',
+      invalid: ['true', 'true'],
+      mutations: [],
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('active dashboard slicers reserve an atomic clear action', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-slicer'))
+    const result = await page.evaluate(async () => {
+      const slicer = document.createElement('lv-slicer') as any
+      slicer.definition = {
+        id: 'delivery_days', label: 'Delivery days', field: 'orders.delivery_days', valueKind: 'integer',
+        predicates: [{ kind: 'range', operators: [] }],
+        options: { kind: 'none', limit: 0, values: [] },
+      }
+      slicer.binding = {
+        key: 'delivery_days', id: 'delivery_days', filter: 'delivery_days', scope: 'page', pageID: 'filters',
+        default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1,
+        readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+      }
+      slicer.expression = {
+        kind: 'range',
+        lower: { value: { kind: 'integer', value: '132' }, inclusive: true },
+        upper: { value: { kind: 'integer', value: '434' }, inclusive: true },
+      }
+      slicer.presentation = {
+        style: 'numeric_range', search: false, selectAll: false,
+        showCounts: false, showSummary: true, compact: false,
+      }
+      const mutations: unknown[] = []
+      slicer.addEventListener('lv-filter-mutate', (event: CustomEvent) => mutations.push(event.detail))
+      document.body.append(slicer)
+      await slicer.updateComplete
+      const leaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
+      await leaf.updateComplete
+      const clear = leaf.shadowRoot.querySelector('button[aria-label="Clear Delivery days"]') as HTMLButtonElement
+      const activeVisibility = getComputedStyle(clear).visibility
+      slicer.pending = true
+      await slicer.updateComplete
+      await leaf.updateComplete
+      const pendingDisabled = clear.disabled
+      const inputs = Array.from(leaf.shadowRoot.querySelectorAll('.range input')) as HTMLInputElement[]
+      inputs[0].focus()
+      inputs[0].value = '200'
+      inputs[0].dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      clear.focus()
+      clear.click()
+      await leaf.updateComplete
+      slicer.expression = { kind: 'unfiltered' }
+      await slicer.updateComplete
+      await leaf.updateComplete
+      return {
+        activeVisibility,
+        pendingDisabled,
+        inactiveVisibility: getComputedStyle(clear).visibility,
+        values: Array.from(leaf.shadowRoot.querySelectorAll('.range input')).map((input: HTMLInputElement) => input.value),
+        mutations,
+      }
+    })
+    expect(result).toEqual({
+      activeVisibility: 'visible',
+      pendingDisabled: false,
+      inactiveVisibility: 'hidden',
+      values: ['', ''],
+      mutations: [{ bindingKey: 'delivery_days', expression: { kind: 'unfiltered' } }],
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('range pane clear discards its draft without an intermediate mutation', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-pane-card'))
+    const events = await page.evaluate(async () => {
+      const card = document.createElement('lv-filter-pane-card') as any
+      card.definition = {
+        id: 'delivery_days', label: 'Delivery days', field: 'orders.delivery_days', valueKind: 'integer',
+        predicates: [{ kind: 'range', operators: [] }],
+        options: { kind: 'none', limit: 0, values: [] },
+      }
+      card.binding = {
+        key: 'delivery_days', id: 'delivery_days', filter: 'delivery_days', scope: 'page', pageID: 'filters',
+        default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1,
+        readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+      }
+      card.expression = {
+        kind: 'range',
+        lower: { value: { kind: 'integer', value: '132' }, inclusive: true },
+        upper: { value: { kind: 'integer', value: '434' }, inclusive: true },
+      }
+      card.presentation = {
+        style: 'numeric_range', search: false, selectAll: false,
+        showCounts: false, showSummary: false, compact: false,
+      }
+      card.pending = true
+      const seen: string[] = []
+      card.addEventListener('lv-filter-mutate', () => seen.push('mutate'))
+      card.addEventListener('lv-filter-clear', () => seen.push('clear'))
+      document.body.append(card)
+      await card.updateComplete
+      const leaf = card.shadowRoot.querySelector('lv-filter-leaf') as any
+      await leaf.updateComplete
+      const minimum = leaf.shadowRoot.querySelector('.range input') as HTMLInputElement
+      minimum.focus()
+      minimum.value = '200'
+      minimum.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      const clear = card.shadowRoot.querySelector('button[aria-label="Clear Delivery days"]') as HTMLButtonElement
+      clear.focus()
+      clear.click()
+      return seen
+    })
+    expect(events).toEqual(['clear'])
   } finally {
     await page.close()
   }
@@ -1575,7 +1862,7 @@ test('clearing a text filter emits the typed unfiltered mutation normalized to c
   } finally { await page.close() }
 })
 
-test('filter summaries are explicit while operational status remains visible', async () => {
+test('filter summaries remain explicit without a layout-shifting update indicator', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -1600,6 +1887,7 @@ test('filter summaries are explicit while operational status remains visible', a
         style: 'dropdown', search: false, selectAll: false,
         showCounts: false, showSummary: false, compact: false,
       }
+      leaf.showTitle = false
       document.body.append(leaf)
       await leaf.updateComplete
       const idle = {
@@ -1619,14 +1907,16 @@ test('filter summaries are explicit while operational status remains visible', a
         idle,
         explicit,
         pending: status?.textContent?.trim() ?? null,
-        pendingInHeading: Boolean(status?.closest('.field-heading')),
+        pendingBusy: leaf.shadowRoot.querySelector('fieldset')?.getAttribute('aria-busy'),
+        pendingHeading: Boolean(leaf.shadowRoot.querySelector('.field-heading')),
       }
     })
     expect(result).toEqual({
       idle: { summary: null, status: null },
       explicit: '1 selected',
-      pending: 'Updating',
-      pendingInHeading: true,
+      pending: null,
+      pendingBusy: 'true',
+      pendingHeading: false,
     })
   } finally {
     await page.close()
@@ -1692,13 +1982,72 @@ test('date-range slicers rearrange at contract boundaries without removing eithe
   }
 })
 
+test('slicer layout resolution ignores report canvas transforms', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    const result = await page.evaluate(async () => {
+      const canvas = document.createElement('div')
+      canvas.style.transform = 'scale(.85)'
+      canvas.style.transformOrigin = 'top left'
+
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.style.display = 'block'
+      leaf.style.width = '268px'
+      leaf.style.height = '78px'
+      leaf.definition = {
+        id: 'purchase_date', label: 'Purchase date', field: 'orders.purchase_date', valueKind: 'date',
+        predicates: [{ kind: 'range', operators: [] }],
+        options: { kind: 'none', limit: 0, values: [] },
+      }
+      leaf.binding = {
+        key: 'purchase_date', id: 'purchase_date', filter: 'purchase_date', scope: 'page', pageID: 'overview',
+        default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1,
+        readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'date_range', search: false, selectAll: false,
+        showCounts: false, showSummary: false, compact: false,
+      }
+      canvas.append(leaf)
+      document.body.append(canvas)
+      await leaf.updateComplete
+      await new Promise(requestAnimationFrame)
+      await leaf.updateComplete
+
+      const range = leaf.shadowRoot.querySelector('.range') as HTMLElement
+      const fieldset = leaf.shadowRoot.querySelector('fieldset') as HTMLElement
+      return {
+        cssSize: [leaf.clientWidth, leaf.clientHeight],
+        visualSize: [Math.round(leaf.getBoundingClientRect().width), Math.round(leaf.getBoundingClientRect().height)],
+        variant: leaf.dataset.layoutVariant,
+        fit: leaf.dataset.layoutFit,
+        columns: getComputedStyle(range).gridTemplateColumns,
+        contentFits: fieldset.scrollWidth <= leaf.clientWidth && fieldset.scrollHeight <= leaf.clientHeight,
+      }
+    })
+
+    expect(result).toEqual({
+      cssSize: [268, 78],
+      visualSize: [228, 66],
+      variant: 'inline',
+      fit: 'fit',
+      columns: '131px 131px',
+      contentFits: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('pane defaults a relative-period definition to the structured shared leaf', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-filter-dock'))
     const controls = await page.evaluate(async () => {
-      localStorage.setItem('leapview:filters-open', 'open')
+      localStorage.removeItem('leapview:filters-open')
       const dock = document.createElement('lv-filter-dock') as any
       dock.pageId = 'overview'
       dock.contract = {
@@ -1748,18 +2097,33 @@ test('pane defaults a relative-period definition to the structured shared leaf',
       }
       document.body.append(dock)
       await dock.updateComplete
+      ;(dock.shadowRoot.querySelector('.rail') as HTMLButtonElement).click()
+      await dock.updateComplete
+      await new Promise(resolve => setTimeout(resolve, 250))
       const card = dock.shadowRoot.querySelector('lv-filter-pane-card') as any
       await card.updateComplete
       const leaf = card.shadowRoot.querySelector('lv-filter-leaf') as any
       await leaf.updateComplete
+      const layoutStates = []
+      for (let index = 0; index < 8; index++) {
+        layoutStates.push(`${leaf.dataset.layoutVariant}:${leaf.dataset.layoutFit}`)
+        await new Promise(requestAnimationFrame)
+      }
       return {
         textInputs: leaf.shadowRoot.querySelectorAll('input[type="text"]').length,
         direction: Boolean(leaf.shadowRoot.querySelector('select[aria-label="Direction"]')),
         count: Boolean(leaf.shadowRoot.querySelector('input[aria-label="Period count"]')),
         unit: Boolean(leaf.shadowRoot.querySelector('select[aria-label="Period unit"]')),
+        layoutStates: [...new Set(layoutStates)],
       }
     })
-    expect(controls).toEqual({ textInputs: 0, direction: true, count: true, unit: true })
+    expect(controls).toEqual({
+      textInputs: 0,
+      direction: true,
+      count: true,
+      unit: true,
+      layoutStates: ['inline:fit'],
+    })
   } finally {
     await page.close()
   }
@@ -2038,7 +2402,59 @@ test('static dropdown selections emit a typed filter mutation', async () => {
   }
 })
 
-test('opened dynamic dropdowns refresh their option page after stale data becomes current', async () => {
+test('clearing a static dropdown visibly returns it to All', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    const state = await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.definition = {
+        id: 'delivered', label: 'Delivery state', field: 'orders.delivered', valueKind: 'boolean',
+        predicates: [{ kind: 'set', operators: ['in'] }],
+        options: {
+          kind: 'static', limit: 2,
+          values: [
+            { value: { kind: 'boolean', value: true }, label: 'Delivered' },
+            { value: { kind: 'boolean', value: false }, label: 'Not delivered' },
+          ],
+        },
+      }
+      leaf.binding = {
+        key: 'delivered', id: 'delivered', filter: 'delivered', scope: 'page', pageID: 'filters',
+        default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1,
+        readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'dropdown', search: false, selectAll: false,
+        showCounts: false, showSummary: false, compact: false,
+      }
+      document.body.append(leaf)
+      await leaf.updateComplete
+      const select = leaf.shadowRoot.querySelector('select') as HTMLSelectElement
+      const delivered = Array.from(select.options).find(option => option.textContent?.trim() === 'Delivered')
+      select.value = delivered?.value ?? ''
+      select.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      leaf.expression = {
+        kind: 'set', operator: 'in', values: [{ kind: 'boolean', value: true }],
+      }
+      await leaf.updateComplete
+      const before = select.selectedOptions[0]?.textContent?.trim()
+      leaf.expression = { kind: 'unfiltered' }
+      await leaf.updateComplete
+      return {
+        before,
+        after: select.selectedOptions[0]?.textContent?.trim(),
+        value: select.value,
+      }
+    })
+    expect(state).toEqual({ before: 'Delivered', after: 'All', value: '' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('closed dynamic dropdowns defer dependency refresh until they are focused again', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -2074,6 +2490,7 @@ test('opened dynamic dropdowns refresh their option page after stale data become
         style: 'dropdown', search: false, selectAll: false,
         showCounts: false, showSummary: true, compact: false,
       }
+      leaf.optionContext = 'context-one'
       leaf.expression = {
         kind: 'set', operator: 'in',
         values: [{ kind: 'string', value: 'AC' }],
@@ -2089,11 +2506,14 @@ test('opened dynamic dropdowns refresh their option page after stale data become
       leaf.shadowRoot.querySelector('select').focus()
       await leaf.updateComplete
       const afterOpen = seen.length
-      leaf.stale = true
+      leaf.shadowRoot.querySelector('select').blur()
+      leaf.optionContext = 'context-two'
       await leaf.updateComplete
-      leaf.stale = false
+      const afterDependencyChange = seen.length
+      const whileDeferred = Array.from(leaf.shadowRoot.querySelectorAll('option')).map((option: HTMLOptionElement) => option.textContent?.trim())
+      leaf.shadowRoot.querySelector('select').focus()
       await leaf.updateComplete
-      return { retained, afterOpen, afterRefresh: seen.length }
+      return { retained, afterOpen, afterDependencyChange, whileDeferred, afterRefocus: seen.length }
     })
     expect(requests).toEqual({
       retained: [
@@ -2101,14 +2521,16 @@ test('opened dynamic dropdowns refresh their option page after stale data become
         { label: 'AC', selected: true },
       ],
       afterOpen: 1,
-      afterRefresh: 2,
+      afterDependencyChange: 1,
+      whileDeferred: ['All', 'AC'],
+      afterRefocus: 2,
     })
   } finally {
     await page.close()
   }
 })
 
-test('visible dynamic controls request replacement options when a filter revision invalidates their page', async () => {
+test('visible dynamic controls refresh once when their option dependency context changes', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -2130,7 +2552,7 @@ test('visible dynamic controls request replacement options when a filter revisio
         style: 'list', search: false, selectAll: false,
         showCounts: false, showSummary: true, compact: false,
       }
-      leaf.optionRetryDelay = 10
+      leaf.optionContext = 'context-one'
       const requests: unknown[] = []
       leaf.addEventListener('lv-filter-options-needed', (event: CustomEvent) => requests.push(event.detail))
       document.body.append(leaf)
@@ -2142,16 +2564,17 @@ test('visible dynamic controls request replacement options when a filter revisio
         items: [{ value: { kind: 'string', value: 'delivered' }, label: 'delivered', selected: false, available: true }],
       }
       await leaf.updateComplete
-      leaf.options = undefined
+      leaf.optionContext = 'context-two'
       await leaf.updateComplete
       await leaf.updateComplete
       await new Promise(resolve => setTimeout(resolve, 30))
       return {
         requests: requests.length,
         status: leaf.shadowRoot.querySelector('.status')?.textContent?.trim(),
+        options: Array.from(leaf.shadowRoot.querySelectorAll('.option span')).map((item: HTMLSpanElement) => item.textContent?.trim()),
       }
     })
-    expect(result).toEqual({ requests: 3, status: 'Loading values' })
+    expect(result).toEqual({ requests: 2, status: undefined, options: ['delivered'] })
   } finally {
     await page.close()
   }
@@ -2438,7 +2861,7 @@ function testDocument(): string {
     filterState,
     filterOptionPages: {
       fb_state: {
-        bindingKey: 'fb_state', options: [{ value: { kind: 'string', value: 'SP' }, label: 'SP', selected: false, available: true }],
+        bindingKey: 'fb_state', items: [{ value: { kind: 'string', value: 'SP' }, label: 'SP', selected: false, available: true }],
         complete: true, servingStateID: 'serving-test', streamGeneration: 3, filterRevision: 0,
         requestGeneration: 0, consumerIdentity: 'option:fb_state',
       },

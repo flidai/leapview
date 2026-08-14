@@ -412,6 +412,8 @@ func normalizeQuery(subject Subject, query Query) (RepositoryQuery, error) {
 	if len(normalizedTypes) == 0 {
 		text, normalizedTypes = implicitTypeFilters(text)
 		typeOperator = len(normalizedTypes) > 0
+	} else if filteredText, inferredTypes := implicitTypeFilters(text); len(inferredTypes) > 0 && catalogTypesInclude(normalizedTypes, inferredTypes) {
+		text = filteredText
 	}
 	noTypes := false
 	if len(allowedTypes) > 0 {
@@ -464,6 +466,19 @@ func intersectTypes(left, right []Type) []Type {
 		}
 	}
 	return out
+}
+
+func catalogTypesInclude(types, wanted []Type) bool {
+	available := make(map[Type]struct{}, len(types))
+	for _, typ := range types {
+		available[typ] = struct{}{}
+	}
+	for _, typ := range wanted {
+		if _, ok := available[typ]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func implicitTypeFilters(text string) (string, []Type) {

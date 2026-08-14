@@ -21,6 +21,7 @@ import (
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
+	"github.com/flidai/leapview/internal/dashboard/usage"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -79,35 +80,37 @@ type SessionKeyFactory func(
 ) dashboardsession.Key
 
 type Handler struct {
-	Metrics              Metrics
-	MetricsForWorkspace  func(workspaceID string) (Metrics, bool)
-	AnalyticalContext    func(context.Context) context.Context
-	Broker               SignalBroker
-	Coordinators         *dashboardstream.Registry
-	Logger               *slog.Logger
-	RefreshStarted       dashboardstream.StartObserver
-	RefreshFinished      dashboardstream.SummaryObserver
-	RefreshEventObserved dashboardstream.EventPublisher
-	CacheObserved        dataquery.CacheOutcomeObserver
-	CurrentPrincipalID   func(r *nethttp.Request) string
-	AuthorizeListObject  func(ctx context.Context, principalID string, object access.ObjectRef) (bool, error)
-	CSRFToken            func(r *nethttp.Request) string
-	Layout               func(r *nethttp.Request) webpage.Provider
-	Presentation         reportui.Presentation
-	Assets               staticasset.Resolver
-	Environment          func(*nethttp.Request) string
-	DataRefreshedAt      func(context.Context, string, string, string) string
-	QueryFreshness       func(context.Context, string, string, string) (api.QueryFreshness, bool)
-	CommandGuard         func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
-	SharedCommandPrepare SharedCommandPrepare
-	SessionStore         dashboardsession.Store
-	SessionKey           SessionKeyFactory
-	OptionCursorSecret   []byte
-	OptionCache          *dashboardfilter.OptionCache
-	AgentBootstrap       func(*nethttp.Request, string) reportui.AgentBootstrap
-	AgentCommands        reportui.AgentCommandBindings
-	RouteScope           reportui.RouteScope
-	StreamNamespace      string
+	Metrics               Metrics
+	MetricsForWorkspace   func(workspaceID string) (Metrics, bool)
+	AnalyticalContext     func(context.Context) context.Context
+	Broker                SignalBroker
+	Coordinators          *dashboardstream.Registry
+	Logger                *slog.Logger
+	RefreshStarted        dashboardstream.StartObserver
+	RefreshFinished       dashboardstream.SummaryObserver
+	RefreshEventObserved  dashboardstream.EventPublisher
+	CacheObserved         dataquery.CacheOutcomeObserver
+	CurrentPrincipalID    func(r *nethttp.Request) string
+	CurrentUsagePrincipal func(r *nethttp.Request) (string, bool)
+	RecordDashboardView   func(context.Context, usage.View) error
+	AuthorizeListObject   func(ctx context.Context, principalID string, object access.ObjectRef) (bool, error)
+	CSRFToken             func(r *nethttp.Request) string
+	Layout                func(r *nethttp.Request) webpage.Provider
+	Presentation          reportui.Presentation
+	Assets                staticasset.Resolver
+	Environment           func(*nethttp.Request) string
+	DataRefreshedAt       func(context.Context, string, string, string) string
+	QueryFreshness        func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	CommandGuard          func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
+	SharedCommandPrepare  SharedCommandPrepare
+	SessionStore          dashboardsession.Store
+	SessionKey            SessionKeyFactory
+	OptionCursorSecret    []byte
+	OptionCache           *dashboardfilter.OptionCache
+	AgentBootstrap        func(*nethttp.Request, string) reportui.AgentBootstrap
+	AgentCommands         reportui.AgentCommandBindings
+	RouteScope            reportui.RouteScope
+	StreamNamespace       string
 }
 
 func (h Handler) scopedStreamID(streamID string) string {

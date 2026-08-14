@@ -48,26 +48,25 @@ func CatalogPageForCatalogsQuery(catalogs []catalog.Catalog, query string, provi
 }
 
 func CatalogPageForCatalogsQueryWithCSRF(catalogs []catalog.Catalog, query, csrfToken string, providers ...webpage.Provider) g.Node {
+	return CatalogPageForCatalogsWithOptions(catalogs, CatalogListOptions{Query: query}, csrfToken, providers...)
+}
+
+type CatalogDashboardMetadata struct {
+	Popularity      uisignals.PopularityLevel
+	LastRefreshedAt string
+}
+
+type CatalogListOptions struct {
+	Query           string
+	WorkspaceFilter string
+	Metadata        map[string]CatalogDashboardMetadata
+}
+
+func CatalogPageForCatalogsWithOptions(catalogs []catalog.Catalog, options CatalogListOptions, csrfToken string, providers ...webpage.Provider) g.Node {
 	if len(catalogs) == 0 {
-		return catalogPageDocument(catalog.Catalog{}, catalogPageSignal(catalog.Catalog{}, query), csrfToken, providers...)
+		return catalogPageDocument(catalog.Catalog{}, catalogPageForCatalogs(catalogs, options), csrfToken, providers...)
 	}
-	dashboards := []uisignals.CatalogDashboardSignal{}
-	for _, catalog := range catalogs {
-		for _, report := range catalog.Dashboards {
-			dashboards = append(dashboards, uisignals.CatalogDashboardSignal{
-				ID:            catalog.Workspace.ID + "." + report.ID,
-				Title:         report.Title,
-				Description:   uisignals.Optional(report.Description),
-				SemanticModel: uisignals.Optional(report.SemanticModel),
-				PageCount:     int64(report.PageCount),
-				Tags:          uisignals.OptionalSlice(report.Tags),
-				Href:          "/workspaces/" + catalog.Workspace.ID + "/dashboards/" + report.ID,
-			})
-		}
-	}
-	page := catalogPageSignal(catalogs[0], query)
-	page.Dashboards = filterCatalogDashboards(dashboards, query)
-	return catalogPageDocument(catalogs[0], page, csrfToken, providers...)
+	return catalogPageDocument(catalogs[0], catalogPageForCatalogs(catalogs, options), csrfToken, providers...)
 }
 
 func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSignal, csrfToken string, providers ...webpage.Provider) g.Node {
@@ -88,30 +87,36 @@ func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSign
 }
 
 func CatalogListPatchForCatalogsQuery(catalogs []catalog.Catalog, query string) map[string]any {
-	page := catalogPageForCatalogsQuery(catalogs, query)
+	return CatalogListPatchForCatalogs(catalogs, CatalogListOptions{Query: query})
+}
+
+func CatalogListPatchForCatalogs(catalogs []catalog.Catalog, options CatalogListOptions) map[string]any {
+	page := catalogPageForCatalogs(catalogs, options)
 	return map[string]any{"page": map[string]any{"dashboards": page.Dashboards}}
 }
 
 func catalogPageForCatalogsQuery(catalogs []catalog.Catalog, query string) uisignals.CatalogPageSignal {
+	return catalogPageForCatalogs(catalogs, CatalogListOptions{Query: query})
+}
+
+func catalogPageForCatalogs(catalogs []catalog.Catalog, options CatalogListOptions) uisignals.CatalogPageSignal {
 	if len(catalogs) == 0 {
-		return catalogPageSignal(catalog.Catalog{}, query)
+		page := catalogPageBase(options.Query)
+		page.ListFilter = uisignals.Optional("all")
+		return page
 	}
-	dashboards := []uisignals.CatalogDashboardSignal{}
+	dashboards := make([]uisignals.CatalogDashboardSignal, 0)
 	for _, workspaceCatalog := range catalogs {
 		for _, report := range workspaceCatalog.Dashboards {
-			dashboards = append(dashboards, uisignals.CatalogDashboardSignal{
-				ID:            workspaceCatalog.Workspace.ID + "." + report.ID,
-				Title:         report.Title,
-				Description:   uisignals.Optional(report.Description),
-				SemanticModel: uisignals.Optional(report.SemanticModel),
-				PageCount:     int64(report.PageCount),
-				Tags:          uisignals.OptionalSlice(report.Tags),
-				Href:          "/workspaces/" + workspaceCatalog.Workspace.ID + "/dashboards/" + report.ID,
-			})
+			dashboardID := workspaceCatalog.Workspace.ID + "." + report.ID
+			dashboards = append(dashboards, catalogDashboardSignal(workspaceCatalog.Workspace, report, dashboardID, options.Metadata[dashboardID]))
 		}
 	}
-	page := catalogPageSignal(catalogs[0], query)
-	page.Dashboards = filterCatalogDashboards(dashboards, query)
+	filter := normalizeCatalogWorkspaceFilter(catalogs, options.WorkspaceFilter)
+	page := catalogPageBase(options.Query)
+	page.WorkspaceFilters = catalogWorkspaceFilters(catalogs)
+	page.ListFilter = uisignals.Optional(filter)
+	page.Dashboards = filterCatalogDashboards(dashboards, options.Query, filter)
 	return page
 }
 
@@ -124,10 +129,14 @@ func CatalogBootstrapSignalsForCatalogs(catalogs []catalog.Catalog, providers ..
 }
 
 func CatalogBootstrapSignalsForCatalogsQuery(catalogs []catalog.Catalog, query string, providers ...webpage.Provider) map[string]any {
+	return CatalogBootstrapSignalsForCatalogsWithOptions(catalogs, CatalogListOptions{Query: query}, providers...)
+}
+
+func CatalogBootstrapSignalsForCatalogsWithOptions(catalogs []catalog.Catalog, options CatalogListOptions, providers ...webpage.Provider) map[string]any {
 	if len(catalogs) == 0 {
-		return CatalogBootstrapSignalsForPage(catalog.Catalog{}, catalogPageSignal(catalog.Catalog{}, query), providers...)
+		return CatalogBootstrapSignalsForPage(catalog.Catalog{}, catalogPageForCatalogs(catalogs, options), providers...)
 	}
-	return CatalogBootstrapSignalsForPage(catalogs[0], catalogPageForCatalogsQuery(catalogs, query), providers...)
+	return CatalogBootstrapSignalsForPage(catalogs[0], catalogPageForCatalogs(catalogs, options), providers...)
 }
 
 func CatalogBootstrapSignalsForPage(catalog catalog.Catalog, page uisignals.CatalogPageSignal, providers ...webpage.Provider) map[string]any {
@@ -171,45 +180,104 @@ func firstProvider(providers []webpage.Provider) webpage.Provider {
 	return providers[0]
 }
 
-func catalogPageSignal(catalog catalog.Catalog, query string) uisignals.CatalogPageSignal {
-	dashboards := make([]uisignals.CatalogDashboardSignal, 0, len(catalog.Dashboards))
-	for _, report := range catalog.Dashboards {
-		dashboards = append(dashboards, uisignals.CatalogDashboardSignal{
-			ID:            report.ID,
-			Title:         report.Title,
-			Description:   uisignals.Optional(report.Description),
-			SemanticModel: uisignals.Optional(report.SemanticModel),
-			PageCount:     int64(report.PageCount),
-			Tags:          uisignals.OptionalSlice(report.Tags),
-			Href:          "/workspaces/" + catalog.Workspace.ID + "/dashboards/" + report.ID,
-		})
+func catalogPageSignal(workspaceCatalog catalog.Catalog, query string) uisignals.CatalogPageSignal {
+	dashboards := make([]uisignals.CatalogDashboardSignal, 0, len(workspaceCatalog.Dashboards))
+	for _, report := range workspaceCatalog.Dashboards {
+		dashboards = append(dashboards, catalogDashboardSignal(workspaceCatalog.Workspace, report, report.ID, CatalogDashboardMetadata{}))
 	}
+	page := catalogPageBase(query)
+	page.Dashboards = filterCatalogDashboards(dashboards, query)
+	page.WorkspaceFilters = catalogWorkspaceFilters([]catalog.Catalog{workspaceCatalog})
+	return page
+}
+
+func catalogPageBase(query string) uisignals.CatalogPageSignal {
 	return uisignals.CatalogPageSignal{
-		Kind:        uisignals.RouteCatalog,
-		Title:       "Dashboards",
-		Description: "Reports backed by semantic models.",
-		Dashboards:  filterCatalogDashboards(dashboards, query),
-		ListQuery:   uisignals.Optional(query),
+		Kind:             uisignals.RouteCatalog,
+		Title:            "Dashboards",
+		Description:      "Reports backed by semantic models.",
+		Dashboards:       []uisignals.CatalogDashboardSignal{},
+		WorkspaceFilters: []uisignals.CatalogWorkspaceFilterSignal{},
+		ListQuery:        uisignals.Optional(query),
 	}
 }
 
-func filterCatalogDashboards(dashboards []uisignals.CatalogDashboardSignal, query string) []uisignals.CatalogDashboardSignal {
+func catalogDashboardSignal(workspace catalog.Workspace, report catalog.Dashboard, id string, metadata CatalogDashboardMetadata) uisignals.CatalogDashboardSignal {
+	return uisignals.CatalogDashboardSignal{
+		ID:              id,
+		Title:           report.Title,
+		Description:     uisignals.Optional(report.Description),
+		SemanticModel:   uisignals.Optional(report.SemanticModel),
+		PageCount:       int64(report.PageCount),
+		Popularity:      uisignals.Optional(metadata.Popularity),
+		LastRefreshedAt: uisignals.Optional(metadata.LastRefreshedAt),
+		Tags:            uisignals.OptionalSlice(report.Tags),
+		Href:            "/workspaces/" + workspace.ID + "/dashboards/" + report.ID,
+		Workspace:       workspaceLabel(workspace),
+		WorkspaceID:     workspace.ID,
+	}
+}
+
+func filterCatalogDashboards(dashboards []uisignals.CatalogDashboardSignal, query string, filters ...string) []uisignals.CatalogDashboardSignal {
 	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
+	filter := "all"
+	if len(filters) > 0 && strings.TrimSpace(filters[0]) != "" {
+		filter = strings.TrimSpace(filters[0])
+	}
+	if query == "" && filter == "all" {
 		return dashboards
 	}
 	filtered := make([]uisignals.CatalogDashboardSignal, 0, len(dashboards))
 	for _, dashboard := range dashboards {
+		if filter != "all" && dashboard.WorkspaceID != filter {
+			continue
+		}
 		haystack := strings.ToLower(strings.Join([]string{
 			dashboard.Title,
 			uisignals.ValueOrZero(dashboard.Description),
 			uisignals.ValueOrZero(dashboard.SemanticModel),
+			dashboard.Workspace,
 		}, " "))
 		if strings.Contains(haystack, query) {
 			filtered = append(filtered, dashboard)
 		}
 	}
 	return filtered
+}
+
+func catalogWorkspaceFilters(catalogs []catalog.Catalog) []uisignals.CatalogWorkspaceFilterSignal {
+	filters := make([]uisignals.CatalogWorkspaceFilterSignal, 0, len(catalogs))
+	seen := make(map[string]bool, len(catalogs))
+	for _, workspaceCatalog := range catalogs {
+		if workspaceCatalog.Workspace.ID == "" || seen[workspaceCatalog.Workspace.ID] {
+			continue
+		}
+		seen[workspaceCatalog.Workspace.ID] = true
+		filters = append(filters, uisignals.CatalogWorkspaceFilterSignal{
+			ID: workspaceCatalog.Workspace.ID, Title: workspaceLabel(workspaceCatalog.Workspace),
+		})
+	}
+	return filters
+}
+
+func normalizeCatalogWorkspaceFilter(catalogs []catalog.Catalog, filter string) string {
+	filter = strings.TrimSpace(filter)
+	if filter == "" || filter == "all" {
+		return "all"
+	}
+	for _, workspaceCatalog := range catalogs {
+		if workspaceCatalog.Workspace.ID == filter {
+			return filter
+		}
+	}
+	return "all"
+}
+
+func workspaceLabel(workspace catalog.Workspace) string {
+	if strings.TrimSpace(workspace.Title) != "" {
+		return workspace.Title
+	}
+	return workspace.ID
 }
 
 func recordTableBadgeValue(value, tone string) any {

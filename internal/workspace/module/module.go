@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -16,22 +17,27 @@ import (
 	workspacehttp "github.com/flidai/leapview/internal/workspace/http"
 	catalog "github.com/flidai/leapview/internal/workspace/navigation"
 	"github.com/flidai/leapview/internal/workspace/ui"
+	uisignals "github.com/flidai/leapview/internal/workspace/ui/signals"
 )
 
 type Module struct {
-	handler            workspacehttp.Handler
-	search             searchService
-	currentCredential  func(*http.Request) (access.APICredential, bool)
-	readModel          workspace.ReadModel
-	assetCatalog       workspace.AssetCatalogReader
-	rootMetrics        queryruntime.Metrics
-	runtimeEnvironment string
-	defaultWorkspaceID string
-	layout             func(*http.Request) webpage.Provider
-	roleBindingUpsert  access.Privilege
-	roleBindingDelete  access.Privilege
-	grantUpsert        access.Privilege
-	grantDelete        access.Privilege
+	handler              workspacehttp.Handler
+	search               searchService
+	currentCredential    func(*http.Request) (access.APICredential, bool)
+	readModel            workspace.ReadModel
+	assetCatalog         workspace.AssetCatalogReader
+	rootMetrics          queryruntime.Metrics
+	runtimeEnvironment   string
+	defaultWorkspaceID   string
+	layout               func(*http.Request) webpage.Provider
+	roleBindingUpsert    access.Privilege
+	roleBindingDelete    access.Privilege
+	grantUpsert          access.Privilege
+	grantDelete          access.Privilege
+	dashboardPopularity  DashboardPopularityProvider
+	dashboardRefreshedAt DashboardLastRefreshedProvider
+	environment          func(*http.Request) string
+	logger               *slog.Logger
 }
 
 type Principal struct {
@@ -66,36 +72,42 @@ func (f AssetRefreshFunc) RefreshAsset(ctx context.Context, input AssetRefreshIn
 type AccessCommandBindings = ui.AccessCommandBindings
 type DataExplorerAgentBootstrap = ui.DataExplorerAgentBootstrap
 type DataExplorerAgentCommandBindings = ui.DataExplorerAgentCommandBindings
+type PopularityLevel = uisignals.PopularityLevel
+type DashboardPopularityProvider func(context.Context, int) (map[string]PopularityLevel, error)
+type DashboardLastRefreshedProvider func(context.Context, string, string, string) (string, bool, error)
 
 type Config struct {
-	Database            *sql.DB
-	Directory           Directory
-	ReadModel           ReadModel
-	Securables          SecurableRegistrar
-	WorkspaceID         func(string) string
-	Environment         func(*http.Request) string
-	AccessService       access.WorkspaceAccessService
-	RoleBindingCommands access.RoleBindingOperations
-	GrantCommands       access.GrantOperations
-	CommandPrivileges   access.WorkspaceCommandPrivileges
-	AccessCommands      ui.AccessCommandBindings
-	AgentBootstrap      func(*http.Request, string) ui.DataExplorerAgentBootstrap
-	AgentCommands       ui.DataExplorerAgentCommandBindings
-	AssetCatalog        workspace.AssetCatalogReader
-	MetricsForWorkspace func(string) (queryruntime.Metrics, bool)
-	RootMetrics         queryruntime.Metrics
-	CurrentPrincipal    func(*http.Request) (Principal, bool)
-	AuthConfigured      bool
-	RuntimeEnvironment  string
-	DefaultWorkspaceID  string
-	RefreshState        RefreshStateProvider
-	RefreshRunner       AssetRefreshRunner
-	Broker              *pagestream.Broker
-	CSRFToken           func(*http.Request) string
-	CurrentRoleLabel    func(*http.Request) string
-	Layout              func(*http.Request) webpage.Provider
-	CurrentCredential   func(*http.Request) (access.APICredential, bool)
-	AuthorizeObject     func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error)
+	Database             *sql.DB
+	Directory            Directory
+	ReadModel            ReadModel
+	Securables           SecurableRegistrar
+	WorkspaceID          func(string) string
+	Environment          func(*http.Request) string
+	AccessService        access.WorkspaceAccessService
+	RoleBindingCommands  access.RoleBindingOperations
+	GrantCommands        access.GrantOperations
+	CommandPrivileges    access.WorkspaceCommandPrivileges
+	AccessCommands       ui.AccessCommandBindings
+	AgentBootstrap       func(*http.Request, string) ui.DataExplorerAgentBootstrap
+	AgentCommands        ui.DataExplorerAgentCommandBindings
+	AssetCatalog         workspace.AssetCatalogReader
+	MetricsForWorkspace  func(string) (queryruntime.Metrics, bool)
+	RootMetrics          queryruntime.Metrics
+	CurrentPrincipal     func(*http.Request) (Principal, bool)
+	AuthConfigured       bool
+	RuntimeEnvironment   string
+	DefaultWorkspaceID   string
+	RefreshState         RefreshStateProvider
+	RefreshRunner        AssetRefreshRunner
+	Broker               *pagestream.Broker
+	CSRFToken            func(*http.Request) string
+	CurrentRoleLabel     func(*http.Request) string
+	Layout               func(*http.Request) webpage.Provider
+	CurrentCredential    func(*http.Request) (access.APICredential, bool)
+	AuthorizeObject      func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error)
+	DashboardPopularity  DashboardPopularityProvider
+	DashboardRefreshedAt DashboardLastRefreshedProvider
+	Logger               *slog.Logger
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -123,12 +135,18 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if readModel == nil {
 		readModel = repository
 	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	m := &Module{
 		readModel: readModel, currentCredential: config.CurrentCredential,
 		rootMetrics: config.RootMetrics, runtimeEnvironment: config.RuntimeEnvironment,
 		defaultWorkspaceID: config.DefaultWorkspaceID, layout: config.Layout,
 		roleBindingUpsert: roleBindingUpsert, roleBindingDelete: roleBindingDelete,
 		grantUpsert: grantUpsert, grantDelete: grantDelete,
+		dashboardPopularity: config.DashboardPopularity, dashboardRefreshedAt: config.DashboardRefreshedAt,
+		environment: config.Environment, logger: logger,
 	}
 	m.assetCatalog = config.AssetCatalog
 	if m.assetCatalog == nil && readModel != nil {
@@ -244,6 +262,89 @@ func (m *Module) CatalogsForVisibleWorkspaces(r *http.Request) []catalog.Catalog
 	return m.handler.ReadModel.CatalogsForVisibleWorkspaces(r)
 }
 
+func (m *Module) catalogPopularity(ctx context.Context, visible []catalog.Catalog) map[string]uisignals.PopularityLevel {
+	if m == nil || m.dashboardPopularity == nil {
+		return nil
+	}
+	popularity, err := m.dashboardPopularity(ctx, m.dashboardCount(ctx, visible))
+	if err != nil {
+		m.logger.WarnContext(ctx, "dashboard popularity unavailable", "error", err)
+		return nil
+	}
+	return popularity
+}
+
+func (m *Module) catalogDashboardMetadata(r *http.Request, visible []catalog.Catalog) map[string]ui.CatalogDashboardMetadata {
+	metadata := make(map[string]ui.CatalogDashboardMetadata)
+	for dashboardID, level := range m.catalogPopularity(r.Context(), visible) {
+		metadata[dashboardID] = ui.CatalogDashboardMetadata{Popularity: level}
+	}
+	if m == nil || m.dashboardRefreshedAt == nil {
+		return metadata
+	}
+	environment := m.runtimeEnvironment
+	if m.environment != nil {
+		environment = m.environment(r)
+	}
+	type refreshResult struct {
+		refreshedAt string
+		ok          bool
+		err         error
+	}
+	refreshes := make(map[string]refreshResult)
+	for _, workspaceCatalog := range visible {
+		for _, dashboard := range workspaceCatalog.Dashboards {
+			if strings.TrimSpace(dashboard.SemanticModel) == "" {
+				continue
+			}
+			modelKey := workspaceCatalog.Workspace.ID + "\x00" + dashboard.SemanticModel
+			result, found := refreshes[modelKey]
+			if !found {
+				result.refreshedAt, result.ok, result.err = m.dashboardRefreshedAt(r.Context(), workspaceCatalog.Workspace.ID, environment, dashboard.SemanticModel)
+				refreshes[modelKey] = result
+			}
+			if result.err != nil {
+				if !found {
+					m.logger.WarnContext(r.Context(), "dashboard refresh timestamp unavailable", "workspace", workspaceCatalog.Workspace.ID, "semantic_model", dashboard.SemanticModel, "error", result.err)
+				}
+				continue
+			}
+			if !result.ok || strings.TrimSpace(result.refreshedAt) == "" {
+				continue
+			}
+			dashboardID := workspaceCatalog.Workspace.ID + "." + dashboard.ID
+			value := metadata[dashboardID]
+			value.LastRefreshedAt = result.refreshedAt
+			metadata[dashboardID] = value
+		}
+	}
+	return metadata
+}
+
+func (m *Module) dashboardCount(ctx context.Context, visible []catalog.Catalog) int {
+	ids := map[string]bool{}
+	add := func(catalogs []catalog.Catalog) {
+		for _, workspaceCatalog := range catalogs {
+			for _, dashboard := range workspaceCatalog.Dashboards {
+				ids[workspaceCatalog.Workspace.ID+"."+dashboard.ID] = true
+			}
+		}
+	}
+	if m.readModel != nil && m.handler.ReadModel.MetricsForWorkspace != nil {
+		if workspaces, err := m.readModel.List(ctx); err == nil {
+			for _, workspace := range workspaces {
+				if metrics, ok := m.handler.ReadModel.MetricsForWorkspace(string(workspace.ID)); ok && metrics != nil {
+					add([]catalog.Catalog{metrics.Catalog()})
+				}
+			}
+		}
+	}
+	if len(ids) == 0 {
+		add(visible)
+	}
+	return len(ids)
+}
+
 func (m *Module) NavigationCatalog() catalog.Catalog {
 	if m == nil || m.rootMetrics == nil {
 		return catalog.Catalog{}
@@ -278,7 +379,10 @@ func (m *Module) Home(w http.ResponseWriter, r *http.Request) {
 	if m.handler.CSRFToken != nil {
 		csrfToken = m.handler.CSRFToken(r)
 	}
-	if err := ui.CatalogPageForCatalogsQueryWithCSRF(m.CatalogsForVisibleWorkspaces(r), strings.TrimSpace(r.URL.Query().Get("q")), csrfToken, providers...).Render(w); err != nil {
+	catalogs := m.CatalogsForVisibleWorkspaces(r)
+	if err := ui.CatalogPageForCatalogsWithOptions(catalogs, ui.CatalogListOptions{
+		Query: strings.TrimSpace(r.URL.Query().Get("q")), Metadata: m.catalogDashboardMetadata(r, catalogs),
+	}, csrfToken, providers...).Render(w); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -295,12 +399,20 @@ func (m *Module) CatalogBootstrapSignals(r *http.Request, provider webpage.Provi
 	if signals.Query != nil {
 		query = strings.TrimSpace(*signals.Query)
 	}
-	return ui.CatalogBootstrapSignalsForCatalogsQuery(m.CatalogsForVisibleWorkspaces(r), query, provider), nil
+	filter := "all"
+	if signals.Filter != nil {
+		filter = strings.TrimSpace(*signals.Filter)
+	}
+	catalogs := m.CatalogsForVisibleWorkspaces(r)
+	return ui.CatalogBootstrapSignalsForCatalogsWithOptions(catalogs, ui.CatalogListOptions{
+		Query: query, WorkspaceFilter: filter, Metadata: m.catalogDashboardMetadata(r, catalogs),
+	}, provider), nil
 }
 
 func (m *Module) CatalogSearch(w http.ResponseWriter, r *http.Request) {
 	var signals struct {
-		Query *string `json:"entityListQuery"`
+		Query  *string `json:"entityListQuery"`
+		Filter *string `json:"entityListFilter"`
 	}
 	if err := pagestream.ReadSignals(r, &signals); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -310,5 +422,12 @@ func (m *Module) CatalogSearch(w http.ResponseWriter, r *http.Request) {
 	if signals.Query != nil {
 		query = strings.TrimSpace(*signals.Query)
 	}
-	_ = pagestream.PatchResponse(w, r, ui.CatalogListPatchForCatalogsQuery(m.CatalogsForVisibleWorkspaces(r), query))
+	filter := "all"
+	if signals.Filter != nil {
+		filter = strings.TrimSpace(*signals.Filter)
+	}
+	catalogs := m.CatalogsForVisibleWorkspaces(r)
+	_ = pagestream.PatchResponse(w, r, ui.CatalogListPatchForCatalogs(catalogs, ui.CatalogListOptions{
+		Query: query, WorkspaceFilter: filter, Metadata: m.catalogDashboardMetadata(r, catalogs),
+	}))
 }

@@ -102,6 +102,27 @@ func TestPlannerConformedFilterPropagatesToEveryFact(t *testing.T) {
 	}
 }
 
+func TestPlannerDimensionOnlyQueryUsesFactsCompatibleWithConformedFilters(t *testing.T) {
+	model := testModel()
+	model.Dimensions["order_status"] = semanticmodel.SemanticDimension{Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{
+		"orders": {Field: "orders.status"},
+	}}
+
+	plan, err := NewPlanner(model).Plan(Request{
+		Dimensions: []Field{{Field: "customer_state", Alias: "value"}},
+		Filters:    []Filter{{Field: "order_status", Operator: "in", Values: []any{"canceled", "created"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Mode != "single_fact" || strings.Join(plan.Facts, ",") != "orders" {
+		t.Fatalf("plan mode/facts = %q/%v, want single_fact/[orders]", plan.Mode, plan.Facts)
+	}
+	if got := strings.Count(plan.SQL, "status IN (?, ?)"); got != 1 {
+		t.Fatalf("status filter count = %d, want 1:\n%s", got, plan.SQL)
+	}
+}
+
 func TestPlannerConformedSelectionEntriesPropagateToEveryFact(t *testing.T) {
 	plan, err := NewPlanner(testModel()).Plan(Request{
 		Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}},

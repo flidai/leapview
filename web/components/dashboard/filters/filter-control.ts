@@ -27,6 +27,13 @@ export type FilterOptionsNeededDetail = {
   limit: number
 }
 
+type RangeDraft = {
+  lower: string
+  upper: string
+  baseExpression: string
+  dirty: boolean
+}
+
 const unfiltered: DashboardFilterExpression = { kind: 'unfiltered' }
 
 export class DashboardFilterLeaf extends LitElement {
@@ -35,16 +42,22 @@ export class DashboardFilterLeaf extends LitElement {
   @property({ attribute: false }) expression: DashboardFilterExpression = unfiltered
   @property({ attribute: false }) options?: DashboardFilterOptionPage
   @property({ attribute: false }) presentation?: DashboardFilterPresentation
+  @property({ attribute: false }) optionContext = ''
+  @property({ type: Boolean }) optionRequestReady = true
   @property({ type: Boolean, reflect: true }) pending = false
   @property({ type: Boolean, reflect: true }) stale = false
   @property({ type: Boolean }) showTitle = true
+  @property({ type: Boolean }) showClearAction = false
+  @property({ type: Boolean }) parentRangeCommitBoundary = false
+  @property({ type: Boolean }) autoHeight = false
 
   private hasRequestedOptions = false
-  private optionRequestAttempts = 0
-  private optionRetryTimer?: ReturnType<typeof setTimeout>
-  private optionRetryDelay = 1_200
+  private optionDirty = true
+  private requestedOptionContext = ''
   private resizeObserver?: ResizeObserver
   @state() private optionLoading = false
+  @state() private rangeDraft?: RangeDraft
+  @state() private rangeError = ''
 
   static styles = css`
     :host { display: block; min-width: 0; font: inherit; }
@@ -74,6 +87,19 @@ export class DashboardFilterLeaf extends LitElement {
       white-space: nowrap;
       font-weight: var(--base-text-weight-medium);
     }
+    .filter-clear {
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: var(--lv-radius-tight, var(--lv-radius-default));
+      background: transparent;
+      color: var(--lv-fg-muted);
+      cursor: pointer;
+      padding: 0 var(--base-size-6);
+      font: var(--lv-type-caption);
+    }
+    .filter-clear[data-active='false'] { visibility: hidden; }
+    .filter-clear:hover:not(:disabled) { background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
+    .filter-clear:disabled { cursor: default; opacity: .45; }
     input, select, button {
       min-height: var(--control-medium-size);
       font: var(--lv-type-body-compact);
@@ -92,6 +118,12 @@ export class DashboardFilterLeaf extends LitElement {
     .range { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     :host([data-layout-variant='stacked']) .range { grid-template-columns: minmax(0, 1fr); }
     .range label { display: grid; min-width: 0; gap: var(--base-size-4); }
+    .range-error {
+      grid-column: 1 / -1;
+      margin: 0;
+      color: var(--lv-fg-danger, var(--fgColor-danger));
+      font: var(--lv-type-caption);
+    }
     .field-label {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
@@ -127,7 +159,6 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   disconnectedCallback(): void {
-    this.clearOptionRetry()
     this.resizeObserver?.disconnect()
     this.resizeObserver = undefined
     super.disconnectedCallback()
@@ -136,23 +167,31 @@ export class DashboardFilterLeaf extends LitElement {
   protected updated(changed: Map<PropertyKey, unknown>) {
     if (changed.has('options')) {
       if (this.options) {
-        this.optionRequestAttempts = 0
-        this.clearOptionRetry()
         this.optionLoading = false
+        this.optionDirty = false
+        this.requestedOptionContext = ''
       } else if (changed.get('options') !== undefined) {
-        this.optionRequestAttempts = 0
-        this.clearOptionRetry()
-        this.optionLoading = this.hasRequestedOptions
-        if (this.hasRequestedOptions && !this.stale) this.requestOptions()
+        this.optionLoading = false
+        this.optionDirty = true
+        if (this.hasRequestedOptions && this.visibleOptionsControl()) this.requestOptions()
       }
     }
-    if (changed.has('stale') && changed.get('stale') === true && !this.stale) {
-      if (this.hasRequestedOptions) this.requestOptions()
-      else this.requestInitialOptions()
+    if (changed.has('optionContext') && changed.get('optionContext') !== undefined) {
+      this.optionDirty = true
+      if (this.visibleOptionsControl()) this.requestOptions()
     }
-    if (changed.has('presentation') || changed.has('definition')) {
-      const rect = this.getBoundingClientRect()
-      this.applyResponsiveLayout(rect.width, rect.height)
+    if (
+      (changed.has('optionRequestReady') && changed.get('optionRequestReady') === false && this.optionRequestReady)
+      || (changed.has('stale') && changed.get('stale') === true && !this.stale)
+    ) {
+      if (this.visibleOptionsControl() || this.dropdownFocused()) this.requestOptions()
+    }
+    if (changed.has('presentation') || changed.has('definition') || changed.has('autoHeight')) {
+      // Report canvases scale visually; layout contracts resolve against the untransformed CSS box.
+      this.applyResponsiveLayout(this.clientWidth, this.clientHeight)
+    }
+    if (changed.has('expression') || changed.has('presentation') || changed.has('definition')) {
+      this.syncRangeDraft()
     }
   }
 
@@ -162,21 +201,32 @@ export class DashboardFilterLeaf extends LitElement {
     if (!definition || !binding) return nothing
     const presentation = this.presentation ?? defaultPresentation(definition)
     const label = presentation.title || binding.paneLabel || definition.label
-    const operationalStatus = this.stale
-      ? 'Waiting for current data'
-      : this.optionLoading
-        ? 'Loading values'
-        : this.pending
-          ? 'Updating'
-          : undefined
+    const operationalStatus = this.optionLoading && !this.options ? 'Loading values' : undefined
     const selectionSummary = presentation.showSummary ? expressionSummary(this.expression) : undefined
+    const active = this.expression.kind !== 'unfiltered'
     return html`
-      <fieldset ?disabled=${!binding.readerEditable || this.stale} aria-busy=${String(this.pending)}>
+      <fieldset
+        ?disabled=${!binding.readerEditable}
+        aria-busy=${String(this.pending || this.optionLoading)}
+        @focusout=${this.onFilterFocusOut}
+      >
         <legend class="visually-hidden">${label}</legend>
-        ${this.showTitle || operationalStatus ? html`
+        ${this.showTitle || operationalStatus || this.showClearAction ? html`
           <div class="field-heading" data-title=${String(this.showTitle)}>
             ${this.showTitle ? html`<span class="field-title" aria-hidden="true" title=${label}>${label}</span>` : nothing}
             ${operationalStatus ? html`<span class="status" aria-live="polite" title=${operationalStatus}>${operationalStatus}</span>` : nothing}
+            ${this.showClearAction ? html`
+              <button
+                class="filter-clear"
+                type="button"
+                data-active=${String(active)}
+                aria-label=${`Clear ${label}`}
+                aria-hidden=${String(!active)}
+                tabindex=${active ? 0 : -1}
+                ?disabled=${!active || !binding.readerEditable || this.stale}
+                @click=${this.clearFilter}
+              >Clear</button>
+            ` : nothing}
           </div>
         ` : nothing}
         ${this.renderControl(presentation)}
@@ -206,8 +256,14 @@ export class DashboardFilterLeaf extends LitElement {
 
   private renderDropdown() {
     const selected = selectedValues(this.expression)
+    const selectedKey = selected.values().next().value ?? ''
     return html`
-      <select aria-label=${this.presentation?.ariaLabel || this.definition?.label || 'Filter'} @focus=${this.requestOptions} @change=${this.onDropdown}>
+      <select
+        aria-label=${this.presentation?.ariaLabel || this.definition?.label || 'Filter'}
+        .value=${selectedKey}
+        @focus=${this.requestOptions}
+        @change=${this.onDropdown}
+      >
         <option value="">All</option>
         ${this.optionItems().map((option) => html`
           <option
@@ -274,15 +330,21 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private renderRange(type: 'number' | 'date') {
-    const range = this.expression.kind === 'range' ? this.expression : undefined
+    const draft = this.rangeDraft ?? rangeDraftFromExpression(this.expression)
+    const invalid = this.rangeError !== ''
     return html`<div class="range">
       <label>
         <span class="field-label">${type === 'number' ? 'Minimum' : 'Start'}</span>
         <input
           type=${type}
           aria-label=${type === 'number' ? 'Minimum' : 'Start date'}
-          .value=${range?.lower ? String(range.lower.value.value) : ''}
-          @change=${this.onRange}
+          placeholder=${type === 'number' ? 'No minimum' : 'No start date'}
+          step=${type === 'number' && this.definition?.valueKind === 'decimal' ? 'any' : nothing}
+          aria-invalid=${String(invalid)}
+          aria-describedby=${invalid ? 'range-error' : nothing}
+          .value=${draft.lower}
+          @input=${this.onRangeInput}
+          @keydown=${this.onRangeKeyDown}
         >
       </label>
       <label>
@@ -290,10 +352,16 @@ export class DashboardFilterLeaf extends LitElement {
         <input
           type=${type}
           aria-label=${type === 'number' ? 'Maximum' : 'End date'}
-          .value=${range?.upper ? String(range.upper.value.value) : ''}
-          @change=${this.onRange}
+          placeholder=${type === 'number' ? 'No maximum' : 'No end date'}
+          step=${type === 'number' && this.definition?.valueKind === 'decimal' ? 'any' : nothing}
+          aria-invalid=${String(invalid)}
+          aria-describedby=${invalid ? 'range-error' : nothing}
+          .value=${draft.upper}
+          @input=${this.onRangeInput}
+          @keydown=${this.onRangeKeyDown}
         >
       </label>
+      ${invalid ? html`<p class="range-error" id="range-error" role="alert">${this.rangeError}</p>` : nothing}
     </div>`
   }
 
@@ -329,18 +397,81 @@ export class DashboardFilterLeaf extends LitElement {
     this.commit(next.length === 0 ? unfiltered : setExpression(next))
   }
 
-  private onRange = () => {
+  private onRangeInput = () => {
     const inputs = [...this.renderRoot.querySelectorAll<HTMLInputElement>('.range input')]
-    const [from, to] = inputs.map((input) => input.value)
-    if (!from && !to) {
-      this.commit(unfiltered)
+    const [lower = '', upper = ''] = inputs.map((input) => input.value)
+    this.rangeDraft = {
+      lower,
+      upper,
+      baseExpression: this.rangeDraft?.baseExpression ?? expressionKey(this.expression),
+      dirty: true,
+    }
+    this.rangeError = rangeValidationMessage(lower, upper, this.definition?.valueKind)
+  }
+
+  private onRangeKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      this.discardRangeDraft()
       return
     }
-    this.commit({
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    this.commitRangeDraft()
+  }
+
+  private onFilterFocusOut = (event: FocusEvent) => {
+    if (this.parentRangeCommitBoundary) return
+    const fieldset = event.currentTarget as HTMLFieldSetElement
+    if (event.relatedTarget instanceof Node && fieldset.contains(event.relatedTarget)) return
+    this.commitRangeDraft()
+  }
+
+  public commitRangeDraft() {
+    if (!this.rangeDraft?.dirty || !this.rangePresentation()) return
+    const { lower, upper } = this.rangeDraft
+    const validation = rangeValidationMessage(lower, upper, this.definition?.valueKind)
+    if (validation) {
+      this.rangeError = validation
+      return
+    }
+    const expression: DashboardFilterExpression = !lower && !upper ? unfiltered : {
       kind: 'range',
-      ...(from ? { lower: { value: typedValue(this.definition!, from), inclusive: true } } : {}),
-      ...(to ? { upper: { value: typedValue(this.definition!, to), inclusive: true } } : {}),
-    })
+      ...(lower ? { lower: { value: typedValue(this.definition!, lower), inclusive: true } } : {}),
+      ...(upper ? { upper: { value: typedValue(this.definition!, upper), inclusive: true } } : {}),
+    }
+    this.rangeDraft = { lower, upper, baseExpression: expressionKey(expression), dirty: false }
+    this.rangeError = ''
+    if (!sameExpression(expression, this.expression)) this.commit(expression)
+  }
+
+  public discardRangeDraft() {
+    this.rangeDraft = rangeDraftFromExpression(this.expression)
+    this.rangeError = ''
+  }
+
+  private syncRangeDraft() {
+    if (!this.rangePresentation()) {
+      if (this.rangeDraft) this.rangeDraft = undefined
+      if (this.rangeError) this.rangeError = ''
+      return
+    }
+    const key = expressionKey(this.expression)
+    if (this.rangeDraft?.dirty && this.rangeDraft.baseExpression === key) return
+    const next = rangeDraftFromExpression(this.expression)
+    if (
+      this.rangeDraft?.lower === next.lower
+      && this.rangeDraft.upper === next.upper
+      && this.rangeDraft.baseExpression === next.baseExpression
+      && !this.rangeDraft.dirty
+    ) return
+    this.rangeDraft = next
+    this.rangeError = ''
+  }
+
+  private rangePresentation(): boolean {
+    const style = (this.presentation ?? (this.definition ? defaultPresentation(this.definition) : undefined))?.style
+    return style === 'numeric_range' || style === 'date_range'
   }
 
   private onRelative = () => {
@@ -363,6 +494,13 @@ export class DashboardFilterLeaf extends LitElement {
       bubbles: true, composed: true,
       detail: { bindingKey: this.binding.key, expression },
     }))
+  }
+
+  private clearFilter = () => {
+    if (this.expression.kind === 'unfiltered') return
+    this.rangeDraft = rangeDraftFromExpression(unfiltered)
+    this.rangeError = ''
+    this.commit(unfiltered)
   }
 
   private optionItems(): DashboardFilterOptionItem[] {
@@ -394,26 +532,27 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private requestInitialOptions() {
-    const style = (this.presentation ?? (this.definition ? defaultPresentation(this.definition) : undefined))?.style
-    if (style === 'list' || style === 'buttons') this.requestOptions()
+    if (this.visibleOptionsControl()) this.requestOptions()
   }
 
   private requestOptions = () => {
-    this.optionRequestAttempts = 0
+    if (this.options && !this.optionDirty) return
     this.loadOptions()
   }
 
   private loadOptions() {
     if (
       this.stale
+      || !this.optionRequestReady
       || !this.binding
       || !this.definition
       || this.definition.options.kind === 'none'
       || this.definition.options.kind === 'static'
     ) return
+    if (this.optionLoading && this.requestedOptionContext === this.optionContext) return
     this.hasRequestedOptions = true
     this.optionLoading = true
-    this.optionRequestAttempts++
+    this.requestedOptionContext = this.optionContext
     this.dispatchEvent(new CustomEvent<FilterOptionsNeededDetail>('lv-filter-options-needed', {
       bubbles: true, composed: true,
       detail: {
@@ -422,28 +561,31 @@ export class DashboardFilterLeaf extends LitElement {
         limit: this.definition.options.limit || 50,
       },
     }))
-    this.clearOptionRetry()
-    if (this.optionRequestAttempts >= 2) return
-    this.optionRetryTimer = setTimeout(() => {
-      this.optionRetryTimer = undefined
-      if (!this.options && !this.stale && this.optionLoading && this.isConnected) this.loadOptions()
-    }, this.optionRetryDelay)
   }
 
-  private clearOptionRetry() {
-    if (this.optionRetryTimer !== undefined) clearTimeout(this.optionRetryTimer)
-    this.optionRetryTimer = undefined
+  private visibleOptionsControl(): boolean {
+    const style = (this.presentation ?? (this.definition ? defaultPresentation(this.definition) : undefined))?.style
+    return style === 'list' || style === 'buttons'
+  }
+
+  private dropdownFocused(): boolean {
+    return this.shadowRoot?.activeElement?.tagName === 'SELECT'
   }
 
   private applyResponsiveLayout(width: number, height: number): void {
     const presentation = this.presentation ?? (this.definition ? defaultPresentation(this.definition) : undefined)
     const contractID = presentation ? slicerContractID(presentation.style) : undefined
-    if (!presentation || !contractID || width <= 0 || height <= 0) {
+    if (!presentation || !contractID || width <= 0 || (!this.autoHeight && height <= 0)) {
       delete this.dataset.layoutVariant
       delete this.dataset.layoutFit
       return
     }
-    const resolution = resolveWidgetLayout(contractID, { width, height }, presentation.showSummary ? ['summary'] : [])
+    // Pane cards grow with their content, so only width selects their arrangement.
+    const resolution = resolveWidgetLayout(
+      contractID,
+      { width, height: this.autoHeight ? Number.POSITIVE_INFINITY : height },
+      presentation.showSummary ? ['summary'] : [],
+    )
     const requirement = selectedRequirement(resolution)
     this.dataset.layoutVariant = requirement.layout
     this.dataset.layoutFit = resolution.kind === 'fit' ? 'fit' : 'too-small'
@@ -456,21 +598,28 @@ abstract class FilterShell extends LitElement {
   @property({ attribute: false }) expression: DashboardFilterExpression = unfiltered
   @property({ attribute: false }) options?: DashboardFilterOptionPage
   @property({ attribute: false }) presentation?: DashboardFilterPresentation
+  @property({ attribute: false }) optionContext = ''
+  @property({ type: Boolean }) optionRequestReady = true
   @property({ type: Boolean, reflect: true }) pending = false
   @property({ type: Boolean, reflect: true }) stale = false
   @property({ type: Boolean, reflect: true }) active = false
   @property({ type: Boolean, reflect: true }) dirty = false
 
-  protected leaf(showTitle = true) {
+  protected leaf(showTitle = true, autoHeight = false, showClearAction = false, parentRangeCommitBoundary = false) {
     return html`<lv-filter-leaf
       .definition=${this.definition}
       .binding=${this.binding}
       .expression=${this.expression}
       .options=${this.options}
       .presentation=${this.presentation}
+      .optionContext=${this.optionContext}
+      .optionRequestReady=${this.optionRequestReady}
       .pending=${this.pending}
       .stale=${this.stale}
       .showTitle=${showTitle}
+      .showClearAction=${showClearAction}
+      .parentRangeCommitBoundary=${parentRangeCommitBoundary}
+      .autoHeight=${autoHeight}
     ></lv-filter-leaf>`
   }
 }
@@ -532,9 +681,10 @@ export class DashboardFilterPaneCard extends FilterShell {
 
   render() {
     const label = this.binding?.paneLabel || this.definition?.label || 'Filter'
-    const editable = this.binding?.readerEditable === true && !this.pending && !this.stale
+    const editable = this.binding?.readerEditable === true && !this.stale
+    const hasMeaningfulDefault = this.binding != null && this.binding.default.kind !== 'unfiltered'
     return html`
-      <section aria-label=${label}>
+      <section aria-label=${label} @focusout=${this.onCardFocusOut}>
         <div class="card-header">
           <span class="title">${label}${this.dirty ? html`<span class="pending-badge">Pending</span>` : nothing}</span>
           <div class="actions">
@@ -545,22 +695,41 @@ export class DashboardFilterPaneCard extends FilterShell {
               ?disabled=${!editable || this.expression.kind === 'unfiltered'}
               @click=${this.clear}
             >Clear</button>
-            <button
-              type="button"
-              aria-label=${`Reset ${label} to default`}
-              title="Reset to default"
-              ?disabled=${!editable || sameExpression(this.expression, this.binding?.default)}
-              @click=${this.reset}
-            >Reset</button>
+            ${hasMeaningfulDefault ? html`
+              <button
+                type="button"
+                aria-label=${`Reset ${label} to default`}
+                title="Reset to default"
+                ?disabled=${!editable || sameExpression(this.expression, this.binding?.default)}
+                @click=${this.reset}
+              >Reset</button>
+            ` : nothing}
           </div>
         </div>
-        ${this.leaf(false)}
+        ${this.leaf(false, true, false, true)}
       </section>
     `
   }
 
-  private clear = () => this.dispatchAction('lv-filter-clear')
-  private reset = () => this.dispatchAction('lv-filter-reset-binding')
+  private clear = () => {
+    this.rangeLeaf()?.discardRangeDraft()
+    this.dispatchAction('lv-filter-clear')
+  }
+
+  private reset = () => {
+    this.rangeLeaf()?.discardRangeDraft()
+    this.dispatchAction('lv-filter-reset-binding')
+  }
+
+  private onCardFocusOut = (event: FocusEvent) => {
+    const section = event.currentTarget as HTMLElement
+    if (event.relatedTarget instanceof Node && section.contains(event.relatedTarget)) return
+    this.rangeLeaf()?.commitRangeDraft()
+  }
+
+  private rangeLeaf(): DashboardFilterLeaf | null {
+    return this.renderRoot.querySelector<DashboardFilterLeaf>('lv-filter-leaf')
+  }
 
   private dispatchAction(type: 'lv-filter-clear' | 'lv-filter-reset-binding') {
     if (!this.binding?.key) return
@@ -580,7 +749,7 @@ export class DashboardSlicer extends FilterShell {
   `
 
   render() {
-    return html`<section aria-label=${this.presentation?.ariaLabel || this.definition?.label || 'Slicer'}>${this.leaf()}</section>`
+    return html`<section aria-label=${this.presentation?.ariaLabel || this.definition?.label || 'Slicer'}>${this.leaf(true, false, true)}</section>`
   }
 }
 
@@ -626,6 +795,31 @@ function operatorLabel(operator: ReturnType<typeof firstComparisonOperator>): st
 
 function sameExpression(left: DashboardFilterExpression, right?: DashboardFilterExpression): boolean {
   return JSON.stringify(left) === JSON.stringify(right ?? unfiltered)
+}
+
+function expressionKey(expression: DashboardFilterExpression): string {
+  return JSON.stringify(expression)
+}
+
+function rangeDraftFromExpression(expression: DashboardFilterExpression): RangeDraft {
+  return {
+    lower: expression.kind === 'range' && expression.lower ? String(expression.lower.value.value) : '',
+    upper: expression.kind === 'range' && expression.upper ? String(expression.upper.value.value) : '',
+    baseExpression: expressionKey(expression),
+    dirty: false,
+  }
+}
+
+function rangeValidationMessage(lower: string, upper: string, valueKind?: DashboardCompiledFilterDefinition['valueKind']): string {
+  if (!lower || !upper) return ''
+  if (valueKind === 'date' || valueKind === 'timestamp') {
+    return lower > upper ? 'Start date must be on or before end date.' : ''
+  }
+  const lowerNumber = Number(lower)
+  const upperNumber = Number(upper)
+  return Number.isFinite(lowerNumber) && Number.isFinite(upperNumber) && lowerNumber > upperNumber
+    ? 'Minimum must be less than or equal to maximum.'
+    : ''
 }
 
 function typedValue(definition: DashboardCompiledFilterDefinition, value: string): DashboardFilterValue {
@@ -674,6 +868,8 @@ export function expressionSummary(expression: DashboardFilterExpression): string
     case 'comparison':
       return `${comparisonOperatorSymbol(expression.operator)} ${String(expression.value.value)}`
     case 'range':
+      if (expression.lower && !expression.upper) return `≥ ${String(expression.lower.value.value)}`
+      if (!expression.lower && expression.upper) return `≤ ${String(expression.upper.value.value)}`
       return `${expression.lower ? String(expression.lower.value.value) : '…'} – ${expression.upper ? String(expression.upper.value.value) : '…'}`
     case 'relative_period':
       return `${expression.direction} ${expression.count} ${expression.unit}`

@@ -7,6 +7,7 @@ import {
   Boxes,
   Cable,
   ChartColumn,
+  ChartNoAxesColumnIncreasing,
   Component,
   Database,
   Download,
@@ -35,6 +36,13 @@ export type EntityListItem = {
   columns?: Record<string, string | number>
   columnTitles?: Record<string, string>
   sortValues?: Record<string, string | number>
+  badges?: EntityListBadge[]
+}
+
+export type EntityListBadge = {
+  icon: 'popularity'
+  label: string
+  level: 'low' | 'medium' | 'high'
 }
 
 export type EntityListColumn = {
@@ -43,6 +51,7 @@ export type EntityListColumn = {
   width?: string
   align?: 'left' | 'right'
   sortable?: boolean
+  render?: 'badges'
 }
 
 export type EntityListFilter = {
@@ -300,6 +309,42 @@ const entityListStyles = `
     font-weight: var(--base-text-weight-semibold);
   }
 
+  .entity-list-title-row {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--base-size-6);
+  }
+
+  .entity-list-badge {
+    display: inline-grid;
+    width: var(--base-size-16);
+    height: var(--base-size-16);
+    flex: 0 0 auto;
+    place-items: center;
+    color: var(--fgColor-disabled);
+  }
+
+  .entity-list-badge-popularity svg path {
+    stroke: currentColor;
+  }
+
+  .entity-list-badge-popularity.is-low svg path:nth-child(1),
+  .entity-list-badge-popularity.is-medium svg path:nth-child(1),
+  .entity-list-badge-popularity.is-high svg path:nth-child(1),
+  .entity-list-badge-popularity.is-medium svg path:nth-child(2),
+  .entity-list-badge-popularity.is-high svg path:nth-child(2),
+  .entity-list-badge-popularity.is-high svg path:nth-child(3) {
+    stroke: var(--display-blue-fgColor);
+  }
+
+  .entity-list-badge-empty {
+    display: inline-block;
+    width: var(--base-size-16);
+    color: var(--fgColor-disabled);
+    text-align: center;
+  }
+
   .entity-list-description,
   .entity-list-meta {
     color: var(--lv-fg-muted);
@@ -498,6 +543,10 @@ class EntityList extends LitElement {
   }
 
   private itemValue(item: EntityListItem, column: EntityListColumn): string | number {
+    return item.sortValues?.[column.id] ?? (column.id === 'name' ? item.title : item.columns?.[column.id] ?? '')
+  }
+
+  private exportValue(item: EntityListItem, column: EntityListColumn): string | number {
     return column.id === 'name' ? item.title : item.columns?.[column.id] ?? ''
   }
 
@@ -506,6 +555,7 @@ class EntityList extends LitElement {
   }
 
   private renderItem(item: EntityListItem, columns: EntityListColumn[]) {
+    const badgesColumn = columns.some((column) => column.render === 'badges')
     return html`
       <tr class="entity-list-table-row">
         <th scope="row">
@@ -514,17 +564,39 @@ class EntityList extends LitElement {
               ? html`<lv-user-avatar .name=${item.title} .imageUrl=${item.avatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>`
               : html`<span class=${`entity-list-icon entity-list-icon-${item.icon || 'default'}`} aria-hidden="true">${lucideIcon(entityIcon(item.icon))}</span>`}
             <span class="entity-list-copy">
-              <span class="entity-list-title">${item.title}</span>
+              <span class="entity-list-title-row">
+                <span class="entity-list-title">${item.title}</span>
+                ${badgesColumn ? '' : (item.badges ?? []).map((badge) => this.renderBadge(badge))}
+              </span>
               ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
             </span>
           </a>
         </th>
         ${columns.slice(1).map((column) => {
           const value = item.columns?.[column.id]
-          const title = item.columnTitles?.[column.id] ?? String(value ?? '')
-          return html`<td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''}`} title=${title}>${value == null || value === '' ? '—' : value}</td>`
+          const badges = item.badges ?? []
+          const title = column.render === 'badges'
+            ? badges.map((badge) => badge.label).join(', ')
+            : item.columnTitles?.[column.id] ?? String(value ?? '')
+          return html`
+            <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''}`} title=${title}>
+              ${column.render === 'badges'
+                ? (badges.length ? badges.map((badge) => this.renderBadge(badge)) : html`
+                    <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
+                  `)
+                : (value == null || value === '' ? '—' : value)}
+            </td>
+          `
         })}
       </tr>
+    `
+  }
+
+  private renderBadge(badge: EntityListBadge) {
+    return html`
+      <span class=${`entity-list-badge entity-list-badge-${badge.icon} is-${badge.level}`} role="img" aria-label=${badge.label} title=${badge.label}>
+        ${lucideIcon(badgeIcon(badge.icon), { size: 16, strokeWidth: 2.5 })}
+      </span>
     `
   }
 
@@ -532,7 +604,7 @@ class EntityList extends LitElement {
     const columns = this.resolvedColumns()
     const rows = [
       columns.map((column) => column.label),
-      ...this.visibleItems().map((item) => columns.map((column) => String(this.itemValue(item, column)))),
+      ...this.visibleItems().map((item) => columns.map((column) => String(this.exportValue(item, column)))),
     ]
     const csv = rows.map((row) => row.map((value) => `"${value.replaceAll('"', '""')}"`).join(',')).join('\n')
     const link = document.createElement('a')
@@ -576,6 +648,12 @@ class EntityList extends LitElement {
       composed: true,
       detail: { query: this.query, filter: this.filter },
     }))
+  }
+}
+
+function badgeIcon(type: EntityListBadge['icon']): IconNode {
+  switch (type) {
+    case 'popularity': return ChartNoAxesColumnIncreasing
   }
 }
 

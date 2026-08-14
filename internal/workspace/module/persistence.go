@@ -31,6 +31,13 @@ func BuildDirectory(database *sql.DB, securables SecurableRegistrar) (Directory,
 	return &directory{repository: workspacesqlite.NewRepositoryWithSecurables(database, securables)}, nil
 }
 
+func BuildReadModel(database *sql.DB) (ReadModel, error) {
+	if database == nil {
+		return nil, errors.New("workspace database is required")
+	}
+	return workspacesqlite.NewRepository(database), nil
+}
+
 func (p *directory) Ensure(ctx context.Context, input workspace.EnsureInput) error {
 	return p.repository.Ensure(ctx, input)
 }

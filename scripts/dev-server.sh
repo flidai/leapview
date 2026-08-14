@@ -223,6 +223,69 @@ wait_ready() {
   return 1
 }
 
+mcp_call() {
+  local port="$1"
+  local body="$2"
+  local token="${LEAPVIEW_DEV_API_TOKEN:-dev}"
+  curl --fail --silent --show-error --max-time 15 \
+    --config <(printf 'header = "Authorization: Bearer %s"\n' "$token") \
+    --header 'Content-Type: application/json' \
+    --header 'Accept: application/json, text/event-stream' \
+    --header 'Mcp-Protocol-Version: 2025-11-25' \
+    --data "$body" \
+    "http://localhost:${port}/mcp"
+}
+
+mcp_smoke() {
+  local port="$1"
+  command -v jq >/dev/null 2>&1 || {
+    echo "jq is required for the development MCP smoke check" >&2
+    return 1
+  }
+
+  local listed
+  listed="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-tools","method":"tools/list","params":{}}')" || return 1
+  jq -e '
+    (.error == null) and
+    ([.result.tools[].name] | contains(["catalog_list", "catalog_search", "query_semantic_model"]))
+  ' <<<"$listed" >/dev/null || {
+    echo "Development MCP smoke check could not list the required tools" >&2
+    return 1
+  }
+
+  local catalog
+  catalog="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-catalog","method":"tools/call","params":{"name":"catalog_list","arguments":{}}}')" || return 1
+  jq -e '(.error == null) and (.result.isError != true) and (.result.structuredContent.count > 0)' <<<"$catalog" >/dev/null || {
+    echo "Development MCP smoke check found no accessible workspaces" >&2
+    return 1
+  }
+
+  local measure
+  measure="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-measure","method":"tools/call","params":{"name":"catalog_search","arguments":{"query":"measure","types":["measure"],"limit":1}}}')" || return 1
+  local query_arguments
+  query_arguments="$(jq -ce '
+    .result.structuredContent.items[0] as $item |
+    ($item.hierarchy[] | select(.ref.type == "semantic_model") | .ref.id) as $model |
+    {workspace: $item.ref.workspaceId, model: $model, measures: [{field: $item.ref.id}], limit: 1}
+  ' <<<"$measure")" || {
+    echo "Development MCP smoke check could not resolve a semantic measure" >&2
+    return 1
+  }
+
+  local query_body query
+  query_body="$(jq -cn --argjson arguments "$query_arguments" '{jsonrpc:"2.0", id:"dev-query", method:"tools/call", params:{name:"query_semantic_model", arguments:$arguments}}')"
+  query="$(mcp_call "$port" "$query_body")" || return 1
+  jq -e '
+    (.error == null) and (.result.isError != true) and
+    (.result.structuredContent.queryId | type == "string" and length > 0) and
+    (.result.structuredContent.rows | type == "array")
+  ' <<<"$query" >/dev/null || {
+    echo "Development MCP smoke check semantic query failed" >&2
+    return 1
+  }
+  echo "Agent MCP smoke check passed"
+}
+
 canonical_source_root() {
 	local source_root="$1"
 	if [[ "$source_root" != /* ]]; then
@@ -268,6 +331,7 @@ publish_project() {
 	fi
   go run ./cmd/leapview dev --once --no-browser --project "$project" --target "http://localhost:${port}" --token dev
 	go run ./cmd/leapview publish --project "$project" --target "http://localhost:${port}" --token dev
+	mcp_smoke "$port"
 }
 
 publish_running() {
@@ -364,6 +428,11 @@ start() {
   export LEAPVIEW_ADDR=":$port"
   export LEAPVIEW_DEV_WORKTREE="$ROOT"
   export LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES="${LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES:-67108864}"
+  if [[ -z "${LEAPVIEW_AGENT_API_KEY:-}" && -n "${DEEPSEEK_API_KEY:-}" ]]; then
+    export LEAPVIEW_AGENT_API_KEY="$DEEPSEEK_API_KEY"
+    export LEAPVIEW_AGENT_BASE_URL="${LEAPVIEW_AGENT_BASE_URL:-https://api.deepseek.com}"
+    export LEAPVIEW_AGENT_MODEL="${LEAPVIEW_AGENT_MODEL:-deepseek-v4-flash}"
+  fi
 
   : > "$LOG_FILE"
   if [[ "$runner" == "air" ]]; then
