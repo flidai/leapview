@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -174,7 +175,8 @@ ORDER BY a.schema_name, a.table_name`)
 
 	var tables []ui.AdminStorageTable
 	for rows.Next() {
-		var schemaName, schemaPath, tableName, tablePath, tableUUID string
+		var schemaName, schemaPath, tableName, tablePath string
+		var tableUUID []byte
 		var tableID, beginSnapshot, rowCount, sizeBytes int64
 		var endSnapshot sql.NullInt64
 		var columnCount, fileCount int
@@ -186,7 +188,7 @@ ORDER BY a.schema_name, a.table_name`)
 			end = endSnapshot.Int64
 		}
 		tables = append(tables, ui.AdminStorageTable{
-			Schema: schemaName, Name: tableName, Type: "table", TableID: tableID, TableUUID: tableUUID,
+			Schema: schemaName, Name: tableName, Type: "table", TableID: tableID, TableUUID: formatDuckLakeUUID(tableUUID),
 			DuckLakePath: duckLakeTablePath(schemaPath, tablePath), BeginSnapshot: beginSnapshot, EndSnapshot: end,
 			RowCount: rowCount, RowCountLabel: formatCount(rowCount), ColumnCount: columnCount,
 			FileCount: fileCount, SizeBytes: sizeBytes, SizeLabel: formatBytes(sizeBytes),
@@ -209,6 +211,25 @@ func inspectDuckLakeTable(ctx context.Context, db queryDatabase, schema, tableNa
 		}
 	}
 	return nil, sql.ErrNoRows
+}
+
+func formatDuckLakeUUID(value []byte) string {
+	if len(value) == 0 {
+		return ""
+	}
+	if len(value) == 16 {
+		encoded := hex.EncodeToString(value)
+		return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:]
+	}
+
+	text := strings.ToLower(strings.TrimSpace(string(value)))
+	compact := strings.ReplaceAll(text, "-", "")
+	if len(compact) == 32 {
+		if _, err := hex.DecodeString(compact); err == nil {
+			return compact[:8] + "-" + compact[8:12] + "-" + compact[12:16] + "-" + compact[16:20] + "-" + compact[20:]
+		}
+	}
+	return hex.EncodeToString(value)
 }
 
 func inspectDuckLakeFiles(ctx context.Context, db queryDatabase, tableID int64) ([]ui.AdminStorageFile, error) {

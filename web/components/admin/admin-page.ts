@@ -768,9 +768,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
   private renderStorageDetail(page: AdminPageSignal) {
     if (page.empty) return nothing
-    const storageFacts = page.sections?.find((section) => section.title === 'Storage')?.facts ?? []
-    const schema = storageFacts.find((fact) => fact.label === 'Schema')?.value ?? ''
-    const objectType = storageFacts.find((fact) => fact.label === 'Object type')?.value ?? 'table'
     return renderEntityDetail({
       label: 'Storage table details',
       backHref: '/admin/storage',
@@ -779,7 +776,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       avatarTreatment: 'plain',
       title: page.headerTitle || page.title,
       subtitle: page.headerDetail,
-      badges: html`${schema ? html`<span class="badge">${schema}</span>` : nothing}<span class="badge">${objectType}</span>`,
       sections: html`
         ${page.metrics?.length ? html`
           <section class="section detail-section" aria-label="Overview">

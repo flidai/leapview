@@ -1428,7 +1428,7 @@ test('storage table detail emphasizes physical storage and active files', async 
     expect(state.backHref).toBe('/admin/storage')
     expect(state.sharedLayout).toBe(true)
     expect(state.avatarClass).toContain('avatar-plain')
-    expect(state.badges).toEqual(['model', 'table'])
+    expect(state.badges).toEqual([])
     expect(state.metricText).toEqual(['Data size 12 MiB', 'Active files 1', 'Stored rows 1,000', 'Begin snapshot 7'])
     expect(state.factText).toEqual(['Schema model', 'Object type table', 'DuckLake path model/orders/', 'Table UUID table-uuid'])
     expect(state.cardCount).toBe(0)
