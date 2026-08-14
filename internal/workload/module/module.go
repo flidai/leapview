@@ -33,6 +33,7 @@ func JobAdmitter(admitter Admitter) jobs.Admitter {
 
 const (
 	BackgroundClass  = workload.Background
+	RefreshClass     = workload.Refresh
 	ControlClass     = workload.Control
 	MaintenanceClass = workload.Maintenance
 	GlobalWorkspace  = workload.GlobalWorkspace

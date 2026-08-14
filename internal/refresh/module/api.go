@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
@@ -55,10 +56,44 @@ func (m *Module) verifyRunCreated(ctx context.Context, run refreshrun.RunRecord)
 	})
 }
 
+func (m *Module) verifyRunCancelled(ctx context.Context, run refreshrun.RunRecord) error {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(refreshgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(ctx, string(refreshgen.GenOperationCancelRefreshRun), apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			if m.events == nil {
+				return errors.New("refresh event store is unavailable")
+			}
+			encoded, err := refreshgen.EncodeGenCancelRefreshRunAuditPayload(refreshgen.GenSchemaRefreshCancelledAuditPayload{
+				Id: run.ID, WorkspaceId: run.WorkspaceID,
+				PipelineId: strings.TrimPrefix(run.TargetID, run.WorkspaceID+"."),
+				Status:     run.Status, Trigger: run.TriggerType,
+			})
+			if err != nil {
+				return err
+			}
+			_, err = m.events.AppendEvent(ctx, m.refreshExecution.ResourceKind, run.ID, contract.AuditAction, []byte(encoded))
+			return err
+		},
+		LogMessage:    "refresh audit failed",
+		LogAttributes: []slog.Attr{slog.String("refresh_run_id", run.ID)},
+	})
+}
+
 // VerifyRunCreated completes the generated createRefreshRun policy after a
 // non-API surface has atomically queued the same refresh lifecycle.
 func (m *Module) VerifyRunCreated(ctx context.Context, run refreshrun.RunRecord) error {
 	return m.verifyRunCreated(ctx, run)
+}
+
+func (m *Module) VerifyRunCancelled(ctx context.Context, run refreshrun.RunRecord) error {
+	return m.verifyRunCancelled(ctx, run)
 }
 
 func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) func(context.Context, refreshrun.JobRecord) {
@@ -134,30 +169,7 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, worksp
 		writeRefreshCommandFailure(m, w, r, operationID, errors.New("refresh response is invalid"))
 		return
 	}
-	logger := m.logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	executor, err := apigencommand.NewExecutor(refreshgen.GetAPIGenCommandRuntimeContract, logger)
-	if err != nil {
-		writeRefreshCommandFailure(m, w, r, operationID, err)
-		return
-	}
-	if err := executor.Execute(r.Context(), string(refreshgen.GenOperationCancelRefreshRun), apigencommand.Execution{
-		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
-			encoded, err := refreshgen.EncodeGenCancelRefreshRunAuditPayload(refreshgen.GenSchemaRefreshCancelledAuditPayload{
-				Id: response.ID, WorkspaceId: response.WorkspaceID, PipelineId: response.PipelineID,
-				Status: response.Status, Trigger: response.Trigger,
-			})
-			if err != nil {
-				return err
-			}
-			_, err = m.events.AppendEvent(ctx, m.refreshExecution.ResourceKind, runID, contract.AuditAction, []byte(encoded))
-			return err
-		},
-		LogMessage:    "refresh audit failed",
-		LogAttributes: []slog.Attr{slog.String("refresh_run_id", runID)},
-	}); err != nil {
+	if err := m.verifyRunCancelled(r.Context(), row); err != nil {
 		writeRefreshCommandFailure(m, w, r, operationID, err)
 		return
 	}

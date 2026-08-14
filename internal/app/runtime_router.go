@@ -677,9 +677,24 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			AuthConfigured:     platform.auth != nil,
 			RuntimeEnvironment: policy.defaultEnvironment,
 			RefreshState:       workspaceRefreshStateBridge{support: refreshSupport},
-			RefreshRunner: workspacemodule.AssetRefreshFunc(func(ctx context.Context, input workspacemodule.AssetRefreshInput) error {
-				return refreshSupport.RefreshAsset(ctx, input.Request, input.WorkspaceID, input.Asset, input.Assets, input.Edges)
-			}),
+			RefreshCapacity: func(context.Context) (workspacemodule.PipelineMonitorCapacity, error) {
+				stats := workloadController(&runtime.workloads).Stats()
+				refreshStats := stats.Classes[workloadmodule.RefreshClass]
+				return workspacemodule.PipelineMonitorCapacity{
+					Running: refreshStats.Running, Queued: refreshStats.Queued, MaximumRunning: refreshStats.Policy.MaximumRunning,
+				}, nil
+			},
+			RefreshRunner: workspacemodule.AssetRefreshFuncs{
+				Run: func(ctx context.Context, input workspacemodule.AssetRefreshInput) error {
+					return refreshSupport.RefreshAsset(ctx, input.Request, input.WorkspaceID, input.Asset, input.Assets, input.Edges)
+				},
+				Retry: func(ctx context.Context, input workspacemodule.AssetRefreshInput, retryOf string) error {
+					return refreshSupport.RetryAsset(ctx, input.Request, input.WorkspaceID, input.Asset, input.Assets, input.Edges, retryOf)
+				},
+				Cancel: func(ctx context.Context, input workspacemodule.PipelineRunCancelInput) error {
+					return refreshSupport.CancelRefreshRun(ctx, input.Request, input.WorkspaceID, input.PipelineID, input.RunID)
+				},
+			},
 			Broker:           runtime.broker,
 			CSRFToken:        routes.accessModule.CSRFToken,
 			CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,

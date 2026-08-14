@@ -1,4 +1,4 @@
-import { LitElement, html } from 'lit'
+import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import {
   ArrowUpDown,
@@ -6,16 +6,22 @@ import {
   BookOpen,
   Boxes,
   Cable,
+  CheckCircle2,
   ChartColumn,
   ChartNoAxesColumnIncreasing,
   ChevronDown,
   ChevronRight,
+  Circle,
+  Clock3,
   Component,
   Database,
   Download,
+  FileText,
   LayoutDashboard,
   Plus,
   Plug,
+  Play,
+  RefreshCw,
   Search,
   Table2,
   TableProperties,
@@ -23,6 +29,7 @@ import {
   UserRound,
   Waypoints,
   Workflow,
+  XCircle,
   type IconNode,
 } from 'lucide'
 import { lucideIcon } from './lucide-icons'
@@ -48,6 +55,14 @@ export type EntityListItem = {
   columnTitles?: Record<string, string>
   sortValues?: Record<string, string | number>
   badges?: EntityListBadge[]
+  actions?: EntityListRowAction[]
+}
+
+export type EntityListRowAction = {
+  label: string
+  action: string
+  icon?: 'play' | 'refresh' | 'details' | 'cancel'
+  disabled?: boolean
 }
 
 export type EntityListBadge = {
@@ -62,7 +77,7 @@ export type EntityListColumn = {
   width?: string
   align?: 'left' | 'right'
   sortable?: boolean
-  render?: 'badges'
+  render?: 'badges' | 'actions' | 'status'
 }
 
 export type EntityListFilter = {
@@ -183,6 +198,41 @@ const entityListStyles = `
   .entity-action-primary:hover {
     border-color: var(--lv-button-accent-border-hover);
     background: var(--lv-button-accent-bg-hover);
+  }
+
+  .entity-list-row-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--base-size-4);
+  }
+
+  .entity-list-row-action {
+    display: inline-flex;
+    width: var(--control-medium-size);
+    height: var(--control-medium-size);
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: var(--lv-radius-default);
+    background: transparent;
+    color: var(--lv-fg-muted);
+    cursor: pointer;
+  }
+
+  .entity-list-row-action:hover:not(:disabled),
+  .entity-list-row-action:focus-visible {
+    background: var(--lv-bg-control-hover, var(--lv-bg-panel-muted));
+    color: var(--lv-fg-default);
+  }
+
+  .entity-list-row-action:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
+  }
+
+  .entity-list-row-action:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
   }
 
   .entity-list-items {
@@ -345,6 +395,10 @@ const entityListStyles = `
     font: var(--lv-type-caption);
   }
 
+  .entity-list-table-row.is-actionable {
+    cursor: pointer;
+  }
+
   .entity-list-table-row:hover,
   .entity-list-table-row:focus-within {
     background: var(--lv-bg-control-hover);
@@ -466,6 +520,10 @@ const entityListStyles = `
     font-weight: var(--base-text-weight-semibold);
   }
 
+  .entity-list.is-title-normal .entity-list-title {
+    font-weight: var(--base-text-weight-normal);
+  }
+
   .entity-list-title-row {
     display: flex;
     min-width: 0;
@@ -514,6 +572,67 @@ const entityListStyles = `
     font: var(--lv-type-body);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .entity-list-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--base-size-6);
+    color: var(--lv-fg-default);
+    font-weight: var(--base-text-weight-medium);
+    white-space: nowrap;
+  }
+
+  .entity-list-status-icon {
+    display: inline-flex;
+    width: var(--base-size-16);
+    height: var(--base-size-16);
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    color: var(--lv-fg-muted);
+  }
+
+  .entity-list-status-icon svg {
+    display: block;
+    width: var(--base-size-16);
+    height: var(--base-size-16);
+  }
+
+  .entity-list-status.is-success .entity-list-status-icon { color: var(--lv-fg-success); }
+  .entity-list-status.is-danger .entity-list-status-icon { color: var(--lv-fg-danger); }
+  .entity-list-status.is-attention .entity-list-status-icon { color: var(--lv-fg-warning); }
+
+  .entity-list.is-compact {
+    gap: var(--base-size-8);
+  }
+
+  .entity-list.is-compact .entity-list-table-row {
+    height: 2.5rem;
+  }
+
+  .entity-list.is-compact .entity-list-table thead th {
+    height: 2rem;
+  }
+
+  .entity-list.is-compact .entity-list-icon {
+    width: var(--base-size-24);
+    height: var(--base-size-24);
+    border: 0;
+    background: transparent;
+  }
+
+  .entity-list.is-compact .entity-list-copy {
+    gap: 0;
+  }
+
+  .entity-list.is-compact .entity-list-description {
+    display: none;
+  }
+
+  .entity-list.is-compact .entity-list-row-action {
+    width: var(--base-size-28);
+    height: var(--base-size-28);
   }
 
   .entity-list-empty {
@@ -568,7 +687,12 @@ class EntityList extends LitElement {
   @property({ attribute: 'active-filter' }) activeFilter = ''
   @property({ attribute: 'group-by' }) groupBy = ''
   @property({ attribute: 'group-icon' }) groupIcon = ''
+  @property({ type: Boolean }) compact = false
+  @property({ attribute: 'title-emphasis' }) titleEmphasis: 'strong' | 'normal' = 'strong'
+  @property({ attribute: 'row-action' }) rowAction = ''
+  @property({ attribute: 'min-width' }) minWidth = ''
   @property({ type: Boolean, attribute: 'client-filter' }) clientFilter = false
+  @property({ type: Boolean, attribute: 'show-toolbar' }) showToolbar = true
   @state() private query = ''
   @state() private filter = ''
   @state() private sortColumnId = ''
@@ -597,8 +721,8 @@ class EntityList extends LitElement {
     const columns = this.resolvedColumns()
     return html`
       <style>${entityListStyles}</style>
-      <section class="entity-list" aria-label=${this.listLabel}>
-        <div class="entity-toolbar">
+      <section class=${`entity-list ${this.compact ? 'is-compact' : ''} ${this.titleEmphasis === 'normal' ? 'is-title-normal' : ''}`} aria-label=${this.listLabel}>
+        ${this.showToolbar ? html`<div class="entity-toolbar">
           <form class="entity-search" @submit=${this.preventSubmit}>
             ${lucideIcon(Search, { size: 16, strokeWidth: 1.8 })}
             <input
@@ -636,10 +760,10 @@ class EntityList extends LitElement {
               `)}
             </div>
           ` : ''}
-        </div>
+        </div>` : ''}
         ${items.length ? html`
           <div class="entity-list-items entity-list-table-wrap">
-            <table class="entity-list-table" aria-label=${this.listLabel}>
+            <table class="entity-list-table" aria-label=${this.listLabel} style=${this.minWidth ? `min-width: ${this.minWidth}` : ''}>
               <colgroup>
                 ${columns.map((column) => html`<col style=${column.width ? `width: ${column.width}` : ''}>`)}
               </colgroup>
@@ -647,7 +771,7 @@ class EntityList extends LitElement {
                 <tr>
                   ${columns.map((column) => {
                     const direction = this.sortColumnId === column.id ? this.sortDirection : false
-                    const sortable = column.sortable !== false
+                    const sortable = column.sortable !== false && column.render !== 'actions'
                     return html`
                       <th
                         class=${column.align === 'right' ? 'is-right' : ''}
@@ -780,11 +904,23 @@ class EntityList extends LitElement {
 
   private renderItem(item: EntityListItem, columns: EntityListColumn[]) {
     const badgesColumn = columns.some((column) => column.render === 'badges')
+    return html`
+      <tr class=${`entity-list-table-row ${this.rowAction ? 'is-actionable' : ''}`} @click=${() => this.emitItemAction(item)}>
+        ${columns.map((column) => column.id === 'name'
+          ? this.renderIdentityCell(item, badgesColumn)
+          : this.renderDataCell(item, column))}
+      </tr>
+    `
+  }
+
+  private renderIdentityCell(item: EntityListItem, badgesColumn: boolean) {
     const iconTreatment = item.iconTreatment ?? (item.icon ? 'plain' : 'none')
     const iconColorClass = iconTreatment === 'framed'
       ? ` color-${item.iconColor || 'purple'}`
       : item.iconColor ? ` color-${item.iconColor}` : ''
-    const icon = item.icon === 'user'
+    const icon = item.icon === 'none'
+      ? nothing
+      : item.icon === 'user'
         ? html`<lv-user-avatar .name=${item.title} .imageUrl=${item.avatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>`
         : iconTreatment === 'none'
           ? html`<span class="entity-list-icon-spacer" aria-hidden="true"></span>`
@@ -800,35 +936,46 @@ class EntityList extends LitElement {
         ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
       </span>
     `
-    const identity = item.iconButtonLabel
-      ? html`<span class="entity-list-identity-row">${icon}${item.href ? html`<a class="entity-list-identity" href=${item.href}>${copy}</a>` : html`<span class="entity-list-identity">${copy}</span>`}</span>`
-      : html`${icon}${copy}`
     return html`
-      <tr class="entity-list-table-row">
-        <th scope="row">
-          ${item.iconButtonLabel
-            ? identity
-            : item.href
-            ? html`<a class="entity-list-identity" href=${item.href}>${identity}</a>`
-            : html`<span class="entity-list-identity">${identity}</span>`}
-        </th>
-        ${columns.slice(1).map((column) => {
-          const value = item.columns?.[column.id]
-          const badges = item.badges ?? []
-          const title = column.render === 'badges'
-            ? badges.map((badge) => badge.label).join(', ')
-            : item.columnTitles?.[column.id] ?? String(value ?? '')
-          return html`
-            <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''}`} title=${title}>
-              ${column.render === 'badges'
-                ? (badges.length ? badges.map((badge) => this.renderBadge(badge)) : html`
-                    <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
-                  `)
-                : (value == null || value === '' ? '—' : value)}
-            </td>
-          `
-        })}
-      </tr>
+      <th scope="row">
+        ${item.iconButtonLabel
+          ? html`<span class="entity-list-identity-row">${icon}${item.href
+            ? html`<a class="entity-list-identity" href=${item.href} @click=${this.stopRowAction}>${copy}</a>`
+            : html`<span class="entity-list-identity">${copy}</span>`}</span>`
+          : item.href
+            ? html`<a class="entity-list-identity" href=${item.href} @click=${this.stopRowAction}>${icon}${copy}</a>`
+            : html`<span class="entity-list-identity">${icon}${copy}</span>`}
+      </th>
+    `
+  }
+
+  private renderDataCell(item: EntityListItem, column: EntityListColumn) {
+    const value = item.columns?.[column.id]
+    const badges = item.badges ?? []
+    const title = column.render === 'badges'
+      ? badges.map((badge) => badge.label).join(', ')
+      : item.columnTitles?.[column.id] ?? String(value ?? '')
+    return html`
+      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''}`} title=${title}>
+        ${column.render === 'badges'
+          ? (badges.length ? badges.map((badge) => this.renderBadge(badge)) : html`
+              <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
+            `)
+          : column.render === 'actions'
+            ? html`<span class="entity-list-row-actions">${(item.actions ?? []).map((action) => html`
+                <button
+                  type="button"
+                  class="entity-list-row-action"
+                  title=${action.label}
+                  aria-label=${action.label}
+                  ?disabled=${action.disabled}
+                  @click=${(event: Event) => this.emitRowAction(event, action, item)}
+                >${lucideIcon(entityActionIcon(action.icon), { size: 15, strokeWidth: 2 })}</button>
+	              `)}</span>`
+            : column.render === 'status'
+              ? this.renderStatus(value)
+              : (value == null || value === '' ? '—' : value)}
+      </td>
     `
   }
 
@@ -848,6 +995,17 @@ class EntityList extends LitElement {
       composed: true,
       detail: { item, anchor: event.currentTarget },
     }))
+  }
+
+  private renderStatus(value: string | number | undefined) {
+    const label = value == null || value === '' ? '—' : String(value)
+    const status = entityStatusPresentation(label)
+    return html`
+      <span class=${`entity-list-status is-${status.tone}`}>
+        <span class="entity-list-status-icon" aria-hidden="true">${lucideIcon(status.icon, { size: 16, strokeWidth: 2 })}</span>
+        <span>${label}</span>
+      </span>
+    `
   }
 
   private exportCSV = () => {
@@ -871,6 +1029,26 @@ class EntityList extends LitElement {
       detail: { id: action.id },
     }))
   }
+
+  private emitRowAction(event: Event, action: EntityListRowAction, item: EntityListItem): void {
+    event.stopPropagation()
+    this.dispatchEvent(new CustomEvent('lv-entity-list-row-action', {
+      bubbles: true,
+      composed: true,
+      detail: { action: action.action, item },
+    }))
+  }
+
+  private emitItemAction(item: EntityListItem): void {
+    if (!this.rowAction) return
+    this.dispatchEvent(new CustomEvent('lv-entity-list-row-action', {
+      bubbles: true,
+      composed: true,
+      detail: { action: this.rowAction, item },
+    }))
+  }
+
+  private stopRowAction = (event: Event): void => event.stopPropagation()
 
   private toggleSort(columnId: string): void {
     if (this.sortColumnId === columnId) {
@@ -934,6 +1112,35 @@ function entityIcon(type = ''): IconNode {
     case 'workflow': return Workflow
     case 'component': return Component
     default: return Boxes
+  }
+}
+
+function entityActionIcon(type: EntityListRowAction['icon']): IconNode {
+  switch (type) {
+    case 'refresh': return RefreshCw
+    case 'details': return FileText
+    case 'cancel': return XCircle
+    default: return Play
+  }
+}
+
+function entityStatusPresentation(label: string): { icon: IconNode, tone: 'success' | 'danger' | 'attention' | 'muted' } {
+  switch (label.trim().toLowerCase()) {
+    case 'succeeded':
+    case 'success':
+    case 'healthy':
+      return { icon: CheckCircle2, tone: 'success' }
+    case 'failed':
+    case 'cancelled':
+    case 'error':
+      return { icon: XCircle, tone: 'danger' }
+    case 'queued':
+    case 'running':
+    case 'prepared':
+    case 'pending':
+      return { icon: Clock3, tone: 'attention' }
+    default:
+      return { icon: Circle, tone: 'muted' }
   }
 }
 

@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "bbd7254d0cf0ff84e2caca0991a0ee63af5560d78852469be79ff14bffae7e41"
+	const expectedRouteContractDigest = "997cc9868be63955edafe98376584ecefc63b71a0722d3495d5330548f2a4521"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -183,7 +183,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/workspaces/{workspace}/catalog/appearance":
 		authenticated.owner = "workspace"
 		authenticated.privilege = "MANAGE_WORKSPACE"
-	case path == "/" || path == "/catalog/search" || path == "/data" || path == "/data/command" ||
+	case path == "/" || path == "/catalog/search" || path == "/pipelines" || path == "/pipelines/command" || path == "/data" || path == "/data/command" ||
 		strings.HasPrefix(path, "/workspaces") || strings.HasPrefix(path, "/connections"):
 		authenticated.owner = "workspace"
 		authenticated.privilege = "VIEW_ITEM"
@@ -299,6 +299,7 @@ GET /login
 GET /profile/avatars/{principal}/{digest}
 GET /product/logo/{digest}
 GET /metrics
+GET /pipelines
 GET /public/dashboards/{publicId}
 GET /public/dashboards/{publicId}/pages/{page}
 GET /public/dashboards/{publicId}/updates
@@ -349,6 +350,7 @@ POST /oauth/register
 POST /oauth/device/code
 POST /oauth/revoke
 POST /oauth/token
+POST /pipelines/command
 PUT /profile/avatar
 PUT /admin/product-logo
 POST /public/dashboards/{publicId}/commands/clear-selection

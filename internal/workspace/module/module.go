@@ -66,16 +66,38 @@ type AssetRefreshInput struct {
 
 type AssetRefreshRunner interface {
 	RefreshAsset(context.Context, AssetRefreshInput) error
+	RetryAsset(context.Context, AssetRefreshInput, string) error
+	CancelRefreshRun(context.Context, PipelineRunCancelInput) error
 }
 
-type AssetRefreshFunc func(context.Context, AssetRefreshInput) error
+type PipelineRunCancelInput struct {
+	Request     *http.Request
+	WorkspaceID string
+	PipelineID  string
+	RunID       string
+}
 
-func (f AssetRefreshFunc) RefreshAsset(ctx context.Context, input AssetRefreshInput) error {
-	return f(ctx, input)
+type AssetRefreshFuncs struct {
+	Run    func(context.Context, AssetRefreshInput) error
+	Retry  func(context.Context, AssetRefreshInput, string) error
+	Cancel func(context.Context, PipelineRunCancelInput) error
+}
+
+func (f AssetRefreshFuncs) RefreshAsset(ctx context.Context, input AssetRefreshInput) error {
+	return f.Run(ctx, input)
+}
+
+func (f AssetRefreshFuncs) RetryAsset(ctx context.Context, input AssetRefreshInput, retryOf string) error {
+	return f.Retry(ctx, input, retryOf)
+}
+
+func (f AssetRefreshFuncs) CancelRefreshRun(ctx context.Context, input PipelineRunCancelInput) error {
+	return f.Cancel(ctx, input)
 }
 
 type AccessCommandBindings = ui.AccessCommandBindings
 type ConnectionCommandBindings = ui.ConnectionCommandBindings
+type PipelineMonitorCapacity = ui.PipelineMonitorCapacity
 type DataExplorerAgentBootstrap = ui.DataExplorerAgentBootstrap
 type DataExplorerAgentCommandBindings = ui.DataExplorerAgentCommandBindings
 type PopularityLevel = uisignals.PopularityLevel
@@ -109,6 +131,7 @@ type Config struct {
 	AuthConfigured           bool
 	RuntimeEnvironment       string
 	RefreshState             RefreshStateProvider
+	RefreshCapacity          func(context.Context) (ui.PipelineMonitorCapacity, error)
 	RefreshRunner            AssetRefreshRunner
 	Broker                   *pagestream.Broker
 	CSRFToken                func(*http.Request) string
@@ -220,7 +243,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	m.handler = workspacehttp.Handler{
 		WorkspaceID: config.WorkspaceID, Environment: config.Environment, ReadModel: httpReadModel,
-		RefreshState:  moduleRefreshState{module: m, upstream: config.RefreshState},
+		RefreshState: moduleRefreshState{module: m, upstream: config.RefreshState}, RefreshCapacity: config.RefreshCapacity,
 		RefreshRunner: refreshRunner, Broker: config.Broker,
 		CSRFToken: config.CSRFToken, CurrentRoleLabel: config.CurrentRoleLabel, Layout: config.Layout,
 		RoleBindingCommands:      config.RoleBindingCommands,
@@ -233,6 +256,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		ConnectionWorkspaceID:    config.ConnectionWorkspaceID,
 		AgentBootstrap:           config.AgentBootstrap,
 		AgentCommands:            config.AgentCommands,
+		AuthorizeObject:          config.AuthorizeObject,
 	}
 	m.search = buildSearch(config.Database, config.AuthorizeObject)
 	return m, nil

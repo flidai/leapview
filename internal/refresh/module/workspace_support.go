@@ -19,6 +19,7 @@ import (
 )
 
 type RunReader interface {
+	GetRun(context.Context, string, string) (refresh.RunRecord, error)
 	ListTargetRuns(context.Context, string, string, string, refresh.RunPage) ([]refresh.RunRecord, error)
 	LatestSuccessfulTargetRun(context.Context, string, string, string, string) (refresh.RunRecord, bool, error)
 }
@@ -38,6 +39,8 @@ type WorkspaceSupport struct {
 	Runs           func() (RunReader, error)
 	QueuePipeline  func(context.Context, refresh.QueuePipelineInput) (refresh.QueueAssetResult, error)
 	RunCreated     func(context.Context, refresh.RunRecord) error
+	CancelRun      func(context.Context, string, string) (refresh.RunRecord, error)
+	RunCancelled   func(context.Context, refresh.RunRecord) error
 	Environment    func(*nethttp.Request) servingstate.Environment
 	PrincipalID    func(*nethttp.Request) string
 	DispatchQueued func()
@@ -52,7 +55,11 @@ type WorkspaceSupport struct {
 }
 
 func (s WorkspaceSupport) RefreshAsset(_ context.Context, r *nethttp.Request, workspaceID string, asset workspace.AssetView, assets []workspace.AssetView, edges []workspace.AssetEdgeView) error {
-	return s.queueAssetRefreshWithPatches(r, workspaceID, asset, assets, edges)
+	return s.queueAssetRefreshWithPatches(r, workspaceID, asset, assets, edges, "")
+}
+
+func (s WorkspaceSupport) RetryAsset(_ context.Context, r *nethttp.Request, workspaceID string, asset workspace.AssetView, assets []workspace.AssetView, edges []workspace.AssetEdgeView, retryOf string) error {
+	return s.queueAssetRefreshWithPatches(r, workspaceID, asset, assets, edges, retryOf)
 }
 
 func (s WorkspaceSupport) AssetRefreshState(ctx context.Context, workspaceID, environment string, asset workspace.AssetView) (refreshpresentation.AssetRefreshState, error) {
@@ -71,8 +78,9 @@ func (s WorkspaceSupport) AssetRefreshState(ctx context.Context, workspaceID, en
 		return refreshpresentation.AssetRefreshState{}, err
 	}
 	state := refreshpresentation.AssetRefreshState{
-		RunCommand: refreshgen.GenUIActionCreateRefreshRun(),
-		Runs:       uiRefreshRuns(runs),
+		RunCommand:    refreshgen.GenUIActionCreateRefreshRun(),
+		CancelCommand: refreshgen.GenUIActionCancelRefreshRun(),
+		Runs:          uiRefreshRuns(runs),
 	}
 	pipelineID := strings.TrimPrefix(asset.Key, workspaceID+".")
 	if s.DataVersions != nil {
@@ -115,7 +123,7 @@ func refreshPipelineModelID(asset workspace.AssetView) string {
 	return ""
 }
 
-func (s WorkspaceSupport) queueAssetRefreshWithPatches(r *nethttp.Request, workspaceID string, asset workspace.AssetView, assets []workspace.AssetView, edges []workspace.AssetEdgeView) error {
+func (s WorkspaceSupport) queueAssetRefreshWithPatches(r *nethttp.Request, workspaceID string, asset workspace.AssetView, assets []workspace.AssetView, edges []workspace.AssetEdgeView, retryOf string) error {
 	operationID := refreshgen.GenCommandOperationCreateRefreshRun()
 	if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), operationID.APIGenOperationID()); err != nil {
 		return err
@@ -143,12 +151,32 @@ func (s WorkspaceSupport) queueAssetRefreshWithPatches(r *nethttp.Request, works
 		environment = s.Environment(r)
 	}
 	pipelineID := strings.TrimPrefix(asset.Key, workspaceID+".")
+	trigger := refresh.TriggerManual
+	retryOf = strings.TrimSpace(retryOf)
+	if retryOf != "" {
+		repo, repoErr := s.runRepository()
+		if repoErr != nil {
+			return repoErr
+		}
+		prior, priorErr := repo.GetRun(ctx, workspaceID, retryOf)
+		if priorErr != nil {
+			return errors.New("retry run was not found")
+		}
+		if prior.Status == refresh.RunStatusQueued || prior.Status == refresh.RunStatusRunning {
+			return errors.New("retry run is not terminal")
+		}
+		if prior.Environment != string(environment) || prior.TargetType != refresh.TargetRefreshPipeline || prior.TargetID != workspaceID+"."+pipelineID {
+			return errors.New("retry run does not belong to the pipeline")
+		}
+		trigger = refresh.TriggerRetry
+	}
 	result, err := s.QueuePipeline(ctx, refresh.QueuePipelineInput{
 		WorkspaceID: workspaceID,
 		Environment: environment,
 		PrincipalID: s.principalID(r),
 		PipelineID:  pipelineID,
-		TriggerType: refresh.TriggerManual,
+		TriggerType: trigger,
+		RetryOf:     retryOf,
 	})
 	if err != nil {
 		return err
@@ -160,6 +188,40 @@ func (s WorkspaceSupport) queueAssetRefreshWithPatches(r *nethttp.Request, works
 		s.DispatchQueued()
 	}
 	return nil
+}
+
+func (s WorkspaceSupport) CancelRefreshRun(_ context.Context, r *nethttp.Request, workspaceID, pipelineID, runID string) error {
+	operationID := refreshgen.GenCommandOperationCancelRefreshRun()
+	if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), operationID.APIGenOperationID()); err != nil {
+		return err
+	}
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	ctx, _, err := refreshgen.BeginGenCancelRefreshRunCommand(r.Context(), refreshgen.GenCancelRefreshRunCommandInvocation{
+		Surface:        apigencommand.SurfaceUI,
+		Workspace:      strings.TrimSpace(workspaceID),
+		IdempotencyKey: "ui:" + operationID.APIGenOperationID() + ":" + requestID,
+		RequestID:      requestID,
+		CorrelationID:  strings.TrimSpace(r.Header.Get("X-Correlation-ID")),
+	})
+	if err != nil {
+		return err
+	}
+	repo, err := s.runRepository()
+	if err != nil {
+		return err
+	}
+	prior, err := repo.GetRun(ctx, workspaceID, runID)
+	if err != nil || prior.TargetType != refresh.TargetRefreshPipeline || prior.TargetID != workspaceID+"."+pipelineID {
+		return errors.New("refresh run does not belong to the pipeline")
+	}
+	if s.CancelRun == nil || s.RunCancelled == nil {
+		return errors.New("refresh cancellation service is required")
+	}
+	cancelled, err := s.CancelRun(ctx, workspaceID, runID)
+	if err != nil {
+		return err
+	}
+	return s.RunCancelled(ctx, cancelled)
 }
 
 func (s WorkspaceSupport) PublishWorkspaceAssetRefreshPatch(r *nethttp.Request, workspaceID string, asset workspace.AssetView, assets []workspace.AssetView, edges []workspace.AssetEdgeView) {
@@ -274,9 +336,18 @@ func uiRefreshRuns(runs []refresh.RunRecord) []refreshpresentation.AssetRefreshR
 func uiRefreshRun(run refresh.RunRecord) refreshpresentation.AssetRefreshRun {
 	return refreshpresentation.AssetRefreshRun{
 		ID:                   run.ID,
+		Environment:          run.Environment,
+		ModelID:              run.ModelID,
+		ServingStateID:       run.ServingStateID,
+		PrincipalID:          run.PrincipalID,
 		PrincipalDisplayName: run.PrincipalDisplayName,
 		TriggerType:          run.TriggerType,
+		ParentRunID:          run.ParentRunID,
+		RetryOf:              run.RetryOf,
+		TargetGeneration:     run.TargetGeneration,
 		Status:               run.Status,
+		CreatedAt:            run.CreatedAt,
+		UpdatedAt:            run.UpdatedAt,
 		StartedAt:            run.StartedAt,
 		FinishedAt:           run.FinishedAt,
 		Error:                run.Error,

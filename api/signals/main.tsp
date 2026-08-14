@@ -15,6 +15,7 @@ namespace LeapViewUISignals;
 enum RouteKind {
   dashboard: "dashboard",
   catalog: "catalog",
+  pipelines: "pipelines",
   chat: "chat",
   workspace: "workspace",
   workspaceAsset: "workspace_asset",
@@ -361,6 +362,90 @@ model CatalogPageSignal {
 	`listQuery`?: string;
 	`title`: string;
 	`workspaceFilters`: CatalogWorkspaceFilterSignal[];
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
+model PipelineMetricSignal {
+  `detail`?: string;
+  `label`: string;
+  `tone`?: string;
+  `value`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
+model PipelineListItemSignal {
+  `assetId`: string;
+  `canRun`: boolean;
+  `description`?: string;
+  `duration`?: string;
+  `href`: string;
+  `id`: string;
+  `lastSuccessful`?: string;
+  `nextRun`?: string;
+  `pipelineId`: string;
+  `running`: boolean;
+  `schedule`: string;
+  `semanticModel`: string;
+  `status`: string;
+  `title`: string;
+  `workspace`: string;
+  `workspaceId`: string;
+}
+
+model PipelineWorkspaceFilterSignal {
+  `id`: string;
+  `title`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "command"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "pipelines" })
+model PipelineCommandSignal {
+  `action`: string;
+  `assetId`: string;
+  `pipelineId`: string;
+  `runId`: string;
+  `workspaceId`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
+model PipelineCommandStatusSignal {
+  `error`: string;
+  `loading`: boolean;
+  `message`: string;
+}
+
+@apigen.contract(#{ kind: "ui-envelope", tags: #["workspace", "pipelines", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "pipelines" })
+model PipelinePageEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
+  `chrome`: ChromeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
+  `page`: PipelinePageSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "pipelineCommand" })
+  `pipelineCommand`: PipelineCommandSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "pipelineCommandStatus" })
+  `pipelineCommandStatus`: PipelineCommandStatusSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
+  `runtime`: RouteRuntimeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
+  `status`: DashboardStatus;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
+model PipelinePageSignal {
+  `activeTab`: string;
+  `description`: string;
+  `environment`: string;
+  `kind`: RouteKind;
+  `metrics`: PipelineMetricSignal[];
+  `pipelines`: PipelineListItemSignal[];
+  `runsTable`: RecordTableSignal;
+  `title`: string;
+  `workspaceFilters`: PipelineWorkspaceFilterSignal[];
 }
 
 model ChatArtifactSignal {

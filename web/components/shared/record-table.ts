@@ -18,6 +18,7 @@ import {
   KeyRound,
   Layers3,
   ListTree,
+  RefreshCw,
   Server,
   Sigma,
   Table2,
@@ -507,7 +508,7 @@ class RecordTable extends LitElement {
     const href = cellHref(column, value, row)
     const label = cellLabel(value)
     if (label === '-') return html`<span class="record-muted">-</span>`
-    return href && href !== '-' ? html`<a class="record-link" href=${href}>${label}</a>` : html`<span>${label}</span>`
+    return href && href !== '-' ? html`<a class="record-link" href=${href} @click=${(event: Event) => event.stopPropagation()}>${label}</a>` : html`<span>${label}</span>`
   }
 
   private renderEntity(column: RecordColumn, value: unknown, row: RecordRow) {
@@ -787,6 +788,11 @@ function iconForName(name: string): any {
       return ExternalLink
     case 'details':
       return FileText
+    case 'refresh':
+    case 'retry':
+      return RefreshCw
+    case 'cancel':
+      return XCircle
     default:
       return Layers3
   }

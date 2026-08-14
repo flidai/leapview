@@ -22,6 +22,7 @@ import {
 	Users,
 	UsersRound,
 	User,
+  Workflow,
   X,
   type IconNode,
 } from 'lucide'
@@ -114,6 +115,7 @@ type IconName =
   | 'menu'
   | 'close'
   | 'plus'
+  | 'workflow'
 
 const defaultConfig: SidebarConfig = {
   active: 'dashboards',
@@ -1392,6 +1394,7 @@ function icon(name: string) {
     menu: Menu,
     close: X,
     plus: Plus,
+    workflow: Workflow,
   }
 
   return lucideIcon(icons[name as IconName] ?? Layers)

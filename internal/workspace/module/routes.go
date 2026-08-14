@@ -28,6 +28,8 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	if protectAnyWorkspace == nil {
 		protectAnyWorkspace = guard.Protect
 	}
+	r.Get("/pipelines", protectAnyWorkspace(access.PrivilegeViewItem, h.Pipelines))
+	r.Post("/pipelines/command", protectAnyWorkspace(access.PrivilegeViewItem, h.PipelineCommand))
 	r.Get("/data", protectAnyWorkspace(access.PrivilegeViewItem, h.DataExplorer))
 	r.Post("/data/command", protectAnyWorkspace(access.PrivilegeViewItem, h.DataExplorerCommand))
 	r.Post("/catalog/search", protectAnyWorkspace(access.PrivilegeViewItem, m.CatalogSearch))

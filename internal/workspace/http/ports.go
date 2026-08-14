@@ -146,6 +146,8 @@ type RefreshStateProvider interface {
 
 type AssetRefreshRunner interface {
 	RefreshAsset(ctx context.Context, input AssetRefreshInput) error
+	RetryAsset(ctx context.Context, input AssetRefreshInput, retryOf string) error
+	CancelRefreshRun(ctx context.Context, input PipelineRunCancelInput) error
 }
 
 type AssetRefreshInput struct {
@@ -154,4 +156,11 @@ type AssetRefreshInput struct {
 	Asset       workspace.AssetView
 	Assets      []workspace.AssetView
 	Edges       []workspace.AssetEdgeView
+}
+
+type PipelineRunCancelInput struct {
+	Request     *nethttp.Request
+	WorkspaceID string
+	PipelineID  string
+	RunID       string
 }

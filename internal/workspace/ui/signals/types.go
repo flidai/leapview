@@ -4,6 +4,7 @@ import workspaceview "github.com/flidai/leapview/internal/workspace"
 
 const (
 	RouteCatalog         RouteKind = "catalog"
+	RoutePipelines       RouteKind = "pipelines"
 	RouteWorkspace       RouteKind = "workspace"
 	RouteWorkspaceAsset  RouteKind = "workspace_asset"
 	RouteConnections     RouteKind = "connections"

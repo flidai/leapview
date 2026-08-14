@@ -12,6 +12,7 @@ import (
 const (
 	routeLogin           = "login"
 	routeCatalog         = "catalog"
+	routePipelines       = "pipelines"
 	routeDashboard       = "dashboard"
 	routeWorkspace       = "workspace"
 	routeWorkspaceAsset  = "workspace_asset"
@@ -29,7 +30,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 			switch route {
 			case routeLogin:
 				return next, true
-			case routeCatalog:
+			case routeCatalog, routePipelines:
 				return routes.accessModule.ProtectAnyWorkspaceNamed("VIEW_ITEM", next), true
 			case routeWorkspace, routeConnections:
 				return routes.accessModule.ProtectAnyWorkspaceNamed("VIEW_ITEM", next), true
@@ -57,6 +58,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 			}
 		},
 		Handlers: map[string]http.Handler{
+			routePipelines: http.HandlerFunc(routes.workspaceModule.HTTP().PipelinesBootstrapUpdates),
 			routeDashboard: http.HandlerFunc(routes.dashboardModule.HTTP().Updates),
 			routeChat:      http.HandlerFunc(routes.agentModule.HTTP().ChatUpdates),
 			routeData:      http.HandlerFunc(routes.workspaceModule.HTTP().DataExplorerUpdates),
