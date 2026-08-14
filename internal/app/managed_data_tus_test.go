@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 )
 
@@ -32,8 +34,17 @@ func TestManagedDataTusRouteRejectsClientCreatedUploads(t *testing.T) {
 }
 
 func TestManagedDataTusRouteForwardsResumableOperations(t *testing.T) {
+	store := testStore(t)
+	principal := testPrincipal(t, context.Background(), store, "publisher@example.com", "Publisher", access.RolePlatformAdmin)
+	token, _ := testScopedAPIToken(t, context.Background(), store, access.APITokenInput{
+		PrincipalID: principal.ID,
+		Name:        "managed-data-publisher",
+		Privileges:  []access.Privilege{access.PrivilegeIngestData},
+	})
+	auth := testAuth(store, "", AuthConfig{APITokenOnly: true})
 	var method, path string
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+		Auth: auth,
 
 		ManagedDataTus: manageddatamodule.TusProtocolHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			method, path = r.Method, r.URL.Path
@@ -42,7 +53,7 @@ func TestManagedDataTusRouteForwardsResumableOperations(t *testing.T) {
 	}))
 
 	request := httptest.NewRequest(http.MethodPatch, "/upload-protocols/tus/tus_abc", nil)
-	request.Header.Set("Authorization", "Bearer dev")
+	request.Header.Set("Authorization", "Bearer "+token)
 	recorder := httptest.NewRecorder()
 	server.Routes().ServeHTTP(recorder, request)
 

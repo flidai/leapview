@@ -59,7 +59,10 @@ func (m *Module) ProtectViewItem(handler http.HandlerFunc) http.HandlerFunc {
 }
 
 func (m *Module) ProtectIngestData(next http.Handler) http.Handler {
-	return m.ProtectHandler(access.PrivilegeIngestData, next)
+	// TUS upload URLs identify an already-authorized upload session rather than
+	// a workspace. Authorize the credential across its explicit scopes instead
+	// of relying on a process-wide default workspace.
+	return m.protectAnyWorkspace(access.PrivilegeIngestData, next)
 }
 
 func (m *Module) ProtectHandlerWithObjects(privilege access.Privilege, resolver func(*http.Request, string) []access.ObjectRef, next http.Handler) http.Handler {
