@@ -10,10 +10,12 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -196,6 +198,29 @@ func (a *Application) Preview(ctx context.Context, request preview.PreviewReques
 	}
 	request.WorkspaceID = workspaceID
 	return service.Preview(ctx, request)
+}
+
+// Builder returns the governed dashboard-builder bootstrap for one exact
+// workspace draft. The runtime provider is scoped to the normalized request
+// workspace and the builder service owns the single lease for this call.
+func (a *Application) Builder(ctx context.Context, request builderview.Request) (uisignals.DashboardBuilderSignal, error) {
+	if err := a.validate(); err != nil {
+		return uisignals.DashboardBuilderSignal{}, err
+	}
+	workspaceID, err := workspaceID(request.WorkspaceID)
+	if err != nil {
+		return uisignals.DashboardBuilderSignal{}, err
+	}
+	service, err := builderview.NewService(builderview.Options{
+		Provider:   workspaceProvider{workspaceID: workspaceID, acquire: a.acquireRuntime},
+		Repository: a.repository,
+		Authorizer: a.authorizer,
+	})
+	if err != nil {
+		return uisignals.DashboardBuilderSignal{}, err
+	}
+	request.WorkspaceID = workspaceID
+	return service.Build(ctx, request)
 }
 
 func (a *Application) validate() error {
