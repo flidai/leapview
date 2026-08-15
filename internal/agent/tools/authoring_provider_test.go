@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
@@ -102,6 +103,30 @@ func TestDashboardAuthoringRoutesLifecycleAndBuilderCommandsToTheirApplicationEn
 	}
 }
 
+func TestDashboardAuthoringCreateAndForkBindSeparateIdempotencyIdentity(t *testing.T) {
+	app := &fakeDashboardAuthoring{}
+	definitions := (DashboardAuthoringProvider{Application: app}).Definitions(Scope{WorkspaceID: "sales", PrincipalID: "principal", ConversationID: "conversation"})
+	createDefinition := definitionByName(definitions, CreateDashboardDraftToolName)
+	if _, err := createDefinition.Handler.Run(context.Background(), agentcore.ToolCall{ID: "create-call", Name: CreateDashboardDraftToolName, Arguments: json.RawMessage(`{"workspace":"sales","title":"Orders","semanticModel":"sales"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if app.create.IdempotencyKey != "create-call" || app.create.ToolCallID != "create-call" || app.create.ConversationID != "conversation" {
+		t.Fatalf("create identity = %#v", app.create)
+	}
+	forkDefinition := definitionByName(definitions, ForkDashboardToolName)
+	if _, err := forkDefinition.Handler.Run(context.Background(), agentcore.ToolCall{ID: "fork-call", Name: ForkDashboardToolName, Arguments: json.RawMessage(`{"sourceKind":"workspace","sourceWorkspace":"sales","sourceDashboard":"orders"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if app.fork.IdempotencyKey != "fork-call" || app.fork.ToolCallID != "fork-call" || app.fork.ConversationID != "conversation" {
+		t.Fatalf("fork identity = %#v", app.fork)
+	}
+	for _, definition := range []agentcore.ToolDefinition{createDefinition, forkDefinition} {
+		if strings.Contains(strings.ToLower(definition.Description), "not idempotent") {
+			t.Fatalf("stale non-idempotent description: %q", definition.Description)
+		}
+	}
+}
+
 func TestDashboardAuthoringStaleRevisionReturnsStructuredDiagnostics(t *testing.T) {
 	app := &fakeDashboardAuthoring{executeErr: dashboardauthoring.ErrStaleRevision}
 	definition := definitionByName((DashboardAuthoringProvider{Application: app}).Definitions(Scope{WorkspaceID: "sales", PrincipalID: "principal"}), ExecuteDashboardCommandToolName)
@@ -164,6 +189,8 @@ func definitionByName(definitions []agentcore.ToolDefinition, name string) agent
 type fakeDashboardAuthoring struct {
 	workspace    string
 	command      dashboardauthoring.Command
+	create       authoringservice.CreateRequest
+	fork         sourceadapter.ForkRequest
 	executeErr   error
 	executeCalls int
 	intentCalls  int
@@ -178,7 +205,8 @@ func (f *fakeDashboardAuthoring) Get(context.Context, catalog.GetRequest) (catal
 func (f *fakeDashboardAuthoring) Draft(context.Context, authoringapplication.DraftRequest) (authoringapplication.DraftRead, error) {
 	return authoringapplication.DraftRead{}, nil
 }
-func (f *fakeDashboardAuthoring) Create(context.Context, authoringservice.CreateRequest) (authoringservice.Result, error) {
+func (f *fakeDashboardAuthoring) Create(_ context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
+	f.create = request
 	return authoringservice.Result{}, nil
 }
 func (f *fakeDashboardAuthoring) Execute(_ context.Context, workspace string, command dashboardauthoring.Command) (authoringservice.Result, error) {
@@ -197,7 +225,8 @@ func (f *fakeDashboardAuthoring) ExecuteIntent(ctx context.Context, request auth
 	}
 	return authoringservice.Result{Revision: dashboardauthoring.RevisionToken{RevisionID: "rev-1", Number: 1, ContentHash: "hash"}}, nil
 }
-func (f *fakeDashboardAuthoring) Fork(context.Context, sourceadapter.ForkRequest) (authoringservice.Result, error) {
+func (f *fakeDashboardAuthoring) Fork(_ context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
+	f.fork = request
 	return authoringservice.Result{}, nil
 }
 func (f *fakeDashboardAuthoring) Preview(context.Context, previewservice.PreviewRequest) (previewservice.Preview, error) {

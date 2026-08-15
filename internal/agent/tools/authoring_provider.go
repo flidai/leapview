@@ -231,7 +231,7 @@ func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDef
 			command := dashboardauthoring.Command{DashboardID: input.DashboardID, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, AssignField: &dashboardauthoring.AssignFieldPayload{PageID: input.PageID, VisualID: input.VisualID, FieldID: input.FieldID, Role: input.Role}}
 			return p.executeIntent(ctx, scope, call, input.Workspace, command)
 		}),
-		p.definition(CreateDashboardDraftToolName, "Create a private dashboard draft owned by the authenticated principal. Each invocation creates a new draft; retries are not idempotent.", "write", agentcontracts.DashboardAuthoringCreateInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "create"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+		p.definition(CreateDashboardDraftToolName, "Create a private dashboard draft owned by the authenticated principal. Retries with the same tool idempotency identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringCreateInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "create"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringCreateInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
@@ -240,7 +240,7 @@ func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDef
 			if !ok {
 				return result
 			}
-			value, err := p.Application.Create(ctx, authoringservice.CreateRequest{WorkspaceID: workspace, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(strings.TrimSpace(input.DashboardID)), Title: input.Title, Slug: input.Slug, SemanticModel: input.SemanticModel, Visibility: dashboardauthoring.VisibilityPrivate, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID})
+			value, err := p.Application.Create(ctx, authoringservice.CreateRequest{WorkspaceID: workspace, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(strings.TrimSpace(input.DashboardID)), Title: input.Title, Slug: input.Slug, SemanticModel: input.SemanticModel, Visibility: dashboardauthoring.VisibilityPrivate, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
 			if err != nil {
 				return authoringToolError(err)
 			}
@@ -266,7 +266,7 @@ func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDef
 			}
 			return agentcore.ToolResult{Content: value}
 		}),
-		p.definition(ForkDashboardToolName, "Fork an authorized workspace or retained project dashboard source into a private draft. Each invocation creates a new draft; retries are not idempotent.", "write", agentcontracts.DashboardAuthoringForkInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "fork"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+		p.definition(ForkDashboardToolName, "Fork an authorized workspace or retained project dashboard source into a private draft. Retries with the same tool idempotency identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringForkInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "fork"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringForkInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
@@ -276,7 +276,7 @@ func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDef
 				return result
 			}
 			_ = workspace // target is normalized by the application/source adapter.
-			value, err := p.Application.Fork(ctx, sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, WorkspaceID: strings.TrimSpace(input.SourceWorkspace), DashboardID: input.SourceDashboard}, TargetWorkspaceID: strings.TrimSpace(input.TargetWorkspace), ActorID: scope.PrincipalID, Title: input.Title, Slug: input.Slug, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID})
+			value, err := p.Application.Fork(ctx, sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, WorkspaceID: strings.TrimSpace(input.SourceWorkspace), DashboardID: input.SourceDashboard}, TargetWorkspaceID: strings.TrimSpace(input.TargetWorkspace), ActorID: scope.PrincipalID, Title: input.Title, Slug: input.Slug, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
 			if err != nil {
 				return authoringToolError(err)
 			}

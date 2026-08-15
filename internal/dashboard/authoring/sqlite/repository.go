@@ -53,6 +53,11 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 	if !lifecycleReferencesRevision(input.Lifecycle, input.Revision.Token()) {
 		return authoring.DashboardLifecycle{}, fmt.Errorf("%w: initial revision is not selected by lifecycle", authoring.ErrInvalidAuthoring)
 	}
+	if input.Operation.Enabled() {
+		if err := validateCreateOperation(input.Operation, workspaceID, input.Lifecycle.ID, input.Revision.Token()); err != nil {
+			return authoring.DashboardLifecycle{}, err
+		}
+	}
 	documentJSON, provenanceJSON, err := encodeRevision(input.Revision)
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -64,6 +69,39 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 	}
 	defer tx.Rollback()
 	q := dashboarddb.New(r.db).WithTx(tx)
+	if input.Operation.Enabled() {
+		if replay, found, err := lookupCreateOperation(ctx, tx, input.Operation); err != nil {
+			return authoring.DashboardLifecycle{}, err
+		} else if found {
+			if replay.DashboardID == "" {
+				return authoring.DashboardLifecycle{}, fmt.Errorf("%w: create operation has no dashboard result", authoring.ErrInvalidAuthoring)
+			}
+			lifecycle, err := r.getLifecycle(ctx, q, workspaceID, replay.DashboardID)
+			if err != nil {
+				return authoring.DashboardLifecycle{}, err
+			}
+			return lifecycle, nil
+		}
+		if err := insertCreateOperation(ctx, tx, input.Operation, input.Lifecycle.ID, input.Revision.Token()); err != nil {
+			if !isConstraint(err) {
+				return authoring.DashboardLifecycle{}, err
+			}
+			// Another transaction may have claimed the same operation between
+			// lookup and insert. Read its immutable result and replay it.
+			replay, found, lookupErr := lookupCreateOperation(ctx, tx, input.Operation)
+			if lookupErr != nil {
+				return authoring.DashboardLifecycle{}, lookupErr
+			}
+			if !found {
+				return authoring.DashboardLifecycle{}, authoring.ErrCommandReuse
+			}
+			lifecycle, getErr := r.getLifecycle(ctx, q, workspaceID, replay.DashboardID)
+			if getErr != nil {
+				return authoring.DashboardLifecycle{}, getErr
+			}
+			return lifecycle, nil
+		}
+	}
 	err = q.InsertAuthoringDashboard(ctx, dashboarddb.InsertAuthoringDashboardParams{WorkspaceID: workspaceID,
 		DashboardID: string(input.Lifecycle.ID), OwnerPrincipalID: input.Lifecycle.OwnerPrincipalID,
 		Slug: input.Lifecycle.Slug, Title: input.Lifecycle.Title, SemanticModel: input.Lifecycle.SemanticModel,
@@ -205,6 +243,50 @@ func (r *Repository) LookupCommandResult(ctx context.Context, workspaceID string
 	result := authoring.CommandResult{}
 	if row.ResultRevisionID.Valid {
 		result.Revision = authoring.RevisionToken{RevisionID: authoring.RevisionID(row.ResultRevisionID.String), Number: uint64(row.ResultRevisionNumber.Int64), ContentHash: row.ResultContentHash.String}
+	}
+	return result, true, nil
+}
+
+// LookupCreateOperation returns the immutable result retained for a create or
+// fork retry. It is intentionally independent of dashboard identity so a
+// generated dashboard ID can be recovered after a process restart. The stored
+// fingerprint is returned without comparison; the service authorizes the
+// retained target before deciding whether a caller reused the key.
+func (r *Repository) LookupCreateOperation(ctx context.Context, operation authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
+	if !operation.Enabled() {
+		return authoring.CreateOperationResult{}, false, nil
+	}
+	if err := validateCreateOperationKey(operation); err != nil {
+		return authoring.CreateOperationResult{}, false, err
+	}
+	row, err := r.db.QueryContext(ctx, `SELECT request_fingerprint, dashboard_id, result_revision_id, result_revision_number, result_content_hash
+FROM dashboard_authoring_create_operations
+WHERE workspace_id = ? AND actor_id = ? AND operation_kind = ? AND idempotency_key = ?`,
+		operation.WorkspaceID, operation.ActorID, operation.Kind, operation.IdempotencyKey)
+	if err != nil {
+		return authoring.CreateOperationResult{}, false, err
+	}
+	defer row.Close()
+	if !row.Next() {
+		if err := row.Err(); err != nil {
+			return authoring.CreateOperationResult{}, false, err
+		}
+		return authoring.CreateOperationResult{}, false, nil
+	}
+	var fingerprint, dashboardID, revisionID, contentHash string
+	var revisionNumber int64
+	if err := row.Scan(&fingerprint, &dashboardID, &revisionID, &revisionNumber, &contentHash); err != nil {
+		return authoring.CreateOperationResult{}, false, err
+	}
+	if revisionNumber <= 0 {
+		return authoring.CreateOperationResult{}, false, fmt.Errorf("%w: create operation result revision is invalid", authoring.ErrInvalidAuthoring)
+	}
+	result := authoring.CreateOperationResult{DashboardID: authoring.DashboardID(dashboardID), Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(revisionID), Number: uint64(revisionNumber), ContentHash: contentHash}, Fingerprint: fingerprint}
+	if err := result.DashboardID.Validate(); err != nil {
+		return authoring.CreateOperationResult{}, false, err
+	}
+	if err := result.Revision.Validate(); err != nil {
+		return authoring.CreateOperationResult{}, false, err
 	}
 	return result, true, nil
 }
@@ -511,6 +593,62 @@ func insertCommand(ctx context.Context, q *dashboarddb.Queries, workspaceID stri
 	if isConstraint(err) {
 		return authoring.ErrCommandReuse
 	}
+	return err
+}
+
+func validateCreateOperationKey(operation authoring.CreateOperation) error {
+	return operation.Validate()
+}
+
+func validateCreateOperation(operation authoring.CreateOperation, workspaceID string, dashboardID authoring.DashboardID, token authoring.RevisionToken) error {
+	if err := validateCreateOperationKey(operation); err != nil {
+		return err
+	}
+	if operation.WorkspaceID != workspaceID {
+		return fmt.Errorf("%w: create operation workspace does not match create workspace", authoring.ErrInvalidAuthoring)
+	}
+	if err := dashboardID.Validate(); err != nil {
+		return err
+	}
+	if err := token.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func lookupCreateOperation(ctx context.Context, tx *sql.Tx, operation authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
+	var fingerprint, dashboardID, revisionID, contentHash string
+	var revisionNumber int64
+	err := tx.QueryRowContext(ctx, `SELECT request_fingerprint, dashboard_id, result_revision_id, result_revision_number, result_content_hash
+FROM dashboard_authoring_create_operations
+WHERE workspace_id = ? AND actor_id = ? AND operation_kind = ? AND idempotency_key = ?`,
+		operation.WorkspaceID, operation.ActorID, operation.Kind, operation.IdempotencyKey).
+		Scan(&fingerprint, &dashboardID, &revisionID, &revisionNumber, &contentHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return authoring.CreateOperationResult{}, false, nil
+	}
+	if err != nil {
+		return authoring.CreateOperationResult{}, false, err
+	}
+	if fingerprint != operation.Fingerprint {
+		return authoring.CreateOperationResult{}, false, authoring.ErrCommandReuse
+	}
+	result := authoring.CreateOperationResult{DashboardID: authoring.DashboardID(dashboardID), Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(revisionID), Number: uint64(revisionNumber), ContentHash: contentHash}}
+	if err := result.DashboardID.Validate(); err != nil {
+		return authoring.CreateOperationResult{}, false, err
+	}
+	if err := result.Revision.Validate(); err != nil {
+		return authoring.CreateOperationResult{}, false, err
+	}
+	return result, true, nil
+}
+
+func insertCreateOperation(ctx context.Context, tx *sql.Tx, operation authoring.CreateOperation, dashboardID authoring.DashboardID, token authoring.RevisionToken) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO dashboard_authoring_create_operations
+ (workspace_id, actor_id, operation_kind, idempotency_key, conversation_id, tool_call_id, request_fingerprint, dashboard_id, result_revision_id, result_revision_number, result_content_hash)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		operation.WorkspaceID, operation.ActorID, operation.Kind, operation.IdempotencyKey, operation.ConversationID, operation.ToolCallID, operation.Fingerprint,
+		dashboardID.String(), token.RevisionID.String(), int64(token.Number), token.ContentHash)
 	return err
 }
 

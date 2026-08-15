@@ -24,14 +24,19 @@ type fakeRepository struct {
 	revisions       map[authoring.RevisionID]authoring.Revision
 	getRevisionCall int
 	created         []authoring.CreateInput
+	operations      map[string]authoring.CreateOperationResult
+	getIDs          []authoring.DashboardID
+	getRevisionIDs  []authoring.RevisionID
 }
 
-func (r *fakeRepository) Get(context.Context, string, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) Get(_ context.Context, _ string, dashboardID authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+	r.getIDs = append(r.getIDs, dashboardID)
 	return r.lifecycle, nil
 }
 
 func (r *fakeRepository) GetRevision(_ context.Context, _ string, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
 	r.getRevisionCall++
+	r.getRevisionIDs = append(r.getRevisionIDs, id)
 	revision, ok := r.revisions[id]
 	if !ok {
 		return authoring.Revision{}, authoring.ErrNotFound
@@ -40,13 +45,36 @@ func (r *fakeRepository) GetRevision(_ context.Context, _ string, _ authoring.Da
 }
 
 func (r *fakeRepository) Create(_ context.Context, input authoring.CreateInput) (authoring.DashboardLifecycle, error) {
+	if input.Operation.Enabled() {
+		if existing, ok := r.operations[operationKey(input.Operation)]; ok {
+			if existing.Fingerprint != input.Operation.Fingerprint {
+				return authoring.DashboardLifecycle{}, authoring.ErrCommandReuse
+			}
+			return r.lifecycle, nil
+		}
+	}
 	r.created = append(r.created, input)
 	r.lifecycle = input.Lifecycle
 	if r.revisions == nil {
 		r.revisions = map[authoring.RevisionID]authoring.Revision{}
 	}
 	r.revisions[input.Revision.ID] = input.Revision
+	if input.Operation.Enabled() {
+		if r.operations == nil {
+			r.operations = map[string]authoring.CreateOperationResult{}
+		}
+		r.operations[operationKey(input.Operation)] = authoring.CreateOperationResult{DashboardID: input.Lifecycle.ID, Revision: input.Revision.Token(), Fingerprint: input.Operation.Fingerprint}
+	}
 	return input.Lifecycle, nil
+}
+
+func (r *fakeRepository) LookupCreateOperation(_ context.Context, operation authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
+	result, ok := r.operations[operationKey(operation)]
+	return result, ok, nil
+}
+
+func operationKey(operation authoring.CreateOperation) string {
+	return operation.WorkspaceID + "|" + operation.ActorID + "|" + operation.Kind + "|" + operation.IdempotencyKey
 }
 
 func (r *fakeRepository) List(context.Context, string) ([]authoring.DashboardLifecycle, error) {
@@ -84,11 +112,15 @@ func (a *fakeAuthorizer) Authorize(_ context.Context, request service.Authorizat
 type fakeRuntime struct {
 	source projectartifact.AuthoredDashboardSource
 	called bool
+	fail   bool
 }
 
 func (r *fakeRuntime) Close() error { return nil }
 func (r *fakeRuntime) AuthoredDashboardSource(id string) (projectartifact.AuthoredDashboardSource, bool) {
 	r.called = true
+	if r.fail {
+		return projectartifact.AuthoredDashboardSource{}, false
+	}
 	if id != r.source.Document.ID {
 		return projectartifact.AuthoredDashboardSource{}, false
 	}
@@ -139,6 +171,33 @@ func TestLoadWorkspaceUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *te
 	}
 	if deniedRepo.getRevisionCall != 0 {
 		t.Fatalf("revision reads after VIEW denial = %d", deniedRepo.getRevisionCall)
+	}
+}
+
+func TestWorkspaceForkReplaySkipsSourceReads(t *testing.T) {
+	published, newer, lifecycle := publishedFixture(t)
+	repository := &fakeRepository{lifecycle: lifecycle, revisions: map[authoring.RevisionID]authoring.Revision{published.ID: published, newer.ID: newer}}
+	authorizer := &fakeAuthorizer{}
+	authoringService := newAuthoringService(t, repository, authorizer)
+	adapter := newAdapterWithService(t, repository, authorizer, authoringService, nil)
+	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: "sales"}, ActorID: "actor", Title: "Forked", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-workspace"}
+	first, err := adapter.Fork(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.getIDs = nil
+	repository.getRevisionIDs = nil
+	second, err := adapter.Fork(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range repository.getIDs {
+		if id == "sales" {
+			t.Fatalf("replay read source lifecycle: %v", repository.getIDs)
+		}
+	}
+	if len(repository.getRevisionIDs) != 0 || second.Revision != first.Revision || second.Lifecycle.ID != first.Lifecycle.ID {
+		t.Fatalf("workspace replay = %#v first=%#v source revisions=%v", second, first, repository.getRevisionIDs)
 	}
 }
 
@@ -242,6 +301,38 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 	}
 	if authorizer.requests[len(authorizer.requests)-1].Action != authoring.AuthorizationActionEdit {
 		t.Fatalf("last authorization = %#v", authorizer.requests[len(authorizer.requests)-1])
+	}
+}
+
+func TestProjectForkReplaySkipsUnavailableSourceLoad(t *testing.T) {
+	document := authoredDocument("project-sales", "Project title")
+	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{Document: document, Metadata: projectartifact.AuthoredDashboardMetadata{Workspace: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"}, Path: "dashboards/project-sales.yaml"}}
+	repository := &fakeRepository{}
+	authorizer := &fakeAuthorizer{}
+	authoringService := newAuthoringService(t, repository, authorizer)
+	released := 0
+	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context, string) (runtimehost.Lease, error) {
+		return &fakeLease{runtime: runtime, state: "project-state", released: &released}, nil
+	})
+	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, WorkspaceID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-project"}
+	first, err := adapter.Fork(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loads := runtime.called
+	runtime.fail = true
+	second, err := adapter.Fork(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Revision != first.Revision || second.Lifecycle.ID != first.Lifecycle.ID || runtime.called != loads || released != 1 {
+		t.Fatalf("project replay = %#v first=%#v runtimeCalled=%v/%v released=%d", second, first, loads, runtime.called, released)
+	}
+	authorizer.err = errors.New("target revoked")
+	changed := request
+	changed.Title = "Different"
+	if _, err := adapter.Fork(t.Context(), changed); err == nil || !strings.Contains(err.Error(), "target revoked") || runtime.called != loads {
+		t.Fatalf("revoked changed replay err=%v runtimeCalled=%v/%v", err, runtime.called, loads)
 	}
 }
 

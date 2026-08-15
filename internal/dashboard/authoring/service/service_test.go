@@ -161,7 +161,7 @@ func currentToken(lifecycle authoring.DashboardLifecycle) authoring.RevisionToke
 	return authoring.RevisionToken{}
 }
 
-func newService(t *testing.T, repository *fakeRepository, auth *fakeAuthorizer, compiler *fakeCompiler) *service.Service {
+func newService(t *testing.T, repository authoring.Repository, auth *fakeAuthorizer, compiler *fakeCompiler) *service.Service {
 	t.Helper()
 	ids := []string{"dash-1", "draft-1", "rev-1", "rev-2", "rev-3"}
 	next := func() (string, error) {

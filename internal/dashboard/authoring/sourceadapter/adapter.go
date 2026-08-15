@@ -328,6 +328,7 @@ type ForkRequest struct {
 	Origin            authoring.Origin
 	ConversationID    string
 	ToolCallID        string
+	IdempotencyKey    string
 }
 
 func (a *Adapter) Fork(ctx context.Context, request ForkRequest) (service.Result, error) {
@@ -353,18 +354,25 @@ func (a *Adapter) Fork(ctx context.Context, request ForkRequest) (service.Result
 		if targetWorkspaceID != request.Source.WorkspaceID {
 			return service.Result{}, fmt.Errorf("workspace source forks must remain in the source workspace")
 		}
-		// Load performs VIEW before any source content is exposed. Service.Fork
-		// then re-reads and transactionally creates the draft, preserving its
-		// command/repository invariants and ForkEvidence token.
-		if _, err := a.Load(ctx, request.Source, actorID); err != nil {
+		if replay, found, err := a.authoring.LookupForkReplay(ctx, service.ForkIdentityRequest{TargetWorkspaceID: targetWorkspaceID, SourceKind: string(request.Source.Kind), SourceWorkspaceID: request.Source.WorkspaceID, SourceDashboardID: request.Source.DashboardID, ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug, Origin: request.Origin, ConversationID: request.ConversationID, ToolCallID: request.ToolCallID, IdempotencyKey: request.IdempotencyKey}); err != nil {
 			return service.Result{}, err
+		} else if found {
+			return replay, nil
 		}
+		// Service.Fork performs VIEW before reading source content on a first
+		// execution. Replays were resolved above without touching the source.
 		return a.authoring.Fork(ctx, service.ForkRequest{
 			WorkspaceID: request.Source.WorkspaceID, SourceDashboardID: request.Source.DashboardID,
 			ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug,
 			Origin: request.Origin, ConversationID: request.ConversationID, ToolCallID: request.ToolCallID,
+			IdempotencyKey: request.IdempotencyKey,
 		})
 	case SourceProject:
+		if replay, found, err := a.authoring.LookupForkReplay(ctx, service.ForkIdentityRequest{TargetWorkspaceID: targetWorkspaceID, SourceKind: string(request.Source.Kind), SourceWorkspaceID: request.Source.WorkspaceID, SourceDashboardID: request.Source.DashboardID, ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug, Origin: request.Origin, ConversationID: request.ConversationID, ToolCallID: request.ToolCallID, IdempotencyKey: request.IdempotencyKey}); err != nil {
+			return service.Result{}, err
+		} else if found {
+			return replay, nil
+		}
 		source, err := a.Load(ctx, request.Source, actorID)
 		if err != nil {
 			return service.Result{}, err
@@ -375,6 +383,8 @@ func (a *Adapter) Fork(ctx context.Context, request ForkRequest) (service.Result
 			Document: source.Document, Title: request.Title, Slug: request.Slug, Origin: request.Origin,
 			Source: sourceEvidence, ForkedFrom: forkEvidence, ConversationID: request.ConversationID,
 			ToolCallID: request.ToolCallID, BaseSemanticServingStateID: source.Provenance.Project.ServingStateID,
+			IdempotencyKey: request.IdempotencyKey,
+			OperationSeed:  &service.ForkOperationSeed{SourceKind: string(request.Source.Kind), SourceWorkspaceID: request.Source.WorkspaceID, SourceDashboardID: request.Source.DashboardID, TargetWorkspaceID: targetWorkspaceID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug},
 		})
 	default:
 		return service.Result{}, fmt.Errorf("invalid dashboard source kind %q", request.Source.Kind)
