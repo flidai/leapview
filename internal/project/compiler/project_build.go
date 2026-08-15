@@ -223,6 +223,7 @@ func (workspaceProject *WorkspaceProject) definition(project Project) (*manifest
 		Catalog:              catalog,
 		Models:               map[string]*semanticmodel.Model{},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{},
+		DashboardSources:     map[string]manifest.DashboardSource{},
 		Publications:         copyDashboardPublications(workspaceProject.Publications),
 		Access: workspace.AccessPolicy{
 			Groups:       copyWorkspaceGroups(workspaceProject.AccessGroups),
@@ -256,6 +257,18 @@ func (workspaceProject *WorkspaceProject) definition(project Project) (*manifest
 		}
 		normalizedDashboard := compiledDashboardResult.Normalized
 		definition.DashboardDefinitions[name] = compiledDashboardResult.Definition
+		definition.DashboardSources[name] = manifest.DashboardSource{
+			Document: normalizedDashboard,
+			Metadata: manifest.DashboardSourceMetadata{
+				Workspace:   workspaceProject.ID,
+				Name:        name,
+				Title:       workspaceProject.DashboardTitles[name],
+				Description: workspaceProject.DashboardDescriptions[name],
+				Owner:       workspaceProject.DashboardOwners[name],
+				Tags:        append([]string(nil), workspaceProject.DashboardTags[name]...),
+			},
+			Path: workspaceProject.DashboardPaths[name],
+		}
 		definition.Catalog.Dashboards = append(definition.Catalog.Dashboards, manifest.CatalogDashboard{
 			ID:          name,
 			Title:       firstNonEmpty(workspaceProject.DashboardTitles[name], normalizedDashboard.Title),

@@ -170,6 +170,7 @@ func loadWorkspaces(project *Project, includes []string) error {
 			ModelDescriptions:     map[string]string{},
 			DashboardTitles:       map[string]string{},
 			DashboardDescriptions: map[string]string{},
+			DashboardOwners:       map[string]string{},
 			DashboardTags:         map[string][]string{},
 			Path:                  path,
 			ModelPaths:            map[string]string{},
@@ -405,6 +406,7 @@ func loadWorkspaceDashboards(workspaceProject *WorkspaceProject, baseDir string,
 		workspaceProject.Dashboards[name] = dashboard
 		workspaceProject.DashboardTitles[name] = envelope.Metadata.Title
 		workspaceProject.DashboardDescriptions[name] = envelope.Metadata.Description
+		workspaceProject.DashboardOwners[name] = envelope.Metadata.Owner
 		workspaceProject.DashboardTags[name] = append([]string{}, envelope.Metadata.Tags...)
 		workspaceProject.DashboardPaths[name] = path
 	}

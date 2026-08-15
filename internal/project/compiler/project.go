@@ -48,6 +48,7 @@ type WorkspaceProject struct {
 	ModelDescriptions     map[string]string
 	DashboardTitles       map[string]string
 	DashboardDescriptions map[string]string
+	DashboardOwners       map[string]string
 	DashboardTags         map[string][]string
 	Path                  string
 	ModelPaths            map[string]string
@@ -122,6 +123,15 @@ func CompileProjectArtifact(projectPath string) (projectartifact.Project, error)
 		definition.SourceFiles, err = neutralSourceFiles(root, definition.SourceFiles)
 		if err != nil {
 			return projectartifact.Project{}, fmt.Errorf("workspace %q source files: %w", workspaceID, err)
+		}
+		for dashboardID, source := range definition.DashboardSources {
+			if strings.TrimSpace(source.Path) != "" {
+				source.Path, err = neutralSourcePath(root, source.Path)
+				if err != nil {
+					return projectartifact.Project{}, fmt.Errorf("workspace %q dashboard %q source: %w", workspaceID, dashboardID, err)
+				}
+			}
+			definition.DashboardSources[dashboardID] = source
 		}
 		metadata.Graph, err = neutralAssetGraph(root, metadata.Graph)
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/project/manifest"
@@ -138,6 +139,59 @@ func TestDecodeRejectsUnsupportedArtifactVersion(t *testing.T) {
 	var unsupported UnsupportedVersionError
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("Decode() error = %v, want UnsupportedVersionError", err)
+	}
+}
+
+func TestAuthoredDashboardSourceRoundTripAndDeepCopy(t *testing.T) {
+	document := dashboardauthoring.Dashboard{
+		ID: "overview", SemanticModel: "sales",
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
+			"orders": {Type: "bar", Title: "Orders"},
+		}),
+	}
+	manifestSource := manifest.DashboardSource{
+		Document: document,
+		Metadata: manifest.DashboardSourceMetadata{
+			Workspace: "sales", Name: "overview", Title: "Overview", Description: "Sales", Owner: "owner@example.com",
+			Tags: []string{"core"},
+		},
+		Path: "workspaces/sales/dashboards/overview.yaml",
+	}
+	project, err := NewProject("example", map[string]WorkspaceInput{
+		"sales": {Metadata: workspace.Workspace{ID: "sales"}, Manifest: &manifest.Workspace{
+			Catalog:          manifest.Catalog{Workspace: manifest.CatalogWorkspace{ID: "sales"}},
+			DashboardSources: map[string]manifest.DashboardSource{"overview": manifestSource},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Digest() == "" || len(project.Canonical()) == 0 {
+		t.Fatal("authored source was not included in canonical artifact")
+	}
+	decoded, err := Decode(project.Canonical())
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, ok := decoded.Workspace("sales")
+	if !ok {
+		t.Fatal("workspace missing after round trip")
+	}
+	first, ok := compiled.AuthoredDashboardSource("overview")
+	if !ok {
+		t.Fatalf("source = %#v, present = %v", first, ok)
+	}
+	if first.Path != manifestSource.Path || first.Metadata.Owner != manifestSource.Metadata.Owner || first.Document.ID != "overview" {
+		t.Fatalf("source round trip = %#v", first)
+	}
+	first.Metadata.Tags[0] = "changed"
+	first.Document.Visuals["orders"].Chart.Title = "Changed"
+	second, ok := compiled.AuthoredDashboardSource("overview")
+	if !ok || second.Metadata.Tags[0] != "core" || second.Document.Visuals["orders"].Chart.Title != "Orders" {
+		t.Fatalf("source projection retained caller mutation = %#v", second)
+	}
+	if _, ok := compiled.AuthoredDashboardSource("missing"); ok {
+		t.Fatal("missing authored source returned present")
 	}
 }
 

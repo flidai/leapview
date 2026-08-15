@@ -75,6 +75,14 @@ spec:
 		if _, ok := compiledWorkspace.Definition.Models[id]; !ok {
 			t.Fatalf("workspace %q missing semantic model %q", id, id)
 		}
+		dashboardID := map[string]string{"sales": "executive-sales", "operations": "fulfillment-operations"}[id]
+		source, ok := compiledWorkspace.Definition.DashboardSources[dashboardID]
+		if !ok || source.Document.ID != dashboardID || source.Metadata.Workspace != id || source.Metadata.Name != dashboardID {
+			t.Fatalf("workspace %q authored dashboard source = %#v, present = %v", id, source, ok)
+		}
+		if source.Document.SemanticModel != id {
+			t.Fatalf("workspace %q authored semantic model = %q, want %q", id, source.Document.SemanticModel, id)
+		}
 		if len(compiledWorkspace.Workspace.Graph.Assets) == 0 {
 			t.Fatalf("workspace %q has empty asset graph", id)
 		}
@@ -155,6 +163,13 @@ func TestCompileProjectArtifactIsIndependentOfCheckoutAndServingState(t *testing
 			if edge.ServingStateID != "" || edge.ID != "" {
 				t.Fatalf("artifact edge retained serving identity: %#v", edge)
 			}
+		}
+		source, ok := compiled.Definition.DashboardSources["executive-sales"]
+		if !ok || filepath.IsAbs(source.Path) || strings.Contains(filepath.ToSlash(source.Path), filepath.ToSlash(filepath.Dir(firstPath))) {
+			t.Fatalf("artifact retained dashboard checkout path: %#v", source)
+		}
+		if source.Path != filepath.ToSlash(filepath.Join("workspaces", "sales", "dashboards", "executive-sales.yaml")) {
+			t.Fatalf("artifact dashboard source path = %q", source.Path)
 		}
 	}
 }
