@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"time"
 
@@ -14,6 +15,11 @@ import (
 var ErrAuditTransaction = apigenfailure.New("audit_transaction", "audit transaction failed")
 var ErrPrincipalAlreadyExists = apigenfailure.New("conflict", "principal already exists")
 var ErrPrincipalOwnsSecurableObject = apigenfailure.New("conflict", "principal owns a securable object; transfer ownership before deletion")
+
+// ErrForbidden is the canonical error for an authorization decision that
+// evaluated successfully but did not grant the requested privilege. Access
+// consumers may preserve this distinction from repository failures.
+var ErrForbidden = errors.New("forbidden")
 
 type Privilege string
 
