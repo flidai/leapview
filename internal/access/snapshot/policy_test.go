@@ -44,8 +44,8 @@ func TestAuthorizationSnapshotRoundTripAndDigest(t *testing.T) {
 	require.NoError(t, err)
 	decoded, err := Decode(encoded, project)
 	require.NoError(t, err)
-	require.Equal(t, snapshot.Identity, decoded.Identity)
-	require.Equal(t, snapshot.Grants[0].Canonical.GrantKey(), decoded.Grants[0].Canonical.GrantKey())
+	require.Equal(t, snapshot.Identity(), decoded.Identity())
+	require.Equal(t, snapshot.Grants()[0].Canonical.GrantKey(), decoded.Grants()[0].Canonical.GrantKey())
 	digest, err := snapshot.Digest()
 	require.NoError(t, err)
 	require.NotEmpty(t, digest)
@@ -105,7 +105,7 @@ func TestAuthorizationSnapshotRejectsDuplicateIDsAndCanonicalKeys(t *testing.T) 
 		{ID: "a", Canonical: grant},
 	}, nil)
 	require.NoError(t, err)
-	require.Equal(t, "a", normalized.Grants[0].ID)
+	require.Equal(t, "a", normalized.Grants()[0].ID)
 }
 
 func TestAuthorizationSnapshotRejectsMalformedServingIdentity(t *testing.T) {
@@ -124,17 +124,17 @@ func TestAuthorizationSnapshotRejectsMalformedServingIdentity(t *testing.T) {
 func TestAuthorizationSnapshotMarshalRejectsPostConstructionMutation(t *testing.T) {
 	project := testGraph(t)
 	grant := testGrant(t, project)
-	snapshot, err := NewAuthorizationSnapshot(testIdentity(), project, []Grant{{ID: "grant_1", Canonical: grant}}, nil)
+	input := []Grant{{ID: "grant_1", Canonical: grant}}
+	snapshot, err := NewAuthorizationSnapshot(testIdentity(), project, input, nil)
 	require.NoError(t, err)
-	// The exported slice is intentionally tolerated for source compatibility,
-	// but serialization must never emit a value that was mutated after install.
-	snapshot.Grants[0].Canonical = access.CanonicalGrant{}
+	input[0].Canonical = access.CanonicalGrant{}
+	input[0].ID = "mutated"
+	encoded, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), "grant_1")
+	// The getter is defensive as well, so callers cannot mutate installed state.
+	grants := snapshot.Grants()
+	grants[0].Canonical = access.CanonicalGrant{}
 	_, err = json.Marshal(snapshot)
-	require.ErrorIs(t, err, access.ErrUnboundCanonicalGrant)
-
-	snapshot, err = NewAuthorizationSnapshot(testIdentity(), project, []Grant{{ID: "grant_1", Canonical: grant}}, nil)
 	require.NoError(t, err)
-	snapshot.Identity.Environment = "prod/uction"
-	_, err = snapshot.Digest()
-	require.Error(t, err)
 }

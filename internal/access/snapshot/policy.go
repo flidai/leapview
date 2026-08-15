@@ -21,9 +21,9 @@ import (
 )
 
 type AuthorizationSnapshot struct {
-	Identity     graph.ServingIdentity
-	Grants       []Grant
-	DataPolicies []DataPolicy
+	identity     graph.ServingIdentity
+	grants       []Grant
+	dataPolicies []DataPolicy
 	// project is retained privately so exported fields cannot be replaced with
 	// values from another graph and then serialized as an installable snapshot.
 	project graph.ProjectGraph
@@ -130,8 +130,17 @@ func NewAuthorizationSnapshot(identity graph.ServingIdentity, project graph.Proj
 		}
 		policy.Compiled = compiled
 	}
-	return AuthorizationSnapshot{Identity: identity, Grants: normalizedGrants, DataPolicies: normalizedPolicies, project: project}, nil
+	return AuthorizationSnapshot{identity: identity, grants: normalizedGrants, dataPolicies: normalizedPolicies, project: project}, nil
 }
+
+// Identity returns the immutable serving identity by value.
+func (s AuthorizationSnapshot) Identity() graph.ServingIdentity { return s.identity }
+
+// Grants returns a defensive copy of the validated grant list.
+func (s AuthorizationSnapshot) Grants() []Grant { return cloneGrants(s.grants) }
+
+// DataPolicies returns a defensive copy of the validated policy list.
+func (s AuthorizationSnapshot) DataPolicies() []DataPolicy { return clonePolicies(s.dataPolicies) }
 
 // Decode validates strict canonical snapshot JSON against the supplied graph.
 // The graph is mandatory: a decoded snapshot must never become installable
@@ -180,10 +189,21 @@ func Decode(data []byte, project graph.ProjectGraph) (AuthorizationSnapshot, err
 }
 
 func (s AuthorizationSnapshot) Validate(project graph.ProjectGraph) error {
-	if err := s.Identity.Validate(); err != nil {
+	if err := s.identity.Validate(); err != nil {
 		return fmt.Errorf("authorization snapshot identity: %w", err)
 	}
-	_, err := NewAuthorizationSnapshot(s.Identity, project, s.Grants, s.DataPolicies)
+	_, err := NewAuthorizationSnapshot(s.identity, project, s.grants, s.dataPolicies)
+	return err
+}
+
+// ValidateBound revalidates the immutable graph binding retained by the
+// constructor. It is the install-time check and requires no caller-supplied
+// project that could disagree with the snapshot's bound graph.
+func (s AuthorizationSnapshot) ValidateBound() error {
+	if err := s.identity.Validate(); err != nil {
+		return fmt.Errorf("authorization snapshot identity: %w", err)
+	}
+	_, err := NewAuthorizationSnapshot(s.identity, s.project, s.grants, s.dataPolicies)
 	return err
 }
 
@@ -197,24 +217,24 @@ func (s AuthorizationSnapshot) Digest() (string, error) {
 }
 
 func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
-	if err := s.Identity.Validate(); err != nil {
+	if err := s.identity.Validate(); err != nil {
 		return nil, fmt.Errorf("authorization snapshot identity: %w", err)
 	}
 	if err := s.project.Validate(); err != nil {
 		return nil, fmt.Errorf("authorization snapshot project graph: %w", err)
 	}
-	if s.Identity.ProjectID != s.project.ProjectID() {
-		return nil, fmt.Errorf("authorization snapshot project %q does not match graph %q", s.Identity.ProjectID, s.project.ProjectID())
+	if s.identity.ProjectID != s.project.ProjectID() {
+		return nil, fmt.Errorf("authorization snapshot project %q does not match graph %q", s.identity.ProjectID, s.project.ProjectID())
 	}
-	grants := make([]grantWire, 0, len(s.Grants))
-	for _, item := range s.Grants {
+	grants := make([]grantWire, 0, len(s.grants))
+	for _, item := range s.grants {
 		if err := item.Canonical.ValidateAgainst(s.project); err != nil {
 			return nil, err
 		}
 		grants = append(grants, grantWire{ID: item.ID, Name: item.Name, Subject: item.Canonical.Subject(), Resource: item.Canonical.Resource(), Capability: item.Canonical.Capability()})
 	}
-	policies := make([]dataPolicyWire, 0, len(s.DataPolicies))
-	for _, item := range s.DataPolicies {
+	policies := make([]dataPolicyWire, 0, len(s.dataPolicies))
+	for _, item := range s.dataPolicies {
 		if item.ID == "" || item.PolicyType == "" || item.ExpressionJSON == "" {
 			return nil, fmt.Errorf("data policy %q is incomplete", item.ID)
 		}
@@ -230,7 +250,7 @@ func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
 	}
 	sort.Slice(grants, func(i, j int) bool { return grants[i].ID < grants[j].ID })
 	sort.Slice(policies, func(i, j int) bool { return policies[i].ID < policies[j].ID })
-	return json.Marshal(snapshotWire{Identity: s.Identity, Grants: grants, DataPolicies: policies})
+	return json.Marshal(snapshotWire{Identity: s.identity, Grants: grants, DataPolicies: policies})
 }
 
 func (s *AuthorizationSnapshot) UnmarshalJSON(data []byte) error {

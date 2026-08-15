@@ -18,7 +18,10 @@ CREATE TABLE IF NOT EXISTS authorization_snapshots (
   generation_id TEXT NOT NULL,
   digest TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY(project_id, environment, generation_id)
+  PRIMARY KEY(project_id, environment, generation_id),
+  FOREIGN KEY(generation_id, project_id, environment)
+    REFERENCES serving_states(id, project_id, environment)
+    ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS authorization_grants (

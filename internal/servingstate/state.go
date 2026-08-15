@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 )
 
 var ErrSnapshotLeaseLost = errors.New("snapshot lease is no longer active")
@@ -103,7 +103,7 @@ type Validation struct {
 	RootDir                   string
 	ProjectID                 projectgraph.ResourceID
 	ProjectDigest             string
-	AccessPolicy              accesssnapshot.AccessPolicy
+	AccessPolicy              projectmanifest.AccessPolicy
 	DashboardPublicationsJSON string
 	DashboardAppearancesJSON  string
 	ManagedDataRevisions      map[string]string
