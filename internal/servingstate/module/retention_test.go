@@ -16,7 +16,9 @@ func TestStorageRetentionSkipsWhenMaintenanceCapacityIsUnavailable(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	held, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Interactive, WorkspaceID: "sales", Operation: "hold"})
+	held, err := controller.Acquire(context.Background(), workload.Request{
+		Class: workload.Interactive, PrincipalID: "test:holder", Operation: "hold", EstimatedMemoryBytes: 1,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
