@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -41,6 +42,26 @@ func (m *Service) Resolver() dashboardresolver.Resolver {
 
 func (m *Service) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
 	return m.reports.SemanticModel(modelID)
+}
+
+// SemanticModelProjection returns a detached semantic-model projection from
+// this runtime generation. Preview and other compiler consumers can inspect
+// the exact model selected by a leased runtime without acquiring another
+// runtime or retaining a mutable pointer into the base serving state.
+func (m *Service) SemanticModelProjection(modelID string) (*semanticmodel.Model, bool) {
+	model, ok := m.SemanticModel(modelID)
+	if !ok || model == nil {
+		return nil, false
+	}
+	encoded, err := json.Marshal(model)
+	if err != nil {
+		return nil, false
+	}
+	var detached semanticmodel.Model
+	if err := json.Unmarshal(encoded, &detached); err != nil {
+		return nil, false
+	}
+	return &detached, true
 }
 
 func (m *Service) QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
