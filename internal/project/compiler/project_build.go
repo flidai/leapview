@@ -201,7 +201,17 @@ func projectManifest(project Project) (manifest.Project, error) {
 			table.Sources = authoredNamesByID(table.Sources, project.SourceIDs)
 			runtimeTables[tableName] = table
 		}
-		model := &semanticmodel.Model{Name: name, Title: name, Connections: copyConnections(project.Connections), Sources: copySources(project.Sources), Tables: translatedTablesForRuntime(runtimeTables, map[string]string{})}
+		sourceAliases := make(map[string]string, len(project.Sources))
+		runtimeSources := make(map[string]semanticmodel.Source, len(project.Sources))
+		for sourceName, source := range project.Sources {
+			alias := localSourceName(sourceName)
+			sourceAliases[sourceName] = alias
+			if sourceID := project.SourceIDs[sourceName]; sourceID != "" {
+				sourceAliases[sourceID] = alias
+			}
+			runtimeSources[alias] = source
+		}
+		model := &semanticmodel.Model{Name: name, Title: name, Connections: copyConnections(project.Connections), Sources: runtimeSources, Tables: translatedTablesForRuntime(runtimeTables, sourceAliases)}
 		authoredSpec := spec
 		authoredSpec.Tables = authoredNamesByID(spec.Tables, project.ModelIDs)
 		if err := applySemanticModelSpec(model, authoredSpec); err != nil {

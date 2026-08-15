@@ -60,7 +60,7 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 		Sources: map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv"}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {Source: "orders", PrimaryKey: "id"},
-			"daily":  {Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, PrimaryKey: "id"},
+			"daily":  {Sources: []string{"orders"}, Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, PrimaryKey: "id"},
 		},
 	}
 	if err := model.ValidateAuthored(); err != nil {
@@ -159,11 +159,15 @@ spec: {semanticModel: sales}
 `)
 	write("dashboards/sales.yaml", `apiVersion: leapview.dev/v1
 kind: Dashboard
-metadata: {id: dashboard:sales, name: sales_dashboard}
+metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales Dashboard}
 spec:
+  title: Sales Dashboard
   semanticModel: sales
-  visuals: {}
-  pages: []
+  visuals:
+    order_count:
+      type: kpi
+      query: {measures: {order_count: null}}
+  pages: [{id: overview, title: Overview, components: []}]
 `)
 
 	compiled, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
@@ -241,9 +245,9 @@ spec:
   access: {include: []}
 `)
 	write("connections/c.yaml", "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:id, name: warehouse}\nspec: {kind: managed}\n")
-	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: connection:id, format: csv, path: orders.csv}\n")
-	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders}\nspec: {source: source:id, primaryKey: id}\n")
-	write("semantic-models/s.yaml", "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic-model:id, name: sales}\nspec: {tables: [model:id], measures: {count: {fact: orders, aggregation: count, empty: zero}}}\n")
+	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: warehouse, format: csv, path: orders.csv}\n")
+	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {source: source:id, primaryKey: id}\n")
+	write("semantic-models/s.yaml", "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic-model:id, name: sales}\nspec: {tables: [model:id], measures: {count: {fact: orders_model, aggregation: count, empty: zero}}}\n")
 	graph, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -267,18 +271,18 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata: {id: model:orders, name: orders_model}
 spec: {source: orders, primaryKey: id}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders]}
+spec: {tables: [orders_model], measures: {}}
 `,
 		"semantic-models/operations.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:operations, name: operations}
-spec: {tables: [orders]}
+spec: {tables: [orders_model], measures: {}}
 `,
 	})
 	graph, err := CompileProjectGraph(projectPath)
@@ -310,7 +314,7 @@ spec: {source: orders, primaryKey: id}
 `,
 	})
 	_, err := LoadProject(projectPath)
-	if err == nil || !strings.Contains(err.Error(), "duplicate resource id") {
+	if err == nil || !strings.Contains(err.Error(), "duplicates resource") {
 		t.Fatalf("LoadProject() error = %v, want duplicate stable ID", err)
 	}
 	diagnostics := configschema.Diagnostics(err)
@@ -331,10 +335,15 @@ kind: Source
 metadata: {id: source:orders, name: orders}
 spec: {connection: warehouse, format: csv, path: orders.csv}
 `,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders_model}
+spec: {source: orders, primaryKey: id}
+`,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders]}
+spec: {tables: [orders], measures: {}}
 `,
 	})
 	_, err := LoadProject(projectPath)
@@ -361,13 +370,13 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata: {id: model:orders, name: orders_model}
 spec: {source: orders, primaryKey: id}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders]}
+spec: {tables: [orders_model], measures: {}}
 `,
 	}
 	first, err := LoadProject(writeFlatProjectFixture(t, files))
@@ -395,7 +404,7 @@ spec: {tables: [orders]}
 	if got := first.Manifest.ResourceFiles["model:orders"]; got != "models/orders.yaml" {
 		t.Fatalf("manifest model resource path = %q, want relative path", got)
 	}
-	if got := first.Manifest.NameIndex.Models["orders"]; got != "model:orders" {
+	if got := first.Manifest.NameIndex.Models["orders_model"]; got != "model:orders" {
 		t.Fatalf("manifest model name index = %q, want stable ID", got)
 	}
 }
@@ -439,6 +448,13 @@ spec:
 	}
 	if strings.Contains(err.Error(), root) || strings.Contains(err.Error(), outside) {
 		t.Fatalf("symlink diagnostic leaked absolute checkout path: %v", err)
+	}
+}
+
+func TestExpandIncludesRejectsNoMatch(t *testing.T) {
+	_, err := expandIncludes(t.TempDir(), []string{"connections/*.yaml"})
+	if err == nil || !strings.Contains(err.Error(), "matched no files") {
+		t.Fatalf("expandIncludes() error = %v, want no-match diagnostic", err)
 	}
 }
 
@@ -520,7 +536,7 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata: {id: model:orders, name: orders_model}
 spec:
   sources: [orders]
   transform: {sql: 'SELECT * FROM raw.orders'}
@@ -558,13 +574,13 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata: {id: model:orders, name: orders_model}
 spec: {source: orders, primaryKey: id}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders]}
+spec: {tables: [orders_model], measures: {}}
 `,
 	}
 	validFiles := cloneFixtureFiles(base)
@@ -655,7 +671,7 @@ spec: {connection: warehouse, format: csv, path: customers.csv}
 		files := cloneFixtureFiles(base)
 		files["models/orders.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata: {id: model:orders, name: orders_model}
 spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, primaryKey: id}
 `
 		_, err := LoadProject(writeFlatProjectFixture(t, files))
@@ -667,16 +683,16 @@ spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, pr
 		files := cloneFixtureFiles(base)
 		files["models/orders.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
-spec: {transform: {sql: 'SELECT * FROM model.customers'}, primaryKey: id}
+metadata: {id: model:orders, name: orders_model}
+spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.orders JOIN model.customers_model USING (id)'}, primaryKey: id}
 `
 		files["models/customers.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:customers, name: customers}
-spec: {transform: {sql: 'SELECT * FROM model.orders'}, primaryKey: id}
+metadata: {id: model:customers, name: customers_model}
+spec: {sources: [customers], transform: {sql: 'SELECT * FROM source.customers JOIN model.orders_model USING (id)'}, primaryKey: id}
 `
 		_, err := LoadProject(writeFlatProjectFixture(t, files))
-		if err == nil || !strings.Contains(err.Error(), "model table dependency cycle") {
+		if err == nil || !strings.Contains(err.Error(), "cycle") {
 			t.Fatalf("LoadProject() error = %v, want model cycle", err)
 		}
 	})
@@ -697,25 +713,29 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata: {id: model:orders, name: orders_model}
 spec: {source: orders, primaryKey: id}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders], measures: {order_count: {fact: orders, aggregation: count, empty: zero}}}
+spec: {tables: [orders_model], measures: {order_count: {fact: orders_model, aggregation: count, empty: zero}}}
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
-metadata: {id: dashboard:sales, name: sales, title: Sales}
-spec: {semanticModel: sales, visuals: {}, pages: []}
+metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
+spec:
+  title: Sales
+  semanticModel: sales
+  visuals: {order_count: {type: kpi, query: {measures: {order_count: null}}}}
+  pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
 	project, err := LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, files))
 	if err != nil {
 		t.Fatalf("LoadProject() error = %v", err)
 	}
-	authored := *project.Dashboards["sales"]
+	authored := *project.Dashboards["sales_dashboard"]
 	model := project.Manifest.SemanticModels["semantic:sales"]
 	direct, err := dashboardcompiler.Compile(authored, map[string]*semanticmodel.Model{"sales": model})
 	if err != nil {
@@ -744,27 +764,28 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata: {id: model:orders, name: orders_model}
 spec: {source: orders, primaryKey: id}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders]}
+spec: {tables: [orders_model], measures: {order_count: {fact: orders_model, aggregation: count, empty: zero}}}
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
-metadata: {id: dashboard:sales, name: sales, title: Sales}
+metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
 spec:
+  title: Sales
   semanticModel: sales
-  visuals: {}
+  visuals: {order_count: {type: kpi, query: {measures: {order_count: null}}}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 		"publications/website.yaml": `apiVersion: leapview.dev/v1
 kind: DashboardPublication
 metadata: {id: publication:website, name: website}
 spec:
-  dashboard: sales
+  dashboard: sales_dashboard
   defaultPage: overview
   embedding: {allowedOrigins: [https://z.example, https://a.example]}
 `,
@@ -846,7 +867,9 @@ func TestProjectPlanDiffIsDeterministicAndAggregatesImpact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, removedSummary := diffProjectGraphs(authored, removed)
+	// The reduced graph is the authored candidate; the complete graph is the
+	// active baseline, so the source is correctly reported as removed.
+	_, _, removedSummary := diffProjectGraphs(removed, authored)
 	if !removedSummary.Breaking || !removedSummary.MaterializationImpact {
 		t.Fatalf("removed source summary = %#v, want breaking materialization impact", removedSummary)
 	}
@@ -881,7 +904,7 @@ func containsString(values []string, want string) bool {
 
 func writeFlatProjectFixture(t *testing.T, files map[string]string) string {
 	t.Helper()
-	return writeFlatProjectFixtureWithProject(t, flatProjectFixtureYAML(), files)
+	return writeFlatProjectFixtureWithProject(t, flatProjectFixtureYAMLForFiles(files), files)
 }
 
 func writeFlatProjectFixtureWithProject(t *testing.T, project string, files map[string]string) string {
@@ -914,4 +937,22 @@ spec:
   access: {include: []}
   publications: {include: []}
 `
+}
+
+func flatProjectFixtureYAMLForFiles(files map[string]string) string {
+	include := func(directory, pattern string) string {
+		prefix := directory + "/"
+		for name := range files {
+			if strings.HasPrefix(name, prefix) {
+				return "[" + pattern + "]"
+			}
+		}
+		return "[]"
+	}
+	project := flatProjectFixtureYAML()
+	project = strings.Replace(project, "[connections/*.yaml]", include("connections", "connections/*.yaml"), 1)
+	project = strings.Replace(project, "[sources/*.yaml]", include("sources", "sources/*.yaml"), 1)
+	project = strings.Replace(project, "[models/*.yaml]", include("models", "models/*.yaml"), 1)
+	project = strings.Replace(project, "[semantic-models/*.yaml]", include("semantic-models", "semantic-models/*.yaml"), 1)
+	return project
 }

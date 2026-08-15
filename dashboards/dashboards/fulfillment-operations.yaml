@@ -89,7 +89,7 @@ spec:
       type: donut
       query:
         dimensions:
-          status: orders.status
+          status: operations_orders.status
         measures:
           order_count:
         sort:
@@ -101,7 +101,7 @@ spec:
       type: bar
       query:
         dimensions:
-          delivery_bucket: orders.delivery_bucket
+          delivery_bucket: operations_orders.delivery_bucket
         measures:
           order_count:
         sort:
@@ -112,7 +112,7 @@ spec:
       type: bar
       query:
         dimensions:
-          status: orders.status
+          status: operations_orders.status
         measures:
           review_score:
         sort:

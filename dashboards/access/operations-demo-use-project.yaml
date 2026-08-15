@@ -1,8 +1,8 @@
 apiVersion: leapview.dev/v1
 kind: Grant
 metadata:
-  id: grant:operations-demo-use-workspace
-  name: operations-demo-use-workspace
+  id: grant:operations-demo-use-project
+  name: operations-demo-use-project
 spec:
   object:
     kind: project

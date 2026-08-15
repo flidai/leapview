@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	appearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -293,6 +292,10 @@ func expandIncludes(baseDir string, includes []string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve project boundary: %w", err)
 	}
+	// Glob against the canonical absolute root. A relative base directory can
+	// otherwise produce relative matches that compare incorrectly with the
+	// canonical absolute path above.
+	baseDir = root
 	var paths []string
 	seen := map[string]struct{}{}
 	for _, pattern := range includes {

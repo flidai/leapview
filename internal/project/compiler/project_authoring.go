@@ -82,6 +82,7 @@ type projectSemanticModelSpec struct {
 }
 
 type dashboardSpec struct {
+	Title             string                                               `yaml:"title"`
 	Appearance        dashboardappearance.Patch                            `yaml:"appearance"`
 	SemanticModel     string                                               `yaml:"semanticModel"`
 	Filters           map[string]dashboardfilter.Definition                `yaml:"filters"`

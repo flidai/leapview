@@ -236,7 +236,7 @@ func loadFlatDashboards(project *Project, includes []string) error {
 		if err := appearanceValidate(spec.Appearance); err != nil {
 			return resourceError(path, id, "spec.appearance", "%s", err)
 		}
-		dashboard := &authoring.Dashboard{ID: id, Appearance: spec.Appearance, Title: firstNonEmpty(envelope.Metadata.Title, name), Description: envelope.Metadata.Description, SemanticModel: strings.TrimSpace(spec.SemanticModel), FilterDefinitions: spec.Filters, FilterBindings: spec.FilterBindings, FilterApplication: spec.FilterApplication, Visuals: spec.Visuals, Pages: projectDashboardPages(spec.Pages)}
+		dashboard := &authoring.Dashboard{ID: id, Appearance: spec.Appearance, Title: firstNonEmpty(spec.Title, envelope.Metadata.DisplayName, envelope.Metadata.Title, name), Description: envelope.Metadata.Description, SemanticModel: strings.TrimSpace(spec.SemanticModel), FilterDefinitions: spec.Filters, FilterBindings: spec.FilterBindings, FilterApplication: spec.FilterApplication, Visuals: spec.Visuals, Pages: projectDashboardPages(spec.Pages)}
 		project.Dashboards[name] = dashboard
 		project.DashboardIDs[name], project.DashboardPaths[name] = id, path
 		project.DashboardMetadata[name] = projectgraph.Metadata{DisplayName: firstNonEmpty(envelope.Metadata.DisplayName, envelope.Metadata.Title, name), Description: envelope.Metadata.Description, Owner: envelope.Metadata.Owner, Domain: envelope.Metadata.Domain, Tags: append([]string(nil), envelope.Metadata.Tags...), Documentation: envelope.Metadata.Documentation}
@@ -372,35 +372,40 @@ func validateFlatProject(project Project) error {
 			return resourceError(project.SourcePaths[name], project.SourceIDs[name], "spec", "Source %q: %v", name, err)
 		}
 	}
-	sourceAliases := make(map[string]string, len(project.Sources))
-	sourceReverse := make(map[string]string, len(project.Sources))
-	aliasedSources := make(map[string]semanticmodel.Source, len(project.Sources))
-	for name, source := range project.Sources {
-		alias := localSourceName(name)
-		sourceAliases[name], sourceReverse[alias], aliasedSources[alias] = alias, name, source
-	}
-	validatedModel := &semanticmodel.Model{Name: project.Name, Connections: copyConnections(project.Connections), Sources: aliasedSources, Tables: translatedTablesForRuntime(project.Models, sourceAliases)}
-	if err := validatedModel.ValidateAuthored(); err != nil {
-		for name := range project.Models {
-			return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec", "Model %q validation: %v", name, err)
-		}
-		return err
-	}
-	for name, table := range validatedModel.Tables {
-		for index, dependency := range table.SourceDependencies {
-			if original, ok := sourceReverse[dependency]; ok {
-				table.SourceDependencies[index] = original
+	if len(project.Models) > 0 {
+		sourceAliases := make(map[string]string, len(project.Sources))
+		sourceReverse := make(map[string]string, len(project.Sources))
+		aliasedSources := make(map[string]semanticmodel.Source, len(project.Sources))
+		for name, source := range project.Sources {
+			alias := localSourceName(name)
+			sourceAliases[name], sourceReverse[alias], aliasedSources[alias] = alias, name, source
+			if id := project.SourceIDs[name]; id != "" {
+				sourceAliases[id] = alias
 			}
 		}
-		if original, ok := sourceReverse[table.Source]; ok {
-			table.Source = original
-		}
-		for index, source := range table.Sources {
-			if original, ok := sourceReverse[source]; ok {
-				table.Sources[index] = original
+		validatedModel := &semanticmodel.Model{Name: project.Name, Connections: copyConnections(project.Connections), Sources: aliasedSources, Tables: translatedTablesForRuntime(project.Models, sourceAliases)}
+		if err := validatedModel.ValidateAuthored(); err != nil {
+			for name := range project.Models {
+				return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec", "Model %q validation: %v", name, err)
 			}
+			return err
 		}
-		project.Models[name] = table
+		for name, table := range validatedModel.Tables {
+			for index, dependency := range table.SourceDependencies {
+				if original, ok := sourceReverse[dependency]; ok {
+					table.SourceDependencies[index] = original
+				}
+			}
+			if original, ok := sourceReverse[table.Source]; ok {
+				table.Source = original
+			}
+			for index, source := range table.Sources {
+				if original, ok := sourceReverse[source]; ok {
+					table.Sources[index] = original
+				}
+			}
+			project.Models[name] = table
+		}
 	}
 	for name, source := range project.Sources {
 		if source.Connection == "" {

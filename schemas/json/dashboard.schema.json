@@ -540,6 +540,9 @@
         "semanticModel": {
           "$ref": "#/$defs/%23ResourceID"
         },
+        "title": {
+          "type": "string"
+        },
         "visuals": {
           "additionalProperties": false,
           "minProperties": 1,

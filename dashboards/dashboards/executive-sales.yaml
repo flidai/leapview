@@ -81,7 +81,7 @@ spec:
       type: area
       query:
         dimensions:
-          purchase_month: orders.purchase_month
+          purchase_month: sales_orders.purchase_month
         measures:
           revenue:
         sort:
@@ -93,7 +93,7 @@ spec:
       type: bar
       query:
         dimensions:
-          category: orders.category
+          category: sales_orders.category
         measures:
           revenue:
         sort:
@@ -104,30 +104,30 @@ spec:
       title: Orders
       type: table
       query:
-        table: orders
+        table: sales_orders
         fields:
-          - orders.order_id
-          - orders.purchase_date
-          - orders.status
-          - customers.state
-          - orders.category
-          - orders.revenue
+          - sales_orders.order_id
+          - sales_orders.purchase_date
+          - sales_orders.status
+          - sales_customers.state
+          - sales_orders.category
+          - sales_orders.revenue
       default_sort:
         key: purchase_date
         direction: desc
       interaction:
         row_selection:
           mappings:
-            - field: orders.order_id
-              fact: orders
+            - field: sales_orders.order_id
+              fact: sales_orders
               value: order_id
               label: order_id
-            - field: orders.status
-              fact: orders
+            - field: sales_orders.status
+              fact: sales_orders
               value: status
               label: status
-            - field: orders.category
-              fact: orders
+            - field: sales_orders.category
+              fact: sales_orders
               value: category
               label: category
           targets:

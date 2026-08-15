@@ -343,6 +343,7 @@ package contracts
 })
 
 #DashboardSpec: close({
+	title?: string
 	appearance?: close({
 		icon?:  #ObjectID | "default"
 		color?: "gray" | "blue" | "green" | "yellow" | "orange" | "red" | "purple" | "pink" | "coral" | "default"
