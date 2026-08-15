@@ -119,6 +119,50 @@ func (r *Repository) List(ctx context.Context, workspaceID string) ([]authoring.
 	return out, nil
 }
 
+// CountBySemanticModel returns the non-archived authoring dashboard counts for
+// each semantic model in deterministic semantic-model order.
+func (r *Repository) CountBySemanticModel(ctx context.Context, workspaceID string) ([]authoring.SemanticModelUsage, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, fmt.Errorf("workspace id is required")
+	}
+	rows, err := dashboarddb.New(r.db).CountAuthoringDashboardsBySemanticModel(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]authoring.SemanticModelUsage, 0, len(rows))
+	for _, row := range rows {
+		private, err := nonNegativeCount(row.PrivateCount)
+		if err != nil {
+			return nil, fmt.Errorf("semantic model %q private count: %w", row.SemanticModel, err)
+		}
+		shared, err := nonNegativeCount(row.SharedCount)
+		if err != nil {
+			return nil, fmt.Errorf("semantic model %q shared count: %w", row.SemanticModel, err)
+		}
+		total, err := nonNegativeCount(row.TotalCount)
+		if err != nil {
+			return nil, fmt.Errorf("semantic model %q total count: %w", row.SemanticModel, err)
+		}
+		usage, err := authoring.NewSemanticModelUsage(row.SemanticModel, private, shared)
+		if err != nil {
+			return nil, err
+		}
+		if usage.Total != total {
+			return nil, fmt.Errorf("%w: semantic model %q count buckets do not match total", authoring.ErrInvalidAuthoring, row.SemanticModel)
+		}
+		out = append(out, usage)
+	}
+	return out, nil
+}
+
+func nonNegativeCount(value int64) (uint64, error) {
+	if value < 0 {
+		return 0, fmt.Errorf("%w: count cannot be negative", authoring.ErrInvalidAuthoring)
+	}
+	return uint64(value), nil
+}
+
 func (r *Repository) GetRevision(ctx context.Context, workspaceID string, dashboardID authoring.DashboardID, revisionID authoring.RevisionID) (authoring.Revision, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {

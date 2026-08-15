@@ -75,6 +75,9 @@ func (r *fakeRepository) Get(_ context.Context, _ string, _ authoring.DashboardI
 func (r *fakeRepository) List(context.Context, string) ([]authoring.DashboardLifecycle, error) {
 	return []authoring.DashboardLifecycle{r.lifecycle}, nil
 }
+func (r *fakeRepository) CountBySemanticModel(context.Context, string) ([]authoring.SemanticModelUsage, error) {
+	return nil, nil
+}
 func (r *fakeRepository) GetRevision(_ context.Context, _ string, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
 	revision, ok := r.revisions[id]
 	if !ok {

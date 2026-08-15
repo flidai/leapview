@@ -58,6 +58,7 @@ type Repository interface {
 	Create(context.Context, CreateInput) (DashboardLifecycle, error)
 	Get(context.Context, string, DashboardID) (DashboardLifecycle, error)
 	List(context.Context, string) ([]DashboardLifecycle, error)
+	CountBySemanticModel(context.Context, string) ([]SemanticModelUsage, error)
 	GetRevision(context.Context, string, DashboardID, RevisionID) (Revision, error)
 	LookupCommandResult(context.Context, string, DashboardID, CommandEvidence) (CommandResult, bool, error)
 	AppendDraft(context.Context, AppendDraftInput) (Revision, error)

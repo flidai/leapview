@@ -15,11 +15,15 @@ WHERE workspace_id = sqlc.arg(workspace_id)
 ORDER BY slug, dashboard_id;
 
 -- name: CountAuthoringDashboardsBySemanticModel :many
-SELECT semantic_model, visibility, COUNT(*) AS dashboard_count
+SELECT semantic_model,
+       COUNT(CASE WHEN visibility = 'private' THEN 1 END) AS private_count,
+       COUNT(CASE WHEN visibility = 'shared' THEN 1 END) AS shared_count,
+       COUNT(*) AS total_count
 FROM dashboard_authoring_dashboards
 WHERE workspace_id = sqlc.arg(workspace_id)
-GROUP BY semantic_model, visibility
-ORDER BY semantic_model, visibility;
+  AND status <> 'archived'
+GROUP BY semantic_model
+ORDER BY semantic_model;
 
 -- name: GetAuthoringRevision :one
 SELECT *
