@@ -45,9 +45,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     :host {
       display: block;
       min-height: 100svh;
-      color: var(--lv-fg-default, #1f2328);
-      background: var(--lv-bg-app, #f6f8fa);
-      font-family: var(--fontStack-system, system-ui, sans-serif);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-app);
+      font-family: var(--fontStack-system);
     }
 
     .sr-only {
@@ -73,13 +73,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       gap: 0.75rem;
       min-height: 3.75rem;
       padding: 0.6rem 1rem;
-      border-bottom: 1px solid var(--lv-border-muted, #d8dee4);
-      background: var(--lv-bg-panel, #fff);
+      border-bottom: var(--lv-border-muted);
+      background: var(--lv-bg-panel);
     }
 
     .back {
       color: inherit;
-      font-size: 0.875rem;
+      font: var(--lv-type-body-compact);
       text-decoration: none;
       white-space: nowrap;
     }
@@ -88,7 +88,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     button:focus-visible,
     input:focus-visible,
     [role='button']:focus-visible {
-      outline: 2px solid var(--lv-accent-emphasis, #0969da);
+      outline: 2px solid var(--lv-fg-accent);
       outline-offset: 2px;
     }
 
@@ -100,8 +100,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .title {
       margin: 0;
       overflow: hidden;
-      font-size: 1rem;
-      font-weight: 650;
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -111,31 +111,31 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       flex-wrap: wrap;
       gap: 0.3rem;
       margin-top: 0.15rem;
-      color: var(--lv-fg-muted, #656d76);
-      font-size: 0.7rem;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
     }
 
     .badge {
       display: inline-flex;
       align-items: center;
-      border: 1px solid var(--lv-border-muted, #d8dee4);
+      border: var(--lv-border-muted);
       border-radius: 999px;
       padding: 0.12rem 0.45rem;
-      background: var(--lv-bg-subtle, #f6f8fa);
+      background: var(--lv-bg-panel-muted);
       white-space: nowrap;
     }
 
     .badge.draft,
     .badge.dirty {
-      border-color: #bf8700;
-      color: #7a4e00;
-      background: #fff8c5;
+      border: var(--lv-border-attention);
+      color: var(--lv-fg-warning);
+      background: var(--lv-bg-attention-muted);
     }
 
     .badge.shared {
-      border-color: #54aeff;
-      color: #0550ae;
-      background: #ddf4ff;
+      border: var(--lv-border-accent);
+      color: var(--lv-fg-accent);
+      background: var(--lv-bg-accent-muted);
     }
 
     .toolbar-actions {
@@ -150,30 +150,29 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       align-items: center;
       justify-content: center;
       min-height: 2rem;
-      border: 1px solid var(--lv-border-default, #d0d7de);
+      border: var(--lv-border-default);
       border-radius: 0.35rem;
       padding: 0.35rem 0.65rem;
-      color: inherit;
-      background: var(--lv-bg-panel, #fff);
-      font: inherit;
-      font-size: 0.78rem;
+      color: var(--lv-button-fg-rest);
+      background: var(--lv-button-bg-rest);
+      font: var(--lv-type-body-compact);
       text-decoration: none;
       cursor: pointer;
     }
 
     button:hover,
     .button:hover {
-      background: var(--lv-bg-subtle, #f6f8fa);
+      background: var(--lv-button-bg-hover);
     }
 
     button.primary {
-      border-color: #1f883d;
-      color: #fff;
-      background: #1f883d;
+      border-color: var(--lv-button-accent-border-rest);
+      color: var(--lv-button-accent-fg-rest);
+      background: var(--lv-button-accent-bg-rest);
     }
 
     button.primary:hover {
-      background: #1a7f37;
+      background: var(--lv-button-accent-bg-hover);
     }
 
     button:disabled {
@@ -190,15 +189,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .pane {
       min-width: 0;
       overflow: auto;
-      background: var(--lv-bg-panel, #fff);
+      background: var(--lv-bg-panel);
     }
 
     .fields {
-      border-right: 1px solid var(--lv-border-muted, #d8dee4);
+      border-right: var(--lv-border-muted);
     }
 
     .properties {
-      border-left: 1px solid var(--lv-border-muted, #d8dee4);
+      border-left: var(--lv-border-muted);
     }
 
     .pane-header {
@@ -206,20 +205,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       top: 0;
       z-index: 1;
       padding: 0.9rem 0.85rem 0.6rem;
-      border-bottom: 1px solid var(--lv-border-muted, #d8dee4);
-      background: var(--lv-bg-panel, #fff);
+      border-bottom: var(--lv-border-muted);
+      background: var(--lv-bg-panel);
     }
 
     .pane-title {
       margin: 0;
-      font-size: 0.8rem;
-      font-weight: 650;
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .pane-hint {
       margin: 0.25rem 0 0;
-      color: var(--lv-fg-muted, #656d76);
-      font-size: 0.7rem;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
       line-height: 1.4;
     }
 
@@ -227,24 +226,23 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       width: 100%;
       box-sizing: border-box;
       margin-top: 0.65rem;
-      border: 1px solid var(--lv-border-default, #d0d7de);
+      border: var(--lv-border-default);
       border-radius: 0.3rem;
       padding: 0.45rem 0.55rem;
-      color: inherit;
-      background: var(--lv-bg-default, #fff);
-      font: inherit;
-      font-size: 0.78rem;
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-input);
+      font: var(--lv-type-body-compact);
     }
 
     .table {
-      border-bottom: 1px solid var(--lv-border-muted, #d8dee4);
+      border-bottom: var(--lv-border-muted);
     }
 
     .table summary {
       padding: 0.6rem 0.85rem;
-      color: var(--lv-fg-default, #1f2328);
-      font-size: 0.75rem;
-      font-weight: 600;
+      color: var(--lv-fg-default);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       cursor: pointer;
       list-style-position: inside;
     }
@@ -271,36 +269,36 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .field:hover {
-      border-color: var(--lv-border-muted, #d8dee4);
-      background: var(--lv-bg-subtle, #f6f8fa);
+      border-color: var(--lv-line-muted);
+      background: var(--lv-bg-panel-muted);
     }
 
     .field-kind {
       width: 1.2rem;
-      color: var(--lv-fg-muted, #656d76);
-      font-size: 0.65rem;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
       text-align: center;
     }
 
     .field-label {
       min-width: 0;
       overflow: hidden;
-      font-size: 0.76rem;
+      font: var(--lv-type-body-compact);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .field-type {
       margin-left: auto;
-      color: var(--lv-fg-muted, #656d76);
-      font-size: 0.64rem;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
     }
 
     .canvas-pane {
       display: grid;
       min-height: 0;
       grid-template-rows: auto minmax(0, 1fr);
-      background: var(--lv-bg-app, #f6f8fa);
+      background: var(--lv-bg-app);
     }
 
     .page-tabs {
@@ -309,8 +307,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       gap: 0.3rem;
       overflow-x: auto;
       padding: 0.55rem 0.75rem;
-      border-bottom: 1px solid var(--lv-border-muted, #d8dee4);
-      background: var(--lv-bg-panel, #fff);
+      border-bottom: var(--lv-border-muted);
+      background: var(--lv-bg-panel);
     }
 
     .page-tab {
@@ -320,9 +318,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .page-tab[aria-selected='true'] {
-      border-color: var(--lv-border-default, #d0d7de);
-      background: var(--lv-bg-subtle, #f6f8fa);
-      font-weight: 600;
+      border-color: var(--lv-line-default);
+      background: var(--lv-bg-panel-muted);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .canvas-scroll {
@@ -334,12 +332,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       position: relative;
       min-width: 38rem;
       min-height: 30rem;
-      border: 1px solid var(--lv-border-muted, #d8dee4);
+      border: var(--lv-border-muted);
       border-radius: 0.45rem;
-      background-color: #fff;
-      background-image: linear-gradient(to right, rgba(9, 105, 218, 0.07) 1px, transparent 1px), linear-gradient(to bottom, rgba(9, 105, 218, 0.07) 1px, transparent 1px);
+      background-color: var(--lv-bg-panel);
+      background-image: linear-gradient(to right, color-mix(in srgb, var(--lv-fg-accent) 7%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--lv-fg-accent) 7%, transparent) 1px, transparent 1px);
       background-size: 8.333% 2.5rem;
-      box-shadow: 0 2px 8px rgba(31, 35, 40, 0.06);
+      box-shadow: var(--lv-shadow-floating-sm);
     }
 
     .visual {
@@ -349,47 +347,47 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       min-width: 4rem;
       min-height: 3rem;
       box-sizing: border-box;
-      border: 1px solid var(--lv-border-default, #d0d7de);
+      border: var(--lv-border-default);
       border-radius: 0.35rem;
       padding: 0.55rem;
       color: inherit;
-      background: rgba(255, 255, 255, 0.96);
+      background: color-mix(in srgb, var(--lv-bg-panel) 96%, transparent);
       text-align: left;
       cursor: pointer;
     }
 
     .visual:hover,
     .visual[aria-pressed='true'] {
-      border-color: var(--lv-accent-emphasis, #0969da);
-      box-shadow: 0 0 0 2px rgba(9, 105, 218, 0.15);
+      border-color: var(--lv-fg-accent);
+      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-bg-accent-muted);
     }
 
     .visual-title {
       overflow: hidden;
-      font-size: 0.76rem;
-      font-weight: 600;
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-semibold);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .visual-type {
       margin-top: 0.2rem;
-      color: var(--lv-fg-muted, #656d76);
-      font-size: 0.68rem;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
     }
 
     .visual-empty {
       display: grid;
       place-items: center;
       min-height: 20rem;
-      color: var(--lv-fg-muted, #656d76);
+      color: var(--lv-fg-muted);
       text-align: center;
     }
 
     .visual-empty strong {
       display: block;
       margin-bottom: 0.3rem;
-      color: var(--lv-fg-default, #1f2328);
+      color: var(--lv-fg-default);
     }
 
     .properties-body {
@@ -404,15 +402,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .property-label {
-      color: var(--lv-fg-muted, #656d76);
-      font-size: 0.68rem;
-      font-weight: 600;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
       letter-spacing: 0.02em;
       text-transform: uppercase;
     }
 
     .property-value {
-      font-size: 0.8rem;
+      font: var(--lv-type-body-compact);
     }
 
     .slot {
@@ -420,15 +418,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       align-items: center;
       justify-content: space-between;
       gap: 0.5rem;
-      border: 1px solid var(--lv-border-muted, #d8dee4);
+      border: var(--lv-border-muted);
       border-radius: 0.3rem;
       padding: 0.45rem;
-      font-size: 0.74rem;
+      font: var(--lv-type-body-compact);
     }
 
     .slot-kind {
-      color: var(--lv-fg-muted, #656d76);
-      font-size: 0.66rem;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
     }
 
     .diagnostics {
@@ -437,29 +435,29 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .diagnostic {
-      border-left: 3px solid var(--lv-fg-muted, #656d76);
+      border-left: 3px solid var(--lv-fg-muted);
       padding: 0.35rem 0.5rem;
-      background: var(--lv-bg-subtle, #f6f8fa);
-      font-size: 0.72rem;
+      background: var(--lv-bg-panel-muted);
+      font: var(--lv-type-caption);
     }
 
     .diagnostic.error {
-      border-color: #cf222e;
+      border-color: var(--lv-fg-danger);
     }
 
     .diagnostic.warning {
-      border-color: #bf8700;
+      border-color: var(--lv-fg-warning);
     }
 
     .diagnostic.info {
-      border-color: #0969da;
+      border-color: var(--lv-fg-accent);
     }
 
     .evidence {
       display: grid;
       gap: 0.3rem;
-      color: var(--lv-fg-muted, #656d76);
-      font-size: 0.7rem;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
     }
 
     .state {
@@ -467,14 +465,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       place-items: center;
       min-height: 60svh;
       padding: 2rem;
-      color: var(--lv-fg-muted, #656d76);
+      color: var(--lv-fg-muted);
       text-align: center;
     }
 
     .state strong {
       display: block;
       margin-bottom: 0.35rem;
-      color: var(--lv-fg-default, #1f2328);
+      color: var(--lv-fg-default);
     }
 
     @media (max-width: 960px) {
@@ -493,7 +491,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       .properties {
         grid-column: 1 / -1;
         max-height: 19rem;
-        border-top: 1px solid var(--lv-border-muted, #d8dee4);
+        border-top: var(--lv-border-muted);
         border-left: 0;
       }
     }
@@ -506,7 +504,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       .pane {
         max-height: none;
         border: 0;
-        border-bottom: 1px solid var(--lv-border-muted, #d8dee4);
+        border-bottom: var(--lv-border-muted);
       }
 
       .fields,
