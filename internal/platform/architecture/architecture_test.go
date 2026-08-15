@@ -229,6 +229,35 @@ func TestEnterpriseAuthoringForbiddenImportsAreRejected(t *testing.T) {
 	}
 }
 
+func TestAccessMayImportOnlyThePublishedProjectGraphContract(t *testing.T) {
+	if !IsSharedContractImport("access", "internal/project/graph") {
+		t.Fatal("access graph contract is not published")
+	}
+	if IsSharedContractImport("access", "internal/project/graph/compiler") || IsSharedContractImport("project", "internal/project/graph") {
+		t.Fatal("shared graph contract rule widened beyond the exact access contract")
+	}
+	source, ok := ClassifyPackage("internal/access")
+	if !ok {
+		t.Fatal("access package is not classified")
+	}
+	graphContract, ok := ClassifyPackage("internal/project/graph")
+	if !ok || graphContract.Capability != "project" || graphContract.Layer != LayerContract {
+		t.Fatal("project graph package is not classified")
+	}
+	if violation := CapabilityImportViolation("internal/access", source, "internal/project/graph", graphContract); violation != "" {
+		t.Fatalf("access -> project/graph violation = %q, want allowed shared contract", violation)
+	}
+	for _, targetPath := range []string{"internal/project/schema", "internal/project/compiler", "internal/project/artifact"} {
+		target, targetOK := ClassifyPackage(targetPath)
+		if !targetOK {
+			t.Fatalf("%s is not classified", targetPath)
+		}
+		if violation := CapabilityImportViolation("internal/access", source, targetPath, target); !strings.Contains(violation, "undeclared capability edge") {
+			t.Fatalf("access -> %s violation = %q, want undeclared capability edge", targetPath, violation)
+		}
+	}
+}
+
 func TestEnterpriseAuthoringStateRemainsCapabilityOwned(t *testing.T) {
 	tests := []struct {
 		path       string
