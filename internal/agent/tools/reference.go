@@ -16,6 +16,7 @@ type ProviderSet struct {
 	Catalog CatalogProvider
 	Visual  VisualProvider
 	APIGen  APIGenProvider
+	Authoring DashboardAuthoringProvider
 }
 
 func (p ProviderSet) Definitions(scope Scope) []agentcore.ToolDefinition {
@@ -23,6 +24,7 @@ func (p ProviderSet) Definitions(scope Scope) []agentcore.ToolDefinition {
 	definitions = append(definitions, p.Catalog.Definitions(scope)...)
 	definitions = append(definitions, p.Visual.Definitions(scope)...)
 	definitions = append(definitions, p.APIGen.Definitions(scope)...)
+	definitions = append(definitions, p.Authoring.Definitions(scope)...)
 	sort.Slice(definitions, func(i, j int) bool {
 		return definitions[i].Name < definitions[j].Name
 	})

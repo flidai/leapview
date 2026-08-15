@@ -930,10 +930,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		routes.agentModule, err = agentmodule.Build(ctx, agentmodule.Config{
 			Database: database, Model: moduleWorkflow.agentConfig,
 			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
-			ProductName:      brand.Name,
-			BuildVersion:     platform.buildIdentity.Version,
-			APIGenOperations: agentAPIGenOperations(),
-			RunWorkloadClass: string(workloadmodule.BackgroundClass), GlobalWorkspaceID: workloadmodule.GlobalWorkspace,
+			ProductName:        brand.Name,
+			BuildVersion:       platform.buildIdentity.Version,
+			APIGenOperations:   agentAPIGenOperations(),
+			DashboardAuthoring: routes.dashboardAuthoring,
+			RunWorkloadClass:   string(workloadmodule.BackgroundClass), GlobalWorkspaceID: workloadmodule.GlobalWorkspace,
 			Search: routes.workspaceModule,
 			Environment: func(r *http.Request) string {
 				return string(requestServingEnvironment(policy.defaultEnvironment, r))

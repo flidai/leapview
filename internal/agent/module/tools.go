@@ -13,6 +13,7 @@ import (
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
@@ -38,11 +39,28 @@ func (m *Module) configureTools() {
 func (m *Module) ToolDefinitions(scope agentcap.Scope) []agentcore.ToolDefinition {
 	toolScope := ToolsScope(scope)
 	return (agenttools.ProviderSet{
-		Docs:    m.DocsToolProvider(),
-		Catalog: m.CatalogToolProvider(),
-		Visual:  m.VisualToolProvider(),
-		APIGen:  m.APIGenToolProvider(),
+		Docs:      m.DocsToolProvider(),
+		Catalog:   m.CatalogToolProvider(),
+		Visual:    m.VisualToolProvider(),
+		APIGen:    m.APIGenToolProvider(),
+		Authoring: m.DashboardAuthoringToolProvider(),
 	}).Definitions(toolScope)
+}
+
+func (m *Module) DashboardAuthoringToolProvider() agenttools.DashboardAuthoringProvider {
+	return agenttools.DashboardAuthoringProvider{
+		Application: m.dashboardAuthoring,
+		Authorize: func(ctx context.Context, scope agenttools.Scope, workspace string, action dashboardauthoring.AuthorizationAction) (agentcore.ToolResult, bool) {
+			privilege := access.PrivilegeViewItem
+			switch action {
+			case dashboardauthoring.AuthorizationActionEdit:
+				privilege = access.PrivilegeEditItem
+			case dashboardauthoring.AuthorizationActionPublish, dashboardauthoring.AuthorizationActionArchive:
+				privilege = access.PrivilegeManageItem
+			}
+			return m.authorizePrivilege(ctx, scopeFromTools(scope), privilege, []access.ObjectRef{access.WorkspaceObject(workspace)}, "agent_tool", "dashboard_authoring")
+		},
+	}
 }
 
 func (m *Module) DocsToolProvider() agenttools.DocsProvider {
@@ -132,9 +150,10 @@ func (m *Module) APIGenToolProvider() agenttools.APIGenProvider {
 
 func ToolsScope(scope agentcap.Scope) agenttools.Scope {
 	return agenttools.Scope{
-		WorkspaceID:   scope.WorkspaceID,
-		PrincipalID:   scope.PrincipalID,
-		DevAuthBypass: scope.DevAuthBypass,
+		WorkspaceID:    scope.WorkspaceID,
+		PrincipalID:    scope.PrincipalID,
+		ConversationID: scope.ConversationID,
+		DevAuthBypass:  scope.DevAuthBypass,
 		Credential: agenttools.CredentialScope{
 			WorkspaceID: scope.Credential.WorkspaceID,
 			Restricted:  scope.Credential.Restricted,
@@ -145,9 +164,10 @@ func ToolsScope(scope agentcap.Scope) agenttools.Scope {
 
 func scopeFromTools(scope agenttools.Scope) agentcap.Scope {
 	return agentcap.Scope{
-		WorkspaceID:   scope.WorkspaceID,
-		PrincipalID:   scope.PrincipalID,
-		DevAuthBypass: scope.DevAuthBypass,
+		WorkspaceID:    scope.WorkspaceID,
+		PrincipalID:    scope.PrincipalID,
+		ConversationID: scope.ConversationID,
+		DevAuthBypass:  scope.DevAuthBypass,
 		Credential: agentcap.CredentialScope{
 			WorkspaceID: scope.Credential.WorkspaceID,
 			Restricted:  scope.Credential.Restricted,

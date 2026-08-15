@@ -31,10 +31,11 @@ func IsBusy(err error) bool {
 }
 
 type Scope struct {
-	WorkspaceID   string
-	PrincipalID   string
-	Credential    CredentialScope
-	DevAuthBypass bool
+	WorkspaceID    string
+	PrincipalID    string
+	ConversationID string
+	Credential     CredentialScope
+	DevAuthBypass  bool
 }
 
 type CredentialScope struct {

@@ -1,10 +1,10 @@
 import "@yacobolo/apigen";
 
-@doc("Capability-owned model-facing contracts for LeapView's curated read-only agent tools.")
+@doc("Capability-owned model-facing contracts for LeapView's curated governed read and authoring agent tools.")
 @apigen.`package`(#{
   title: "LeapView Agent Tool Contracts",
   version: "1.0.0",
-  description: "Compact, model-facing contracts for LeapView's curated read-only tools.",
+  description: "Compact, model-facing contracts for LeapView's curated governed read and authoring tools.",
 })
 namespace LeapViewAgentTools;
 
@@ -691,4 +691,205 @@ model DocsReadResult {
   totalLines: int32;
   nextOffset?: int32;
   truncated: boolean;
+}
+
+// Dashboard authoring tools deliberately keep the model-facing surface
+// narrow. Authenticated actor and provenance fields are server-bound and are
+// therefore not accepted by any input contract. The closed authoring.Command
+// union remains the validation authority for command payloads.
+model DashboardAuthoringRevisionToken {
+  revisionId: string;
+  number: int64;
+  contentHash: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "catalog"] })
+model DashboardAuthoringListInput {
+  @minLength(1)
+  workspace: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "catalog"] })
+model DashboardAuthoringListResult {
+  items: Record<unknown>[];
+  count: int32;
+  projectCount: int32;
+  workspaceCount: int32;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "catalog"] })
+model DashboardAuthoringGetInput {
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  dashboard: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "catalog"] })
+model DashboardAuthoringGetResult {
+  dashboard: Record<unknown>;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "draft"] })
+model DashboardAuthoringDraftGetInput {
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  dashboard: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "draft"] })
+model DashboardAuthoringDraftGetResult {
+  lifecycle: Record<unknown>;
+  revision: Record<unknown>;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "create"] })
+model DashboardAuthoringCreateInput {
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  title: string;
+  @minLength(1)
+  semanticModel: string;
+  @minLength(1)
+  dashboardId?: string;
+  @minLength(1)
+  slug?: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring"] })
+model DashboardAuthoringResult {
+  revision: Record<unknown>;
+  lifecycle: Record<unknown>;
+}
+
+model AuthoringPublish {}
+model AuthoringArchive {}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "intent"] })
+model DashboardAuthoringSetVisibilityInput {
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  dashboardId: string;
+  @minLength(1)
+  draftId: string;
+  expectedRevision: DashboardAuthoringRevisionToken;
+  visibility: "private" | "shared";
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "intent"] })
+model DashboardAuthoringAddPageInput {
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  dashboardId: string;
+  @minLength(1)
+  draftId: string;
+  expectedRevision: DashboardAuthoringRevisionToken;
+  pageId?: string;
+  title?: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "intent"] })
+model DashboardAuthoringAddVisualInput {
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  dashboardId: string;
+  @minLength(1)
+  draftId: string;
+  expectedRevision: DashboardAuthoringRevisionToken;
+  @minLength(1)
+  pageId: string;
+  visualId?: string;
+  componentId?: string;
+  @minLength(1)
+  type: string;
+  title?: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "intent"] })
+model DashboardAuthoringAssignFieldInput {
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  dashboardId: string;
+  @minLength(1)
+  draftId: string;
+  expectedRevision: DashboardAuthoringRevisionToken;
+  @minLength(1)
+  pageId: string;
+  @minLength(1)
+  visualId: string;
+  @minLength(1)
+  fieldId: string;
+  role: "measure" | "dimension" | "detail";
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "command"] })
+model DashboardAuthoringCommandInput {
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  dashboardId: string;
+  @minLength(1)
+  draftId: string;
+  expectedRevision: DashboardAuthoringRevisionToken;
+  @minLength(1)
+  contentHash?: string;
+  publish?: AuthoringPublish;
+  archive?: AuthoringArchive;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "fork"] })
+model DashboardAuthoringForkInput {
+  sourceKind: "workspace" | "project";
+  @minLength(1)
+  sourceWorkspace: string;
+  @minLength(1)
+  sourceDashboard: string;
+  @minLength(1)
+  targetWorkspace?: string;
+  @minLength(1)
+  title?: string;
+  @minLength(1)
+  slug?: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "preview"] })
+model DashboardAuthoringPreviewInput {
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  dashboard: string;
+  @minLength(1)
+  draftId: string;
+  expectedRevision: DashboardAuthoringRevisionToken;
+  @minLength(1)
+  page: string;
+  filters?: Record<unknown>;
+}
+
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "preview"] })
+model DashboardAuthoringPreviewResult {
+  revision: Record<unknown>;
+  definition: Record<unknown>;
+  pagePatch: Record<unknown>;
+  semanticEvidence: Record<unknown>;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "export"] })
+model DashboardAuthoringExportInput {
+  sourceKind: "workspace" | "project";
+  @minLength(1)
+  workspace: string;
+  @minLength(1)
+  dashboard: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "export"] })
+model DashboardAuthoringExportResult {
+  yaml: string;
 }

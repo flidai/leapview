@@ -53,6 +53,36 @@ func TestServiceUsesHostProvidedTools(t *testing.T) {
 	}
 }
 
+func TestServiceBindsConversationIDToAgentToolProviders(t *testing.T) {
+	ctx := context.Background()
+	store := openAgentAppStore(t, ctx)
+	defer store.Close()
+	principal := createAgentAppPrincipal(t, ctx, store, "conversation-tools@example.com")
+	model := newRecordingAgentModel(agentcore.ModelResponse{Content: "done", FinishReason: agentcore.FinishReasonStop})
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	var seen []string
+	service.SetToolProviders(func(scope Scope) []agentcore.ToolDefinition {
+		seen = append(seen, scope.ConversationID)
+		return nil
+	})
+	scope := Scope{WorkspaceID: "sales", PrincipalID: principal.ID}
+	conversation, err := service.CreateConversation(ctx, scope, "Tool provenance")
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "hello"}); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if len(seen) == 0 {
+		t.Fatal("tool provider was not called")
+	}
+	for _, got := range seen {
+		if got != conversation.ID {
+			t.Fatalf("tool provider conversation id = %q, want %q (all calls: %#v)", got, conversation.ID, seen)
+		}
+	}
+}
+
 func TestServiceAppendsHostProvidedTools(t *testing.T) {
 	service := NewService(nil, Config{APIKey: "key", Model: "model"})
 	service.SetToolProviders(fakeToolProvider("one"))
