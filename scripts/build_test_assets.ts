@@ -24,6 +24,7 @@ const fixtures = new Map<string, FixtureBuild>([
       'chunks/[name]-[hash].[ext]',
     ),
   ],
+  ['dashboard-builder', single('dashboard-builder', 'web/components/dashboard/dashboard-builder.ts', '.tmp/dashboard-builder-test/dashboard-builder-under-test.js')],
   [
     'chat-page',
     split('chat-page', 'web/components/chat/chat-page.ts', '.tmp/chat-page-test', 'chat-page-under-test.js', 'chunks/[name]-[hash].[ext]'),
