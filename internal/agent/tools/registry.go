@@ -48,12 +48,24 @@ func APIGenToolNames(operations []APIGenOperation) []string {
 
 func ManualToolNames() []string {
 	return []string{
+		AddDashboardPageToolName,
+		AddDashboardVisualToolName,
+		AssignDashboardFieldToolName,
 		CatalogGetToolName,
 		CatalogListToolName,
 		CatalogSearchToolName,
+		CreateDashboardDraftToolName,
 		DocsReadToolName,
 		DocsSearchToolName,
+		ExecuteDashboardCommandToolName,
+		ExportDashboardYAMLToolName,
+		ForkDashboardToolName,
+		GetDashboardDraftToolName,
+		GetDashboardToolName,
+		ListDashboardsToolName,
+		PreviewDashboardDraftToolName,
 		QueryVisualToolName,
+		SetDashboardVisibilityToolName,
 	}
 }
 

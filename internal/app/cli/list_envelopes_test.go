@@ -395,7 +395,7 @@ func TestAgentToolsCommandListsCanonicalTools(t *testing.T) {
 			t.Fatalf("agent tools output missing %q:\n%s", want, output)
 		}
 	}
-	for _, legacy := range []string{"list_dashboards", "list_assets", "describe_asset", "asset_lineage", "explain_semantic_model_query"} {
+	for _, legacy := range []string{"list_assets", "describe_asset", "asset_lineage", "explain_semantic_model_query"} {
 		if strings.Contains(output, legacy) {
 			t.Fatalf("agent tools output contains legacy tool %q:\n%s", legacy, output)
 		}
@@ -410,7 +410,7 @@ func TestAgentToolsCommandListsCanonicalTools(t *testing.T) {
 			names = append(names, fields[0])
 		}
 	}
-	wantNames := []string{"catalog_get", "catalog_list", "catalog_search", "docs_read", "docs_search", "query_dashboard_visual", "query_semantic_model", "query_visual"}
+	wantNames := []string{"add_dashboard_page", "add_dashboard_visual", "assign_dashboard_field", "catalog_get", "catalog_list", "catalog_search", "create_dashboard_draft", "docs_read", "docs_search", "execute_dashboard_command", "export_dashboard_yaml", "fork_dashboard", "get_dashboard", "get_dashboard_draft", "list_dashboards", "preview_dashboard_draft", "query_dashboard_visual", "query_semantic_model", "query_visual", "set_dashboard_visibility"}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("agent tools names = %#v, want %#v\n%s", names, wantNames, output)
 	}

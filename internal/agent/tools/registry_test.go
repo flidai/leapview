@@ -76,17 +76,47 @@ func TestAPIGenQueryWorkspaceBindingsAreExplicitModelArguments(t *testing.T) {
 func TestToolNamesAreTheCuratedSurface(t *testing.T) {
 	operations := curatedTestAPIGenOperations()
 	want := []string{
+		"add_dashboard_page",
+		"add_dashboard_visual",
+		"assign_dashboard_field",
 		"catalog_get",
 		"catalog_list",
 		"catalog_search",
+		"create_dashboard_draft",
 		"docs_read",
 		"docs_search",
+		"execute_dashboard_command",
+		"export_dashboard_yaml",
+		"fork_dashboard",
+		"get_dashboard",
+		"get_dashboard_draft",
+		"list_dashboards",
+		"preview_dashboard_draft",
 		"query_dashboard_visual",
 		"query_semantic_model",
 		"query_visual",
+		"set_dashboard_visibility",
 	}
 	if got := ToolNames(operations); !slices.Equal(got, want) {
 		t.Fatalf("ToolNames() = %#v, want %#v", got, want)
+	}
+}
+
+func TestAnnotationsForEffectUseSafeWorstCaseHints(t *testing.T) {
+	for _, test := range []struct {
+		effect      string
+		readOnly    bool
+		destructive bool
+		idempotent  bool
+	}{
+		{effect: "read", readOnly: true, idempotent: true},
+		{effect: "write"},
+		{effect: "destructive", destructive: true},
+	} {
+		got := AnnotationsForEffect(test.effect)
+		if got.ReadOnlyHint != test.readOnly || got.DestructiveHint != test.destructive || got.IdempotentHint != test.idempotent || got.OpenWorldHint {
+			t.Fatalf("AnnotationsForEffect(%q) = %#v", test.effect, got)
+		}
 	}
 }
 
@@ -99,14 +129,27 @@ func TestReferenceCatalogComesFromCanonicalProviderDefinitions(t *testing.T) {
 	if len(reference) != len(ToolNames(operations)) {
 		t.Fatalf("ReferenceCatalog() count = %d, want %d", len(reference), len(ToolNames(operations)))
 	}
-	definitions := (ProviderSet{APIGen: APIGenProvider{Operations: operations}}).Definitions(Scope{})
+	definitions := (ProviderSet{APIGen: APIGenProvider{Operations: operations}}).referenceDefinitions(Scope{})
 	if len(definitions) != len(reference) {
 		t.Fatalf("ProviderSet definitions = %d, reference = %d", len(definitions), len(reference))
 	}
 	wantDefaults := map[string]map[string]any{
+		"add_dashboard_page": {}, "add_dashboard_visual": {}, "assign_dashboard_field": {},
 		"catalog_get": {}, "catalog_list": {"limit": 25}, "catalog_search": {"limit": 10},
-		"docs_read": {"limit": 200, "offset": 1}, "docs_search": {"limit": 8},
+		"create_dashboard_draft": {},
+		"docs_read":              {"limit": 200, "offset": 1}, "docs_search": {"limit": 8},
+		"execute_dashboard_command": {}, "export_dashboard_yaml": {}, "fork_dashboard": {},
+		"get_dashboard": {}, "get_dashboard_draft": {}, "list_dashboards": {}, "preview_dashboard_draft": {},
 		"query_dashboard_visual": {"limit": 50}, "query_semantic_model": {"limit": 25}, "query_visual": {"limit": 50},
+		"set_dashboard_visibility": {},
+	}
+	wantEffects := map[string]string{
+		"add_dashboard_page": "write", "add_dashboard_visual": "write", "assign_dashboard_field": "write",
+		"catalog_get": "read", "catalog_list": "read", "catalog_search": "read", "create_dashboard_draft": "write",
+		"docs_read": "read", "docs_search": "read", "execute_dashboard_command": "destructive", "export_dashboard_yaml": "read",
+		"fork_dashboard": "write", "get_dashboard": "read", "get_dashboard_draft": "read", "list_dashboards": "read",
+		"preview_dashboard_draft": "read", "query_dashboard_visual": "read", "query_semantic_model": "read", "query_visual": "read",
+		"set_dashboard_visibility": "write",
 	}
 	for index, tool := range reference {
 		definition := definitions[index]
@@ -119,7 +162,7 @@ func TestReferenceCatalogComesFromCanonicalProviderDefinitions(t *testing.T) {
 		if string(tool.InputSchema) != string(definition.InputSchema) || string(tool.OutputSchema) != string(definition.OutputSchema) {
 			t.Fatalf("tool %q reference schemas drifted from provider definitions", tool.Name)
 		}
-		if tool.Effect != "read" || !tool.Annotations.ReadOnlyHint || !tool.Annotations.IdempotentHint || tool.Annotations.DestructiveHint || tool.Annotations.OpenWorldHint {
+		if tool.Effect != wantEffects[tool.Name] || tool.Annotations.ReadOnlyHint != (tool.Effect == "read") || tool.Annotations.DestructiveHint != (tool.Effect == "destructive") || tool.Annotations.IdempotentHint != (tool.Effect == "read") || tool.Annotations.OpenWorldHint {
 			t.Fatalf("tool %q annotations = %#v", tool.Name, tool.Annotations)
 		}
 		if tool.Privilege == "" || tool.OperationID == "" {

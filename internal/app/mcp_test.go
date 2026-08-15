@@ -94,8 +94,8 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 	if len(listResponse.Result.Tools) != len(builtIn) {
 		t.Fatalf("MCP tool count = %d, built-in count = %d", len(listResponse.Result.Tools), len(builtIn))
 	}
-	if len(listResponse.Result.Tools) != 8 {
-		t.Fatalf("MCP tool count = %d, want 8", len(listResponse.Result.Tools))
+	if len(listResponse.Result.Tools) != 20 {
+		t.Fatalf("MCP tool count = %d, want 20", len(listResponse.Result.Tools))
 	}
 	foundVisual := false
 	foundNames := map[string]bool{}
@@ -108,7 +108,7 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 		if tool.Description != expected.description || !jsonObjectsEqual(tool.InputSchema, expected.input) || !jsonObjectsEqual(tool.OutputSchema, expected.output) || tool.Annotations.ReadOnly != (expected.effect == "read") {
 			t.Fatalf("MCP metadata differs for %s", tool.Name)
 		}
-		if !tool.Annotations.ReadOnly || tool.Annotations.Destructive || !tool.Annotations.Idempotent || tool.Annotations.OpenWorld {
+		if tool.Annotations.ReadOnly != (expected.effect == "read") || tool.Annotations.Destructive != (expected.effect == "destructive") || tool.Annotations.Idempotent != (expected.effect == "read") || tool.Annotations.OpenWorld {
 			t.Fatalf("MCP safety annotations differ for %s: %#v", tool.Name, tool.Annotations)
 		}
 		if tool.Name == "query_visual" {
@@ -125,12 +125,12 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 	if !foundVisual {
 		t.Fatalf("tools/list omitted query_visual: %s", listed.Body.String())
 	}
-	for _, name := range []string{"catalog_search", "catalog_list", "catalog_get", "query_semantic_model", "query_dashboard_visual", "query_visual", "docs_search", "docs_read"} {
+	for _, name := range []string{"catalog_search", "catalog_list", "catalog_get", "query_semantic_model", "query_dashboard_visual", "query_visual", "docs_search", "docs_read", "list_dashboards", "get_dashboard", "get_dashboard_draft", "create_dashboard_draft", "execute_dashboard_command", "fork_dashboard", "preview_dashboard_draft", "export_dashboard_yaml", "set_dashboard_visibility", "add_dashboard_page", "add_dashboard_visual", "assign_dashboard_field"} {
 		if !foundNames[name] {
 			t.Fatalf("tools/list omitted %s: %s", name, listed.Body.String())
 		}
 	}
-	for _, legacy := range []string{"list_workspaces", "list_dashboards", "search", "describe_dashboard", "query_dashboard_page"} {
+	for _, legacy := range []string{"list_workspaces", "search", "describe_dashboard", "query_dashboard_page"} {
 		if foundNames[legacy] {
 			t.Fatalf("tools/list exposed legacy tool %s", legacy)
 		}

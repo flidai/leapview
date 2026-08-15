@@ -21,12 +21,28 @@ func TestGenerateWritesCanonicalManifestAndReferencePages(t *testing.T) {
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		t.Fatalf("decode manifest: %v", err)
 	}
-	if manifest.SchemaVersion != 1 || len(manifest.Tools) != 8 {
+	if manifest.SchemaVersion != 1 || len(manifest.Tools) != 20 {
 		t.Fatalf("manifest = %#v", manifest)
 	}
 	for _, tool := range manifest.Tools {
 		if len(tool.InputSchema) == 0 || len(tool.OutputSchema) == 0 {
 			t.Fatalf("tool %q omitted schemas", tool.Name)
+		}
+		switch tool.Effect {
+		case "read":
+			if !tool.Annotations.ReadOnlyHint || !tool.Annotations.IdempotentHint || tool.Annotations.DestructiveHint {
+				t.Fatalf("read tool %q annotations = %#v", tool.Name, tool.Annotations)
+			}
+		case "write":
+			if tool.Annotations.ReadOnlyHint || tool.Annotations.IdempotentHint || tool.Annotations.DestructiveHint {
+				t.Fatalf("write tool %q annotations = %#v", tool.Name, tool.Annotations)
+			}
+		case "destructive":
+			if tool.Annotations.ReadOnlyHint || tool.Annotations.IdempotentHint || !tool.Annotations.DestructiveHint {
+				t.Fatalf("destructive tool %q annotations = %#v", tool.Name, tool.Annotations)
+			}
+		default:
+			t.Fatalf("tool %q has unsupported effect %q", tool.Name, tool.Effect)
 		}
 		page, err := os.ReadFile(filepath.Join(out, tool.Name+".md"))
 		if err != nil {
@@ -42,6 +58,13 @@ func TestGenerateWritesCanonicalManifestAndReferencePages(t *testing.T) {
 				t.Fatalf("%s.md missing %q", tool.Name, want)
 			}
 		}
+	}
+	commandPage, err := os.ReadFile(filepath.Join(out, "execute_dashboard_command.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(commandPage), "Publish or archive") {
+		t.Fatal("execute_dashboard_command page omitted publish/archive scope")
 	}
 	index, err := os.ReadFile(filepath.Join(out, "index.md"))
 	if err != nil {

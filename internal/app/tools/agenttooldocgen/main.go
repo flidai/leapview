@@ -173,10 +173,30 @@ func renderTool(tool agenttools.ToolReference) string {
 	out.WriteString("| Operation | `" + tool.OperationID + "` |\n")
 	out.WriteString("| Tags | " + codeList(tool.Tags) + " |\n")
 	out.WriteString("| Defaults | `" + escapeTable(compactJSON(tool.Defaults)) + "` |\n")
-	out.WriteString("| MCP annotations | read-only, idempotent, non-destructive, closed-world |\n")
+	out.WriteString("| MCP annotations | " + annotationSummary(tool.Annotations) + " |\n")
 	writeSchema(&out, "Input schema", tool.InputSchema, tool.Name)
 	writeSchema(&out, "Output schema", tool.OutputSchema, tool.Name)
 	return out.String()
+}
+
+func annotationSummary(annotations agenttools.ToolAnnotations) string {
+	access := "read/write"
+	if annotations.ReadOnlyHint {
+		access = "read-only"
+	}
+	idempotency := "not idempotent"
+	if annotations.IdempotentHint {
+		idempotency = "idempotent"
+	}
+	destructiveness := "non-destructive"
+	if annotations.DestructiveHint {
+		destructiveness = "destructive"
+	}
+	world := "closed-world"
+	if annotations.OpenWorldHint {
+		world = "open-world"
+	}
+	return strings.Join([]string{access, idempotency, destructiveness, world}, ", ")
 }
 
 func writeSchema(out *strings.Builder, heading string, schema json.RawMessage, toolName string) {

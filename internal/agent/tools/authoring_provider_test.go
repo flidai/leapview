@@ -24,7 +24,7 @@ func TestDashboardAuthoringDefinitionsExposeGovernedEffects(t *testing.T) {
 	}
 	wantEffects := map[string]string{
 		ListDashboardsToolName: "read", GetDashboardToolName: "read", GetDashboardDraftToolName: "read",
-		CreateDashboardDraftToolName: "write", ExecuteDashboardCommandToolName: "write", ForkDashboardToolName: "write",
+		CreateDashboardDraftToolName: "write", ExecuteDashboardCommandToolName: "destructive", ForkDashboardToolName: "write",
 		PreviewDashboardDraftToolName: "read", ExportDashboardYAMLToolName: "read",
 		SetDashboardVisibilityToolName: "write", AddDashboardPageToolName: "write", AddDashboardVisualToolName: "write", AssignDashboardFieldToolName: "write",
 	}

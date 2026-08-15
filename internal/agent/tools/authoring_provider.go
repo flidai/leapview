@@ -152,6 +152,18 @@ func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDef
 	if p.Application == nil {
 		return nil
 	}
+	return p.definitions(scope)
+}
+
+// contractDefinitions returns the complete static contract, including when a
+// runtime application is unavailable. Reference generation uses this to keep
+// the published catalog aligned with the same provider definitions without
+// advertising an unusable provider at runtime.
+func (p DashboardAuthoringProvider) contractDefinitions(scope Scope) []agentcore.ToolDefinition {
+	return p.definitions(scope)
+}
+
+func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDefinition {
 	return []agentcore.ToolDefinition{
 		p.definition(ListDashboardsToolName, "List the authorized dashboard catalog for one workspace.", "read", agentcontracts.DashboardAuthoringListInputSchemaJSON, agentcontracts.DashboardAuthoringListResultSchemaJSON, []string{"dashboard", "authoring", "catalog"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringListInput
@@ -231,7 +243,7 @@ func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDef
 			command := dashboardauthoring.Command{DashboardID: input.DashboardID, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, AssignField: &dashboardauthoring.AssignFieldPayload{PageID: input.PageID, VisualID: input.VisualID, FieldID: input.FieldID, Role: input.Role}}
 			return p.executeIntent(ctx, scope, call, input.Workspace, command)
 		}),
-		p.definition(CreateDashboardDraftToolName, "Create a private dashboard draft owned by the authenticated principal. Retries with the same tool idempotency identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringCreateInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "create"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+		p.definition(CreateDashboardDraftToolName, "Create a private dashboard draft owned by the authenticated principal. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringCreateInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "create"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringCreateInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
@@ -246,7 +258,7 @@ func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDef
 			}
 			return agentcore.ToolResult{Content: value}
 		}),
-		p.definition(ExecuteDashboardCommandToolName, "Apply one closed, typed dashboard authoring command using an exact expected revision. Actor and agent provenance are server-bound.", "write", agentcontracts.DashboardAuthoringCommandInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "command"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+		p.definition(ExecuteDashboardCommandToolName, "Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision. Actor and agent provenance are server-bound.", "destructive", agentcontracts.DashboardAuthoringCommandInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "command"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringCommandInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
@@ -266,7 +278,7 @@ func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDef
 			}
 			return agentcore.ToolResult{Content: value}
 		}),
-		p.definition(ForkDashboardToolName, "Fork an authorized workspace or retained project dashboard source into a private draft. Retries with the same tool idempotency identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringForkInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "fork"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+		p.definition(ForkDashboardToolName, "Fork an authorized workspace or retained project dashboard source into a private draft. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringForkInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "fork"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringForkInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())

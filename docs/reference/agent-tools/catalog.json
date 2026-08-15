@@ -2,6 +2,21 @@
   "title": "Agent tool reference",
   "documents": [
     {
+      "slug": "add_dashboard_page",
+      "title": "add_dashboard_page",
+      "summary": "Add one dashboard page to a private draft using an exact expected revision."
+    },
+    {
+      "slug": "add_dashboard_visual",
+      "title": "add_dashboard_visual",
+      "summary": "Add a governed dashboard visual to a private draft using an exact expected revision."
+    },
+    {
+      "slug": "assign_dashboard_field",
+      "title": "assign_dashboard_field",
+      "summary": "Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision."
+    },
+    {
       "slug": "catalog_get",
       "title": "catalog_get",
       "summary": "Get the compact definition and type-specific metadata for one exact catalog ref."
@@ -17,6 +32,11 @@
       "summary": "Search the complete authorized LeapView BI catalog across workspaces."
     },
     {
+      "slug": "create_dashboard_draft",
+      "title": "create_dashboard_draft",
+      "summary": "Create a private dashboard draft owned by the authenticated principal."
+    },
+    {
       "slug": "docs_read",
       "title": "docs_read",
       "summary": "Read a bounded line window from one LeapView document returned by docs_search."
@@ -25,6 +45,41 @@
       "slug": "docs_search",
       "title": "docs_search",
       "summary": "Search LeapView's version-matched product documentation."
+    },
+    {
+      "slug": "execute_dashboard_command",
+      "title": "execute_dashboard_command",
+      "summary": "Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision."
+    },
+    {
+      "slug": "export_dashboard_yaml",
+      "title": "export_dashboard_yaml",
+      "summary": "Export an authorized authored dashboard source as canonical project YAML."
+    },
+    {
+      "slug": "fork_dashboard",
+      "title": "fork_dashboard",
+      "summary": "Fork an authorized workspace or retained project dashboard source into a private draft."
+    },
+    {
+      "slug": "get_dashboard",
+      "title": "get_dashboard",
+      "summary": "Get one authorized dashboard's governed metadata."
+    },
+    {
+      "slug": "get_dashboard_draft",
+      "title": "get_dashboard_draft",
+      "summary": "Read the exact current private draft and retained revision for one dashboard."
+    },
+    {
+      "slug": "list_dashboards",
+      "title": "list_dashboards",
+      "summary": "List the authorized dashboard catalog for one workspace."
+    },
+    {
+      "slug": "preview_dashboard_draft",
+      "title": "preview_dashboard_draft",
+      "summary": "Preview an exact private dashboard draft revision and page against the active governed runtime."
     },
     {
       "slug": "query_dashboard_visual",
@@ -40,6 +95,11 @@
       "slug": "query_visual",
       "title": "query_visual",
       "summary": "Create one read-only visual from LeapView semantic model fields."
+    },
+    {
+      "slug": "set_dashboard_visibility",
+      "title": "set_dashboard_visibility",
+      "summary": "Set a private dashboard draft's visibility using an exact expected revision."
     }
   ]
 }
