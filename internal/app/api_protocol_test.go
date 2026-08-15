@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,9 +15,15 @@ import (
 
 	apigenapi "github.com/flidai/leapview/internal/app/api/gen"
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
+	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
+	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
+	"github.com/flidai/leapview/internal/platform"
 	protocolgen "github.com/flidai/leapview/internal/platform/http/api/gen"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
+	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/flidai/leapview/internal/workspace"
 )
 
@@ -277,6 +284,87 @@ func TestPublicProtocolIdempotencyReplaysAndRejectsDigestReuse(t *testing.T) {
 	if conflict.Code != http.StatusConflict || calls != 1 || conflict.Header().Get("Content-Type") != "application/problem+json" {
 		t.Fatalf("conflict=%d body=%s calls=%d", conflict.Code, conflict.Body.String(), calls)
 	}
+}
+
+func TestDashboardAuthoringCreateUsesPublicProtocolIdempotency(t *testing.T) {
+	store := testStore(t)
+	if _, err := store.SQLDB().ExecContext(context.Background(), `INSERT OR IGNORE INTO principals (id, email, display_name) VALUES ('dev', 'dev@localhost', 'Local Developer')`); err != nil {
+		t.Fatalf("seed developer principal: %v", err)
+	}
+	protocolApp := testProtocolAuthoringApplication(t, store)
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Authoring: protocolApp}))
+	handler := server.Routes()
+	request := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/authoring/drafts", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer dev")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "authoring-create-protocol")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	body := `{"title":"Protocol Integration Dashboard","semanticModel":"sales"}`
+	first, second := request(body), request(body)
+	if first.Code != http.StatusCreated || second.Code != first.Code || second.Body.String() != first.Body.String() {
+		t.Fatalf("create replay first=%d/%s second=%d/%s", first.Code, first.Body.String(), second.Code, second.Body.String())
+	}
+	if second.Header().Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("replay header = %#v", second.Header())
+	}
+	conflict := request(`{"title":"Protocol Integration Dashboard Different","semanticModel":"sales"}`)
+	if conflict.Code != http.StatusConflict || conflict.Header().Get("Content-Type") != "application/problem+json" {
+		t.Fatalf("create key conflict = %d/%s headers=%#v", conflict.Code, conflict.Body.String(), conflict.Header())
+	}
+}
+
+type protocolAuthoringAuthorizer struct{}
+
+func (protocolAuthoringAuthorizer) Authorize(context.Context, authoringservice.AuthorizationRequest) error {
+	return nil
+}
+
+type protocolAuthoringCompiler struct{}
+
+func (protocolAuthoringCompiler) Compile(context.Context, string, string, authoring.Dashboard) (authoringservice.Compilation, error) {
+	return authoringservice.Compilation{}, nil
+}
+
+func testProtocolAuthoringApplication(t *testing.T, store *platform.Store) *authoringapplication.Application {
+	t.Helper()
+	repository := authoringsqlite.NewRepository(store.SQLDB())
+	authorizer := protocolAuthoringAuthorizer{}
+	sequence := 0
+	next := func(prefix string) (string, error) {
+		sequence++
+		return fmt.Sprintf("%s-%d", prefix, sequence), nil
+	}
+	service, err := authoringservice.NewService(authoringservice.Options{
+		Repository: repository, Authorizer: authorizer, Compiler: protocolAuthoringCompiler{},
+		Now: func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC) },
+		NewDashboardID: func() (authoring.DashboardID, error) {
+			value, err := next("dashboard")
+			return authoring.DashboardID(value), err
+		},
+		NewDraftID: func() (authoring.DraftID, error) { value, err := next("draft"); return authoring.DraftID(value), err },
+		NewRevisionID: func() (authoring.RevisionID, error) {
+			value, err := next("revision")
+			return authoring.RevisionID(value), err
+		},
+	})
+	if err != nil {
+		t.Fatalf("build authoring service: %v", err)
+	}
+	app, err := authoringapplication.New(authoringapplication.Options{
+		Authoring: service, Repository: repository, Authorizer: authorizer,
+		AcquireRuntime: func(context.Context, string) (runtimehost.Lease, error) {
+			return nil, errors.New("runtime unavailable")
+		},
+	})
+	if err != nil {
+		t.Fatalf("build authoring application: %v", err)
+	}
+	return app
 }
 
 func TestPublicProtocolIdempotencyReplaysAfterServerRestart(t *testing.T) {

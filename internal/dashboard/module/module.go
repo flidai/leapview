@@ -45,6 +45,7 @@ type Module struct {
 	publicationService            *publication.Service
 	publicURL                     string
 	currentActor                  func(*http.Request) string
+	recordAudit                   func(context.Context, access.AuditEventInput) error
 	recordPublicationCommandAudit func(context.Context, publicationCommandAuditInput) error
 	streams                       publication.StreamRegistry
 	publicBroker                  dashboardhttp.SignalBroker
@@ -280,7 +281,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			QueryFreshness:      config.Semantic.QueryFreshness,
 		},
 		snapshot:  config.ServingSnapshot,
-		publicURL: config.PublicURL, currentActor: config.CurrentActor,
+		publicURL: config.PublicURL, currentActor: config.CurrentActor, recordAudit: config.RecordAudit,
 		recordPublicationCommandAudit: publicationCommandAudit,
 		streams:                       publication.NewMemoryStreamRegistry(), publicBroker: config.HTTP.Broker,
 		publicTelemetry: config.PublicTelemetry, dashboardTelemetry: config.HTTP.Telemetry, logger: config.Logger,

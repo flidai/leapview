@@ -17,6 +17,7 @@ import "./audit.tsp";
 import "./query_audit.tsp";
 import "./connection_bindings.tsp";
 import "./dashboard_publications.tsp";
+import "./dashboard_authoring.tsp";
 import "./managed_data.tsp";
 import "./upload_tus.tsp";
 import "./upload_s3_multipart.tsp";
