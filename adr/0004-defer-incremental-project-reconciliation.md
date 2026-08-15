@@ -1,7 +1,16 @@
-# Incremental project reconciliation decision
+# ADR-0004: Defer incremental project reconciliation
 
-Status: **production implementation deferred; corrected measurement pending**
-(2026-08-05).
+Status: accepted
+
+Decision date: 2026-08-05
+
+Implementation: deferred pending corrected measurement
+
+Deciders: LeapView maintainers
+
+Amended by: [ADR-0005](0005-use-project-wide-resource-graph.md) supersedes
+workspace-scoped identity and fixture assumptions; the measurement gate and
+atomic publication decision remain active
 
 ## Decision
 
@@ -130,3 +139,10 @@ Run the corrected matrix on a controlled worker, when the supported project
 envelope changes, and after material compiler optimizations. If the gate is
 crossed, open the prototype as a separate implementation issue with the raw
 benchmark output attached.
+
+## Confirmation
+
+The production compiler must continue to publish one complete immutable project
+generation. Architecture tests must reject partial serving-state publication.
+Introducing incremental compilation on the production path requires the
+measurement and prototype evidence defined here and a superseding ADR.

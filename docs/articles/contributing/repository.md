@@ -14,6 +14,7 @@ LeapView is a monorepo containing the product application, browser components, r
 - `dashboards/` — complete example configuration-as-code projects.
 - `web/components/` — product Lit components and renderer adapters.
 - `static/` — built product browser assets.
+- `adr/` — numbered, durable architecture decisions and their authoring template.
 - `docs/articles/` — authored task and concept documentation.
 - `docs/reference/`, `docs/api/`, and `docs/visuals/` — generated or catalogued reference inputs.
 - `site/` and `internal/app/site/` — public site assets and Go HTTP server.

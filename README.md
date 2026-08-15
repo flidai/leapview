@@ -52,6 +52,7 @@ To remove the evaluation, run `docker rm --force leapview-evaluate`. Also run
 - [Build dashboards](https://leapview.dev/docs/guides/build)
 - [Self-hosting](https://leapview.dev/docs/guides/operate/self-hosting)
 - [Architecture](https://leapview.dev/docs/architecture)
+- [Architecture decision log](adr/README.md)
 - [CLI, API, configuration, and resource reference](https://leapview.dev/docs/reference)
 
 The repository also contains a release-oriented

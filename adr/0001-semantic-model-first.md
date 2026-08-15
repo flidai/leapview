@@ -1,4 +1,12 @@
-# Semantic Model Decision
+# ADR-0001: Use a semantic-model-first BI contract
+
+Status: accepted
+
+Decision date: 2026-06-18
+
+Implementation: complete
+
+Deciders: LeapView maintainers
 
 ## Summary
 
@@ -19,7 +27,7 @@ Use one authored path:
 - `semantic_models` define tables, fields, relationships, and measures.
 - `dashboards` reference one semantic model and query its fields/measures.
 
-Generated physical serving shapes are internal optimizations. They are not authored dashboard contracts and should not appear as primary workspace assets.
+Generated physical serving shapes are internal optimizations. They are not authored dashboard contracts and should not appear as primary authored assets.
 
 ## Product Vocabulary
 
@@ -128,7 +136,7 @@ LeapView should force a safe default path:
 10. Multi-fact aggregate queries pre-aggregate each fact and stitch results without joining fact rows.
 11. Row/detail queries without measures must declare a table.
 12. Authored model SQL uses `source.<name>` only; `raw.<name>` is internal runtime plumbing.
-13. Semantic models remain the domain and curation boundary; models are not composed implicitly at runtime.
+13. Semantic models remain the business-definition and curation boundary; models are not composed implicitly at runtime.
 
 ## Why This Shape
 
@@ -141,3 +149,11 @@ The semantic model can still be optimized internally. LeapView may generate phys
 If repeated query subsets become painful, add optional semantic views later. A view should be a DRY, permission, or curation layer over the semantic model, not a required v1 modeling layer.
 
 If heavier transformations are needed, they should live upstream. LeapView can support small local SQL preparation, but it should not become a full transformation orchestrator.
+
+## Confirmation
+
+Configuration schemas, compiler tests, semantic-planner tests, dashboard
+validation, and agent/query contracts must continue to reject dashboard access
+to physical sources, authored joins, and generated serving structures. A change
+that introduces another mandatory query layer or bypasses the governed semantic
+model requires a superseding ADR.

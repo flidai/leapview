@@ -1,8 +1,12 @@
-# Infisical Go SDK decision
+# ADR-0003: Retain the narrow Infisical resolver
 
-Status: rejected for `github.com/infisical/go-sdk` v0.8.0
+Status: accepted
 
-Date: 2026-07-31
+Decision date: 2026-07-31
+
+Implementation: complete
+
+Deciders: LeapView maintainers
 
 LeapView keeps its narrow Infisical resolver instead of adopting the official Go SDK. The SDK covers basic Universal Auth, OIDC login, access-token renewal, and self-hosted base URLs, but it cannot preserve LeapView's transport and credential-handling policies without retaining most of the current implementation around it.
 
@@ -65,3 +69,10 @@ Re-evaluate a later SDK only when its narrow auth-and-secrets surface:
 - can be imported without linking unrelated cloud authentication stacks.
 
 This is a versioned fit decision, not a permanent rejection of an official client.
+
+## Confirmation
+
+Resolver security tests must retain the allowlist, exact-origin, redirect,
+response-bound, cancellation, credential-redaction, token-refresh, and retry
+invariants recorded above. A future SDK evaluation either confirms all of those
+properties or supersedes this ADR with new evidence.
