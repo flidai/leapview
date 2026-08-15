@@ -1,6 +1,6 @@
 # Dashboard authoring and promotion
 
-Use this workflow when a dashboard change must move from a safe workspace draft to a production deployment. It defines the ownership, environment, source-control, and lifecycle boundaries for file, UI, and agent authors.
+Use this workflow when a dashboard change must move from a safe workspace draft to a production deployment. It defines the ownership, environment, source-control, and lifecycle boundaries for file, UI, and agent authors. The browser builder, headless authoring API, and dashboard-authoring agent tools all use the same draft, revision, authorization, and promotion rules.
 
 ## Before you begin
 
@@ -59,6 +59,123 @@ Do not use a data snapshot, virtual schema, or automatic fork of an underlying m
 
 For a dashboard-only change, reuse the already approved semantic model and deploy the dashboard change with that model reference. If model, semantic-model, access-policy, or dashboard changes must move together, validate and QA the complete project in development, then deploy that same full project to production. Do not suggest snapshots, virtual schemas, or automatic model forks to avoid coordinating those changes.
 
+## Use the browser dashboard builder
+
+Open the authenticated edit route:
+
+```text
+GET /workspaces/{workspace}/dashboards/{dashboard}/edit
+```
+
+The route requires dashboard edit access. It resolves the repository's current draft pointer and exact retained revision on the server, then streams a typed builder projection. The page shows the governed semantic-model fields, pages, visuals, source origin, visibility, lifecycle, revision number, save state, diagnostics, and source evidence. It never accepts a client-supplied document as authority.
+
+The builder currently exposes four bounded intents:
+
+| Intent | Browser action | Required governed identity |
+| --- | --- | --- |
+| **Set visibility** | Toggle **Share** / **Make private** | `private` or `shared` dashboard visibility |
+| **Add page** | Select **Add page** (including the empty-page state) | The new page ID and optional title; the server allocates missing IDs |
+| **Add visual** | Choose a type and select **Add visual** | Target page, visual type, and optional visual/component IDs and title |
+| **Assign governed field** | Click **Add** beside a field or drag it onto a visual slot | Target page and visual, semantic field ID, and `measure`, `dimension`, or `detail` role |
+
+Field assignment is validated against the active governed semantic model before the edit is appended. Formatting, filters, interactions, arbitrary YAML patches, and model edits are outside this bounded builder surface; use the project authoring guides for those changes.
+
+Every builder mutation carries the dashboard ID, draft ID, and a complete expected revision token (`revisionId`, `number`, and `contentHash`). The browser supplies a request ID (`X-Request-ID`, with `Idempotency-Key` as a fallback); the authenticated principal is the actor. A successful intent appends one immutable revision, increments the revision number, updates the draft pointer, and leaves an already published revision unchanged. Replaying the same command identity and fingerprint returns the recorded result without appending a second revision. A token that is no longer current returns a stale-revision conflict; reload the current draft and submit the intent again.
+
+### Preview, publish, and export exactly what was reviewed
+
+The **Preview** link identifies one exact draft revision. It includes the draft ID, page ID, revision ID, revision number, and content hash; there is no implicit “latest” revision. The browser route is:
+
+```text
+GET /workspaces/{workspace}/dashboards/{dashboard}/preview?draft={draft}&page={page}&revisionId={id}&revisionNumber={number}&revisionContentHash={hash}
+```
+
+Preview compiles that retained document against the active governed runtime and returns the definition, page patch, semantic-model/runtime identity, serving-state ID, and DuckLake snapshot evidence. Preview does not change the draft, publish the dashboard, deploy a serving generation, or mutate data.
+
+**Publish** is a typed command against the same complete expected revision. LeapView compiles the draft with its governed semantic model, stores the compiled revision and publication evidence, and moves the dashboard lifecycle to `published`. Publishing does not deploy a full project to production; use the development publication and full-project promotion gates described above.
+
+**Export YAML** downloads the canonical authored source without changing lifecycle state:
+
+```text
+GET /workspaces/{workspace}/dashboards/{dashboard}/export.yaml
+```
+
+The export is reviewable project YAML. A workspace source is the retained authored document; a project source is the active serving artifact with serving-state/path evidence. Neither export turns a compiled artifact into a fabricated authoring revision.
+
+## Use the headless dashboard-authoring API
+
+The generated API is rooted at `/api/v1/workspaces/{workspace}/authoring`. Authenticate with a scoped principal and use IDs returned by the catalog; do not infer identity from titles. The generated OpenAPI contract is authoritative for field types and status codes.
+
+| Method and path | Purpose and access |
+| --- | --- |
+| `GET /api/v1/workspaces/{workspace}/authoring/catalog` | List governed dashboard identities (`VIEW_ITEM`). |
+| `GET /api/v1/workspaces/{workspace}/authoring/dashboards/{dashboard}` | Read one dashboard summary (`VIEW_ITEM`). |
+| `GET /api/v1/workspaces/{workspace}/authoring/dashboards/{dashboard}/draft` | Read the current private draft, lifecycle pointer, document, and exact revision (`EDIT_ITEM`). |
+| `GET /api/v1/workspaces/{workspace}/authoring/dashboards/{dashboard}/drafts/{draft}/revisions/{revision}` | Read that exact current draft revision (`EDIT_ITEM`); the draft and revision path values must match. |
+| `GET /api/v1/workspaces/{workspace}/authoring/dashboards/{dashboard}/revisions/{revision}` | Read that exact published revision (`VIEW_ITEM`); this path never means “latest draft.” |
+| `POST /api/v1/workspaces/{workspace}/authoring/drafts` | Create one named private draft. |
+| `POST /api/v1/workspaces/{workspace}/authoring/commands` | Apply one closed command: one builder intent, `publish`, or `archive`. |
+| `POST /api/v1/workspaces/{workspace}/authoring/forks` | Fork a retained workspace source or active project source into a new private draft. |
+| `POST /api/v1/workspaces/{workspace}/authoring/dashboards/{dashboard}/drafts/{draft}/preview` | Preview one exact revision and page. |
+| `GET /api/v1/workspaces/{workspace}/authoring/sources/{kind}/{dashboard}/export` | Export canonical YAML for `workspace` or `project` source kind. |
+
+`POST /drafts`, `POST /commands`, and `POST /forks` require an `Idempotency-Key` header (1–200 characters). The key is an operation-idempotency identity, separate from actor and tool-call provenance, and is audited with the authenticated actor; it is not a repository or Git authority. For create and fork, the same key with the same normalized payload durably replays the original draft/result; the same key with a changed payload is a conflict; a different key creates a new draft. Command retries likewise replay only when the same key is reused with the same request fingerprint. Preview, reads, and export do not require an idempotency key.
+
+Command requests must name the exact `dashboardId`, `draftId`, and `expectedRevision` token:
+
+```json
+{
+  "dashboardId": "revenue",
+  "draftId": "draft-7",
+  "expectedRevision": {
+    "revisionId": "revision-12",
+    "number": 12,
+    "contentHash": "sha256:..."
+  },
+  "addVisual": {
+    "pageId": "overview",
+    "type": "bar",
+    "title": "Revenue by month"
+  }
+}
+```
+
+The union accepts exactly one of `setVisibility`, `addPage`, `addVisual`, `assignField`, `publish`, or `archive`. Every successful edit returns the new immutable revision token and the repository-authoritative lifecycle pointer. A stale token is a `409` conflict; read the current draft and reconcile rather than dropping the token or defaulting to a newer revision. Preview requests repeat the complete token in their body, and responses include the same revision plus runtime and snapshot evidence.
+
+## Use dashboard-authoring agent tools
+
+The dashboard-authoring subset of built-in chat and MCP contains these twelve tools:
+
+```text
+list_dashboards
+get_dashboard
+get_dashboard_draft
+create_dashboard_draft
+execute_dashboard_command
+fork_dashboard
+preview_dashboard_draft
+export_dashboard_yaml
+set_dashboard_visibility
+add_dashboard_page
+add_dashboard_visual
+assign_dashboard_field
+```
+
+The first three read the governed catalog or exact private draft. `create_dashboard_draft` and `fork_dashboard` create private drafts. The four intent tools apply the same visibility, add-page, add-visual, and assign-field union used by the browser. `execute_dashboard_command` is reserved for exact-revision `publish` and `archive`; `preview_dashboard_draft` requires an exact revision and page; and `export_dashboard_yaml` returns canonical YAML. Catalog, query, and documentation tools remain separate integration surfaces.
+
+Agent inputs deliberately omit actor and provenance fields. The server binds `origin: agent`, the authenticated principal as `actorId`, the active conversation as `conversationId`, and the tool invocation ID as `toolCallId`; a model cannot spoof any of them. Agent calls use the invocation ID for both their operation idempotency key and actual tool-call identity. Agent tools enforce the workspace scope, object privilege, governed semantic-model check, and exact revision token before applying a mutation. Create and fork replay a durable result for the same invocation ID and normalized payload, conflict on a changed payload, and create a new draft for a different invocation ID; intent and lifecycle command retries follow command-ID/fingerprint replay rules. MCP writes are advertised as non-idempotent because MCP assigns a fresh server tool-call ID for each request; durable replay requires an agent caller to reuse the original invocation identity.
+
+## Choose a create, fork, or promotion flow
+
+| Situation | Recommended flow |
+| --- | --- |
+| New dashboard with an existing governed semantic model | Create a private draft in the target workspace, use the four bounded intents, preview the exact latest revision, publish in development, then export and promote the full project. |
+| Change to an existing published workspace dashboard | Fork the exact published workspace revision into a new private draft; keep the source unchanged, iterate, preview, publish in development, and promote the reviewed project. |
+| Only an active project artifact is available | Fork the project source into a private draft. Record its serving-state/path evidence, understand that it has no authoring revision token, and prefer a retained workspace source for subsequent edits when one is available. |
+| Dashboard and model, policy, or semantic changes must move together | Validate and QA one complete project candidate in the permanent development boundary, export the canonical YAML, and deploy that same full project atomically to production. |
+
+The create/fork operation never deploys, publishes a serving generation, mutates the semantic model, creates a data snapshot, or makes a temporary schema. Git is an optional review and evidence integration after export; LeapView has no native Git integration and no repository authority. The server remains authoritative for lifecycle, authorization, revisions, and deployment targets.
+
 ## Use Git when it helps review
 
 Git is highly recommended, but opt-in. LeapView has no native Git integration, pull-request workflow, or merge automation. A mature integration exports canonical YAML, lets the user's Git provider handle branches and review, and invokes LeapView's CLI or API from a dedicated workspace-scoped deploy service account after merge.
@@ -92,4 +209,4 @@ After production activation, verify the serving-state generation and exercise on
 
 ## Next steps
 
-Read [Projects, workspaces, and environments](/docs/concepts/projects-workspaces-environments) for resource boundaries, [Targets and environments](/docs/cli/targets) for target safeguards, and [Dashboard authoring patterns](/docs/guides/build/patterns) for maintainable dashboard structure.
+Read [Projects, workspaces, and environments](/docs/concepts/projects-workspaces-environments) for resource boundaries, [API conventions](/docs/guides/integrate/api-conventions) for headless retry and error handling, [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for agent transport details, [Targets and environments](/docs/cli/targets) for target safeguards, and [Dashboard authoring patterns](/docs/guides/build/patterns) for maintainable dashboard structure.

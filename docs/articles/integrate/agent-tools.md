@@ -1,6 +1,6 @@
 # Use the agent tool catalog
 
-LeapView exposes one fixed read-only tool catalog through built-in chat and the deployment's MCP endpoint. Use catalog tools to identify governed resources before calling a query tool. Use documentation tools when the question is about LeapView itself.
+LeapView exposes one governed tool catalog through built-in chat and the deployment's MCP endpoint. Catalog, query, and documentation tools are read-only; dashboard authoring adds a bounded twelve-tool surface for private drafts and exact-revision commands. Use catalog tools to identify governed resources before calling a query tool, and use documentation tools when the question is about LeapView itself.
 
 ## Choose a tool
 
@@ -15,7 +15,30 @@ LeapView exposes one fixed read-only tool catalog through built-in chat and the 
 | Find version-matched LeapView documentation | `docs_search` |
 | Read a document returned by documentation search | `docs_read` |
 
-The catalog does not expose connections, raw sources, model tables, refresh runs, lineage, raw SQL, previews, explanations, filter-value enumeration, page-wide queries, or mutation operations. Use the generated HTTP API or CLI when one of those separate product surfaces is appropriate.
+The discovery/query/documentation subset does not expose connections, raw sources, model tables, refresh runs, lineage, raw SQL, previews, explanations, filter-value enumeration, page-wide queries, or mutation operations. Dashboard authoring is a separate governed product surface; use the authoring tools or generated headless authoring API when creating a private draft, applying one of its four intents, previewing an exact revision, publishing, forking, or exporting YAML.
+
+## Dashboard authoring tools
+
+The dashboard-authoring subset contains exactly these twelve names:
+
+```text
+list_dashboards
+get_dashboard
+get_dashboard_draft
+create_dashboard_draft
+execute_dashboard_command
+fork_dashboard
+preview_dashboard_draft
+export_dashboard_yaml
+set_dashboard_visibility
+add_dashboard_page
+add_dashboard_visual
+assign_dashboard_field
+```
+
+`list_dashboards`, `get_dashboard`, and `get_dashboard_draft` read governed dashboard state. `create_dashboard_draft` creates a new private draft. `set_dashboard_visibility`, `add_dashboard_page`, `add_dashboard_visual`, and `assign_dashboard_field` are the four bounded builder intents; each requires an exact draft revision token. `execute_dashboard_command` accepts exact-revision `publish` and `archive`, `fork_dashboard` copies a retained workspace or project source into a new private draft, `preview_dashboard_draft` previews one exact page and revision, and `export_dashboard_yaml` returns canonical authored YAML.
+
+The model cannot supply identity or provenance fields. The server binds `origin: agent`, the authenticated principal as `actorId`, the active conversation as `conversationId`, and the tool invocation as `toolCallId`. Workspace scope, object privileges, semantic-model governance, and optimistic revision checks run before every mutation. Agent calls set the operation idempotency key and actual `toolCallId` from the invocation ID. Create and fork calls with the same invocation ID and normalized payload replay their durable draft/result; a changed payload conflicts, while a different invocation ID creates a new draft. Intent and lifecycle-command retries use the same command identity and request fingerprint replay rules. MCP writes are deliberately advertised as non-idempotent because the server assigns a fresh tool-call ID to each request; durable replay applies only when an agent caller reuses the original invocation identity. See [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring) for browser, API, and promotion details.
 
 ## Identify resources with refs
 
@@ -181,7 +204,7 @@ Reads are line- and byte-bounded. Continue from `nextOffset` only when the curre
 
 ## Handle authorization and errors
 
-All eight tools are read-only, idempotent, and non-destructive. MCP access requires `USE_AGENT`. Catalog operations require `VIEW_ITEM`; data-query tools require `QUERY_DATA` and continue to enforce resource grants and data policies.
+Catalog, query, and documentation tools are read-only, idempotent, and non-destructive. Dashboard-authoring read tools are also non-mutating; its create, intent, publish, archive, and fork tools are governed writes. MCP access requires `USE_AGENT`. Catalog operations require `VIEW_ITEM`; data-query tools require `QUERY_DATA`; dashboard authoring checks `EDIT_ITEM` for draft edits and `MANAGE_ITEM` for publish/archive while continuing to enforce workspace grants and data policies.
 
 Catalog lookup deliberately does not reveal inaccessible resources:
 
@@ -198,17 +221,21 @@ Tool providers calculate every semantic page before it reaches the agent harness
 
 ## Verify the exposed surface
 
-Run `leapview agent tools` against the same release used by a deployment. Built-in chat, deployment MCP `tools/list`, and the CLI catalog must expose exactly:
+Run `leapview agent tools` against the same release used by a deployment. The dashboard-authoring subset in built-in chat and deployment MCP `tools/list` must expose exactly:
 
 ```text
-catalog_search
-catalog_list
-catalog_get
-query_semantic_model
-query_dashboard_visual
-query_visual
-docs_search
-docs_read
+list_dashboards
+get_dashboard
+get_dashboard_draft
+create_dashboard_draft
+execute_dashboard_command
+fork_dashboard
+preview_dashboard_draft
+export_dashboard_yaml
+set_dashboard_visibility
+add_dashboard_page
+add_dashboard_visual
+assign_dashboard_field
 ```
 
-Legacy agent tool names are intentionally not exposed for new runs. Historical conversation entries remain renderable, but they are not callable aliases.
+The same names, schemas, and server-bound provenance are used by built-in chat and MCP. Discover the catalog for the other read/query/documentation tools separately; do not infer authoring tool arguments from a model response or cache schemas across a release change.
