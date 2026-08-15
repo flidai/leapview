@@ -26,6 +26,10 @@ var (
 	ErrInvalidPayload    = errors.New("invalid dashboard authoring command payload")
 	ErrStaleRevision     = errors.New("dashboard authoring revision is stale")
 	ErrNotFound          = errors.New("dashboard authoring record not found")
+	// ErrSourceUnavailable indicates that an authored source document is not
+	// retained and therefore cannot be safely forked. Compiled dashboard
+	// definitions are intentionally not accepted as a source substitute.
+	ErrSourceUnavailable = errors.New("dashboard authoring source document unavailable")
 	ErrConflict          = errors.New("dashboard authoring conflict")
 	ErrCommandReuse      = errors.New("dashboard authoring command id was reused with a different request")
 )
@@ -109,6 +113,28 @@ type SourceMetadata struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
+// ForkEvidence is typed, immutable provenance for a dashboard fork. The
+// complete source revision token is retained so downstream consumers do not
+// need to infer source identity from free-form metadata.
+type ForkEvidence struct {
+	SourceWorkspaceID string        `json:"sourceWorkspaceId"`
+	SourceDashboardID DashboardID   `json:"sourceDashboardId"`
+	SourceRevision    RevisionToken `json:"sourceRevision"`
+}
+
+func (e ForkEvidence) Validate() error {
+	if err := validateRequiredLifecycleValue("fork source workspace id", e.SourceWorkspaceID); err != nil {
+		return err
+	}
+	if err := e.SourceDashboardID.Validate(); err != nil {
+		return fmt.Errorf("%w: fork source dashboard: %v", ErrInvalidAuthoring, err)
+	}
+	if err := e.SourceRevision.ValidateComplete(); err != nil {
+		return fmt.Errorf("%w: fork source revision: %v", ErrInvalidAuthoring, err)
+	}
+	return nil
+}
+
 type Provenance struct {
 	Origin                     Origin          `json:"origin"`
 	ActorID                    string          `json:"actorId"`
@@ -116,6 +142,7 @@ type Provenance struct {
 	ToolCallID                 string          `json:"toolCallId,omitempty"`
 	BaseSemanticServingStateID string          `json:"baseSemanticServingStateId,omitempty"`
 	Source                     *SourceMetadata `json:"source,omitempty"`
+	ForkedFrom                 *ForkEvidence   `json:"forkedFrom,omitempty"`
 }
 
 // Clone returns a provenance value detached from caller-owned evidence maps.
@@ -123,23 +150,31 @@ type Provenance struct {
 // shallow struct copy must not leave Source.Metadata shared with a request.
 func (p Provenance) Clone() Provenance {
 	cloned := p
-	if p.Source == nil {
-		return cloned
-	}
-	source := *p.Source
-	if p.Source.Metadata != nil {
-		source.Metadata = make(map[string]string, len(p.Source.Metadata))
-		for key, value := range p.Source.Metadata {
-			source.Metadata[key] = value
+	if p.Source != nil {
+		source := *p.Source
+		if p.Source.Metadata != nil {
+			source.Metadata = make(map[string]string, len(p.Source.Metadata))
+			for key, value := range p.Source.Metadata {
+				source.Metadata[key] = value
+			}
 		}
+		cloned.Source = &source
 	}
-	cloned.Source = &source
+	if p.ForkedFrom != nil {
+		fork := *p.ForkedFrom
+		cloned.ForkedFrom = &fork
+	}
 	return cloned
 }
 
 func (p Provenance) Validate() error {
 	if !p.Origin.Valid() {
 		return fmt.Errorf("%w: unsupported provenance origin %q", ErrInvalidAuthoring, p.Origin)
+	}
+	if p.ForkedFrom != nil {
+		if err := p.ForkedFrom.Validate(); err != nil {
+			return err
+		}
 	}
 	if err := validateProvenanceIdentifier("provenance actor id", p.ActorID); err != nil {
 		return err
@@ -183,7 +218,8 @@ func (p Provenance) Digest() string {
 		ToolCallID                 string          `json:"toolCallId,omitempty"`
 		BaseSemanticServingStateID string          `json:"baseSemanticServingStateId,omitempty"`
 		Source                     *SourceMetadata `json:"source,omitempty"`
-	}{Origin: p.Origin, ActorID: strings.TrimSpace(p.ActorID), ConversationID: strings.TrimSpace(p.ConversationID), ToolCallID: strings.TrimSpace(p.ToolCallID), BaseSemanticServingStateID: strings.TrimSpace(p.BaseSemanticServingStateID), Source: p.Source})
+		ForkedFrom                 *ForkEvidence   `json:"forkedFrom,omitempty"`
+	}{Origin: p.Origin, ActorID: strings.TrimSpace(p.ActorID), ConversationID: strings.TrimSpace(p.ConversationID), ToolCallID: strings.TrimSpace(p.ToolCallID), BaseSemanticServingStateID: strings.TrimSpace(p.BaseSemanticServingStateID), Source: p.Source, ForkedFrom: p.ForkedFrom})
 }
 
 type RevisionToken struct {

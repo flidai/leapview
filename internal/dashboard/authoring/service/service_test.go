@@ -13,12 +13,21 @@ import (
 )
 
 type fakeAuthorizer struct {
-	requests []service.AuthorizationRequest
-	err      error
+	requests   []service.AuthorizationRequest
+	err        error
+	denyAction authoring.AuthorizationAction
 }
 
 func (a *fakeAuthorizer) Authorize(_ context.Context, request service.AuthorizationRequest) error {
 	a.requests = append(a.requests, request)
+	if a.denyAction != "" {
+		if request.Action != a.denyAction {
+			return nil
+		}
+		if a.err == nil {
+			return errors.New("authorization denied")
+		}
+	}
 	return a.err
 }
 
@@ -54,6 +63,8 @@ type fakeRepository struct {
 	}
 	publishCalls int
 	archiveCalls int
+	createCalls  int
+	created      []authoring.CreateInput
 	lastPublish  authoring.PublishInput
 }
 
@@ -65,6 +76,8 @@ func newFakeRepository() *fakeRepository {
 }
 
 func (r *fakeRepository) Create(_ context.Context, input authoring.CreateInput) (authoring.DashboardLifecycle, error) {
+	r.createCalls++
+	r.created = append(r.created, input)
 	r.lifecycle = input.Lifecycle
 	r.revisions[input.Revision.ID] = input.Revision
 	return r.lifecycle, nil

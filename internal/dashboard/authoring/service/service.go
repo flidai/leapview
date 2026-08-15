@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -103,6 +104,166 @@ type CreateRequest struct {
 	ConversationID             string
 	ToolCallID                 string
 	BaseSemanticServingStateID string
+}
+
+// ForkRequest copies the exact published authored revision of a dashboard into
+// a new private draft in the workspace identified by WorkspaceID.
+type ForkRequest struct {
+	WorkspaceID                string
+	SourceDashboardID          authoring.DashboardID
+	ActorID                    string
+	OwnerPrincipalID           string
+	Title                      string
+	Slug                       string
+	Origin                     authoring.Origin
+	Source                     *authoring.SourceMetadata
+	ConversationID             string
+	ToolCallID                 string
+	BaseSemanticServingStateID string
+}
+
+// Fork copies a published authored revision into a new private draft. It
+// never compiles, publishes, deploys, or mutates the source lifecycle.
+func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
+	workspaceID := strings.TrimSpace(input.WorkspaceID)
+	actorID := strings.TrimSpace(input.ActorID)
+	if workspaceID == "" || actorID == "" {
+		return Result{}, fmt.Errorf("workspace and actor are required")
+	}
+	sourceWorkspaceID := workspaceID
+	sourceID := input.SourceDashboardID
+	if err := sourceID.Validate(); err != nil {
+		return Result{}, err
+	}
+
+	// Load and authorize the source before reading its immutable revision. This
+	// is both the authorization boundary and the required VIEW-before-EDIT
+	// ordering for a fork.
+	source, err := s.repository.Get(ctx, sourceWorkspaceID, sourceID)
+	if err != nil {
+		return Result{}, err
+	}
+	if source.WorkspaceID != sourceWorkspaceID || source.ID != sourceID {
+		return Result{}, fmt.Errorf("%w: source lifecycle identity does not match request", authoring.ErrInvalidAuthoring)
+	}
+	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{
+		ActorID: actorID, WorkspaceID: sourceWorkspaceID, DashboardID: source.ID,
+		OwnerPrincipalID: source.OwnerPrincipalID, SemanticModel: source.SemanticModel,
+		Action: authoring.AuthorizationActionView,
+	}); err != nil {
+		return Result{}, err
+	}
+	if source.Status == authoring.LifecycleStatusArchived {
+		return Result{}, fmt.Errorf("%w: archived dashboard cannot be forked", authoring.ErrConflict)
+	}
+	if source.Status != authoring.LifecycleStatusPublished || source.Published == nil {
+		return Result{}, fmt.Errorf("%w: source dashboard has no published revision", authoring.ErrInvalidAuthoring)
+	}
+	if err := source.Validate(); err != nil {
+		return Result{}, err
+	}
+
+	publishedToken := source.Published.Revision
+	sourceRevision, err := s.repository.GetRevision(ctx, sourceWorkspaceID, source.ID, publishedToken.RevisionID)
+	if err != nil {
+		if errors.Is(err, authoring.ErrNotFound) || errors.Is(err, authoring.ErrSourceUnavailable) {
+			return Result{}, errors.Join(authoring.ErrSourceUnavailable, err)
+		}
+		return Result{}, err
+	}
+	if err := sourceRevision.Validate(); err != nil {
+		return Result{}, err
+	}
+	if sourceRevision.DashboardID != source.ID || !sameToken(sourceRevision.Token(), publishedToken) {
+		return Result{}, fmt.Errorf("%w: published revision pointer does not match retained source revision", authoring.ErrStaleRevision)
+	}
+	if sourceRevision.Document.SemanticModel != source.SemanticModel {
+		return Result{}, fmt.Errorf("%w: source revision semantic model does not match lifecycle", authoring.ErrInvalidAuthoring)
+	}
+
+	targetID, err := s.newDashboardID()
+	if err != nil {
+		return Result{}, fmt.Errorf("allocate dashboard id: %w", err)
+	}
+	if err := targetID.Validate(); err != nil {
+		return Result{}, err
+	}
+	if targetID == source.ID {
+		return Result{}, fmt.Errorf("%w: source and target dashboard must differ", authoring.ErrInvalidAuthoring)
+	}
+	draftID, err := s.newDraftID()
+	if err != nil {
+		return Result{}, fmt.Errorf("allocate draft id: %w", err)
+	}
+	revisionID, err := s.newRevisionID()
+	if err != nil {
+		return Result{}, fmt.Errorf("allocate revision id: %w", err)
+	}
+	now, err := s.utcNow()
+	if err != nil {
+		return Result{}, err
+	}
+
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		title = source.Title
+	}
+	slug := strings.TrimSpace(input.Slug)
+	if slug == "" {
+		slug = slugForTitle(title)
+	}
+	if slug == "" {
+		return Result{}, fmt.Errorf("dashboard slug is required when title has no slug-compatible characters")
+	}
+	ownerID := strings.TrimSpace(input.OwnerPrincipalID)
+	if ownerID == "" {
+		ownerID = actorID
+	}
+	origin := input.Origin
+	if origin == "" {
+		origin = authoring.OriginUI
+	}
+	provenance := authoring.Provenance{
+		Origin: origin, ActorID: actorID,
+		ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID),
+		BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Source: input.Source,
+		ForkedFrom: &authoring.ForkEvidence{SourceWorkspaceID: sourceWorkspaceID, SourceDashboardID: source.ID, SourceRevision: publishedToken},
+	}
+	if err := provenance.Validate(); err != nil {
+		return Result{}, err
+	}
+
+	document, err := sourceRevision.Document.Clone()
+	if err != nil {
+		return Result{}, err
+	}
+	document.ID = targetID.String()
+	document.Title = title
+	// SemanticModel is intentionally left untouched: a dashboard fork never
+	// forks the governed semantic model or its underlying data/schema.
+	revision, err := authoring.NewRevision(revisionID, targetID, 1, now, document, provenance)
+	if err != nil {
+		return Result{}, err
+	}
+	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
+		WorkspaceID: workspaceID, ID: targetID, OwnerPrincipalID: ownerID, Slug: slug,
+		Title: title, SemanticModel: source.SemanticModel, Visibility: authoring.VisibilityPrivate,
+		Draft: &authoring.Draft{ID: draftID, DashboardID: targetID, Revision: revision.Token(), Provenance: provenance},
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{
+		ActorID: actorID, WorkspaceID: workspaceID, DashboardID: targetID,
+		OwnerPrincipalID: ownerID, SemanticModel: source.SemanticModel, Action: authoring.AuthorizationActionEdit,
+	}); err != nil {
+		return Result{}, err
+	}
+	created, err := s.repository.Create(ctx, authoring.CreateInput{WorkspaceID: workspaceID, Lifecycle: lifecycle, Revision: revision})
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Revision: revision.Token(), Lifecycle: created}, nil
 }
 
 func (s *Service) Create(ctx context.Context, input CreateRequest) (Result, error) {
