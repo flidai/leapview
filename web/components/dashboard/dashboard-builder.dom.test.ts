@@ -106,6 +106,120 @@ test('dashboard builder keeps an accessible responsive surface and exposes loadi
   }
 })
 
+test('dashboard builder exposes the full mobile surface through one vertical scroll container', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const properties = root.querySelector('.properties') as HTMLElement
+      const initial = properties.getBoundingClientRect()
+      const host = element as HTMLElement
+      host.scrollTop = host.scrollHeight - host.clientHeight
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      const reachable = properties.getBoundingClientRect()
+      return {
+        hostOverflowY: getComputedStyle(host).overflowY,
+        hostScrollHeight: host.scrollHeight,
+        hostClientHeight: host.clientHeight,
+        propertiesInitiallyBelowViewport: initial.top >= innerHeight,
+        propertiesReachable: reachable.top < innerHeight && reachable.bottom > 0,
+        hostHorizontalOverflow: host.scrollWidth > host.clientWidth,
+        documentHorizontalOverflow: document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth,
+      }
+    })
+    expect(state.hostOverflowY).toBe('auto')
+    expect(state.hostScrollHeight).toBeGreaterThan(state.hostClientHeight)
+    expect(state.propertiesInitiallyBelowViewport).toBe(true)
+    expect(state.propertiesReachable).toBe(true)
+    expect(state.hostHorizontalOverflow).toBe(false)
+    expect(state.documentHorizontalOverflow).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder selects a newly added page after the authoritative command patch', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(root.querySelector('button[aria-label="Add page"]') as HTMLButtonElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        builder: {
+          pages: [
+            {
+              id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 },
+              visuals: [{ id: 'sales-chart', title: 'Sales by status', type: 'bar', placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], filters: [] }],
+            },
+            { id: 'details', title: 'Details', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [] },
+            { id: 'page-2', title: 'Page 2', canvas: { width: 1366, height: 940 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [] },
+          ],
+          revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' },
+          selectedPageId: 'overview', selectedVisualId: 'sales-chart',
+        },
+      })
+      await element.updateComplete
+      await element.updateComplete
+      let visualCommand: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { visualCommand = event.detail }, { once: true })
+      ;(root.querySelector('.add-visual button') as HTMLButtonElement).click()
+      return {
+        commandPageID: command?.pageId,
+        visualCommandPageID: visualCommand?.pageId,
+        selectedTab: root.querySelector('.page-tab[aria-selected="true"]')?.textContent?.trim(),
+        selectedProperties: root.querySelector('.property-value')?.textContent?.trim(),
+        emptyCanvas: Boolean(root.querySelector('.visual-empty')),
+      }
+    })
+    expect(state.commandPageID).toBe('')
+    expect(state.visualCommandPageID).toBe('page-2')
+    expect(state.selectedTab).toBe('Page 2')
+    expect(state.selectedProperties).toBe('Page 2')
+    expect(state.emptyCanvas).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder follows the streamed exact-revision preview href', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const initialHref = root.querySelector('a.button')?.getAttribute('href') ?? ''
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        builder: {
+          revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' },
+          preview: { href: '/workspaces/sales/dashboards/revenue/preview?draft=draft-7&revisionId=rev-8&revisionNumber=8&revisionContentHash=sha256%3Adef' },
+        },
+      })
+      await element.updateComplete
+      return { initialHref, updatedHref: root.querySelector('a.button')?.getAttribute('href') ?? '' }
+    })
+    expect(state.initialHref).toContain('revisionNumber=7')
+    expect(state.updatedHref).toContain('revisionNumber=8')
+    expect(state.updatedHref).toContain('revisionId=rev-8')
+    expect(state.updatedHref).not.toContain('revisionNumber=6')
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   const signals = {
     builder: {
@@ -122,12 +236,12 @@ function testDocument(): string {
       selectedPageId: 'overview', selectedVisualId: 'sales-chart',
       capabilities: { canEdit: true, canShare: true, canPublish: true, canPreview: true, canExport: true, canAddPage: true, canAddVisual: true },
       diagnostics: [{ severity: 'warning', code: 'FIELD_REQUIRED', message: 'Add a measure to complete this visual.' }],
-      preview: { active: false, mode: 'draft', loading: false }, save: { state: 'dirty', message: '2 changes' },
+      preview: { active: false, mode: 'draft', loading: false, href: '/workspaces/sales/dashboards/revenue/preview?draft=draft-7&revisionId=rev-7&revisionNumber=7&revisionContentHash=sha256%3Aabc' }, save: { state: 'dirty', message: '2 changes' },
     },
     status: { loading: false, error: '', generation: 0, lastUpdated: '', refreshId: '', setupRequired: false, progressPercent: 100 },
     runtime: { kind: 'dashboard_builder', workspaceId: 'sales', dashboardId: 'revenue' },
   }
-  return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/dashboards/revenue"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
+  return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/dashboards/revenue" preview-href="/workspaces/sales/dashboards/revenue/preview?draft=draft-7&revisionId=rev-6&revisionNumber=6&revisionContentHash=sha256%3Aold"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }
 
 function escapeHTML(value: string): string {

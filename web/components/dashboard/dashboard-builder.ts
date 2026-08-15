@@ -41,6 +41,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private localVisualID = ''
   @state() private visualType = 'bar'
 
+  // Add-page uses server-generated identifiers. Keep the page set that was
+  // visible when the intent was sent so the authoritative response can select
+  // the page created by that intent, even when the response's selectedPageId
+  // still reflects the page that was active before the mutation.
+  private pendingAddPage: { revision: string; pageIDs: Set<string> } | null = null
+
   static styles = css`
     :host {
       display: block;
@@ -497,6 +503,16 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     @media (max-width: 640px) {
+      :host {
+        height: 100%;
+        max-height: 100svh;
+        overflow-y: auto;
+      }
+
+      .builder {
+        min-height: auto;
+      }
+
       .body {
         display: block;
       }
@@ -524,7 +540,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   `
 
   updated(): void {
-    checkSignalContract('dashboard builder', this.builder, {
+    const builder = this.builder
+    checkSignalContract('dashboard builder', builder, {
       workspaceId: 'required',
       dashboardId: 'required',
       draftId: 'required',
@@ -536,6 +553,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       preview: 'required',
       save: 'required',
     })
+    this.selectPendingAddedPage(builder)
   }
 
   get builder(): DashboardBuilderSignal | null {
@@ -587,8 +605,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
-          ${(this.previewHref || builder.preview.href) && builder.capabilities.canPreview
-            ? html`<a class="button" href=${this.previewHref || builder.preview.href}>Preview</a>`
+          ${(builder.preview.href || this.previewHref) && builder.capabilities.canPreview
+            ? html`<a class="button" href=${builder.preview.href || this.previewHref}>Preview</a>`
             : builder.capabilities.canPreview ? html`<button disabled title="Preview is not available yet">Preview</button>` : nothing}
           ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'shared' ? 'Make private' : 'Share'}</button>` : nothing}
           ${builder.capabilities.canExport
@@ -766,7 +784,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
   private publish = (): void => this.emitCommand('publish')
 
-  private addPage = (): void => this.emitCommand('add_page', { pageId: '', title: '' })
+  private addPage = (): void => {
+    const builder = this.builder
+    if (!builder?.capabilities.canAddPage) return
+    this.pendingAddPage = {
+      revision: this.revisionKey(builder),
+      pageIDs: new Set(builder.pages.map((page) => page.id)),
+    }
+    this.emitCommand('add_page', { pageId: '', title: '' })
+  }
   private addVisual = (): void => {
     const builder = this.builder
     if (!builder?.capabilities.canAddVisual) return
@@ -842,6 +868,25 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private emitCommand(action: string, detail: Record<string, unknown> = {}): void {
     this.emit('lv-builder-command', { ...this.commandDetail(), action, ...detail })
+  }
+
+  private selectPendingAddedPage(builder: DashboardBuilderSignal | null): void {
+    const pending = this.pendingAddPage
+    if (!pending || !builder) return
+    if (this.status.error) {
+      this.pendingAddPage = null
+      return
+    }
+    if (pending.revision === this.revisionKey(builder)) return
+    const addedPage = builder.pages.find((page) => !pending.pageIDs.has(page.id))
+    this.pendingAddPage = null
+    if (!addedPage) return
+    this.localPageID = addedPage.id
+    this.localVisualID = ''
+  }
+
+  private revisionKey(builder: DashboardBuilderSignal): string {
+    return `${builder.revision.id}:${builder.revision.number}:${builder.revision.contentHash}`
   }
 
   private onFieldQuery = (event: Event): void => {

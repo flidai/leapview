@@ -150,6 +150,11 @@ type AssignFieldPayload struct {
 	VisualID string    `json:"visualId"`
 	FieldID  string    `json:"fieldId"`
 	Role     FieldRole `json:"role"`
+
+	// ResolvedTable is populated only by the governed application boundary
+	// after it validates FieldID against the active semantic model. It is not a
+	// transport field and therefore cannot be supplied by a builder client.
+	ResolvedTable string `json:"-"`
 }
 
 func (AssignFieldPayload) authoringPayload() {}
@@ -445,11 +450,15 @@ func validatePayload(payload authoringPayload) error {
 			return err
 		}
 		if strings.TrimSpace(value.VisualID) != "" {
-			if err := validateBuilderIdentifier("visual id", value.VisualID); err != nil {
+			if err := validateCanonicalBuilderIdentifier("visual id", value.VisualID); err != nil {
 				return err
 			}
 		}
 		if strings.TrimSpace(value.ComponentID) != "" {
+			// Page component IDs use the schema's #ObjectID contract, which
+			// intentionally permits hyphens (for example, an existing
+			// "orders-card" placement). Keep explicit IDs backwards-compatible;
+			// only generated defaults need the stricter identifier form.
 			if err := validateBuilderIdentifier("component id", value.ComponentID); err != nil {
 				return err
 			}
@@ -529,6 +538,14 @@ func validateBuilderIdentifier(kind, value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" || value != strings.TrimSpace(value) || !identifierPattern.MatchString(value) {
 		return fmt.Errorf("%w: invalid %s %q", ErrInvalidPayload, kind, value)
+	}
+	return nil
+}
+
+func validateCanonicalBuilderIdentifier(kind, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || value != trimmed || !canonicalIdentifierPattern.MatchString(trimmed) {
+		return fmt.Errorf("%w: invalid canonical %s %q", ErrInvalidPayload, kind, value)
 	}
 	return nil
 }

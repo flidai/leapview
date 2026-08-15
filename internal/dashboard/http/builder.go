@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -160,6 +161,7 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
+	builder = dashboardBuilderWithPreviewHref(builder)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"builder": builder, "status": uisignals.DashboardStatus{Loading: false}})
 }
 
@@ -199,10 +201,20 @@ func (h Handler) DashboardBuilderExportYAML(w nethttp.ResponseWriter, r *nethttp
 		writeBuilderError(w, r, access.ErrForbidden)
 		return
 	}
-	yaml, err := h.Authoring.ExportYAML(r.Context(), sourceadapter.ExportRequest{
+	request := sourceadapter.ExportRequest{
 		Source:  sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: workspaceID, DashboardID: authoring.DashboardID(dashboardID)},
 		ActorID: actorID,
-	})
+	}
+	var yaml []byte
+	var err error
+	if draftExporter, ok := h.Authoring.(draftYAMLExporter); ok {
+		yaml, err = draftExporter.ExportDraftYAML(r.Context(), request)
+	} else {
+		// Compatibility for a transport fake or an older composition that has
+		// not adopted the draft-aware capability yet. The production
+		// application always implements draftYAMLExporter.
+		yaml, err = h.Authoring.ExportYAML(r.Context(), request)
+	}
 	if err != nil {
 		writeBuilderError(w, r, err)
 		return
@@ -229,6 +241,14 @@ type dashboardBuilderCommandSignal struct {
 	Title               string          `json:"title"`
 	Visibility          string          `json:"visibility"`
 	Action              string          `json:"action"`
+}
+
+// draftYAMLExporter is implemented by the composed application. Keeping this
+// as an optional capability preserves the narrow transport interface for
+// tests and older adapters while ensuring production uses the draft-aware
+// source boundary.
+type draftYAMLExporter interface {
+	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
 func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, actorID, workspaceID, dashboardID string) (authoring.Command, error) {
@@ -303,11 +323,28 @@ func revisionFromQuery(values url.Values) (authoring.RevisionToken, error) {
 }
 
 func dashboardBuilderEnvelope(builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderEnvelope {
+	builder = dashboardBuilderWithPreviewHref(builder)
 	return uisignals.DashboardBuilderEnvelope{
 		Builder: builder,
 		Runtime: uisignals.RouteRuntimeSignal{Kind: uisignals.RouteKindDashboardBuilder, WorkspaceID: uisignals.Optional(builder.WorkspaceID), DashboardID: uisignals.Optional(builder.DashboardID)},
 		Status:  uisignals.DashboardStatus{Loading: false},
 	}
+}
+
+// dashboardBuilderWithPreviewHref derives the exact-revision preview URL from
+// the authoritative builder projection. The shell carries an initial fallback
+// URL, but every streamed projection must replace it after a mutation so a
+// preview cannot target an older revision.
+func dashboardBuilderWithPreviewHref(builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderSignal {
+	if strings.TrimSpace(builder.WorkspaceID) == "" || strings.TrimSpace(builder.DashboardID) == "" ||
+		strings.TrimSpace(builder.DraftID) == "" || strings.TrimSpace(builder.Revision.ID) == "" ||
+		builder.Revision.Number <= 0 || strings.TrimSpace(builder.Revision.ContentHash) == "" {
+		builder.Preview.Href = nil
+		return builder
+	}
+	href := dashboardBuilderPreviewPath(builder.WorkspaceID, builder.DashboardID, builder)
+	builder.Preview.Href = &href
+	return builder
 }
 
 func dashboardBuilderBasePath(workspaceID, dashboardID string) string {

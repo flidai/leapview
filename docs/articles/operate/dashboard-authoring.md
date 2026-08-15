@@ -100,7 +100,7 @@ Preview compiles that retained document against the active governed runtime and 
 GET /workspaces/{workspace}/dashboards/{dashboard}/export.yaml
 ```
 
-The export is reviewable project YAML. A workspace source is the retained authored document; a project source is the active serving artifact with serving-state/path evidence. Neither export turns a compiled artifact into a fabricated authoring revision.
+The export is reviewable project YAML. A workspace source resolves the current lifecycle draft by its dashboard ID; a project source is the active serving artifact with serving-state/path evidence. Neither export turns a compiled artifact into a fabricated authoring revision.
 
 ## Use the headless dashboard-authoring API
 

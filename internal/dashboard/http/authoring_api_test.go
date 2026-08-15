@@ -20,16 +20,18 @@ import (
 )
 
 type fakeHeadlessAuthoring struct {
-	draftErr   error
-	executeErr error
-	command    authoring.Command
-	createErr  error
-	create     authoringservice.CreateRequest
-	result     authoringservice.Result
-	audits     []access.AuditEventInput
-	fork       sourceadapter.ForkRequest
-	revision   application.RevisionRequest
-	previewErr error
+	draftErr     error
+	executeErr   error
+	command      authoring.Command
+	createErr    error
+	create       authoringservice.CreateRequest
+	result       authoringservice.Result
+	audits       []access.AuditEventInput
+	fork         sourceadapter.ForkRequest
+	revision     application.RevisionRequest
+	previewErr   error
+	exports      []sourceadapter.ExportRequest
+	draftExports []sourceadapter.ExportRequest
 }
 
 func (f *fakeHeadlessAuthoring) Create(_ context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
@@ -64,8 +66,13 @@ func (f *fakeHeadlessAuthoring) Fork(_ context.Context, request sourceadapter.Fo
 func (f *fakeHeadlessAuthoring) Preview(context.Context, preview.PreviewRequest) (preview.Preview, error) {
 	return preview.Preview{}, f.previewErr
 }
-func (f *fakeHeadlessAuthoring) ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error) {
+func (f *fakeHeadlessAuthoring) ExportYAML(_ context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
+	f.exports = append(f.exports, request)
 	return []byte("dashboard: {}\n"), nil
+}
+func (f *fakeHeadlessAuthoring) ExportDraftYAML(_ context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
+	f.draftExports = append(f.draftExports, request)
+	return []byte("dashboard: draft\n"), nil
 }
 
 type testAuthoringAPIGenDispatcher struct {
@@ -321,6 +328,25 @@ func TestAuthoringAPIExportSetsSafeDownloadFilename(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Disposition"); got != `attachment; filename="dashboard-dash.bad.yaml"` {
 		t.Fatalf("content disposition = %q", got)
+	}
+	if len(app.draftExports) != 1 || app.draftExports[0].Source.Kind != sourceadapter.SourceWorkspace || app.draftExports[0].Source.DashboardID != "dash.bad" {
+		t.Fatalf("workspace export requests = %#v", app.draftExports)
+	}
+}
+
+func TestAuthoringAPIProjectExportUsesActiveSourceExport(t *testing.T) {
+	app := &fakeHeadlessAuthoring{}
+	request := httptest.NewRequest(http.MethodGet, "/workspaces/sales/authoring/sources/project/project-sales/export", nil)
+	recording := httptest.NewRecorder()
+	testAuthoringRouter(app).ServeHTTP(recording, request)
+	if recording.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (%s)", recording.Code, http.StatusOK, recording.Body.String())
+	}
+	if len(app.exports) != 1 || app.exports[0].Source.Kind != sourceadapter.SourceProject || app.exports[0].Source.DashboardID != "project-sales" {
+		t.Fatalf("project export requests = %#v", app.exports)
+	}
+	if len(app.draftExports) != 0 {
+		t.Fatalf("project export used draft path = %#v", app.draftExports)
 	}
 }
 

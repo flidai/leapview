@@ -58,9 +58,12 @@ func TestBuilderIntentAddPageAndVisualAreDeterministicAndAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	visual, ok := revision.Document.Visuals["visual-3"]
+	visual, ok := revision.Document.Visuals["visual_3"]
 	if !ok || visual.Chart == nil || visual.Chart.Type != "bar" {
 		t.Fatalf("default visual = %#v", visual)
+	}
+	if got := revision.Document.Pages[0].Visuals[len(revision.Document.Pages[0].Visuals)-1].ID; got != "visual_3_tile" {
+		t.Fatalf("default visual component ID = %q", got)
 	}
 	if got := revision.Document.Pages[0].Visuals[len(revision.Document.Pages[0].Visuals)-1].Placement; got.Col != 1 || got.Row != 5 {
 		t.Fatalf("visual placement = %#v, expected next non-overlapping cell", got)
@@ -72,6 +75,40 @@ func TestBuilderIntentAddPageAndVisualAreDeterministicAndAtomic(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, revision) {
 		t.Fatal("failed duplicate visual mutated current revision")
+	}
+}
+
+func TestBuilderIntentRejectsNonCanonicalProvidedVisualIdentifiers(t *testing.T) {
+	lifecycle, current := reducerFixture(t)
+	for _, test := range []struct {
+		name      string
+		visual    string
+		component string
+	}{
+		{name: "visual", visual: "foo-bar", component: "foo_bar"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command := intentCommand(current, &AddVisualPayload{PageID: "overview", VisualID: test.visual, ComponentID: test.component, Type: "bar"})
+			if _, _, err := ApplyEdit(lifecycle, current, command, "rev-2", 2, time.Date(2026, 8, 15, 13, 0, 0, 0, time.UTC)); !errors.Is(err, ErrInvalidPayload) {
+				t.Fatalf("non-canonical identifier error = %v", err)
+			}
+		})
+	}
+}
+
+func TestBuilderIntentPreservesCanonicalProvidedVisualIdentifiers(t *testing.T) {
+	lifecycle, current := reducerFixture(t)
+	command := intentCommand(current, &AddVisualPayload{PageID: "overview", VisualID: "custom_visual", ComponentID: "custom_component", Type: "bar"})
+	_, revision, err := ApplyEdit(lifecycle, current, command, "rev-2", 2, time.Date(2026, 8, 15, 13, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := revision.Document.Visuals["custom_visual"]; !ok {
+		t.Fatal("canonical caller visual ID was rewritten or dropped")
+	}
+	components := revision.Document.Pages[0].Visuals
+	if got := components[len(components)-1].ID; got != "custom_component" {
+		t.Fatalf("canonical caller component ID = %q", got)
 	}
 }
 

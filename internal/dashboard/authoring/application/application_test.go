@@ -17,6 +17,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
@@ -188,6 +189,31 @@ func TestProjectExportNormalizesSourceWorkspaceAndDoesNotCrossWorkspace(t *testi
 	}
 }
 
+func TestDraftExportNormalizesWorkspaceAndUsesCurrentLifecycleDraft(t *testing.T) {
+	repository, lifecycle, revision := previewRepository(t)
+	draft, err := authoring.NewRevision(revision.ID, lifecycle.ID, revision.Number, revision.CreatedAt, exportDocument(string(lifecycle.ID), lifecycle.Title), revision.Provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle.Draft.Revision = draft.Token()
+	repository.revisions[draft.ID] = draft
+	repository.lifecycles[lifecycle.ID] = lifecycle
+	authorizer := &fakeAuthorizer{}
+	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+		return nil, errors.New("runtime should not be acquired")
+	})
+
+	exported, err := app.ExportDraftYAML(context.Background(), sourceadapter.ExportRequest{
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: " workspace ", DashboardID: lifecycle.ID}, ActorID: "actor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exported), "title: Sales") || !strings.Contains(string(exported), "name: sales") {
+		t.Fatalf("draft export = %s", exported)
+	}
+}
+
 func TestWorkspaceForkRejectsCrossWorkspaceTarget(t *testing.T) {
 	repository := newRepository()
 	authorizer := &fakeAuthorizer{}
@@ -275,11 +301,149 @@ func TestExecuteIntentAssignFieldUsesOneLeaseAndGovernedRole(t *testing.T) {
 	}
 }
 
+func TestExecuteIntentAssignFieldInfersTableAndCompilesTableVisual(t *testing.T) {
+	repository, lifecycle, current := previewRepository(t)
+	document, err := current.Document.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	document.Visuals["orders"] = authoring.TabularVisualization("table", authoring.TableVisual{Title: "Customers"})
+	current, err = authoring.NewRevision("table-revision", current.DashboardID, current.Number, current.CreatedAt, document, current.Provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle.Draft.Revision = current.Token()
+	repository.lifecycles[lifecycle.ID] = lifecycle
+	repository.revisions[current.ID] = current
+
+	model := previewModel()
+	model.Tables["customers"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
+		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
+	}}
+	lease := &fakeLease{runtime: &previewRuntime{model: model}, servingState: "state-sales"}
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
+	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-customers-field", &authoring.AssignFieldPayload{
+		PageID: "overview", VisualID: "orders", FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
+	})
+	result, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := repository.revisions[result.Revision.RevisionID].Document
+	visual := updated.Visuals["orders"]
+	if visual.Tabular == nil || visual.Tabular.Query.Table != "customers" || len(visual.Tabular.Query.Columns) != 1 || visual.Tabular.Query.Columns[0].Field != "customers.customer_id" {
+		t.Fatalf("assigned table visual = %#v", visual)
+	}
+	if _, err := dashboardcompiler.Compile(updated, map[string]*semanticmodel.Model{"sales": model}); err != nil {
+		t.Fatalf("compiled builder table visual: %v", err)
+	}
+	appendCalls, releaseCalls := repository.appendCalls, lease.releaseCalls
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); err != nil {
+		t.Fatalf("idempotent table-field retry: %v", err)
+	}
+	if repository.appendCalls != appendCalls || lease.releaseCalls != releaseCalls {
+		t.Fatalf("idempotent table-field retry mutated or reacquired: append=%d/%d release=%d/%d", repository.appendCalls, appendCalls, lease.releaseCalls, releaseCalls)
+	}
+}
+
+func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
+	repository, lifecycle, current := previewRepository(t)
+	// The preview fixture intentionally exercises the builder's short measure
+	// aliases. Export's strict contract requires qualified table.field refs, so
+	// make the pre-existing visual canonical before testing the newly added one.
+	document, err := current.Document.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	document.Visuals["orders"].Tabular.Query.Fields[1] = "orders.order_count"
+	current, err = authoring.NewRevision("canonical-base", current.DashboardID, current.Number, current.CreatedAt, document, current.Provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle.Draft.Revision = current.Token()
+	repository.lifecycles[lifecycle.ID] = lifecycle
+	repository.revisions[current.ID] = current
+	model := previewModel()
+	model.Tables["customers"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
+		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
+	}}
+	lease := &fakeLease{runtime: &previewRuntime{model: model}, servingState: "state-sales"}
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
+
+	pageResult, err := app.ExecuteIntent(context.Background(), application.IntentRequest{
+		WorkspaceID: "workspace", ActorID: "actor",
+		Command: intentCommandForApplication(current, lifecycle.Draft.ID, "intent-add-page", &authoring.AddPagePayload{}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = repository.revisions[pageResult.Revision.RevisionID]
+	pageID := current.Document.Pages[len(current.Document.Pages)-1].ID
+	if pageID != "page-2" {
+		t.Fatalf("server page ID = %q", pageID)
+	}
+
+	visualResult, err := app.ExecuteIntent(context.Background(), application.IntentRequest{
+		WorkspaceID: "workspace", ActorID: "actor",
+		Command: intentCommandForApplication(current, lifecycle.Draft.ID, "intent-add-table", &authoring.AddVisualPayload{PageID: pageID, Type: "table"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = repository.revisions[visualResult.Revision.RevisionID]
+	page := current.Document.Pages[len(current.Document.Pages)-1]
+	component := page.Visuals[len(page.Visuals)-1]
+	if component.Visual != "visual_2" || component.ID != "visual_2_tile" {
+		t.Fatalf("server visual/component IDs = visual %q component %q", component.Visual, component.ID)
+	}
+
+	fieldResult, err := app.ExecuteIntent(context.Background(), application.IntentRequest{
+		WorkspaceID: "workspace", ActorID: "actor",
+		Command: intentCommandForApplication(current, lifecycle.Draft.ID, "intent-assign-customer", &authoring.AssignFieldPayload{
+			PageID: pageID, VisualID: component.ID, FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ExportDraftYAML(context.Background(), sourceadapter.ExportRequest{
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: lifecycle.ID}, ActorID: "actor",
+	}); err != nil {
+		t.Fatalf("export server-generated builder IDs: %v", err)
+	}
+	if fieldResult.Lifecycle.Draft == nil || fieldResult.Lifecycle.Draft.Revision != repository.lifecycles[lifecycle.ID].Draft.Revision {
+		t.Fatal("field intent did not return current lifecycle")
+	}
+}
+
+func TestExecuteIntentAssignFieldDoesNotRewriteExistingFactForAnotherGovernedTable(t *testing.T) {
+	repository, lifecycle, current := previewRepository(t)
+	model := previewModel()
+	model.Tables["customers"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
+		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
+	}}
+	lease := &fakeLease{runtime: &previewRuntime{model: model}, servingState: "state-sales"}
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
+	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-cross-table-field", &authoring.AssignFieldPayload{
+		PageID: "overview", VisualID: "orders", FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
+	})
+	result, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command})
+	if err != nil {
+		t.Fatal(err)
+	}
+	visual := repository.revisions[result.Revision.RevisionID].Document.Visuals["orders"]
+	if visual.Tabular == nil || visual.Tabular.Query.Table != "orders" || len(visual.Tabular.Query.Columns) != 1 || visual.Tabular.Query.Columns[0].Field != "customers.customer_id" {
+		t.Fatalf("cross-table assignment rewrote fact: %#v", visual)
+	}
+}
+
 func intentCommandForApplication(revision authoring.Revision, draftID authoring.DraftID, id string, payload authoringPayloadForApplication) authoring.Command {
 	command := authoring.Command{ID: authoring.CommandID(id), DashboardID: revision.DashboardID, DraftID: draftID, ExpectedRevision: revision.Token(), Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}}
 	switch value := payload.(type) {
 	case *authoring.AddPagePayload:
 		command.AddPage = value
+	case *authoring.AddVisualPayload:
+		command.AddVisual = value
 	case *authoring.AssignFieldPayload:
 		command.AssignField = value
 	case *authoring.MetadataPatch:

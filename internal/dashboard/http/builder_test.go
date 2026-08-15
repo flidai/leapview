@@ -21,15 +21,17 @@ import (
 )
 
 type builderAuthoringFake struct {
-	builder      uisignals.DashboardBuilderSignal
-	executed     authoring.Command
-	preview      preview.Preview
-	yaml         []byte
-	err          error
-	previewErr   error
-	exportErr    error
-	executeCalls int
-	intentCalls  int
+	builder          uisignals.DashboardBuilderSignal
+	executed         authoring.Command
+	preview          preview.Preview
+	yaml             []byte
+	err              error
+	previewErr       error
+	exportErr        error
+	exportDraftCalls int
+	exportDraftReq   sourceadapter.ExportRequest
+	executeCalls     int
+	intentCalls      int
 }
 
 func (f *builderAuthoringFake) Builder(context.Context, builderview.Request) (uisignals.DashboardBuilderSignal, error) {
@@ -71,6 +73,11 @@ func (f *builderAuthoringFake) Preview(context.Context, preview.PreviewRequest) 
 	return f.preview, f.previewErr
 }
 func (f *builderAuthoringFake) ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error) {
+	return f.yaml, f.exportErr
+}
+func (f *builderAuthoringFake) ExportDraftYAML(_ context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
+	f.exportDraftCalls++
+	f.exportDraftReq = request
 	return f.yaml, f.exportErr
 }
 
@@ -152,6 +159,9 @@ func TestDashboardBuilderPreviewAndExport(t *testing.T) {
 	}
 	if got := exportRec.Header().Get("Content-Disposition"); !strings.Contains(got, `attachment; filename="revenue.yaml"`) {
 		t.Fatalf("content disposition = %q", got)
+	}
+	if fake.exportDraftCalls != 1 || fake.exportDraftReq.Source.Kind != sourceadapter.SourceWorkspace || fake.exportDraftReq.Source.WorkspaceID != "sales" || fake.exportDraftReq.Source.DashboardID != "revenue" || fake.exportDraftReq.ActorID != "principal-1" {
+		t.Fatalf("draft export request = %#v calls=%d", fake.exportDraftReq, fake.exportDraftCalls)
 	}
 }
 

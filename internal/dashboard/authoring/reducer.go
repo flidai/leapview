@@ -218,7 +218,7 @@ func addVisual(document *Dashboard, payload AddVisualPayload) error {
 	}
 	visualID := strings.TrimSpace(payload.VisualID)
 	if visualID == "" {
-		visualID = nextBuilderID("visual", len(document.Visuals)+1, func(candidate string) bool {
+		visualID = nextCanonicalBuilderID("visual", len(document.Visuals)+1, func(candidate string) bool {
 			_, exists := document.Visuals[candidate]
 			return exists
 		})
@@ -228,9 +228,9 @@ func addVisual(document *Dashboard, payload AddVisualPayload) error {
 	}
 	componentID := strings.TrimSpace(payload.ComponentID)
 	if componentID == "" {
-		componentID = visualID + "-tile"
-		if componentID == "-tile" || !identifierPattern.MatchString(componentID) {
-			componentID = nextBuilderID("component", len(document.Pages[pageIndex].Visuals)+1, func(candidate string) bool {
+		componentID = visualID + "_tile"
+		if !canonicalIdentifierPattern.MatchString(componentID) {
+			componentID = nextCanonicalBuilderID("component", len(document.Pages[pageIndex].Visuals)+1, func(candidate string) bool {
 				for _, component := range document.Pages[pageIndex].Visuals {
 					if component.ID == candidate {
 						return true
@@ -342,6 +342,14 @@ func assignField(document *Dashboard, payload AssignFieldPayload) error {
 			visual.Chart.Query.Dimensions = appendUniqueFieldRef(visual.Chart.Query.Dimensions, ref)
 		}
 	} else if visual.Tabular != nil {
+		// A new table visual has no query table until its first governed field is
+		// assigned. The application resolves this table from the active semantic
+		// model and carries it as non-transport metadata; never infer it from an
+		// unvalidated client payload here. Existing table targets remain stable so
+		// related-table dimensions can be assigned without changing the fact.
+		if strings.TrimSpace(visual.Tabular.Query.Table) == "" && strings.TrimSpace(payload.ResolvedTable) != "" {
+			visual.Tabular.Query.Table = strings.TrimSpace(payload.ResolvedTable)
+		}
 		switch payload.Role {
 		case FieldRoleMeasure:
 			visual.Tabular.Query.Measures = appendUniqueFieldRef(visual.Tabular.Query.Measures, ref)
@@ -394,6 +402,18 @@ func nextBuilderID(prefix string, start int, exists func(string) bool) string {
 	}
 	for index := start; ; index++ {
 		candidate := fmt.Sprintf("%s-%d", prefix, index)
+		if !exists(candidate) {
+			return candidate
+		}
+	}
+}
+
+func nextCanonicalBuilderID(prefix string, start int, exists func(string) bool) string {
+	if start < 1 {
+		start = 1
+	}
+	for index := start; ; index++ {
+		candidate := fmt.Sprintf("%s_%d", prefix, index)
 		if !exists(candidate) {
 			return candidate
 		}

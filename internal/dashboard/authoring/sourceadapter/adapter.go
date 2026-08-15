@@ -49,13 +49,16 @@ func (r SourceRef) validate() error {
 	return nil
 }
 
-// WorkspaceProvenance records the exact published authored revision selected
-// from the authoring repository. Repository/ref metadata is evidence only;
-// no checkout identity is used as source authority.
+// WorkspaceProvenance records the exact authored revision selected from the
+// authoring repository. Repository/ref metadata is evidence only; no
+// checkout identity is used as source authority. PublishedRevision is set
+// only when the published source path is used; DraftRevision identifies an
+// explicit current-draft load.
 type WorkspaceProvenance struct {
 	WorkspaceID       string
 	DashboardID       authoring.DashboardID
 	PublishedRevision authoring.RevisionToken
+	DraftRevision     *authoring.RevisionToken
 	SourceEvidence    *authoring.SourceMetadata
 }
 
@@ -170,6 +173,32 @@ func (a *Adapter) Load(ctx context.Context, ref SourceRef, actorID string) (Sour
 }
 
 func (a *Adapter) loadWorkspace(ctx context.Context, ref SourceRef, actorID string) (Source, error) {
+	return a.loadWorkspaceRevision(ctx, ref, actorID, false)
+}
+
+// LoadDraft resolves the current draft revision for a workspace dashboard.
+// It is intentionally separate from Load: the ordinary workspace source path
+// is the exact published source used by agent exports and forks, while the
+// builder export needs the repository-authoritative draft selected by its
+// lifecycle pointer.
+func (a *Adapter) LoadDraft(ctx context.Context, ref SourceRef, actorID string) (Source, error) {
+	if a == nil {
+		return Source{}, fmt.Errorf("dashboard source adapter is not configured")
+	}
+	if err := ref.validate(); err != nil {
+		return Source{}, err
+	}
+	if ref.Kind != SourceWorkspace {
+		return Source{}, fmt.Errorf("draft source must be a workspace source")
+	}
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return Source{}, fmt.Errorf("actor id is required")
+	}
+	return a.loadWorkspaceRevision(ctx, ref, actorID, true)
+}
+
+func (a *Adapter) loadWorkspaceRevision(ctx context.Context, ref SourceRef, actorID string, draft bool) (Source, error) {
 	// Lifecycle metadata is itself protected source detail. Authorize on the
 	// scoped dashboard object before loading it; owner/model fields are
 	// deliberately unavailable until after this boundary.
@@ -189,11 +218,28 @@ func (a *Adapter) loadWorkspace(ctx context.Context, ref SourceRef, actorID stri
 	if err := lifecycle.Validate(); err != nil {
 		return Source{}, err
 	}
-	if lifecycle.Status != authoring.LifecycleStatusPublished || lifecycle.Published == nil {
-		return Source{}, sourceUnavailable(ref, fmt.Errorf("dashboard is not published"))
+	var selectedToken authoring.RevisionToken
+	workspaceProvenance := WorkspaceProvenance{WorkspaceID: ref.WorkspaceID, DashboardID: ref.DashboardID}
+	if draft {
+		if lifecycle.Status != authoring.LifecycleStatusDraft && lifecycle.Status != authoring.LifecycleStatusPublished {
+			return Source{}, sourceUnavailable(ref, fmt.Errorf("dashboard has no current draft"))
+		}
+		if lifecycle.Draft == nil {
+			return Source{}, sourceUnavailable(ref, fmt.Errorf("dashboard has no current draft"))
+		}
+		selectedToken = lifecycle.Draft.Revision
+		workspaceProvenance.DraftRevision = &selectedToken
+	} else {
+		if lifecycle.Status != authoring.LifecycleStatusPublished || lifecycle.Published == nil {
+			return Source{}, sourceUnavailable(ref, fmt.Errorf("dashboard is not published"))
+		}
+		selectedToken = lifecycle.Published.Revision
+		workspaceProvenance.PublishedRevision = selectedToken
 	}
-	publishedToken := lifecycle.Published.Revision
-	revision, err := a.repository.GetRevision(ctx, ref.WorkspaceID, ref.DashboardID, publishedToken.RevisionID)
+	if err := selectedToken.ValidateComplete(); err != nil {
+		return Source{}, fmt.Errorf("validate selected authored revision pointer: %w", err)
+	}
+	revision, err := a.repository.GetRevision(ctx, ref.WorkspaceID, ref.DashboardID, selectedToken.RevisionID)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) || errors.Is(err, authoring.ErrSourceUnavailable) {
 			return Source{}, sourceUnavailable(ref, err)
@@ -203,8 +249,8 @@ func (a *Adapter) loadWorkspace(ctx context.Context, ref SourceRef, actorID stri
 	if err := revision.Validate(); err != nil {
 		return Source{}, err
 	}
-	if revision.DashboardID != ref.DashboardID || !sameToken(revision.Token(), publishedToken) {
-		return Source{}, fmt.Errorf("published revision pointer does not match retained authored revision")
+	if revision.DashboardID != ref.DashboardID || !sameToken(revision.Token(), selectedToken) {
+		return Source{}, fmt.Errorf("selected authored revision pointer does not match retained authored revision")
 	}
 	if strings.TrimSpace(revision.Document.SemanticModel) != strings.TrimSpace(lifecycle.SemanticModel) {
 		return Source{}, fmt.Errorf("published authored revision semantic model does not match lifecycle")
@@ -228,13 +274,11 @@ func (a *Adapter) loadWorkspace(ctx context.Context, ref SourceRef, actorID stri
 		}
 		evidence = &copy
 	}
+	workspaceProvenance.SourceEvidence = evidence
 	return Source{
 		Ref: ref, Document: document, Metadata: metadata,
-		Lifecycle: cloneLifecycle(lifecycle),
-		Provenance: Provenance{Kind: SourceWorkspace, Workspace: &WorkspaceProvenance{
-			WorkspaceID: ref.WorkspaceID, DashboardID: ref.DashboardID,
-			PublishedRevision: publishedToken, SourceEvidence: evidence,
-		}},
+		Lifecycle:  cloneLifecycle(lifecycle),
+		Provenance: Provenance{Kind: SourceWorkspace, Workspace: &workspaceProvenance},
 	}, nil
 }
 
@@ -307,6 +351,22 @@ func (a *Adapter) Export(ctx context.Context, request ExportRequest) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	return a.exportSource(source)
+}
+
+// ExportDraft emits canonical YAML for the repository-authoritative current
+// draft of a workspace dashboard. It does not accept a slug or a caller
+// supplied revision; the lifecycle's draft pointer is the sole identity
+// translation from dashboard ID to authored content.
+func (a *Adapter) ExportDraft(ctx context.Context, request ExportRequest) ([]byte, error) {
+	source, err := a.LoadDraft(ctx, request.Source, request.ActorID)
+	if err != nil {
+		return nil, err
+	}
+	return a.exportSource(source)
+}
+
+func (a *Adapter) exportSource(source Source) ([]byte, error) {
 	if a.exportDashboard == nil {
 		return nil, fmt.Errorf("dashboard source exporter is not configured")
 	}

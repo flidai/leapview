@@ -173,6 +173,21 @@ func (a *Application) ExportYAML(ctx context.Context, request sourceadapter.Expo
 	return a.sources.Export(ctx, request)
 }
 
+// ExportDraftYAML exports the repository-authoritative current draft source.
+// The source adapter resolves the lifecycle's draft revision under the same
+// workspace and authorization boundary as other source operations.
+func (a *Application) ExportDraftYAML(ctx context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
+	if err := a.validate(); err != nil {
+		return nil, err
+	}
+	workspace, err := workspaceID(request.Source.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	request.Source.WorkspaceID = workspace
+	return a.sources.ExportDraft(ctx, request)
+}
+
 // PublishedCompilationReader exposes the read-only compilation port needed by
 // dashboard runtime resolution without exposing the repository implementation
 // or requiring application composition to import authoring internals.

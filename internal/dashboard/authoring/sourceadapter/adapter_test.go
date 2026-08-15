@@ -175,6 +175,47 @@ func TestLoadWorkspaceUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *te
 	}
 }
 
+func TestExportDraftUsesLifecycleDraftRevisionByDashboardID(t *testing.T) {
+	published, newer, lifecycle := publishedFixture(t)
+	repository := &fakeRepository{lifecycle: lifecycle, revisions: map[authoring.RevisionID]authoring.Revision{
+		published.ID: published, newer.ID: newer,
+	}}
+	authorizer := &fakeAuthorizer{}
+	authoringService := newAuthoringService(t, repository, authorizer)
+	adapter, err := sourceadapter.New(sourceadapter.Options{
+		Repository: repository, Authorizer: authorizer, Authoring: authoringService,
+		ExportDashboard: func(document authoring.Dashboard, _ authoring.DashboardExportMetadata) ([]byte, error) {
+			return []byte(document.Title), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exported, err := adapter.ExportDraft(t.Context(), sourceadapter.ExportRequest{
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: lifecycle.ID}, ActorID: "actor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(exported) != "Newer draft" {
+		t.Fatalf("draft export document = %q", exported)
+	}
+	// The authored title is deliberately changed only in the draft revision;
+	// its document content must still be the current lifecycle draft, not the
+	// published source selected by Adapter.Export.
+	source, err := adapter.LoadDraft(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: lifecycle.ID}, "actor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Document.Title != "Newer draft" || source.Provenance.Workspace == nil || source.Provenance.Workspace.DraftRevision == nil || *source.Provenance.Workspace.DraftRevision != newer.Token() {
+		t.Fatalf("draft source = title %q provenance %#v", source.Document.Title, source.Provenance.Workspace)
+	}
+	if source.Provenance.Workspace.PublishedRevision != (authoring.RevisionToken{}) {
+		t.Fatalf("draft source fabricated published provenance: %#v", source.Provenance.Workspace)
+	}
+}
+
 func TestWorkspaceForkReplaySkipsSourceReads(t *testing.T) {
 	published, newer, lifecycle := publishedFixture(t)
 	repository := &fakeRepository{lifecycle: lifecycle, revisions: map[authoring.RevisionID]authoring.Revision{published.ID: published, newer.ID: newer}}

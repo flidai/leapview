@@ -103,6 +103,26 @@ func TestDashboardAuthoringRoutesLifecycleAndBuilderCommandsToTheirApplicationEn
 	}
 }
 
+func TestDashboardAuthoringExportUsesDraftForWorkspaceAndPublishedForProject(t *testing.T) {
+	app := &fakeDashboardAuthoring{}
+	definition := definitionByName((DashboardAuthoringProvider{Application: app}).Definitions(Scope{WorkspaceID: "sales", PrincipalID: "principal"}), ExportDashboardYAMLToolName)
+	for name, sourceKind := range map[string]sourceadapter.SourceKind{"workspace draft": sourceadapter.SourceWorkspace, "project source": sourceadapter.SourceProject} {
+		t.Run(name, func(t *testing.T) {
+			arguments, _ := json.Marshal(map[string]any{"workspace": "sales", "sourceKind": sourceKind, "dashboard": "dashboard-lifecycle-1"})
+			result, err := definition.Handler.Run(context.Background(), agentcore.ToolCall{ID: name, Name: ExportDashboardYAMLToolName, Arguments: arguments})
+			if err != nil || result.IsError {
+				t.Fatalf("export result = %#v err=%v", result, err)
+			}
+		})
+	}
+	if len(app.draftExports) != 1 || app.draftExports[0].Source.DashboardID != "dashboard-lifecycle-1" || app.draftExports[0].Source.WorkspaceID != "sales" {
+		t.Fatalf("workspace export requests = %#v", app.draftExports)
+	}
+	if len(app.exports) != 1 || app.exports[0].Source.Kind != sourceadapter.SourceProject || app.exports[0].Source.DashboardID != "dashboard-lifecycle-1" {
+		t.Fatalf("project export requests = %#v", app.exports)
+	}
+}
+
 func TestDashboardAuthoringCreateAndForkBindSeparateIdempotencyIdentity(t *testing.T) {
 	app := &fakeDashboardAuthoring{}
 	definitions := (DashboardAuthoringProvider{Application: app}).Definitions(Scope{WorkspaceID: "sales", PrincipalID: "principal", ConversationID: "conversation"})
@@ -194,6 +214,8 @@ type fakeDashboardAuthoring struct {
 	executeErr   error
 	executeCalls int
 	intentCalls  int
+	exports      []sourceadapter.ExportRequest
+	draftExports []sourceadapter.ExportRequest
 }
 
 func (f *fakeDashboardAuthoring) List(context.Context, catalog.ListRequest) (catalog.ListResult, error) {
@@ -232,7 +254,12 @@ func (f *fakeDashboardAuthoring) Fork(_ context.Context, request sourceadapter.F
 func (f *fakeDashboardAuthoring) Preview(context.Context, previewservice.PreviewRequest) (previewservice.Preview, error) {
 	return previewservice.Preview{}, nil
 }
-func (f *fakeDashboardAuthoring) ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error) {
+func (f *fakeDashboardAuthoring) ExportYAML(_ context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
+	f.exports = append(f.exports, request)
+	return []byte("version: 1\n"), nil
+}
+func (f *fakeDashboardAuthoring) ExportDraftYAML(_ context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
+	f.draftExports = append(f.draftExports, request)
 	return []byte("version: 1\n"), nil
 }
 

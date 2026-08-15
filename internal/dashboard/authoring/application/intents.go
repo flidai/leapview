@@ -45,7 +45,7 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 	}
 	var validator func(context.Context, authoring.DashboardLifecycle) error
 	if request.Command.AssignField != nil {
-		field := *request.Command.AssignField
+		field := request.Command.AssignField
 		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
 			return a.validateAssignedField(ctx, workspace, request.Command, lifecycle, field)
 		}
@@ -58,7 +58,7 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 // runtime lease. The lease is released before the transactional edit begins;
 // the reducer remains the final authority for optimistic revision and exact
 // placement checks.
-func (a *Application) validateAssignedField(ctx context.Context, workspace string, command authoring.Command, lifecycle authoring.DashboardLifecycle, field authoring.AssignFieldPayload) error {
+func (a *Application) validateAssignedField(ctx context.Context, workspace string, command authoring.Command, lifecycle authoring.DashboardLifecycle, field *authoring.AssignFieldPayload) error {
 	if err := command.Validate(); err != nil {
 		return err
 	}
@@ -103,7 +103,8 @@ func (a *Application) validateAssignedField(ctx context.Context, workspace strin
 	if componentVisual == "" {
 		return fmt.Errorf("%w: visual component %q on page %q", authoring.ErrNotFound, field.VisualID, field.PageID)
 	}
-	if _, ok := revision.Document.Visuals[componentVisual]; !ok {
+	authored, ok := revision.Document.Visuals[componentVisual]
+	if !ok {
 		return fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, componentVisual)
 	}
 
@@ -132,7 +133,38 @@ func (a *Application) validateAssignedField(ctx context.Context, workspace strin
 	if !ok || model == nil || strings.TrimSpace(model.Name) != strings.TrimSpace(revision.Document.SemanticModel) {
 		return fmt.Errorf("semantic model %q is unavailable in active runtime", revision.Document.SemanticModel)
 	}
-	return validateGovernedField(model, field.FieldID, field.Role)
+	if err := validateGovernedField(model, field.FieldID, field.Role); err != nil {
+		return err
+	}
+	// Keep this derived identity out of the wire payload and command
+	// fingerprint. It is only used by the reducer after the authoritative
+	// semantic-model validation above succeeds.
+	field.ResolvedTable = resolvedTableForField(model, authored, *field)
+	return nil
+}
+
+// resolvedTableForField returns a fact/table identity only when the governed
+// semantic field has one unambiguous physical owner. Semantic dimensions may
+// bind to multiple facts, so they deliberately leave the table unset and let
+// the existing compiler relationship validation decide whether the authored
+// query is valid.
+func resolvedTableForField(model *semanticmodel.Model, authored authoring.AuthoringVisualization, field authoring.AssignFieldPayload) string {
+	if authored.Tabular == nil || strings.TrimSpace(authored.Tabular.Query.Table) != "" {
+		return ""
+	}
+	switch field.Role {
+	case authoring.FieldRoleMeasure:
+		measure, err := model.ResolveMeasure(strings.TrimSpace(field.FieldID))
+		if err == nil {
+			return strings.TrimSpace(measure.Fact)
+		}
+	case authoring.FieldRoleDimension, authoring.FieldRoleDetail:
+		dimension, err := model.ResolveDimension(strings.TrimSpace(field.FieldID))
+		if err == nil {
+			return strings.TrimSpace(dimension.Table)
+		}
+	}
+	return ""
 }
 
 func validateGovernedField(model *semanticmodel.Model, field string, role authoring.FieldRole) error {

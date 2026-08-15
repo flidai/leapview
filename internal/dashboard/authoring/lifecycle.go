@@ -35,6 +35,12 @@ var (
 )
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
+
+// canonicalIdentifierPattern matches the stricter identifier contract used by
+// dashboard spec maps and visual references. Authoring identifiers remain
+// backwards-compatible with the broader pattern above, but server-generated
+// defaults must be safe to export without requiring a caller-provided rename.
+var canonicalIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,127}$`)
 
 func validateIdentifier(kind, value string) error {

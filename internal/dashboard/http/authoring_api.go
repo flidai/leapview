@@ -39,6 +39,14 @@ type HeadlessAuthoringApplication interface {
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
+// HeadlessAuthoringDraftExporter is the optional current-draft export
+// capability implemented by the composed application. Workspace exports use
+// it when available; project exports remain on ExportYAML and resolve the
+// active serving artifact.
+type HeadlessAuthoringDraftExporter interface {
+	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
+}
+
 type authoringMutationResponse struct {
 	Revision  authoring.RevisionToken      `json:"revision"`
 	Lifecycle authoring.DashboardLifecycle `json:"lifecycle"`
@@ -348,7 +356,19 @@ func (h AuthoringAPI) Export(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeAuthoringError(w, r, fmt.Errorf("invalid dashboard source kind %q", kind), nethttp.StatusBadRequest)
 		return
 	}
-	body, err := h.Application.ExportYAML(r.Context(), sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: kind, WorkspaceID: chi.URLParam(r, "workspace"), DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard"))}, ActorID: actor})
+	request := sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: kind, WorkspaceID: chi.URLParam(r, "workspace"), DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard"))}, ActorID: actor}
+	var body []byte
+	if kind == sourceadapter.SourceWorkspace {
+		if exporter, ok := h.Application.(HeadlessAuthoringDraftExporter); ok {
+			body, err = exporter.ExportDraftYAML(r.Context(), request)
+		} else {
+			// Compatibility for older application adapters. Production
+			// composition implements the draft-aware capability.
+			body, err = h.Application.ExportYAML(r.Context(), request)
+		}
+	} else {
+		body, err = h.Application.ExportYAML(r.Context(), request)
+	}
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return

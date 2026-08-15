@@ -49,6 +49,15 @@ type DashboardAuthoring interface {
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
+// DashboardAuthoringDraftExporter is the optional draft-aware export
+// capability implemented by the composed application. Keeping it optional
+// preserves compatibility for focused provider fakes and older adapters;
+// workspace exports use it whenever available, while project exports always
+// use ExportYAML against the active serving artifact.
+type DashboardAuthoringDraftExporter interface {
+	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
+}
+
 // DashboardAuthoringAuthorize performs a transport-level privilege check in
 // addition to the application's object authorizer. It is optional so focused
 // provider tests can use a small fake application; production always wires it.
@@ -318,7 +327,20 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if !ok {
 				return result
 			}
-			value, err := p.Application.ExportYAML(ctx, sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, WorkspaceID: workspace, DashboardID: input.Dashboard}, ActorID: scope.PrincipalID})
+			request := sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, WorkspaceID: workspace, DashboardID: input.Dashboard}, ActorID: scope.PrincipalID}
+			var value []byte
+			var err error
+			if input.SourceKind == sourceadapter.SourceWorkspace {
+				if exporter, ok := p.Application.(DashboardAuthoringDraftExporter); ok {
+					value, err = exporter.ExportDraftYAML(ctx, request)
+				} else {
+					// Compatibility for older application adapters. Production
+					// composition implements the draft-aware capability.
+					value, err = p.Application.ExportYAML(ctx, request)
+				}
+			} else {
+				value, err = p.Application.ExportYAML(ctx, request)
+			}
 			if err != nil {
 				return authoringToolError(err)
 			}
