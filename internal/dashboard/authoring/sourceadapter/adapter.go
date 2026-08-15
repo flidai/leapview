@@ -13,7 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/runtimehost"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 // SourceKind is a closed discriminator. A project source is owned by the
@@ -105,10 +105,15 @@ type ProjectRuntime interface {
 	AuthoredDashboardSource(string) (authoring.AuthoredDashboardSource, bool)
 }
 
+// Lease is the source adapter's narrow runtime capability. Identity is the
+// exact serving generation selected for this project; no workspace lookup is
+// available at this boundary.
+type Lease = projectruntime.Lease
+
 // AcquireRuntime acquires one active runtime lease for a source project.
 // The callback keeps this package independent of registry topology while
-// retaining the runtimehost lease's lifetime and generation guarantees.
-type AcquireRuntime func(context.Context, graph.ResourceID) (runtimehost.Lease, error)
+// retaining the lease's lifetime and generation guarantees.
+type AcquireRuntime func(context.Context, graph.ResourceID) (projectruntime.Lease, error)
 
 // Options wires application-owned capabilities. Repository and Authorizer
 // are required for all operations. AcquireRuntime is required only for
@@ -300,6 +305,13 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 		return Source{}, fmt.Errorf("project dashboard runtime provider returned a nil lease")
 	}
 	defer lease.Release()
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return Source{}, fmt.Errorf("project runtime serving identity does not match source project: %w", err)
+	}
+	if identity.ProjectID != ref.ProjectID {
+		return Source{}, fmt.Errorf("project runtime serving identity project %q does not match %q", identity.ProjectID, ref.ProjectID)
+	}
 	runtime := lease.Runtime()
 	projectRuntime, ok := runtime.(ProjectRuntime)
 	if !ok || projectRuntime == nil {
@@ -326,7 +338,7 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 		Ref: ref, Document: document, Metadata: metadata,
 		Provenance: Provenance{Kind: SourceProject, Project: &ProjectProvenance{
 			ProjectID: ref.ProjectID, DashboardID: ref.DashboardID,
-			ServingStateID: string(lease.ServingStateID()), Path: retained.Path,
+			ServingStateID: strings.TrimSpace(identity.GenerationID), Path: retained.Path,
 		}},
 	}, nil
 }

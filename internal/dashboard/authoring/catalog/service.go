@@ -19,7 +19,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/runtimehost"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 var (
@@ -115,13 +115,13 @@ type AuthoredDashboardSources interface {
 }
 
 type Options struct {
-	Provider   runtimehost.Provider
+	Provider   projectruntime.Provider
 	Repository authoring.Repository
 	Authorizer authoringservice.Authorizer
 }
 
 type Service struct {
-	provider   runtimehost.Provider
+	provider   projectruntime.Provider
 	repository authoring.Repository
 	authorizer authoringservice.Authorizer
 }
@@ -153,7 +153,14 @@ func (s *Service) List(ctx context.Context, request ListRequest) (ListResult, er
 	}
 	defer lease.Release()
 
-	project, err := projectCandidates(runtime, projectID, strings.TrimSpace(string(lease.ServingStateID())))
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return ListResult{}, fmt.Errorf("dashboard catalog serving identity does not match project: %w", err)
+	}
+	if identity.ProjectID != projectID {
+		return ListResult{}, fmt.Errorf("dashboard catalog serving identity project %q does not match %q", identity.ProjectID, projectID)
+	}
+	project, err := projectCandidates(runtime, projectID, strings.TrimSpace(identity.GenerationID))
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -206,7 +213,14 @@ func (s *Service) Get(ctx context.Context, request GetRequest) (Dashboard, error
 	}
 	defer lease.Release()
 
-	project, err := projectCandidate(runtime, projectID, id, strings.TrimSpace(string(lease.ServingStateID())))
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return Dashboard{}, fmt.Errorf("dashboard catalog serving identity does not match project: %w", err)
+	}
+	if identity.ProjectID != projectID {
+		return Dashboard{}, fmt.Errorf("dashboard catalog serving identity project %q does not match %q", identity.ProjectID, projectID)
+	}
+	project, err := projectCandidate(runtime, projectID, id, strings.TrimSpace(identity.GenerationID))
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return Dashboard{}, err
 	}
@@ -246,7 +260,7 @@ func (s *Service) Get(ctx context.Context, request GetRequest) (Dashboard, error
 	return visible[0], nil
 }
 
-func (s *Service) acquire(ctx context.Context) (runtimehost.Lease, runtimehost.Runtime, error) {
+func (s *Service) acquire(ctx context.Context) (projectruntime.Lease, projectruntime.Runtime, error) {
 	if s == nil || s.provider == nil {
 		return nil, nil, fmt.Errorf("dashboard catalog runtime provider is required")
 	}
@@ -271,7 +285,7 @@ func normalizeRequest(projectID graph.ResourceID, actorID string) (graph.Resourc
 	return projectID, actorID, nil
 }
 
-func projectCandidates(runtime runtimehost.Runtime, projectID graph.ResourceID, servingStateID string) ([]Dashboard, error) {
+func projectCandidates(runtime projectruntime.Runtime, projectID graph.ResourceID, servingStateID string) ([]Dashboard, error) {
 	port, ok := runtime.(RuntimeCatalog)
 	if !ok {
 		return nil, fmt.Errorf("active runtime does not provide dashboard catalog")
@@ -296,7 +310,7 @@ func projectCandidates(runtime runtimehost.Runtime, projectID graph.ResourceID, 
 	return items, nil
 }
 
-func projectCandidate(runtime runtimehost.Runtime, projectID graph.ResourceID, id string, servingStateID string) (*Dashboard, error) {
+func projectCandidate(runtime projectruntime.Runtime, projectID graph.ResourceID, id string, servingStateID string) (*Dashboard, error) {
 	items, err := projectCandidates(runtime, projectID, servingStateID)
 	if err != nil {
 		return nil, err
@@ -309,7 +323,7 @@ func projectCandidate(runtime runtimehost.Runtime, projectID graph.ResourceID, i
 	return nil, ErrNotFound
 }
 
-func enrichProjectItems(runtime runtimehost.Runtime, items []Dashboard) error {
+func enrichProjectItems(runtime projectruntime.Runtime, items []Dashboard) error {
 	for index := range items {
 		if items[index].Source != SourceProject {
 			continue
@@ -321,7 +335,7 @@ func enrichProjectItems(runtime runtimehost.Runtime, items []Dashboard) error {
 	return nil
 }
 
-func enrichProjectItem(runtime runtimehost.Runtime, item *Dashboard) error {
+func enrichProjectItem(runtime projectruntime.Runtime, item *Dashboard) error {
 	if item == nil || item.Source != SourceProject {
 		return fmt.Errorf("project dashboard metadata is incomplete")
 	}

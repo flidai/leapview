@@ -15,6 +15,7 @@ import (
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func (m *Service) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {
@@ -227,8 +228,10 @@ func (s *QueryService) executeVisualConsumerJob(ctx context.Context, request con
 
 func (s *QueryService) executeTableConsumer(ctx context.Context, request consumer.Request, target consumer.Target, startedAt time.Time, publish consumer.Publisher) {
 	definition := visualizationdefinition.Definition{}
-	if resolved, err := s.snapshots.reports.Resolve(request.DashboardID); err == nil {
-		definition, _ = resolved.Visualization(target.ID)
+	if dashboardID, parseErr := projectgraph.NewResourceID(request.DashboardID); parseErr == nil {
+		if resolved, err := s.snapshots.reports.Resolve(dashboardID); err == nil {
+			definition, _ = resolved.Visualization(target.ID)
+		}
 	}
 	table, err := s.visualizations.queryTableRowsPage(ctx, request.DashboardID, request.PageID, request.Filters, target.WindowRequest)
 	if err == nil && table.Error != "" {

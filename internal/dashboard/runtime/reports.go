@@ -11,15 +11,21 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/catalog"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type ReportService struct {
-	workspace *dashboarddefinition.Workspace
-	defaultID string
+	projectID  projectgraph.ResourceID
+	identity   projectgraph.ServingIdentity
+	models     map[projectgraph.ResourceID]*semanticmodel.Model
+	dashboards map[projectgraph.ResourceID]dashboarddefinition.Definition
+	catalog    catalog.Catalog
+	defaultID  string
 }
 
 func (m *Service) DefaultDashboardID() string {
@@ -30,9 +36,8 @@ func (m *Service) ModelIDForDashboard(dashboardID string) string {
 	return m.reports.ModelIDForDashboard(dashboardID)
 }
 
-// Resolver exposes the workspace-scoped dashboard resolver used by runtime
-// query consumers. The service's compiled workspace is the project serving
-// source; no caller-supplied workspace ID can alter that scope.
+// Resolver exposes the project-scoped dashboard resolver used by runtime query
+// consumers. The service's immutable project definition is the serving source.
 func (m *Service) Resolver() dashboardresolver.Resolver {
 	if m == nil {
 		return nil
@@ -41,15 +46,25 @@ func (m *Service) Resolver() dashboardresolver.Resolver {
 }
 
 func (m *Service) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
-	return m.reports.SemanticModel(modelID)
+	return m.SemanticModelByID(projectgraph.ResourceID(modelID))
+}
+
+func (m *Service) SemanticModelByID(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	if err := modelID.Validate(); err != nil || m == nil || m.reports == nil {
+		return nil, false
+	}
+	return m.reports.SemanticModelByID(modelID)
 }
 
 // SemanticModelProjection returns a detached semantic-model projection from
 // this runtime generation. Preview and other compiler consumers can inspect
 // the exact model selected by a leased runtime without acquiring another
 // runtime or retaining a mutable pointer into the base serving state.
-func (m *Service) SemanticModelProjection(modelID string) (*semanticmodel.Model, bool) {
-	model, ok := m.SemanticModel(modelID)
+func (m *Service) SemanticModelProjection(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	if err := modelID.Validate(); err != nil {
+		return nil, false
+	}
+	model, ok := m.SemanticModelByID(modelID)
 	if !ok || model == nil {
 		return nil, false
 	}
@@ -66,29 +81,17 @@ func (m *Service) SemanticModelProjection(modelID string) (*semanticmodel.Model,
 
 func (m *Service) QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
 	query := reportAggregateDataQuery(modelID, request)
-	query.WorkspaceID = m.workspaceID()
 	result, err := m.ExecuteDataQuery(ctx, query)
 	return reportRowsFromDataQuery(result.Rows), err
 }
 
 func (m *Service) PreviewSemantic(ctx context.Context, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error) {
 	query := reportRowDataQuery(modelID, request, false)
-	query.WorkspaceID = m.workspaceID()
 	result, err := m.ExecuteDataQuery(ctx, query)
 	return reportRowsFromDataQuery(result.Rows), err
 }
 
-func (m *Service) workspaceID() string {
-	if m != nil && m.reports != nil && m.reports.workspace != nil {
-		return m.reports.workspace.Catalog.Workspace.ID
-	}
-	return ""
-}
-
 func (m *Service) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, fmt.Errorf("workspace ID is required")
-	}
 	return dataquery.ExecuteAudited(ctx, request, func(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 		runtime, err := m.semanticRuntime(request.ModelID)
 		if err != nil {
@@ -101,9 +104,6 @@ func (m *Service) ExecuteDataQuery(ctx context.Context, request dataquery.Query)
 }
 
 func (m *Service) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, fmt.Errorf("workspace ID is required")
-	}
 	return dataquery.ExecuteAudited(ctx, request, func(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 		runtime, err := m.semanticRuntime(request.ModelID)
 		if err != nil {
@@ -148,30 +148,42 @@ func (s *ReportService) ModelIDForDashboard(dashboardID string) string {
 
 // Resolve implements the capability-owned resolver contract for the compiled
 // project/deployment serving state currently held by this runtime.
-func (s *ReportService) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
-	if s == nil || s.workspace == nil {
+func (s *ReportService) Resolve(dashboardID projectgraph.ResourceID) (dashboardresolver.Resolved, error) {
+	if s == nil {
 		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
 	}
-	report, ok := s.compiledDashboard(dashboardID)
-	if !ok || report.SemanticModel == "" {
-		return dashboardresolver.Resolved{}, fmt.Errorf("%w: %q", dashboardresolver.ErrNotFound, strings.TrimSpace(dashboardID))
+	if err := dashboardID.Validate(); err != nil {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
 	}
-	model, ok := s.workspace.Models[report.SemanticModel]
+	report, ok := s.compiledDashboard(dashboardID.String())
+	if !ok || report.SemanticModel == "" {
+		return dashboardresolver.Resolved{}, fmt.Errorf("%w: %q", dashboardresolver.ErrNotFound, dashboardID)
+	}
+	modelID, err := projectgraph.NewResourceID(report.SemanticModel)
+	if err != nil {
+		return dashboardresolver.Resolved{}, fmt.Errorf("%w: semantic model %q for dashboard %q", dashboardresolver.ErrNotFound, report.SemanticModel, dashboardID)
+	}
+	model, ok := s.models[modelID]
 	if !ok || model == nil {
-		return dashboardresolver.Resolved{}, fmt.Errorf("%w: semantic model %q for dashboard %q", dashboardresolver.ErrNotFound, report.SemanticModel, strings.TrimSpace(dashboardID))
+		return dashboardresolver.Resolved{}, fmt.Errorf("%w: semantic model %q for dashboard %q", dashboardresolver.ErrNotFound, report.SemanticModel, dashboardID)
 	}
 	return dashboardresolver.Resolved{
-		Definition: *report,
-		Model:      model,
-		Source: dashboardresolver.SourceMetadata{
-			Kind:        dashboardresolver.SourceProject,
-			WorkspaceID: s.workspace.Catalog.Workspace.ID,
-		},
+		Definition:      *report,
+		Model:           model,
+		SemanticModelID: projectgraph.ResourceID(report.SemanticModel),
+		Source:          dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, Identity: s.identity},
 	}, nil
 }
 
 func (s *ReportService) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
-	model, ok := s.workspace.Models[modelID]
+	return s.SemanticModelByID(projectgraph.ResourceID(modelID))
+}
+
+func (s *ReportService) SemanticModelByID(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	if err := modelID.Validate(); err != nil || s == nil {
+		return nil, false
+	}
+	model, ok := s.models[modelID]
 	return model, ok
 }
 
@@ -249,12 +261,20 @@ func (s *ReportService) Pages(dashboardID string) []dashboard.Page {
 	return pages
 }
 
-func (s *ReportService) reportRuntime(dashboardID string, runtimes map[string]*modelRuntime) (*dashboarddefinition.Definition, *modelRuntime, error) {
-	resolved, err := s.Resolve(dashboardID)
+func (s *ReportService) reportRuntime(dashboardID string, runtimes map[projectgraph.ResourceID]*modelRuntime) (*dashboarddefinition.Definition, *modelRuntime, error) {
+	resourceID, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
 	if err != nil {
 		return nil, nil, fmt.Errorf("unknown dashboard %q: %w", dashboardID, err)
 	}
-	runtime, ok := runtimes[resolved.Definition.SemanticModel]
+	resolved, err := s.Resolve(resourceID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unknown dashboard %q: %w", dashboardID, err)
+	}
+	modelID, err := projectgraph.NewResourceID(resolved.Definition.SemanticModel)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unknown semantic model %q", resolved.Definition.SemanticModel)
+	}
+	runtime, ok := runtimes[modelID]
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown semantic model %q", resolved.Definition.SemanticModel)
 	}
@@ -262,7 +282,11 @@ func (s *ReportService) reportRuntime(dashboardID string, runtimes map[string]*m
 }
 
 func (s *ReportService) compiledDashboard(dashboardID string) (*dashboarddefinition.Definition, bool) {
-	definition, ok := s.workspace.Dashboards[dashboardID]
+	dashboardResourceID, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return nil, false
+	}
+	definition, ok := s.dashboards[dashboardResourceID]
 	if !ok {
 		return nil, false
 	}
@@ -278,7 +302,11 @@ func defaultTableSort(definition visualizationdefinition.Definition) dashboard.T
 }
 
 func (m *Service) semanticRuntime(modelID string) (*modelRuntime, error) {
-	runtime, ok := m.runtimes[modelID]
+	resourceID, err := projectgraph.NewResourceID(strings.TrimSpace(modelID))
+	if err != nil {
+		return nil, fmt.Errorf("unknown semantic model %q", modelID)
+	}
+	runtime, ok := m.runtimes[resourceID]
 	if !ok {
 		return nil, fmt.Errorf("unknown semantic model %q", modelID)
 	}

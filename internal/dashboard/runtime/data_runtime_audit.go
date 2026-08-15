@@ -8,17 +8,17 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type governedDataRuntime struct {
 	DataRuntime
-	workspaceID string
-	service     reportdef.DataService
+	service reportdef.DataService
 }
 
-func newGovernedDataRuntime(workspaceID, modelID string, runtime DataRuntime) DataRuntime {
-	wrapped := &governedDataRuntime{DataRuntime: runtime, workspaceID: workspaceID}
-	wrapped.service = reportdef.NewDataQueryService(modelID, wrapped)
+func newGovernedDataRuntime(_ projectgraph.ResourceID, modelID projectgraph.ResourceID, runtime DataRuntime) DataRuntime {
+	wrapped := &governedDataRuntime{DataRuntime: runtime}
+	wrapped.service = reportdef.NewDataQueryService(modelID.String(), wrapped)
 	return wrapped
 }
 
@@ -43,9 +43,6 @@ func (r *governedDataRuntime) Distribution(ctx context.Context, request reportde
 }
 
 func (r *governedDataRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
-	if request.WorkspaceID == "" {
-		request.WorkspaceID = r.workspaceID
-	}
 	return dataquery.ExecuteAudited(ctx, request, r.DataRuntime.ExecuteDataQuery)
 }
 
@@ -62,9 +59,6 @@ func (r *governedDataRuntime) ExecuteDataQueryBundle(ctx context.Context, reques
 	fieldSet := map[string]bool{}
 	measureSet := map[string]bool{}
 	for i := range requests {
-		if requests[i].Query.WorkspaceID == "" {
-			requests[i].Query.WorkspaceID = r.workspaceID
-		}
 		ids[i] = requests[i].ID
 		for _, field := range requests[i].Query.Fields {
 			key := field.Field + "\x00" + field.Alias

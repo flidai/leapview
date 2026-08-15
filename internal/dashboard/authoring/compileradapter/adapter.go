@@ -15,7 +15,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/compiler"
 	"github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/runtimehost"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 var (
@@ -28,14 +28,19 @@ var (
 // SemanticModelProjection must return a detached model projection; the
 // adapter never falls back to a mutable base-runtime model lookup.
 type Runtime interface {
-	runtimehost.Runtime
-	SemanticModelProjection(string) (*semanticmodel.Model, bool)
+	projectruntime.Runtime
+	SemanticModelProjection(graph.ResourceID) (*semanticmodel.Model, bool)
 }
+
+// Lease is the narrow identity-bearing runtime capability consumed by the
+// compiler. The runtime host lease satisfies this contract structurally while
+// keeping host topology and workspace lookup out of authoring.
+type Lease = projectruntime.Lease
 
 // AcquireRuntime acquires one active runtime lease for a project. Keeping
 // acquisition as a callback leaves registry topology outside the authoring
 // package while preserving the lease's generation and lifetime guarantees.
-type AcquireRuntime func(context.Context, string) (runtimehost.Lease, error)
+type AcquireRuntime func(context.Context, graph.ResourceID) (projectruntime.Lease, error)
 
 // Options wires the runtime capability used by the adapter.
 type Options struct {
@@ -84,7 +89,7 @@ func (a *Adapter) Compile(ctx context.Context, projectID, semanticModelID graph.
 		return authoringservice.Compilation{}, err
 	}
 
-	lease, err := a.acquireRuntime(ctx, projectID.String())
+	lease, err := a.acquireRuntime(ctx, projectID)
 	if err != nil {
 		return authoringservice.Compilation{}, err
 	}
@@ -97,7 +102,7 @@ func (a *Adapter) Compile(ctx context.Context, projectID, semanticModelID graph.
 	if !ok || active == nil {
 		return authoringservice.Compilation{}, fmt.Errorf("dashboard authoring compiler active runtime does not provide semantic model projection")
 	}
-	model, ok := active.SemanticModelProjection(semanticModelID.String())
+	model, ok := active.SemanticModelProjection(semanticModelID)
 	if !ok || model == nil {
 		return authoringservice.Compilation{}, fmt.Errorf("%w: semantic model %q is unavailable in active runtime", ErrSemanticMismatch, semanticModelID)
 	}
@@ -115,12 +120,15 @@ func (a *Adapter) Compile(ctx context.Context, projectID, semanticModelID graph.
 	if compiled.Definition.SemanticModel != semanticModelID.String() || compiled.Definition.SemanticModel != document.SemanticModel.String() {
 		return authoringservice.Compilation{}, fmt.Errorf("%w: compiled semantic model %q does not match requested %q", ErrSemanticMismatch, compiled.Definition.SemanticModel, semanticModelID)
 	}
-	servingStateID := strings.TrimSpace(string(lease.ServingStateID()))
-	if servingStateID == "" {
-		return authoringservice.Compilation{}, fmt.Errorf("dashboard authoring compiler serving-state identity is unavailable")
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return authoringservice.Compilation{}, fmt.Errorf("dashboard authoring compiler serving identity does not match project: %w", err)
+	}
+	if identity.ProjectID != projectID {
+		return authoringservice.Compilation{}, fmt.Errorf("dashboard authoring compiler serving identity project %q does not match %q", identity.ProjectID, projectID)
 	}
 	return authoringservice.Compilation{
 		Definition:             compiled.Definition,
-		SemanticServingStateID: servingStateID,
+		SemanticServingStateID: strings.TrimSpace(identity.GenerationID),
 	}, nil
 }

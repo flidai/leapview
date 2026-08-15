@@ -3,16 +3,17 @@ package runtimefactory
 import (
 	"context"
 
-	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Input struct {
-	Directory, ServingStateID, WorkspaceID, Environment       string
+	Directory                                                 string
+	Identity                                                  projectgraph.ServingIdentity
 	SemanticModelDigest, ArtifactDigest, SourceDataDigest     string
 	CandidateID, AuthorizationFingerprint, BindingFingerprint string
 	SnapshotID                                                int64
-	Definition                                                *dashboarddefinition.Workspace
+	Definition                                                *dashboardruntime.ProjectDefinition
 }
 
 type Builder func(context.Context, Input) (*dashboardruntime.Service, error)

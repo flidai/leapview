@@ -16,7 +16,8 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
-	"github.com/flidai/leapview/internal/runtimehost"
+	"github.com/flidai/leapview/internal/project/graph"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 const (
@@ -41,20 +42,20 @@ type Request struct {
 // Runtime is the only active-generation capability needed by the builder.
 // SemanticModelProjection must return a detached model projection.
 type Runtime interface {
-	runtimehost.Runtime
-	SemanticModelProjection(string) (*semanticmodel.Model, bool)
+	projectruntime.Runtime
+	SemanticModelProjection(graph.ResourceID) (*semanticmodel.Model, bool)
 }
 
 // Options wires the read-side builder dependencies.
 type Options struct {
-	Provider   runtimehost.Provider
+	Provider   projectruntime.Provider
 	Repository authoring.Repository
 	Authorizer authoringservice.Authorizer
 }
 
 // Service builds one bounded builder projection per request.
 type Service struct {
-	provider   runtimehost.Provider
+	provider   projectruntime.Provider
 	repository authoring.Repository
 	authorizer authoringservice.Authorizer
 }
@@ -158,8 +159,12 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder runtime lease is empty")
 	}
 	defer lease.Release()
-	if strings.TrimSpace(string(lease.ServingStateID())) == "" {
-		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder serving-state identity is empty")
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder serving identity does not match project: %w", err)
+	}
+	if identity.ProjectID.String() != projectID {
+		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder serving identity project %q does not match %q", identity.ProjectID, projectID)
 	}
 	if lease.Runtime() == nil {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder runtime is empty")

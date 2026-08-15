@@ -17,15 +17,15 @@ import (
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type VisualizationDataService struct {
-	mu          *sync.RWMutex
-	reports     *ReportService
-	runtimes    map[string]*modelRuntime
-	filters     *FilterService
-	tiles       *spatialTileRegistry
-	workspaceID string
+	mu       *sync.RWMutex
+	reports  *ReportService
+	runtimes map[projectgraph.ResourceID]*modelRuntime
+	filters  *FilterService
+	tiles    *spatialTileRegistry
 }
 
 func (s *VisualizationDataService) visuals(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, keys []string) (map[string]visualizationir.VisualizationEnvelope, error) {

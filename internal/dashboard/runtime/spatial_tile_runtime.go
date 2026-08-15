@@ -111,6 +111,9 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 		aggregateDomains = append(aggregateDomains, aggregate)
 	}
 	publicID := spatialTilePublicationFromContext(ctx)
+	if publicID == "" {
+		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("project spatial tile route is unavailable until the project-native route contract is installed")
+	}
 	token, err := s.tiles.register(spatialTileRevision{
 		DashboardID: dashboardID, PageID: pageID, VisualID: visualID, PublicID: publicID,
 		PrincipalID: dataquery.MetadataFromContext(ctx).PrincipalID, StreamID: dataquery.MetadataFromContext(ctx).StreamID, Filters: filters, RawMinimumZoom: int(effectiveRawMinimumZoom), AuthoredRawMinimumZoom: int(spatial.Tiles.RawMinimumZoom),
@@ -118,10 +121,7 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	if err != nil {
 		return visualizationir.VisualizationEnvelope{}, err
 	}
-	tileURL := spatialTileURL(s.workspaceID, dashboardID, visualID, token)
-	if publicID != "" {
-		tileURL = publicSpatialTileURL(publicID, visualID, token)
-	}
+	tileURL := publicSpatialTileURL(publicID, visualID, token)
 	envelope, err := visualizationruntime.SpatialTiledEnvelopeFromMetadata(definition, visualizationruntime.SpatialTiledMetadata{
 		Cardinality: cardinality, Extent: extent, RawDomains: rawDomains, AggregateDomains: aggregateDomains,
 		TileURL: tileURL, RawMinimumZoom: int32(effectiveRawMinimumZoom),

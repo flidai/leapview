@@ -17,7 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/runtimehost"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 var (
@@ -45,15 +45,20 @@ type DraftRepository interface {
 // this interface local prevents preview from reaching into runtime internals or
 // opening another data runtime.
 type Runtime interface {
-	runtimehost.Runtime
-	SemanticModelProjection(string) (*semanticmodel.Model, bool)
+	Close() error
+	SemanticModelProjection(graph.ResourceID) (*semanticmodel.Model, bool)
 	QueryDashboardPageForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters) (dashboard.Patch, error)
 }
+
+// Lease is the exact project-generation capability used by preview. It is
+// deliberately narrower than a host lease so preview cannot resolve another
+// project or acquire another generation behind the caller's back.
+type Lease = projectruntime.Lease
 
 // PreviewProvider is the lease-bearing runtime boundary. Provider.Acquire is
 // called exactly once for each successful preview attempt that reaches runtime.
 type PreviewProvider interface {
-	Acquire(context.Context) (runtimehost.Lease, error)
+	Acquire(context.Context) (projectruntime.Lease, error)
 }
 
 // Options wires the read-only preview dependencies.
@@ -216,11 +221,18 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		return Preview{}, fmt.Errorf("dashboard preview runtime lease is empty")
 	}
 	defer lease.Release()
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return Preview{}, fmt.Errorf("dashboard preview serving identity does not match project: %w", err)
+	}
+	if identity.ProjectID != projectID {
+		return Preview{}, fmt.Errorf("dashboard preview serving identity project %q does not match %q", identity.ProjectID, projectID)
+	}
 	active, activeOK := lease.Runtime().(Runtime)
 	if !activeOK || active == nil {
 		return Preview{}, fmt.Errorf("active runtime does not provide dashboard preview capability")
 	}
-	model, modelOK := active.SemanticModelProjection(lifecycle.SemanticModel.String())
+	model, modelOK := active.SemanticModelProjection(lifecycle.SemanticModel)
 	if !modelOK || model == nil {
 		return Preview{}, fmt.Errorf("%w: semantic model %q is unavailable in active runtime", ErrSemanticMismatch, lifecycle.SemanticModel)
 	}
@@ -238,15 +250,19 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if compiled.Definition.SemanticModel != lifecycle.SemanticModel.String() || compiled.Definition.SemanticModel != revision.Document.SemanticModel.String() {
 		return Preview{}, fmt.Errorf("%w: compiled semantic model does not match lifecycle", ErrSemanticMismatch)
 	}
-	servingStateID := strings.TrimSpace(string(lease.ServingStateID()))
+	servingStateID := strings.TrimSpace(identity.GenerationID)
 	if servingStateID == "" {
 		return Preview{}, fmt.Errorf("dashboard preview serving-state identity is unavailable")
+	}
+	snapshotID := int64(0)
+	if snapshotRuntime, ok := lease.Runtime().(interface{ DuckLakeSnapshotID() int64 }); ok {
+		snapshotID = snapshotRuntime.DuckLakeSnapshotID()
 	}
 
 	evidence := SemanticServingStateEvidence{
 		SemanticModel: lifecycle.SemanticModel.String(), RuntimeModel: model.Name,
 		ServingStateID:     servingStateID,
-		DuckLakeSnapshotID: lease.DuckLakeSnapshotID(),
+		DuckLakeSnapshotID: snapshotID,
 	}
 	patch, err := active.QueryDashboardPageForDefinition(ctx, compiled.Definition, pageID, request.Filters)
 	result := Preview{Revision: revision.Token(), Definition: compiled.Definition, PagePatch: patch, SemanticEvidence: evidence}
