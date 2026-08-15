@@ -14,6 +14,7 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/api"
+	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardhttp "github.com/flidai/leapview/internal/dashboard/http"
@@ -37,6 +38,7 @@ import (
 
 type Module struct {
 	handler                       dashboardhttp.Handler
+	authoring                     *dashboardauthoringapplication.Application
 	semantic                      semanticapi.Handler
 	snapshot                      func(context.Context, string) (string, error)
 	publications                  *publicationsqlite.Repository
@@ -59,7 +61,11 @@ type Module struct {
 }
 
 type Config struct {
-	Database        *sql.DB
+	Database *sql.DB
+	// Authoring is supplied by production composition. It remains optional at
+	// this module boundary so focused dashboard-module tests can exercise the
+	// read/render surface without constructing runtime-backed authoring ports.
+	Authoring       *dashboardauthoringapplication.Application
 	HTTP            HTTPConfig
 	Semantic        SemanticConfig
 	ServingSnapshot func(context.Context, string) (string, error)
@@ -264,7 +270,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}
 	}
 	module := &Module{
-		handler: handler,
+		handler:   handler,
+		authoring: config.Authoring,
 		semantic: semanticapi.Handler{
 			Metrics: config.Semantic.Metrics, MetricsForWorkspace: metricsForSemantic,
 			CurrentPrincipalID:  config.Semantic.CurrentPrincipalID,
@@ -323,6 +330,12 @@ func observeVisualizationFrame(telemetry DashboardTelemetry, event dashboardstre
 
 func (m *Module) HTTP() dashboardhttp.Handler      { return m.handler }
 func (m *Module) SemanticAPI() semanticapi.Handler { return m.semantic }
+func (m *Module) Authoring() *dashboardauthoringapplication.Application {
+	if m == nil {
+		return nil
+	}
+	return m.authoring
+}
 
 type PopularityLevel string
 

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -16,6 +17,11 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	authoringaccessadapter "github.com/flidai/leapview/internal/dashboard/authoring/accessadapter"
+	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
+	authoringcompileradapter "github.com/flidai/leapview/internal/dashboard/authoring/compileradapter"
+	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -29,6 +35,7 @@ import (
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
+	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
@@ -286,6 +293,48 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	cleanup.Push("runtime-host", func(context.Context) error { return runtimeHostModule.Close() })
+	authoringRepository := authoringsqlite.NewRepository(store.SQLDB())
+	authoringAuthorizer, err := authoringaccessadapter.New(accessModule.AuthorizeObject)
+	if err != nil {
+		return fail(fmt.Errorf("build dashboard authoring access adapter: %w", err))
+	}
+	authoringAcquireRuntime := func(ctx context.Context, workspaceID string) (runtimehost.Lease, error) {
+		return runtimeHostModule.ProviderForWorkspace(servingstatemodule.WorkspaceID(workspaceID)).Acquire(ctx)
+	}
+	authoringCompiler, err := authoringcompileradapter.New(authoringcompileradapter.Options{
+		AcquireRuntime: authoringAcquireRuntime,
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build dashboard authoring compiler adapter: %w", err))
+	}
+	ids := productionAuthoringIDGenerators()
+	authoringService, err := authoringservice.NewService(authoringservice.Options{
+		Repository: authoringRepository,
+		Authorizer: authoringAuthorizer,
+		Compiler:   authoringCompiler,
+		Now:        func() time.Time { return time.Now().UTC() },
+		NewDashboardID: func() (dashboardauthoring.DashboardID, error) {
+			return ids.dashboard()
+		},
+		NewDraftID: func() (dashboardauthoring.DraftID, error) {
+			return ids.draft()
+		},
+		NewRevisionID: func() (dashboardauthoring.RevisionID, error) {
+			return ids.revision()
+		},
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build dashboard authoring service: %w", err))
+	}
+	authoringApplication, err := authoringapplication.New(authoringapplication.Options{
+		Authoring:      authoringService,
+		Repository:     authoringRepository,
+		Authorizer:     authoringAuthorizer,
+		AcquireRuntime: authoringAcquireRuntime,
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build dashboard authoring application: %w", err))
+	}
 	deploymentRuntime, err := deploymentmodule.NewRuntime(runtimeHostModule)
 	if err != nil {
 		return fail(err)
@@ -425,7 +474,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		ProviderFactory: func(workspaceID string) runtimehostmodule.Provider {
 			return runtimeHostModule.ProviderForWorkspace(servingstatemodule.WorkspaceID(workspaceID))
 		},
-		PublishedCompilationReader: authoringsqlite.NewRepository(store.SQLDB()),
+		PublishedCompilationReader: authoringRepository,
 	})
 	auth := accessModule.Auth()
 	rateLimits := apihttpmiddleware.ProductionRateLimitConfig()
@@ -441,7 +490,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			AnalyticsModule: analyticsModule, DashboardAssets: dashboardAssets,
 			ReleaseModule: releaseModule, JobModule: jobModule,
 			AccessModule: accessModule, ManagedDataModule: managedDataModule,
-			Product: productService, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), identity),
+			Authoring: authoringApplication,
+			Product:   productService, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), identity),
 		},
 		workflowAssemblyInputs{
 			AgentSettings: store,
