@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -35,7 +36,7 @@ func newPreviewFixture(t *testing.T) previewFixture {
 		t.Fatal(err)
 	}
 	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
-		WorkspaceID: "workspace", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales",
+		ProjectID: "project", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales",
 		SemanticModel: "sales_model", Visibility: authoring.VisibilityPrivate,
 		Draft: &authoring.Draft{ID: "draft-1", DashboardID: "sales", Revision: revision.Token(), Provenance: provenance},
 	})
@@ -53,7 +54,7 @@ func newPreviewFixture(t *testing.T) previewFixture {
 	}
 	return previewFixture{
 		repository: repository, authorizer: authorizer, provider: provider, runtime: runtime, service: service,
-		request:  PreviewRequest{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales", DraftID: "draft-1", ExpectedRevision: revision.Token(), PageID: "overview"},
+		request:  PreviewRequest{ProjectID: "project", ActorID: "actor", DashboardID: "sales", DraftID: "draft-1", ExpectedRevision: revision.Token(), PageID: "overview"},
 		revision: revision,
 	}
 }
@@ -190,10 +191,10 @@ type fakeRepository struct {
 	mu               sync.Mutex
 }
 
-func (r *fakeRepository) Get(context.Context, string, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) Get(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
 	return r.lifecycle, nil
 }
-func (r *fakeRepository) GetRevision(context.Context, string, authoring.DashboardID, authoring.RevisionID) (authoring.Revision, error) {
+func (r *fakeRepository) GetRevision(context.Context, graph.ResourceID, authoring.DashboardID, authoring.RevisionID) (authoring.Revision, error) {
 	r.mu.Lock()
 	r.getRevisionCalls++
 	r.mu.Unlock()

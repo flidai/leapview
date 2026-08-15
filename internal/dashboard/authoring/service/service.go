@@ -17,6 +17,7 @@ import (
 	dashboardmodel "github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 // AuthorizationRequest is the single authorization boundary for every
@@ -24,10 +25,10 @@ import (
 // an adapter can make one scoped decision without looking up more state.
 type AuthorizationRequest struct {
 	ActorID          string
-	WorkspaceID      string
+	ProjectID        graph.ResourceID
 	DashboardID      authoring.DashboardID
 	OwnerPrincipalID string
-	SemanticModel    string
+	SemanticModel    graph.ResourceID
 	Action           authoring.AuthorizationAction
 }
 
@@ -43,7 +44,7 @@ type Compilation struct {
 }
 
 type Compiler interface {
-	Compile(context.Context, string, string, authoring.Dashboard) (Compilation, error)
+	Compile(context.Context, graph.ResourceID, graph.ResourceID, authoring.Dashboard) (Compilation, error)
 }
 
 // Options wires the service's required ports. IDs and time are supplied by
@@ -91,16 +92,16 @@ type Result struct {
 	Lifecycle authoring.DashboardLifecycle `json:"lifecycle"`
 }
 
-// CreateRequest creates a named workspace draft. DashboardID is optional; an
+// CreateRequest creates a named project draft. DashboardID is optional; an
 // omitted ID is allocated by the injected generator.
 type CreateRequest struct {
-	WorkspaceID      string
+	ProjectID        graph.ResourceID
 	ActorID          string
 	OwnerPrincipalID string
 	DashboardID      authoring.DashboardID
 	Title            string
 	Slug             string
-	SemanticModel    string
+	SemanticModel    graph.ResourceID
 	Visibility       authoring.Visibility
 	Origin           authoring.Origin
 	Source           *authoring.SourceMetadata
@@ -113,9 +114,9 @@ type CreateRequest struct {
 }
 
 // ForkRequest copies the exact published authored revision of a dashboard into
-// a new private draft in the workspace identified by WorkspaceID.
+// a new private draft in the project identified by ProjectID.
 type ForkRequest struct {
-	WorkspaceID       string
+	ProjectID         graph.ResourceID
 	SourceDashboardID authoring.DashboardID
 	ActorID           string
 	OwnerPrincipalID  string
@@ -141,7 +142,7 @@ type ForkRequest struct {
 // Source is descriptive provenance only. In particular, an adapter must not
 // manufacture a RevisionToken for a project artifact that does not have one.
 type CreateFromDocumentRequest struct {
-	WorkspaceID                string
+	ProjectID                  graph.ResourceID
 	ActorID                    string
 	OwnerPrincipalID           string
 	Document                   authoring.Dashboard
@@ -162,9 +163,9 @@ type CreateFromDocumentRequest struct {
 // mutable serving artifact.
 type ForkOperationSeed struct {
 	SourceKind        string
-	SourceWorkspaceID string
+	SourceProjectID   graph.ResourceID
 	SourceDashboardID authoring.DashboardID
-	TargetWorkspaceID string
+	TargetProjectID   graph.ResourceID
 	OwnerPrincipalID  string
 	Title             string
 	Slug              string
@@ -174,9 +175,9 @@ type ForkOperationSeed struct {
 // a fork. It is used for a pre-load replay check by source adapters; Source,
 // when present, is caller provenance rather than loaded source evidence.
 type ForkIdentityRequest struct {
-	TargetWorkspaceID string
+	TargetProjectID   graph.ResourceID
 	SourceKind        string
-	SourceWorkspaceID string
+	SourceProjectID   graph.ResourceID
 	SourceDashboardID authoring.DashboardID
 	ActorID           string
 	OwnerPrincipalID  string
@@ -195,7 +196,7 @@ type ForkIdentityRequest struct {
 // No compiler, publication, deployment, or data/model mutation is involved.
 func (s *Service) CreateFromDocument(ctx context.Context, input CreateFromDocumentRequest) (Result, error) {
 	return s.createDraft(ctx, createDraftInput{
-		WorkspaceID: input.WorkspaceID, ActorID: input.ActorID, OwnerPrincipalID: input.OwnerPrincipalID,
+		ProjectID: input.ProjectID, ActorID: input.ActorID, OwnerPrincipalID: input.OwnerPrincipalID,
 		Document: input.Document, Title: input.Title, Slug: input.Slug, Visibility: authoring.VisibilityPrivate,
 		Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom,
 		ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, IdempotencyKey: input.IdempotencyKey,
@@ -206,17 +207,17 @@ func (s *Service) CreateFromDocument(ctx context.Context, input CreateFromDocume
 // Fork copies a published authored revision into a new private draft. It
 // never compiles, publishes, deploys, or mutates the source lifecycle.
 func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
-	workspaceID := strings.TrimSpace(input.WorkspaceID)
+	projectID := input.ProjectID
 	actorID := strings.TrimSpace(input.ActorID)
-	if workspaceID == "" || actorID == "" {
-		return Result{}, fmt.Errorf("workspace and actor are required")
+	if err := projectID.Validate(); err != nil || actorID == "" {
+		return Result{}, fmt.Errorf("project and actor are required")
 	}
-	sourceWorkspaceID := workspaceID
+	sourceProjectID := projectID
 	sourceID := input.SourceDashboardID
 	if err := sourceID.Validate(); err != nil {
 		return Result{}, err
 	}
-	operation, err := s.forkOperation(workspaceID, actorID, sourceID, input)
+	operation, err := s.forkOperation(projectID, actorID, sourceID, input)
 	if err != nil {
 		return Result{}, err
 	}
@@ -231,14 +232,14 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 	// Load and authorize the source before reading its immutable revision. This
 	// is both the authorization boundary and the required VIEW-before-EDIT
 	// ordering for a fork.
-	source, err := s.repository.Get(ctx, sourceWorkspaceID, sourceID)
+	source, err := s.repository.Get(ctx, sourceProjectID, sourceID)
 	if err != nil {
 		return Result{}, err
 	}
-	if source.WorkspaceID != sourceWorkspaceID || source.ID != sourceID {
+	if source.ProjectID != sourceProjectID || source.ID != sourceID {
 		return Result{}, fmt.Errorf("%w: source lifecycle identity does not match request", authoring.ErrInvalidAuthoring)
 	}
-	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, WorkspaceID: sourceWorkspaceID, DashboardID: source.ID, OwnerPrincipalID: source.OwnerPrincipalID, SemanticModel: source.SemanticModel, Action: authoring.AuthorizationActionView}); err != nil {
+	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, ProjectID: sourceProjectID, DashboardID: source.ID, OwnerPrincipalID: source.OwnerPrincipalID, SemanticModel: source.SemanticModel, Action: authoring.AuthorizationActionView}); err != nil {
 		return Result{}, err
 	}
 	if source.Status == authoring.LifecycleStatusArchived {
@@ -252,7 +253,7 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 	}
 
 	publishedToken := source.Published.Revision
-	sourceRevision, err := s.repository.GetRevision(ctx, sourceWorkspaceID, source.ID, publishedToken.RevisionID)
+	sourceRevision, err := s.repository.GetRevision(ctx, sourceProjectID, source.ID, publishedToken.RevisionID)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) || errors.Is(err, authoring.ErrSourceUnavailable) {
 			return Result{}, errors.Join(authoring.ErrSourceUnavailable, err)
@@ -287,7 +288,7 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 	if origin == "" {
 		origin = authoring.OriginUI
 	}
-	forkedFrom := &authoring.ForkEvidence{Kind: authoring.ForkSourceWorkspace, Workspace: &authoring.WorkspaceForkEvidence{SourceWorkspaceID: sourceWorkspaceID, SourceDashboardID: source.ID, SourceRevision: publishedToken}}
+	forkedFrom := &authoring.ForkEvidence{Kind: authoring.ForkSourceInstance, Instance: &authoring.InstanceForkEvidence{SourceProjectID: sourceProjectID, SourceDashboardID: source.ID, SourceRevision: publishedToken}}
 	provenance := authoring.Provenance{Origin: origin, ActorID: actorID, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Source: input.Source, ForkedFrom: forkedFrom}
 	if err := provenance.Validate(); err != nil {
 		return Result{}, err
@@ -319,7 +320,7 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	document.ID = targetID.String()
+	document.ID = targetID
 	document.Title = title
 	// SemanticModel is intentionally left untouched: a dashboard fork never
 	// forks the governed semantic model or its underlying data/schema.
@@ -328,7 +329,7 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 		return Result{}, err
 	}
 	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
-		WorkspaceID: workspaceID, ID: targetID, OwnerPrincipalID: ownerID, Slug: slug,
+		ProjectID: projectID, ID: targetID, OwnerPrincipalID: ownerID, Slug: slug,
 		Title: title, SemanticModel: source.SemanticModel, Visibility: authoring.VisibilityPrivate,
 		Draft: &authoring.Draft{ID: draftID, DashboardID: targetID, Revision: revision.Token(), Provenance: provenance},
 	})
@@ -336,12 +337,12 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 		return Result{}, err
 	}
 	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{
-		ActorID: actorID, WorkspaceID: workspaceID, DashboardID: targetID,
+		ActorID: actorID, ProjectID: projectID, DashboardID: targetID,
 		OwnerPrincipalID: ownerID, SemanticModel: source.SemanticModel, Action: authoring.AuthorizationActionEdit,
 	}); err != nil {
 		return Result{}, err
 	}
-	created, err := s.repository.Create(ctx, authoring.CreateInput{WorkspaceID: workspaceID, Lifecycle: lifecycle, Revision: revision, Operation: operation})
+	created, err := s.repository.Create(ctx, authoring.CreateInput{ProjectID: projectID, Lifecycle: lifecycle, Revision: revision, Operation: operation})
 	if err != nil {
 		return Result{}, err
 	}
@@ -372,7 +373,7 @@ func (s *Service) Create(ctx context.Context, input CreateRequest) (Result, erro
 	if title == "" {
 		return Result{}, fmt.Errorf("dashboard title is required")
 	}
-	semanticModel := strings.TrimSpace(input.SemanticModel)
+	semanticModel := input.SemanticModel
 	if semanticModel == "" {
 		return Result{}, fmt.Errorf("semantic model is required")
 	}
@@ -385,10 +386,10 @@ func (s *Service) Create(ctx context.Context, input CreateRequest) (Result, erro
 	}
 	defaultPage := dashboardmodel.Page{ID: "overview", Title: "Overview", Canvas: dashboardmodel.PageCanvas{Width: 1366, Height: 940}, Grid: dashboardmodel.PageGrid{Columns: 12, RowHeight: 48, Gap: 16}}.WithDefaults()
 	return s.createDraft(ctx, createDraftInput{
-		WorkspaceID: input.WorkspaceID, ActorID: input.ActorID, OwnerPrincipalID: input.OwnerPrincipalID,
+		ProjectID: input.ProjectID, ActorID: input.ActorID, OwnerPrincipalID: input.OwnerPrincipalID,
 		DashboardID:          input.DashboardID,
 		RequestedDashboardID: input.DashboardID,
-		Document:             authoring.Dashboard{ID: input.DashboardID.String(), Title: title, SemanticModel: semanticModel, Visuals: map[string]authoring.AuthoringVisualization{}, Pages: []dashboardmodel.Page{defaultPage}},
+		Document:             authoring.Dashboard{ID: input.DashboardID, Title: title, SemanticModel: semanticModel, Visuals: map[string]authoring.AuthoringVisualization{}, Pages: []dashboardmodel.Page{defaultPage}},
 		Title:                title, Slug: input.Slug, Visibility: visibility, Origin: input.Origin, Source: input.Source,
 		ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, BaseSemanticServingStateID: input.BaseSemanticServingStateID,
 		IdempotencyKey: input.IdempotencyKey, OperationKind: "create",
@@ -396,7 +397,7 @@ func (s *Service) Create(ctx context.Context, input CreateRequest) (Result, erro
 }
 
 type createDraftInput struct {
-	WorkspaceID                string
+	ProjectID                  graph.ResourceID
 	ActorID                    string
 	OwnerPrincipalID           string
 	DashboardID                authoring.DashboardID
@@ -421,16 +422,16 @@ type createDraftInput struct {
 // allocation, provenance validation, edit authorization, and repository
 // insertion together prevents the two entry points from drifting.
 func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Result, error) {
-	workspaceID := strings.TrimSpace(input.WorkspaceID)
+	projectID := input.ProjectID
 	actorID := strings.TrimSpace(input.ActorID)
 	ownerID := strings.TrimSpace(input.OwnerPrincipalID)
-	if workspaceID == "" || actorID == "" {
-		return Result{}, fmt.Errorf("workspace and actor are required")
+	if err := projectID.Validate(); err != nil || actorID == "" {
+		return Result{}, fmt.Errorf("project and actor are required")
 	}
 	if ownerID == "" {
 		ownerID = actorID
 	}
-	semanticModel := strings.TrimSpace(input.Document.SemanticModel)
+	semanticModel := input.Document.SemanticModel
 	if semanticModel == "" {
 		return Result{}, fmt.Errorf("semantic model is required")
 	}
@@ -474,14 +475,14 @@ func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	if strings.TrimSpace(payloadDocument.ID) == "" {
-		payloadDocument.ID = "pending-dashboard"
+	if strings.TrimSpace(payloadDocument.ID.String()) == "" {
+		payloadDocument.ID = graph.ResourceID("pending-dashboard")
 	}
 	payloadDocument.Title = title
 	if err := payloadDocument.ValidateDraftStructure(); err != nil {
 		return Result{}, err
 	}
-	normalized := inputWithNormalizedCreateFields(input, workspaceID, actorID, ownerID, input.DashboardID, title, slug, visibility, origin, payloadDocument)
+	normalized := inputWithNormalizedCreateFields(input, projectID, actorID, ownerID, input.DashboardID, title, slug, visibility, origin, payloadDocument)
 	normalized.ForkedFrom = provenance.ForkedFrom
 	normalized.Source = provenance.Source
 	normalized.OperationKind = input.OperationKind
@@ -522,14 +523,14 @@ func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	document.ID = targetID.String()
+	document.ID = targetID
 	document.Title = title
 	revision, err := authoring.NewRevision(revisionID, targetID, 1, now, document, provenance)
 	if err != nil {
 		return Result{}, err
 	}
 	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
-		WorkspaceID: workspaceID, ID: targetID, OwnerPrincipalID: ownerID, Slug: slug,
+		ProjectID: projectID, ID: targetID, OwnerPrincipalID: ownerID, Slug: slug,
 		Title: title, SemanticModel: semanticModel, Visibility: visibility,
 		Draft: &authoring.Draft{ID: draftID, DashboardID: targetID, Revision: revision.Token(), Provenance: provenance},
 	})
@@ -537,12 +538,12 @@ func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Resu
 		return Result{}, err
 	}
 	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{
-		ActorID: actorID, WorkspaceID: workspaceID, DashboardID: targetID,
+		ActorID: actorID, ProjectID: projectID, DashboardID: targetID,
 		OwnerPrincipalID: ownerID, SemanticModel: semanticModel, Action: authoring.AuthorizationActionEdit,
 	}); err != nil {
 		return Result{}, err
 	}
-	created, err := s.repository.Create(ctx, authoring.CreateInput{WorkspaceID: workspaceID, Lifecycle: lifecycle, Revision: revision, Operation: operation})
+	created, err := s.repository.Create(ctx, authoring.CreateInput{ProjectID: projectID, Lifecycle: lifecycle, Revision: revision, Operation: operation})
 	if err != nil {
 		return Result{}, err
 	}
@@ -566,7 +567,7 @@ func (s *Service) lookupCreateReplay(ctx context.Context, operation authoring.Cr
 	if err != nil || !found {
 		return Result{}, found, err
 	}
-	lifecycle, err := s.repository.Get(ctx, operation.WorkspaceID, stored.DashboardID)
+	lifecycle, err := s.repository.Get(ctx, operation.ProjectID, stored.DashboardID)
 	if err != nil {
 		return Result{}, false, err
 	}
@@ -588,7 +589,7 @@ func (s *Service) authorizedCreateReplay(ctx context.Context, actorID string, op
 	if err != nil || !found {
 		return Result{}, found, err
 	}
-	lifecycle, err := s.repository.Get(ctx, operation.WorkspaceID, stored.DashboardID)
+	lifecycle, err := s.repository.Get(ctx, operation.ProjectID, stored.DashboardID)
 	if err != nil {
 		return Result{}, false, err
 	}
@@ -602,11 +603,11 @@ func (s *Service) authorizedCreateReplay(ctx context.Context, actorID string, op
 }
 
 func (s *Service) authorizeReplay(ctx context.Context, actorID string, lifecycle authoring.DashboardLifecycle) error {
-	return s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, WorkspaceID: lifecycle.WorkspaceID, DashboardID: lifecycle.ID, OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: authoring.AuthorizationActionEdit})
+	return s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, ProjectID: lifecycle.ProjectID, DashboardID: lifecycle.ID, OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: authoring.AuthorizationActionEdit})
 }
 
-func inputWithNormalizedCreateFields(input createDraftInput, workspaceID, actorID, ownerID string, dashboardID authoring.DashboardID, title, slug string, visibility authoring.Visibility, origin authoring.Origin, document authoring.Dashboard) createDraftInput {
-	input.WorkspaceID, input.ActorID, input.OwnerPrincipalID = workspaceID, actorID, ownerID
+func inputWithNormalizedCreateFields(input createDraftInput, projectID graph.ResourceID, actorID, ownerID string, dashboardID authoring.DashboardID, title, slug string, visibility authoring.Visibility, origin authoring.Origin, document authoring.Dashboard) createDraftInput {
+	input.ProjectID, input.ActorID, input.OwnerPrincipalID = projectID, actorID, ownerID
 	input.DashboardID, input.Title, input.Slug, input.Visibility, input.Origin = dashboardID, title, slug, visibility, origin
 	input.Document = document
 	return input
@@ -619,7 +620,7 @@ func (s *Service) createOperation(input createDraftInput) (authoring.CreateOpera
 	}
 	if input.OperationSeed != nil {
 		seed := *input.OperationSeed
-		return s.forkIdentityOperation(ForkIdentityRequest{TargetWorkspaceID: seed.TargetWorkspaceID, SourceKind: seed.SourceKind, SourceWorkspaceID: seed.SourceWorkspaceID, SourceDashboardID: seed.SourceDashboardID, ActorID: input.ActorID, OwnerPrincipalID: seed.OwnerPrincipalID, Title: seed.Title, Slug: seed.Slug, Origin: input.Origin, ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, IdempotencyKey: key})
+		return s.forkIdentityOperation(ForkIdentityRequest{TargetProjectID: seed.TargetProjectID, SourceKind: seed.SourceKind, SourceProjectID: seed.SourceProjectID, SourceDashboardID: seed.SourceDashboardID, ActorID: input.ActorID, OwnerPrincipalID: seed.OwnerPrincipalID, Title: seed.Title, Slug: seed.Slug, Origin: input.Origin, ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, IdempotencyKey: key})
 	}
 	kind := strings.TrimSpace(input.OperationKind)
 	if kind == "" {
@@ -639,7 +640,7 @@ func (s *Service) createOperation(input createDraftInput) (authoring.CreateOpera
 		OwnerPrincipalID           string                    `json:"ownerPrincipalId"`
 		Title                      string                    `json:"title"`
 		Slug                       string                    `json:"slug"`
-		SemanticModel              string                    `json:"semanticModel"`
+		SemanticModel              graph.ResourceID          `json:"semanticModel"`
 		Visibility                 authoring.Visibility      `json:"visibility"`
 		Origin                     authoring.Origin          `json:"origin"`
 		Source                     *authoring.SourceMetadata `json:"source,omitempty"`
@@ -648,21 +649,21 @@ func (s *Service) createOperation(input createDraftInput) (authoring.CreateOpera
 		ToolCallID                 string                    `json:"toolCallId,omitempty"`
 		BaseSemanticServingStateID string                    `json:"baseSemanticServingStateId,omitempty"`
 		Document                   authoring.Dashboard       `json:"document"`
-	}{Kind: kind, DashboardID: requestedID, OwnerPrincipalID: strings.TrimSpace(input.OwnerPrincipalID), Title: strings.TrimSpace(input.Title), Slug: strings.TrimSpace(input.Slug), SemanticModel: strings.TrimSpace(input.Document.SemanticModel), Visibility: input.Visibility, Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Document: document}
+	}{Kind: kind, DashboardID: requestedID, OwnerPrincipalID: strings.TrimSpace(input.OwnerPrincipalID), Title: strings.TrimSpace(input.Title), Slug: strings.TrimSpace(input.Slug), SemanticModel: input.Document.SemanticModel, Visibility: input.Visibility, Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Document: document}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return authoring.CreateOperation{}, fmt.Errorf("encode create operation payload: %w", err)
 	}
 	digest := sha256.Sum256(encoded)
-	operation := authoring.CreateOperation{WorkspaceID: strings.TrimSpace(input.WorkspaceID), ActorID: strings.TrimSpace(input.ActorID), Kind: kind, IdempotencyKey: key, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), Fingerprint: "sha256:" + hex.EncodeToString(digest[:])}
+	operation := authoring.CreateOperation{ProjectID: input.ProjectID, ActorID: strings.TrimSpace(input.ActorID), Kind: kind, IdempotencyKey: key, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), Fingerprint: "sha256:" + hex.EncodeToString(digest[:])}
 	if err := operation.Validate(); err != nil {
 		return authoring.CreateOperation{}, err
 	}
 	return operation, nil
 }
 
-func (s *Service) forkOperation(workspaceID, actorID string, sourceID authoring.DashboardID, input ForkRequest) (authoring.CreateOperation, error) {
-	return s.forkIdentityOperation(ForkIdentityRequest{TargetWorkspaceID: workspaceID, SourceKind: "workspace", SourceWorkspaceID: workspaceID, SourceDashboardID: sourceID, ActorID: actorID, OwnerPrincipalID: input.OwnerPrincipalID, Title: input.Title, Slug: input.Slug, Origin: input.Origin, Source: input.Source, ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, IdempotencyKey: input.IdempotencyKey})
+func (s *Service) forkOperation(projectID graph.ResourceID, actorID string, sourceID authoring.DashboardID, input ForkRequest) (authoring.CreateOperation, error) {
+	return s.forkIdentityOperation(ForkIdentityRequest{TargetProjectID: projectID, SourceKind: "instance", SourceProjectID: projectID, SourceDashboardID: sourceID, ActorID: actorID, OwnerPrincipalID: input.OwnerPrincipalID, Title: input.Title, Slug: input.Slug, Origin: input.Origin, Source: input.Source, ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, IdempotencyKey: input.IdempotencyKey})
 }
 
 func (s *Service) forkIdentityOperation(input ForkIdentityRequest) (authoring.CreateOperation, error) {
@@ -677,9 +678,9 @@ func (s *Service) forkIdentityOperation(input ForkIdentityRequest) (authoring.Cr
 	payload := struct {
 		Kind              string                    `json:"kind"`
 		SourceKind        string                    `json:"sourceKind"`
-		SourceWorkspaceID string                    `json:"sourceWorkspaceId"`
+		SourceProjectID   graph.ResourceID          `json:"sourceProjectId"`
 		SourceDashboardID authoring.DashboardID     `json:"sourceDashboardId"`
-		TargetWorkspaceID string                    `json:"targetWorkspaceId"`
+		TargetProjectID   graph.ResourceID          `json:"targetProjectId"`
 		OwnerPrincipalID  string                    `json:"ownerPrincipalId,omitempty"`
 		Title             string                    `json:"title,omitempty"`
 		Slug              string                    `json:"slug,omitempty"`
@@ -687,13 +688,13 @@ func (s *Service) forkIdentityOperation(input ForkIdentityRequest) (authoring.Cr
 		Source            *authoring.SourceMetadata `json:"source,omitempty"`
 		ConversationID    string                    `json:"conversationId,omitempty"`
 		ToolCallID        string                    `json:"toolCallId,omitempty"`
-	}{Kind: "fork", SourceKind: strings.TrimSpace(input.SourceKind), SourceWorkspaceID: strings.TrimSpace(input.SourceWorkspaceID), SourceDashboardID: input.SourceDashboardID, TargetWorkspaceID: strings.TrimSpace(input.TargetWorkspaceID), OwnerPrincipalID: strings.TrimSpace(input.OwnerPrincipalID), Title: strings.TrimSpace(input.Title), Slug: strings.TrimSpace(input.Slug), Origin: origin, Source: input.Source, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID)}
+	}{Kind: "fork", SourceKind: strings.TrimSpace(input.SourceKind), SourceProjectID: input.SourceProjectID, SourceDashboardID: input.SourceDashboardID, TargetProjectID: input.TargetProjectID, OwnerPrincipalID: strings.TrimSpace(input.OwnerPrincipalID), Title: strings.TrimSpace(input.Title), Slug: strings.TrimSpace(input.Slug), Origin: origin, Source: input.Source, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID)}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return authoring.CreateOperation{}, fmt.Errorf("encode fork operation payload: %w", err)
 	}
 	digest := sha256.Sum256(encoded)
-	operation := authoring.CreateOperation{WorkspaceID: strings.TrimSpace(input.TargetWorkspaceID), ActorID: strings.TrimSpace(input.ActorID), Kind: "fork", IdempotencyKey: key, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), Fingerprint: "sha256:" + hex.EncodeToString(digest[:])}
+	operation := authoring.CreateOperation{ProjectID: input.TargetProjectID, ActorID: strings.TrimSpace(input.ActorID), Kind: "fork", IdempotencyKey: key, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), Fingerprint: "sha256:" + hex.EncodeToString(digest[:])}
 	if err := operation.Validate(); err != nil {
 		return authoring.CreateOperation{}, err
 	}
@@ -703,22 +704,21 @@ func (s *Service) forkIdentityOperation(input ForkIdentityRequest) (authoring.Cr
 // Execute is the one mutation path for the typed command union. Authorization
 // and command-result lookup happen before stale reducer evaluation so retries
 // remain successful even if a later edit has advanced the draft pointer.
-func (s *Service) Execute(ctx context.Context, workspaceID string, command authoring.Command) (Result, error) {
-	return s.execute(ctx, workspaceID, command, nil)
+func (s *Service) Execute(ctx context.Context, projectID graph.ResourceID, command authoring.Command) (Result, error) {
+	return s.execute(ctx, projectID, command, nil)
 }
 
 // ExecuteValidated is the narrow extension used by application-level builder
 // intents. The validator runs only after authorization and durable command
 // idempotency lookup, so a replay returns its original result without reading
 // a stale draft or acquiring a runtime lease again.
-func (s *Service) ExecuteValidated(ctx context.Context, workspaceID string, command authoring.Command, validator func(context.Context, authoring.DashboardLifecycle) error) (Result, error) {
-	return s.execute(ctx, workspaceID, command, validator)
+func (s *Service) ExecuteValidated(ctx context.Context, projectID graph.ResourceID, command authoring.Command, validator func(context.Context, authoring.DashboardLifecycle) error) (Result, error) {
+	return s.execute(ctx, projectID, command, validator)
 }
 
-func (s *Service) execute(ctx context.Context, workspaceID string, command authoring.Command, validator func(context.Context, authoring.DashboardLifecycle) error) (Result, error) {
-	workspaceID = strings.TrimSpace(workspaceID)
-	if workspaceID == "" {
-		return Result{}, fmt.Errorf("workspace id is required")
+func (s *Service) execute(ctx context.Context, projectID graph.ResourceID, command authoring.Command, validator func(context.Context, authoring.DashboardLifecycle) error) (Result, error) {
+	if err := projectID.Validate(); err != nil {
+		return Result{}, fmt.Errorf("project id is required")
 	}
 	if err := command.Validate(); err != nil {
 		return Result{}, err
@@ -727,11 +727,11 @@ func (s *Service) execute(ctx context.Context, workspaceID string, command autho
 	if err != nil {
 		return Result{}, err
 	}
-	lifecycle, err := s.repository.Get(ctx, workspaceID, command.DashboardID)
+	lifecycle, err := s.repository.Get(ctx, projectID, command.DashboardID)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: command.Provenance.ActorID, WorkspaceID: workspaceID, DashboardID: lifecycle.ID, OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: action}); err != nil {
+	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: command.Provenance.ActorID, ProjectID: projectID, DashboardID: lifecycle.ID, OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: action}); err != nil {
 		return Result{}, err
 	}
 	fingerprint, err := command.Fingerprint()
@@ -746,7 +746,7 @@ func (s *Service) execute(ctx context.Context, workspaceID string, command autho
 	if err := evidence.Validate(); err != nil {
 		return Result{}, err
 	}
-	replayed, found, err := s.repository.LookupCommandResult(ctx, workspaceID, command.DashboardID, evidence)
+	replayed, found, err := s.repository.LookupCommandResult(ctx, projectID, command.DashboardID, evidence)
 	if err != nil {
 		return Result{}, err
 	}
@@ -764,15 +764,15 @@ func (s *Service) execute(ctx context.Context, workspaceID string, command autho
 
 	switch {
 	case command.Publish != nil:
-		return s.publish(ctx, workspaceID, command, lifecycle, evidence)
+		return s.publish(ctx, projectID, command, lifecycle, evidence)
 	case command.Archive != nil:
-		return s.archive(ctx, workspaceID, command, lifecycle, evidence)
+		return s.archive(ctx, projectID, command, lifecycle, evidence)
 	default:
-		return s.edit(ctx, workspaceID, command, lifecycle, evidence)
+		return s.edit(ctx, projectID, command, lifecycle, evidence)
 	}
 }
 
-func (s *Service) edit(ctx context.Context, workspaceID string, command authoring.Command, lifecycle authoring.DashboardLifecycle, evidence authoring.CommandEvidence) (Result, error) {
+func (s *Service) edit(ctx context.Context, projectID graph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, evidence authoring.CommandEvidence) (Result, error) {
 	if lifecycle.Draft == nil {
 		return Result{}, fmt.Errorf("%w: dashboard has no draft", authoring.ErrConflict)
 	}
@@ -782,7 +782,7 @@ func (s *Service) edit(ctx context.Context, workspaceID string, command authorin
 	if !sameToken(lifecycle.Draft.Revision, command.ExpectedRevision) {
 		return Result{}, fmt.Errorf("%w: expected revision does not match current draft", authoring.ErrStaleRevision)
 	}
-	current, err := s.repository.GetRevision(ctx, workspaceID, lifecycle.ID, lifecycle.Draft.Revision.RevisionID)
+	current, err := s.repository.GetRevision(ctx, projectID, lifecycle.ID, lifecycle.Draft.Revision.RevisionID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -794,18 +794,18 @@ func (s *Service) edit(ctx context.Context, workspaceID string, command authorin
 	if err != nil {
 		return Result{}, err
 	}
-	appended, err := s.repository.AppendDraft(ctx, authoring.AppendDraftInput{WorkspaceID: workspaceID, DashboardID: command.DashboardID, ExpectedDraftRevision: command.ExpectedRevision, Revision: revision, Next: nextLifecycle, Evidence: evidence})
+	appended, err := s.repository.AppendDraft(ctx, authoring.AppendDraftInput{ProjectID: projectID, DashboardID: command.DashboardID, ExpectedDraftRevision: command.ExpectedRevision, Revision: revision, Next: nextLifecycle, Evidence: evidence})
 	if err != nil {
 		return Result{}, err
 	}
-	currentLifecycle, err := s.repository.Get(ctx, workspaceID, command.DashboardID)
+	currentLifecycle, err := s.repository.Get(ctx, projectID, command.DashboardID)
 	if err != nil {
 		return Result{}, err
 	}
 	return Result{Revision: appended.Token(), Lifecycle: currentLifecycle}, nil
 }
 
-func (s *Service) publish(ctx context.Context, workspaceID string, command authoring.Command, lifecycle authoring.DashboardLifecycle, evidence authoring.CommandEvidence) (Result, error) {
+func (s *Service) publish(ctx context.Context, projectID graph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, evidence authoring.CommandEvidence) (Result, error) {
 	if lifecycle.Draft == nil {
 		return Result{}, fmt.Errorf("%w: dashboard has no draft", authoring.ErrConflict)
 	}
@@ -818,40 +818,40 @@ func (s *Service) publish(ctx context.Context, workspaceID string, command autho
 	if lifecycle.Status == authoring.LifecycleStatusArchived {
 		return Result{}, fmt.Errorf("%w: archived dashboard cannot be published", authoring.ErrConflict)
 	}
-	current, err := s.repository.GetRevision(ctx, workspaceID, lifecycle.ID, lifecycle.Draft.Revision.RevisionID)
+	current, err := s.repository.GetRevision(ctx, projectID, lifecycle.ID, lifecycle.Draft.Revision.RevisionID)
 	if err != nil {
 		return Result{}, err
 	}
-	compilation, err := s.compiler.Compile(ctx, workspaceID, lifecycle.SemanticModel, current.Document)
+	compilation, err := s.compiler.Compile(ctx, projectID, lifecycle.SemanticModel, current.Document)
 	if err != nil {
 		return Result{}, err
 	}
-	if compilation.Definition.ID != current.Document.ID || compilation.Definition.Title != current.Document.Title {
+	if compilation.Definition.ID != current.Document.ID.String() || compilation.Definition.Title != current.Document.Title {
 		return Result{}, fmt.Errorf("%w: compiler definition identity does not match authored dashboard", authoring.ErrInvalidAuthoring)
 	}
-	if compilation.Definition.SemanticModel != lifecycle.SemanticModel || compilation.Definition.SemanticModel != current.Document.SemanticModel {
+	if compilation.Definition.SemanticModel != lifecycle.SemanticModel.String() || compilation.Definition.SemanticModel != current.Document.SemanticModel.String() {
 		return Result{}, fmt.Errorf("%w: compiler semantic model does not match authored lifecycle", authoring.ErrInvalidAuthoring)
 	}
 	if strings.TrimSpace(compilation.SemanticServingStateID) == "" {
 		return Result{}, fmt.Errorf("%w: compiler semantic serving state id is required", authoring.ErrInvalidAuthoring)
 	}
-	compiled, err := authoring.NewCompiledRevision(workspaceID, command.DashboardID, current.Token(), compilation.Definition, compilation.SemanticServingStateID, evidence.OccurredAt)
+	compiled, err := authoring.NewCompiledRevision(projectID, command.DashboardID, current.Token(), compilation.Definition, compilation.SemanticServingStateID, evidence.OccurredAt)
 	if err != nil {
 		return Result{}, err
 	}
-	published, err := s.repository.Publish(ctx, authoring.PublishInput{WorkspaceID: workspaceID, DashboardID: command.DashboardID, ExpectedDraftRevision: command.ExpectedRevision, Published: authoring.Published{Revision: current.Token(), Compilation: compiled.Token(), PublishedAt: evidence.OccurredAt, Provenance: command.Provenance}, Compilation: compiled, Evidence: evidence})
+	published, err := s.repository.Publish(ctx, authoring.PublishInput{ProjectID: projectID, DashboardID: command.DashboardID, ExpectedDraftRevision: command.ExpectedRevision, Published: authoring.Published{Revision: current.Token(), Compilation: compiled.Token(), PublishedAt: evidence.OccurredAt, Provenance: command.Provenance}, Compilation: compiled, Evidence: evidence})
 	if err != nil {
 		return Result{}, err
 	}
 	return Result{Revision: current.Token(), Lifecycle: published}, nil
 }
 
-func (s *Service) archive(ctx context.Context, workspaceID string, command authoring.Command, lifecycle authoring.DashboardLifecycle, evidence authoring.CommandEvidence) (Result, error) {
+func (s *Service) archive(ctx context.Context, projectID graph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, evidence authoring.CommandEvidence) (Result, error) {
 	token := currentToken(lifecycle)
 	if token.IsZero() || !sameToken(token, command.ExpectedRevision) {
 		return Result{}, fmt.Errorf("%w: expected revision does not match current lifecycle", authoring.ErrStaleRevision)
 	}
-	archived, err := s.repository.Archive(ctx, authoring.ArchiveInput{WorkspaceID: workspaceID, DashboardID: command.DashboardID, ExpectedCurrentRevision: command.ExpectedRevision, Evidence: evidence})
+	archived, err := s.repository.Archive(ctx, authoring.ArchiveInput{ProjectID: projectID, DashboardID: command.DashboardID, ExpectedCurrentRevision: command.ExpectedRevision, Evidence: evidence})
 	if err != nil {
 		return Result{}, err
 	}

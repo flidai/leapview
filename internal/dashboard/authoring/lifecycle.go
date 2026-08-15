@@ -10,11 +10,16 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 // These IDs are intentionally distinct: a dashboard ID is stable across
 // title, slug, and source-path changes, while drafts and revisions are not.
-type DashboardID string
+// DashboardID is the canonical graph identity for a dashboard. It is kept as
+// a named alias so the authoring contracts can document the resource kind
+// while callers still use graph.ResourceID throughout project APIs.
+type DashboardID = graph.ResourceID
 type DraftID string
 type RevisionID string
 type CommandID string
@@ -50,15 +55,24 @@ func validateIdentifier(kind, value string) error {
 	return nil
 }
 
-func (id DashboardID) Validate() error { return validateIdentifier("dashboard id", string(id)) }
-func (id DraftID) Validate() error     { return validateIdentifier("draft id", string(id)) }
-func (id RevisionID) Validate() error  { return validateIdentifier("revision id", string(id)) }
-func (id CommandID) Validate() error   { return validateIdentifier("command id", string(id)) }
+func validateDashboardID(id graph.ResourceID) error {
+	if _, err := graph.NewResourceID(id.String()); err != nil {
+		return fmt.Errorf("%w: dashboard id: %v", ErrInvalidIdentifier, err)
+	}
+	return nil
+}
 
-func (id DashboardID) String() string { return string(id) }
-func (id DraftID) String() string     { return string(id) }
-func (id RevisionID) String() string  { return string(id) }
-func (id CommandID) String() string   { return string(id) }
+// ValidateDashboardID validates a dashboard graph identity at package
+// boundaries while preserving authoring's identifier error contract.
+func ValidateDashboardID(id DashboardID) error { return validateDashboardID(id) }
+
+func (id DraftID) Validate() error    { return validateIdentifier("draft id", string(id)) }
+func (id RevisionID) Validate() error { return validateIdentifier("revision id", string(id)) }
+func (id CommandID) Validate() error  { return validateIdentifier("command id", string(id)) }
+
+func (id DraftID) String() string    { return string(id) }
+func (id RevisionID) String() string { return string(id) }
+func (id CommandID) String() string  { return string(id) }
 
 type Origin string
 
@@ -79,11 +93,14 @@ func (o Origin) Validate() error {
 type Visibility string
 
 const (
-	VisibilityPrivate Visibility = "private"
-	VisibilityShared  Visibility = "shared"
+	VisibilityPrivate      Visibility = "private"
+	VisibilityRestricted   Visibility = "restricted"
+	VisibilityOrganization Visibility = "organization"
 )
 
-func (v Visibility) Valid() bool { return v == VisibilityPrivate || v == VisibilityShared }
+func (v Visibility) Valid() bool {
+	return v == VisibilityPrivate || v == VisibilityRestricted || v == VisibilityOrganization
+}
 func (v Visibility) Validate() error {
 	if !v.Valid() {
 		return fmt.Errorf("%w: unsupported visibility %q", ErrInvalidAuthoring, v)
@@ -120,34 +137,34 @@ type SourceMetadata struct {
 }
 
 // ForkSourceKind discriminates the two honest source authorities for a fork.
-// Workspace sources are backed by an exact retained authoring revision;
-// project sources are backed by the active serving artifact and deliberately
-// have no authoring revision token.
+// Instance sources are backed by an exact retained authoring revision; project
+// sources are backed by the active serving artifact and deliberately have no
+// authoring revision token.
 type ForkSourceKind string
 
 const (
-	ForkSourceWorkspace ForkSourceKind = "workspace"
-	ForkSourceProject   ForkSourceKind = "project"
+	ForkSourceInstance ForkSourceKind = "instance"
+	ForkSourceProject  ForkSourceKind = "project"
 )
 
-func (k ForkSourceKind) Valid() bool { return k == ForkSourceWorkspace || k == ForkSourceProject }
+func (k ForkSourceKind) Valid() bool { return k == ForkSourceInstance || k == ForkSourceProject }
 
 // ProjectForkEvidence identifies a retained project-artifact source without
 // pretending it was authored in the authoring repository.
 type ProjectForkEvidence struct {
-	SourceWorkspaceID string      `json:"sourceWorkspaceId"`
-	SourceDashboardID DashboardID `json:"sourceDashboardId"`
-	ServingStateID    string      `json:"servingStateId"`
-	Path              string      `json:"path,omitempty"`
+	SourceProjectID   graph.ResourceID `json:"sourceProjectId"`
+	SourceDashboardID DashboardID      `json:"sourceDashboardId"`
+	ServingStateID    string           `json:"servingStateId"`
+	Path              string           `json:"path,omitempty"`
 }
 
-// WorkspaceForkEvidence identifies an exact retained published authoring
+// InstanceForkEvidence identifies an exact retained published authoring
 // revision. It is kept as a sibling of ProjectForkEvidence so the union is
 // symmetric and cannot accidentally imply a project revision.
-type WorkspaceForkEvidence struct {
-	SourceWorkspaceID string        `json:"sourceWorkspaceId"`
-	SourceDashboardID DashboardID   `json:"sourceDashboardId"`
-	SourceRevision    RevisionToken `json:"sourceRevision"`
+type InstanceForkEvidence struct {
+	SourceProjectID   graph.ResourceID `json:"sourceProjectId"`
+	SourceDashboardID DashboardID      `json:"sourceDashboardId"`
+	SourceRevision    RevisionToken    `json:"sourceRevision"`
 }
 
 // ForkEvidence is typed, immutable provenance for a dashboard fork. The
@@ -155,38 +172,38 @@ type WorkspaceForkEvidence struct {
 // revision, preventing downstream consumers from inferring a fake source
 // revision from free-form metadata.
 type ForkEvidence struct {
-	Kind      ForkSourceKind         `json:"kind"`
-	Workspace *WorkspaceForkEvidence `json:"workspace,omitempty"`
-	Project   *ProjectForkEvidence   `json:"project,omitempty"`
+	Kind     ForkSourceKind        `json:"kind"`
+	Instance *InstanceForkEvidence `json:"instance,omitempty"`
+	Project  *ProjectForkEvidence  `json:"project,omitempty"`
 }
 
 func (e ForkEvidence) Validate() error {
 	switch e.Kind {
-	case ForkSourceWorkspace:
-		if e.Workspace == nil || e.Project != nil {
-			return fmt.Errorf("%w: workspace fork requires only workspace evidence", ErrInvalidAuthoring)
+	case ForkSourceInstance:
+		if e.Instance == nil || e.Project != nil {
+			return fmt.Errorf("%w: instance fork requires only instance evidence", ErrInvalidAuthoring)
 		}
-		if err := validateRequiredLifecycleValue("fork source workspace id", e.Workspace.SourceWorkspaceID); err != nil {
+		if err := validateResourceID("fork source project id", e.Instance.SourceProjectID); err != nil {
 			return err
 		}
-		if err := e.Workspace.SourceDashboardID.Validate(); err != nil {
+		if err := validateDashboardID(e.Instance.SourceDashboardID); err != nil {
 			return fmt.Errorf("%w: fork source dashboard: %v", ErrInvalidAuthoring, err)
 		}
-		if err := e.Workspace.SourceRevision.ValidateComplete(); err != nil {
+		if err := e.Instance.SourceRevision.ValidateComplete(); err != nil {
 			return fmt.Errorf("%w: fork source revision: %v", ErrInvalidAuthoring, err)
 		}
 		return nil
 	case ForkSourceProject:
-		if e.Workspace != nil {
-			return fmt.Errorf("%w: project fork cannot contain workspace evidence", ErrInvalidAuthoring)
+		if e.Instance != nil {
+			return fmt.Errorf("%w: project fork cannot contain instance evidence", ErrInvalidAuthoring)
 		}
 		if e.Project == nil {
 			return fmt.Errorf("%w: project fork evidence is required", ErrInvalidAuthoring)
 		}
-		if err := validateRequiredLifecycleValue("project fork source workspace id", e.Project.SourceWorkspaceID); err != nil {
+		if err := validateResourceID("project fork source project id", e.Project.SourceProjectID); err != nil {
 			return err
 		}
-		if err := e.Project.SourceDashboardID.Validate(); err != nil {
+		if err := validateDashboardID(e.Project.SourceDashboardID); err != nil {
 			return fmt.Errorf("%w: project fork source dashboard: %v", ErrInvalidAuthoring, err)
 		}
 		if strings.TrimSpace(e.Project.ServingStateID) == "" {
@@ -228,9 +245,9 @@ func (p Provenance) Clone() Provenance {
 	}
 	if p.ForkedFrom != nil {
 		fork := *p.ForkedFrom
-		if p.ForkedFrom.Workspace != nil {
-			workspace := *p.ForkedFrom.Workspace
-			fork.Workspace = &workspace
+		if p.ForkedFrom.Instance != nil {
+			instance := *p.ForkedFrom.Instance
+			fork.Instance = &instance
 		}
 		if p.ForkedFrom.Project != nil {
 			project := *p.ForkedFrom.Project
@@ -355,7 +372,7 @@ func NewRevision(id RevisionID, dashboardID DashboardID, number uint64, createdA
 	if err := dashboardID.Validate(); err != nil {
 		return Revision{}, err
 	}
-	if document.ID != string(dashboardID) {
+	if document.ID != dashboardID {
 		return Revision{}, fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, document.ID, dashboardID)
 	}
 	if err := provenance.Validate(); err != nil {
@@ -385,10 +402,10 @@ func (r Revision) Validate() error {
 	if err := r.ID.Validate(); err != nil {
 		return err
 	}
-	if err := r.DashboardID.Validate(); err != nil {
+	if err := validateDashboardID(r.DashboardID); err != nil {
 		return err
 	}
-	if r.Document.ID != string(r.DashboardID) {
+	if r.Document.ID != r.DashboardID {
 		return fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, r.Document.ID, r.DashboardID)
 	}
 	if r.Number == 0 {
@@ -432,7 +449,7 @@ func (d Draft) Validate() error {
 	if err := d.ID.Validate(); err != nil {
 		return err
 	}
-	if err := d.DashboardID.Validate(); err != nil {
+	if err := validateDashboardID(d.DashboardID); err != nil {
 		return err
 	}
 	if err := d.Revision.ValidateComplete(); err != nil {
@@ -460,25 +477,25 @@ func (p Published) Validate() error {
 // DashboardLifecycle is the mutable identity record around immutable
 // revisions. Slug and title may change without changing ID.
 type DashboardLifecycle struct {
-	WorkspaceID      string          `json:"workspaceId"`
-	ID               DashboardID     `json:"id"`
-	OwnerPrincipalID string          `json:"ownerPrincipalId"`
-	Slug             string          `json:"slug"`
-	Title            string          `json:"title"`
-	SemanticModel    string          `json:"semanticModel"`
-	Visibility       Visibility      `json:"visibility"`
-	Status           LifecycleStatus `json:"status"`
-	Draft            *Draft          `json:"draft,omitempty"`
-	Published        *Published      `json:"published,omitempty"`
+	ProjectID        graph.ResourceID `json:"projectId"`
+	ID               DashboardID      `json:"id"`
+	OwnerPrincipalID string           `json:"ownerPrincipalId"`
+	Slug             string           `json:"slug"`
+	Title            string           `json:"title"`
+	SemanticModel    graph.ResourceID `json:"semanticModel"`
+	Visibility       Visibility       `json:"visibility"`
+	Status           LifecycleStatus  `json:"status"`
+	Draft            *Draft           `json:"draft,omitempty"`
+	Published        *Published       `json:"published,omitempty"`
 }
 
 type NewDashboardLifecycleInput struct {
-	WorkspaceID      string
+	ProjectID        graph.ResourceID
 	ID               DashboardID
 	OwnerPrincipalID string
 	Slug             string
 	Title            string
-	SemanticModel    string
+	SemanticModel    graph.ResourceID
 	Visibility       Visibility
 	Draft            *Draft
 }
@@ -491,7 +508,7 @@ func NewDashboardLifecycle(input NewDashboardLifecycleInput) (DashboardLifecycle
 		draft = &draftCopy
 	}
 	lifecycle := DashboardLifecycle{
-		WorkspaceID: input.WorkspaceID, ID: input.ID, OwnerPrincipalID: input.OwnerPrincipalID,
+		ProjectID: input.ProjectID, ID: input.ID, OwnerPrincipalID: input.OwnerPrincipalID,
 		Slug: input.Slug, Title: input.Title, SemanticModel: input.SemanticModel,
 		Visibility: input.Visibility, Status: LifecycleStatusDraft, Draft: draft,
 	}
@@ -502,10 +519,10 @@ func NewDashboardLifecycle(input NewDashboardLifecycleInput) (DashboardLifecycle
 }
 
 func (d DashboardLifecycle) Validate() error {
-	if err := validateRequiredLifecycleValue("dashboard workspace id", d.WorkspaceID); err != nil {
+	if err := validateResourceID("dashboard project id", d.ProjectID); err != nil {
 		return err
 	}
-	if err := d.ID.Validate(); err != nil {
+	if err := validateDashboardID(d.ID); err != nil {
 		return err
 	}
 	if err := validateRequiredLifecycleValue("dashboard owner principal id", d.OwnerPrincipalID); err != nil {
@@ -517,7 +534,7 @@ func (d DashboardLifecycle) Validate() error {
 	if strings.TrimSpace(d.Title) == "" {
 		return fmt.Errorf("%w: dashboard title is required", ErrInvalidAuthoring)
 	}
-	if err := validateRequiredLifecycleValue("dashboard semantic model", d.SemanticModel); err != nil {
+	if err := validateResourceID("dashboard semantic model", d.SemanticModel); err != nil {
 		return err
 	}
 	if !d.Visibility.Valid() {
@@ -560,6 +577,13 @@ func validateRequiredLifecycleValue(kind, value string) error {
 	}
 	if !identifierPattern.MatchString(value) {
 		return fmt.Errorf("%w: invalid %s %q", ErrInvalidAuthoring, kind, value)
+	}
+	return nil
+}
+
+func validateResourceID(kind string, value graph.ResourceID) error {
+	if _, err := graph.NewResourceID(value.String()); err != nil {
+		return fmt.Errorf("%w: %s: %v", ErrInvalidAuthoring, kind, err)
 	}
 	return nil
 }

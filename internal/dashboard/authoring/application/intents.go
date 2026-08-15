@@ -13,12 +13,12 @@ import (
 
 // IntentRequest is the transport-neutral application input for builder
 // mutations. The command itself carries the exact dashboard/draft/revision,
-// command ID, and provenance; WorkspaceID and ActorID are kept alongside it
+// command ID, and provenance; ProjectID and ActorID are kept alongside it
 // so an HTTP or agent adapter cannot smuggle an alternate scope.
 type IntentRequest struct {
-	WorkspaceID string
-	ActorID     string
-	Command     authoring.Command
+	ProjectID string
+	ActorID   string
+	Command   authoring.Command
 }
 
 // ExecuteIntent is the single application mutation entrypoint for bounded
@@ -29,7 +29,7 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 	if err := a.validate(); err != nil {
 		return authoringservice.Result{}, err
 	}
-	workspace, err := workspaceID(request.WorkspaceID)
+	project, err := projectID(request.ProjectID)
 	if err != nil {
 		return authoringservice.Result{}, err
 	}
@@ -47,10 +47,10 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 	if request.Command.AssignField != nil {
 		field := request.Command.AssignField
 		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
-			return a.validateAssignedField(ctx, workspace, request.Command, lifecycle, field)
+			return a.validateAssignedField(ctx, project, request.Command, lifecycle, field)
 		}
 	}
-	return a.authoring.ExecuteValidated(ctx, workspace, request.Command, validator)
+	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)
 }
 
 // validateAssignedField resolves the exact current draft/component and then
@@ -58,11 +58,11 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 // runtime lease. The lease is released before the transactional edit begins;
 // the reducer remains the final authority for optimistic revision and exact
 // placement checks.
-func (a *Application) validateAssignedField(ctx context.Context, workspace string, command authoring.Command, lifecycle authoring.DashboardLifecycle, field *authoring.AssignFieldPayload) error {
+func (a *Application) validateAssignedField(ctx context.Context, project string, command authoring.Command, lifecycle authoring.DashboardLifecycle, field *authoring.AssignFieldPayload) error {
 	if err := command.Validate(); err != nil {
 		return err
 	}
-	if lifecycle.WorkspaceID != workspace || lifecycle.ID != command.DashboardID {
+	if lifecycle.ProjectID != project || lifecycle.ID != command.DashboardID {
 		return fmt.Errorf("dashboard intent lifecycle identity does not match request")
 	}
 	if err := lifecycle.Validate(); err != nil {
@@ -74,7 +74,7 @@ func (a *Application) validateAssignedField(ctx context.Context, workspace strin
 	if !sameRevision(lifecycle.Draft.Revision, command.ExpectedRevision) {
 		return fmt.Errorf("%w: intent expected revision does not match current draft", authoring.ErrStaleRevision)
 	}
-	revision, err := a.repository.GetRevision(ctx, workspace, command.DashboardID, command.ExpectedRevision.RevisionID)
+	revision, err := a.repository.GetRevision(ctx, project, command.DashboardID, command.ExpectedRevision.RevisionID)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func (a *Application) validateAssignedField(ctx context.Context, workspace strin
 		return fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, componentVisual)
 	}
 
-	lease, err := a.acquireRuntime(ctx, workspace)
+	lease, err := a.acquireRuntime(ctx, project)
 	if err != nil {
 		return err
 	}

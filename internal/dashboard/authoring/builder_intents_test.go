@@ -26,7 +26,7 @@ func intentCommand(current Revision, payload authoringPayload) Command {
 
 func TestBuilderIntentUnionIsClosedAndVisibilityIsTransactional(t *testing.T) {
 	lifecycle, current := reducerFixture(t)
-	command := intentCommand(current, &SetVisibilityPayload{Visibility: VisibilityShared})
+	command := intentCommand(current, &SetVisibilityPayload{Visibility: VisibilityOrganization})
 	if !command.IsBuilderIntent() {
 		t.Fatal("visibility command is not a builder intent")
 	}
@@ -34,7 +34,7 @@ func TestBuilderIntentUnionIsClosedAndVisibilityIsTransactional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.Visibility != VisibilityShared || revision.Document.Title != current.Document.Title {
+	if next.Visibility != VisibilityOrganization || revision.Document.Title != current.Document.Title {
 		t.Fatalf("visibility result = lifecycle=%#v revision=%#v", next, revision)
 	}
 	metadata := intentCommand(current, &MetadataPatch{Title: stringPtr("not an intent")})
@@ -113,7 +113,7 @@ func TestBuilderIntentPreservesCanonicalProvidedVisualIdentifiers(t *testing.T) 
 }
 
 func revisionLifecycle(revision Revision) DashboardLifecycle {
-	return DashboardLifecycle{WorkspaceID: "workspace-1", ID: revision.DashboardID, OwnerPrincipalID: "principal-1", Slug: "sales", Title: revision.Document.Title, SemanticModel: revision.Document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: revision.DashboardID, Revision: revision.Token(), Provenance: revision.Provenance}}
+	return DashboardLifecycle{ProjectID: "project-1", ID: revision.DashboardID, OwnerPrincipalID: "principal-1", Slug: "sales", Title: revision.Document.Title, SemanticModel: revision.Document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: revision.DashboardID, Revision: revision.Token(), Provenance: revision.Provenance}}
 }
 
 func TestAssignFieldTargetsExactComponentAndTypedSlots(t *testing.T) {

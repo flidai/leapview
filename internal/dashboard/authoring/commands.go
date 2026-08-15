@@ -375,7 +375,7 @@ func (c Command) Validate() error {
 	if err := c.ID.Validate(); err != nil {
 		return err
 	}
-	if err := c.DashboardID.Validate(); err != nil {
+	if err := validateDashboardID(c.DashboardID); err != nil {
 		return err
 	}
 	if err := c.ExpectedRevision.ValidateComplete(); err != nil {

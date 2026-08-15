@@ -63,13 +63,13 @@ func TestCreateAndExecuteDelegateToTransactionalService(t *testing.T) {
 	})
 
 	created, err := app.Create(context.Background(), authoringservice.CreateRequest{
-		WorkspaceID: " workspace ", ActorID: "actor", OwnerPrincipalID: "owner",
+		ProjectID: " project ", ActorID: "actor", OwnerPrincipalID: "owner",
 		Title: "Orders", Slug: "orders", SemanticModel: "sales", Origin: authoring.OriginUI,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repository.createCalls != 1 || created.Lifecycle.WorkspaceID != "workspace" {
+	if repository.createCalls != 1 || created.Lifecycle.ProjectID != "project" {
 		t.Fatalf("create delegation = calls %d lifecycle %#v", repository.createCalls, created.Lifecycle)
 	}
 
@@ -79,7 +79,7 @@ func TestCreateAndExecuteDelegateToTransactionalService(t *testing.T) {
 		ExpectedRevision: created.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"},
 		Metadata: &authoring.MetadataPatch{Title: &title},
 	}
-	updated, err := app.Execute(context.Background(), " workspace ", command)
+	updated, err := app.Execute(context.Background(), " project ", command)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,95 +88,95 @@ func TestCreateAndExecuteDelegateToTransactionalService(t *testing.T) {
 	}
 }
 
-func TestCatalogOperationsUseRequestedWorkspaceAndOneLeaseEach(t *testing.T) {
+func TestCatalogOperationsUseRequestedProjectAndOneLeaseEach(t *testing.T) {
 	repository := newRepository()
 	authorizer := &fakeAuthorizer{}
 	var acquired []string
 	var leases []*fakeLease
-	app := newApplication(t, repository, authorizer, func(_ context.Context, workspace string) (runtimehost.Lease, error) {
-		acquired = append(acquired, workspace)
+	app := newApplication(t, repository, authorizer, func(_ context.Context, project string) (runtimehost.Lease, error) {
+		acquired = append(acquired, project)
 		lease := &fakeLease{runtime: &catalogRuntime{catalog: dashboardcatalog.Catalog{
-			Workspace:  dashboardcatalog.Workspace{ID: workspace},
-			Dashboards: []dashboardcatalog.Dashboard{{ID: workspace + "-sales", Title: workspace + " sales", SemanticModel: "sales"}},
-		}}, servingState: servingstate.ID("state-" + workspace)}
+			Project:    dashboardcatalog.Project{ID: project},
+			Dashboards: []dashboardcatalog.Dashboard{{ID: project + "-sales", Title: project + " sales", SemanticModel: "sales"}},
+		}}, servingState: servingstate.ID("state-" + project)}
 		leases = append(leases, lease)
 		return lease, nil
 	})
 
-	listed, err := app.List(context.Background(), catalog.ListRequest{WorkspaceID: " sales ", ActorID: "actor"})
+	listed, err := app.List(context.Background(), catalog.ListRequest{ProjectID: " sales ", ActorID: "actor"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listed.Count != 1 || listed.Items[0].WorkspaceID != "sales" {
+	if listed.Count != 1 || listed.Items[0].ProjectID != "sales" {
 		t.Fatalf("catalog list = %#v", listed)
 	}
-	got, err := app.Get(context.Background(), catalog.GetRequest{WorkspaceID: " finance ", ActorID: "actor", DashboardID: "finance-sales"})
+	got, err := app.Get(context.Background(), catalog.GetRequest{ProjectID: " finance ", ActorID: "actor", DashboardID: "finance-sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.WorkspaceID != "finance" || got.ID != "finance-sales" {
+	if got.ProjectID != "finance" || got.ID != "finance-sales" {
 		t.Fatalf("catalog get = %#v", got)
 	}
 	if strings.Join(acquired, ",") != "sales,finance" {
-		t.Fatalf("runtime workspaces = %#v", acquired)
+		t.Fatalf("runtime projects = %#v", acquired)
 	}
 	if len(leases) != 2 || leases[0].releaseCalls != 1 || leases[1].releaseCalls != 1 {
 		t.Fatalf("lease lifecycle = %#v", leases)
 	}
 }
 
-func TestPreviewUsesRequestedWorkspaceAndOneLease(t *testing.T) {
+func TestPreviewUsesRequestedProjectAndOneLease(t *testing.T) {
 	repository, lifecycle, revision := previewRepository(t)
 	authorizer := &fakeAuthorizer{}
 	var acquired string
 	lease := &fakeLease{runtime: &previewRuntime{model: previewModel()}, servingState: "serving-sales"}
-	app := newApplication(t, repository, authorizer, func(_ context.Context, workspace string) (runtimehost.Lease, error) {
-		acquired = workspace
+	app := newApplication(t, repository, authorizer, func(_ context.Context, project string) (runtimehost.Lease, error) {
+		acquired = project
 		return lease, nil
 	})
 
 	result, err := app.Preview(context.Background(), previewservice.PreviewRequest{
-		WorkspaceID: " workspace ", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: " project ", ActorID: "actor", DashboardID: lifecycle.ID,
 		DraftID: "preview-draft", ExpectedRevision: revision.Token(), PageID: "overview",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if acquired != "workspace" || lease.releaseCalls != 1 || result.Revision != revision.Token() {
-		t.Fatalf("preview scope/result = workspace %q releases %d result %#v", acquired, lease.releaseCalls, result)
+	if acquired != "project" || lease.releaseCalls != 1 || result.Revision != revision.Token() {
+		t.Fatalf("preview scope/result = project %q releases %d result %#v", acquired, lease.releaseCalls, result)
 	}
 }
 
-func TestProjectExportNormalizesSourceWorkspaceAndDoesNotCrossWorkspace(t *testing.T) {
+func TestProjectExportNormalizesSourceProjectAndDoesNotCrossProject(t *testing.T) {
 	repository := newRepository()
 	authorizer := &fakeAuthorizer{}
 	sources := map[string]projectartifact.AuthoredDashboardSource{
 		"sales": {
 			Document: exportDocument("sales-dashboard", "Sales"),
-			Metadata: projectartifact.AuthoredDashboardMetadata{Workspace: "sales", Name: "sales-dashboard", Title: "Sales"},
+			Metadata: projectartifact.AuthoredDashboardMetadata{Project: "sales", Name: "sales-dashboard", Title: "Sales"},
 		},
 		"finance": {
 			Document: exportDocument("finance-dashboard", "Finance"),
-			Metadata: projectartifact.AuthoredDashboardMetadata{Workspace: "finance", Name: "finance-dashboard", Title: "Finance"},
+			Metadata: projectartifact.AuthoredDashboardMetadata{Project: "finance", Name: "finance-dashboard", Title: "Finance"},
 		},
 	}
 	var acquired []string
 	var leases []*fakeLease
-	app := newApplication(t, repository, authorizer, func(_ context.Context, workspace string) (runtimehost.Lease, error) {
-		acquired = append(acquired, workspace)
-		lease := &fakeLease{runtime: &sourceRuntime{source: sources[workspace]}, servingState: servingstate.ID("state-" + workspace)}
+	app := newApplication(t, repository, authorizer, func(_ context.Context, project string) (runtimehost.Lease, error) {
+		acquired = append(acquired, project)
+		lease := &fakeLease{runtime: &sourceRuntime{source: sources[project]}, servingState: servingstate.ID("state-" + project)}
 		leases = append(leases, lease)
 		return lease, nil
 	})
 
 	sales, err := app.ExportYAML(context.Background(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, WorkspaceID: " sales ", DashboardID: "sales-dashboard"}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: " sales ", DashboardID: "sales-dashboard"}, ActorID: "actor",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	finance, err := app.ExportYAML(context.Background(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, WorkspaceID: " finance ", DashboardID: "finance-dashboard"}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: " finance ", DashboardID: "finance-dashboard"}, ActorID: "actor",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestProjectExportNormalizesSourceWorkspaceAndDoesNotCrossWorkspace(t *testi
 	}
 }
 
-func TestDraftExportNormalizesWorkspaceAndUsesCurrentLifecycleDraft(t *testing.T) {
+func TestDraftExportNormalizesProjectAndUsesCurrentLifecycleDraft(t *testing.T) {
 	repository, lifecycle, revision := previewRepository(t)
 	draft, err := authoring.NewRevision(revision.ID, lifecycle.ID, revision.Number, revision.CreatedAt, exportDocument(string(lifecycle.ID), lifecycle.Title), revision.Provenance)
 	if err != nil {
@@ -204,7 +204,7 @@ func TestDraftExportNormalizesWorkspaceAndUsesCurrentLifecycleDraft(t *testing.T
 	})
 
 	exported, err := app.ExportDraftYAML(context.Background(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: " workspace ", DashboardID: lifecycle.ID}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: " project ", DashboardID: lifecycle.ID}, ActorID: "actor",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -214,18 +214,18 @@ func TestDraftExportNormalizesWorkspaceAndUsesCurrentLifecycleDraft(t *testing.T
 	}
 }
 
-func TestWorkspaceForkRejectsCrossWorkspaceTarget(t *testing.T) {
+func TestProjectForkRejectsCrossProjectTarget(t *testing.T) {
 	repository := newRepository()
 	authorizer := &fakeAuthorizer{}
 	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 	_, err := app.Fork(context.Background(), sourceadapter.ForkRequest{
-		Source:            sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: " workspace ", DashboardID: "sales"},
-		TargetWorkspaceID: "other", ActorID: "actor",
+		Source:          sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: " project ", DashboardID: "sales"},
+		TargetProjectID: "other", ActorID: "actor",
 	})
-	if err == nil || !strings.Contains(err.Error(), "must remain in the source workspace") {
-		t.Fatalf("cross-workspace fork error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "must remain in the source project") {
+		t.Fatalf("cross-project fork error = %v", err)
 	}
 }
 
@@ -238,7 +238,7 @@ func TestExecuteIntentRejectsGenericPayloadAndKeepsNonFieldIntentsLeaseFree(t *t
 		return nil, errors.New("unexpected runtime acquisition")
 	})
 	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-page", &authoring.AddPagePayload{})
-	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); err != nil {
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command}); err != nil {
 		t.Fatal(err)
 	}
 	if acquired != 0 || repository.appendCalls != 1 {
@@ -246,7 +246,7 @@ func TestExecuteIntentRejectsGenericPayloadAndKeepsNonFieldIntentsLeaseFree(t *t
 	}
 	title := "unsafe"
 	generic := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-generic", &authoring.MetadataPatch{Title: &title})
-	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: generic}); !errors.Is(err, authoring.ErrInvalidPayload) {
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: generic}); !errors.Is(err, authoring.ErrInvalidPayload) {
 		t.Fatalf("generic payload error = %v", err)
 	}
 }
@@ -260,7 +260,7 @@ func TestExecuteIntentAuthorizesBeforeDraftRevisionAndRuntimeReads(t *testing.T)
 		return nil, errors.New("runtime should not be acquired")
 	})
 	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMeasure})
-	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); !errors.Is(err, access.ErrForbidden) {
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command}); !errors.Is(err, access.ErrForbidden) {
 		t.Fatalf("denied intent error = %v", err)
 	}
 	if repository.getRevisionCalls != 0 || acquired != 0 {
@@ -274,7 +274,7 @@ func TestExecuteIntentAssignFieldUsesOneLeaseAndGovernedRole(t *testing.T) {
 	lease := &fakeLease{runtime: &previewRuntime{model: previewModel()}, servingState: "state-sales"}
 	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
 	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMeasure})
-	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); err != nil {
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command}); err != nil {
 		t.Fatal(err)
 	}
 	if lease.releaseCalls != 1 || repository.appendCalls != 1 {
@@ -285,7 +285,7 @@ func TestExecuteIntentAssignFieldUsesOneLeaseAndGovernedRole(t *testing.T) {
 	current := repository.lifecycles[lifecycle.ID].Draft.Revision
 	bad := intentCommandForApplication(repository.revisions[current.RevisionID], lifecycle.Draft.ID, "intent-field-bad", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "orders.status", Role: authoring.FieldRoleMeasure})
 	lease.releaseCalls = 0
-	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: bad}); !errors.Is(err, authoring.ErrInvalidPayload) {
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: bad}); !errors.Is(err, authoring.ErrInvalidPayload) {
 		t.Fatalf("spoofed role error = %v", err)
 	}
 	if lease.releaseCalls != 1 || repository.appendCalls != 1 {
@@ -293,7 +293,7 @@ func TestExecuteIntentAssignFieldUsesOneLeaseAndGovernedRole(t *testing.T) {
 	}
 	// A durable command retry replays before field/runtime validation even
 	// though the draft pointer has advanced.
-	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); err != nil {
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command}); err != nil {
 		t.Fatalf("idempotent field retry error = %v", err)
 	}
 	if lease.releaseCalls != 1 || repository.appendCalls != 1 {
@@ -325,7 +325,7 @@ func TestExecuteIntentAssignFieldInfersTableAndCompilesTableVisual(t *testing.T)
 	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-customers-field", &authoring.AssignFieldPayload{
 		PageID: "overview", VisualID: "orders", FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
 	})
-	result, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command})
+	result, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestExecuteIntentAssignFieldInfersTableAndCompilesTableVisual(t *testing.T)
 		t.Fatalf("compiled builder table visual: %v", err)
 	}
 	appendCalls, releaseCalls := repository.appendCalls, lease.releaseCalls
-	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); err != nil {
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command}); err != nil {
 		t.Fatalf("idempotent table-field retry: %v", err)
 	}
 	if repository.appendCalls != appendCalls || lease.releaseCalls != releaseCalls {
@@ -371,7 +371,7 @@ func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
 
 	pageResult, err := app.ExecuteIntent(context.Background(), application.IntentRequest{
-		WorkspaceID: "workspace", ActorID: "actor",
+		ProjectID: "project", ActorID: "actor",
 		Command: intentCommandForApplication(current, lifecycle.Draft.ID, "intent-add-page", &authoring.AddPagePayload{}),
 	})
 	if err != nil {
@@ -384,7 +384,7 @@ func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 	}
 
 	visualResult, err := app.ExecuteIntent(context.Background(), application.IntentRequest{
-		WorkspaceID: "workspace", ActorID: "actor",
+		ProjectID: "project", ActorID: "actor",
 		Command: intentCommandForApplication(current, lifecycle.Draft.ID, "intent-add-table", &authoring.AddVisualPayload{PageID: pageID, Type: "table"}),
 	})
 	if err != nil {
@@ -398,7 +398,7 @@ func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 	}
 
 	fieldResult, err := app.ExecuteIntent(context.Background(), application.IntentRequest{
-		WorkspaceID: "workspace", ActorID: "actor",
+		ProjectID: "project", ActorID: "actor",
 		Command: intentCommandForApplication(current, lifecycle.Draft.ID, "intent-assign-customer", &authoring.AssignFieldPayload{
 			PageID: pageID, VisualID: component.ID, FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
 		}),
@@ -407,7 +407,7 @@ func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := app.ExportDraftYAML(context.Background(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: lifecycle.ID}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: lifecycle.ID}, ActorID: "actor",
 	}); err != nil {
 		t.Fatalf("export server-generated builder IDs: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestExecuteIntentAssignFieldDoesNotRewriteExistingFactForAnotherGovernedTab
 	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-cross-table-field", &authoring.AssignFieldPayload{
 		PageID: "overview", VisualID: "orders", FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
 	})
-	result, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command})
+	result, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,10 +530,10 @@ func (r *fakeRepository) Get(_ context.Context, _ string, id authoring.Dashboard
 	}
 	return lifecycle, nil
 }
-func (r *fakeRepository) List(_ context.Context, workspace string) ([]authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) List(_ context.Context, project string) ([]authoring.DashboardLifecycle, error) {
 	items := make([]authoring.DashboardLifecycle, 0, len(r.lifecycles))
 	for _, lifecycle := range r.lifecycles {
-		if lifecycle.WorkspaceID == workspace {
+		if lifecycle.ProjectID == project {
 			items = append(items, lifecycle)
 		}
 	}
@@ -584,7 +584,7 @@ func previewRepository(t *testing.T) (*fakeRepository, authoring.DashboardLifecy
 		t.Fatal(err)
 	}
 	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
-		WorkspaceID: "workspace", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales", SemanticModel: "sales", Visibility: authoring.VisibilityPrivate,
+		ProjectID: "project", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales", SemanticModel: "sales", Visibility: authoring.VisibilityPrivate,
 		Draft: &authoring.Draft{ID: "preview-draft", DashboardID: "sales", Revision: revision.Token(), Provenance: provenance},
 	})
 	if err != nil {

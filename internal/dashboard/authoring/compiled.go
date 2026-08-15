@@ -9,6 +9,7 @@ import (
 	"time"
 
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 // CompiledRevisionToken identifies the exact compiler output selected by a
@@ -43,9 +44,9 @@ func (t CompiledRevisionToken) Validate() error {
 
 // CompiledRevision is immutable serving output for one authored revision.
 // Scope is carried in the value so repository implementations cannot
-// accidentally return an artifact from another workspace or dashboard.
+// accidentally return an artifact from another project or dashboard.
 type CompiledRevision struct {
-	WorkspaceID            string                         `json:"workspaceId"`
+	ProjectID              graph.ResourceID               `json:"projectId"`
 	DashboardID            DashboardID                    `json:"dashboardId"`
 	AuthoredRevision       RevisionToken                  `json:"authoredRevision"`
 	Definition             dashboarddefinition.Definition `json:"definition"`
@@ -56,11 +57,11 @@ type CompiledRevision struct {
 
 // NewCompiledRevision computes the canonical definition hash and deep-copies
 // compiler output before it crosses the persistence boundary.
-func NewCompiledRevision(workspaceID string, dashboardID DashboardID, authored RevisionToken, definition dashboarddefinition.Definition, semanticServingStateID string, compiledAt time.Time) (CompiledRevision, error) {
-	if err := validateRequiredLifecycleValue("compiled workspace id", workspaceID); err != nil {
+func NewCompiledRevision(projectID graph.ResourceID, dashboardID DashboardID, authored RevisionToken, definition dashboarddefinition.Definition, semanticServingStateID string, compiledAt time.Time) (CompiledRevision, error) {
+	if err := validateResourceID("compiled project id", projectID); err != nil {
 		return CompiledRevision{}, err
 	}
-	if err := dashboardID.Validate(); err != nil {
+	if err := validateDashboardID(dashboardID); err != nil {
 		return CompiledRevision{}, err
 	}
 	if err := authored.ValidateComplete(); err != nil {
@@ -86,7 +87,7 @@ func NewCompiledRevision(workspaceID string, dashboardID DashboardID, authored R
 	if err != nil {
 		return CompiledRevision{}, err
 	}
-	return CompiledRevision{WorkspaceID: workspaceID, DashboardID: dashboardID, AuthoredRevision: authored, Definition: cloned, DefinitionHash: hash, SemanticServingStateID: semanticServingStateID, CompiledAt: compiledAt}, nil
+	return CompiledRevision{ProjectID: projectID, DashboardID: dashboardID, AuthoredRevision: authored, Definition: cloned, DefinitionHash: hash, SemanticServingStateID: semanticServingStateID, CompiledAt: compiledAt}, nil
 }
 
 func (c CompiledRevision) Token() CompiledRevisionToken {
@@ -94,10 +95,10 @@ func (c CompiledRevision) Token() CompiledRevisionToken {
 }
 
 func (c CompiledRevision) Validate() error {
-	if err := validateRequiredLifecycleValue("compiled workspace id", c.WorkspaceID); err != nil {
+	if err := validateResourceID("compiled project id", c.ProjectID); err != nil {
 		return err
 	}
-	if err := c.DashboardID.Validate(); err != nil {
+	if err := validateDashboardID(c.DashboardID); err != nil {
 		return err
 	}
 	if err := c.AuthoredRevision.ValidateComplete(); err != nil {

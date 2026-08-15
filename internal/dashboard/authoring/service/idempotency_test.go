@@ -20,7 +20,7 @@ func newIdempotentFakeRepository() *idempotentFakeRepository {
 }
 
 func operationMapKey(operation authoring.CreateOperation) string {
-	return operation.WorkspaceID + "|" + operation.ActorID + "|" + operation.Kind + "|" + operation.IdempotencyKey
+	return operation.ProjectID.String() + "|" + operation.ActorID + "|" + operation.Kind + "|" + operation.IdempotencyKey
 }
 
 func (r *idempotentFakeRepository) LookupCreateOperation(_ context.Context, operation authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
@@ -61,7 +61,7 @@ func TestCreateIdempotencyReplaysExactResultAndDoesNotAllocate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := service.CreateRequest{WorkspaceID: "workspace", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool-call", IdempotencyKey: "retry-1"}
+	request := service.CreateRequest{ProjectID: "project", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool-call", IdempotencyKey: "retry-1"}
 	first, err := svc.Create(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestCreateIdempotencyAuthorizesStoredTargetBeforeReuseConflict(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := service.CreateRequest{WorkspaceID: "workspace", ActorID: "actor", Title: "Orders", Slug: "orders", SemanticModel: "sales", IdempotencyKey: "retry-1"}
+	request := service.CreateRequest{ProjectID: "project", ActorID: "actor", Title: "Orders", Slug: "orders", SemanticModel: "sales", IdempotencyKey: "retry-1"}
 	if _, err := svc.Create(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -116,14 +116,14 @@ func TestCreateIdempotencyAuthorizesStoredTargetBeforeReuseConflict(t *testing.T
 func TestCreateIdempotencyRejectsUnsupportedRepository(t *testing.T) {
 	repository := newFakeRepository()
 	svc := newService(t, repository, &fakeAuthorizer{}, &fakeCompiler{})
-	_, err := svc.Create(t.Context(), service.CreateRequest{WorkspaceID: "workspace", ActorID: "actor", Title: "Orders", Slug: "orders", SemanticModel: "sales", IdempotencyKey: "retry-1"})
+	_, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project", ActorID: "actor", Title: "Orders", Slug: "orders", SemanticModel: "sales", IdempotencyKey: "retry-1"})
 	if err == nil || repository.createCalls != 0 {
 		t.Fatalf("unsupported repository err=%v createCalls=%d", err, repository.createCalls)
 	}
 }
 
 func TestCreateOperationIdempotencyKeyLength(t *testing.T) {
-	base := authoring.CreateOperation{WorkspaceID: "workspace", ActorID: "actor", Kind: "create", IdempotencyKey: "retry", Fingerprint: "sha256:fingerprint"}
+	base := authoring.CreateOperation{ProjectID: "project", ActorID: "actor", Kind: "create", IdempotencyKey: "retry", Fingerprint: "sha256:fingerprint"}
 	if err := base.Validate(); err != nil {
 		t.Fatal(err)
 	}

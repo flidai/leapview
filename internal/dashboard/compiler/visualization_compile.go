@@ -35,7 +35,7 @@ func newCompileContext(visualID, modelID, visualType string, model *semanticmode
 }
 
 func CompileDashboardDefinition(authored *dashboardauthoring.Dashboard, visualizations map[string]visualizationdefinition.Definition) (dashboarddefinition.Definition, error) {
-	compiled, err := dashboarddefinition.New(authored.ID, authored.Title, authored.Description, authored.SemanticModel, authored.Pages, visualizations)
+	compiled, err := dashboarddefinition.New(authored.ID.String(), authored.Title, authored.Description, authored.SemanticModel.String(), authored.Pages, visualizations)
 	if err != nil {
 		return dashboarddefinition.Definition{}, err
 	}
@@ -61,7 +61,7 @@ func compileVisualizationDefinitions(report *dashboardauthoring.Dashboard, model
 	out := make(map[string]visualizationdefinition.Definition, len(report.Visuals))
 	for _, id := range sortedMapKeys(report.Visuals) {
 		authoring := report.Visuals[id]
-		ctx, err := newCompileContext(id, report.SemanticModel, authoring.Type, model)
+		ctx, err := newCompileContext(id, report.SemanticModel.String(), authoring.Type, model)
 		if err != nil {
 			return nil, fmt.Errorf("visual %q: %w", id, err)
 		}

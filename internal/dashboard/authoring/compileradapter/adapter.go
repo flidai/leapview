@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/compiler"
+	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -31,7 +32,7 @@ type Runtime interface {
 	SemanticModelProjection(string) (*semanticmodel.Model, bool)
 }
 
-// AcquireRuntime acquires one active runtime lease for a workspace. Keeping
+// AcquireRuntime acquires one active runtime lease for a project. Keeping
 // acquisition as a callback leaves registry topology outside the authoring
 // package while preserving the lease's generation and lifetime guarantees.
 type AcquireRuntime func(context.Context, string) (runtimehost.Lease, error)
@@ -60,22 +61,20 @@ func New(options Options) (*Adapter, error) {
 // Compile strictly compiles one authored dashboard against the detached
 // semantic model selected from the same active runtime lease. The lease is
 // acquired once and released exactly once on every path after acquisition.
-func (a *Adapter) Compile(ctx context.Context, workspaceID, semanticModelID string, document authoring.Dashboard) (authoringservice.Compilation, error) {
+func (a *Adapter) Compile(ctx context.Context, projectID, semanticModelID graph.ResourceID, document authoring.Dashboard) (authoringservice.Compilation, error) {
 	if a == nil || a.acquireRuntime == nil {
 		return authoringservice.Compilation{}, fmt.Errorf("dashboard authoring compiler is not configured")
 	}
-	workspaceID = strings.TrimSpace(workspaceID)
-	if workspaceID == "" {
-		return authoringservice.Compilation{}, fmt.Errorf("workspace id is required")
+	if err := projectID.Validate(); err != nil {
+		return authoringservice.Compilation{}, fmt.Errorf("project id is required: %w", err)
 	}
-	semanticModelID = strings.TrimSpace(semanticModelID)
-	if semanticModelID == "" {
-		return authoringservice.Compilation{}, fmt.Errorf("semantic model id is required")
+	if err := semanticModelID.Validate(); err != nil {
+		return authoringservice.Compilation{}, fmt.Errorf("semantic model id is required: %w", err)
 	}
-	if strings.TrimSpace(document.ID) == "" {
+	if !document.ID.Valid() {
 		return authoringservice.Compilation{}, fmt.Errorf("dashboard id is required")
 	}
-	if strings.TrimSpace(document.SemanticModel) == "" {
+	if strings.TrimSpace(document.SemanticModel.String()) == "" {
 		return authoringservice.Compilation{}, fmt.Errorf("dashboard semantic model is required")
 	}
 	if document.SemanticModel != semanticModelID {
@@ -85,7 +84,7 @@ func (a *Adapter) Compile(ctx context.Context, workspaceID, semanticModelID stri
 		return authoringservice.Compilation{}, err
 	}
 
-	lease, err := a.acquireRuntime(ctx, workspaceID)
+	lease, err := a.acquireRuntime(ctx, projectID.String())
 	if err != nil {
 		return authoringservice.Compilation{}, err
 	}
@@ -98,22 +97,22 @@ func (a *Adapter) Compile(ctx context.Context, workspaceID, semanticModelID stri
 	if !ok || active == nil {
 		return authoringservice.Compilation{}, fmt.Errorf("dashboard authoring compiler active runtime does not provide semantic model projection")
 	}
-	model, ok := active.SemanticModelProjection(semanticModelID)
+	model, ok := active.SemanticModelProjection(semanticModelID.String())
 	if !ok || model == nil {
 		return authoringservice.Compilation{}, fmt.Errorf("%w: semantic model %q is unavailable in active runtime", ErrSemanticMismatch, semanticModelID)
 	}
-	if model.Name != semanticModelID {
+	if model.Name != semanticModelID.String() {
 		return authoringservice.Compilation{}, fmt.Errorf("%w: runtime semantic model %q does not match requested %q", ErrSemanticMismatch, model.Name, semanticModelID)
 	}
 
-	compiled, err := compiler.Compile(document, map[string]*semanticmodel.Model{semanticModelID: model})
+	compiled, err := compiler.Compile(document, map[string]*semanticmodel.Model{semanticModelID.String(): model})
 	if err != nil {
 		return authoringservice.Compilation{}, fmt.Errorf("strictly compile dashboard: %w", err)
 	}
-	if compiled.Definition.ID != document.ID {
+	if compiled.Definition.ID != document.ID.String() {
 		return authoringservice.Compilation{}, fmt.Errorf("%w: compiled dashboard id %q does not match authored id %q", authoring.ErrInvalidAuthoring, compiled.Definition.ID, document.ID)
 	}
-	if compiled.Definition.SemanticModel != semanticModelID || compiled.Definition.SemanticModel != document.SemanticModel {
+	if compiled.Definition.SemanticModel != semanticModelID.String() || compiled.Definition.SemanticModel != document.SemanticModel.String() {
 		return authoringservice.Compilation{}, fmt.Errorf("%w: compiled semantic model %q does not match requested %q", ErrSemanticMismatch, compiled.Definition.SemanticModel, semanticModelID)
 	}
 	servingStateID := strings.TrimSpace(string(lease.ServingStateID()))

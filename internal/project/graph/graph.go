@@ -93,6 +93,14 @@ func NewResourceID(value string) (ResourceID, error) {
 // String returns the textual form of the ID.
 func (id ResourceID) String() string { return string(id) }
 
+// Validate checks the canonical resource ID. It mirrors the validation
+// methods exposed by domain-specific identity wrappers while keeping the
+// graph ResourceID itself the single identity type.
+func (id ResourceID) Validate() error {
+	_, err := NewResourceID(id.String())
+	return err
+}
+
 // Valid reports whether id is a valid canonical resource ID.
 func (id ResourceID) Valid() bool { return resourceIDPattern.MatchString(string(id)) }
 

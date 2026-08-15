@@ -8,6 +8,7 @@ import (
 
 	dashboardmodel "github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 // ApplyEdit applies one validated authoring edit to an immutable revision.
@@ -435,7 +436,11 @@ func applyMetadata(document *Dashboard, patch MetadataPatch) error {
 		document.Description = *patch.Description
 	}
 	if patch.SemanticModel != nil {
-		document.SemanticModel = *patch.SemanticModel
+		modelID, err := graph.NewResourceID(*patch.SemanticModel)
+		if err != nil {
+			return fmt.Errorf("%w: semantic model: %v", ErrInvalidPayload, err)
+		}
+		document.SemanticModel = modelID
 	}
 	if patch.Appearance != nil {
 		if patch.Appearance.Icon != nil {

@@ -1,5 +1,5 @@
 // Package preview provides the read-only application boundary for rendering an
-// exact workspace dashboard draft. A preview is deliberately not an authoring
+// exact project dashboard draft. A preview is deliberately not an authoring
 // mutation or a serving-state candidate: it reads one immutable revision,
 // compiles it in memory, and executes it through the already-active runtime.
 package preview
@@ -16,6 +16,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -35,8 +36,8 @@ var (
 // authoring.Repository makes it impossible for a preview operation to persist,
 // publish, activate, or create any authoring/deployment state.
 type DraftRepository interface {
-	Get(context.Context, string, authoring.DashboardID) (authoring.DashboardLifecycle, error)
-	GetRevision(context.Context, string, authoring.DashboardID, authoring.RevisionID) (authoring.Revision, error)
+	Get(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error)
+	GetRevision(context.Context, graph.ResourceID, authoring.DashboardID, authoring.RevisionID) (authoring.Revision, error)
 }
 
 // Runtime is the immutable capability required from one active runtime lease.
@@ -87,7 +88,7 @@ func NewService(options Options) (*Service, error) {
 // "latest". Filters are passed to the existing definition query path and may
 // be empty when the runtime should apply compiled defaults.
 type PreviewRequest struct {
-	WorkspaceID      string
+	ProjectID        graph.ResourceID
 	ActorID          string
 	DashboardID      authoring.DashboardID
 	DraftID          authoring.DraftID
@@ -123,11 +124,11 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if s == nil || s.repository == nil || s.authorizer == nil || s.provider == nil {
 		return Preview{}, fmt.Errorf("dashboard preview service is not configured")
 	}
-	workspaceID, actorID := strings.TrimSpace(request.WorkspaceID), strings.TrimSpace(request.ActorID)
-	if workspaceID == "" || actorID == "" {
-		return Preview{}, fmt.Errorf("workspace and actor are required")
+	projectID, actorID := request.ProjectID, strings.TrimSpace(request.ActorID)
+	if err := projectID.Validate(); err != nil || actorID == "" {
+		return Preview{}, fmt.Errorf("project and actor are required")
 	}
-	if err := request.DashboardID.Validate(); err != nil {
+	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
 		return Preview{}, err
 	}
 	if err := request.DraftID.Validate(); err != nil {
@@ -147,7 +148,7 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	// Lifecycle metadata is loaded before authorization, but no draft pointer or
 	// revision bytes are returned to the caller. Authorization is the first
 	// boundary that can expose any draft state to this operation.
-	lifecycle, err := s.repository.Get(ctx, workspaceID, request.DashboardID)
+	lifecycle, err := s.repository.Get(ctx, projectID, request.DashboardID)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) {
 			return Preview{}, fmt.Errorf("%w: %v", ErrNotFound, err)
@@ -155,13 +156,13 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		return Preview{}, err
 	}
 	if err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
-		ActorID: actorID, WorkspaceID: workspaceID, DashboardID: request.DashboardID,
+		ActorID: actorID, ProjectID: projectID, DashboardID: request.DashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
 		Action: authoring.AuthorizationActionEdit,
 	}); err != nil {
 		return Preview{}, err
 	}
-	if lifecycle.WorkspaceID != workspaceID || lifecycle.ID != request.DashboardID {
+	if lifecycle.ProjectID != projectID || lifecycle.ID != request.DashboardID {
 		return Preview{}, fmt.Errorf("dashboard preview lifecycle identity does not match request")
 	}
 
@@ -187,7 +188,7 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	// The revision ID comes only from the already-authorized, exact lifecycle
 	// pointer. We never ask the repository for a revision selected by an
 	// untrusted token other than after this equality check.
-	revision, err := s.repository.GetRevision(ctx, workspaceID, request.DashboardID, lifecycle.Draft.Revision.RevisionID)
+	revision, err := s.repository.GetRevision(ctx, projectID, request.DashboardID, lifecycle.Draft.Revision.RevisionID)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) {
 			return Preview{}, fmt.Errorf("%w: draft revision is unavailable", ErrNotFound)
@@ -200,10 +201,10 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if revision.DashboardID != request.DashboardID || !sameRevision(revision.Token(), lifecycle.Draft.Revision) {
 		return Preview{}, fmt.Errorf("%w: retained draft revision does not match lifecycle pointer", ErrStaleRevision)
 	}
-	if revision.Document.ID != request.DashboardID.String() {
+	if revision.Document.ID != request.DashboardID {
 		return Preview{}, fmt.Errorf("dashboard preview document identity does not match lifecycle")
 	}
-	if strings.TrimSpace(revision.Document.SemanticModel) != strings.TrimSpace(lifecycle.SemanticModel) {
+	if revision.Document.SemanticModel != lifecycle.SemanticModel {
 		return Preview{}, fmt.Errorf("%w: draft semantic model does not match lifecycle", ErrSemanticMismatch)
 	}
 
@@ -219,22 +220,22 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if !activeOK || active == nil {
 		return Preview{}, fmt.Errorf("active runtime does not provide dashboard preview capability")
 	}
-	model, modelOK := active.SemanticModelProjection(lifecycle.SemanticModel)
+	model, modelOK := active.SemanticModelProjection(lifecycle.SemanticModel.String())
 	if !modelOK || model == nil {
 		return Preview{}, fmt.Errorf("%w: semantic model %q is unavailable in active runtime", ErrSemanticMismatch, lifecycle.SemanticModel)
 	}
-	if strings.TrimSpace(model.Name) != strings.TrimSpace(lifecycle.SemanticModel) {
+	if strings.TrimSpace(model.Name) != lifecycle.SemanticModel.String() {
 		return Preview{}, fmt.Errorf("%w: runtime semantic model %q does not match lifecycle %q", ErrSemanticMismatch, model.Name, lifecycle.SemanticModel)
 	}
 
-	compiled, err := compiler.Compile(revision.Document, map[string]*semanticmodel.Model{lifecycle.SemanticModel: model})
+	compiled, err := compiler.Compile(revision.Document, map[string]*semanticmodel.Model{lifecycle.SemanticModel.String(): model})
 	if err != nil {
 		return Preview{}, fmt.Errorf("strictly compile dashboard draft: %w", err)
 	}
-	if compiled.Definition.ID != request.DashboardID.String() || compiled.Definition.ID != revision.Document.ID {
+	if compiled.Definition.ID != request.DashboardID.String() || compiled.Definition.ID != revision.Document.ID.String() {
 		return Preview{}, fmt.Errorf("dashboard preview compiled definition identity does not match lifecycle")
 	}
-	if compiled.Definition.SemanticModel != lifecycle.SemanticModel || compiled.Definition.SemanticModel != revision.Document.SemanticModel {
+	if compiled.Definition.SemanticModel != lifecycle.SemanticModel.String() || compiled.Definition.SemanticModel != revision.Document.SemanticModel.String() {
 		return Preview{}, fmt.Errorf("%w: compiled semantic model does not match lifecycle", ErrSemanticMismatch)
 	}
 	servingStateID := strings.TrimSpace(string(lease.ServingStateID()))
@@ -243,7 +244,7 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	}
 
 	evidence := SemanticServingStateEvidence{
-		SemanticModel: lifecycle.SemanticModel, RuntimeModel: model.Name,
+		SemanticModel: lifecycle.SemanticModel.String(), RuntimeModel: model.Name,
 		ServingStateID:     servingStateID,
 		DuckLakeSnapshotID: lease.DuckLakeSnapshotID(),
 	}

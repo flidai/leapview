@@ -36,7 +36,7 @@ func reducerFixture(t *testing.T) (DashboardLifecycle, Revision) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := DashboardLifecycle{WorkspaceID: "workspace-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: "sales", Revision: current.Token(), Provenance: provenance}}
+	lifecycle := DashboardLifecycle{ProjectID: "project-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: "sales", Revision: current.Token(), Provenance: provenance}}
 	if err := lifecycle.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func blankDraftFixture(t *testing.T) (DashboardLifecycle, Revision) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := DashboardLifecycle{WorkspaceID: "workspace-1", ID: "blank", OwnerPrincipalID: "principal-1", Slug: "blank", Title: document.Title, SemanticModel: document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: "blank", Revision: current.Token(), Provenance: provenance}}
+	lifecycle := DashboardLifecycle{ProjectID: "project-1", ID: "blank", OwnerPrincipalID: "principal-1", Slug: "blank", Title: document.Title, SemanticModel: document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: "blank", Revision: current.Token(), Provenance: provenance}}
 	if err := lifecycle.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -110,9 +110,9 @@ func TestApplyEditPayloads(t *testing.T) {
 		check func(*testing.T, DashboardLifecycle, Revision)
 	}{
 		{name: "metadata", edit: func(Revision) authoringPayload {
-			return &MetadataPatch{Title: &title, Description: stringPtr(""), Slug: stringPtr("updated-sales"), Visibility: visibilityPtr(VisibilityShared)}
+			return &MetadataPatch{Title: &title, Description: stringPtr(""), Slug: stringPtr("updated-sales"), Visibility: visibilityPtr(VisibilityOrganization)}
 		}, check: func(t *testing.T, lifecycle DashboardLifecycle, revision Revision) {
-			if lifecycle.Title != title || lifecycle.Slug != "updated-sales" || lifecycle.Visibility != VisibilityShared || revision.Document.Description != "" {
+			if lifecycle.Title != title || lifecycle.Slug != "updated-sales" || lifecycle.Visibility != VisibilityOrganization || revision.Document.Description != "" {
 				t.Fatalf("metadata not applied: lifecycle=%#v document=%#v", lifecycle, revision.Document)
 			}
 		}},

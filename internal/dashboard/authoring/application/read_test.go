@@ -21,7 +21,7 @@ func TestDraftDeniedBeforeRevisionLookup(t *testing.T) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 
-	_, err := app.Draft(context.Background(), application.DraftRequest{WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID})
+	_, err := app.Draft(context.Background(), application.DraftRequest{ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID})
 	if !errors.Is(err, access.ErrForbidden) {
 		t.Fatalf("denied draft error = %v, want forbidden", err)
 	}
@@ -38,7 +38,7 @@ func TestRevisionDeniedBeforeRevisionLookup(t *testing.T) {
 	})
 
 	_, err := app.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		DraftID: lifecycle.Draft.ID, RevisionID: revision.ID, Action: authoring.AuthorizationActionEdit,
 	})
 	if !errors.Is(err, access.ErrForbidden) {
@@ -65,7 +65,7 @@ func TestRevisionRequiresExactCurrentDraftPointer(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			repository.getRevisionCalls = 0
 			_, err := app.Revision(context.Background(), application.RevisionRequest{
-				WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+				ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 				DraftID: test.draftID, RevisionID: test.revision, Action: authoring.AuthorizationActionEdit,
 			})
 			if !errors.Is(err, authoring.ErrNotFound) {
@@ -78,7 +78,7 @@ func TestRevisionRequiresExactCurrentDraftPointer(t *testing.T) {
 	}
 
 	got, err := app.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		DraftID: lifecycle.Draft.ID, RevisionID: revision.ID, Action: authoring.AuthorizationActionEdit,
 	})
 	if err != nil || got.ID != revision.ID {
@@ -107,7 +107,7 @@ func TestRevisionRequiresExactPublishedPointerForView(t *testing.T) {
 	authApp := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return nil, nil })
 
 	_, err := authApp.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		RevisionID: "other-revision", Action: authoring.AuthorizationActionView,
 	})
 	if !errors.Is(err, authoring.ErrNotFound) || repository.getRevisionCalls != 0 {
@@ -115,7 +115,7 @@ func TestRevisionRequiresExactPublishedPointerForView(t *testing.T) {
 	}
 	repository.getRevisionCalls = 0
 	got, err := authApp.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		RevisionID: revision.ID, Action: authoring.AuthorizationActionView,
 	})
 	if err != nil || got.ID != revision.ID || repository.getRevisionCalls != 1 {
@@ -131,7 +131,7 @@ func TestArchivedRevisionDoesNotDiscloseRetainedPointer(t *testing.T) {
 	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return nil, nil })
 
 	_, err := app.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		DraftID: lifecycle.Draft.ID, RevisionID: revision.ID, Action: authoring.AuthorizationActionEdit,
 	})
 	if !errors.Is(err, authoring.ErrNotFound) || repository.getRevisionCalls != 0 {

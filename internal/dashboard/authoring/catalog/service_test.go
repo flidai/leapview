@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
+	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -25,11 +26,11 @@ func TestListFiltersBeforeReadingUnauthorizedRevisionAndExcludesArchived(t *test
 	}}
 	auth := &fakeAuthorizer{deny: map[string]bool{"denied": true}}
 	service := newTestService(t, repo, auth, nil)
-	result, err := service.List(t.Context(), ListRequest{WorkspaceID: "sales", ActorID: "actor"})
+	result, err := service.List(t.Context(), ListRequest{ProjectID: "sales", ActorID: "actor"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Count != 1 || result.ProjectCount != 0 || result.WorkspaceCount != 1 || len(result.Items) != 1 || result.Items[0].ID != "good" {
+	if result.Count != 1 || result.ProjectCount != 0 || result.InstanceCount != 1 || len(result.Items) != 1 || result.Items[0].ID.String() != "good" {
 		t.Fatalf("result = %#v", result)
 	}
 	if len(repo.revisionReads) != 1 || repo.revisionReads[0] != "good" {
@@ -41,47 +42,47 @@ func TestListFiltersBeforeReadingUnauthorizedRevisionAndExcludesArchived(t *test
 }
 
 func TestListMergesSourcesOrdersAndReturnsMetadata(t *testing.T) {
-	project := dashboardcatalog.Dashboard{ID: "z-project", Title: "Zulu", Description: "Project", SemanticModel: "sales", Tags: []string{"z"}}
-	workspace := lifecycle("a-workspace", authoring.LifecycleStatusPublished, "rev-draft")
-	workspace.Draft = &authoring.Draft{DashboardID: "a-workspace", Revision: token("rev-draft", 2), Provenance: provenance(authoring.OriginAgent)}
-	workspace.Published = &authoring.Published{
+	runtimeDashboard := dashboardcatalog.Dashboard{ID: "z-project", Title: "Zulu", Description: "Project", SemanticModel: "sales", Tags: []string{"z"}}
+	instance := lifecycle("a-project", authoring.LifecycleStatusPublished, "rev-draft")
+	instance.Draft = &authoring.Draft{DashboardID: "a-project", Revision: token("rev-draft", 2), Provenance: provenance(authoring.OriginAgent)}
+	instance.Published = &authoring.Published{
 		Revision: token("rev-published", 1), PublishedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
 		Compilation: authoring.CompiledRevisionToken{AuthoredRevision: token("rev-published", 1), DefinitionHash: "sha256:" + strings.Repeat("a", 64), SemanticServingStateID: "semantic-1"},
 		Provenance:  provenance(authoring.OriginFile),
 	}
-	repo := &fakeRepository{lifecycles: []authoring.DashboardLifecycle{workspace}, revisions: map[string]authoring.Revision{
-		"a-workspace": revisionWithToken("a-workspace", token("rev-draft", 2), "Draft description"),
+	repo := &fakeRepository{lifecycles: []authoring.DashboardLifecycle{instance}, revisions: map[string]authoring.Revision{
+		"a-project": revisionWithToken("a-project", token("rev-draft", 2), "Draft description"),
 	}}
-	service := newTestService(t, repo, &fakeAuthorizer{}, []dashboardcatalog.Dashboard{project})
-	result, err := service.List(t.Context(), ListRequest{WorkspaceID: "sales", ActorID: "actor"})
+	service := newTestService(t, repo, &fakeAuthorizer{}, []dashboardcatalog.Dashboard{runtimeDashboard})
+	result, err := service.List(t.Context(), ListRequest{ProjectID: "sales", ActorID: "actor"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := []string{result.Items[0].ID, result.Items[1].ID}; got[0] != "a-workspace" || got[1] != "z-project" {
+	if got := []string{result.Items[0].ID.String(), result.Items[1].ID.String()}; got[0] != "a-project" || got[1] != "z-project" {
 		t.Fatalf("ordering = %#v", got)
 	}
 	item := result.Items[0]
-	if item.Source != SourceWorkspace || item.Origin != authoring.OriginAgent || item.Status != authoring.LifecycleStatusPublished || item.Description != "Draft description" || item.Revision == nil || item.Revision.ID != "rev-draft" || item.Publication == nil || item.Publication.Revision.ID != "rev-published" || item.Publication.SemanticServingStateID != "semantic-1" {
-		t.Fatalf("workspace metadata = %#v rev=%#v pub=%#v", item, item.Revision, item.Publication)
+	if item.Source != SourceInstance || item.Origin != authoring.OriginAgent || item.Status != authoring.LifecycleStatusPublished || item.Description != "Draft description" || item.Revision == nil || item.Revision.ID != "rev-draft" || item.Publication == nil || item.Publication.Revision.ID != "rev-published" || item.Publication.SemanticServingStateID != "semantic-1" {
+		t.Fatalf("project metadata = %#v rev=%#v pub=%#v", item, item.Revision, item.Publication)
 	}
-	if result.ProjectCount != 1 || result.WorkspaceCount != 1 || result.Count != 2 {
+	if result.ProjectCount != 1 || result.InstanceCount != 1 || result.Count != 2 {
 		t.Fatalf("counts = %#v", result)
 	}
-	if result.Items[1].Source != SourceProject || result.Items[1].Origin != authoring.OriginFile || result.Items[1].Status != authoring.LifecycleStatusPublished || result.Items[1].Visibility != authoring.VisibilityShared {
+	if result.Items[1].Source != SourceProject || result.Items[1].Origin != authoring.OriginFile || result.Items[1].Status != authoring.LifecycleStatusPublished || result.Items[1].Visibility != authoring.VisibilityOrganization {
 		t.Fatalf("project metadata = %#v", result.Items[1])
 	}
 }
 
 func TestListCollisionOnlyAfterBothSourcesAreAuthorized(t *testing.T) {
-	workspace := lifecycle("same", authoring.LifecycleStatusDraft, "rev-same")
-	repo := &fakeRepository{lifecycles: []authoring.DashboardLifecycle{workspace}, revisions: map[string]authoring.Revision{"same": revision("same", "rev-same", "workspace")}}
+	project := lifecycle("same", authoring.LifecycleStatusDraft, "rev-same")
+	repo := &fakeRepository{lifecycles: []authoring.DashboardLifecycle{project}, revisions: map[string]authoring.Revision{"same": revision("same", "rev-same", "project")}}
 	service := newTestService(t, repo, &fakeAuthorizer{}, []dashboardcatalog.Dashboard{{ID: "same", Title: "Project", SemanticModel: "sales"}})
-	if _, err := service.List(t.Context(), ListRequest{WorkspaceID: "sales", ActorID: "actor"}); !errors.Is(err, ErrAmbiguous) {
+	if _, err := service.List(t.Context(), ListRequest{ProjectID: "sales", ActorID: "actor"}); !errors.Is(err, ErrAmbiguous) {
 		t.Fatalf("error = %v, want collision", err)
 	}
 
 	denied := newTestService(t, repo, &fakeAuthorizer{deny: map[string]bool{"same": true}}, []dashboardcatalog.Dashboard{{ID: "same", Title: "Project", SemanticModel: "sales"}})
-	result, err := denied.List(t.Context(), ListRequest{WorkspaceID: "sales", ActorID: "actor"})
+	result, err := denied.List(t.Context(), ListRequest{ProjectID: "sales", ActorID: "actor"})
 	if err != nil || result.Count != 0 {
 		t.Fatalf("denied collision result=%#v err=%v", result, err)
 	}
@@ -91,7 +92,7 @@ func TestGetHidesUnauthorizedAndArchivedDashboards(t *testing.T) {
 	life := lifecycle("private", authoring.LifecycleStatusDraft, "rev-private")
 	repo := &fakeRepository{lifecycles: []authoring.DashboardLifecycle{life}, revisions: map[string]authoring.Revision{"private": revision("private", "rev-private", "secret")}}
 	service := newTestService(t, repo, &fakeAuthorizer{deny: map[string]bool{"private": true}}, nil)
-	if _, err := service.Get(t.Context(), GetRequest{WorkspaceID: "sales", ActorID: "actor", DashboardID: "private"}); !errors.Is(err, ErrNotFound) {
+	if _, err := service.Get(t.Context(), GetRequest{ProjectID: "sales", ActorID: "actor", DashboardID: "private"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("error = %v, want not found", err)
 	}
 
@@ -99,7 +100,7 @@ func TestGetHidesUnauthorizedAndArchivedDashboards(t *testing.T) {
 	repo.lifecycles = []authoring.DashboardLifecycle{archived}
 	auth := &fakeAuthorizer{}
 	service = newTestService(t, repo, auth, nil)
-	if _, err := service.Get(t.Context(), GetRequest{WorkspaceID: "sales", ActorID: "actor", DashboardID: "private"}); !errors.Is(err, ErrNotFound) {
+	if _, err := service.Get(t.Context(), GetRequest{ProjectID: "sales", ActorID: "actor", DashboardID: "private"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("archived error = %v, want not found", err)
 	}
 	if len(auth.requests) != 0 {
@@ -112,7 +113,7 @@ func TestBackendErrorsPropagateAndLeaseIsSingle(t *testing.T) {
 	repo := &fakeRepository{listErr: want}
 	provider := &fakeProvider{runtime: fakeRuntime{catalog: dashboardcatalog.Catalog{Workspace: dashboardcatalog.Workspace{ID: "sales"}}}}
 	service := newTestServiceWithProvider(t, repo, &fakeAuthorizer{}, provider)
-	if _, err := service.List(t.Context(), ListRequest{WorkspaceID: "sales", ActorID: "actor"}); !errors.Is(err, want) {
+	if _, err := service.List(t.Context(), ListRequest{ProjectID: "sales", ActorID: "actor"}); !errors.Is(err, want) {
 		t.Fatalf("error = %v, want backend error", err)
 	}
 	if provider.acquires != 1 || provider.lease.releases != 1 {
@@ -192,7 +193,7 @@ type fakeRepository struct {
 func (r *fakeRepository) Create(context.Context, authoring.CreateInput) (authoring.DashboardLifecycle, error) {
 	panic("unused")
 }
-func (r *fakeRepository) Get(_ context.Context, _ string, id authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) Get(_ context.Context, _ graph.ResourceID, id authoring.DashboardID) (authoring.DashboardLifecycle, error) {
 	for _, lifecycle := range r.lifecycles {
 		if lifecycle.ID == id {
 			return lifecycle, nil
@@ -200,16 +201,16 @@ func (r *fakeRepository) Get(_ context.Context, _ string, id authoring.Dashboard
 	}
 	return authoring.DashboardLifecycle{}, authoring.ErrNotFound
 }
-func (r *fakeRepository) List(context.Context, string) ([]authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) List(context.Context, graph.ResourceID) ([]authoring.DashboardLifecycle, error) {
 	if r.listErr != nil {
 		return nil, r.listErr
 	}
 	return append([]authoring.DashboardLifecycle(nil), r.lifecycles...), nil
 }
-func (r *fakeRepository) CountBySemanticModel(context.Context, string) ([]authoring.SemanticModelUsage, error) {
+func (r *fakeRepository) CountBySemanticModel(context.Context, graph.ResourceID) ([]authoring.SemanticModelUsage, error) {
 	panic("unused")
 }
-func (r *fakeRepository) GetRevision(_ context.Context, _ string, id authoring.DashboardID, revisionID authoring.RevisionID) (authoring.Revision, error) {
+func (r *fakeRepository) GetRevision(_ context.Context, _ graph.ResourceID, id authoring.DashboardID, revisionID authoring.RevisionID) (authoring.Revision, error) {
 	r.revisionReads = append(r.revisionReads, id.String())
 	revision, ok := r.revisions[id.String()]
 	if !ok || revision.ID != revisionID {
@@ -217,7 +218,7 @@ func (r *fakeRepository) GetRevision(_ context.Context, _ string, id authoring.D
 	}
 	return revision, nil
 }
-func (r *fakeRepository) LookupCommandResult(context.Context, string, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
+func (r *fakeRepository) LookupCommandResult(context.Context, graph.ResourceID, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
 	panic("unused")
 }
 func (r *fakeRepository) AppendDraft(context.Context, authoring.AppendDraftInput) (authoring.Revision, error) {
@@ -229,12 +230,12 @@ func (r *fakeRepository) Publish(context.Context, authoring.PublishInput) (autho
 func (r *fakeRepository) Archive(context.Context, authoring.ArchiveInput) (authoring.DashboardLifecycle, error) {
 	panic("unused")
 }
-func (r *fakeRepository) GetPublishedCompilation(context.Context, string, authoring.DashboardID) (authoring.CompiledRevision, error) {
+func (r *fakeRepository) GetPublishedCompilation(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	panic("unused")
 }
 
 func lifecycle(id string, status authoring.LifecycleStatus, revisionID string) authoring.DashboardLifecycle {
-	return authoring.DashboardLifecycle{WorkspaceID: "sales", ID: authoring.DashboardID(id), OwnerPrincipalID: "owner", Slug: id, Title: id, SemanticModel: "sales", Visibility: authoring.VisibilityPrivate, Status: status, Draft: &authoring.Draft{DashboardID: authoring.DashboardID(id), Revision: token(revisionID, 1), Provenance: provenance(authoring.OriginUI)}}
+	return authoring.DashboardLifecycle{ProjectID: graph.ResourceID("sales"), ID: authoring.DashboardID(id), OwnerPrincipalID: "owner", Slug: id, Title: id, SemanticModel: graph.ResourceID("sales"), Visibility: authoring.VisibilityPrivate, Status: status, Draft: &authoring.Draft{DashboardID: authoring.DashboardID(id), Revision: token(revisionID, 1), Provenance: provenance(authoring.OriginUI)}}
 }
 
 func revision(id, revisionID, description string) authoring.Revision {
@@ -242,7 +243,7 @@ func revision(id, revisionID, description string) authoring.Revision {
 }
 
 func revisionWithToken(id string, revisionToken authoring.RevisionToken, description string) authoring.Revision {
-	return authoring.Revision{ID: revisionToken.RevisionID, DashboardID: authoring.DashboardID(id), Number: revisionToken.Number, ContentHash: revisionToken.ContentHash, Document: authoring.Dashboard{ID: id, Description: description}}
+	return authoring.Revision{ID: revisionToken.RevisionID, DashboardID: authoring.DashboardID(id), Number: revisionToken.Number, ContentHash: revisionToken.ContentHash, Document: authoring.Dashboard{ID: graph.ResourceID(id), Description: description}}
 }
 
 func token(id string, number uint64) authoring.RevisionToken {

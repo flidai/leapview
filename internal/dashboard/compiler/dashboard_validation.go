@@ -26,7 +26,7 @@ func ValidateAndNormalizeDashboard(d *dashboardauthoring.Dashboard, models map[s
 	if err := normalized.ValidateContract(); err != nil {
 		return nil, err
 	}
-	model, ok := models[normalized.SemanticModel]
+	model, ok := models[normalized.SemanticModel.String()]
 	if !ok {
 		return nil, fmt.Errorf("dashboard %q references unknown semantic model %q", normalized.ID, normalized.SemanticModel)
 	}

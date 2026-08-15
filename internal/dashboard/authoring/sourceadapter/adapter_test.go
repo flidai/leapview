@@ -75,7 +75,7 @@ func (r *fakeRepository) LookupCreateOperation(_ context.Context, operation auth
 }
 
 func operationKey(operation authoring.CreateOperation) string {
-	return operation.WorkspaceID + "|" + operation.ActorID + "|" + operation.Kind + "|" + operation.IdempotencyKey
+	return operation.ProjectID + "|" + operation.ActorID + "|" + operation.Kind + "|" + operation.IdempotencyKey
 }
 
 func (r *fakeRepository) List(context.Context, string) ([]authoring.DashboardLifecycle, error) {
@@ -139,7 +139,7 @@ func (l *fakeLease) ServingStateID() servingstate.ID { return l.state }
 func (l *fakeLease) DuckLakeSnapshotID() int64       { return 42 }
 func (l *fakeLease) Release()                        { *l.released++ }
 
-func TestLoadWorkspaceUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *testing.T) {
+func TestLoadProjectUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *testing.T) {
 	published, newer, lifecycle := publishedFixture(t)
 	repository := &fakeRepository{lifecycle: lifecycle, revisions: map[authoring.RevisionID]authoring.Revision{
 		published.ID: published, newer.ID: newer,
@@ -147,15 +147,15 @@ func TestLoadWorkspaceUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *te
 	authorizer := &fakeAuthorizer{}
 	adapter := newAdapter(t, repository, authorizer, nil)
 
-	source, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: "sales"}, "actor")
+	source, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "sales"}, "actor")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if source.Document.Title != "Published title" {
 		t.Fatalf("loaded title = %q, want exact published title", source.Document.Title)
 	}
-	if source.Provenance.Kind != sourceadapter.SourceWorkspace || source.Provenance.Workspace == nil || source.Provenance.Workspace.PublishedRevision != published.Token() {
-		t.Fatalf("workspace provenance = %#v", source.Provenance)
+	if source.Provenance.Kind != sourceadapter.SourceProject || source.Provenance.Project == nil || source.Provenance.Project.PublishedRevision != published.Token() {
+		t.Fatalf("project provenance = %#v", source.Provenance)
 	}
 	if source.Lifecycle == nil || source.Lifecycle.Status != authoring.LifecycleStatusPublished {
 		t.Fatalf("loaded lifecycle = %#v", source.Lifecycle)
@@ -167,7 +167,7 @@ func TestLoadWorkspaceUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *te
 	deniedRepo := &fakeRepository{lifecycle: lifecycle, revisions: repository.revisions}
 	denied := &fakeAuthorizer{err: errors.New("view denied")}
 	deniedAdapter := newAdapter(t, deniedRepo, denied, nil)
-	if _, err := deniedAdapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: "sales"}, "actor"); err == nil {
+	if _, err := deniedAdapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "sales"}, "actor"); err == nil {
 		t.Fatal("Load succeeded despite VIEW denial")
 	}
 	if deniedRepo.getRevisionCall != 0 {
@@ -193,7 +193,7 @@ func TestExportDraftUsesLifecycleDraftRevisionByDashboardID(t *testing.T) {
 	}
 
 	exported, err := adapter.ExportDraft(t.Context(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: lifecycle.ID}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: lifecycle.ID}, ActorID: "actor",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,25 +204,25 @@ func TestExportDraftUsesLifecycleDraftRevisionByDashboardID(t *testing.T) {
 	// The authored title is deliberately changed only in the draft revision;
 	// its document content must still be the current lifecycle draft, not the
 	// published source selected by Adapter.Export.
-	source, err := adapter.LoadDraft(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: lifecycle.ID}, "actor")
+	source, err := adapter.LoadDraft(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: lifecycle.ID}, "actor")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.Document.Title != "Newer draft" || source.Provenance.Workspace == nil || source.Provenance.Workspace.DraftRevision == nil || *source.Provenance.Workspace.DraftRevision != newer.Token() {
-		t.Fatalf("draft source = title %q provenance %#v", source.Document.Title, source.Provenance.Workspace)
+	if source.Document.Title != "Newer draft" || source.Provenance.Project == nil || source.Provenance.Project.DraftRevision == nil || *source.Provenance.Project.DraftRevision != newer.Token() {
+		t.Fatalf("draft source = title %q provenance %#v", source.Document.Title, source.Provenance.Project)
 	}
-	if source.Provenance.Workspace.PublishedRevision != (authoring.RevisionToken{}) {
-		t.Fatalf("draft source fabricated published provenance: %#v", source.Provenance.Workspace)
+	if source.Provenance.Project.PublishedRevision != (authoring.RevisionToken{}) {
+		t.Fatalf("draft source fabricated published provenance: %#v", source.Provenance.Project)
 	}
 }
 
-func TestWorkspaceForkReplaySkipsSourceReads(t *testing.T) {
+func TestProjectForkReplaySkipsSourceReads(t *testing.T) {
 	published, newer, lifecycle := publishedFixture(t)
 	repository := &fakeRepository{lifecycle: lifecycle, revisions: map[authoring.RevisionID]authoring.Revision{published.ID: published, newer.ID: newer}}
 	authorizer := &fakeAuthorizer{}
 	authoringService := newAuthoringService(t, repository, authorizer)
 	adapter := newAdapterWithService(t, repository, authorizer, authoringService, nil)
-	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: "workspace", DashboardID: "sales"}, ActorID: "actor", Title: "Forked", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-workspace"}
+	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "sales"}, ActorID: "actor", Title: "Forked", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-project"}
 	first, err := adapter.Fork(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +239,7 @@ func TestWorkspaceForkReplaySkipsSourceReads(t *testing.T) {
 		}
 	}
 	if len(repository.getRevisionIDs) != 0 || second.Revision != first.Revision || second.Lifecycle.ID != first.Lifecycle.ID {
-		t.Fatalf("workspace replay = %#v first=%#v source revisions=%v", second, first, repository.getRevisionIDs)
+		t.Fatalf("project replay = %#v first=%#v source revisions=%v", second, first, repository.getRevisionIDs)
 	}
 }
 
@@ -248,21 +248,21 @@ func TestLoadProjectUsesOneActiveLeaseAndHasNoFakeRevision(t *testing.T) {
 	document := authoredDocument("project-sales", "Project title")
 	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{
 		Document: document,
-		Metadata: projectartifact.AuthoredDashboardMetadata{Workspace: "project", Name: "project-sales", Title: document.Title},
-		Path:     "workspaces/project/dashboards/project-sales.yaml",
+		Metadata: projectartifact.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title},
+		Path:     "projects/project/dashboards/project-sales.yaml",
 	}}
 	released := 0
 	acquires := 0
 	authorizer := &fakeAuthorizer{}
-	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(_ context.Context, workspace string) (runtimehost.Lease, error) {
+	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(_ context.Context, project string) (runtimehost.Lease, error) {
 		acquires++
-		if workspace != "project" {
-			t.Fatalf("runtime workspace = %q", workspace)
+		if project != "project" {
+			t.Fatalf("runtime project = %q", project)
 		}
 		return &fakeLease{runtime: runtime, state: "serving-project-1", released: &released}, nil
 	})
 
-	source, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, WorkspaceID: "project", DashboardID: "project-sales"}, "actor")
+	source, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, "actor")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,8 +278,8 @@ func TestLoadProjectUsesOneActiveLeaseAndHasNoFakeRevision(t *testing.T) {
 	if source.Provenance.Project.ServingStateID == "" {
 		t.Fatal("project provenance omitted serving state")
 	}
-	if source.Provenance.Workspace != nil {
-		t.Fatal("project provenance populated workspace revision branch")
+	if source.Provenance.Project != nil {
+		t.Fatal("project provenance populated project revision branch")
 	}
 }
 
@@ -290,7 +290,7 @@ func TestMissingProjectSourceIsTypedUnavailableAndAuthPrecedesDisclosure(t *test
 	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
 		return &fakeLease{runtime: runtime, released: &released}, nil
 	})
-	_, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, WorkspaceID: "project", DashboardID: "missing"}, "actor")
+	_, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "missing"}, "actor")
 	if !errors.Is(err, sourceadapter.ErrSourceUnavailable) || !errors.As(err, new(*sourceadapter.SourceUnavailableError)) {
 		t.Fatalf("error = %v, want typed unavailable", err)
 	}
@@ -306,7 +306,7 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 	document := authoredDocument("project-sales", "Project title")
 	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{
 		Document: document,
-		Metadata: projectartifact.AuthoredDashboardMetadata{Workspace: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"},
+		Metadata: projectartifact.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"},
 		Path:     "dashboards/project-sales.yaml",
 	}}
 	repository := &fakeRepository{}
@@ -317,14 +317,14 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 		return &fakeLease{runtime: runtime, state: "project-state", released: &released}, nil
 	})
 
-	exported, err := adapter.Export(t.Context(), sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, WorkspaceID: "project", DashboardID: "project-sales"}, ActorID: "actor"})
+	exported, err := adapter.Export(t.Context(), sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, ActorID: "actor"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(exported), "semanticModel: sales") || !strings.Contains(string(exported), "title: Project title") {
 		t.Fatalf("exported YAML = %s", exported)
 	}
-	result, err := adapter.Fork(t.Context(), sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, WorkspaceID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project"})
+	result, err := adapter.Fork(t.Context(), sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 
 func TestProjectForkReplaySkipsUnavailableSourceLoad(t *testing.T) {
 	document := authoredDocument("project-sales", "Project title")
-	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{Document: document, Metadata: projectartifact.AuthoredDashboardMetadata{Workspace: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"}, Path: "dashboards/project-sales.yaml"}}
+	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{Document: document, Metadata: projectartifact.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"}, Path: "dashboards/project-sales.yaml"}}
 	repository := &fakeRepository{}
 	authorizer := &fakeAuthorizer{}
 	authoringService := newAuthoringService(t, repository, authorizer)
@@ -356,7 +356,7 @@ func TestProjectForkReplaySkipsUnavailableSourceLoad(t *testing.T) {
 	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context, string) (runtimehost.Lease, error) {
 		return &fakeLease{runtime: runtime, state: "project-state", released: &released}, nil
 	})
-	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, WorkspaceID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-project"}
+	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-project"}
 	first, err := adapter.Fork(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -439,11 +439,11 @@ func publishedFixture(t *testing.T) (authoring.Revision, authoring.Revision, aut
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := authoring.NewCompiledRevision("workspace", "sales", published.Token(), dashboarddefinition.Definition{ID: "sales", Title: document.Title, SemanticModel: "sales"}, "serving-state", sourceTestTime)
+	compiled, err := authoring.NewCompiledRevision("project", "sales", published.Token(), dashboarddefinition.Definition{ID: "sales", Title: document.Title, SemanticModel: "sales"}, "serving-state", sourceTestTime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := authoring.DashboardLifecycle{WorkspaceID: "workspace", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: document.Title, SemanticModel: "sales", Visibility: authoring.VisibilityShared, Status: authoring.LifecycleStatusPublished, Published: &authoring.Published{Revision: published.Token(), Compilation: compiled.Token(), PublishedAt: sourceTestTime, Provenance: provenance}, Draft: &authoring.Draft{ID: "draft", DashboardID: "sales", Revision: newer.Token(), Provenance: provenance}}
+	lifecycle := authoring.DashboardLifecycle{ProjectID: "project", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: document.Title, SemanticModel: "sales", Visibility: authoring.VisibilityOrganization, Status: authoring.LifecycleStatusPublished, Published: &authoring.Published{Revision: published.Token(), Compilation: compiled.Token(), PublishedAt: sourceTestTime, Provenance: provenance}, Draft: &authoring.Draft{ID: "draft", DashboardID: "sales", Revision: newer.Token(), Provenance: provenance}}
 	if err := lifecycle.Validate(); err != nil {
 		t.Fatal(err)
 	}

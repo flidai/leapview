@@ -31,17 +31,17 @@ func newFixture(t *testing.T) fixture {
 	model := testModel()
 	runtime := &fakeRuntime{model: model}
 	lease := &fakeLease{runtime: runtime, servingState: "serving-sales"}
-	var gotWorkspace string
+	var gotProject string
 	adapter, err := compileradapter.New(compileradapter.Options{
-		AcquireRuntime: func(_ context.Context, workspaceID string) (runtimehost.Lease, error) {
-			gotWorkspace = workspaceID
+		AcquireRuntime: func(_ context.Context, projectID string) (runtimehost.Lease, error) {
+			gotProject = projectID
 			return lease, nil
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fixture{adapter: adapter, runtime: runtime, lease: lease, doc: doc, model: model, gotWS: gotWorkspace}
+	return fixture{adapter: adapter, runtime: runtime, lease: lease, doc: doc, model: model, gotWS: gotProject}
 }
 
 func testDocument() authoring.Dashboard {
@@ -64,24 +64,24 @@ func testModel() *semanticmodel.Model {
 	}
 }
 
-func TestCompileUsesOneWorkspaceLeaseAndReturnsExactState(t *testing.T) {
+func TestCompileUsesOneProjectLeaseAndReturnsExactState(t *testing.T) {
 	fixture := newFixture(t)
-	var gotWorkspace string
-	fixture.adapter, _ = compileradapter.New(compileradapter.Options{AcquireRuntime: func(_ context.Context, workspaceID string) (runtimehost.Lease, error) {
-		gotWorkspace = workspaceID
+	var gotProject string
+	fixture.adapter, _ = compileradapter.New(compileradapter.Options{AcquireRuntime: func(_ context.Context, projectID string) (runtimehost.Lease, error) {
+		gotProject = projectID
 		return fixture.lease, nil
 	}})
-	result, err := fixture.adapter.Compile(context.Background(), " workspace ", "sales_model", fixture.doc)
+	result, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", fixture.doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotWorkspace != "workspace" {
-		t.Fatalf("acquired workspace = %q, want workspace", gotWorkspace)
+	if gotProject != "project" {
+		t.Fatalf("acquired project = %q, want project", gotProject)
 	}
 	if fixture.runtime.projectionCalls != 1 || fixture.lease.releaseCalls != 1 {
 		t.Fatalf("runtime/lease calls = %d/%d, want 1/1", fixture.runtime.projectionCalls, fixture.lease.releaseCalls)
 	}
-	if result.Definition.ID != fixture.doc.ID || result.Definition.SemanticModel != fixture.doc.SemanticModel || result.SemanticServingStateID != "serving-sales" {
+	if result.Definition.ID != fixture.doc.ID.String() || result.Definition.SemanticModel != fixture.doc.SemanticModel.String() || result.SemanticServingStateID != "serving-sales" {
 		t.Fatalf("unexpected compilation = %#v", result)
 	}
 }
@@ -89,7 +89,7 @@ func TestCompileUsesOneWorkspaceLeaseAndReturnsExactState(t *testing.T) {
 func TestCompileRequiresProjectionCapabilityAndReleases(t *testing.T) {
 	fixture := newFixture(t)
 	fixture.lease.runtime = &runtimeWithoutProjection{}
-	if _, err := fixture.adapter.Compile(context.Background(), "workspace", "sales_model", fixture.doc); err == nil {
+	if _, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", fixture.doc); err == nil {
 		t.Fatal("missing projection capability unexpectedly compiled")
 	}
 	if fixture.lease.releaseCalls != 1 {
@@ -101,7 +101,7 @@ func TestCompileRejectsSemanticMismatchAndMissingModelWithRelease(t *testing.T) 
 	t.Run("runtime mismatch", func(t *testing.T) {
 		fixture := newFixture(t)
 		fixture.runtime.model = &semanticmodel.Model{Name: "other_model"}
-		_, err := fixture.adapter.Compile(context.Background(), "workspace", "sales_model", fixture.doc)
+		_, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", fixture.doc)
 		if !errors.Is(err, compileradapter.ErrSemanticMismatch) {
 			t.Fatalf("error = %v, want semantic mismatch", err)
 		}
@@ -112,7 +112,7 @@ func TestCompileRejectsSemanticMismatchAndMissingModelWithRelease(t *testing.T) 
 	t.Run("missing model", func(t *testing.T) {
 		fixture := newFixture(t)
 		fixture.runtime.model = nil
-		_, err := fixture.adapter.Compile(context.Background(), "workspace", "sales_model", fixture.doc)
+		_, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", fixture.doc)
 		if !errors.Is(err, compileradapter.ErrSemanticMismatch) {
 			t.Fatalf("error = %v, want semantic mismatch", err)
 		}
@@ -124,7 +124,7 @@ func TestCompileRejectsSemanticMismatchAndMissingModelWithRelease(t *testing.T) 
 		fixture := newFixture(t)
 		document := fixture.doc
 		document.SemanticModel = "other_model"
-		_, err := fixture.adapter.Compile(context.Background(), "workspace", "sales_model", document)
+		_, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", document)
 		if !errors.Is(err, compileradapter.ErrSemanticMismatch) {
 			t.Fatalf("error = %v, want semantic mismatch", err)
 		}
@@ -150,7 +150,7 @@ func TestCompileStrictDraftErrorReleasesAndDoesNotMutateInputOrModel(t *testing.
 		beforeTables[name] = table
 	}
 	beforeModel.Tables = beforeTables
-	if _, err := fixture.adapter.Compile(context.Background(), "workspace", "sales_model", document); err == nil || !strings.Contains(err.Error(), "strictly compile dashboard") {
+	if _, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", document); err == nil || !strings.Contains(err.Error(), "strictly compile dashboard") {
 		t.Fatalf("strict compile error = %v", err)
 	}
 	if fixture.lease.releaseCalls != 1 {
@@ -164,7 +164,7 @@ func TestCompileStrictDraftErrorReleasesAndDoesNotMutateInputOrModel(t *testing.
 func TestCompileRejectsMissingServingStateAndReleases(t *testing.T) {
 	fixture := newFixture(t)
 	fixture.lease.servingState = "  "
-	if _, err := fixture.adapter.Compile(context.Background(), "workspace", "sales_model", fixture.doc); err == nil {
+	if _, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", fixture.doc); err == nil {
 		t.Fatal("missing serving state unexpectedly compiled")
 	}
 	if fixture.lease.releaseCalls != 1 {
@@ -178,7 +178,7 @@ func TestCompileImmutabilityAndCompilerContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := fixture.adapter.Compile(context.Background(), "workspace", "sales_model", fixture.doc)
+	result, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", fixture.doc)
 	if err != nil {
 		t.Fatal(err)
 	}

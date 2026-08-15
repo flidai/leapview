@@ -28,10 +28,10 @@ const (
 	maxDiagnostics = 128
 )
 
-// Request identifies one workspace-scoped draft builder projection. Empty
+// Request identifies one project-scoped draft builder projection. Empty
 // selections use the first deterministic page/visual fallback.
 type Request struct {
-	WorkspaceID      string
+	ProjectID        string
 	ActorID          string
 	DashboardID      authoring.DashboardID
 	SelectedPageID   string
@@ -79,12 +79,12 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	if s == nil || s.provider == nil || s.repository == nil || s.authorizer == nil {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder service is not configured")
 	}
-	workspaceID := strings.TrimSpace(request.WorkspaceID)
+	projectID := strings.TrimSpace(request.ProjectID)
 	actorID := strings.TrimSpace(request.ActorID)
-	if workspaceID == "" || actorID == "" {
-		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("workspace and actor are required")
+	if projectID == "" || actorID == "" {
+		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("project and actor are required")
 	}
-	if err := request.DashboardID.Validate(); err != nil {
+	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -93,14 +93,14 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 
 	// Lifecycle identity is metadata, but the draft pointer and its document
 	// remain undisclosed until this exact dashboard EDIT decision succeeds.
-	lifecycle, err := s.repository.Get(ctx, workspaceID, request.DashboardID)
+	lifecycle, err := s.repository.Get(ctx, projectID, request.DashboardID)
 	if err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
 	}
-	if lifecycle.WorkspaceID != workspaceID || lifecycle.ID != request.DashboardID {
+	if lifecycle.ProjectID != projectID || lifecycle.ID != request.DashboardID {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder lifecycle identity does not match request")
 	}
-	canEdit, err := s.authorize(ctx, actorID, workspaceID, lifecycle, authoring.AuthorizationActionEdit)
+	canEdit, err := s.authorize(ctx, actorID, projectID, lifecycle, authoring.AuthorizationActionEdit)
 	if err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
 	}
@@ -125,12 +125,12 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	if err := lifecycle.Validate(); err != nil {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("validate dashboard lifecycle: %w", err)
 	}
-	capabilities, err := s.capabilities(ctx, actorID, workspaceID, lifecycle, canEdit)
+	capabilities, err := s.capabilities(ctx, actorID, projectID, lifecycle, canEdit)
 	if err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
 	}
 
-	revision, err := s.repository.GetRevision(ctx, workspaceID, request.DashboardID, lifecycle.Draft.Revision.RevisionID)
+	revision, err := s.repository.GetRevision(ctx, projectID, request.DashboardID, lifecycle.Draft.Revision.RevisionID)
 	if err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
 	}
@@ -143,7 +143,7 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	if revision.DashboardID != request.DashboardID || !sameRevision(revision.Token(), lifecycle.Draft.Revision) {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder draft revision does not match lifecycle pointer")
 	}
-	if revision.Document.ID != request.DashboardID.String() {
+	if revision.Document.ID != request.DashboardID {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder document identity does not match request")
 	}
 	if strings.TrimSpace(revision.Document.SemanticModel) != strings.TrimSpace(lifecycle.SemanticModel) {
@@ -179,9 +179,9 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	return project(request, lifecycle, revision, model, capabilities)
 }
 
-func (s *Service) authorize(ctx context.Context, actorID, workspaceID string, lifecycle authoring.DashboardLifecycle, action authoring.AuthorizationAction) (bool, error) {
+func (s *Service) authorize(ctx context.Context, actorID, projectID string, lifecycle authoring.DashboardLifecycle, action authoring.AuthorizationAction) (bool, error) {
 	err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
-		ActorID: actorID, WorkspaceID: workspaceID, DashboardID: lifecycle.ID,
+		ActorID: actorID, ProjectID: projectID, DashboardID: lifecycle.ID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: action,
 	})
 	if err == nil {
@@ -193,12 +193,12 @@ func (s *Service) authorize(ctx context.Context, actorID, workspaceID string, li
 	return false, err
 }
 
-func (s *Service) capabilities(ctx context.Context, actorID, workspaceID string, lifecycle authoring.DashboardLifecycle, canEdit bool) (uisignals.DashboardBuilderCapabilitiesSignal, error) {
-	publish, err := s.authorize(ctx, actorID, workspaceID, lifecycle, authoring.AuthorizationActionPublish)
+func (s *Service) capabilities(ctx context.Context, actorID, projectID string, lifecycle authoring.DashboardLifecycle, canEdit bool) (uisignals.DashboardBuilderCapabilitiesSignal, error) {
+	publish, err := s.authorize(ctx, actorID, projectID, lifecycle, authoring.AuthorizationActionPublish)
 	if err != nil {
 		return uisignals.DashboardBuilderCapabilitiesSignal{}, err
 	}
-	export, err := s.authorize(ctx, actorID, workspaceID, lifecycle, authoring.AuthorizationActionView)
+	export, err := s.authorize(ctx, actorID, projectID, lifecycle, authoring.AuthorizationActionView)
 	if err != nil {
 		return uisignals.DashboardBuilderCapabilitiesSignal{}, err
 	}
@@ -236,7 +236,7 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 		return uisignals.DashboardBuilderSignal{}, err
 	}
 	signal := uisignals.DashboardBuilderSignal{
-		WorkspaceID: lifecycle.WorkspaceID, DashboardID: lifecycle.ID.String(), DraftID: draftID,
+		ProjectID: lifecycle.ProjectID, DashboardID: lifecycle.ID.String(), DraftID: draftID,
 		Revision: revisionValue, Title: lifecycle.Title, Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
 		HasUnpublishedChanges: dirty, Origin: originSignal(revision.Provenance), SourceEvidence: sourceEvidence,
 		SemanticModel: semantic, Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
@@ -577,17 +577,17 @@ func sourceEvidenceSignalChecked(provenance authoring.Provenance) (*uisignals.Da
 		return nil, nil
 	}
 	switch provenance.ForkedFrom.Kind {
-	case authoring.ForkSourceWorkspace:
-		if provenance.ForkedFrom.Workspace == nil {
+	case authoring.ForkSourceProject:
+		if provenance.ForkedFrom.Project == nil {
 			return nil, nil
 		}
-		revision, err := revisionSignalChecked(provenance.ForkedFrom.Workspace.SourceRevision)
+		revision, err := revisionSignalChecked(provenance.ForkedFrom.Project.SourceRevision)
 		if err != nil {
-			return nil, fmt.Errorf("dashboard builder source workspace revision: %w", err)
+			return nil, fmt.Errorf("dashboard builder source project revision: %w", err)
 		}
-		item := &uisignals.DashboardBuilderWorkspaceSourceEvidence{
-			Kind: "workspace", WorkspaceID: provenance.ForkedFrom.Workspace.SourceWorkspaceID,
-			DashboardID: provenance.ForkedFrom.Workspace.SourceDashboardID.String(), Revision: revision,
+		item := &uisignals.DashboardBuilderProjectSourceEvidence{
+			Kind: "project", ProjectID: provenance.ForkedFrom.Project.SourceProjectID,
+			DashboardID: provenance.ForkedFrom.Project.SourceDashboardID.String(), Revision: revision,
 		}
 		return &uisignals.DashboardBuilderSourceEvidenceSignal{Value: item}, nil
 	case authoring.ForkSourceProject:
@@ -595,7 +595,7 @@ func sourceEvidenceSignalChecked(provenance authoring.Provenance) (*uisignals.Da
 			return nil, nil
 		}
 		item := &uisignals.DashboardBuilderProjectSourceEvidence{
-			Kind: "project", WorkspaceID: provenance.ForkedFrom.Project.SourceWorkspaceID,
+			Kind: "project", ProjectID: provenance.ForkedFrom.Project.SourceProjectID,
 			DashboardID: provenance.ForkedFrom.Project.SourceDashboardID.String(), ServingStateID: provenance.ForkedFrom.Project.ServingStateID,
 		}
 		if path := strings.TrimSpace(provenance.ForkedFrom.Project.Path); path != "" {
