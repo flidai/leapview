@@ -496,7 +496,7 @@ func projectSemanticModel(model *semanticmodel.Model) (uisignals.DashboardBuilde
 			if strings.TrimSpace(measure.Field) != "" {
 				fieldID = measure.Field
 			}
-			if projected, ok := fieldSignal(fieldID, display(measure.Label, id), "measure", measureType(measure), measure.Description); ok {
+			if projected, ok := fieldSignal(fieldID, display(measure.Label, id), "measure", "number", measure.Description); ok {
 				fields = append(fields, projected)
 			}
 		}
@@ -542,13 +542,6 @@ func safeDataType(value string) string {
 		return "unknown"
 	}
 	return value
-}
-
-func measureType(measure semanticmodel.MetricMeasure) string {
-	if strings.TrimSpace(measure.Input.Field) != "" {
-		return "number"
-	}
-	return "number"
 }
 
 func containsField(fields []uisignals.DashboardBuilderFieldSignal, id string) bool {

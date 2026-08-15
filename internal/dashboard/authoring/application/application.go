@@ -114,11 +114,7 @@ func (a *Application) List(ctx context.Context, request catalog.ListRequest) (ca
 	if err != nil {
 		return catalog.ListResult{}, err
 	}
-	service, err := catalog.NewService(catalog.Options{
-		Provider:   workspaceProvider{workspaceID: workspaceID, acquire: a.acquireRuntime},
-		Repository: a.repository,
-		Authorizer: a.authorizer,
-	})
+	service, err := a.newCatalogService(workspaceID)
 	if err != nil {
 		return catalog.ListResult{}, err
 	}
@@ -136,11 +132,7 @@ func (a *Application) Get(ctx context.Context, request catalog.GetRequest) (cata
 	if err != nil {
 		return catalog.Dashboard{}, err
 	}
-	service, err := catalog.NewService(catalog.Options{
-		Provider:   workspaceProvider{workspaceID: workspaceID, acquire: a.acquireRuntime},
-		Repository: a.repository,
-		Authorizer: a.authorizer,
-	})
+	service, err := a.newCatalogService(workspaceID)
 	if err != nil {
 		return catalog.Dashboard{}, err
 	}
@@ -228,6 +220,14 @@ func (a *Application) validate() error {
 		return fmt.Errorf("dashboard authoring application is not configured")
 	}
 	return nil
+}
+
+func (a *Application) newCatalogService(workspaceID string) (*catalog.Service, error) {
+	return catalog.NewService(catalog.Options{
+		Provider:   workspaceProvider{workspaceID: workspaceID, acquire: a.acquireRuntime},
+		Repository: a.repository,
+		Authorizer: a.authorizer,
+	})
 }
 
 func workspaceID(value string) (string, error) {

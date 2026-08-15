@@ -328,7 +328,7 @@ function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'activ
     kind: 'chat',
     view,
     title: 'Chats',
-    description: 'Ask read-only questions about dashboards, semantic models, measures, and fields.',
+    description: 'Ask about governed BI or make authorized dashboard changes.',
   }
   const agent = {
     conversations: [

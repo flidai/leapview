@@ -36,10 +36,10 @@ type options struct {
 // globals or process startup.
 func Command(ctx context.Context, dependencies Dependencies) *cobra.Command {
 	values := &options{}
-	parent := &cobra.Command{Use: "agent", Short: "Use the LeapView read-only agent"}
+	parent := &cobra.Command{Use: "agent", Short: "Use the LeapView governed BI agent"}
 	ask := &cobra.Command{
 		Use:   "ask [question]",
-		Short: "Ask the LeapView read-only agent a question",
+		Short: "Ask the LeapView agent a question",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAsk(ctx, dependencies.Client, values, args[0], cmd.OutOrStdout())
