@@ -45,8 +45,7 @@ func (e UnsupportedVersionError) Error() string {
 }
 
 // projectWire is intentionally flat: there is exactly one graph and one
-// project manifest. In particular, it has no workspace key, selector, or
-// serving identity.
+// project manifest. It carries no serving selector or target identity.
 type projectWire struct {
 	Version  int                       `json:"version"`
 	Graph    projectgraph.ProjectGraph `json:"graph"`
