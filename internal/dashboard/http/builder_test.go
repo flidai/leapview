@@ -4,26 +4,35 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/go-chi/chi/v5"
 )
 
 type builderAuthoringFake struct {
 	builder          uisignals.DashboardBuilderSignal
+	builderReq       builderview.Request
 	executed         authoring.Command
 	preview          preview.Preview
+	previewCtx       context.Context
+	previewReq       preview.PreviewRequest
+	previewCalls     int
 	yaml             []byte
 	err              error
 	previewErr       error
@@ -34,7 +43,8 @@ type builderAuthoringFake struct {
 	intentCalls      int
 }
 
-func (f *builderAuthoringFake) Builder(context.Context, builderview.Request) (uisignals.DashboardBuilderSignal, error) {
+func (f *builderAuthoringFake) Builder(_ context.Context, request builderview.Request) (uisignals.DashboardBuilderSignal, error) {
+	f.builderReq = request
 	return f.builder, f.err
 }
 func (f *builderAuthoringFake) Execute(_ context.Context, _ string, command authoring.Command) (authoringservice.Result, error) {
@@ -69,7 +79,11 @@ func TestDashboardBuilderCommandRoutesBuilderIntentsWithServerGeneratedIDs(t *te
 		t.Fatalf("server-generated visual IDs were not preserved: %#v", fake.executed.AddVisual)
 	}
 }
-func (f *builderAuthoringFake) Preview(context.Context, preview.PreviewRequest) (preview.Preview, error) {
+
+func (f *builderAuthoringFake) Preview(ctx context.Context, request preview.PreviewRequest) (preview.Preview, error) {
+	f.previewCtx = ctx
+	f.previewReq = request
+	f.previewCalls++
 	return f.preview, f.previewErr
 }
 func (f *builderAuthoringFake) ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error) {
@@ -208,5 +222,146 @@ func TestDashboardBuilderRejectsDraftURLMismatchAndCommandScopeSpoof(t *testing.
 	handler.DashboardBuilderCommand(commandRec, withBuilderURLParams(commandReq, "sales", "revenue"))
 	if commandRec.Code != nethttp.StatusBadRequest {
 		t.Fatalf("scope spoof status = %d, body = %s", commandRec.Code, commandRec.Body.String())
+	}
+}
+
+func TestDashboardBuilderGETPropagatesPageSelectionAndPageBaseHref(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{WorkspaceID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := httptest.NewRequest(nethttp.MethodGet, "/workspaces/sales/dashboards/revenue/edit?page=details&visual=orders-card", nil)
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilder(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.builderReq.SelectedPageID != "details" || fake.builderReq.SelectedVisualID != "orders-card" {
+		t.Fatalf("builder selection request = %#v", fake.builderReq)
+	}
+	if !strings.Contains(rec.Body.String(), `page-base-href="/workspaces/sales/dashboards/revenue/edit"`) {
+		t.Fatalf("page base href missing from shell: %s", rec.Body.String())
+	}
+}
+
+func TestDashboardBuilderPreviewVisualsUseAuthoredIDsAndRuntimeMetadata(t *testing.T) {
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&authoring.Dashboard{
+		ID: "sales", SemanticModel: "sales",
+		Visuals: authoring.ChartVisualizations(map[string]authoring.Visual{
+			"orders": {Type: "line", Title: "Orders", Query: authoring.VisualQuery{Table: "orders", Measures: []authoring.FieldRef{{Field: "orders.revenue"}}}},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("compile visualization definition: %v", err)
+	}
+	envelope, err := visualizationruntime.EmptyEnvelopeFromDefinition(definitions["orders"], 2, 0, 0)
+	if err != nil {
+		t.Fatalf("empty visualization envelope: %v", err)
+	}
+	selectedPage := "overview"
+	got := dashboardBuilderPreviewVisuals(uisignals.DashboardBuilderSignal{
+		DashboardID: "sales", SelectedPageID: &selectedPage,
+	}, preview.Preview{
+		PagePatch: dashboard.Patch{
+			Filters: dashboard.Filters{InteractionRevision: 4},
+			Status:  dashboard.Status{Generation: 9},
+			Visuals: map[string]visualizationir.VisualizationEnvelope{"orders": envelope},
+		},
+		SemanticEvidence: preview.SemanticServingStateEvidence{ServingStateID: "state-7"},
+	})
+	signal, ok := got["orders"]
+	if !ok {
+		t.Fatalf("preview visuals = %#v, want authored orders key", got)
+	}
+	if signal.VisualID != "orders" || signal.ServingStateID != "state-7" || signal.StreamGeneration != 9 || signal.InteractionRevision != 4 || signal.ConsumerIdentity != "overview/orders" {
+		t.Fatalf("preview visual metadata = %#v", signal)
+	}
+}
+
+func TestDashboardBuilderPreviewFailureKeepsBuilderVisible(t *testing.T) {
+	fake := &builderAuthoringFake{
+		builder:    uisignals.DashboardBuilderSignal{WorkspaceID: "workspace", DashboardID: "sales", DraftID: "draft-1"},
+		previewErr: errors.New("query preview failed"),
+	}
+	handler := Handler{Authoring: fake}
+	envelope := handler.dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", fake.builder)
+	if fake.previewCalls != 1 {
+		t.Fatalf("preview calls = %d, want 1", fake.previewCalls)
+	}
+	if envelope.Builder.Preview.Active || envelope.Builder.Preview.Error == nil || *envelope.Builder.Preview.Error != "query preview failed" {
+		t.Fatalf("preview failure state = %#v", envelope.Builder.Preview)
+	}
+	if envelope.BuilderVisuals == nil || len(envelope.BuilderVisuals) != 0 {
+		t.Fatalf("preview failure visuals = %#v, want empty map", envelope.BuilderVisuals)
+	}
+	statusFailure := &builderAuthoringFake{
+		builder: uisignals.DashboardBuilderSignal{WorkspaceID: "workspace", DashboardID: "sales", DraftID: "draft-1"},
+		preview: preview.Preview{PagePatch: dashboard.Patch{Status: dashboard.Status{Error: "runtime unavailable"}}},
+	}
+	statusEnvelope := (Handler{Authoring: statusFailure}).dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", statusFailure.builder)
+	if statusEnvelope.Builder.Preview.Active || statusEnvelope.Builder.Preview.Error == nil || *statusEnvelope.Builder.Preview.Error != "runtime unavailable" {
+		t.Fatalf("status preview failure state = %#v", statusEnvelope.Builder.Preview)
+	}
+}
+
+func TestDashboardBuilderInlinePreviewUsesAnalyticalContext(t *testing.T) {
+	marker := &struct{}{}
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{WorkspaceID: "workspace", DashboardID: "sales", DraftID: "draft-1"}}
+	handler := Handler{
+		Authoring: fake,
+		AnalyticalContext: func(ctx context.Context) context.Context {
+			return context.WithValue(ctx, marker, true)
+		},
+	}
+	_ = handler.dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", fake.builder)
+	if fake.previewCtx == nil || fake.previewCtx.Value(marker) != true {
+		t.Fatal("inline builder preview did not receive analytical context")
+	}
+}
+
+func TestDashboardBuilderStandalonePreviewUsesAnalyticalContext(t *testing.T) {
+	marker := &struct{}{}
+	fake := &builderAuthoringFake{}
+	handler := Handler{
+		Authoring:          fake,
+		CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" },
+		AnalyticalContext: func(ctx context.Context) context.Context {
+			return context.WithValue(ctx, marker, true)
+		},
+	}
+	hash := "sha256:" + strings.Repeat("a", 64)
+	req := httptest.NewRequest(nethttp.MethodGet, "/workspaces/sales/dashboards/revenue/preview?draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash="+hash, nil)
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.previewCtx == nil || fake.previewCtx.Value(marker) != true {
+		t.Fatal("standalone builder preview did not receive analytical context")
+	}
+}
+
+func TestDashboardBuilderCommandRepreviewsAuthoritativeRevision(t *testing.T) {
+	selectedPage := "overview"
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{
+		WorkspaceID: "sales", DashboardID: "revenue", DraftID: "draft-1",
+		Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-1", Number: 7, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+		Pages:    []uisignals.DashboardBuilderPageSignal{{ID: selectedPage}}, SelectedPageID: &selectedPage,
+	}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/workspaces/sales/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"workspaceId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "7", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"pageId": selectedPage, "action": "publish",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "command-preview-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.previewCalls != 1 {
+		t.Fatalf("preview calls = %d, want 1", fake.previewCalls)
+	}
+	if fake.previewReq.WorkspaceID != "sales" || fake.previewReq.ActorID != "principal-1" || fake.previewReq.DashboardID != "revenue" || fake.previewReq.DraftID != "draft-1" || fake.previewReq.ExpectedRevision.Number != 7 || fake.previewReq.ExpectedRevision.RevisionID != "revision-1" || fake.previewReq.PageID != selectedPage {
+		t.Fatalf("preview request = %#v", fake.previewReq)
 	}
 }

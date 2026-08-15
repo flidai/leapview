@@ -41,6 +41,7 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 	}
 	builder, err := h.Authoring.Builder(r.Context(), builderview.Request{
 		WorkspaceID: workspaceID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+		SelectedPageID: strings.TrimSpace(r.URL.Query().Get("page")), SelectedVisualID: strings.TrimSpace(r.URL.Query().Get("visual")),
 	})
 	if err != nil {
 		writeBuilderError(w, r, err)
@@ -63,6 +64,7 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		BackHref:       "/workspaces/" + url.PathEscape(workspaceID),
 		PreviewHref:    dashboardBuilderPreviewPath(workspaceID, dashboardID, builder),
 		ExportYAMLHref: dashboardBuilderBasePath(workspaceID, dashboardID) + "/export.yaml",
+		PageBaseHref:   dashboardBuilderBasePath(workspaceID, dashboardID) + "/edit",
 		CommandPath:    dashboardBuilderBasePath(workspaceID, dashboardID) + "/draft/command",
 		CommandBinding: dashboardBuilderCommandBinding,
 	}, providers...).Render(w); err != nil {
@@ -96,7 +98,7 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	clientID := pagestream.EnsureClientID(w, r)
 	streamID := "dashboard_builder:" + clientID + ":" + workspaceID + ":" + dashboardID
 	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(h.traceStore(), streamID, "dashboard_builder.bootstrap"))
-	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(dashboardBuilderEnvelope(builder))); err != nil {
+	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(h.dashboardBuilderEnvelopeWithPreview(r.Context(), actorID, builder))); err != nil {
 		return
 	}
 	<-r.Context().Done()
@@ -161,8 +163,12 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
-	builder = dashboardBuilderWithPreviewHref(builder)
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"builder": builder, "status": uisignals.DashboardStatus{Loading: false}})
+	envelope := h.dashboardBuilderEnvelopeWithPreview(r.Context(), actorID, builder)
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
+		"builder":        envelope.Builder,
+		"builderVisuals": envelope.BuilderVisuals,
+		"status":         uisignals.DashboardStatus{Loading: false},
+	})
 }
 
 // DashboardBuilderPreview renders one exact draft revision as JSON. No
@@ -179,7 +185,7 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
-	result, err := h.Authoring.Preview(r.Context(), preview.PreviewRequest{
+	result, err := h.Authoring.Preview(h.analyticalContext(r.Context()), preview.PreviewRequest{
 		WorkspaceID: workspaceID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		DraftID:          authoring.DraftID(strings.TrimSpace(r.URL.Query().Get("draft"))),
 		ExpectedRevision: revision, PageID: strings.TrimSpace(r.URL.Query().Get("page")),
@@ -325,10 +331,89 @@ func revisionFromQuery(values url.Values) (authoring.RevisionToken, error) {
 func dashboardBuilderEnvelope(builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderEnvelope {
 	builder = dashboardBuilderWithPreviewHref(builder)
 	return uisignals.DashboardBuilderEnvelope{
-		Builder: builder,
-		Runtime: uisignals.RouteRuntimeSignal{Kind: uisignals.RouteKindDashboardBuilder, WorkspaceID: uisignals.Optional(builder.WorkspaceID), DashboardID: uisignals.Optional(builder.DashboardID)},
-		Status:  uisignals.DashboardStatus{Loading: false},
+		Builder:        builder,
+		BuilderVisuals: map[string]uisignals.DashboardVisualizationSignal{},
+		Runtime:        uisignals.RouteRuntimeSignal{Kind: uisignals.RouteKindDashboardBuilder, WorkspaceID: uisignals.Optional(builder.WorkspaceID), DashboardID: uisignals.Optional(builder.DashboardID)},
+		Status:         uisignals.DashboardStatus{Loading: false},
 	}
+}
+
+// dashboardBuilderEnvelopeWithPreview keeps the builder projection authoritative
+// while adding the governed, exact-revision visual preview to the same stream
+// patch. Preview is deliberately fail-soft: authoring/query errors are exposed
+// on builder.preview without hiding the builder or failing the bootstrap.
+func (h Handler) dashboardBuilderEnvelopeWithPreview(ctx context.Context, actorID string, builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderEnvelope {
+	envelope := dashboardBuilderEnvelope(builder)
+	result, err := h.Authoring.Preview(h.analyticalContext(ctx), preview.PreviewRequest{
+		WorkspaceID: strings.TrimSpace(builder.WorkspaceID), ActorID: strings.TrimSpace(actorID),
+		DashboardID: authoring.DashboardID(strings.TrimSpace(builder.DashboardID)),
+		DraftID:     authoring.DraftID(strings.TrimSpace(builder.DraftID)),
+		ExpectedRevision: authoring.RevisionToken{
+			RevisionID: authoring.RevisionID(strings.TrimSpace(builder.Revision.ID)), Number: uint64(maxInt64(builder.Revision.Number)), ContentHash: strings.TrimSpace(builder.Revision.ContentHash),
+		},
+		PageID: firstBuilderPage(builder),
+	})
+	envelope.BuilderVisuals = dashboardBuilderPreviewVisuals(builder, result)
+	envelope.Builder.Preview.Loading = false
+	previewErr := err
+	if previewErr == nil && strings.TrimSpace(result.PagePatch.Status.Error) != "" {
+		previewErr = errors.New(strings.TrimSpace(result.PagePatch.Status.Error))
+	}
+	if previewErr != nil {
+		envelope.Builder.Preview.Active = false
+		message := strings.TrimSpace(previewErr.Error())
+		if message != "" {
+			envelope.Builder.Preview.Error = &message
+		} else {
+			envelope.Builder.Preview.Error = nil
+		}
+		return envelope
+	}
+	envelope.Builder.Preview.Active = true
+	envelope.Builder.Preview.Error = nil
+	return envelope
+}
+
+func maxInt64(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func dashboardBuilderPreviewVisuals(builder uisignals.DashboardBuilderSignal, result preview.Preview) map[string]uisignals.DashboardVisualizationSignal {
+	visuals := make(map[string]uisignals.DashboardVisualizationSignal, len(result.PagePatch.Visuals))
+	pageID := firstBuilderPage(builder)
+	generation := result.PagePatch.Status.Generation
+	if generation <= 0 {
+		generation = 1
+	}
+	servingStateID := strings.TrimSpace(result.SemanticEvidence.ServingStateID)
+	if servingStateID == "" {
+		servingStateID = strings.TrimSpace(result.PagePatch.Filters.ServingStateID)
+	}
+	filterRevision := int64(0)
+	if result.PagePatch.Filters.CompiledState != nil {
+		filterRevision = int64(result.PagePatch.Filters.CompiledState.Revision)
+	}
+	for authoredVisualID, envelope := range result.PagePatch.Visuals {
+		authoredVisualID = strings.TrimSpace(authoredVisualID)
+		if authoredVisualID == "" {
+			authoredVisualID = strings.TrimSpace(envelope.VisualID)
+		}
+		if authoredVisualID == "" {
+			continue
+		}
+		signal := uisignals.DashboardVisualizationSignalFromIR(envelope)
+		signal.VisualID = authoredVisualID
+		signal.ServingStateID = servingStateID
+		signal.StreamGeneration = generation
+		signal.FilterRevision = filterRevision
+		signal.InteractionRevision = int64(result.PagePatch.Filters.InteractionRevision)
+		signal.ConsumerIdentity = pageID + "/" + authoredVisualID
+		visuals[authoredVisualID] = signal
+	}
+	return visuals
 }
 
 // dashboardBuilderWithPreviewHref derives the exact-revision preview URL from

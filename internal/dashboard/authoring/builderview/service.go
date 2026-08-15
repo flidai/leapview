@@ -331,7 +331,7 @@ func projectVisual(component dashboard.PageVisual, authored authoring.AuthoringV
 		if err != nil {
 			return uisignals.DashboardBuilderVisualSignal{}, err
 		}
-		return uisignals.DashboardBuilderVisualSignal{ID: component.Visual, Title: display(title, component.Visual), Type: visualType, Placement: uisignals.DashboardPagePlacementFromDashboard(component.Placement), Slots: slots, Filters: []string{}}, nil
+		return uisignals.DashboardBuilderVisualSignal{ID: component.Visual, VisualID: component.Visual, Title: display(title, component.Visual), Type: visualType, Placement: uisignals.DashboardPagePlacementFromDashboard(component.Placement), Slots: slots, Filters: []string{}}, nil
 	}
 	if authored.Tabular != nil {
 		if title == "" {
@@ -341,7 +341,7 @@ func projectVisual(component dashboard.PageVisual, authored authoring.AuthoringV
 		if err != nil {
 			return uisignals.DashboardBuilderVisualSignal{}, err
 		}
-		return uisignals.DashboardBuilderVisualSignal{ID: component.Visual, Title: display(title, component.Visual), Type: visualType, Placement: uisignals.DashboardPagePlacementFromDashboard(component.Placement), Slots: slots, Filters: []string{}}, nil
+		return uisignals.DashboardBuilderVisualSignal{ID: component.Visual, VisualID: component.Visual, Title: display(title, component.Visual), Type: visualType, Placement: uisignals.DashboardPagePlacementFromDashboard(component.Placement), Slots: slots, Filters: []string{}}, nil
 	}
 	return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("visual %q has no authoring variant", component.Visual)
 }

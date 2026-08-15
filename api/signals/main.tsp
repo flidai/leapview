@@ -37,6 +37,8 @@ enum RouteKind {
 model DashboardBuilderEnvelope {
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builder" })
   `builder`: DashboardBuilderSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderVisuals" })
+  `builderVisuals`: Record<DashboardVisualizationSignal>;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
   `runtime`: RouteRuntimeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
@@ -128,6 +130,7 @@ model DashboardBuilderPageSignal {
 
 model DashboardBuilderVisualSignal {
   `id`: string;
+  `visualId`: string;
   `title`: string;
   `type`: string;
   `placement`: DashboardPagePlacement;

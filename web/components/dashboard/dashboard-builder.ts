@@ -8,10 +8,14 @@ import type {
   DashboardBuilderTableSignal,
   DashboardBuilderVisualSignal,
   DashboardBuilderVisualSlotSignal,
+  DashboardVisualizationSignal,
   DashboardStatus,
 } from '../../generated/signals'
+import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
+import './visualization/host'
+import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
 
 const emptyStatus: DashboardStatus = {
   loading: false,
@@ -28,11 +32,14 @@ const emptyStatus: DashboardStatus = {
 // server catalog remains authoritative for future visual types.
 const builderVisualTypes = ['bar', 'line', 'area', 'column', 'table'] as const
 
+type DashboardBuilderVisualWithPreview = DashboardBuilderVisualSignal & { visualId?: string }
+
 /** Draft dashboard authoring surface. Runtime dashboard rendering remains a
  * separate component and envelope; this component only edits the bounded
  * builder projection delivered by the stream. */
 class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @property({ attribute: 'back-href' }) backHref = ''
+  @property({ attribute: 'page-base-href' }) pageBaseHref = ''
   @property({ attribute: 'preview-href' }) previewHref = ''
   @property({ attribute: 'export-yaml-href' }) exportYAMLHref = ''
 
@@ -40,6 +47,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private localPageID = ''
   @state() private localVisualID = ''
   @state() private visualType = 'bar'
+  private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
 
   // Add-page uses server-generated identifiers. Keep the page set that was
   // visible when the intent was sent so the authoritative response can select
@@ -76,9 +84,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .toolbar {
       display: flex;
       align-items: center;
-      gap: 0.75rem;
-      min-height: 3.75rem;
-      padding: 0.6rem 1rem;
+      gap: var(--base-size-12);
+      min-height: var(--control-medium-size);
+      padding: var(--base-size-8) var(--base-size-16);
       border-bottom: var(--lv-border-muted);
       background: var(--lv-bg-panel);
     }
@@ -106,7 +114,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .title {
       margin: 0;
       overflow: hidden;
-      font: var(--lv-type-body);
+      font: var(--lv-type-section-title, var(--lv-type-body));
       font-weight: var(--base-text-weight-semibold);
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -114,34 +122,30 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .meta {
       display: flex;
-      flex-wrap: wrap;
-      gap: 0.3rem;
-      margin-top: 0.15rem;
+      align-items: center;
+      gap: var(--base-size-6);
+      margin-top: var(--base-size-2);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-    }
-
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      border: var(--lv-border-muted);
-      border-radius: 999px;
-      padding: 0.12rem 0.45rem;
-      background: var(--lv-bg-panel-muted);
       white-space: nowrap;
     }
 
-    .badge.draft,
-    .badge.dirty {
-      border: var(--lv-border-attention);
-      color: var(--lv-fg-warning);
-      background: var(--lv-bg-attention-muted);
+    .meta::before {
+      width: var(--base-size-6);
+      height: var(--base-size-6);
+      border-radius: var(--lv-radius-full);
+      background: var(--lv-fg-muted);
+      content: '';
     }
 
-    .badge.shared {
-      border: var(--lv-border-accent);
-      color: var(--lv-fg-accent);
-      background: var(--lv-bg-accent-muted);
+    .meta[data-state='dirty']::before,
+    .meta[data-state='saving']::before,
+    .meta[data-state='error']::before {
+      background: var(--lv-fg-warning);
+    }
+
+    .meta[data-state='saved']::before {
+      background: var(--lv-fg-success);
     }
 
     .toolbar-actions {
@@ -155,10 +159,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 2rem;
+      min-height: var(--control-medium-size);
+      box-sizing: border-box;
       border: var(--lv-border-default);
-      border-radius: 0.35rem;
-      padding: 0.35rem 0.65rem;
+      border-radius: var(--lv-button-radius, var(--lv-radius-default));
+      padding: 0 var(--lv-button-padding-inline, var(--base-size-12));
       color: var(--lv-button-fg-rest);
       background: var(--lv-button-bg-rest);
       font: var(--lv-type-body-compact);
@@ -179,6 +184,67 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     button.primary:hover {
       background: var(--lv-button-accent-bg-hover);
+    }
+
+    .more-actions {
+      position: relative;
+    }
+
+    .more-actions summary {
+      display: inline-flex;
+      min-height: var(--control-medium-size);
+      box-sizing: border-box;
+      align-items: center;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-button-radius, var(--lv-radius-default));
+      padding: 0 var(--lv-button-padding-inline, var(--base-size-12));
+      color: var(--lv-button-fg-rest);
+      background: var(--lv-button-bg-rest);
+      font: var(--lv-type-body-compact);
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .more-actions summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .more-actions summary:focus-visible {
+      outline: 2px solid var(--lv-fg-accent);
+      outline-offset: 2px;
+    }
+
+    .more-actions summary:hover {
+      background: var(--lv-button-bg-hover);
+    }
+
+    .more-menu {
+      position: absolute;
+      z-index: 2;
+      top: calc(100% + var(--base-size-6));
+      right: 0;
+      display: grid;
+      min-width: 10rem;
+      gap: var(--base-size-2);
+      padding: var(--base-size-4);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      box-shadow: var(--lv-shadow-floating-sm);
+    }
+
+    .more-menu button,
+    .more-menu .button {
+      justify-content: flex-start;
+      width: 100%;
+      border-color: transparent;
+      background: transparent;
+      text-align: left;
+    }
+
+    .more-menu button:hover,
+    .more-menu .button:hover {
+      background: var(--lv-bg-panel-muted);
     }
 
     button:disabled {
@@ -231,12 +297,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .search {
       width: 100%;
       box-sizing: border-box;
-      margin-top: 0.65rem;
+      min-height: var(--control-small-size);
+      margin-top: var(--base-size-8);
       border: var(--lv-border-default);
-      border-radius: 0.3rem;
-      padding: 0.45rem 0.55rem;
+      border-radius: var(--lv-radius-small, var(--lv-radius-default));
+      padding: 0 var(--control-small-paddingInline-normal, var(--base-size-8));
       color: var(--lv-fg-default);
-      background: var(--lv-bg-input);
+      background: var(--lv-bg-input, var(--lv-bg-control));
       font: var(--lv-type-body-compact);
     }
 
@@ -245,6 +312,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .table summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--base-size-8);
       padding: 0.6rem 0.85rem;
       color: var(--lv-fg-default);
       font: var(--lv-type-caption);
@@ -266,8 +337,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       width: 100%;
       box-sizing: border-box;
       border: 1px solid transparent;
-      border-radius: 0.3rem;
-      padding: 0.38rem 0.45rem;
+      border-radius: var(--lv-radius-small, var(--lv-radius-default));
+      min-height: var(--control-small-size);
+      padding: 0 var(--control-small-paddingInline-normal, var(--base-size-8));
       color: inherit;
       background: transparent;
       text-align: left;
@@ -310,17 +382,24 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .page-tabs {
       display: flex;
       align-items: center;
-      gap: 0.3rem;
+      gap: var(--base-size-4);
       overflow-x: auto;
-      padding: 0.55rem 0.75rem;
+      padding: var(--base-size-6) var(--base-size-12);
       border-bottom: var(--lv-border-muted);
       background: var(--lv-bg-panel);
     }
 
     .page-tab {
       flex: 0 0 auto;
+      min-height: var(--control-small-size);
+      border-radius: var(--lv-button-radius, var(--lv-radius-default));
+      padding: 0 var(--control-small-paddingInline-normal, var(--base-size-8));
+      color: inherit;
       border-color: transparent;
       background: transparent;
+      font: inherit;
+      text-decoration: none;
+      cursor: pointer;
     }
 
     .page-tab[aria-selected='true'] {
@@ -330,36 +409,94 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .canvas-scroll {
+      position: relative;
       overflow: auto;
-      padding: 1.2rem;
+      min-width: 0;
+      padding: 0;
     }
 
     .canvas {
       position: relative;
+      width: max(100%, 38rem);
       min-width: 38rem;
       min-height: 30rem;
-      border: var(--lv-border-muted);
-      border-radius: 0.45rem;
+      border: 0;
+      border-radius: 0;
       background-color: var(--lv-bg-panel);
       background-image: linear-gradient(to right, color-mix(in srgb, var(--lv-fg-accent) 7%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--lv-fg-accent) 7%, transparent) 1px, transparent 1px);
       background-size: 8.333% 2.5rem;
-      box-shadow: var(--lv-shadow-floating-sm);
+      box-shadow: none;
+    }
+
+    .add-visual {
+      display: flex;
+      align-items: center;
+      gap: var(--base-size-6);
+      min-height: var(--control-small-size);
+      box-sizing: border-box;
+      padding: var(--base-size-6) var(--base-size-12);
+      border-bottom: var(--lv-border-muted);
+      background: var(--lv-bg-panel);
+      font: var(--lv-type-caption);
+    }
+
+    .add-visual label {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--base-size-6);
+      color: var(--lv-fg-muted);
+    }
+
+    .add-visual select {
+      min-height: var(--control-small-size);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-small, var(--lv-radius-default));
+      padding: 0 var(--control-small-paddingInline-normal, var(--base-size-8));
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-control, var(--lv-bg-panel));
+      font: var(--lv-type-caption);
+    }
+
+    .add-visual button {
+      min-height: var(--control-small-size);
+      border-radius: var(--lv-button-radius, var(--lv-radius-default));
+      padding: 0 var(--control-small-paddingInline-normal, var(--base-size-8));
+    }
+
+    .preview-error {
+      margin: 0;
+      padding: var(--base-size-8) var(--base-size-12);
+      border-bottom: var(--lv-border-muted);
+      color: var(--lv-fg-danger, var(--lv-fg-muted));
+      background: var(--lv-bg-danger-muted, var(--lv-bg-panel));
+      font: var(--lv-type-caption);
     }
 
     .visual {
       position: absolute;
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
       min-width: 4rem;
       min-height: 3rem;
       box-sizing: border-box;
       border: var(--lv-border-default);
-      border-radius: 0.35rem;
-      padding: 0.55rem;
+      border-radius: var(--lv-radius-default);
+      padding: var(--base-size-8);
       color: inherit;
       background: color-mix(in srgb, var(--lv-bg-panel) 96%, transparent);
       text-align: left;
       cursor: pointer;
+    }
+
+    .visual.has-preview {
+      grid-template-rows: minmax(0, 1fr);
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .visual:focus-visible {
+      outline: 2px solid var(--lv-fg-accent);
+      outline-offset: 2px;
     }
 
     .visual:hover,
@@ -382,6 +519,31 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       font: var(--lv-type-caption);
     }
 
+    .visual-preview {
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .visual-preview lv-visualization-host {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .visual-preview-empty {
+      display: grid;
+      min-height: 0;
+      place-items: center;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      text-align: center;
+    }
+
     .visual-empty {
       display: grid;
       place-items: center;
@@ -398,8 +560,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .properties-body {
       display: grid;
-      gap: 1rem;
-      padding: 0.85rem;
+      gap: var(--base-size-12);
+      padding: var(--base-size-12);
     }
 
     .property-group {
@@ -409,10 +571,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .property-label {
       color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
+      font: var(--lv-type-body-compact);
       font-weight: var(--base-text-weight-semibold);
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
     }
 
     .property-value {
@@ -425,8 +585,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       justify-content: space-between;
       gap: 0.5rem;
       border: var(--lv-border-muted);
-      border-radius: 0.3rem;
-      padding: 0.45rem;
+      border-radius: var(--lv-radius-small, var(--lv-radius-default));
+      padding: var(--base-size-6);
       font: var(--lv-type-body-compact);
     }
 
@@ -464,6 +624,24 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       gap: 0.3rem;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
+    }
+
+    .secondary-details {
+      border-top: var(--lv-border-muted);
+      padding-top: var(--base-size-8);
+    }
+
+    .secondary-details summary {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
+      cursor: pointer;
+    }
+
+    .secondary-details-content {
+      display: grid;
+      gap: var(--base-size-12);
+      padding-top: var(--base-size-8);
     }
 
     .state {
@@ -532,6 +710,40 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         min-height: 38rem;
       }
 
+      /* The authored grid remains absolute on desktop. On a narrow viewport,
+       * switch the canvas to a single-column flow so chart hosts get a real
+       * viewport-sized box instead of an off-screen slice of the desktop
+       * canvas. The surface stays full-bleed; the canvas scroller remains the
+       * only overflow container. */
+      .canvas {
+        display: grid;
+        width: 100%;
+        min-width: 0;
+        min-height: 0;
+        aspect-ratio: auto !important;
+        grid-template-columns: minmax(0, 1fr) !important;
+        grid-auto-rows: auto;
+        gap: var(--base-size-12);
+      }
+
+      .canvas .visual {
+        position: relative;
+        top: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        left: auto !important;
+        width: 100% !important;
+        height: 16rem !important;
+        min-width: 0;
+        min-height: 12rem;
+        order: var(--mobile-order, 0);
+      }
+
+      .canvas .visual[data-visual-type='kpi'] {
+        height: 8rem !important;
+        min-height: 8rem;
+      }
+
       .toolbar-actions {
         width: 100%;
         overflow-x: auto;
@@ -564,6 +776,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return this.signal<DashboardStatus>('status', emptyStatus)
   }
 
+  get builderVisuals(): Record<string, VisualizationEnvelope> {
+    return this.visualizationDecoder.decodeAll(
+      this.signal<Record<string, DashboardVisualizationSignal>>('builderVisuals', {}),
+    )
+  }
+
   render() {
     const builder = this.builder
     if (!builder) {
@@ -591,27 +809,30 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderToolbar(builder: DashboardBuilderSignal) {
     const saveState = builder.save.state
+    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport
     return html`
       <header class="toolbar">
-        ${this.backHref ? html`<a class="back" href=${this.backHref} aria-label="Back to dashboard">← Back</a>` : html`<span class="back" aria-label="Back to dashboard">← Back</span>`}
+        ${this.backHref ? html`<a class="back" href=${this.backHref} aria-label="Back to dashboard">Back</a>` : html`<span class="back" aria-label="Back to dashboard">Back</span>`}
         <div class="title-wrap">
           <h1 class="title">${builder.title}</h1>
-          <div class="meta" aria-label="Dashboard draft metadata">
-            <span class="badge">${builder.origin.label}</span>
-            <span class="badge ${builder.visibility}">${builder.visibility}</span>
-            <span class="badge ${builder.lifecycle}">${builder.lifecycle}</span>
-            <span class="badge" title=${builder.revision.id}>Revision ${builder.revision.number}</span>
-            <span class="badge ${builder.hasUnpublishedChanges || saveState === 'dirty' ? 'dirty' : ''}" aria-live="polite">${this.saveLabel(builder)}</span>
+          <div class="meta" data-state=${builder.hasUnpublishedChanges || saveState === 'dirty' ? 'dirty' : saveState} aria-label="Dashboard draft status" aria-live="polite" title=${`${builder.origin.label} · Revision ${builder.revision.number} · ${builder.revision.id}`}>
+            <span>${this.titleCase(builder.visibility)} ${this.titleCase(builder.lifecycle)} · Revision ${builder.revision.number} · ${this.saveLabel(builder)}</span>
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
           ${(builder.preview.href || this.previewHref) && builder.capabilities.canPreview
             ? html`<a class="button" href=${builder.preview.href || this.previewHref}>Preview</a>`
             : builder.capabilities.canPreview ? html`<button disabled title="Preview is not available yet">Preview</button>` : nothing}
-          ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'shared' ? 'Make private' : 'Share'}</button>` : nothing}
-          ${builder.capabilities.canExport
-            ? this.exportYAMLHref ? html`<a class="button" href=${this.exportYAMLHref} download>Export YAML</a>` : html`<button disabled title="YAML export is not available yet">Export YAML</button>`
-            : nothing}
+          ${hasMoreActions ? html`
+            <details class="more-actions">
+              <summary aria-label="More dashboard actions">More</summary>
+              <div class="more-menu" aria-label="More dashboard actions">
+                ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'shared' ? 'Make private' : 'Share'}</button>` : nothing}
+                ${builder.capabilities.canExport
+                  ? this.exportYAMLHref ? html`<a class="button" href=${this.exportYAMLHref} download>Export YAML</a>` : html`<button disabled title="YAML export is not available yet">Export YAML</button>`
+                  : nothing}
+              </div>
+            </details>` : nothing}
           ${builder.capabilities.canPublish ? html`<button class="primary" @click=${this.publish}>Publish</button>` : nothing}
         </div>
       </header>
@@ -624,7 +845,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <aside class="pane fields" aria-label="Semantic model fields">
         <div class="pane-header">
           <h2 class="pane-title">${builder.semanticModel.title}</h2>
-          <p class="pane-hint">Drag fields onto a visual, or use Add to place them in the selected slot.</p>
+          <p class="pane-hint">Select a visual, then choose or drag a field.</p>
           <label>
             <span class="sr-only">Search fields</span>
             <input class="search" type="search" placeholder="Search fields" .value=${this.fieldQuery} @input=${this.onFieldQuery} />
@@ -646,7 +867,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <button class="field" draggable=${this.builder?.capabilities.canEdit ? 'true' : 'false'} ?disabled=${!this.builder?.capabilities.canEdit} title=${this.builder?.capabilities.canEdit ? `Add ${field.label} to the selected visual` : 'Editing is not permitted'} aria-label="Add ${field.label}" @click=${() => this.addField(field)} @dragstart=${(event: DragEvent) => this.dragField(event, field)}>
               <span class="field-kind" aria-hidden="true">${field.kind === 'measure' ? '∑' : '◇'}</span>
               <span class="field-label">${field.label}</span>
-              <span class="field-type">${field.dataType}</span>
+              ${field.dataType.toLowerCase() === 'unknown' ? nothing : html`<span class="field-type">${field.dataType}</span>`}
             </button>
           `)}
         </div>
@@ -662,11 +883,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`
       <main class="canvas-pane" aria-label="Dashboard canvas">
         <nav class="page-tabs" aria-label="Dashboard pages" role="tablist">
-          ${builder.pages.map((item) => html`<button class="page-tab" role="tab" aria-selected=${item.id === page.id} @click=${() => this.selectPage(item.id)}>${item.title}</button>`)}
-          ${builder.capabilities.canAddPage ? html`<button class="page-tab" @click=${this.addPage} aria-label="Add page">＋</button>` : nothing}
+          ${builder.pages.map((item) => this.pageBaseHref
+            ? html`<a class="page-tab" role="tab" aria-selected=${item.id === page.id} href=${this.pageHref(item.id)}>${item.title}</a>`
+            : html`<button class="page-tab" role="tab" aria-selected=${item.id === page.id} @click=${() => this.selectPage(item.id)}>${item.title}</button>`)}
+          ${builder.capabilities.canAddPage ? html`<button class="page-tab" @click=${this.addPage} aria-label="Add page">Add page</button>` : nothing}
         </nav>
         <div class="canvas-scroll">
           ${builder.capabilities.canAddVisual ? this.renderAddVisualControl() : nothing}
+          ${builder.preview.error ? html`<p class="preview-error" role="alert">${builder.preview.error}</p>` : nothing}
           <div class="canvas" style=${`aspect-ratio: ${page.canvas.width || 16} / ${page.canvas.height || 9}; grid-template-columns: repeat(${width}, 1fr);`} @dragover=${(event: DragEvent) => event.preventDefault()} @drop=${this.dropField}>
             ${page.visuals.length === 0
               ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Drag a field here or add a visual to begin.</span></div></div>`
@@ -679,26 +903,34 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderVisual(visual: DashboardBuilderVisualSignal, page: DashboardBuilderPageSignal) {
     const selected = visual.id === this.effectiveVisualID(this.builder, page)
+    const preview = this.builderVisuals[this.visualSignalID(visual)]
+    const mobileOrder = this.mobileVisualOrder(visual, page)
     const left = `${Math.max(0, visual.placement.col - 1) * (100 / Math.max(1, page.grid.columns))}%`
     const top = `${Math.max(0, visual.placement.row - 1) * (page.grid.rowHeight || 40)}px`
     const width = `${Math.max(1, visual.placement.colSpan) * (100 / Math.max(1, page.grid.columns))}%`
     const height = `${Math.max(1, visual.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
     return html`
-      <button class="visual" aria-pressed=${selected} aria-label="Select ${visual.title}" style=${`left:${left};top:${top};width:${width};height:${height}`} @click=${() => this.selectVisual(visual.id)}>
-        <span class="visual-title">${visual.title}</span>
-        <span class="visual-type">${visual.type} · ${visual.slots.length} field slots</span>
-      </button>
+      <div class="visual ${preview ? 'has-preview' : ''}" data-visual-type=${visual.type.toLowerCase()} role="button" tabindex="0" aria-pressed=${selected} aria-label="Select ${visual.title}" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${() => this.selectVisual(visual.id)} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)}>
+        ${preview
+          ? html`<span class="visual-preview" aria-hidden="true" inert><lv-visualization-host .envelope=${preview}></lv-visualization-host></span>`
+          : html`<span class="visual-title">${visual.title}</span><span class="visual-preview-empty">${this.builder?.preview.error ? 'Preview unavailable' : 'Add fields to preview'}</span><span class="visual-type">${visual.type} · ${visual.slots.length} field slots</span>`}
+      </div>
     `
   }
 
   private renderProperties(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
     return html`
       <aside class="pane properties" aria-label="Properties">
-        <div class="pane-header"><h2 class="pane-title">${visual ? 'Visual properties' : 'Page properties'}</h2><p class="pane-hint">Governed fields, formatting, and validation stay attached to the draft.</p></div>
+        <div class="pane-header"><h2 class="pane-title">${visual ? 'Visual properties' : 'Page properties'}</h2><p class="pane-hint">Configure fields and review validation.</p></div>
         <div class="properties-body">
           ${visual ? this.renderVisualProperties(visual) : this.renderPageProperties(page)}
-          ${this.renderDiagnostics(builder.diagnostics)}
-          ${this.renderEvidence(builder)}
+          <details class="secondary-details">
+            <summary>Diagnostics &amp; source evidence</summary>
+            <div class="secondary-details-content">
+              ${this.renderDiagnostics(builder.diagnostics)}
+              ${this.renderEvidence(builder)}
+            </div>
+          </details>
         </div>
       </aside>
     `
@@ -713,10 +945,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <section class="property-group" aria-label="Query fields">
         <span class="property-label">Query slots</span>
         ${visual.slots.length === 0 ? html`<span class="pane-hint">Drop a field into this visual.</span>` : visual.slots.map((slot) => this.renderSlot(slot))}
-      </section>
-      <section class="property-group" aria-label="Formatting and interactions">
-        <span class="property-label">Format &amp; interactions</span>
-        <span class="pane-hint">Formatting and cross-filter interactions are configured per visual.</span>
       </section>
       <section class="property-group" aria-label="Visual filters">
         <span class="property-label">Filters</span>
@@ -843,9 +1071,30 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.emit('lv-builder-page-select', { ...this.commandDetail(), pageId: pageID })
   }
 
+  private pageHref(pageID: string): string {
+    const separator = this.pageBaseHref.includes('?') ? '&' : '?'
+    return `${this.pageBaseHref}${separator}page=${encodeURIComponent(pageID)}`
+  }
+
   private selectVisual(visualID: string): void {
     this.localVisualID = visualID
     this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: visualID })
+  }
+
+  private selectVisualOnKey(event: KeyboardEvent, visualID: string): void {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    this.selectVisual(visualID)
+  }
+
+  private visualSignalID(visual: DashboardBuilderVisualSignal): string {
+    return (visual as DashboardBuilderVisualWithPreview).visualId || visual.id
+  }
+
+  private mobileVisualOrder(visual: DashboardBuilderVisualSignal, page: DashboardBuilderPageSignal): number {
+    return [...page.visuals]
+      .sort((left, right) => left.placement.row - right.placement.row || left.placement.col - right.placement.col || left.id.localeCompare(right.id))
+      .findIndex((item) => item.id === visual.id)
   }
 
   private commandDetail(): Record<string, string> {
@@ -899,6 +1148,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (builder.save.state === 'dirty') return 'Unsaved changes'
     if (builder.hasUnpublishedChanges) return 'Unpublished draft'
     return builder.save.message || 'Saved'
+  }
+
+  private titleCase(value: string): string {
+    return value.length === 0 ? value : `${value[0].toUpperCase()}${value.slice(1)}`
   }
 }
 

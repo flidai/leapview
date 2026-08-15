@@ -209,6 +209,9 @@ func TestBuildDeterministicProjectionAndComponentIdentity(t *testing.T) {
 	if got := []string{one.Pages[0].Visuals[0].ID, one.Pages[0].Visuals[1].ID}; !reflect.DeepEqual(got, []string{"first-placement", "second-placement"}) {
 		t.Fatalf("component identity/order = %#v", got)
 	}
+	if got := []string{one.Pages[0].Visuals[0].VisualID, one.Pages[0].Visuals[1].VisualID}; !reflect.DeepEqual(got, []string{"orders", "orders"}) {
+		t.Fatalf("authored visual identity = %#v", got)
+	}
 }
 
 func TestBuildBoundsGlobalCountsAndDoesNotLeakAuthoredUnion(t *testing.T) {

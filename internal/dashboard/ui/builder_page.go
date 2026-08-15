@@ -18,12 +18,14 @@ import (
 // domain events; this boundary keeps command transport in the page shell.
 //
 // BackHref, PreviewHref, and ExportYAMLHref are optional browser navigations.
+// PageBaseHref is the canonical edit URL used by page-navigation anchors.
 // Mutating actions use one injected command path and APIGen binding so CSRF
 // and operation headers are always assembled by the shared action helpers.
 type DashboardBuilderActionBindings struct {
 	BackHref       string
 	PreviewHref    string
 	ExportYAMLHref string
+	PageBaseHref   string
 
 	CommandPath    string
 	CommandBinding uicommand.Binding
@@ -35,7 +37,7 @@ type DashboardBuilderActionBindings struct {
 // injected action bridges.
 func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken string, actions DashboardBuilderActionBindings, providers ...webpage.Provider) g.Node {
 	builder := envelope.Builder
-	layout := webpage.Resolve(firstProvider(providers), webpage.Context{
+	layout := builderFocusLayout(firstProvider(providers), webpage.Context{
 		Active:       "dashboards",
 		ScopeID:      builder.WorkspaceID,
 		SectionID:    builder.DashboardID,
@@ -56,6 +58,7 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 		"back-href":        actions.BackHref,
 		"preview-href":     actions.PreviewHref,
 		"export-yaml-href": actions.ExportYAMLHref,
+		"page-base-href":   actions.PageBaseHref,
 	} {
 		if strings.TrimSpace(value) != "" {
 			attrs = append(attrs, g.Attr(name, value))
@@ -71,13 +74,26 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 	})
 }
 
+// builderFocusLayout keeps product presentation/theme/assets while removing
+// the application shell mount and chrome assets. The builder owns its own
+// back/title/actions and therefore renders as a full-width route-local focus
+// surface; other routes continue using the injected layout unchanged.
+func builderFocusLayout(provider webpage.Provider, context webpage.Context) webpage.Layout {
+	layout := webpage.Resolve(provider, context)
+	layout.Signal = nil
+	layout.Scripts = nil
+	layout.Mount = nil
+	return layout
+}
+
 // DashboardBuilderBootstrapSignals exposes the typed stream bootstrap under
 // stable signal keys without serializing it into the document shell.
 func DashboardBuilderBootstrapSignals(envelope uisignals.DashboardBuilderEnvelope) map[string]any {
 	return map[string]any{
-		"builder": envelope.Builder,
-		"runtime": envelope.Runtime,
-		"status":  envelope.Status,
+		"builder":        envelope.Builder,
+		"builderVisuals": envelope.BuilderVisuals,
+		"runtime":        envelope.Runtime,
+		"status":         envelope.Status,
 	}
 }
 
@@ -92,6 +108,9 @@ func dashboardBuilderUpdatesURL(builder uisignals.DashboardBuilderSignal) string
 	}
 	if strings.TrimSpace(builder.DraftID) != "" {
 		values.Set("draft", builder.DraftID)
+	}
+	if builder.SelectedPageID != nil && strings.TrimSpace(*builder.SelectedPageID) != "" {
+		values.Set("page", strings.TrimSpace(*builder.SelectedPageID))
 	}
 	return "/updates?" + values.Encode()
 }
