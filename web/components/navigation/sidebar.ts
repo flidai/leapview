@@ -303,50 +303,47 @@ class LeapViewSidebar extends LitElement {
     }
 
 		.area-switcher {
-			display: flex;
-			align-items: center;
-			gap: var(--base-size-12);
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: var(--base-size-2);
 			border: 0;
+			border-radius: var(--lv-radius-default);
 			background: transparent;
-			padding: 0 var(--base-size-2);
+			padding: 0;
     }
 
     .area-item {
-      display: inline-flex;
+      display: grid;
       min-width: 0;
-      min-height: var(--control-xsmall-size);
+      min-height: var(--control-small-size);
+      grid-template-columns: var(--control-xsmall-size) minmax(0, 1fr);
       align-items: center;
       justify-content: center;
-      border-bottom: var(--borderWidth-thick) solid transparent;
-      border-radius: 0;
+      gap: var(--base-size-4);
+      border-radius: calc(var(--lv-radius-default) - var(--base-size-2));
       color: var(--lv-fg-muted);
-      padding: 0 var(--base-size-2);
+      padding: 0 var(--base-size-6);
       text-decoration: none;
       font: var(--lv-type-body-compact);
     }
 
-    .area-item:hover {
-      background: transparent;
-      color: var(--lv-fg-default);
-    }
-
+    .area-item:hover,
     .area-item:focus-visible {
-      background: transparent;
+      background: var(--control-bgColor-hover);
       color: var(--lv-fg-default);
       outline: var(--focus-outline);
       outline-offset: var(--focus-outline-offset);
     }
 
 		.area-item[aria-current='page'] {
-			border-bottom-color: var(--lv-line-accent);
-			background: transparent;
+			background: var(--control-bgColor-hover);
 			box-shadow: none;
 			color: var(--lv-fg-default);
 			font-weight: var(--base-text-weight-medium);
     }
 
     .area-icon {
-      display: none;
+      display: grid;
       width: var(--control-xsmall-size);
       height: var(--control-xsmall-size);
       place-items: center;
@@ -822,31 +819,15 @@ class LeapViewSidebar extends LitElement {
     }
 
     :host([data-collapsed]) .area-switcher:not(.mobile-area-switcher) {
-      display: grid;
-      grid-template-columns: 1fr;
-      justify-items: center;
-      gap: var(--base-size-2);
-      border: 0;
-      background: transparent;
-      padding: 0;
+      display: none;
     }
 
     :host([data-collapsed]) .area-item {
       width: var(--base-size-36);
       min-height: var(--base-size-36);
-      border-bottom: 0;
-      border-radius: var(--lv-radius-default);
       grid-template-columns: 1fr;
       justify-items: center;
       padding: 0;
-    }
-
-    :host([data-collapsed]) .area-item[aria-current='page'] {
-      background: var(--control-bgColor-hover);
-    }
-
-    :host([data-collapsed]) .area-icon {
-      display: grid;
     }
 
     :host([data-collapsed]) .area-label {
@@ -1043,35 +1024,22 @@ class LeapViewSidebar extends LitElement {
 
 			.area-switcher,
 			:host([data-collapsed]) .area-switcher {
-				display: flex;
-				align-items: center;
-				justify-content: flex-start;
-				gap: var(--base-size-12);
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				justify-items: stretch;
 				margin-bottom: var(--base-size-8);
 				border: 0;
 				background: transparent;
-				padding: 0 var(--base-size-2);
+				padding: 0;
 			}
 
       .area-item,
       :host([data-collapsed]) .area-item {
         width: auto;
-        min-height: var(--control-xsmall-size);
-        border-bottom: var(--borderWidth-thick) solid transparent;
-        border-radius: 0;
-        background: transparent;
-        padding: 0 var(--base-size-2);
-      }
-
-      .area-item[aria-current='page'],
-      :host([data-collapsed]) .area-item[aria-current='page'] {
-        border-bottom-color: var(--lv-line-accent);
-        background: transparent;
-      }
-
-      .area-icon,
-      :host([data-collapsed]) .area-icon {
-        display: none;
+        min-height: var(--control-small-size);
+        grid-template-columns: var(--control-xsmall-size) minmax(0, auto);
+        justify-items: stretch;
+        padding: 0 var(--base-size-6);
       }
 
       .area-label,

@@ -281,6 +281,11 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
           return button ? { label: button.getAttribute('aria-label'), disabled: button.disabled } : null
         })(),
         collapsedAttribute: sidebar.hasAttribute('data-collapsed'),
+        visibleAreaSwitcherCount: Array.from(root.querySelectorAll('.area-switcher')).filter((item) => {
+          const rect = item.getBoundingClientRect()
+          const style = getComputedStyle(item)
+          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+        }).length,
       }
     })
 
@@ -295,6 +300,7 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
       markCount: 0,
       collapseControl: { label: 'Expand navigation', disabled: false },
       collapsedAttribute: true,
+      visibleAreaSwitcherCount: 0,
     })
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
@@ -757,11 +763,10 @@ test('sidebar switches between Insights and Develop and remembers the last area 
     expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
     expect(developState.visibleAreaSwitcherCount).toBe(1)
     expect(developState.currentAreaClickPrevented).toBe(true)
-    expect(developState.switcherStyle).toEqual({ display: 'flex', borderTopWidth: '0px', backgroundColor: 'rgba(0, 0, 0, 0)' })
+    expect(developState.switcherStyle).toEqual({ display: 'grid', borderTopWidth: '0px', backgroundColor: 'rgba(0, 0, 0, 0)' })
     expect(developState.currentAreaStyle.boxShadow).toBe('none')
-    expect(developState.currentAreaStyle.backgroundColor).toBe(developState.switcherStyle.backgroundColor)
-    expect(developState.currentAreaStyle.borderBottomColor).not.toBe(developState.otherAreaStyle.borderBottomColor)
-    expect(developState.areaIconDisplay).toBe('none')
+    expect(developState.currentAreaStyle.backgroundColor).not.toBe(developState.switcherStyle.backgroundColor)
+    expect(developState.areaIconDisplay).toBe('grid')
 
     await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
@@ -1182,11 +1187,7 @@ async function sidebarAreaState(page: import('@playwright/test').Page) {
       })(),
       currentAreaStyle: (() => {
         const style = getComputedStyle(root.querySelector('.brand .area-item[aria-current="page"]') as HTMLElement)
-        return { backgroundColor: style.backgroundColor, borderBottomColor: style.borderBottomColor, boxShadow: style.boxShadow }
-      })(),
-      otherAreaStyle: (() => {
-        const style = getComputedStyle(root.querySelector('.brand .area-item[aria-current="false"]') as HTMLElement)
-        return { borderBottomColor: style.borderBottomColor }
+        return { backgroundColor: style.backgroundColor, boxShadow: style.boxShadow }
       })(),
       areaIconDisplay: getComputedStyle(root.querySelector('.brand .area-icon') as HTMLElement).display,
     }
