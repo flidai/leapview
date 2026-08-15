@@ -24,7 +24,6 @@ import (
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
-	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
@@ -58,7 +57,7 @@ type capabilityRoutes struct {
 	managedDataModule  *manageddatamodule.Module
 	deploymentModule   *deploymentmodule.Module
 	dashboardModule    *dashboardmodule.Module
-	dashboardAuthoring *authoringapplication.Application
+	dashboardAuthoring *dashboardmodule.AuthoringApplication
 	dashboardAssets    dashboardmodule.Assets
 	agentModule        *agentmodule.Module
 	releaseModule      *releasemodule.Module
@@ -194,7 +193,7 @@ type capabilityAssemblyInputs struct {
 	Agent             *agentmodule.Service
 	ManagedDataModule *manageddatamodule.Module
 	AnalyticsModule   *analyticsmodule.Module
-	Authoring         *authoringapplication.Application
+	Authoring         *dashboardmodule.AuthoringApplication
 	DashboardAssets   dashboardmodule.Assets
 	Product           *adminmodule.ProductService
 	ProductStatus     adminmodule.ProductStatus

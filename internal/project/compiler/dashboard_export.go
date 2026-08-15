@@ -22,18 +22,10 @@ import (
 // never decompiled implicitly.
 var ErrDashboardSourceUnavailable = errors.New("dashboard authored source is unavailable")
 
-// DashboardExportMetadata is the project-resource metadata surrounding an
-// authored dashboard. Name and title fall back to Dashboard.ID and
-// Dashboard.Title when omitted. Workspace is optional in the resource schema,
-// but should normally be supplied for a workspace dashboard.
-type DashboardExportMetadata struct {
-	Name        string
-	Workspace   string
-	Title       string
-	Description string
-	Owner       string
-	Tags        []string
-}
+// DashboardExportMetadata is retained as an alias for the dashboard-owned
+// export contract. The compiler remains the production implementation while
+// callers can depend on the dashboard capability's narrow port.
+type DashboardExportMetadata = dashboardauthoring.DashboardExportMetadata
 
 type canonicalDashboardResource struct {
 	APIVersion string                     `yaml:"apiVersion"`

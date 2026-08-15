@@ -23,25 +23,12 @@ const (
 	CompilerVersion = "leapview-project-compiler:v3"
 )
 
-// AuthoredDashboardMetadata is the descriptive resource identity retained
-// with an authored dashboard source.
-type AuthoredDashboardMetadata struct {
-	Workspace   string
-	Name        string
-	Title       string
-	Description string
-	Owner       string
-	Tags        []string
-}
-
-// AuthoredDashboardSource is the immutable, capability-scoped authored
-// dashboard retained in a project artifact. Callers receive a fresh deep copy
-// from Workspace.AuthoredDashboardSource and may mutate it safely.
-type AuthoredDashboardSource struct {
-	Document dashboardauthoring.Dashboard
-	Metadata AuthoredDashboardMetadata
-	Path     string
-}
+// AuthoredDashboardMetadata and AuthoredDashboardSource are retained aliases
+// for callers of the artifact package. The source contracts are owned by the
+// dashboard capability so dashboard authoring never needs to depend on the
+// project artifact implementation.
+type AuthoredDashboardMetadata = dashboardauthoring.AuthoredDashboardMetadata
+type AuthoredDashboardSource = dashboardauthoring.AuthoredDashboardSource
 
 type UnsupportedVersionError struct {
 	Version int

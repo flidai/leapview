@@ -18,7 +18,6 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
-	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -111,7 +110,7 @@ type RuntimeCatalog interface {
 // project artifact. It enriches tags, owner, and source path without making
 // those values an authorization or compilation authority.
 type AuthoredDashboardSources interface {
-	AuthoredDashboardSource(string) (projectartifact.AuthoredDashboardSource, bool)
+	AuthoredDashboardSource(string) (authoring.AuthoredDashboardSource, bool)
 }
 
 type Options struct {

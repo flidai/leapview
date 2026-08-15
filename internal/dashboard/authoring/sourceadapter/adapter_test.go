@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -343,7 +344,7 @@ func newAdapter(t *testing.T, repository *fakeRepository, authorizer *fakeAuthor
 
 func newAdapterWithService(t *testing.T, repository *fakeRepository, authorizer *fakeAuthorizer, authoringService *service.Service, acquire sourceadapter.AcquireRuntime) *sourceadapter.Adapter {
 	t.Helper()
-	adapter, err := sourceadapter.New(sourceadapter.Options{Repository: repository, Authorizer: authorizer, AcquireRuntime: acquire, Authoring: authoringService})
+	adapter, err := sourceadapter.New(sourceadapter.Options{Repository: repository, Authorizer: authorizer, AcquireRuntime: acquire, Authoring: authoringService, ExportDashboard: projectcompiler.ExportDashboard})
 	if err != nil {
 		t.Fatal(err)
 	}

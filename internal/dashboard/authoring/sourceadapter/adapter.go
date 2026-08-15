@@ -12,8 +12,6 @@ import (
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/service"
-	projectartifact "github.com/flidai/leapview/internal/project/artifact"
-	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -84,7 +82,7 @@ type Provenance struct {
 type Source struct {
 	Ref        SourceRef
 	Document   authoring.Dashboard
-	Metadata   projectartifact.AuthoredDashboardMetadata
+	Metadata   authoring.AuthoredDashboardMetadata
 	Lifecycle  *authoring.DashboardLifecycle
 	Provenance Provenance
 }
@@ -100,7 +98,7 @@ type PublishedRepository interface {
 // It prevents adapters from reaching into DuckDB, deployment state, or
 // checkout paths. Implementations must return a fresh detached source.
 type ProjectRuntime interface {
-	AuthoredDashboardSource(string) (projectartifact.AuthoredDashboardSource, bool)
+	AuthoredDashboardSource(string) (authoring.AuthoredDashboardSource, bool)
 }
 
 // AcquireRuntime acquires one active runtime lease for a source workspace.
@@ -113,17 +111,19 @@ type AcquireRuntime func(context.Context, string) (runtimehost.Lease, error)
 // project source operations. Authoring is the existing transactional service
 // used for forks; adapters never write its repository directly.
 type Options struct {
-	Repository     PublishedRepository
-	Authorizer     service.Authorizer
-	AcquireRuntime AcquireRuntime
-	Authoring      *service.Service
+	Repository      PublishedRepository
+	Authorizer      service.Authorizer
+	AcquireRuntime  AcquireRuntime
+	Authoring       *service.Service
+	ExportDashboard authoring.DashboardExporter
 }
 
 type Adapter struct {
-	repository     PublishedRepository
-	authorizer     service.Authorizer
-	acquireRuntime AcquireRuntime
-	authoring      *service.Service
+	repository      PublishedRepository
+	authorizer      service.Authorizer
+	acquireRuntime  AcquireRuntime
+	authoring       *service.Service
+	exportDashboard authoring.DashboardExporter
 }
 
 func New(options Options) (*Adapter, error) {
@@ -139,6 +139,7 @@ func New(options Options) (*Adapter, error) {
 	return &Adapter{
 		repository: options.Repository, authorizer: options.Authorizer,
 		acquireRuntime: options.AcquireRuntime, authoring: options.Authoring,
+		exportDashboard: options.ExportDashboard,
 	}, nil
 }
 
@@ -212,7 +213,7 @@ func (a *Adapter) loadWorkspace(ctx context.Context, ref SourceRef, actorID stri
 	if err != nil {
 		return Source{}, err
 	}
-	metadata := projectartifact.AuthoredDashboardMetadata{
+	metadata := authoring.AuthoredDashboardMetadata{
 		Workspace: ref.WorkspaceID, Name: ref.DashboardID.String(), Title: lifecycle.Title,
 		Owner: lifecycle.OwnerPrincipalID,
 	}
@@ -306,7 +307,10 @@ func (a *Adapter) Export(ctx context.Context, request ExportRequest) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	return projectcompiler.ExportDashboard(source.Document, projectcompiler.DashboardExportMetadata{
+	if a.exportDashboard == nil {
+		return nil, fmt.Errorf("dashboard source exporter is not configured")
+	}
+	return a.exportDashboard(source.Document, authoring.DashboardExportMetadata{
 		Name: source.Metadata.Name, Workspace: source.Metadata.Workspace,
 		Title: source.Metadata.Title, Description: source.Metadata.Description,
 		Owner: source.Metadata.Owner, Tags: append([]string(nil), source.Metadata.Tags...),

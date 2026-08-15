@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
@@ -23,10 +24,11 @@ import (
 // used by the composed application boundary. Runtime acquisition remains a
 // callback so the transport does not depend on registry topology.
 type Options struct {
-	Authoring      *authoringservice.Service
-	Repository     authoring.Repository
-	Authorizer     authoringservice.Authorizer
-	AcquireRuntime sourceadapter.AcquireRuntime
+	Authoring       *authoringservice.Service
+	Repository      authoring.Repository
+	Authorizer      authoringservice.Authorizer
+	AcquireRuntime  sourceadapter.AcquireRuntime
+	ExportDashboard authoring.DashboardExporter
 }
 
 // Application is the small canonical dashboard authoring application
@@ -60,10 +62,11 @@ func New(options Options) (*Application, error) {
 
 	acquireRuntime := guardedAcquire(options.AcquireRuntime)
 	sources, err := sourceadapter.New(sourceadapter.Options{
-		Repository:     options.Repository,
-		Authorizer:     options.Authorizer,
-		AcquireRuntime: acquireRuntime,
-		Authoring:      options.Authoring,
+		Repository:      options.Repository,
+		Authorizer:      options.Authorizer,
+		AcquireRuntime:  acquireRuntime,
+		Authoring:       options.Authoring,
+		ExportDashboard: options.ExportDashboard,
 	})
 	if err != nil {
 		return nil, err
@@ -168,6 +171,16 @@ func (a *Application) ExportYAML(ctx context.Context, request sourceadapter.Expo
 	}
 	request.Source.WorkspaceID = workspace
 	return a.sources.Export(ctx, request)
+}
+
+// PublishedCompilationReader exposes the read-only compilation port needed by
+// dashboard runtime resolution without exposing the repository implementation
+// or requiring application composition to import authoring internals.
+func (a *Application) PublishedCompilationReader() dashboardresolver.PublishedCompilationReader {
+	if a == nil {
+		return nil
+	}
+	return a.repository
 }
 
 // Preview renders one exact draft revision through a request-scoped provider
