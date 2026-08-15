@@ -26,6 +26,7 @@ import {
   type IconNode,
 } from 'lucide'
 import type {
+  ConnectionAdministrationSignal,
   ConnectionsPageSignal,
   DefinitionFactSignal,
   RecordTableSignal,
@@ -37,6 +38,7 @@ import type {
   WorkspaceTabSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
+import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
@@ -44,7 +46,9 @@ import '../shared/entity-list'
 import '../shared/loading-spinner'
 import '../shared/record-table'
 import '../shared/code-block'
+import '../shared/drawer'
 import '../shared/workspace-access-control'
+import './connection-administration'
 
 const emptyWorkspaceAccess: WorkspaceAccessSignal = {
   workspace: {},
@@ -56,6 +60,14 @@ const emptyWorkspaceAccess: WorkspaceAccessSignal = {
   command: { bindingId: '', email: '', principalId: '', privilege: '', role: '', subjectId: '', subjectType: '', subjects: [] },
   search: '',
   searchStatus: { loading: false, error: '' },
+}
+
+const emptyConnectionAdministration: ConnectionAdministrationSignal = {
+  command: {
+    action: '', assetId: '', authenticationMode: '', confirmationToken: '', connectorKind: '', credentialEnvironment: '', credentialProjectId: '', database: '', expectedRevision: 0,
+    host: '', logicalConnection: '', objectScope: '', options: '', port: '', secretKey: '', secretPath: '', sourceIdentity: '', surface: '', tlsMode: '',
+  },
+  status: { error: '', loading: false, message: '' },
 }
 
 class LeapViewWorkspacePage extends DatastarLit(LitElement) {
@@ -179,43 +191,56 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
   }
 
   updated(): void {
-    checkSignalContract('connections page', this.page, { kind: 'required', title: 'required', assetList: 'required' })
+    checkSignalContract('connections page', this.page, { kind: 'required', title: 'required', connections: 'required' })
   }
 
   get page(): ConnectionsPageSignal | null {
     return this.signal<ConnectionsPageSignal | null>('page', null)
   }
 
+  get connectionAdmin(): ConnectionAdministrationSignal {
+    return this.signal<ConnectionAdministrationSignal>('connectionAdmin', emptyConnectionAdministration)
+  }
+
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
-    const assetList = page.assetList
     return html`
-      <section class="page" aria-label="Connections and sources">
-        ${renderPageHeader(page.title)}
+      <section class="page" aria-label="Connections">
+        ${renderPageHeader(page.title, page.description ?? '', '', html`
+          <lv-connection-administration
+            surface="list"
+            environment=${page.environment ?? ''}
+            .lifecycles=${page.connections.map((connection) => connection.lifecycle)}
+            .administration=${this.connectionAdmin}
+          ></lv-connection-administration>
+        `)}
         <lv-entity-list
-          .items=${(assetList?.assets ?? []).map((asset) => ({
-            id: asset.id,
-            title: asset.title,
-            href: asset.detailHref,
-            icon: asset.type,
+          .items=${page.connections.map((connection) => ({
+            id: connection.id,
+            title: connection.title,
+            description: connection.description,
+            href: connection.detailHref,
+            icon: 'connection',
             iconTreatment: 'plain' as const,
-            category: asset.type,
             columns: {
-              type: asset.typeLabel,
-              key: asset.key,
+              kind: connection.kind,
+              scope: connection.scope,
+              sources: connection.sourceCount,
+              credentials: connection.credentialStatus,
             },
           }))}
           .columns=${[
-            { id: 'name', label: 'Name', width: '54%' },
-            { id: 'type', label: 'Type', width: '20%' },
-            { id: 'key', label: 'Key', width: '26%' },
+            { id: 'name', label: 'Name', width: '32%' },
+            { id: 'kind', label: 'Kind / provider', width: '18%' },
+            { id: 'scope', label: 'Scope', width: '16%' },
+            { id: 'sources', label: 'Sources', width: '12%', align: 'right' },
+            { id: 'credentials', label: 'Credentials', width: '22%' },
           ]}
-          .filters=${(assetList?.tabs ?? []).map((tab) => ({ id: tab.id || 'all', label: tab.label, href: tab.href }))}
-          active-filter=${assetList?.activeType || 'all'}
-          initial-query=${assetList?.query ?? ''}
-          search-placeholder="Search connections and sources"
-          empty-text=${assetList?.empty ?? 'No connection assets match this view.'}
+          .filters=${[]}
+          initial-query=${page.query ?? ''}
+          search-placeholder="Search connections"
+          empty-text="No connections match this search."
         ></lv-entity-list>
       </section>
     `
@@ -224,7 +249,7 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
 
 class LeapViewWorkspaceAssetPage extends DatastarLit(LitElement) {
   static get styles() {
-    return workspaceStyles
+    return [entityDetailStyles, workspaceStyles]
   }
 
   updated(): void {
@@ -235,9 +260,93 @@ class LeapViewWorkspaceAssetPage extends DatastarLit(LitElement) {
     return this.signal<WorkspaceAssetPageSignal | null>('page', null)
   }
 
+  get connectionAdmin(): ConnectionAdministrationSignal {
+    return this.signal<ConnectionAdministrationSignal>('connectionAdmin', emptyConnectionAdministration)
+  }
+
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
+    if (page.drawerParent) return this.renderDrawerPage(page)
+    if (page.asset.type === 'connection') return this.renderConnectionPage(page)
+    return this.renderAssetPage(page)
+  }
+
+  private renderDrawerPage(page: WorkspaceAssetPageSignal) {
+    const parent = page.drawerParent!
+    return html`
+      <div class="drawer-page">
+        ${parent.asset.type === 'connection' ? this.renderConnectionPage(parent) : this.renderAssetPage(parent)}
+        <lv-drawer
+          open
+          size="wide"
+          label=${`${page.title} source details`}
+          .modal=${false}
+          @lv-drawer-close=${() => window.location.assign(parent.asset.detailHref)}
+        >
+          <div slot="title" class="source-drawer-title">
+            ${assetTypeGlyph(page.asset.type, 'inline')}
+            <h1>${page.title}</h1>
+          </div>
+          <p slot="subtitle" class="source-drawer-subtitle">Source in ${parent.title}</p>
+          <div class="source-drawer-body">
+            ${renderTabs(page.tabs)}
+            <div class=${page.activeSection === 'lineage' ? 'source-drawer-section lineage-body' : 'source-drawer-section'}>
+              ${this.renderSection(page)}
+            </div>
+          </div>
+        </lv-drawer>
+      </div>
+    `
+  }
+
+  private renderConnectionPage(page: WorkspaceAssetPageSignal) {
+    const lifecycle = page.connectionLifecycle
+    const administration = this.connectionAdmin
+    const feedback = administration.status.error
+      ? html`<div class="connection-feedback error" role="alert">${administration.status.error}</div>`
+      : administration.status.message
+        ? html`<div class="connection-feedback success" role="status">${administration.status.message}</div>`
+        : nothing
+    const actions = lifecycle ? html`
+      <lv-connection-administration
+        surface="detail"
+        environment=${page.environment ?? ''}
+        .lifecycles=${[lifecycle]}
+        .administration=${administration}
+      ></lv-connection-administration>
+    ` : nothing
+    const details = page.activeSection === 'lineage'
+      ? this.renderLineage(page)
+      : html`
+          ${renderFacts('Overview', page.details?.overview ?? [], true)}
+          ${(page.details?.sections ?? []).map(renderDetailSection)}
+        `
+    return html`
+      <div class="connection-detail-route">
+        ${renderEntityDetail({
+          label: 'Connection administration',
+          feedback,
+          backHref: '/connections',
+          backLabel: 'All connections',
+          avatar: lucideIcon(Plug, { size: 28, strokeWidth: 1.75 }),
+          title: page.title,
+          subtitle: page.asset.description || 'Connection used by published sources.',
+          badges: html`
+            <span class="badge">${lifecycle?.connectorKind || page.asset.typeLabel}</span>
+            ${lifecycle?.objectScope ? html`<span class="badge">${lifecycle.objectScope}</span>` : nothing}
+          `,
+          actions,
+          sections: html`
+            <div class="connection-detail-tabs">${renderTabs(page.tabs, 'Connection sections')}</div>
+            ${details}
+          `,
+        })}
+      </div>
+    `
+  }
+
+  private renderAssetPage(page: WorkspaceAssetPageSignal) {
     return html`
       <section class="asset-page" aria-label="Workspace asset detail">
         <header class="breadcrumb-header">
@@ -253,21 +362,33 @@ class LeapViewWorkspaceAssetPage extends DatastarLit(LitElement) {
             </ol>
           </nav>
           <div class="actions">
+            ${page.connectionLifecycle ? html`
+              <lv-connection-administration
+                surface="detail"
+                environment=${page.environment ?? ''}
+                .lifecycles=${[page.connectionLifecycle]}
+                .administration=${this.connectionAdmin}
+              ></lv-connection-administration>
+            ` : nothing}
             ${page.actions?.map((action) => this.renderAction(action, page))}
           </div>
         </header>
         <div class="asset-body">
           ${renderTabs(page.tabs)}
           <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'details' && page.details?.semanticModelGraph ? 'section-body graph-details-body' : 'section-body'}>
-            ${page.activeSection === 'lineage'
-              ? this.renderLineage(page)
-              : page.activeSection === 'refreshes'
-                ? this.renderRefreshes(page)
-                : this.renderDetails(page)}
+            ${this.renderSection(page)}
           </div>
         </div>
       </section>
     `
+  }
+
+  private renderSection(page: WorkspaceAssetPageSignal) {
+    return page.activeSection === 'lineage'
+      ? this.renderLineage(page)
+      : page.activeSection === 'refreshes'
+        ? this.renderRefreshes(page)
+        : this.renderDetails(page)
   }
 
   private renderAction(action: NonNullable<WorkspaceAssetPageSignal['actions']>[number], page: WorkspaceAssetPageSignal) {
@@ -402,10 +523,10 @@ function renderAssetTable(assets: WorkspaceAssetSummarySignal[], empty: string) 
   `
 }
 
-function renderTabs(tabs: WorkspaceTabSignal[]) {
+function renderTabs(tabs: WorkspaceTabSignal[], label = 'Asset sections') {
   if (!tabs.length) return nothing
   return html`
-    <nav class="tabs" aria-label="Asset sections">
+    <nav class="tabs" aria-label=${label}>
       ${tabs.map((tab) => html`
         <a class=${tab.active ? 'active' : ''} href=${tab.href} aria-current=${tab.active ? 'page' : nothing}>
           <span>${tab.label}</span>
@@ -586,6 +707,58 @@ const workspaceStyles = css`
     margin-inline: 0;
     padding: 0;
     overflow: visible;
+  }
+
+  .connection-detail-route {
+    width: min(calc(100% - var(--base-size-48)), var(--lv-workspace-detail-max-width));
+    min-width: 0;
+    min-height: 100svh;
+    box-sizing: border-box;
+    margin-inline: auto;
+    padding-block: var(--base-size-24);
+  }
+
+  .connection-detail-route .muted {
+    margin: 0;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .connection-detail-route .detail-section {
+    gap: var(--base-size-16);
+    border-top: var(--lv-border-muted);
+    border-bottom: 0;
+    padding: var(--base-size-24) 0;
+  }
+
+  .connection-detail-route .facts,
+  .connection-detail-route .facts.overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--base-size-16) var(--base-size-48);
+  }
+
+  .connection-detail-tabs {
+    padding-top: var(--base-size-8);
+  }
+
+  .connection-feedback {
+    margin-bottom: var(--base-size-16);
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel-muted);
+    padding: var(--base-size-12) var(--base-size-16);
+    font: var(--lv-type-body-compact);
+  }
+
+  .connection-feedback.error {
+    border-color: var(--lv-line-danger-muted);
+    color: var(--lv-fg-danger);
+  }
+
+  .connection-feedback.success {
+    border-color: var(--lv-line-success-muted);
+    color: var(--lv-fg-success);
   }
 
   .catalog {
@@ -1028,6 +1201,51 @@ const workspaceStyles = css`
     padding: var(--base-size-16);
   }
 
+  .drawer-page {
+    min-height: 100svh;
+  }
+
+  .source-drawer-title {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--base-size-8);
+  }
+
+  .source-drawer-title h1 {
+    font: var(--lv-type-section-title);
+  }
+
+  .source-drawer-subtitle {
+    margin-top: var(--base-size-4);
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-body-compact);
+  }
+
+  .source-drawer-body {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+  }
+
+  .source-drawer-section {
+    min-width: 0;
+    padding-top: var(--base-size-16);
+  }
+
+  .source-drawer-section.lineage-body {
+    margin-inline: calc(-1 * var(--base-size-20));
+    padding-top: 0;
+  }
+
+  .source-drawer-section .details-content {
+    padding-inline: 0;
+  }
+
+  .source-drawer-section .lineage-graph {
+    height: 20rem;
+  }
+
   .lineage {
     display: grid;
     min-height: 0;
@@ -1145,6 +1363,16 @@ const workspaceStyles = css`
       height: auto;
       min-height: 100svh;
       overflow: visible;
+    }
+
+    .connection-detail-route {
+      width: 100%;
+      padding: var(--base-size-16);
+    }
+
+    .connection-detail-route .facts,
+    .connection-detail-route .facts.overview {
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .section-body {

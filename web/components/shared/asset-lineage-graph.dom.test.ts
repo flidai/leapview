@@ -69,6 +69,8 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
       const controlIconRect = controlIcon.getBoundingClientRect()
       return {
         flowHeight: Math.round(flowRect.height),
+        flowWidth: Math.round(flowRect.width),
+        inspectorPanels: graph.querySelectorAll('.asset-lineage-panel').length,
         viewportPosition: getComputedStyle(viewport).position,
         viewportMatchesFlowWidth: Math.round(Number.parseFloat(getComputedStyle(viewport).width)) === Math.round(flowRect.width),
         edgePosition: getComputedStyle(edge).position,
@@ -84,6 +86,8 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
 
     expect(state).toEqual({
       flowHeight: 420,
+      flowWidth: 900,
+      inspectorPanels: 0,
       viewportPosition: 'absolute',
       viewportMatchesFlowWidth: true,
       edgePosition: 'absolute',

@@ -55824,6 +55824,8 @@ paths:
               logicalConnection: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:
@@ -55875,6 +55877,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: connection.binding.configure
         privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
@@ -56524,6 +56528,8 @@ paths:
               expectedRevision: 1
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:
@@ -56578,6 +56584,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: connection.binding.update
         privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
@@ -56899,6 +56907,8 @@ paths:
         - Connections
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:
@@ -56950,6 +56960,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: connection.binding.disable
         privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
@@ -57271,6 +57283,8 @@ paths:
         - Connections
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:
@@ -57318,6 +57332,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: connection.binding.enable
         privilege: MANAGE_CONNECTION_METADATA
       x-authz:
         mode: privilege
@@ -58238,6 +58254,8 @@ paths:
         - Connections
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:
@@ -58297,6 +58315,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: connection.binding.refresh
         privilege: TEST_CONNECTION
       x-authz:
         mode: privilege
@@ -58605,6 +58625,8 @@ paths:
         - Connections
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:
@@ -58664,6 +58686,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: connection.binding.test
         privilege: TEST_CONNECTION
       x-authz:
         mode: privilege

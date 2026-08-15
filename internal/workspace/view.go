@@ -203,15 +203,11 @@ func FilterWorkspaceLandingAssets(assets []AssetView, typ, query string) []Asset
 	return out
 }
 
-func FilterConnectionAssets(assets []AssetView, typ, query string) []AssetView {
-	typ = NormalizeConnectionAssetType(typ)
+func FilterConnections(assets []AssetView, query string) []AssetView {
 	query = strings.ToLower(strings.TrimSpace(query))
 	out := make([]AssetView, 0, len(assets))
 	for _, asset := range assets {
-		if asset.Type != string(AssetTypeConnection) && asset.Type != string(AssetTypeSource) {
-			continue
-		}
-		if typ != "" && asset.Type != typ {
+		if asset.Type != string(AssetTypeConnection) {
 			continue
 		}
 		haystack := strings.ToLower(asset.Type + " " + asset.Key + " " + asset.Title + " " + asset.Description)
@@ -221,15 +217,6 @@ func FilterConnectionAssets(assets []AssetView, typ, query string) []AssetView {
 		out = append(out, asset)
 	}
 	return out
-}
-
-func NormalizeConnectionAssetType(typ string) string {
-	switch strings.TrimSpace(typ) {
-	case string(AssetTypeConnection), string(AssetTypeSource):
-		return strings.TrimSpace(typ)
-	default:
-		return ""
-	}
 }
 
 func AssetByID(assets []AssetView, id string) (AssetView, bool) {

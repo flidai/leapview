@@ -8,21 +8,10 @@ import (
 )
 
 func ConnectionsHref(query string) string {
-	return ConnectionsHrefWithType("", query)
-}
-
-func ConnectionsHrefWithType(typ, query string) string {
-	params := []string{}
-	if typ = strings.TrimSpace(typ); typ != "" {
-		params = append(params, "type="+url.QueryEscape(typ))
-	}
-	if query = strings.TrimSpace(query); query != "" {
-		params = append(params, "q="+url.QueryEscape(query))
-	}
-	if len(params) == 0 {
+	if query = strings.TrimSpace(query); query == "" {
 		return "/connections"
 	}
-	return "/connections?" + strings.Join(params, "&")
+	return "/connections?q=" + url.QueryEscape(query)
 }
 
 func WorkspaceAssetSectionHref(workspaceID, assetID, section string) string {

@@ -791,7 +791,7 @@ func TestWorkspaceConnectionFilterRedirectsToGlobalConnections(t *testing.T) {
 	}
 }
 
-func TestWorkspaceSourceFilterRedirectsToConnectionSources(t *testing.T) {
+func TestWorkspaceSourceFilterRedirectsToConnections(t *testing.T) {
 	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
@@ -806,8 +806,8 @@ func TestWorkspaceSourceFilterRedirectsToConnectionSources(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusFound, rec.Body.String())
 	}
-	if got := rec.Header().Get("Location"); got != "/connections?type=source&q=orders" {
-		t.Fatalf("Location = %q, want /connections?type=source&q=orders", got)
+	if got := rec.Header().Get("Location"); got != "/connections" {
+		t.Fatalf("Location = %q, want /connections", got)
 	}
 }
 
@@ -827,7 +827,7 @@ func TestConnectionsPageRendersGlobalConnectionSurface(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := renderedWithBootstrap(t, server, rec.Body.String(), "Bearer dev")
-	for _, want := range []string{"<lv-connections-page", "Connections", "Connection", "Source", "assetList", "Project-global managed Olist ecommerce demo data.", "orders"} {
+	for _, want := range []string{"<lv-connections-page", "Connections", "connections", "Project-global managed Olist ecommerce demo data.", "sourceCount", "credentialStatus"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("connections page missing %q:\n%s", want, body)
 		}
@@ -835,8 +835,8 @@ func TestConnectionsPageRendersGlobalConnectionSurface(t *testing.T) {
 	if !strings.Contains(body, `/connections/connection:olist/details`) {
 		t.Fatalf("connections page did not link to canonical connection details:\n%s", body)
 	}
-	if !strings.Contains(body, `/sources/source:olist.orders/details`) {
-		t.Fatalf("connections page did not link to canonical source details:\n%s", body)
+	if strings.Contains(body, `/sources/`) || strings.Contains(body, `"typeLabel":"Source"`) {
+		t.Fatalf("connections page mixed source rows into the connection list:\n%s", body)
 	}
 	if strings.Contains(body, `/workspaces/test/assets/`) {
 		t.Fatalf("connections page linked to workspace asset details:\n%s", body)
@@ -846,14 +846,14 @@ func TestConnectionsPageRendersGlobalConnectionSurface(t *testing.T) {
 	}
 }
 
-func TestConnectionsPageFiltersSources(t *testing.T) {
+func TestConnectionsPageIgnoresLegacySourceFilter(t *testing.T) {
 	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
-	req := httptest.NewRequest(http.MethodGet, "/connections?type=source&q=orders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/connections?type=source", nil)
 	req.Header.Set("Authorization", "Bearer dev")
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
@@ -862,13 +862,13 @@ func TestConnectionsPageFiltersSources(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := renderedWithBootstrap(t, server, rec.Body.String(), "Bearer dev")
-	for _, want := range []string{"Source", "orders", `/connections/`, `/sources/`} {
+	for _, want := range []string{"olist", `/connections/connection:olist/details`, `"kind":"managed"`} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("source-filtered connections page missing %q:\n%s", want, body)
+			t.Fatalf("connections page missing %q with legacy source filter:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "Local CSV files for the Olist ecommerce demo dataset.") {
-		t.Fatalf("source-filtered connections page included connection row:\n%s", body)
+	if strings.Contains(body, `/sources/`) || strings.Contains(body, `"typeLabel":"Source"`) {
+		t.Fatalf("legacy source filter restored source rows:\n%s", body)
 	}
 }
 
@@ -879,7 +879,7 @@ func TestConnectionsSearchCommandPatchesOnlyResultRows(t *testing.T) {
 	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
 
-	req := httptest.NewRequest(http.MethodPost, "/connections/search", strings.NewReader(`{"entityListQuery":"orders","entityListFilter":"source"}`))
+	req := httptest.NewRequest(http.MethodPost, "/connections/search", strings.NewReader(`{"entityListQuery":"olist"}`))
 	req.Header.Set("Authorization", "Bearer dev")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -896,17 +896,13 @@ func TestConnectionsSearchCommandPatchesOnlyResultRows(t *testing.T) {
 	if !ok || len(patches[0]) != 1 || len(page) != 1 {
 		t.Fatalf("search command patched more than result data: %#v", patches[0])
 	}
-	assetList, ok := page["assetList"].(map[string]any)
-	if !ok || len(assetList) != 1 {
-		t.Fatalf("search command asset list patch = %#v", page["assetList"])
+	connections, ok := page["connections"].([]any)
+	if !ok || len(connections) == 0 {
+		t.Fatalf("search command connections = %#v", page["connections"])
 	}
-	assets, ok := assetList["assets"].([]any)
-	if !ok || len(assets) == 0 {
-		t.Fatalf("search command assets = %#v", assetList["assets"])
-	}
-	for _, value := range assets {
+	for _, value := range connections {
 		asset, ok := value.(map[string]any)
-		if !ok || asset["type"] != "source" || !strings.Contains(strings.ToLower(fmt.Sprint(asset["title"])), "orders") {
+		if !ok || !strings.Contains(strings.ToLower(fmt.Sprint(asset["title"])), "olist") || asset["sourceCount"] == nil {
 			t.Fatalf("unexpected connection search result: %#v", value)
 		}
 	}
@@ -993,7 +989,7 @@ func TestConnectionSourceAssetRoutesUseConnectionScopedSurface(t *testing.T) {
 		t.Fatalf("source detail status = %d body=%s", detailRec.Code, detailRec.Body.String())
 	}
 	detailBody := renderedWithBootstrap(t, server, detailRec.Body.String(), "Bearer dev")
-	for _, want := range []string{"Connections", "Sources", "orders", "Fields", "Physical type", "Lineage"} {
+	for _, want := range []string{"Connections", "Sources", "orders", "Fields", "Physical type", "Lineage", `"drawerParent":`} {
 		if !strings.Contains(detailBody, want) {
 			t.Fatalf("source detail missing %q:\n%s", want, detailBody)
 		}

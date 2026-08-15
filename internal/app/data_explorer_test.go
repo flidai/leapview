@@ -368,8 +368,40 @@ func TestGlobalDataExplorerSelectsDuplicateKeysByWorkspace(t *testing.T) {
 	if uisignals.ValueOrZero(explorer.SelectedKey) != "model_table:model_table:olist.orders" || explorer.SelectedObject == nil || explorer.SelectedObject.WorkspaceID != "ops" {
 		t.Fatalf("selected object = %#v key=%q", explorer.SelectedObject, uisignals.ValueOrZero(explorer.SelectedKey))
 	}
-	if len(explorer.Objects) != 2 {
-		t.Fatalf("object count = %d, want both workspaces' model table", len(explorer.Objects))
+	if len(explorer.Objects) != 4 {
+		t.Fatalf("object count = %d, want both workspaces' source and model table", len(explorer.Objects))
+	}
+}
+
+func TestGlobalDataExplorerKeepsRequestedSourceSelected(t *testing.T) {
+	store := testStore(t)
+	metrics := dataExplorerFixtureMetrics{dataDir: seedDataExplorerCSV(t)}
+	seedActiveDeploymentFromWorkspaceAssets(t, store, "test", metrics)
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{WorkspaceID: "test"}))
+
+	const object = "source:olist.orders"
+	req := dataExplorerTestRequest(http.MethodGet, "/data?workspace=test&object="+object, nil)
+	_, explorer, err := server.globalDataExplorerState(req, dataExplorerCommandFromQuery("test", object))
+	if err != nil {
+		t.Fatalf("globalDataExplorerState() error = %v", err)
+	}
+	if explorer.SelectedObject == nil {
+		t.Fatal("selected source is nil")
+	}
+	if got := uisignals.ValueOrZero(explorer.SelectedObject.AssetID); got != object {
+		t.Fatalf("selected asset = %q, want %q", got, object)
+	}
+	if explorer.SelectedObject.Layer != "source" || uisignals.ValueOrZero(explorer.SelectedObject.Table) != "orders" {
+		t.Fatalf("selected object = %#v, want orders source", explorer.SelectedObject)
+	}
+	if got := uisignals.ValueOrZero(explorer.SelectedObject.RowCountLabel); got != "Preview unavailable" {
+		t.Fatalf("source row label = %q", got)
+	}
+	if len(uisignals.ValueOrZero(explorer.SelectedObject.Columns)) != 2 {
+		t.Fatalf("source columns = %#v", explorer.SelectedObject.Columns)
+	}
+	if len(explorer.Preview.Blocks["a"].Rows) != 0 {
+		t.Fatalf("raw source rows must not be queried: %#v", explorer.Preview.Blocks["a"].Rows)
 	}
 }
 
