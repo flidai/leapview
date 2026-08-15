@@ -11,6 +11,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -33,8 +34,16 @@ type Catalog = dashboard.Catalog
 type dashboardRefreshRuntimeKey struct{}
 
 type dashboardRefreshRuntime struct {
-	workspaceID string
-	runtime     runtimehost.Runtime
+	workspaceID    string
+	runtime        runtimehost.Runtime
+	servingStateID string
+	resolutions    *dashboardRefreshResolutionCache
+}
+
+type dashboardRefreshResolutionCache struct {
+	mu     sync.Mutex
+	values map[string]dashboardresolver.Resolved
+	errors map[string]error
 }
 
 type dynamicRuntimeMetrics struct {
@@ -52,13 +61,37 @@ type catalogRuntime interface {
 }
 
 type runtimeResolver interface {
-	dashboardresolver.Resolver
+	Resolver() dashboardresolver.Resolver
 	SemanticModel(modelID string) (*semanticmodel.Model, bool)
 	DefaultFilters(dashboardID string) dashboard.Filters
 }
 
 type dashboardRuntime interface {
 	QueryDashboardPage(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters) (dashboard.Patch, error)
+}
+
+type definitionDashboardRuntime interface {
+	QueryDashboardPageForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters) (dashboard.Patch, error)
+}
+
+type definitionVisualizationRuntime interface {
+	QueryVisualizationForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, string) (visualizationir.VisualizationEnvelope, error)
+	QueryVisualizationWindowForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error)
+	NormalizeVisualizationWindowForDefinition(dashboarddefinition.Definition, dashboard.TableRequest) dashboard.TableRequest
+}
+
+type definitionMetadataRuntime interface {
+	DefaultFiltersForDefinition(dashboarddefinition.Definition) dashboard.Filters
+	PagesForDefinition(dashboarddefinition.Definition) []dashboard.Page
+	ModelIDForDashboardDefinition(dashboarddefinition.Definition) string
+}
+
+type definitionFilterRuntime interface {
+	QueryCompiledFilterOptionsForDefinition(context.Context, dashboarddefinition.Definition, dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error)
+}
+
+type definitionConsumerRuntime interface {
+	ExecuteConsumersPageForDefinition(context.Context, dashboarddefinition.Definition, consumer.Request, consumer.Publisher) error
 }
 
 type filterOptionRuntime interface {
@@ -126,21 +159,29 @@ func (r runtimeMetricsResolver) Resolve(dashboardID string) (dashboardresolver.R
 	}
 	defer lease.Release()
 	runtime := lease.Runtime()
+	return r.metrics.resolveOnRuntime(runtime, strings.TrimSpace(string(lease.ServingStateID())), dashboardID)
+}
+
+func runtimeResolverPort(runtime runtimehost.Runtime) (runtimeResolver, bool) {
 	port, ok := runtime.(runtimeResolver)
+	return port, ok
+}
+
+func (m runtimeMetrics) resolveOnRuntime(runtime runtimehost.Runtime, servingStateID, dashboardID string) (dashboardresolver.Resolved, error) {
+	port, ok := runtimeResolverPort(runtime)
 	if !ok {
 		return dashboardresolver.Resolved{}, fmt.Errorf("active runtime does not provide dashboard resolver")
 	}
-	servingStateID := strings.TrimSpace(string(lease.ServingStateID()))
-	project := dashboardresolver.NewProject(port, r.metrics.workspaceID, dashboardresolver.SourceMetadata{ServingStateID: servingStateID})
+	project := dashboardresolver.NewProject(port.Resolver(), m.workspaceID, dashboardresolver.SourceMetadata{ServingStateID: strings.TrimSpace(servingStateID)})
 	var published dashboardresolver.Resolver
-	if r.metrics.publishedCompilationReader != nil {
+	if m.publishedCompilationReader != nil {
 		published = dashboardresolver.NewPublished(
-			dashboardresolver.NewPublishedCompilationResolver(r.metrics.workspaceID, servingStateID, r.metrics.publishedCompilationReader, port),
-			r.metrics.workspaceID,
+			dashboardresolver.NewPublishedCompilationResolver(m.workspaceID, strings.TrimSpace(servingStateID), m.publishedCompilationReader, port),
+			m.workspaceID,
 			dashboardresolver.SourceMetadata{},
 		)
 	}
-	composite, err := dashboardresolver.NewComposite(r.metrics.workspaceID, project, published)
+	composite, err := dashboardresolver.NewComposite(m.workspaceID, project, published)
 	if err != nil {
 		return dashboardresolver.Resolved{}, err
 	}
@@ -228,16 +269,21 @@ func (m runtimeMetrics) DefaultDashboardID() string {
 }
 
 func (m runtimeMetrics) ModelIDForDashboard(dashboardID string) string {
-	runtime, release, err := m.active(context.Background())
+	runtime, release, resolved, err := m.activeResolved(context.Background(), dashboardID)
 	if err != nil {
 		return ""
 	}
 	defer release()
-	port, ok := runtime.(catalogRuntime)
-	if !ok {
+	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+		if port, ok := runtime.(definitionMetadataRuntime); ok {
+			return port.ModelIDForDashboardDefinition(resolved.Definition)
+		}
 		return ""
 	}
-	return port.ModelIDForDashboard(dashboardID)
+	if port, ok := runtime.(catalogRuntime); ok {
+		return port.ModelIDForDashboard(dashboardID)
+	}
+	return resolved.Definition.SemanticModel
 }
 
 func (m runtimeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
@@ -246,7 +292,7 @@ func (m runtimeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, boo
 		return nil, false
 	}
 	defer release()
-	port, ok := runtime.(runtimeResolver)
+	port, ok := runtimeResolverPort(runtime)
 	if !ok {
 		return nil, false
 	}
@@ -254,29 +300,40 @@ func (m runtimeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, boo
 }
 
 func (m runtimeMetrics) DefaultFilters(dashboardID string) dashboard.Filters {
-	runtime, release, err := m.active(context.Background())
+	runtime, release, resolved, err := m.activeResolved(context.Background(), dashboardID)
 	if err != nil {
 		return dashboard.Filters{}.WithDefaults()
 	}
 	defer release()
-	port, ok := runtime.(runtimeResolver)
-	if !ok {
+	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+		if port, ok := runtime.(definitionMetadataRuntime); ok {
+			return port.DefaultFiltersForDefinition(resolved.Definition)
+		}
 		return dashboard.Filters{}.WithDefaults()
 	}
-	return port.DefaultFilters(dashboardID)
+	if port, ok := runtime.(runtimeResolver); ok {
+		return port.DefaultFilters(dashboardID)
+	}
+	return dashboard.Filters{}.WithDefaults()
 }
 
 func (m runtimeMetrics) NormalizeVisualizationWindow(dashboardID string, request dashboard.TableRequest) dashboard.TableRequest {
-	runtime, release, err := m.active(context.Background())
+	runtime, release, resolved, err := m.activeResolved(context.Background(), dashboardID)
 	if err != nil {
 		return request.WithDefaults()
 	}
 	defer release()
-	port, ok := runtime.(visualizationRuntime)
-	if !ok {
+	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+		if port, ok := runtime.(definitionVisualizationRuntime); ok {
+			return port.NormalizeVisualizationWindowForDefinition(resolved.Definition, request)
+		}
 		return request.WithDefaults()
 	}
-	return port.NormalizeVisualizationWindow(dashboardID, request)
+	port, ok := runtime.(visualizationRuntime)
+	if ok && resolved.Source.Kind == dashboardresolver.SourceProject {
+		return port.NormalizeVisualizationWindow(dashboardID, request)
+	}
+	return request.WithDefaults()
 }
 
 func (m runtimeMetrics) QueryDashboard(ctx context.Context, dashboardID string, filters dashboard.Filters) (dashboard.Patch, error) {
@@ -284,26 +341,39 @@ func (m runtimeMetrics) QueryDashboard(ctx context.Context, dashboardID string, 
 }
 
 func (m runtimeMetrics) QueryCompiledFilterOptions(ctx context.Context, dashboardID string, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
-	runtime, release, err := m.active(ctx)
+	runtime, release, resolved, err := m.activeResolvedForDashboardRefresh(ctx, dashboardID)
 	if err != nil {
 		return dashboardfilter.OptionResult{}, err
 	}
 	defer release()
+	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+		if port, ok := runtime.(definitionFilterRuntime); ok {
+			return port.QueryCompiledFilterOptionsForDefinition(ctx, resolved.Definition, query)
+		}
+		return dashboardfilter.OptionResult{}, fmt.Errorf("compiled filter options are not supported by this runtime")
+	}
 	port, ok := runtime.(filterOptionRuntime)
-	if !ok {
+	if !ok || resolved.Source.Kind != dashboardresolver.SourceProject {
 		return dashboardfilter.OptionResult{}, fmt.Errorf("compiled filter options are not supported by this runtime")
 	}
 	return port.QueryCompiledFilterOptions(ctx, dashboardID, query)
 }
 
 func (m runtimeMetrics) QueryDashboardPage(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters) (dashboard.Patch, error) {
-	runtime, release, err := m.active(ctx)
+	runtime, release, resolved, err := m.activeResolvedForDashboardRefresh(ctx, dashboardID)
 	if err != nil {
 		return dashboard.EmptyPatch(filters.WithDefaults(), err), nil
 	}
 	defer release()
+	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+		if port, ok := runtime.(definitionDashboardRuntime); ok {
+			return port.QueryDashboardPageForDefinition(ctx, resolved.Definition, pageID, filters)
+		}
+		err := fmt.Errorf("active runtime does not provide compiled dashboard data")
+		return dashboard.EmptyPatch(filters.WithDefaults(), err), nil
+	}
 	port, ok := runtime.(dashboardRuntime)
-	if !ok {
+	if !ok || resolved.Source.Kind != dashboardresolver.SourceProject {
 		err := fmt.Errorf("active runtime does not provide dashboard data")
 		return dashboard.EmptyPatch(filters.WithDefaults(), err), nil
 	}
@@ -315,26 +385,38 @@ func (m runtimeMetrics) QueryDashboardVisualizations(ctx context.Context, dashbo
 }
 
 func (m runtimeMetrics) QueryVisualization(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error) {
-	runtime, release, err := m.activeForDashboardRefresh(ctx)
+	runtime, release, resolved, err := m.activeResolvedForDashboardRefresh(ctx, dashboardID)
 	if err != nil {
 		return visualizationir.VisualizationEnvelope{}, err
 	}
 	defer release()
+	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+		if port, ok := runtime.(definitionVisualizationRuntime); ok {
+			return port.QueryVisualizationForDefinition(ctx, resolved.Definition, pageID, filters, visualID)
+		}
+		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide compiled visualization data")
+	}
 	port, ok := runtime.(visualizationRuntime)
-	if !ok {
+	if !ok || resolved.Source.Kind != dashboardresolver.SourceProject {
 		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide visualization data")
 	}
 	return port.QueryVisualization(ctx, dashboardID, pageID, filters, visualID)
 }
 
 func (m runtimeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
-	runtime, release, err := m.activeForDashboardRefresh(ctx)
+	runtime, release, resolved, err := m.activeResolvedForDashboardRefresh(ctx, dashboardID)
 	if err != nil {
 		return visualizationir.VisualizationEnvelope{}, err
 	}
 	defer release()
+	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+		if port, ok := runtime.(definitionVisualizationRuntime); ok {
+			return port.QueryVisualizationWindowForDefinition(ctx, resolved.Definition, pageID, filters, request)
+		}
+		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide compiled visualization data")
+	}
 	port, ok := runtime.(visualizationRuntime)
-	if !ok {
+	if !ok || resolved.Source.Kind != dashboardresolver.SourceProject {
 		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide visualization data")
 	}
 	return port.QueryVisualizationWindow(ctx, dashboardID, pageID, filters, request)
@@ -384,20 +466,28 @@ func (m runtimeMetrics) WithDashboardRefreshLease(ctx context.Context, run func(
 	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && pinned.workspaceID == m.workspaceID && pinned.runtime != nil {
 		return run(ctx)
 	}
-	runtime, release, err := m.active(ctx)
+	runtime, release, servingStateID, err := m.activeWithState(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
-	ctx = context.WithValue(ctx, dashboardRefreshRuntimeKey{}, dashboardRefreshRuntime{workspaceID: m.workspaceID, runtime: runtime})
+	ctx = context.WithValue(ctx, dashboardRefreshRuntimeKey{}, dashboardRefreshRuntime{
+		workspaceID: m.workspaceID, runtime: runtime, servingStateID: servingStateID,
+		resolutions: &dashboardRefreshResolutionCache{values: map[string]dashboardresolver.Resolved{}, errors: map[string]error{}},
+	})
 	return run(ctx)
 }
 
 func (m runtimeMetrics) activeForDashboardRefresh(ctx context.Context) (runtimehost.Runtime, func(), error) {
+	runtime, release, _, err := m.activeResolvedForDashboardRefreshRaw(ctx)
+	return runtime, release, err
+}
+
+func (m runtimeMetrics) activeResolvedForDashboardRefreshRaw(ctx context.Context) (runtimehost.Runtime, func(), string, error) {
 	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && pinned.workspaceID == m.workspaceID && pinned.runtime != nil {
-		return pinned.runtime, func() {}, nil
+		return pinned.runtime, func() {}, pinned.servingStateID, nil
 	}
-	return m.active(ctx)
+	return m.activeWithState(ctx)
 }
 
 func (m runtimeMetrics) QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
@@ -475,16 +565,22 @@ func (m runtimeMetrics) ExplainSemanticPreview(modelID string, request reportdef
 }
 
 func (m runtimeMetrics) Pages(dashboardID string) []dashboard.Page {
-	runtime, release, err := m.active(context.Background())
+	runtime, release, resolved, err := m.activeResolved(context.Background(), dashboardID)
 	if err != nil {
 		return nil
 	}
 	defer release()
-	port, ok := runtime.(catalogRuntime)
-	if !ok {
+	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+		if port, ok := runtime.(definitionMetadataRuntime); ok {
+			return port.PagesForDefinition(resolved.Definition)
+		}
 		return nil
 	}
-	return port.Pages(dashboardID)
+	port, ok := runtime.(catalogRuntime)
+	if ok && resolved.Source.Kind == dashboardresolver.SourceProject {
+		return port.Pages(dashboardID)
+	}
+	return nil
 }
 
 func (m runtimeMetrics) RuntimeReady(ctx context.Context, workspaceID string) error {
@@ -511,11 +607,11 @@ func (m runtimeMetrics) RuntimeReady(ctx context.Context, workspaceID string) er
 	if defaultDashboardID == "" {
 		return fmt.Errorf("default dashboard is not configured")
 	}
-	reportPort, ok := activeRuntime.(runtimeResolver)
+	reportPort, ok := runtimeResolverPort(activeRuntime)
 	if !ok {
 		return fmt.Errorf("active runtime does not provide report metadata")
 	}
-	resolved, err := reportPort.Resolve(defaultDashboardID)
+	resolved, err := reportPort.Resolver().Resolve(defaultDashboardID)
 	if err != nil {
 		return reportMetadataReady(catalogPort, defaultDashboardID, dashboarddefinition.Definition{}, nil, false)
 	}
@@ -523,12 +619,63 @@ func (m runtimeMetrics) RuntimeReady(ctx context.Context, workspaceID string) er
 }
 
 func (m runtimeMetrics) active(ctx context.Context) (runtimehost.Runtime, func(), error) {
+	runtime, release, _, err := m.activeWithState(ctx)
+	return runtime, release, err
+}
+
+func (m runtimeMetrics) activeWithState(ctx context.Context) (runtimehost.Runtime, func(), string, error) {
 	if m.provider == nil {
-		return nil, func() {}, fmt.Errorf("runtime provider is not configured")
+		return nil, func() {}, "", fmt.Errorf("runtime provider is not configured")
 	}
 	lease, err := m.provider.Acquire(ctx)
 	if err != nil {
-		return nil, func() {}, err
+		return nil, func() {}, "", err
 	}
-	return lease.Runtime(), lease.Release, nil
+	return lease.Runtime(), lease.Release, strings.TrimSpace(string(lease.ServingStateID())), nil
+}
+
+func (m runtimeMetrics) activeResolved(ctx context.Context, dashboardID string) (runtimehost.Runtime, func(), dashboardresolver.Resolved, error) {
+	runtime, release, stateID, err := m.activeWithState(ctx)
+	if err != nil {
+		return nil, func() {}, dashboardresolver.Resolved{}, err
+	}
+	resolved, err := m.resolveOnRuntime(runtime, stateID, dashboardID)
+	if err != nil {
+		release()
+		return nil, func() {}, dashboardresolver.Resolved{}, err
+	}
+	return runtime, release, resolved, nil
+}
+
+func (m runtimeMetrics) activeResolvedForDashboardRefresh(ctx context.Context, dashboardID string) (runtimehost.Runtime, func(), dashboardresolver.Resolved, error) {
+	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && pinned.workspaceID == m.workspaceID && pinned.runtime != nil && pinned.resolutions != nil {
+		id := strings.TrimSpace(dashboardID)
+		pinned.resolutions.mu.Lock()
+		defer pinned.resolutions.mu.Unlock()
+		if resolved, ok := pinned.resolutions.values[id]; ok {
+			return pinned.runtime, func() {}, resolved, nil
+		}
+		if err, ok := pinned.resolutions.errors[id]; ok {
+			return nil, func() {}, dashboardresolver.Resolved{}, err
+		}
+		resolved, err := m.resolveOnRuntime(pinned.runtime, pinned.servingStateID, id)
+		if err != nil {
+			pinned.resolutions.errors[id] = err
+			return nil, func() {}, dashboardresolver.Resolved{}, err
+		}
+		pinned.resolutions.values[id] = resolved
+		return pinned.runtime, func() {}, resolved, nil
+	}
+	runtime, release, stateID, err := m.activeResolvedForDashboardRefreshRaw(ctx)
+	if err != nil {
+		return nil, func() {}, dashboardresolver.Resolved{}, err
+	}
+	resolved, err := m.resolveOnRuntime(runtime, stateID, dashboardID)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return nil, func() {}, dashboardresolver.Resolved{}, err
+	}
+	return runtime, release, resolved, nil
 }

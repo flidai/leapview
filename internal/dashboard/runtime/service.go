@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,57 @@ type modelRuntime struct {
 	data      DataRuntime
 	ready     bool
 	missing   error
+}
+
+// definitionService creates a query service view over an already compiled
+// dashboard definition. Published workspace dashboards are immutable compiler
+// output and must execute through the same model/data runtimes as project
+// dashboards; rebuilding a Workspace or opening another data runtime here
+// would violate that boundary. The view only replaces report metadata while
+// retaining this service's model runtimes, locks, filters, and visual cache.
+// It is intentionally unexported and consumed immediately by the
+// ForDefinition methods below; do not return it from a public API or call
+// lifecycle methods such as Close on the view, since it aliases the base
+// service's data runtimes.
+func (m *Service) definitionService(definition dashboarddefinition.Definition) (*Service, error) {
+	if m == nil || m.reports == nil || m.reports.workspace == nil {
+		return nil, fmt.Errorf("dashboard runtime is unavailable")
+	}
+	definition.ID = strings.TrimSpace(definition.ID)
+	definition.SemanticModel = strings.TrimSpace(definition.SemanticModel)
+	if definition.ID == "" || definition.SemanticModel == "" {
+		return nil, fmt.Errorf("compiled dashboard requires ID and semantic model")
+	}
+	runtime, ok := m.runtimes[definition.SemanticModel]
+	if !ok || runtime == nil {
+		return nil, fmt.Errorf("unknown semantic model %q", definition.SemanticModel)
+	}
+	if runtime.model == nil || strings.TrimSpace(runtime.model.Name) != definition.SemanticModel {
+		return nil, fmt.Errorf("semantic model %q does not match compiled dashboard", definition.SemanticModel)
+	}
+	workspace := *m.reports.workspace
+	workspace.Dashboards = map[string]dashboarddefinition.Definition{definition.ID: definition}
+	workspace.Models = make(map[string]*semanticmodel.Model, len(m.reports.workspace.Models)+1)
+	for modelID, model := range m.reports.workspace.Models {
+		workspace.Models[modelID] = model
+	}
+	workspace.Models[definition.SemanticModel] = runtime.model
+	reports := &ReportService{workspace: &workspace, defaultID: definition.ID}
+	visualizations := *m.visualizations
+	visualizations.reports = reports
+	visualizations.runtimes = m.runtimes
+	snapshots := *m.snapshots
+	snapshots.reports = reports
+	snapshots.visualizations = &visualizations
+	queries := &QueryService{snapshots: &snapshots, visualizations: &visualizations}
+	return &Service{
+		// Keep the execution view's lock zero-valued: query paths use the
+		// pointer-bearing Snapshot/Visualization services below, which retain
+		// the original service lock without copying a live mutex.
+		runtimes: m.runtimes, catalog: m.catalog, reports: reports,
+		queries: queries, filters: m.filters, visualizations: &visualizations,
+		snapshots: &snapshots, tiles: m.tiles,
+	}, nil
 }
 
 func NewFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntimeFactory, definition *dashboarddefinition.Workspace) (*Service, error) {

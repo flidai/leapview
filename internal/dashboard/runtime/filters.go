@@ -23,6 +23,10 @@ func (m *Service) QueryCompiledFilterOptions(ctx context.Context, dashboardID st
 	if err != nil {
 		return dashboardfilter.OptionResult{}, err
 	}
+	return m.filters.queryCompiledFilterOptions(ctx, runtime, report, query)
+}
+
+func (s *FilterService) queryCompiledFilterOptions(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
 	filters := []reportdef.QueryFilter{}
 	bindings := report.CompiledFilterBindings()
 	for key, expression := range query.Dependencies {
