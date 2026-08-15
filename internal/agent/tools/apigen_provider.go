@@ -18,10 +18,11 @@ import (
 )
 
 type Scope struct {
-	WorkspaceID   string
-	PrincipalID   string
-	DevAuthBypass bool
-	Credential    CredentialScope
+	WorkspaceID    string
+	PrincipalID    string
+	ConversationID string
+	DevAuthBypass  bool
+	Credential     CredentialScope
 }
 
 type CredentialScope struct {

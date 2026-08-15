@@ -5,8 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -15,7 +17,7 @@ func TestRuntimeMetricsQueryDashboardUsesRuntimeLease(t *testing.T) {
 	provider := &leaseRecordingProvider{}
 	metrics := NewRuntimeMetrics(provider, "test")
 
-	if _, err := metrics.QueryDashboardPage(context.Background(), "dashboard", "page", dashboard.Filters{}); err != nil {
+	if _, err := metrics.QueryDashboardPage(context.Background(), "executive-sales", "overview", dashboard.Filters{}); err != nil {
 		t.Fatalf("query dashboard: %v", err)
 	}
 	if provider.lease == nil {
@@ -37,7 +39,7 @@ func TestRuntimeMetricsReleasesRuntimeLeaseWhenQueryFails(t *testing.T) {
 	provider := &leaseRecordingProvider{runtime: leaseRecordingRuntime{queryErr: wantErr}}
 	metrics := NewRuntimeMetrics(provider, "test")
 
-	if _, err := metrics.QueryDashboardPage(context.Background(), "dashboard", "page", dashboard.Filters{}); !errors.Is(err, wantErr) {
+	if _, err := metrics.QueryDashboardPage(context.Background(), "executive-sales", "overview", dashboard.Filters{}); !errors.Is(err, wantErr) {
 		t.Fatalf("query dashboard error = %v, want %v", err, wantErr)
 	}
 	if provider.lease == nil || !provider.lease.released {
@@ -57,10 +59,10 @@ func TestRuntimeMetricsDashboardRefreshLeasePinsOneRuntimeAcrossTargets(t *testi
 
 	err := refreshMetrics.WithDashboardRefreshLease(context.Background(), func(ctx context.Context) error {
 		provider.current = second
-		if err := refreshMetrics.ExecuteConsumersPage(ctx, consumer.Request{DashboardID: "dashboard", PageID: "page", Targets: []consumer.Target{{Kind: consumer.KindVisual, ID: "one"}}}, func(consumer.Result) bool { return true }); err != nil {
+		if err := refreshMetrics.ExecuteConsumersPage(ctx, consumer.Request{DashboardID: "executive-sales", PageID: "overview", Targets: []consumer.Target{{Kind: consumer.KindVisual, ID: "one"}}}, func(consumer.Result) bool { return true }); err != nil {
 			return err
 		}
-		if err := refreshMetrics.ExecuteConsumersPage(ctx, consumer.Request{DashboardID: "dashboard", PageID: "page", Targets: []consumer.Target{{Kind: consumer.KindVisual, ID: "two"}}}, func(consumer.Result) bool { return true }); err != nil {
+		if err := refreshMetrics.ExecuteConsumersPage(ctx, consumer.Request{DashboardID: "executive-sales", PageID: "overview", Targets: []consumer.Target{{Kind: consumer.KindVisual, ID: "two"}}}, func(consumer.Result) bool { return true }); err != nil {
 			return err
 		}
 		if provider.lease.released {
@@ -101,6 +103,16 @@ type targetLeaseRuntime struct {
 
 func (r *targetLeaseRuntime) Close() error { return nil }
 
+func (r *targetLeaseRuntime) Resolver() dashboardresolver.Resolver { return fakeMetrics{}.Resolver() }
+
+func (r *targetLeaseRuntime) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
+	return fakeMetrics{}.SemanticModel(modelID)
+}
+
+func (r *targetLeaseRuntime) DefaultFilters(dashboardID string) dashboard.Filters {
+	return fakeMetrics{}.DefaultFilters(dashboardID)
+}
+
 func (r *targetLeaseRuntime) ExecuteConsumersPage(_ context.Context, request consumer.Request, publish consumer.Publisher) error {
 	for _, target := range request.Targets {
 		r.calls++
@@ -129,6 +141,18 @@ type leaseRecordingRuntime struct {
 
 func (r *leaseRecordingRuntime) Close() error {
 	return nil
+}
+
+func (r *leaseRecordingRuntime) Resolver() dashboardresolver.Resolver {
+	return fakeMetrics{}.Resolver()
+}
+
+func (r *leaseRecordingRuntime) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
+	return fakeMetrics{}.SemanticModel(modelID)
+}
+
+func (r *leaseRecordingRuntime) DefaultFilters(dashboardID string) dashboard.Filters {
+	return fakeMetrics{}.DefaultFilters(dashboardID)
 }
 
 func (r *leaseRecordingRuntime) QueryDashboardPage(context.Context, string, string, dashboard.Filters) (dashboard.Patch, error) {

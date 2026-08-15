@@ -4,6 +4,7 @@ import (
 	"context"
 
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 )
 
 type QueryField struct {
@@ -52,7 +53,7 @@ type AggregateQuery struct {
 	Table      string
 	Dimensions []QueryField
 	Measures   []QueryField
-	Time       QueryTime
+	Time       dashboardauthoring.QueryTime
 	Filters    []QueryFilter
 	Sort       []QuerySort
 	Limit      int

@@ -35,10 +35,11 @@ type PreparedRefresh struct {
 // PrepareFilterState attaches canonical compiled filter state and refreshes
 // only active-page consumers targeted by the changed bindings.
 func (s Service) PrepareFilterState(request Request, authoritative dashboard.Filters, state dashboardfilter.State, changedBindingKeys []string) (PreparedRefresh, error) {
-	definition, _, ok := s.Metrics.Report(request.DashboardID)
+	resolved, ok := resolveDashboard(s.Metrics, request.DashboardID)
 	if !ok {
 		return PreparedRefresh{}, fmt.Errorf("dashboard %q is not published", request.DashboardID)
 	}
+	definition := resolved.Definition
 	page, ok := definition.PageOrDefault(request.PageID)
 	if !ok || page.ID != request.PageID {
 		return PreparedRefresh{}, fmt.Errorf("unknown dashboard page %q", request.PageID)
@@ -184,10 +185,11 @@ func (s Service) visualWindowTableRequest(dashboardID string, window dashboard.V
 	if window.VisualID == "" {
 		return dashboard.TableRequest{}, fmt.Errorf("visual window requires a visual ID")
 	}
-	definition, _, ok := s.Metrics.Report(dashboardID)
+	resolved, ok := resolveDashboard(s.Metrics, dashboardID)
 	if !ok {
 		return dashboard.TableRequest{}, fmt.Errorf("dashboard %q is not published", dashboardID)
 	}
+	definition := resolved.Definition
 	visual, ok := definition.Visualizations[window.VisualID]
 	if !ok {
 		return dashboard.TableRequest{}, fmt.Errorf("unknown windowed visual %q", window.VisualID)
@@ -246,10 +248,11 @@ func internalTableRequest(window dashboard.VisualizationWindowRequest) dashboard
 }
 
 func (s Service) fullPlan(request Request, commandName string) RefreshPlan {
-	definition, _, ok := s.Metrics.Report(request.DashboardID)
+	resolved, ok := resolveDashboard(s.Metrics, request.DashboardID)
 	if !ok {
 		return RefreshPlan{Command: commandName}
 	}
+	definition := resolved.Definition
 	page, ok := definition.PageOrDefault(request.PageID)
 	if !ok {
 		return RefreshPlan{Command: commandName}
@@ -286,10 +289,11 @@ func (s Service) fullPlan(request Request, commandName string) RefreshPlan {
 }
 
 func (s Service) selectionTargets(request Request, sourceKind, sourceID string) ([]Target, error) {
-	definition, _, ok := s.Metrics.Report(request.DashboardID)
+	resolved, ok := resolveDashboard(s.Metrics, request.DashboardID)
 	if !ok {
 		return nil, fmt.Errorf("dashboard %q is not published", request.DashboardID)
 	}
+	definition := resolved.Definition
 	var ids []string
 	switch sourceKind {
 	case "visual":
@@ -337,10 +341,11 @@ func (s Service) selectionTargets(request Request, sourceKind, sourceID string) 
 }
 
 func (s Service) spatialSelectionTargets(request Request, sourceID, interactionID string) ([]Target, error) {
-	definition, _, ok := s.Metrics.Report(request.DashboardID)
+	resolved, ok := resolveDashboard(s.Metrics, request.DashboardID)
 	if !ok {
 		return nil, fmt.Errorf("dashboard %q is not published", request.DashboardID)
 	}
+	definition := resolved.Definition
 	source, ok := definition.Visualizations[sourceID]
 	if !ok {
 		return nil, fmt.Errorf("unknown source visual %q", sourceID)
@@ -373,10 +378,11 @@ func activeInteractionTargetIDs(targets []visualizationir.VisualizationInteracti
 }
 
 func (s Service) targetsForIDs(request Request, ids []string) ([]Target, error) {
-	definition, _, ok := s.Metrics.Report(request.DashboardID)
+	resolved, ok := resolveDashboard(s.Metrics, request.DashboardID)
 	if !ok {
 		return nil, fmt.Errorf("dashboard %q is not published", request.DashboardID)
 	}
+	definition := resolved.Definition
 	pageIDs, err := visualizationIDsForPage(definition, request.PageID)
 	if err != nil {
 		return nil, err
@@ -410,10 +416,11 @@ func (s Service) targetsForIDs(request Request, ids []string) ([]Target, error) 
 }
 
 func (s Service) requireVisualizationOnPage(request Request, visualID string) error {
-	definition, _, ok := s.Metrics.Report(request.DashboardID)
+	resolved, ok := resolveDashboard(s.Metrics, request.DashboardID)
 	if !ok {
 		return fmt.Errorf("dashboard %q is not published", request.DashboardID)
 	}
+	definition := resolved.Definition
 	ids, err := visualizationIDsForPage(definition, request.PageID)
 	if err != nil {
 		return err

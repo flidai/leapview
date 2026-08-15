@@ -6,9 +6,9 @@ package manifest
 import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/internal/workspace"
 )
@@ -41,13 +41,34 @@ type CatalogDashboard struct {
 	Appearance  dashboardappearance.Patch `yaml:"appearance,omitempty" json:"appearance,omitempty"`
 }
 
+// DashboardSourceMetadata is the authoring-resource identity retained with a
+// compiled dashboard. It is descriptive evidence for a future fork/export;
+// deployment repository/ref/commit identities are deliberately not retained
+// here because they are not authoring authority.
+type DashboardSourceMetadata struct {
+	Workspace   string   `json:"workspace"`
+	Name        string   `json:"name"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Owner       string   `json:"owner"`
+	Tags        []string `json:"tags,omitempty"`
+}
+
+// DashboardSource retains the normalized authored dashboard document and
+// resource metadata without retaining checkout access or secrets.
+type DashboardSource struct {
+	Document dashboardauthoring.Dashboard `json:"document"`
+	Metadata DashboardSourceMetadata      `json:"metadata"`
+	Path     string                       `json:"path"`
+}
+
 // Workspace is compiler-private mutable state. It is serialized into the
 // immutable project artifact and never exposed directly to a capability.
 type Workspace struct {
 	Catalog              Catalog
 	Models               map[string]*semanticmodel.Model
-	Dashboards           map[string]*reportdef.Dashboard
 	DashboardDefinitions map[string]dashboarddefinition.Definition
+	DashboardSources     map[string]DashboardSource
 	Publications         map[string]publication.Definition
 	Access               workspace.AccessPolicy
 	RefreshPipelines     map[string]refreshschedule.Definition

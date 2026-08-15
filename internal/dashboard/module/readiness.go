@@ -35,8 +35,14 @@ func metricsMetadataReady(metrics queryruntime.Metrics, workspaceID string) erro
 	if dashboardID == "" {
 		return fmt.Errorf("default dashboard is not configured")
 	}
-	report, model, ok := metrics.Report(dashboardID)
-	return reportMetadataReady(metrics, dashboardID, report, model, ok)
+	if metrics.Resolver() == nil {
+		return reportMetadataReady(metrics, dashboardID, dashboarddefinition.Definition{}, nil, false)
+	}
+	resolved, err := metrics.Resolver().Resolve(dashboardID)
+	if err != nil {
+		return reportMetadataReady(metrics, dashboardID, dashboarddefinition.Definition{}, nil, false)
+	}
+	return reportMetadataReady(metrics, dashboardID, resolved.Definition, resolved.Model, true)
 }
 
 func reportMetadataReady(metrics interface {

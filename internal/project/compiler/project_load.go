@@ -10,8 +10,8 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	appearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	"github.com/flidai/leapview/internal/dashboard/report"
 	"github.com/flidai/leapview/internal/project/schema"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/internal/workspace"
@@ -159,7 +159,7 @@ func loadWorkspaces(project *Project, includes []string) error {
 			AllowedSources:        map[string]struct{}{},
 			Models:                map[string]semanticmodel.Table{},
 			SemanticModels:        map[string]projectSemanticModelSpec{},
-			Dashboards:            map[string]*report.Dashboard{},
+			Dashboards:            map[string]*dashboardauthoring.Dashboard{},
 			Publications:          map[string]publication.Definition{},
 			AccessGroups:          map[string]workspace.WorkspaceGroup{},
 			AccessRoleBindings:    map[string]workspace.WorkspaceRoleBinding{},
@@ -170,6 +170,7 @@ func loadWorkspaces(project *Project, includes []string) error {
 			ModelDescriptions:     map[string]string{},
 			DashboardTitles:       map[string]string{},
 			DashboardDescriptions: map[string]string{},
+			DashboardOwners:       map[string]string{},
 			DashboardTags:         map[string][]string{},
 			Path:                  path,
 			ModelPaths:            map[string]string{},
@@ -387,7 +388,7 @@ func loadWorkspaceDashboards(workspaceProject *WorkspaceProject, baseDir string,
 		if _, exists := workspaceProject.Dashboards[name]; exists {
 			return resourceError(path, "dashboard:"+workspaceProject.ID+"."+name, "metadata.name", "duplicate Dashboard %q in workspace %q", name, workspaceProject.ID)
 		}
-		dashboard := &report.Dashboard{
+		dashboard := &dashboardauthoring.Dashboard{
 			ID:                name,
 			Appearance:        spec.Appearance,
 			Title:             envelope.Metadata.Title,
@@ -405,6 +406,7 @@ func loadWorkspaceDashboards(workspaceProject *WorkspaceProject, baseDir string,
 		workspaceProject.Dashboards[name] = dashboard
 		workspaceProject.DashboardTitles[name] = envelope.Metadata.Title
 		workspaceProject.DashboardDescriptions[name] = envelope.Metadata.Description
+		workspaceProject.DashboardOwners[name] = envelope.Metadata.Owner
 		workspaceProject.DashboardTags[name] = append([]string{}, envelope.Metadata.Tags...)
 		workspaceProject.DashboardPaths[name] = path
 	}

@@ -32,6 +32,7 @@
     "test:visual-modal": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts visual-modal && bun test web/components/dashboard/visual-modal-focus.test.ts web/components/dashboard/visual-modal.dom.test.ts",
     "test:catalog-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts catalog-page && bun test web/components/app/catalog-page.dom.test.ts web/components/app/dashboard-icon-picker.test.ts",
     "test:dashboard-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-page && bun test web/components/dashboard/dashboard-page.dom.test.ts",
+    "test:dashboard-builder": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-builder && bun test web/components/dashboard/dashboard-builder.dom.test.ts",
     "test:chat-composer": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-composer && bun test web/components/chat/chat-composer.dom.test.ts",
     "test:chat-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-page && bun test web/components/chat/chat-page.dom.test.ts",
     "test:chat-thread": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-thread && bun test web/components/chat/chat-thread.dom.test.ts",

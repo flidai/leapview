@@ -57,6 +57,7 @@ type capabilityRoutes struct {
 	managedDataModule  *manageddatamodule.Module
 	deploymentModule   *deploymentmodule.Module
 	dashboardModule    *dashboardmodule.Module
+	dashboardAuthoring *dashboardmodule.AuthoringApplication
 	dashboardAssets    dashboardmodule.Assets
 	agentModule        *agentmodule.Module
 	releaseModule      *releasemodule.Module
@@ -192,6 +193,7 @@ type capabilityAssemblyInputs struct {
 	Agent             *agentmodule.Service
 	ManagedDataModule *manageddatamodule.Module
 	AnalyticsModule   *analyticsmodule.Module
+	Authoring         *dashboardmodule.AuthoringApplication
 	DashboardAssets   dashboardmodule.Assets
 	Product           *adminmodule.ProductService
 	ProductStatus     adminmodule.ProductStatus
@@ -342,7 +344,7 @@ func buildApplicationSurfaces(
 		if provider == nil || strings.TrimSpace(workspaceID) == "" {
 			return nil
 		}
-		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(provider, workspaceID)
+		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, WorkspaceID: workspaceID})
 		candidate = dashboardmodule.WithAdmission(candidate, controller)
 		if dataAuthorization != nil && (data.AccessRepo != nil || workflow.Auth != nil || capabilities.AccessModule != nil) {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
@@ -416,6 +418,7 @@ func buildApplicationSurfaces(
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
 	routes.dashboardAssets = capabilities.DashboardAssets
+	routes.dashboardAuthoring = capabilities.Authoring
 	persistence.workspaceReadModel = workspaceReadModel
 	persistence.workspaceDirectory = data.WorkspaceDirectory
 	persistence.workspaceAssetCatalog = data.AssetCatalog
@@ -782,6 +785,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
 			Database:    database,
+			Authoring:   routes.dashboardAuthoring,
 			RecordAudit: routes.accessModule.RecordAudit,
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics: runtime.metrics,
@@ -925,10 +929,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		routes.agentModule, err = agentmodule.Build(ctx, agentmodule.Config{
 			Database: database, Model: moduleWorkflow.agentConfig,
 			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
-			ProductName:      brand.Name,
-			BuildVersion:     platform.buildIdentity.Version,
-			APIGenOperations: agentAPIGenOperations(),
-			RunWorkloadClass: string(workloadmodule.BackgroundClass), GlobalWorkspaceID: workloadmodule.GlobalWorkspace,
+			ProductName:        brand.Name,
+			BuildVersion:       platform.buildIdentity.Version,
+			APIGenOperations:   agentAPIGenOperations(),
+			DashboardAuthoring: routes.dashboardAuthoring,
+			RunWorkloadClass:   string(workloadmodule.BackgroundClass), GlobalWorkspaceID: workloadmodule.GlobalWorkspace,
 			Search: routes.workspaceModule,
 			Environment: func(r *http.Request) string {
 				return string(requestServingEnvironment(policy.defaultEnvironment, r))

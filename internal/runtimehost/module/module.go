@@ -15,6 +15,11 @@ type ServingStatePort interface {
 	runtimehost.ServingStateRepository
 }
 
+// Lease is the runtime-host module's narrow composition port. Keeping the
+// alias here lets application composition avoid importing the runtime
+// implementation package directly.
+type Lease = runtimehost.Lease
+
 type Config struct {
 	States                ServingStatePort
 	WorkspaceIDs          []servingstate.WorkspaceID

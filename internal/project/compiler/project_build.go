@@ -9,6 +9,7 @@ import (
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/project/manifest"
@@ -221,8 +222,8 @@ func (workspaceProject *WorkspaceProject) definition(project Project) (*manifest
 	definition := &manifest.Workspace{
 		Catalog:              catalog,
 		Models:               map[string]*semanticmodel.Model{},
-		Dashboards:           workspaceProject.Dashboards,
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{},
+		DashboardSources:     map[string]manifest.DashboardSource{},
 		Publications:         copyDashboardPublications(workspaceProject.Publications),
 		Access: workspace.AccessPolicy{
 			Groups:       copyWorkspaceGroups(workspaceProject.AccessGroups),
@@ -250,24 +251,30 @@ func (workspaceProject *WorkspaceProject) definition(project Project) (*manifest
 	}
 	for name := range workspaceProject.Dashboards {
 		dashboard := workspaceProject.Dashboards[name]
-		if err := ValidateDashboard(dashboard, definition.Models); err != nil {
+		compiledDashboardResult, err := dashboardcompiler.Compile(*dashboard, definition.Models)
+		if err != nil {
 			return nil, resourceError(workspaceProject.DashboardPaths[name], "dashboard:"+workspaceProject.ID+"."+name, "spec", "loading dashboard %q: %s", name, err.Error())
 		}
-		visualizations, err := compileVisualizationDefinitions(dashboard, definition.Models[dashboard.SemanticModel])
-		if err != nil {
-			return nil, resourceError(workspaceProject.DashboardPaths[name], "dashboard:"+workspaceProject.ID+"."+name, "spec.visuals", "compiling dashboard %q visualizations: %s", name, err.Error())
+		normalizedDashboard := compiledDashboardResult.Normalized
+		definition.DashboardDefinitions[name] = compiledDashboardResult.Definition
+		definition.DashboardSources[name] = manifest.DashboardSource{
+			Document: normalizedDashboard,
+			Metadata: manifest.DashboardSourceMetadata{
+				Workspace:   workspaceProject.ID,
+				Name:        name,
+				Title:       workspaceProject.DashboardTitles[name],
+				Description: workspaceProject.DashboardDescriptions[name],
+				Owner:       workspaceProject.DashboardOwners[name],
+				Tags:        append([]string(nil), workspaceProject.DashboardTags[name]...),
+			},
+			Path: workspaceProject.DashboardPaths[name],
 		}
-		compiledDashboard, err := CompileDashboardDefinition(dashboard, visualizations)
-		if err != nil {
-			return nil, resourceError(workspaceProject.DashboardPaths[name], "dashboard:"+workspaceProject.ID+"."+name, "spec", "compiling dashboard %q definition: %s", name, err.Error())
-		}
-		definition.DashboardDefinitions[name] = compiledDashboard
 		definition.Catalog.Dashboards = append(definition.Catalog.Dashboards, manifest.CatalogDashboard{
 			ID:          name,
-			Title:       firstNonEmpty(workspaceProject.DashboardTitles[name], dashboard.Title),
+			Title:       firstNonEmpty(workspaceProject.DashboardTitles[name], normalizedDashboard.Title),
 			Description: workspaceProject.DashboardDescriptions[name],
 			Tags:        append([]string{}, workspaceProject.DashboardTags[name]...),
-			Appearance:  dashboard.Appearance,
+			Appearance:  normalizedDashboard.Appearance,
 		})
 	}
 	sort.Slice(definition.Catalog.Dashboards, func(i, j int) bool {

@@ -57,11 +57,12 @@ func (h Handler) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	dashboardID := chi.URLParam(r, "dashboard")
-	report, model, ok := metrics.Report(dashboardID)
-	if !ok {
+	resolved, err := resolveDashboard(metrics, dashboardID)
+	if err != nil {
 		writeJSONError(w, fmt.Errorf("dashboard %q not found", dashboardID), nethttp.StatusNotFound)
 		return
 	}
+	report, model := resolved.Definition, resolved.Model
 	writeJSON(w, nethttp.StatusOK, DashboardManifestProjection(report, model, metrics.Pages(dashboardID)))
 }
 
@@ -313,18 +314,19 @@ func (h Handler) queryDashboardTabularVisual(w nethttp.ResponseWriter, r *nethtt
 		return
 	}
 	dashboardID := chi.URLParam(r, "dashboard")
-	report, _, exists := metrics.Report(dashboardID)
-	if !exists {
+	resolved, err := resolveDashboard(metrics, dashboardID)
+	if err != nil {
 		writeJSONError(w, fmt.Errorf("dashboard %q not found", dashboardID), nethttp.StatusNotFound)
 		return
 	}
+	report := resolved.Definition
 	filters, err := dashboardQueryFilters(report, page.ID, input.FilterState, input.InteractionSelections, input.SpatialSelections)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
 	ctx := dataquery.WithMetadata(r.Context(), h.requestQueryMetadata(r, dataquery.SurfaceAPI, dataquery.OperationAPIQuery, "dashboard_visual", dashboardID+":"+visualID))
-	definition, exists := metrics.VisualizationDefinition(dashboardID, visualID)
+	definition, exists := resolved.Visualization(visualID)
 	if !exists {
 		writeJSONError(w, fmt.Errorf("compiled visualization %q not found", visualID), nethttp.StatusInternalServerError)
 		return
@@ -447,11 +449,12 @@ func (h Handler) dashboardReportPage(w nethttp.ResponseWriter, r *nethttp.Reques
 		return dashboarddefinition.Definition{}, dashboard.Page{}, false
 	}
 	dashboardID := chi.URLParam(r, "dashboard")
-	report, _, ok := metrics.Report(dashboardID)
-	if !ok {
+	resolved, err := resolveDashboard(metrics, dashboardID)
+	if err != nil {
 		writeJSONError(w, fmt.Errorf("dashboard %q not found", dashboardID), nethttp.StatusNotFound)
 		return dashboarddefinition.Definition{}, dashboard.Page{}, false
 	}
+	report := resolved.Definition
 	pageID := chi.URLParam(r, "page")
 	pages := metrics.Pages(dashboardID)
 	if pages == nil {

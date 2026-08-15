@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "997cc9868be63955edafe98376584ecefc63b71a0722d3495d5330548f2a4521"
+	const expectedRouteContractDigest = "e8c50d150858aa25b4341c460fd4ba9cf329a15329514314226ace6120e9ab3b"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -171,6 +171,12 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.HasPrefix(path, "/candidates/{candidate}/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "AUTHOR_PROJECT"
+	case path == "/workspaces/{workspace}/dashboards/{dashboard}/edit" || path == "/workspaces/{workspace}/dashboards/{dashboard}/draft/command":
+		authenticated.owner = "dashboard"
+		authenticated.privilege = "EDIT_ITEM"
+	case path == "/workspaces/{workspace}/dashboards/{dashboard}/preview" || path == "/workspaces/{workspace}/dashboards/{dashboard}/export.yaml":
+		authenticated.owner = "dashboard"
+		authenticated.privilege = "VIEW_ITEM"
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "VIEW_ITEM"
@@ -313,6 +319,9 @@ GET /workspaces/{workspace}/access/search
 GET /workspaces/{workspace}/assets/{asset}
 GET /workspaces/{workspace}/assets/{asset}/{section}
 GET /workspaces/{workspace}/dashboards/{dashboard}
+GET /workspaces/{workspace}/dashboards/{dashboard}/edit
+GET /workspaces/{workspace}/dashboards/{dashboard}/export.yaml
+GET /workspaces/{workspace}/dashboards/{dashboard}/preview
 GET /workspaces/{workspace}/dashboards/{dashboard}/pages/{page}
 GET /workspaces/{workspace}/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /workspaces/{workspace}/data
@@ -373,6 +382,7 @@ POST /workspaces/{workspace}/commands/navigate
 POST /workspaces/{workspace}/commands/select
 POST /workspaces/{workspace}/commands/spatial-select
 POST /workspaces/{workspace}/commands/visual-window
+POST /workspaces/{workspace}/dashboards/{dashboard}/draft/command
 POST /workspaces/search
 POST /workspaces/{workspace}/search
 PUT /metrics

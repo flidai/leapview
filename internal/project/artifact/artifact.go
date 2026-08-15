@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/project/manifest"
@@ -18,9 +19,16 @@ import (
 )
 
 const (
-	Version         = 2
-	CompilerVersion = "leapview-project-compiler:v2"
+	Version         = 3
+	CompilerVersion = "leapview-project-compiler:v3"
 )
+
+// AuthoredDashboardMetadata and AuthoredDashboardSource are retained aliases
+// for callers of the artifact package. The source contracts are owned by the
+// dashboard capability so dashboard authoring never needs to depend on the
+// project artifact implementation.
+type AuthoredDashboardMetadata = dashboardauthoring.AuthoredDashboardMetadata
+type AuthoredDashboardSource = dashboardauthoring.AuthoredDashboardSource
 
 type UnsupportedVersionError struct {
 	Version int
@@ -182,6 +190,105 @@ func (w Workspace) DashboardDefinition() *dashboarddefinition.Workspace {
 		return nil
 	}
 	return DashboardProjection(workspaceManifest)
+}
+
+// AuthoredDashboardSource returns a fresh deep copy of the normalized authored
+// dashboard and its descriptive resource metadata. A missing source is
+// explicit: the bool is false and the zero value is returned.
+func (w Workspace) AuthoredDashboardSource(dashboardID string) (AuthoredDashboardSource, bool) {
+	workspaceManifest := w.Manifest()
+	return AuthoredDashboardSourceProjection(workspaceManifest, dashboardID)
+}
+
+// AuthoredDashboardSourceProjection narrows a mutable manifest to one
+// authored dashboard source. It is also used by runtime adapters that already
+// hold a decoded serving manifest.
+func AuthoredDashboardSourceProjection(definition *manifest.Workspace, dashboardID string) (AuthoredDashboardSource, bool) {
+	source, ok, _ := AuthoredDashboardSourceProjectionChecked(definition, dashboardID)
+	return source, ok
+}
+
+// AuthoredDashboardSourceProjectionChecked is the diagnostic form of
+// AuthoredDashboardSourceProjection. It distinguishes an absent source from
+// a retained source whose identity is corrupt.
+func AuthoredDashboardSourceProjectionChecked(definition *manifest.Workspace, dashboardID string) (AuthoredDashboardSource, bool, error) {
+	if definition == nil {
+		return AuthoredDashboardSource{}, false, nil
+	}
+	dashboardID = strings.TrimSpace(dashboardID)
+	source, ok := definition.DashboardSources[dashboardID]
+	if !ok {
+		return AuthoredDashboardSource{}, false, nil
+	}
+	if strings.TrimSpace(source.Document.ID) != dashboardID {
+		return AuthoredDashboardSource{}, false, fmt.Errorf("authored dashboard source %q document id = %q", dashboardID, source.Document.ID)
+	}
+	if strings.TrimSpace(source.Metadata.Name) != dashboardID {
+		return AuthoredDashboardSource{}, false, fmt.Errorf("authored dashboard source %q metadata name = %q", dashboardID, source.Metadata.Name)
+	}
+	if strings.TrimSpace(source.Metadata.Workspace) != strings.TrimSpace(definition.Catalog.Workspace.ID) {
+		return AuthoredDashboardSource{}, false, fmt.Errorf("authored dashboard source %q workspace = %q, want %q", dashboardID, source.Metadata.Workspace, definition.Catalog.Workspace.ID)
+	}
+	if strings.TrimSpace(source.Document.SemanticModel) == "" {
+		return AuthoredDashboardSource{}, false, fmt.Errorf("authored dashboard source %q semantic model is required", dashboardID)
+	}
+	if compiled, exists := definition.DashboardDefinitions[dashboardID]; exists &&
+		strings.TrimSpace(compiled.SemanticModel) != strings.TrimSpace(source.Document.SemanticModel) {
+		return AuthoredDashboardSource{}, false, fmt.Errorf("authored dashboard source %q semantic model = %q, want %q", dashboardID, source.Document.SemanticModel, compiled.SemanticModel)
+	}
+	cloned, ok := CloneAuthoredDashboardSource(AuthoredDashboardSource{
+		Document: source.Document,
+		Metadata: AuthoredDashboardMetadata{
+			Workspace:   source.Metadata.Workspace,
+			Name:        source.Metadata.Name,
+			Title:       source.Metadata.Title,
+			Description: source.Metadata.Description,
+			Owner:       source.Metadata.Owner,
+			Tags:        append([]string(nil), source.Metadata.Tags...),
+		},
+		Path: source.Path,
+	})
+	if !ok {
+		return AuthoredDashboardSource{}, false, fmt.Errorf("authored dashboard source %q document cannot be deep-copied", dashboardID)
+	}
+	return cloned, true, nil
+}
+
+// CloneAuthoredDashboardSource deep-copies one retained authored source.
+func CloneAuthoredDashboardSource(source AuthoredDashboardSource) (AuthoredDashboardSource, bool) {
+	document, err := source.Document.Clone()
+	if err != nil {
+		return AuthoredDashboardSource{}, false
+	}
+	source.Document = document
+	source.Metadata.Tags = append([]string(nil), source.Metadata.Tags...)
+	return source, true
+}
+
+// AuthoredDashboardSources returns fresh deep copies of all retained authored
+// dashboard sources. The returned map and nested values are caller-owned.
+func AuthoredDashboardSources(definition *manifest.Workspace) map[string]AuthoredDashboardSource {
+	result, _ := AuthoredDashboardSourcesChecked(definition)
+	return result
+}
+
+// AuthoredDashboardSourcesChecked returns all retained sources and reports a
+// corrupt retained source instead of silently dropping it.
+func AuthoredDashboardSourcesChecked(definition *manifest.Workspace) (map[string]AuthoredDashboardSource, error) {
+	if definition == nil || len(definition.DashboardSources) == 0 {
+		return nil, nil
+	}
+	result := make(map[string]AuthoredDashboardSource, len(definition.DashboardSources))
+	for id := range definition.DashboardSources {
+		source, present, err := AuthoredDashboardSourceProjectionChecked(definition, id)
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			result[id] = source
+		}
+	}
+	return result, nil
 }
 
 // DashboardProjection narrows a mutable project manifest to the data the

@@ -33,10 +33,9 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
-	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/platform"
@@ -47,6 +46,7 @@ import (
 	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 	"github.com/flidai/leapview/internal/project/manifest"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
+	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 	servingstatevalidation "github.com/flidai/leapview/internal/servingstate/validation"
@@ -59,6 +59,8 @@ type harness struct {
 	handler     http.Handler
 	server      *httptest.Server
 	store       *platform.Store
+	metrics     integrationMetrics
+	runtime     runtimehost.Runtime
 	workspaceID string
 }
 
@@ -83,10 +85,9 @@ type harnessOption func(*harnessConfig)
 type integrationMetrics interface {
 	consumer.Executor
 	Catalog() catalog.Catalog
+	Resolver() dashboardresolver.Resolver
 	DefaultDashboardID() string
 	ModelIDForDashboard(dashboardID string) string
-	Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool)
-	VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool)
 	SemanticModel(modelID string) (*semanticmodel.Model, bool)
 	DefaultFilters(dashboardID string) dashboard.Filters
 	NormalizeVisualizationWindow(dashboardID string, request dashboard.TableRequest) dashboard.TableRequest
@@ -149,6 +150,8 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 
 	h := &harness{
 		handler:     newAppTestHarness(metricsForApp).Routes(),
+		metrics:     metricsForApp,
+		runtime:     metrics,
 		workspaceID: metricsForApp.Catalog().Workspace.ID,
 	}
 	h.server = httptest.NewServer(h.handler)
@@ -220,7 +223,7 @@ func newHarnessWithMetrics(t *testing.T, opts ...harnessOption) (*harness, integ
 	if config.wrapMetrics != nil {
 		metricsForApp = config.wrapMetrics(metrics)
 	}
-	return &harness{workspaceID: metricsForApp.Catalog().Workspace.ID}, metricsForApp, config.catalogPath
+	return &harness{metrics: metricsForApp, runtime: metrics, workspaceID: metricsForApp.Catalog().Workspace.ID}, metricsForApp, config.catalogPath
 }
 
 func newHarnessRuntime(dataDir, catalogPath, duckDBDir string) (*dashboardruntime.Service, error) {

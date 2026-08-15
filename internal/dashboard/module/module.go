@@ -14,6 +14,7 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/api"
+	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardhttp "github.com/flidai/leapview/internal/dashboard/http"
@@ -37,12 +38,14 @@ import (
 
 type Module struct {
 	handler                       dashboardhttp.Handler
+	authoring                     *dashboardauthoringapplication.Application
 	semantic                      semanticapi.Handler
 	snapshot                      func(context.Context, string) (string, error)
 	publications                  *publicationsqlite.Repository
 	publicationService            *publication.Service
 	publicURL                     string
 	currentActor                  func(*http.Request) string
+	recordAudit                   func(context.Context, access.AuditEventInput) error
 	recordPublicationCommandAudit func(context.Context, publicationCommandAuditInput) error
 	streams                       publication.StreamRegistry
 	publicBroker                  dashboardhttp.SignalBroker
@@ -59,7 +62,11 @@ type Module struct {
 }
 
 type Config struct {
-	Database        *sql.DB
+	Database *sql.DB
+	// Authoring is supplied by production composition. It remains optional at
+	// this module boundary so focused dashboard-module tests can exercise the
+	// read/render surface without constructing runtime-backed authoring ports.
+	Authoring       *dashboardauthoringapplication.Application
 	HTTP            HTTPConfig
 	Semantic        SemanticConfig
 	ServingSnapshot func(context.Context, string) (string, error)
@@ -192,6 +199,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	telemetry := config.HTTP.Telemetry
 	handler := dashboardhttp.Handler{
 		Metrics: config.HTTP.Metrics, MetricsForWorkspace: metricsForHTTP,
+		Authoring: config.Authoring,
 		AnalyticalContext: func(ctx context.Context) context.Context {
 			return workload.WithAdmitter(ctx, config.HTTP.Admission)
 		},
@@ -264,7 +272,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}
 	}
 	module := &Module{
-		handler: handler,
+		handler:   handler,
+		authoring: config.Authoring,
 		semantic: semanticapi.Handler{
 			Metrics: config.Semantic.Metrics, MetricsForWorkspace: metricsForSemantic,
 			CurrentPrincipalID:  config.Semantic.CurrentPrincipalID,
@@ -272,7 +281,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			QueryFreshness:      config.Semantic.QueryFreshness,
 		},
 		snapshot:  config.ServingSnapshot,
-		publicURL: config.PublicURL, currentActor: config.CurrentActor,
+		publicURL: config.PublicURL, currentActor: config.CurrentActor, recordAudit: config.RecordAudit,
 		recordPublicationCommandAudit: publicationCommandAudit,
 		streams:                       publication.NewMemoryStreamRegistry(), publicBroker: config.HTTP.Broker,
 		publicTelemetry: config.PublicTelemetry, dashboardTelemetry: config.HTTP.Telemetry, logger: config.Logger,
@@ -323,6 +332,12 @@ func observeVisualizationFrame(telemetry DashboardTelemetry, event dashboardstre
 
 func (m *Module) HTTP() dashboardhttp.Handler      { return m.handler }
 func (m *Module) SemanticAPI() semanticapi.Handler { return m.semantic }
+func (m *Module) Authoring() *dashboardauthoringapplication.Application {
+	if m == nil {
+		return nil
+	}
+	return m.authoring
+}
 
 type PopularityLevel string
 

@@ -7,6 +7,7 @@ LeapView exposes CLI, HTTP API, built-in agent, and remote MCP surfaces backed b
 - Use the [CLI](/docs/cli) for human-operated delivery, CI pipelines, managed-data synchronization, maintenance, and quick headless queries.
 - Use the [HTTP API](/docs/guides/integrate/api-quickstart) for application integrations that need typed request, response, status, pagination, and compatibility contracts.
 - Use [Headless BI queries](/docs/guides/integrate/headless-bi) for governed dashboard or semantic-model results without the LeapView browser UI.
+- Use [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring) for the browser builder, headless authoring API, agent authoring tools, and development-to-production promotion flow.
 - Use [Public and embedded dashboards](/docs/guides/integrate/public-dashboards) for anonymous, governed dashboard presentations on approved origins.
 - Use [Agent integrations](/docs/guides/integrate/agent) for iterative natural-language exploration through the governed tool catalog.
 - Use the [agent tool catalog reference](/docs/guides/integrate/agent-tools) when implementing direct MCP calls or evaluating agent tool traces.

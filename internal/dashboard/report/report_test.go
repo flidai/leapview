@@ -1,14 +1,13 @@
 package report
 
 import (
-	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
-	"gopkg.in/yaml.v3"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 )
 
 type fakeMetrics struct {
@@ -19,9 +18,20 @@ func (m *fakeMetrics) DefaultFilters(string) dashboard.Filters {
 	return m.report.DefaultFilters()
 }
 
-func (m *fakeMetrics) Report(string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
-	model := &semanticmodel.Model{Name: "model"}
-	return m.report, model, true
+func (m *fakeMetrics) Resolver() dashboardresolver.Resolver {
+	return fakeReportResolver{definition: m.report}
+}
+
+type fakeReportResolver struct {
+	definition dashboarddefinition.Definition
+}
+
+func (r fakeReportResolver) Resolve(string) (dashboardresolver.Resolved, error) {
+	return dashboardresolver.Resolved{
+		Definition: r.definition,
+		Model:      &semanticmodel.Model{Name: "model"},
+		Source:     dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, WorkspaceID: "workspace"},
+	}, nil
 }
 
 func TestActivePageResolution(t *testing.T) {
@@ -37,14 +47,6 @@ func TestActivePageResolution(t *testing.T) {
 	}
 	if _, ok := ActivePage(pages, "missing"); ok {
 		t.Fatal("missing explicit page resolved")
-	}
-}
-
-func TestVisualQueryRejectsInlineMeasure(t *testing.T) {
-	var query VisualQuery
-	err := yaml.Unmarshal([]byte("measures:\n  revenue:\n    expr: SUM(orders.revenue)\n"), &query)
-	if err == nil || !strings.Contains(err.Error(), "inline dashboard measures are not supported") {
-		t.Fatalf("Unmarshal() error = %v", err)
 	}
 }
 

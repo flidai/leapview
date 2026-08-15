@@ -211,10 +211,11 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 	if !ok || metrics == nil {
 		return agent.TurnContext{}, fmt.Errorf("unknown workspace %q", workspaceID)
 	}
-	report, _, ok := metrics.Report(dashboardID)
+	resolved, ok := resolveDashboard(metrics, dashboardID)
 	if !ok {
 		return agent.TurnContext{}, fmt.Errorf("unknown dashboard %q", dashboardID)
 	}
+	report := resolved.Definition
 	var page dashboard.Page
 	for _, current := range metrics.Pages(dashboardID) {
 		if current.ID == pageID {

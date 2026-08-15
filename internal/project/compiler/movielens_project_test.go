@@ -37,7 +37,7 @@ func TestMovieLensExperimentProjectCompiles(t *testing.T) {
 	if !ok || len(movieTitle.Bindings) != 2 || movieTitle.Bindings["ratings"].Field != "movies.title" || movieTitle.Bindings["tags"].Field != "movies.title" {
 		t.Fatalf("movie_title dimension = %#v, want conformed ratings/tags bindings", movieTitle)
 	}
-	ratingsOverview := workspaceProject.Definition.Dashboards["ratings-overview"]
+	ratingsOverview := workspaceProject.Definition.DashboardDefinitions["ratings-overview"]
 	if filter := ratingsOverview.FilterDefinitions["rating_bucket"]; filter.Field != "rating_bucket" || filter.Fact != "ratings" {
 		t.Fatalf("rating_bucket filter = %#v, want explicit ratings fact", filter)
 	}

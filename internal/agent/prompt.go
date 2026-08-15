@@ -107,6 +107,8 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	if strings.TrimSpace(input.Input) == "" {
 		return nil, fmt.Errorf("prompt input is required")
 	}
+	toolScope := input.Scope
+	toolScope.ConversationID = input.ConversationID
 	if err := s.acquire(input.ConversationID); err != nil {
 		return nil, err
 	}
@@ -179,7 +181,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				if promptErr != nil {
 					return nil, promptErr
 				}
-				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-readonly", SystemPrompt: systemPrompt, Model: s.model, Tools: s.toolDefinitions(input.Scope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
+				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", SystemPrompt: systemPrompt, Model: s.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
 				if prepErr != nil {
 					return nil, prepErr
 				}
@@ -221,10 +223,10 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		return nil, err
 	}
 	prepared, err := agentcore.New(agentcore.Definition{
-		Name:              "leapview-readonly",
+		Name:              "leapview-governed",
 		SystemPrompt:      systemPrompt,
 		Model:             s.model,
-		Tools:             s.toolDefinitions(input.Scope),
+		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: initial,
 		IDGenerator:       fixedRunIDGenerator{runID: run.ID},
 	})
@@ -391,13 +393,15 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 		CorrelationID:  p.CorrelationID,
 		OnEvent:        onEvent,
 	}
+	toolScope := input.Scope
+	toolScope.ConversationID = input.ConversationID
 
 	sink := &storeEventSink{repo: s.repo, scope: input.Scope, conversationID: input.ConversationID, runID: p.RunID, onEvent: input.OnEvent}
 	def := agentcore.Definition{
-		Name:              "leapview-readonly",
+		Name:              "leapview-governed",
 		SystemPrompt:      p.systemPrompt,
 		Model:             s.model,
-		Tools:             s.toolDefinitions(input.Scope),
+		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: p.initial,
 		Events:            sink,
 		IDGenerator:       fixedRunIDGenerator{runID: p.RunID},

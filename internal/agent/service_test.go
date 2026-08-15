@@ -13,9 +13,9 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/flidai/leapview/internal/platform/jobs"
@@ -50,6 +50,36 @@ func TestServiceUsesHostProvidedTools(t *testing.T) {
 	tools := service.toolDefinitions(Scope{WorkspaceID: "test", PrincipalID: "principal"})
 	if runTool(t, tools, "list_workspace_assets", `{}`) != `{"ok":true}` {
 		t.Fatalf("host-provided tool did not run")
+	}
+}
+
+func TestServiceBindsConversationIDToAgentToolProviders(t *testing.T) {
+	ctx := context.Background()
+	store := openAgentAppStore(t, ctx)
+	defer store.Close()
+	principal := createAgentAppPrincipal(t, ctx, store, "conversation-tools@example.com")
+	model := newRecordingAgentModel(agentcore.ModelResponse{Content: "done", FinishReason: agentcore.FinishReasonStop})
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	var seen []string
+	service.SetToolProviders(func(scope Scope) []agentcore.ToolDefinition {
+		seen = append(seen, scope.ConversationID)
+		return nil
+	})
+	scope := Scope{WorkspaceID: "sales", PrincipalID: principal.ID}
+	conversation, err := service.CreateConversation(ctx, scope, "Tool provenance")
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "hello"}); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if len(seen) == 0 {
+		t.Fatal("tool provider was not called")
+	}
+	for _, got := range seen {
+		if got != conversation.ID {
+			t.Fatalf("tool provider conversation id = %q, want %q (all calls: %#v)", got, conversation.ID, seen)
+		}
 	}
 }
 
@@ -1162,7 +1192,7 @@ func (fakeAgentMetrics) Catalog() catalog.Catalog {
 	}
 }
 
-func (fakeAgentMetrics) Report(id string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
+func (fakeAgentMetrics) dashboardDefinition(id string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
 	if id != "executive-sales" {
 		return dashboarddefinition.Definition{}, nil, false
 	}
@@ -1171,16 +1201,16 @@ func (fakeAgentMetrics) Report(id string) (dashboarddefinition.Definition, *sema
 	return dashboardfixture.Compile(report, model), model, true
 }
 
-func fakeAgentAuthoringReport() reportdef.Dashboard {
-	return reportdef.Dashboard{
+func fakeAgentAuthoringReport() dashboardauthoring.Dashboard {
+	return dashboardauthoring.Dashboard{
 		ID:            "executive-sales",
 		Title:         "Executive Sales",
 		Description:   "Sales dashboard",
 		SemanticModel: "test",
-		Visuals: reportdef.MergeVisualizations(reportdef.ChartVisualizations(map[string]reportdef.Visual{
-			"orders": {Title: "Orders", Type: "bar", Query: reportdef.VisualQuery{Measures: []reportdef.FieldRef{{Field: "order_count"}}}},
-		}), reportdef.TabularVisualizations("table", map[string]reportdef.TableVisual{
-			"orders_table": {Title: "Orders", Query: reportdef.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}},
+		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
+			"orders": {Title: "Orders", Type: "bar", Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count"}}}},
+		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
+			"orders_table": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}},
 		})),
 		Pages: []dashboard.Page{{ID: "overview", Title: "Overview", Visuals: []dashboard.PageVisual{{ID: "orders", Kind: "visual", Visual: "orders"}, {ID: "orders-table", Kind: "visual", Visual: "orders_table"}}}},
 	}
@@ -1209,7 +1239,7 @@ func fakeSemanticModel() *semanticmodel.Model {
 }
 
 func (fakeAgentMetrics) Pages(id string) []dashboard.Page {
-	report, _, ok := fakeAgentMetrics{}.Report(id)
+	report, _, ok := fakeAgentMetrics{}.dashboardDefinition(id)
 	if !ok {
 		return nil
 	}
@@ -1225,7 +1255,7 @@ func (fakeAgentMetrics) NormalizeVisualizationWindow(_ string, request dashboard
 }
 
 func (fakeAgentMetrics) QueryDashboardPage(_ context.Context, dashboardID, pageID string, filters dashboard.Filters) (dashboard.Patch, error) {
-	report, _, _ := fakeAgentMetrics{}.Report(dashboardID)
+	report, _, _ := fakeAgentMetrics{}.dashboardDefinition(dashboardID)
 	definition := report.Visualizations["orders"]
 	envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 10}}}, nil, 0, 0)
 	if err != nil {
@@ -1243,32 +1273,32 @@ type largeDashboardMetrics struct {
 	fakeAgentMetrics
 }
 
-func (largeDashboardMetrics) Report(id string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
+func (largeDashboardMetrics) dashboardDefinition(id string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
 	if id != "executive-sales" {
 		return dashboarddefinition.Definition{}, nil, false
 	}
 	report, model := fakeAgentAuthoringReport(), fakeSemanticModel()
 	report.Pages = make([]dashboard.Page, 0, 24)
-	report.Visuals = map[string]reportdef.AuthoringVisualization{}
+	report.Visuals = map[string]dashboardauthoring.AuthoringVisualization{}
 	for pageIndex := 1; pageIndex <= 24; pageIndex++ {
 		chartID := fmt.Sprintf("chart_%02d", pageIndex)
 		kpiID := fmt.Sprintf("kpi_%02d", pageIndex)
 		tableID := fmt.Sprintf("table_%02d", pageIndex)
-		report.Visuals[chartID] = reportdef.ChartVisualization(reportdef.Visual{
+		report.Visuals[chartID] = dashboardauthoring.ChartVisualization(dashboardauthoring.Visual{
 			Title:       fmt.Sprintf("Chart %02d", pageIndex),
 			Description: largeDashboardPayloadMarker + strings.Repeat("x", 4096),
 			Type:        "bar",
-			Query:       reportdef.VisualQuery{Measures: []reportdef.FieldRef{{Field: "order_count"}}},
+			Query:       dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count"}}},
 		})
-		report.Visuals[kpiID] = reportdef.ChartVisualization(reportdef.Visual{
+		report.Visuals[kpiID] = dashboardauthoring.ChartVisualization(dashboardauthoring.Visual{
 			Title:       fmt.Sprintf("KPI %02d", pageIndex),
 			Description: largeDashboardPayloadMarker + strings.Repeat("y", 4096),
 			Type:        "kpi",
-			Query:       reportdef.VisualQuery{Measures: []reportdef.FieldRef{{Field: "order_count"}}},
+			Query:       dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count"}}},
 		})
-		report.Visuals[tableID] = reportdef.TabularVisualization("table", reportdef.TableVisual{
+		report.Visuals[tableID] = dashboardauthoring.TabularVisualization("table", dashboardauthoring.TableVisual{
 			Title: fmt.Sprintf("Table %02d", pageIndex),
-			Query: reportdef.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}},
+			Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}},
 			Columns: []dashboard.TableColumn{{
 				Key:   largeDashboardPayloadMarker + strings.Repeat("z", 4096),
 				Label: "Large Column",
@@ -1288,7 +1318,7 @@ func (largeDashboardMetrics) Report(id string) (dashboarddefinition.Definition, 
 }
 
 func (largeDashboardMetrics) Pages(id string) []dashboard.Page {
-	report, _, ok := largeDashboardMetrics{}.Report(id)
+	report, _, ok := largeDashboardMetrics{}.dashboardDefinition(id)
 	if !ok {
 		return nil
 	}

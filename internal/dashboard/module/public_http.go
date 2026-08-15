@@ -71,13 +71,13 @@ func (m *Module) ResolvePublicDashboard(ctx context.Context, publicID string) (R
 	if !ok || metrics == nil {
 		return ResolvedPublicDashboard{}, publication.ErrNotFound
 	}
-	report, _, ok := metrics.Report(row.Dashboard)
-	if !ok {
+	resolvedDashboard, err := dashboardhttp.ResolveDashboard(metrics, row.Dashboard)
+	if err != nil {
 		return ResolvedPublicDashboard{}, publication.ErrNotFound
 	}
 	return ResolvedPublicDashboard{
-		Publication: row, Metrics: metrics, Report: report,
-		ModelID: metrics.ModelIDForDashboard(row.Dashboard),
+		Publication: row, Metrics: metrics, Report: resolvedDashboard.Definition,
+		ModelID: resolvedDashboard.Definition.SemanticModel,
 	}, nil
 }
 
@@ -99,11 +99,12 @@ func (m *Module) PublicDashboardDocument(presentation string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		_, model, ok := resolved.Metrics.Report(resolved.Publication.Dashboard)
-		if !ok {
+		resolvedDashboard, err := dashboardhttp.ResolveDashboard(resolved.Metrics, resolved.Publication.Dashboard)
+		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
+		model := resolvedDashboard.Model
 		SetPublicDashboardSecurityHeaders(w.Header(), presentation, resolved.Publication.AllowedOrigins)
 		m.observePublicDocument(presentation, "success")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

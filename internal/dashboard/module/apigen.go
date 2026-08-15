@@ -4,10 +4,50 @@ import (
 	"log/slog"
 	"net/http"
 
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	dashboardhttp "github.com/flidai/leapview/internal/dashboard/http"
 )
 
 type dashboardAPIGenHandler struct{ module *Module }
+
+func (h dashboardAPIGenHandler) authoringAPI() dashboardhttp.AuthoringAPI {
+	actor := h.module.currentActor
+	if actor == nil {
+		actor = h.module.handler.CurrentPrincipalID
+	}
+	return dashboardhttp.AuthoringAPI{Application: h.module.authoring, ActorID: actor, RecordAudit: h.module.recordAudit}
+}
+
+func (h dashboardAPIGenHandler) ListDashboardAuthoringCatalog(w http.ResponseWriter, r *http.Request, _ string) {
+	h.authoringAPI().ListCatalog(w, r)
+}
+func (h dashboardAPIGenHandler) ExecuteDashboardAuthoringCommand(w http.ResponseWriter, r *http.Request, _ string, _ dashboardgen.GenExecuteDashboardAuthoringCommandHeaders) {
+	h.authoringAPI().ExecuteCommand(w, r)
+}
+func (h dashboardAPIGenHandler) GetDashboardAuthoringDashboard(w http.ResponseWriter, r *http.Request, _, _ string) {
+	h.authoringAPI().GetDashboard(w, r)
+}
+func (h dashboardAPIGenHandler) GetDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _, _ string) {
+	h.authoringAPI().GetDraft(w, r)
+}
+func (h dashboardAPIGenHandler) PreviewDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _, _, _ string) {
+	h.authoringAPI().Preview(w, r)
+}
+func (h dashboardAPIGenHandler) GetDashboardAuthoringDraftRevision(w http.ResponseWriter, r *http.Request, _, _, _, _ string) {
+	h.authoringAPI().GetRevision(w, r)
+}
+func (h dashboardAPIGenHandler) GetDashboardAuthoringPublishedRevision(w http.ResponseWriter, r *http.Request, _, _, _ string) {
+	h.authoringAPI().GetRevision(w, r)
+}
+func (h dashboardAPIGenHandler) CreateDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _ string, _ dashboardgen.GenCreateDashboardAuthoringDraftHeaders) {
+	h.authoringAPI().CreateDraft(w, r)
+}
+func (h dashboardAPIGenHandler) ForkDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _ string, _ dashboardgen.GenForkDashboardAuthoringDraftHeaders) {
+	h.authoringAPI().Fork(w, r)
+}
+func (h dashboardAPIGenHandler) ExportDashboardAuthoringSource(w http.ResponseWriter, r *http.Request, _, _, _ string) {
+	h.authoringAPI().Export(w, r)
+}
 
 func (h dashboardAPIGenHandler) ListDashboardPublications(w http.ResponseWriter, r *http.Request, workspace string) {
 	h.module.ListDashboardPublications(w, r, workspace)

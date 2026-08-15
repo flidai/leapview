@@ -406,7 +406,7 @@ func TestBIAPISemanticDatasetSurface(t *testing.T) {
 		},
 		{
 			method: http.MethodGet,
-			path:   "/api/v1/workspaces/test/semantic-models/test/datasets/orders/fields?limit=3",
+			path:   "/api/v1/workspaces/test/semantic-models/test/datasets/orders/fields?limit=4",
 			want:   []string{`"kind":"dimension"`, `"kind":"measure"`, `"order_count"`},
 		},
 		{
@@ -504,7 +504,7 @@ func (m auditedDashboardMetrics) QueryDashboardPage(ctx context.Context, dashboa
 	if err != nil {
 		return dashboard.Patch{}, err
 	}
-	definition, _ := m.VisualizationDefinition(dashboardID, "order_rows")
+	definition, _ := m.visualizationDefinition(dashboardID, "order_rows")
 	envelope, err := visualizationruntime.WindowEnvelopeFromDefinition(definition, table, 0, 0)
 	if err != nil {
 		return dashboard.Patch{}, err

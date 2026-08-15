@@ -12,10 +12,11 @@ import (
 // ProviderSet is the canonical composition of the tool providers consumed by
 // built-in chat, MCP, the CLI catalog, and generated documentation.
 type ProviderSet struct {
-	Docs    DocsProvider
-	Catalog CatalogProvider
-	Visual  VisualProvider
-	APIGen  APIGenProvider
+	Docs      DocsProvider
+	Catalog   CatalogProvider
+	Visual    VisualProvider
+	APIGen    APIGenProvider
+	Authoring DashboardAuthoringProvider
 }
 
 func (p ProviderSet) Definitions(scope Scope) []agentcore.ToolDefinition {
@@ -23,6 +24,23 @@ func (p ProviderSet) Definitions(scope Scope) []agentcore.ToolDefinition {
 	definitions = append(definitions, p.Catalog.Definitions(scope)...)
 	definitions = append(definitions, p.Visual.Definitions(scope)...)
 	definitions = append(definitions, p.APIGen.Definitions(scope)...)
+	definitions = append(definitions, p.Authoring.Definitions(scope)...)
+	sort.Slice(definitions, func(i, j int) bool {
+		return definitions[i].Name < definitions[j].Name
+	})
+	return definitions
+}
+
+// referenceDefinitions composes the complete transport-independent catalog
+// for generated references. Runtime Definitions intentionally omits authoring
+// when its application facade is unavailable; reference generation still
+// needs the static schemas and metadata for that provider.
+func (p ProviderSet) referenceDefinitions(scope Scope) []agentcore.ToolDefinition {
+	definitions := p.Docs.Definitions()
+	definitions = append(definitions, p.Catalog.Definitions(scope)...)
+	definitions = append(definitions, p.Visual.Definitions(scope)...)
+	definitions = append(definitions, p.APIGen.Definitions(scope)...)
+	definitions = append(definitions, p.Authoring.contractDefinitions(scope)...)
 	sort.Slice(definitions, func(i, j int) bool {
 		return definitions[i].Name < definitions[j].Name
 	})
@@ -37,11 +55,17 @@ type ToolAnnotations struct {
 }
 
 func AnnotationsForEffect(effect string) ToolAnnotations {
-	return ToolAnnotations{
-		ReadOnlyHint:    effect == "" || effect == "read",
-		DestructiveHint: effect == "destructive",
-		IdempotentHint:  effect != "destructive",
-		OpenWorldHint:   false,
+	switch effect {
+	case "read":
+		return ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true}
+	case "destructive":
+		return ToolAnnotations{DestructiveHint: true}
+	case "write":
+		// Writes are neither read-only nor destructive, and a transport retry
+		// may receive a fresh tool-call identity and create another resource.
+		return ToolAnnotations{}
+	default:
+		return ToolAnnotations{}
 	}
 }
 
@@ -64,14 +88,14 @@ type ToolReference struct {
 // definitions used at runtime. It fails closed if registry and provider
 // composition drift.
 func ReferenceCatalog(operations []APIGenOperation) ([]ToolReference, error) {
-	definitions := (ProviderSet{APIGen: APIGenProvider{Operations: operations}}).Definitions(Scope{})
+	definitions := (ProviderSet{APIGen: APIGenProvider{Operations: operations}}).referenceDefinitions(Scope{})
 	if len(definitions) != len(ToolNames(operations)) {
 		return nil, fmt.Errorf("canonical definitions count %d does not match registry count %d", len(definitions), len(ToolNames(operations)))
 	}
 	metadata := referenceMetadata(operations)
 	references := make([]ToolReference, 0, len(definitions))
 	for _, definition := range definitions {
-		if definition.Effect != "read" {
+		if definition.Effect != "read" && definition.Effect != "write" && definition.Effect != "destructive" {
 			return nil, fmt.Errorf("canonical tool %q has unsupported effect %q", definition.Name, definition.Effect)
 		}
 		entry, ok := metadata[definition.Name]
@@ -101,12 +125,24 @@ type toolReferenceMetadata struct {
 
 func referenceMetadata(operations []APIGenOperation) map[string]toolReferenceMetadata {
 	metadata := map[string]toolReferenceMetadata{
-		CatalogSearchToolName: {privilege: "VIEW_ITEM", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogSearchLimit}},
-		CatalogListToolName:   {privilege: "VIEW_ITEM", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogListLimit}},
-		CatalogGetToolName:    {privilege: "VIEW_ITEM", operationID: "manual", defaults: map[string]any{}},
-		QueryVisualToolName:   {privilege: "QUERY_DATA", operationID: "manual", defaults: map[string]any{"limit": maxVisualRows}},
-		DocsSearchToolName:    {privilege: "USE_AGENT", operationID: "manual", defaults: map[string]any{"limit": productdocs.DefaultSearchLimit}},
-		DocsReadToolName:      {privilege: "USE_AGENT", operationID: "manual", defaults: map[string]any{"limit": productdocs.DefaultReadLimit, "offset": 1}},
+		AddDashboardPageToolName:        {privilege: "EDIT_ITEM", operationID: "manual", defaults: map[string]any{}},
+		AddDashboardVisualToolName:      {privilege: "EDIT_ITEM", operationID: "manual", defaults: map[string]any{}},
+		AssignDashboardFieldToolName:    {privilege: "EDIT_ITEM", operationID: "manual", defaults: map[string]any{}},
+		CatalogSearchToolName:           {privilege: "VIEW_ITEM", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogSearchLimit}},
+		CatalogListToolName:             {privilege: "VIEW_ITEM", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogListLimit}},
+		CatalogGetToolName:              {privilege: "VIEW_ITEM", operationID: "manual", defaults: map[string]any{}},
+		CreateDashboardDraftToolName:    {privilege: "EDIT_ITEM", operationID: "manual", defaults: map[string]any{}},
+		ExecuteDashboardCommandToolName: {privilege: "MANAGE_ITEM", operationID: "manual", defaults: map[string]any{}},
+		ExportDashboardYAMLToolName:     {privilege: "VIEW_ITEM", operationID: "manual", defaults: map[string]any{}},
+		ForkDashboardToolName:           {privilege: "EDIT_ITEM", operationID: "manual", defaults: map[string]any{}},
+		GetDashboardDraftToolName:       {privilege: "EDIT_ITEM", operationID: "manual", defaults: map[string]any{}},
+		GetDashboardToolName:            {privilege: "VIEW_ITEM", operationID: "manual", defaults: map[string]any{}},
+		ListDashboardsToolName:          {privilege: "VIEW_ITEM", operationID: "manual", defaults: map[string]any{}},
+		PreviewDashboardDraftToolName:   {privilege: "EDIT_ITEM", operationID: "manual", defaults: map[string]any{}},
+		QueryVisualToolName:             {privilege: "QUERY_DATA", operationID: "manual", defaults: map[string]any{"limit": maxVisualRows}},
+		SetDashboardVisibilityToolName:  {privilege: "EDIT_ITEM", operationID: "manual", defaults: map[string]any{}},
+		DocsSearchToolName:              {privilege: "USE_AGENT", operationID: "manual", defaults: map[string]any{"limit": productdocs.DefaultSearchLimit}},
+		DocsReadToolName:                {privilege: "USE_AGENT", operationID: "manual", defaults: map[string]any{"limit": productdocs.DefaultReadLimit, "offset": 1}},
 	}
 	for _, operation := range operations {
 		defaults := map[string]any{}

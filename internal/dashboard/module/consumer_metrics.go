@@ -5,14 +5,21 @@ import (
 	"fmt"
 
 	"github.com/flidai/leapview/internal/dashboard/consumer"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 )
 
 func (m runtimeMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {
-	runtime, release, err := m.activeForDashboardRefresh(ctx)
+	runtime, release, resolved, err := m.activeResolvedForDashboardRefresh(ctx, request.DashboardID)
 	if err != nil {
 		return err
 	}
 	defer release()
+	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+		if port, ok := runtime.(definitionConsumerRuntime); ok {
+			return port.ExecuteConsumersPageForDefinition(ctx, resolved.Definition, request, publish)
+		}
+		return fmt.Errorf("active runtime does not provide compiled dashboard consumer execution")
+	}
 	return executeConsumersFrom(ctx, runtime, request, publish)
 }
 

@@ -54,6 +54,8 @@ Do not blindly retry create, deploy, refresh, turn, or administrative operations
 
 `409` usually requires reading current lifecycle state rather than waiting and repeating the same payload. `400`, `401`, and `403` require correction, not retry.
 
+Dashboard-authoring writes are explicit: always send `Idempotency-Key` on draft creation, commands, and forks. The key is separate from actor/tool-call provenance. Reusing a key with the same normalized payload or command fingerprint replays the durable result; reusing it with a changed payload conflicts; a different key creates a new draft. Builder commands and previews must carry the complete expected revision token rather than assuming the server will select the latest revision. See [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring) for the route table and lifecycle rules.
+
 ## Timeouts and cancellation
 
 Set connection, response-header, and overall operation deadlines. BI queries and refresh operations have different expected durations; do not give every request one unlimited timeout. Cancel client requests when their result is no longer needed so server work can be released where supported.

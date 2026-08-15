@@ -2,6 +2,298 @@
   "schemaVersion": 1,
   "tools": [
     {
+      "name": "add_dashboard_page",
+      "description": "Add one dashboard page to a private draft using an exact expected revision.",
+      "privilege": "EDIT_ITEM",
+      "effect": "write",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "intent"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboardId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "draftId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRevision": {
+            "additionalProperties": false,
+            "properties": {
+              "contentHash": {
+                "type": "string"
+              },
+              "number": {
+                "type": "integer"
+              },
+              "revisionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contentHash",
+              "number",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          "pageId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboardId",
+          "draftId",
+          "expectedRevision",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "lifecycle",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "add_dashboard_visual",
+      "description": "Add a governed dashboard visual to a private draft using an exact expected revision.",
+      "privilege": "EDIT_ITEM",
+      "effect": "write",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "intent"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "dashboardId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "draftId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRevision": {
+            "additionalProperties": false,
+            "properties": {
+              "contentHash": {
+                "type": "string"
+              },
+              "number": {
+                "type": "integer"
+              },
+              "revisionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contentHash",
+              "number",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          "pageId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "visualId": {
+            "type": "string"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboardId",
+          "draftId",
+          "expectedRevision",
+          "pageId",
+          "type",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "lifecycle",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "assign_dashboard_field",
+      "description": "Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision.",
+      "privilege": "EDIT_ITEM",
+      "effect": "write",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "intent"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboardId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "draftId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRevision": {
+            "additionalProperties": false,
+            "properties": {
+              "contentHash": {
+                "type": "string"
+              },
+              "number": {
+                "type": "integer"
+              },
+              "revisionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contentHash",
+              "number",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          "fieldId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "pageId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "measure",
+              "dimension",
+              "detail"
+            ],
+            "type": "string"
+          },
+          "visualId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboardId",
+          "draftId",
+          "expectedRevision",
+          "fieldId",
+          "pageId",
+          "role",
+          "visualId",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "lifecycle",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "catalog_get",
       "description": "Get the compact definition and type-specific metadata for one exact catalog ref. A dashboard/page location is required when a visual or filter is shared.",
       "privilege": "VIEW_ITEM",
@@ -1904,6 +2196,74 @@
       }
     },
     {
+      "name": "create_dashboard_draft",
+      "description": "Create a private dashboard draft owned by the authenticated principal. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.",
+      "privilege": "EDIT_ITEM",
+      "effect": "write",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "create"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboardId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "semanticModel": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "slug": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "semanticModel",
+          "title",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "lifecycle",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "docs_read",
       "description": "Read a bounded line window from one LeapView document returned by docs_search. Continue with nextOffset when truncated is true.",
       "privilege": "USE_AGENT",
@@ -2103,6 +2463,494 @@
           "hasMore",
           "matches",
           "query"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "execute_dashboard_command",
+      "description": "Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision. Actor and agent provenance are server-bound.",
+      "privilege": "MANAGE_ITEM",
+      "effect": "destructive",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "command"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "archive": {
+            "type": "object"
+          },
+          "contentHash": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "dashboardId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "draftId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRevision": {
+            "additionalProperties": false,
+            "properties": {
+              "contentHash": {
+                "type": "string"
+              },
+              "number": {
+                "type": "integer"
+              },
+              "revisionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contentHash",
+              "number",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          "publish": {
+            "type": "object"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboardId",
+          "draftId",
+          "expectedRevision",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "lifecycle",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "export_dashboard_yaml",
+      "description": "Export an authorized authored dashboard source as canonical project YAML.",
+      "privilege": "VIEW_ITEM",
+      "effect": "read",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "export"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboard": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "sourceKind": {
+            "enum": [
+              "workspace",
+              "project"
+            ],
+            "type": "string"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboard",
+          "sourceKind",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "yaml": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "yaml"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "fork_dashboard",
+      "description": "Fork an authorized workspace or retained project dashboard source into a private draft. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.",
+      "privilege": "EDIT_ITEM",
+      "effect": "write",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "fork"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "sourceDashboard": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "sourceKind": {
+            "enum": [
+              "workspace",
+              "project"
+            ],
+            "type": "string"
+          },
+          "sourceWorkspace": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "targetWorkspace": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceDashboard",
+          "sourceKind",
+          "sourceWorkspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "lifecycle",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_dashboard",
+      "description": "Get one authorized dashboard's governed metadata.",
+      "privilege": "VIEW_ITEM",
+      "effect": "read",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "catalog"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboard": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboard",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboard": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "dashboard"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_dashboard_draft",
+      "description": "Read the exact current private draft and retained revision for one dashboard.",
+      "privilege": "EDIT_ITEM",
+      "effect": "read",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "draft"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboard": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboard",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "lifecycle",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_dashboards",
+      "description": "List the authorized dashboard catalog for one workspace.",
+      "privilege": "VIEW_ITEM",
+      "effect": "read",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "catalog"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "projectCount": {
+            "type": "integer"
+          },
+          "workspaceCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "items",
+          "projectCount",
+          "workspaceCount"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "preview_dashboard_draft",
+      "description": "Preview an exact private dashboard draft revision and page against the active governed runtime.",
+      "privilege": "EDIT_ITEM",
+      "effect": "read",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "preview"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboard": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "draftId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRevision": {
+            "additionalProperties": false,
+            "properties": {
+              "contentHash": {
+                "type": "string"
+              },
+              "number": {
+                "type": "integer"
+              },
+              "revisionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contentHash",
+              "number",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          "filters": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "page": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboard",
+          "draftId",
+          "expectedRevision",
+          "page",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "definition": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "pagePatch": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "semanticEvidence": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "definition",
+          "pagePatch",
+          "revision",
+          "semanticEvidence"
         ],
         "type": "object"
       }
@@ -3904,6 +4752,95 @@
           "summary",
           "title",
           "type"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "set_dashboard_visibility",
+      "description": "Set a private dashboard draft's visibility using an exact expected revision.",
+      "privilege": "EDIT_ITEM",
+      "effect": "write",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "intent"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboardId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "draftId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRevision": {
+            "additionalProperties": false,
+            "properties": {
+              "contentHash": {
+                "type": "string"
+              },
+              "number": {
+                "type": "integer"
+              },
+              "revisionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contentHash",
+              "number",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          "visibility": {
+            "enum": [
+              "private",
+              "shared"
+            ],
+            "type": "string"
+          },
+          "workspace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboardId",
+          "draftId",
+          "expectedRevision",
+          "visibility",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "lifecycle",
+          "revision"
         ],
         "type": "object"
       }

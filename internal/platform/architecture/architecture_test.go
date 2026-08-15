@@ -1545,6 +1545,14 @@ func TestCapabilityModulesRequireDeclaredPublicContractEdges(t *testing.T) {
 	if violation := CapabilityImportViolation("internal/agent/module", agentModule, "internal/dashboard/report", dashboardReport); violation != "" {
 		t.Fatalf("agent module -> dashboard report should be allowed, got %q", violation)
 	}
+
+	dashboardResolver, ok := ClassifyPackage("internal/dashboard/resolver")
+	if !ok {
+		t.Fatal("dashboard resolver classification is unavailable")
+	}
+	if violation := CapabilityImportViolation("internal/agent/module", agentModule, "internal/dashboard/resolver", dashboardResolver); violation != "" {
+		t.Fatalf("agent module -> dashboard resolver should be allowed, got %q", violation)
+	}
 }
 
 func TestApplicationImportsProductCapabilitiesOnlyThroughModules(t *testing.T) {
@@ -2517,7 +2525,7 @@ func TestResponsiveLayoutContractGenerationIsAvailableToEveryBrowserBuild(t *tes
 	files := map[string][]string{
 		"Taskfile.yml": {
 			"layout-contract:generate:",
-			"internal/project/layoutcontract/contracts.json",
+			"internal/dashboard/layoutcontract/contracts.json",
 			"web/generated/dashboard-layout/contracts.json",
 			"go run ./internal/app/tools/layoutcontractgen",
 			"build:\n    desc: Build browser assets\n    deps:\n      - node:deps\n      - layout-contract:generate",

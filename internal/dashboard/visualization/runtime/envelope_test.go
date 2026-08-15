@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	"github.com/flidai/leapview/internal/dashboard/visualization/ir"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 )
 
 func testCartesianDefinition(t *testing.T, id string, fields []ir.VisualizationField, interactions []ir.VisualizationInteraction) visualizationdefinition.Definition {
@@ -56,11 +56,11 @@ func testGridDefinition(t *testing.T, id string, table dashboard.Table) visualiz
 	for index, column := range table.Columns {
 		fields[index] = column.Key
 	}
-	authored := reportdef.TableVisual{Title: table.Title, Columns: table.Columns, DefaultSort: table.Sort, Style: table.Style, Query: reportdef.TableQuery{Table: "table", Fields: fields}}
+	authored := dashboardauthoring.TableVisual{Title: table.Title, Columns: table.Columns, DefaultSort: table.Sort, Style: table.Style, Query: dashboardauthoring.TableQuery{Table: "table", Fields: fields}}
 	if visualType != "table" {
 		authored.Query.Fields = nil
 		for _, column := range table.Columns {
-			field := reportdef.FieldRef{Field: column.Key, Alias: column.Key}
+			field := dashboardauthoring.FieldRef{Field: column.Key, Alias: column.Key}
 			if column.Role == "measure" || column.Align == "right" {
 				authored.Query.Measures = append(authored.Query.Measures, field)
 			} else {
@@ -68,7 +68,7 @@ func testGridDefinition(t *testing.T, id string, table dashboard.Table) visualiz
 			}
 		}
 	}
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&reportdef.Dashboard{ID: "test", SemanticModel: "model", Visuals: reportdef.TabularVisualizations(visualType, map[string]reportdef.TableVisual{id: authored})})
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{ID: "test", SemanticModel: "model", Visuals: dashboardauthoring.TabularVisualizations(visualType, map[string]dashboardauthoring.TableVisual{id: authored})})
 	if err != nil {
 		t.Fatal(err)
 	}

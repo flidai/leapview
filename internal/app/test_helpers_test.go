@@ -12,6 +12,7 @@ import (
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
+	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
@@ -73,6 +74,7 @@ type assemblyConfig struct {
 	DesktopDiscovery      desktopdiscovery.Config
 	RefreshPipelineClock  refreshmodule.Clock
 	AnalyticsModule       *analyticsmodule.Module
+	Authoring             *authoringapplication.Application
 	DashboardAssets       dashboardmodule.Assets
 	QueryAudit            *analyticsmodule.QueryAuditSurface
 	Product               *adminmodule.ProductService
@@ -216,7 +218,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		capabilityAssemblyInputs{
 			ReleaseModule: options.ReleaseModule, JobModule: options.JobModule,
 			AccessModule: options.AccessModule, Agent: options.Agent,
-			ManagedDataModule: options.ManagedDataModule, AnalyticsModule: options.AnalyticsModule,
+			ManagedDataModule: options.ManagedDataModule, AnalyticsModule: options.AnalyticsModule, Authoring: options.Authoring,
 			DashboardAssets: options.DashboardAssets, Product: options.Product, ProductStatus: options.ProductStatus,
 		},
 		workflowAssemblyInputs{
@@ -250,11 +252,11 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 }
 
 func NewRuntimeMetrics(provider runtimehost.Provider, workspaceID string) QueryMetrics {
-	return dashboardmodule.NewRuntimeMetrics(provider, workspaceID)
+	return dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, WorkspaceID: workspaceID})
 }
 
 func NewDynamicRuntimeMetrics(factory func(string) runtimehost.Provider) QueryMetrics {
-	return dashboardmodule.NewDynamicRuntimeMetrics(factory)
+	return dashboardmodule.NewDynamicRuntimeMetrics(dashboardmodule.DynamicRuntimeMetricsOptions{ProviderFactory: factory})
 }
 
 func NewMultiWorkspaceMetrics(workspaces map[string]QueryMetrics) QueryMetrics {

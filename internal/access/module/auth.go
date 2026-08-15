@@ -37,12 +37,12 @@ const maxAuthReturnTargetBytes = 2500
 
 var (
 	errUnauthorized = errors.New("unauthorized")
-	errForbidden    = errors.New("forbidden")
+	errForbidden    = access.ErrForbidden
 )
 
 var (
 	ErrUnauthorized = errUnauthorized
-	ErrForbidden    = errForbidden
+	ErrForbidden    = access.ErrForbidden
 )
 
 type Principal struct {

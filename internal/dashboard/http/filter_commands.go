@@ -31,11 +31,12 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	dashboardID := lddatastar.DashboardID(r, signals, metrics.DefaultDashboardID())
 	pageID := lddatastar.PageID(r, signals)
-	definition, _, ok := metrics.Report(dashboardID)
-	if !ok {
+	resolved, err := resolveDashboard(metrics, dashboardID)
+	if err != nil {
 		nethttp.NotFound(w, r)
 		return
 	}
+	definition := resolved.Definition
 	request := command.Request{
 		DashboardID: dashboardID, PageID: pageID,
 		ModelID: metrics.ModelIDForDashboard(dashboardID),

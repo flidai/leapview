@@ -54,7 +54,7 @@ The supported Hetzner module provides a single-node production topology with Cad
 - Workspace search and catalog/lineage discovery.
 - Dashboard and semantic headless BI queries.
 - Principal-owned global agent conversations, messages, runs, events, and turns.
-- An OAuth-protected, tools-only MCP endpoint at `/mcp` using the same fixed eight-tool governed catalog as the built-in agent, with embedded PKCE consent or an external JWT issuer. See [Use the agent tool catalog](/docs/guides/integrate/agent-tools).
+- An OAuth-protected, tools-only MCP endpoint at `/mcp` using the same twenty-tool governed catalog as the built-in agent—including bounded dashboard authoring tools for private drafts and exact revisions—with embedded PKCE consent or an external JWT issuer. See [Use the agent tool catalog](/docs/guides/integrate/agent-tools).
 - Prometheus metrics protected by a bearer token.
 
 ## Boundaries

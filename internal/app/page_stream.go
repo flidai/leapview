@@ -10,17 +10,18 @@ import (
 )
 
 const (
-	routeLogin           = "login"
-	routeCatalog         = "catalog"
-	routePipelines       = "pipelines"
-	routeDashboard       = "dashboard"
-	routeWorkspace       = "workspace"
-	routeWorkspaceAsset  = "workspace_asset"
-	routeConnections     = "connections"
-	routeConnectionAsset = "connection_asset"
-	routeData            = "data"
-	routeChat            = "chat"
-	routeAdmin           = "admin"
+	routeLogin            = "login"
+	routeCatalog          = "catalog"
+	routePipelines        = "pipelines"
+	routeDashboard        = "dashboard"
+	routeDashboardBuilder = "dashboard_builder"
+	routeWorkspace        = "workspace"
+	routeWorkspaceAsset   = "workspace_asset"
+	routeConnections      = "connections"
+	routeConnectionAsset  = "connection_asset"
+	routeData             = "data"
+	routeChat             = "chat"
+	routeAdmin            = "admin"
 )
 
 func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy) {
@@ -36,6 +37,12 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 				return routes.accessModule.ProtectAnyWorkspaceNamed("VIEW_ITEM", next), true
 			case routeDashboard, routeWorkspaceAsset, routeConnectionAsset, routeData:
 				return routes.accessModule.ProtectNamed("VIEW_ITEM", next), true
+			case routeDashboardBuilder:
+				// The builder application performs the exact dashboard EDIT
+				// authorization after loading only lifecycle metadata. This broad
+				// workspace gate keeps unauthenticated streams out while preserving
+				// the application-level object decision.
+				return routes.accessModule.ProtectAnyWorkspaceNamed("EDIT_ITEM", next), true
 			case routeChat:
 				return routes.accessModule.ProtectAnyWorkspaceNamed("VIEW_AGENT", next), true
 			case routeAdmin:
@@ -58,10 +65,11 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, pla
 			}
 		},
 		Handlers: map[string]http.Handler{
-			routePipelines: http.HandlerFunc(routes.workspaceModule.HTTP().PipelinesBootstrapUpdates),
-			routeDashboard: http.HandlerFunc(routes.dashboardModule.HTTP().Updates),
-			routeChat:      http.HandlerFunc(routes.agentModule.HTTP().ChatUpdates),
-			routeData:      http.HandlerFunc(routes.workspaceModule.HTTP().DataExplorerUpdates),
+			routePipelines:        http.HandlerFunc(routes.workspaceModule.HTTP().PipelinesBootstrapUpdates),
+			routeDashboard:        http.HandlerFunc(routes.dashboardModule.HTTP().Updates),
+			routeDashboardBuilder: http.HandlerFunc(routes.dashboardModule.HTTP().DashboardBuilderUpdates),
+			routeChat:             http.HandlerFunc(routes.agentModule.HTTP().ChatUpdates),
+			routeData:             http.HandlerFunc(routes.workspaceModule.HTTP().DataExplorerUpdates),
 			routeAdmin: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				adminHTTP := routes.adminModule.HTTP()
 				if strings.TrimSpace(r.URL.Query().Get("section")) == "queries" {

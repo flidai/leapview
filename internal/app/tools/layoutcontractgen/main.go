@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	sourcePath = "internal/project/layoutcontract/contracts.json"
+	sourcePath = "internal/dashboard/layoutcontract/contracts.json"
 	targetPath = "web/generated/dashboard-layout/contracts.json"
 )
 

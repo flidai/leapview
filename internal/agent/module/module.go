@@ -23,6 +23,7 @@ import (
 	"github.com/flidai/leapview/internal/agent/productdocs"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/agent/ui"
+	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -57,6 +58,7 @@ type Module struct {
 	productName              string
 	buildVersion             string
 	apiOperations            []agenttools.APIGenOperation
+	dashboardAuthoring       *authoringapplication.Application
 	runExecution             apigencommand.AsyncExecutionContract
 }
 
@@ -107,6 +109,7 @@ type Config struct {
 	ProductName              string
 	BuildVersion             string
 	APIGenOperations         []agenttools.APIGenOperation
+	DashboardAuthoring       *authoringapplication.Application
 	HTTP                     HTTPConfig
 }
 
@@ -128,10 +131,11 @@ type ModelConfig struct {
 }
 
 type Scope struct {
-	WorkspaceID   string
-	PrincipalID   string
-	Credential    CredentialScope
-	DevAuthBypass bool
+	WorkspaceID    string
+	PrincipalID    string
+	ConversationID string
+	Credential     CredentialScope
+	DevAuthBypass  bool
 }
 
 type CredentialScope struct {
@@ -229,8 +233,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		pendingChatTitles: map[string]struct{}{},
 		mcpScope:          mcpScope, mcpProtect: config.MCPProtect,
 		productName: config.ProductName, buildVersion: config.BuildVersion,
-		apiOperations: append([]agenttools.APIGenOperation(nil), config.APIGenOperations...),
-		runExecution:  runExecution,
+		apiOperations:      append([]agenttools.APIGenOperation(nil), config.APIGenOperations...),
+		dashboardAuthoring: config.DashboardAuthoring,
+		runExecution:       runExecution,
 	}
 	if err := validateRunJobHandlers(runExecution, m.JobHandlers(nil)); err != nil {
 		return nil, err
@@ -271,7 +276,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 
 func scopeFromAgent(scope agent.Scope) Scope {
 	return Scope{
-		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID,
+		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
 			WorkspaceID: scope.Credential.WorkspaceID,
@@ -283,7 +288,7 @@ func scopeFromAgent(scope agent.Scope) Scope {
 
 func scopeToAgent(scope Scope) agent.Scope {
 	return agent.Scope{
-		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID,
+		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: agent.CredentialScope{
 			WorkspaceID: scope.Credential.WorkspaceID,

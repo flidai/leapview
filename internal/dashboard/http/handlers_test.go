@@ -15,14 +15,12 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
 	"github.com/flidai/leapview/internal/dashboard/usage"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
-	"github.com/flidai/leapview/internal/project/testing/dashboardfixture"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -38,6 +36,23 @@ func (fakeMetrics) Catalog() catalog.Catalog {
 func (fakeMetrics) DefaultDashboardID() string {
 	return "dash"
 }
+func (m fakeMetrics) Resolver() dashboardresolver.Resolver {
+	return fakeDashboardResolver{}
+}
+
+type fakeDashboardResolver struct{}
+
+func (fakeDashboardResolver) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
+	if dashboardID != "dash" {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
+	model := &semanticmodel.Model{Name: "model", Title: "Model"}
+	definition, err := dashboarddefinition.New("dash", "Dashboard", "", "model", fakeMetrics{}.Pages(dashboardID), nil)
+	if err != nil {
+		return dashboardresolver.Resolved{}, err
+	}
+	return dashboardresolver.Resolved{Definition: definition, Model: model, Source: dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, WorkspaceID: "workspace"}}, nil
+}
 func (fakeMetrics) DefaultFilters(string) dashboard.Filters {
 	return dashboard.Filters{}.WithDefaults()
 }
@@ -52,23 +67,6 @@ func (fakeMetrics) Pages(dashboardID string) []dashboard.Page {
 		return nil
 	}
 	return []dashboard.Page{{ID: "overview", Title: "Overview"}, {ID: "ops", Title: "Ops"}}
-}
-func (fakeMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
-	if dashboardID != "dash" {
-		return dashboarddefinition.Definition{}, nil, false
-	}
-	report := reportdef.Dashboard{
-		ID:            "dash",
-		Title:         "Dashboard",
-		SemanticModel: "model",
-		Visuals:       map[string]reportdef.AuthoringVisualization{},
-		Pages:         fakeMetrics{}.Pages(dashboardID),
-	}
-	model := &semanticmodel.Model{Name: "model", Title: "Model"}
-	return dashboardfixture.Compile(report, model), model, true
-}
-func (fakeMetrics) VisualizationDefinition(string, string) (visualizationdefinition.Definition, bool) {
-	return visualizationdefinition.Definition{}, false
 }
 func (fakeMetrics) QueryDashboardPage(_ context.Context, _ string, _ string, filters dashboard.Filters) (dashboard.Patch, error) {
 	return dashboard.Patch{Filters: filters.WithDefaults()}, nil

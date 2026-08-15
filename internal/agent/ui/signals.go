@@ -120,7 +120,7 @@ func chatInitialSignals(workspaceID, view string, state ChatViewState) map[strin
 	return map[string]any{
 		"page": ChatPageSignal{
 			Kind: RouteChat, View: normalizedView(view), Title: "Chats",
-			Description: "Ask read-only questions about dashboards, semantic models, measures, and fields.",
+			Description: "Ask about governed BI or make authorized dashboard changes.",
 		},
 		"runtime": RouteRuntimeSignal{Kind: RouteChat, WorkspaceID: Optional(workspaceID)},
 		"agent":   state.Agent,

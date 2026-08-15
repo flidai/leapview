@@ -5,16 +5,16 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 )
 
 func TestDashboardVisualizationDescriptionContainsOnlyCompiledContract(t *testing.T) {
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&reportdef.Dashboard{
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
 		ID: "sales", SemanticModel: "sales",
-		Visuals: reportdef.ChartVisualizations(map[string]reportdef.Visual{"revenue": {Type: "line", Title: "Revenue", Query: reportdef.VisualQuery{Table: "orders", Dimensions: []reportdef.FieldRef{{Field: "orders.month"}}, Measures: []reportdef.FieldRef{{Field: "orders.revenue"}}}}}),
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"revenue": {Type: "line", Title: "Revenue", Query: dashboardauthoring.VisualQuery{Table: "orders", Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}}, Measures: []dashboardauthoring.FieldRef{{Field: "orders.revenue"}}}}}),
 	})
 	if err != nil {
 		t.Fatalf("compile definitions: %v", err)
@@ -46,7 +46,7 @@ func TestDashboardGridJSONUsesVisualizationEnvelope(t *testing.T) {
 		Cardinality: dashboard.ExactCardinality(1), AvailableRows: 1,
 		Blocks: map[string]dashboard.TableBlock{"a": {Rows: []map[string]any{{"order_id": "A-1"}}}},
 	}
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&reportdef.Dashboard{ID: "sales", SemanticModel: "sales", Visuals: reportdef.TabularVisualizations("table", map[string]reportdef.TableVisual{"orders": {Title: "Orders", Columns: table.Columns, Query: reportdef.TableQuery{Table: "orders", Fields: []string{"order_id"}}}})})
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{ID: "sales", SemanticModel: "sales", Visuals: dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{"orders": {Title: "Orders", Columns: table.Columns, Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"order_id"}}}})})
 	if err != nil {
 		t.Fatalf("compile table definition: %v", err)
 	}

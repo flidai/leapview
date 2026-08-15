@@ -6,12 +6,12 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 	g "maragu.dev/gomponents"
 	h "maragu.dev/gomponents/html"
 )
@@ -27,14 +27,16 @@ func BenchmarkDashboardDatastarLitBridge(b *testing.B) {
 func benchmarkDashboardBridge(b *testing.B) {
 	report, model, catalog := benchmarkDashboardFixture()
 	activePage := report.Pages[0]
-	if err := workspacecompiler.ValidateDashboard(&report, map[string]*semanticmodel.Model{model.Name: model}); err != nil {
-		b.Fatal(err)
-	}
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&report, model)
+	normalizedReport, err := dashboardcompiler.ValidateAndNormalizeDashboard(&report, map[string]*semanticmodel.Model{model.Name: model})
 	if err != nil {
 		b.Fatal(err)
 	}
-	compiled, err := workspacecompiler.CompileDashboardDefinition(&report, definitions)
+	report = *normalizedReport
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&report, model)
+	if err != nil {
+		b.Fatal(err)
+	}
+	compiled, err := dashboardcompiler.CompileDashboardDefinition(&report, definitions)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -54,7 +56,7 @@ func benchmarkDashboardBridge(b *testing.B) {
 	b.ReportMetric(float64(htmlBytes), "html_bytes/op")
 }
 
-func benchmarkDashboardDocument(catalog catalog.Catalog, report reportdef.Dashboard, model *semanticmodel.Model, activePage dashboard.Page, _ map[string]any) g.Node {
+func benchmarkDashboardDocument(catalog catalog.Catalog, report dashboardauthoring.Dashboard, model *semanticmodel.Model, activePage dashboard.Page, _ map[string]any) g.Node {
 	dashboardUpdatesURL := updatesURL(catalog.Workspace.ID, report.ID, activePage.ID)
 	body := benchmarkDatastarLitDashboardRoot(catalog, report, model)
 	mainAttrs := []g.Node{
@@ -72,14 +74,14 @@ func benchmarkDashboardDocument(catalog catalog.Catalog, report reportdef.Dashbo
 	})
 }
 
-func benchmarkDatastarLitDashboardRoot(catalog catalog.Catalog, report reportdef.Dashboard, model *semanticmodel.Model) g.Node {
+func benchmarkDatastarLitDashboardRoot(catalog catalog.Catalog, report dashboardauthoring.Dashboard, model *semanticmodel.Model) g.Node {
 	attrs := append([]g.Node{g.Attr("slot", "page")}, benchmarkDashboardCommandAttrs(catalog, report, model)...)
 	return g.El("lv-app-shell",
 		g.El("lv-dashboard-page", attrs...),
 	)
 }
 
-func benchmarkDashboardCommandAttrs(catalog catalog.Catalog, report reportdef.Dashboard, model *semanticmodel.Model) []g.Node {
+func benchmarkDashboardCommandAttrs(catalog catalog.Catalog, report dashboardauthoring.Dashboard, model *semanticmodel.Model) []g.Node {
 	return []g.Node{
 		g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/filter", "runtime", "filterCommand")),
 		g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/filter-options", "runtime", "filterOptionRequest")),
@@ -89,7 +91,7 @@ func benchmarkDashboardCommandAttrs(catalog catalog.Catalog, report reportdef.Da
 	}
 }
 
-func benchmarkDashboardFixture() (reportdef.Dashboard, *semanticmodel.Model, catalog.Catalog) {
+func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.Model, catalog.Catalog) {
 	zebra := true
 	filterDefinitions := map[string]dashboardfilter.Definition{}
 	filterBindings := map[string]dashboardfilter.Binding{}
@@ -105,14 +107,14 @@ func benchmarkDashboardFixture() (reportdef.Dashboard, *semanticmodel.Model, cat
 			URL:     dashboardfilter.URLPolicy{Param: id, Encoding: dashboardfilter.URLEncodingTypedV1},
 		}
 	}
-	visuals := map[string]reportdef.Visual{}
+	visuals := map[string]dashboardauthoring.Visual{}
 	components := []dashboard.PageVisual{}
 	for i := range 8 {
 		id := "visual_" + string(rune('a'+i))
-		visuals[id] = reportdef.Visual{
+		visuals[id] = dashboardauthoring.Visual{
 			Title: "Benchmark Visual " + string(rune('A'+i)),
 			Type:  "bar",
-			Query: reportdef.VisualQuery{
+			Query: dashboardauthoring.VisualQuery{
 				Dimensions: fieldRefs("orders.status"),
 				Measures:   fieldRefs("order_count"),
 			},
@@ -126,12 +128,12 @@ func benchmarkDashboardFixture() (reportdef.Dashboard, *semanticmodel.Model, cat
 			X:       float64(i * 220), Y: 390, Width: 200, Height: 120,
 		})
 	}
-	tables := map[string]reportdef.TableVisual{}
+	tables := map[string]dashboardauthoring.TableVisual{}
 	for i := 0; i < 4; i++ {
 		id := "table_" + string(rune('a'+i))
-		tables[id] = reportdef.TableVisual{
+		tables[id] = dashboardauthoring.TableVisual{
 			Title: "Benchmark Table " + string(rune('A'+i)),
-			Query: reportdef.TableQuery{Table: "orders", Fields: []string{"orders.order_id", "orders.status", "orders.state", "orders.category"}},
+			Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id", "orders.status", "orders.state", "orders.category"}},
 			Style: dashboard.TableStyle{Density: "compact", Grid: "full", Zebra: &zebra},
 			Columns: []dashboard.TableColumn{
 				{Key: "order_id", Label: "Order", Width: 180, Format: "text"},
@@ -142,12 +144,12 @@ func benchmarkDashboardFixture() (reportdef.Dashboard, *semanticmodel.Model, cat
 		}
 		components = append(components, dashboard.PageVisual{ID: id, Kind: "visual", Visual: id, X: float64(i * 300), Y: 540, Width: 280, Height: 220})
 	}
-	report := reportdef.Dashboard{
+	report := dashboardauthoring.Dashboard{
 		ID:                "benchmark-dashboard",
 		Title:             "Benchmark Dashboard",
 		SemanticModel:     "benchmark",
 		FilterDefinitions: filterDefinitions,
-		Visuals:           reportdef.MergeVisualizations(reportdef.ChartVisualizations(visuals), reportdef.TabularVisualizations("table", tables)),
+		Visuals:           dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(visuals), dashboardauthoring.TabularVisualizations("table", tables)),
 		Pages: []dashboard.Page{{
 			ID:             "overview",
 			Title:          "Overview",

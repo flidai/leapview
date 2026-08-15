@@ -7,10 +7,11 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	. "github.com/flidai/leapview/internal/dashboard/command"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/project/testing/dashboardfixture"
 )
@@ -49,9 +50,9 @@ func (fakeMetrics) NormalizeVisualizationWindow(_ string, request dashboard.Tabl
 	}
 	return request.WithDefaults()
 }
-func (m fakeMetrics) Report(string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
-	authored := reportdef.Dashboard{
-		ID: "dash", SemanticModel: "model",
+func (m fakeMetrics) dashboardDefinition(string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
+	authored := dashboardauthoring.Dashboard{
+		ID: "dash", Title: "Dashboard", SemanticModel: "model",
 		FilterDefinitions: map[string]dashboardfilter.Definition{
 			"state": {
 				Label: "State", Field: "state",
@@ -60,45 +61,45 @@ func (m fakeMetrics) Report(string) (dashboarddefinition.Definition, *semanticmo
 				}},
 			},
 		},
-		Visuals: reportdef.MergeVisualizations(reportdef.ChartVisualizations(map[string]reportdef.Visual{
+		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
 			"chart": {
-				Type:  "bar",
-				Query: reportdef.VisualQuery{Dimensions: []reportdef.FieldRef{{Field: "state", Alias: "label"}}, Measures: []reportdef.FieldRef{{Field: "order_count", Alias: "value"}}},
-				Interaction: reportdef.Interaction{PointSelection: reportdef.SelectionInteraction{
-					Toggle: true, Mappings: []reportdef.SelectionMapping{{Field: "state", Value: "label"}}, Targets: []string{"orders"},
+				Type: "bar", Title: "Chart",
+				Query: dashboardauthoring.VisualQuery{Dimensions: []dashboardauthoring.FieldRef{{Field: "state", Alias: "label"}}, Measures: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}},
+				Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{
+					Toggle: true, Mappings: []dashboardauthoring.SelectionMapping{{Field: "state", Value: "label"}}, Targets: []string{"orders"},
 				}},
 			},
 			"boolean_chart": {
-				Type:  "bar",
-				Query: reportdef.VisualQuery{Dimensions: []reportdef.FieldRef{{Field: "active", Alias: "label"}}, Measures: []reportdef.FieldRef{{Field: "order_count", Alias: "value"}}},
-				Interaction: reportdef.Interaction{PointSelection: reportdef.SelectionInteraction{
-					Toggle: true, Mappings: []reportdef.SelectionMapping{{Field: "active", Value: "label"}}, Targets: []string{"orders"},
+				Type: "bar", Title: "Boolean chart",
+				Query: dashboardauthoring.VisualQuery{Dimensions: []dashboardauthoring.FieldRef{{Field: "active", Alias: "label"}}, Measures: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}},
+				Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{
+					Toggle: true, Mappings: []dashboardauthoring.SelectionMapping{{Field: "active", Value: "label"}}, Targets: []string{"orders"},
 				}},
 			},
 			"customer_map": {
-				Type: "map",
-				Query: reportdef.VisualQuery{
+				Type: "map", Title: "Customer map",
+				Query: dashboardauthoring.VisualQuery{
 					Table:      "orders",
-					Dimensions: []reportdef.FieldRef{{Field: "latitude", Alias: "latitude"}, {Field: "longitude", Alias: "longitude"}, {Field: "state", Alias: "state"}},
-					Measures:   []reportdef.FieldRef{{Field: "order_count", Alias: "value"}},
+					Dimensions: []dashboardauthoring.FieldRef{{Field: "latitude", Alias: "latitude"}, {Field: "longitude", Alias: "longitude"}, {Field: "state", Alias: "state"}},
+					Measures:   []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
 				},
-				Geo: reportdef.VisualGeo{Basemap: "blank", Layers: []reportdef.VisualGeoLayer{{ID: "customers", Kind: "point", Latitude: "latitude", Longitude: "longitude", Value: "value"}}},
-				Interaction: reportdef.Interaction{SpatialSelection: reportdef.SpatialSelectionInteraction{
+				Geo: dashboardauthoring.VisualGeo{Basemap: "blank", Layers: []dashboardauthoring.VisualGeoLayer{{ID: "customers", Kind: "point", Latitude: "latitude", Longitude: "longitude", Value: "value"}}},
+				Interaction: dashboardauthoring.Interaction{SpatialSelection: dashboardauthoring.SpatialSelectionInteraction{
 					Gestures:  []string{"box", "lasso", "radius"},
-					Latitude:  reportdef.SpatialSelectionMapping{Source: "latitude", Field: "latitude"},
-					Longitude: reportdef.SpatialSelectionMapping{Source: "longitude", Field: "longitude"},
+					Latitude:  dashboardauthoring.SpatialSelectionMapping{Source: "latitude", Field: "latitude"},
+					Longitude: dashboardauthoring.SpatialSelectionMapping{Source: "longitude", Field: "longitude"},
 					Targets:   []string{"chart", "orders"},
 				}},
 			},
-		}), reportdef.TabularVisualizations("table", map[string]reportdef.TableVisual{"orders": {Query: reportdef.TableQuery{Table: "orders", Fields: []string{"orders.state"}}}})),
+		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.state"}}}})),
 		Pages: []dashboard.Page{
-			{ID: "overview", FilterBindings: map[string]dashboardfilter.Binding{
+			{ID: "overview", Title: "Overview", FilterBindings: map[string]dashboardfilter.Binding{
 				"state": {Filter: "state", Default: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionUnfiltered}},
 			}, Visuals: []dashboard.PageVisual{
-				{ID: "state-slicer", Kind: "slicer", Binding: dashboardfilter.BindingRef{Scope: dashboardfilter.ScopePage, ID: "state"}},
-				{ID: "chart", Kind: "visual", Visual: "chart"}, {ID: "customer-map", Kind: "visual", Visual: "customer_map"}, {ID: "orders", Kind: "visual", Visual: "orders"},
+				{ID: "state-slicer", Kind: "slicer", Binding: dashboardfilter.BindingRef{Scope: dashboardfilter.ScopePage, ID: "state"}, Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 3, RowSpan: 2}},
+				{ID: "chart", Kind: "visual", Visual: "chart", Placement: dashboard.PagePlacement{Col: 4, Row: 1, ColSpan: 4, RowSpan: 4}}, {ID: "customer-map", Kind: "visual", Visual: "customer_map", Placement: dashboard.PagePlacement{Col: 8, Row: 1, ColSpan: 4, RowSpan: 4}}, {ID: "orders", Kind: "visual", Visual: "orders", Placement: dashboard.PagePlacement{Col: 1, Row: 5, ColSpan: 12, RowSpan: 4}},
 			}},
-			{ID: "boolean", Visuals: []dashboard.PageVisual{{ID: "boolean-chart", Kind: "visual", Visual: "boolean_chart"}, {ID: "orders", Kind: "visual", Visual: "orders"}}},
+			{ID: "boolean", Title: "Boolean", Visuals: []dashboard.PageVisual{{ID: "boolean-chart", Kind: "visual", Visual: "boolean_chart", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 6, RowSpan: 4}}, {ID: "orders", Kind: "visual", Visual: "orders", Placement: dashboard.PagePlacement{Col: 7, Row: 1, ColSpan: 6, RowSpan: 4}}}},
 		},
 	}
 	model := &semanticmodel.Model{
@@ -121,8 +122,30 @@ func (m fakeMetrics) Report(string) (dashboarddefinition.Definition, *semanticmo
 	return definition, model, true
 }
 
+func (m fakeMetrics) Resolver() dashboardresolver.Resolver {
+	return fakeDashboardResolver{metrics: m}
+}
+
+type fakeDashboardResolver struct{ metrics fakeMetrics }
+
+func (r fakeDashboardResolver) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
+	definition, model, ok := r.metrics.dashboardDefinition(dashboardID)
+	if !ok {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
+	return dashboardresolver.Resolved{Definition: definition, Model: model, Source: dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, WorkspaceID: "workspace"}}, nil
+}
+
+func testDashboardDefinition() dashboarddefinition.Definition {
+	resolved, err := (fakeMetrics{}).Resolver().Resolve("dash")
+	if err != nil {
+		panic(err)
+	}
+	return resolved.Definition
+}
+
 func TestPrepareSpatialSelectValidatesGeometryAndUsesExplicitTargets(t *testing.T) {
-	definition, _, _ := (fakeMetrics{}).Report("dash")
+	definition := testDashboardDefinition()
 	command := dashboard.SpatialSelectionCommand{
 		VisualID: "customer_map", SpecRevision: definition.Visualizations["customer_map"].SpecRevision, DataRevision: 1,
 		ServingStateID: "serving-test",
@@ -154,7 +177,7 @@ func TestPrepareSpatialSelectValidatesGeometryAndUsesExplicitTargets(t *testing.
 }
 
 func TestPrepareVisualWindowValidatesTypedIdentityAndCoordinates(t *testing.T) {
-	definition, _, _ := (fakeMetrics{}).Report("dash")
+	definition := testDashboardDefinition()
 	request := dashboard.VisualizationWindowRequest{
 		VisualID: "orders", SpecRevision: definition.Visualizations["orders"].SpecRevision, DataRevision: 9,
 		RequestSeq: 7, ResetVersion: 2, Start: 150, Limit: 50, BlockID: "b",
@@ -187,7 +210,7 @@ func TestPrepareVisualWindowValidatesTypedIdentityAndCoordinates(t *testing.T) {
 }
 
 func TestPrepareSelectUsesAuthoritativeSelectionsAndExplicitTargetsOnly(t *testing.T) {
-	definition, _, _ := (fakeMetrics{}).Report("dash")
+	definition := testDashboardDefinition()
 	authoritative := dashboard.Filters{
 		Selections: []dashboard.InteractionSelection{{
 			SourceKind: "visual", SourceID: "existing", InteractionKind: "point_selection",
@@ -216,7 +239,7 @@ func TestPrepareSelectUsesAuthoritativeSelectionsAndExplicitTargetsOnly(t *testi
 }
 
 func TestPrepareSelectRestrictsExplicitTargetsToActivePage(t *testing.T) {
-	definition, _, _ := (fakeMetrics{}).Report("dash")
+	definition := testDashboardDefinition()
 	chart := definition.Visualizations["chart"]
 	spec := chart.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
 	spec.Interactions[0].Targets = []visualizationir.VisualizationInteractionTarget{
@@ -243,7 +266,7 @@ func TestPrepareSelectRestrictsExplicitTargetsToActivePage(t *testing.T) {
 }
 
 func TestPrepareSelectCanonicalizesTypedMappings(t *testing.T) {
-	definition, _, _ := (fakeMetrics{}).Report("dash")
+	definition := testDashboardDefinition()
 	filters := authoritativeFilters()
 	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{
 		SourceKind: "visual", SourceID: "boolean_chart", InteractionKind: "point_selection", Action: "set",
@@ -263,7 +286,7 @@ func TestPrepareSelectCanonicalizesTypedMappings(t *testing.T) {
 }
 
 func TestPrepareSelectRejectsForgedMapping(t *testing.T) {
-	definition, _, _ := (fakeMetrics{}).Report("dash")
+	definition := testDashboardDefinition()
 	filters := authoritativeFilters()
 	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{
 		SourceKind: "visual", SourceID: "chart", InteractionKind: "point_selection", Action: "set",
@@ -279,7 +302,7 @@ func TestPrepareSelectRejectsForgedMapping(t *testing.T) {
 }
 
 func TestPrepareSelectRejectsEveryStaleRevisionBeforeApplyingState(t *testing.T) {
-	definition, _, _ := (fakeMetrics{}).Report("dash")
+	definition := testDashboardDefinition()
 	filters := authoritativeFilters()
 	filters.InteractionRevision = 3
 	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{
@@ -307,7 +330,7 @@ func TestPrepareSelectRejectsEveryStaleRevisionBeforeApplyingState(t *testing.T)
 }
 
 func TestPrepareClearSelectionPlansAffectedTargetUnion(t *testing.T) {
-	definition, _, _ := (fakeMetrics{}).Report("dash")
+	definition := testDashboardDefinition()
 	chart := definition.Visualizations["chart"]
 	spec := chart.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
 	spec.Interactions[0].Targets = []visualizationir.VisualizationInteractionTarget{

@@ -7,19 +7,19 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 )
 
 func testVisualDefinition(t *testing.T, id string) visualizationdefinition.Definition {
 	t.Helper()
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&reportdef.Dashboard{
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
 		ID: "test", SemanticModel: "model",
-		Visuals: reportdef.ChartVisualizations(map[string]reportdef.Visual{id: {Type: "bar", Title: id, Query: reportdef.VisualQuery{Table: "table", Measures: []reportdef.FieldRef{{Field: "measure"}}}}}),
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{id: {Type: "bar", Title: id, Query: dashboardauthoring.VisualQuery{Table: "table", Measures: []dashboardauthoring.FieldRef{{Field: "measure"}}}}}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -36,11 +36,11 @@ func testTableDefinition(t *testing.T, id string, table dashboard.Table) visuali
 	for index, column := range table.Columns {
 		fields[index] = column.Key
 	}
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&reportdef.Dashboard{
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
 		ID: "test", SemanticModel: "model",
-		Visuals: reportdef.TabularVisualizations("table", map[string]reportdef.TableVisual{id: {
+		Visuals: dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{id: {
 			Title: table.Title, Columns: table.Columns, DefaultSort: table.Sort, Style: table.Style,
-			Query: reportdef.TableQuery{Table: "table", Fields: fields},
+			Query: dashboardauthoring.TableQuery{Table: "table", Fields: fields},
 		}}),
 	})
 	if err != nil {

@@ -159,10 +159,11 @@ func (h Handler) persistPreparedSelections(
 	if h.SessionStore == nil {
 		return nil
 	}
-	definition, _, ok := metrics.Report(request.DashboardID)
-	if !ok {
+	resolved, err := resolveDashboard(metrics, request.DashboardID)
+	if err != nil {
 		return nil
 	}
+	definition := resolved.Definition
 	clientID := pagestream.ClientIDFromRequest(r, signals.Runtime.ClientID)
 	key := h.dashboardSessionKey(r, definition, clientID, signals.Runtime.StreamInstanceID)
 	interaction, err := selectionMaps(prepared.Filters.Selections)

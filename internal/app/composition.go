@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -285,6 +286,18 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	cleanup.Push("runtime-host", func(context.Context) error { return runtimeHostModule.Close() })
+	authoringAcquireRuntime := func(ctx context.Context, workspaceID string) (runtimehostmodule.Lease, error) {
+		return runtimeHostModule.ProviderForWorkspace(servingstatemodule.WorkspaceID(workspaceID)).Acquire(ctx)
+	}
+	authoringApplication, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
+		Database:        store.SQLDB(),
+		AuthorizeObject: accessModule.AuthorizeObject,
+		AcquireRuntime:  authoringAcquireRuntime,
+		ExportDashboard: projectmodule.ExportDashboard,
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build dashboard authoring module: %w", err))
+	}
 	deploymentRuntime, err := deploymentmodule.NewRuntime(runtimeHostModule)
 	if err != nil {
 		return fail(err)
@@ -420,8 +433,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			},
 		},
 	}
-	runtimeMetrics := dashboardmodule.NewDynamicRuntimeMetrics(func(workspaceID string) runtimehostmodule.Provider {
-		return runtimeHostModule.ProviderForWorkspace(servingstatemodule.WorkspaceID(workspaceID))
+	runtimeMetrics := dashboardmodule.NewDynamicRuntimeMetrics(dashboardmodule.DynamicRuntimeMetricsOptions{
+		ProviderFactory: func(workspaceID string) runtimehostmodule.Provider {
+			return runtimeHostModule.ProviderForWorkspace(servingstatemodule.WorkspaceID(workspaceID))
+		},
+		PublishedCompilationReader: authoringApplication.PublishedCompilationReader(),
 	})
 	auth := accessModule.Auth()
 	rateLimits := apihttpmiddleware.ProductionRateLimitConfig()
@@ -437,7 +453,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			AnalyticsModule: analyticsModule, DashboardAssets: dashboardAssets,
 			ReleaseModule: releaseModule, JobModule: jobModule,
 			AccessModule: accessModule, ManagedDataModule: managedDataModule,
-			Product: productService, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), identity),
+			Authoring: authoringApplication,
+			Product:   productService, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), identity),
 		},
 		workflowAssemblyInputs{
 			AgentSettings: store,

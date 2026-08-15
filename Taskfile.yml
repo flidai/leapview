@@ -216,6 +216,7 @@ tasks:
       - bun run test:visual-modal
       - bun run test:catalog-page
       - bun run test:dashboard-page
+      - bun run test:dashboard-builder
       - bun run test:windowed-table
       - bun run test:filter-menu
 
@@ -723,7 +724,7 @@ tasks:
     method: checksum
     sources:
       - Taskfile.yml
-      - internal/project/layoutcontract/contracts.json
+      - internal/dashboard/layoutcontract/contracts.json
       - internal/app/tools/layoutcontractgen/**/*.go
     generates:
       - web/generated/dashboard-layout/contracts.json

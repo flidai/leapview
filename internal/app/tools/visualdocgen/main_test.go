@@ -12,7 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/app/site/visualdocs"
 	"github.com/flidai/leapview/internal/dashboard"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
@@ -359,10 +359,10 @@ func TestVisualDocumentationCoversEveryPublicTypeAndGeographicLayer(t *testing.T
 			}
 		}
 	}
-	if got, want := strings.Join(publicTypes, ","), strings.Join(reportdef.SupportedVisualizationTypes(), ","); got != want {
+	if got, want := strings.Join(publicTypes, ","), strings.Join(dashboardauthoring.SupportedVisualizationTypes(), ","); got != want {
 		t.Fatalf("runtime visualization types = %q, public schema = %q", want, got)
 	}
-	if got, want := strings.Join(publicGeographicLayers, ","), strings.Join(reportdef.SupportedGeographicLayerKinds(), ","); got != want {
+	if got, want := strings.Join(publicGeographicLayers, ","), strings.Join(dashboardauthoring.SupportedGeographicLayerKinds(), ","); got != want {
 		t.Fatalf("runtime geographic layer kinds = %q, public schema = %q", want, got)
 	}
 	for _, visualType := range publicTypes {
@@ -492,15 +492,15 @@ func TestValidateVisualPayloadRejectsInvalidGeneratedData(t *testing.T) {
 	}
 }
 
-func reportVisual(shape, visualType string, options map[string]any) reportdef.Visual {
-	value := reportdef.Visual{Type: visualType}
+func reportVisual(shape, visualType string, options map[string]any) dashboardauthoring.Visual {
+	value := dashboardauthoring.Visual{Type: visualType}
 	if mapID, ok := options["map"].(string); ok {
-		value.Geo.Layers = []reportdef.VisualGeoLayer{{ID: "regions", Kind: "choropleth", GeometryAsset: mapID, Join: "name", Value: "value"}}
+		value.Geo.Layers = []dashboardauthoring.VisualGeoLayer{{ID: "regions", Kind: "choropleth", GeometryAsset: mapID, Join: "name", Value: "value"}}
 	}
 	return value
 }
 
-func reportVisualPointer(shape, visualType string, options map[string]any) *reportdef.Visual {
+func reportVisualPointer(shape, visualType string, options map[string]any) *dashboardauthoring.Visual {
 	value := reportVisual(shape, visualType, options)
 	return &value
 }

@@ -14,6 +14,7 @@ namespace LeapViewUISignals;
 /** Route surfaces supported by the shared UI signal transport. */
 enum RouteKind {
   dashboard: "dashboard",
+  dashboardBuilder: "dashboard_builder",
   catalog: "catalog",
   pipelines: "pipelines",
   chat: "chat",
@@ -24,6 +25,156 @@ enum RouteKind {
   data: "data",
   admin: "admin",
   login: "login",
+}
+
+/**
+ * Typed authoring transport for the unreleased dashboard builder. This is
+ * deliberately separate from DashboardEnvelope: the builder edits a draft
+ * asset and must never be mistaken for the published runtime projection.
+ */
+@apigen.contract(#{ kind: "ui-envelope", tags: #["dashboard", "builder", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "dashboard_builder" })
+model DashboardBuilderEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builder" })
+  `builder`: DashboardBuilderSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderVisuals" })
+  `builderVisuals`: Record<DashboardVisualizationSignal>;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
+  `runtime`: RouteRuntimeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
+  `status`: DashboardStatus;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "builder", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard_builder" })
+model DashboardBuilderSignal {
+  `workspaceId`: string;
+  `dashboardId`: string;
+  `draftId`: string;
+  `revision`: DashboardBuilderRevisionSignal;
+  `title`: string;
+  `lifecycle`: "draft" | "published" | "archived";
+  `visibility`: "private" | "shared";
+  `hasUnpublishedChanges`: boolean;
+  `origin`: DashboardBuilderOriginSignal;
+  `sourceEvidence`?: DashboardBuilderSourceEvidenceSignal;
+  `semanticModel`: DashboardBuilderSemanticModelSignal;
+  `pages`: DashboardBuilderPageSignal[];
+  `selectedPageId`?: string;
+  `selectedVisualId`?: string;
+  `capabilities`: DashboardBuilderCapabilitiesSignal;
+  `diagnostics`: DashboardBuilderDiagnosticSignal[];
+  `preview`: DashboardBuilderPreviewStateSignal;
+  `save`: DashboardBuilderSaveStateSignal;
+}
+
+model DashboardBuilderRevisionSignal {
+  `id`: string;
+  `number`: int64;
+  `contentHash`: string;
+}
+
+model DashboardBuilderOriginSignal {
+  `kind`: "file" | "ui" | "agent";
+  `label`: string;
+  `sourcePath`?: string;
+}
+
+@discriminator("kind")
+model DashboardBuilderSourceEvidenceSignal {
+  `kind`: string;
+}
+
+model DashboardBuilderWorkspaceSourceEvidence extends DashboardBuilderSourceEvidenceSignal {
+  `kind`: "workspace";
+  `workspaceId`: string;
+  `dashboardId`: string;
+  `revision`: DashboardBuilderRevisionSignal;
+}
+
+model DashboardBuilderProjectSourceEvidence extends DashboardBuilderSourceEvidenceSignal {
+  `kind`: "project";
+  `workspaceId`: string;
+  `dashboardId`: string;
+  `path`?: string;
+  `servingStateId`: string;
+}
+
+model DashboardBuilderSemanticModelSignal {
+  `id`: string;
+  `title`: string;
+  `tables`: DashboardBuilderTableSignal[];
+}
+
+model DashboardBuilderTableSignal {
+  `id`: string;
+  `title`: string;
+  `fields`: DashboardBuilderFieldSignal[];
+}
+
+model DashboardBuilderFieldSignal {
+  `id`: string;
+  `label`: string;
+  `kind`: "dimension" | "measure";
+  `dataType`: string;
+  `description`?: string;
+}
+
+model DashboardBuilderPageSignal {
+  `id`: string;
+  `title`: string;
+  `canvas`: DashboardPageCanvas;
+  `grid`: DashboardPageGrid;
+  `visuals`: DashboardBuilderVisualSignal[];
+}
+
+model DashboardBuilderVisualSignal {
+  `id`: string;
+  `visualId`: string;
+  `title`: string;
+  `type`: string;
+  `placement`: DashboardPagePlacement;
+  `slots`: DashboardBuilderVisualSlotSignal[];
+  `filters`: string[];
+}
+
+model DashboardBuilderVisualSlotSignal {
+  `id`: string;
+  `label`: string;
+  `kind`: "dimension" | "measure" | "category" | "value" | "detail";
+  `fieldId`?: string;
+  `required`: boolean;
+}
+
+model DashboardBuilderCapabilitiesSignal {
+  `canEdit`: boolean;
+  `canShare`: boolean;
+  `canPublish`: boolean;
+  `canPreview`: boolean;
+  `canExport`: boolean;
+  `canAddPage`: boolean;
+  `canAddVisual`: boolean;
+}
+
+model DashboardBuilderDiagnosticSignal {
+  `severity`: "error" | "warning" | "info";
+  `code`: string;
+  `message`: string;
+  `targetId`?: string;
+}
+
+model DashboardBuilderPreviewStateSignal {
+  `active`: boolean;
+  `mode`: "draft" | "published";
+  `loading`: boolean;
+  `href`?: string;
+  `error`?: string;
+}
+
+model DashboardBuilderSaveStateSignal {
+  `state`: "saved" | "dirty" | "saving" | "error";
+  `message`?: string;
+  `lastSavedAt`?: utcDateTime;
 }
 
 /** Relative instance-wide dashboard usage over the rolling popularity window. */

@@ -7,6 +7,12 @@ import (
 	"fmt"
 )
 
+type AuthoringArchive struct {
+}
+
+type AuthoringPublish struct {
+}
+
 type CatalogColumn struct {
 	Key    string  `json:"key"`
 	Label  string  `json:"label"`
@@ -762,6 +768,140 @@ type DashboardAppliedFilters struct {
 	Controls          map[string]DashboardFilterControl `json:"controls"`
 	Selections        []map[string]any                  `json:"selections"`
 	SpatialSelections []map[string]any                  `json:"spatialSelections"`
+}
+
+type DashboardAuthoringAddPageInput struct {
+	Workspace        string                          `json:"workspace"`
+	DashboardID      string                          `json:"dashboardId"`
+	DraftID          string                          `json:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
+	PageID           *string                         `json:"pageId,omitempty"`
+	Title            *string                         `json:"title,omitempty"`
+}
+
+type DashboardAuthoringAddVisualInput struct {
+	Workspace        string                          `json:"workspace"`
+	DashboardID      string                          `json:"dashboardId"`
+	DraftID          string                          `json:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
+	PageID           string                          `json:"pageId"`
+	VisualID         *string                         `json:"visualId,omitempty"`
+	ComponentID      *string                         `json:"componentId,omitempty"`
+	Type             string                          `json:"type"`
+	Title            *string                         `json:"title,omitempty"`
+}
+
+type DashboardAuthoringAssignFieldInput struct {
+	Workspace        string                          `json:"workspace"`
+	DashboardID      string                          `json:"dashboardId"`
+	DraftID          string                          `json:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
+	PageID           string                          `json:"pageId"`
+	VisualID         string                          `json:"visualId"`
+	FieldID          string                          `json:"fieldId"`
+	Role             string                          `json:"role"`
+}
+
+type DashboardAuthoringCommandInput struct {
+	Workspace        string                          `json:"workspace"`
+	DashboardID      string                          `json:"dashboardId"`
+	DraftID          string                          `json:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
+	ContentHash      *string                         `json:"contentHash,omitempty"`
+	Publish          *AuthoringPublish               `json:"publish,omitempty"`
+	Archive          *AuthoringArchive               `json:"archive,omitempty"`
+}
+
+type DashboardAuthoringCreateInput struct {
+	Workspace     string  `json:"workspace"`
+	Title         string  `json:"title"`
+	SemanticModel string  `json:"semanticModel"`
+	DashboardID   *string `json:"dashboardId,omitempty"`
+	Slug          *string `json:"slug,omitempty"`
+}
+
+type DashboardAuthoringDraftGetInput struct {
+	Workspace string `json:"workspace"`
+	Dashboard string `json:"dashboard"`
+}
+
+type DashboardAuthoringDraftGetResult struct {
+	Lifecycle map[string]any `json:"lifecycle"`
+	Revision  map[string]any `json:"revision"`
+}
+
+type DashboardAuthoringExportInput struct {
+	SourceKind string `json:"sourceKind"`
+	Workspace  string `json:"workspace"`
+	Dashboard  string `json:"dashboard"`
+}
+
+type DashboardAuthoringExportResult struct {
+	Yaml string `json:"yaml"`
+}
+
+type DashboardAuthoringForkInput struct {
+	SourceKind      string  `json:"sourceKind"`
+	SourceWorkspace string  `json:"sourceWorkspace"`
+	SourceDashboard string  `json:"sourceDashboard"`
+	TargetWorkspace *string `json:"targetWorkspace,omitempty"`
+	Title           *string `json:"title,omitempty"`
+	Slug            *string `json:"slug,omitempty"`
+}
+
+type DashboardAuthoringGetInput struct {
+	Workspace string `json:"workspace"`
+	Dashboard string `json:"dashboard"`
+}
+
+type DashboardAuthoringGetResult struct {
+	Dashboard map[string]any `json:"dashboard"`
+}
+
+type DashboardAuthoringListInput struct {
+	Workspace string `json:"workspace"`
+}
+
+type DashboardAuthoringListResult struct {
+	Items          []map[string]any `json:"items"`
+	Count          int32            `json:"count"`
+	ProjectCount   int32            `json:"projectCount"`
+	WorkspaceCount int32            `json:"workspaceCount"`
+}
+
+type DashboardAuthoringPreviewInput struct {
+	Workspace        string                          `json:"workspace"`
+	Dashboard        string                          `json:"dashboard"`
+	DraftID          string                          `json:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
+	Page             string                          `json:"page"`
+	Filters          *map[string]any                 `json:"filters,omitempty"`
+}
+
+type DashboardAuthoringPreviewResult struct {
+	Revision         map[string]any `json:"revision"`
+	Definition       map[string]any `json:"definition"`
+	PagePatch        map[string]any `json:"pagePatch"`
+	SemanticEvidence map[string]any `json:"semanticEvidence"`
+}
+
+type DashboardAuthoringResult struct {
+	Revision  map[string]any `json:"revision"`
+	Lifecycle map[string]any `json:"lifecycle"`
+}
+
+type DashboardAuthoringRevisionToken struct {
+	RevisionID  string `json:"revisionId"`
+	Number      int64  `json:"number"`
+	ContentHash string `json:"contentHash"`
+}
+
+type DashboardAuthoringSetVisibilityInput struct {
+	Workspace        string                          `json:"workspace"`
+	DashboardID      string                          `json:"dashboardId"`
+	DraftID          string                          `json:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
+	Visibility       string                          `json:"visibility"`
 }
 
 type DashboardFilterControl struct {

@@ -70,6 +70,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Deploy and operate LeapView](/docs/guides/operate): Understand the production delivery and operations workflow.
 - [Develop, review, and publish](/docs/cli/validate-deploy): Preview a private target candidate and publish that exact revision.
 - [Targets and environments](/docs/cli/targets): Keep local, staging, and production changes explicit.
+- [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring): Move private dashboard drafts through development, review, and production with explicit ownership boundaries.
 - [Production configuration](/docs/guides/operate/production-configuration): Configure secrets, storage, auth, and runtime boundaries.
 - [Self-hosting](/docs/guides/operate/self-hosting): Build and run a supported single-node deployment.
 - [Health and observability](/docs/guides/operate/observability): Monitor health, query activity, refreshes, and deployments.
@@ -111,14 +112,26 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 #### Agent tools
 
 - [Agent tool reference](/docs/agent-tools): Browse the exact tool contracts exposed by built-in chat and deployment MCP.
+- [add_dashboard_page](/docs/agent-tools/add_dashboard_page): Add one dashboard page to a private draft using an exact expected revision.
+- [add_dashboard_visual](/docs/agent-tools/add_dashboard_visual): Add a governed dashboard visual to a private draft using an exact expected revision.
+- [assign_dashboard_field](/docs/agent-tools/assign_dashboard_field): Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision.
 - [catalog_get](/docs/agent-tools/catalog_get): Get the compact definition and type-specific metadata for one exact catalog ref.
 - [catalog_list](/docs/agent-tools/catalog_list): Browse one deterministic level of the authorized LeapView catalog hierarchy.
 - [catalog_search](/docs/agent-tools/catalog_search): Search the complete authorized LeapView BI catalog across workspaces.
+- [create_dashboard_draft](/docs/agent-tools/create_dashboard_draft): Create a private dashboard draft owned by the authenticated principal.
 - [docs_read](/docs/agent-tools/docs_read): Read a bounded line window from one LeapView document returned by docs_search.
 - [docs_search](/docs/agent-tools/docs_search): Search LeapView's version-matched product documentation.
+- [execute_dashboard_command](/docs/agent-tools/execute_dashboard_command): Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision.
+- [export_dashboard_yaml](/docs/agent-tools/export_dashboard_yaml): Export an authorized authored dashboard source as canonical project YAML.
+- [fork_dashboard](/docs/agent-tools/fork_dashboard): Fork an authorized workspace or retained project dashboard source into a private draft.
+- [get_dashboard](/docs/agent-tools/get_dashboard): Get one authorized dashboard's governed metadata.
+- [get_dashboard_draft](/docs/agent-tools/get_dashboard_draft): Read the exact current private draft and retained revision for one dashboard.
+- [list_dashboards](/docs/agent-tools/list_dashboards): List the authorized dashboard catalog for one workspace.
+- [preview_dashboard_draft](/docs/agent-tools/preview_dashboard_draft): Preview an exact private dashboard draft revision and page against the active governed runtime.
 - [query_dashboard_visual](/docs/agent-tools/query_dashboard_visual): Query an existing dashboard visual with governed filters and compact analytical output
 - [query_semantic_model](/docs/agent-tools/query_semantic_model): Query governed semantic data with typed columns, filters, pagination, and provenance
 - [query_visual](/docs/agent-tools/query_visual): Create one read-only visual from LeapView semantic model fields.
+- [set_dashboard_visibility](/docs/agent-tools/set_dashboard_visibility): Set a private dashboard draft's visibility using an exact expected revision.
 
 #### Configuration
 
@@ -141,7 +154,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [CLI command reference](/docs/cli/reference): Browse every generated LeapView command.
 - [leapview admin](/docs/cli/admin): Administrative utilities
-- [leapview agent](/docs/cli/agent): Use the LeapView read-only agent
+- [leapview agent](/docs/cli/agent): Use the LeapView governed BI agent
 - [leapview api](/docs/cli/api): Call any generated LeapView API operation
 - [leapview config](/docs/cli/config): Inspect and validate process-global configuration
 - [leapview dashboards](/docs/cli/dashboards): Inspect dashboards

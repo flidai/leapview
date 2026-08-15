@@ -29,11 +29,12 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	dashboardID := lddatastar.DashboardID(r, signals, metrics.DefaultDashboardID())
 	sourcePageID := lddatastar.PageID(r, signals)
-	definition, model, ok := metrics.Report(dashboardID)
-	if !ok {
+	resolved, err := resolveDashboard(metrics, dashboardID)
+	if err != nil {
 		nethttp.NotFound(w, r)
 		return
 	}
+	definition, model := resolved.Definition, resolved.Model
 	targetPage, ok := definition.PageOrDefault(signals.NavigationCommand.PageID)
 	if !ok || targetPage.ID != signals.NavigationCommand.PageID {
 		nethttp.Error(w, "unknown dashboard page", nethttp.StatusBadRequest)
@@ -91,7 +92,7 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if component.Visual == "" {
 			continue
 		}
-		if visual, exists := metrics.VisualizationDefinition(dashboardID, component.Visual); exists {
+		if visual, exists := resolved.Visualization(component.Visual); exists {
 			definitions[component.Visual] = visual
 		}
 	}

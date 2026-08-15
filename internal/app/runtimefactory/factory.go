@@ -92,9 +92,15 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 			}
 		}
 	}
+	authoredSources, err := projectartifact.AuthoredDashboardSourcesChecked(compiled.Manifest)
+	if err != nil {
+		_ = service.Close()
+		return nil, fmt.Errorf("authored dashboard sources: %w", err)
+	}
 	return dashboardRuntimeWithGraph{
 		Service: service, workspaceID: string(input.State.WorkspaceID),
 		servingStateID: string(input.State.ID), graph: compiled.Graph,
+		authoredSources: authoredSources,
 	}, nil
 }
 

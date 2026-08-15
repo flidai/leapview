@@ -43,20 +43,32 @@ Other remote MCP clients use the same URL and OAuth discovery flow. The client m
 
 ## Confirm the tool catalog
 
-After connecting, the host's `tools/list` response contains exactly eight tools:
+After connecting, the host's `tools/list` response contains exactly twenty tools:
 
 ```text
+add_dashboard_page
+add_dashboard_visual
+assign_dashboard_field
 catalog_search
 catalog_list
 catalog_get
+create_dashboard_draft
 query_semantic_model
 query_dashboard_visual
 query_visual
 docs_search
 docs_read
+execute_dashboard_command
+export_dashboard_yaml
+fork_dashboard
+get_dashboard
+get_dashboard_draft
+list_dashboards
+preview_dashboard_draft
+set_dashboard_visibility
 ```
 
-The same names, input schemas, output schemas, read-only annotations, and handlers are used by built-in chat. There are no model-visible compatibility aliases for the superseded tool catalog. Rediscover tools after upgrading LeapView.
+The same names, input schemas, output schemas, safety annotations, and handlers are used by built-in chat. Dashboard authoring tools are governed writes for private drafts and exact revisions; catalog, query, documentation, preview, and export tools remain read-only. There are no model-visible compatibility aliases for the superseded tool catalog. Rediscover tools after upgrading LeapView.
 
 Use `catalog_search` when the workspace or parent is unknown, `catalog_list` to browse a known parent, and `catalog_get` before querying when an exact definition is needed. Follow [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, hierarchy, locations, pagination, errors, and query-tool selection. The generated [Agent tool reference](/docs/agent-tools) publishes the same schemas and annotations as `tools/list`.
 
