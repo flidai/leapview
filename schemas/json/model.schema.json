@@ -13,31 +13,41 @@
         "description": {
           "type": "string"
         },
-        "name": {
+        "displayName": {
+          "type": "string"
+        },
+        "documentation": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "id": {
           "$ref": "#/$defs/%23ResourceID"
+        },
+        "name": {
+          "$ref": "#/$defs/%23ResourceName"
         },
         "owner": {
           "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/%23Provenance"
         },
         "tags": {
           "items": {
             "type": "string"
           },
           "type": "array"
-        },
-        "title": {
-          "type": "string"
-        },
-        "workspace": {
-          "$ref": "#/$defs/%23ResourceID"
         }
       },
       "required": [
+        "id",
         "name"
       ],
       "type": "object"
     },
-    "#ModelTable": {
+    "#Model": {
       "additionalProperties": false,
       "properties": {
         "description": {
@@ -106,7 +116,26 @@
       ],
       "type": "object"
     },
+    "#Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "#ResourceID": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "#ResourceName": {
       "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
       "type": "string"
     }
@@ -118,13 +147,13 @@
       "$ref": "#/$defs/%23APIVersion"
     },
     "kind": {
-      "const": "ModelTable"
+      "const": "Model"
     },
     "metadata": {
       "$ref": "#/$defs/%23Metadata"
     },
     "spec": {
-      "$ref": "#/$defs/%23ModelTable"
+      "$ref": "#/$defs/%23Model"
     }
   },
   "required": [

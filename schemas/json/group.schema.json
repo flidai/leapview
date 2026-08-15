@@ -3,19 +3,31 @@
     "#APIVersion": {
       "const": "leapview.dev/v1"
     },
-    "#IncludeList": {
+    "#Group": {
       "additionalProperties": false,
       "properties": {
-        "include": {
+        "description": {
+          "type": "string"
+        },
+        "members": {
           "items": {
-            "type": "string"
+            "additionalProperties": false,
+            "properties": {
+              "displayName": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              },
+              "principalId": {
+                "$ref": "#/$defs/%23ResourceID"
+              }
+            },
+            "type": "object"
           },
           "type": "array"
         }
       },
-      "required": [
-        "include"
-      ],
       "type": "object"
     },
     "#Metadata": {
@@ -89,49 +101,13 @@
       "$ref": "#/$defs/%23APIVersion"
     },
     "kind": {
-      "const": "Project"
+      "const": "Group"
     },
     "metadata": {
       "$ref": "#/$defs/%23Metadata"
     },
     "spec": {
-      "additionalProperties": false,
-      "properties": {
-        "access": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "connections": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "dashboards": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "models": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "pipelines": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "publications": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "semanticModels": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "sources": {
-          "$ref": "#/$defs/%23IncludeList"
-        }
-      },
-      "required": [
-        "access",
-        "connections",
-        "dashboards",
-        "models",
-        "pipelines",
-        "semanticModels",
-        "sources"
-      ],
-      "type": "object"
+      "$ref": "#/$defs/%23Group"
     }
   },
   "required": [

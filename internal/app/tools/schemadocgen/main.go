@@ -102,7 +102,7 @@ func generate(schemaDir, exampleDir, outDir string) error {
 }
 
 func configurationDocumentOrder(slug string) int {
-	order := []string{"project", "connection", "source", "workspace", "model-table", "semantic-model", "dashboard", "workspace-group", "workspace-role-binding", "grant", "data-policy"}
+	order := []string{"project", "connection", "source", "model", "semantic-model", "pipeline", "dashboard", "group", "role-binding", "grant", "data-policy", "dashboard-publication"}
 	for index, candidate := range order {
 		if slug == candidate {
 			return index

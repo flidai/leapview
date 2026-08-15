@@ -3,18 +3,31 @@
     "#APIVersion": {
       "const": "leapview.dev/v1"
     },
-    "#IncludeList": {
+    "#AccessSubject": {
       "additionalProperties": false,
       "properties": {
-        "include": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "displayName": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "group": {
+          "$ref": "#/$defs/%23ResourceID"
+        },
+        "kind": {
+          "enum": [
+            "principal",
+            "group",
+            "service_principal"
+          ]
+        },
+        "principalId": {
+          "$ref": "#/$defs/%23ResourceID"
         }
       },
       "required": [
-        "include"
+        "kind"
       ],
       "type": "object"
     },
@@ -80,6 +93,31 @@
     "#ResourceName": {
       "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
       "type": "string"
+    },
+    "#RoleBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "enum": [
+            "owner",
+            "admin",
+            "deployer",
+            "contributor",
+            "editor",
+            "member",
+            "viewer",
+            "platform_admin"
+          ]
+        },
+        "subject": {
+          "$ref": "#/$defs/%23AccessSubject"
+        }
+      },
+      "required": [
+        "role",
+        "subject"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -89,49 +127,13 @@
       "$ref": "#/$defs/%23APIVersion"
     },
     "kind": {
-      "const": "Project"
+      "const": "RoleBinding"
     },
     "metadata": {
       "$ref": "#/$defs/%23Metadata"
     },
     "spec": {
-      "additionalProperties": false,
-      "properties": {
-        "access": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "connections": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "dashboards": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "models": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "pipelines": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "publications": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "semanticModels": {
-          "$ref": "#/$defs/%23IncludeList"
-        },
-        "sources": {
-          "$ref": "#/$defs/%23IncludeList"
-        }
-      },
-      "required": [
-        "access",
-        "connections",
-        "dashboards",
-        "models",
-        "pipelines",
-        "semanticModels",
-        "sources"
-      ],
-      "type": "object"
+      "$ref": "#/$defs/%23RoleBinding"
     }
   },
   "required": [

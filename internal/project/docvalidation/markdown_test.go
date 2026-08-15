@@ -20,6 +20,7 @@ func TestValidateMarkdownChecksYAMLSyntaxAndResourceSchemas(t *testing.T) {
 		"apiVersion: leapview.dev/v1",
 		"kind: Project",
 		"metadata:",
+		"  id: project:commerce",
 		"  name: commerce",
 		"spec:",
 		"  unsupported: true",
@@ -33,7 +34,7 @@ func TestValidateMarkdownChecksYAMLSyntaxAndResourceSchemas(t *testing.T) {
 	if issues[0].File != "docs/example.md" || issues[0].Line != 5 || !strings.Contains(issues[0].Message, "YAML") {
 		t.Errorf("syntax issue = %#v", issues[0])
 	}
-	if issues[1].File != "docs/example.md" || issues[1].Line != 14 || !strings.Contains(issues[1].Message, "unsupported") {
+	if issues[1].File != "docs/example.md" || issues[1].Line != 15 || !strings.Contains(issues[1].Message, "unsupported") {
 		t.Errorf("schema issue = %#v", issues[1])
 	}
 }
@@ -56,14 +57,23 @@ filters:
 ` + "```yaml\n" + `apiVersion: leapview.dev/v1
 kind: Project
 metadata:
+  id: project:commerce
   name: commerce
 spec:
   connections:
     include: [connections/*.yaml]
   sources:
     include: [sources/*.yaml]
-  workspaces:
-    include: [workspaces/*/workspace.yaml]
+  models:
+    include: [models/*.yaml]
+  semanticModels:
+    include: [semantic-models/*.yaml]
+  pipelines:
+    include: [pipelines/*.yaml]
+  dashboards:
+    include: [dashboards/*.yaml]
+  access:
+    include: [access/*.yaml]
 ` + "```\n\n```yaml\n" + `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -75,13 +85,13 @@ metadata:
 	}
 }
 
-func TestValidateMarkdownAcceptsRefreshPipelineResources(t *testing.T) {
+func TestValidateMarkdownAcceptsPipelineResources(t *testing.T) {
 	t.Parallel()
 
 	markdown := "```yaml\n" + `apiVersion: leapview.dev/v1
-kind: RefreshPipeline
+kind: Pipeline
 metadata:
-  workspace: sales
+  id: pipeline:sales-refresh
   name: sales-refresh
 spec:
   semanticModel: sales
