@@ -198,6 +198,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	telemetry := config.HTTP.Telemetry
 	handler := dashboardhttp.Handler{
 		Metrics: config.HTTP.Metrics, MetricsForWorkspace: metricsForHTTP,
+		Authoring: config.Authoring,
 		AnalyticalContext: func(ctx context.Context) context.Context {
 			return workload.WithAdmitter(ctx, config.HTTP.Admission)
 		},

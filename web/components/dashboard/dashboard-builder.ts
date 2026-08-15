@@ -569,7 +569,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderToolbar(builder: DashboardBuilderSignal) {
     const saveState = builder.save.state
-    const canSave = builder.capabilities.canEdit && saveState !== 'saving'
     return html`
       <header class="toolbar">
         ${this.backHref ? html`<a class="back" href=${this.backHref} aria-label="Back to dashboard">← Back</a>` : html`<span class="back" aria-label="Back to dashboard">← Back</span>`}
@@ -587,12 +586,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${(this.previewHref || builder.preview.href) && builder.capabilities.canPreview
             ? html`<a class="button" href=${this.previewHref || builder.preview.href}>Preview</a>`
             : builder.capabilities.canPreview ? html`<button disabled title="Preview is not available yet">Preview</button>` : nothing}
-          ${builder.capabilities.canShare ? html`<button @click=${this.share}>Share</button>` : nothing}
+          ${builder.capabilities.canShare ? html`<button disabled title="Sharing is not available yet">Share</button>` : nothing}
           ${builder.capabilities.canExport
             ? this.exportYAMLHref ? html`<a class="button" href=${this.exportYAMLHref} download>Export YAML</a>` : html`<button disabled title="YAML export is not available yet">Export YAML</button>`
             : nothing}
           ${builder.capabilities.canPublish ? html`<button class="primary" @click=${this.publish}>Publish</button>` : nothing}
-          ${builder.capabilities.canEdit ? html`<button @click=${this.save} ?disabled=${!canSave}>${saveState === 'saving' ? 'Saving…' : 'Save draft'}</button>` : nothing}
         </div>
       </header>
     `
@@ -623,7 +621,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <summary>${table.title}<span class="field-type">${table.fields.length}</span></summary>
         <div class="field-list">
           ${table.fields.map((field) => html`
-            <button class="field" draggable="true" aria-label="Add ${field.label}" @click=${() => this.addField(field)} @dragstart=${(event: DragEvent) => this.dragField(event, field)}>
+            <button class="field" draggable="false" disabled title="Adding fields is not available yet" aria-label="Add ${field.label}">
               <span class="field-kind" aria-hidden="true">${field.kind === 'measure' ? '∑' : '◇'}</span>
               <span class="field-label">${field.label}</span>
               <span class="field-type">${field.dataType}</span>
@@ -643,12 +641,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <main class="canvas-pane" aria-label="Dashboard canvas">
         <nav class="page-tabs" aria-label="Dashboard pages" role="tablist">
           ${builder.pages.map((item) => html`<button class="page-tab" role="tab" aria-selected=${item.id === page.id} @click=${() => this.selectPage(item.id)}>${item.title}</button>`)}
-          ${builder.capabilities.canAddPage ? html`<button class="page-tab" aria-label="Add page" @click=${this.addPage}>＋</button>` : nothing}
+          ${builder.capabilities.canAddPage ? html`<button class="page-tab" disabled title="Adding pages is not available yet" aria-label="Add page">＋</button>` : nothing}
         </nav>
         <div class="canvas-scroll">
           <div class="canvas" style=${`aspect-ratio: ${page.canvas.width || 16} / ${page.canvas.height || 9}; grid-template-columns: repeat(${width}, 1fr);`} @dragover=${(event: DragEvent) => event.preventDefault()} @drop=${this.dropField}>
             ${page.visuals.length === 0
-              ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Drag a field here or add a visual to begin.</span>${builder.capabilities.canAddVisual ? html`<div><button @click=${this.addVisual}>Add visual</button></div>` : nothing}</div></div>`
+              ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Drag a field here or add a visual to begin.</span>${builder.capabilities.canAddVisual ? html`<div><button disabled title="Adding visuals is not available yet">Add visual</button></div>` : nothing}</div></div>`
               : page.visuals.map((visual) => this.renderVisual(visual, page))}
           </div>
         </div>
@@ -756,7 +754,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return page.visuals[0]?.id ?? ''
   }
 
-  private save = (): void => this.emitCommand('save')
   private share = (): void => this.emitCommand('share')
   private publish = (): void => this.emitCommand('publish')
 
@@ -764,13 +761,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private addVisual = (): void => this.emitCommand('add_visual')
 
   private addField(field: DashboardBuilderFieldSignal): void {
-    this.emitCommand('add_field', { fieldId: field.id, fieldKind: field.kind })
+    void field
   }
 
   private dropField = (event: DragEvent): void => {
     event.preventDefault()
-    const fieldID = event.dataTransfer?.getData('text/leapview-field')
-    if (fieldID) this.emitCommand('add_field', { fieldId: fieldID })
   }
 
   private dragField(event: DragEvent, field: DashboardBuilderFieldSignal): void {

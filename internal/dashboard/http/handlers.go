@@ -11,6 +11,11 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/api"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
+	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
+	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/command"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
@@ -21,6 +26,7 @@ import (
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
+	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/dashboard/usage"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -90,6 +96,17 @@ type SharedCommandPrepare func(
 	prepare func(dashboard.Filters) (command.PreparedRefresh, error),
 ) (command.PreparedRefresh, uint64, error)
 
+// AuthoringApplication is the narrow browser-facing authoring boundary. The
+// implementation is the composed dashboard authoring application; keeping the
+// interface here lets focused HTTP tests inject a fake without reaching into
+// repository or runtime internals.
+type AuthoringApplication interface {
+	Builder(context.Context, builderview.Request) (uisignals.DashboardBuilderSignal, error)
+	Execute(context.Context, string, authoring.Command) (authoringservice.Result, error)
+	Preview(context.Context, preview.PreviewRequest) (preview.Preview, error)
+	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
+}
+
 type SessionKeyFactory func(
 	r *nethttp.Request,
 	report dashboarddefinition.Definition,
@@ -130,6 +147,7 @@ type Handler struct {
 	RouteScope              reportui.RouteScope
 	StreamNamespace         string
 	SpatialTileStreamClosed func(Metrics, string)
+	Authoring               AuthoringApplication
 }
 
 func (h Handler) scopedStreamID(streamID string) string {

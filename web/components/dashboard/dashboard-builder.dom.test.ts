@@ -54,9 +54,10 @@ test('dashboard builder renders field explorer, canvas, and properties with type
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
-      const event = new Promise<unknown>((resolve) => element.addEventListener('lv-builder-command', (item: CustomEvent) => resolve(item.detail), { once: true }))
+      let unsupportedCommand = false
+      element.addEventListener('lv-builder-command', () => { unsupportedCommand = true }, { once: true })
       ;(root.querySelector('.field') as HTMLButtonElement).click()
-      const detail = await event
+      await new Promise((resolve) => setTimeout(resolve, 20))
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
         panes: Array.from(root.querySelectorAll('.pane-title')).map((node) => node.textContent?.trim()),
@@ -64,7 +65,7 @@ test('dashboard builder renders field explorer, canvas, and properties with type
         visuals: root.querySelectorAll('.visual').length,
         diagnostics: root.querySelectorAll('.diagnostic').length,
         evidence: root.querySelector('.evidence')?.textContent?.trim(),
-        detail,
+        unsupportedCommand,
       }
     })
     expect(state.title).toBe('Revenue draft')
@@ -73,7 +74,7 @@ test('dashboard builder renders field explorer, canvas, and properties with type
     expect(state.visuals).toBe(1)
     expect(state.diagnostics).toBe(1)
     expect(state.evidence).toContain('workspace')
-    expect(state.detail).toMatchObject({ action: 'add_field', fieldId: 'orders.status', pageId: 'overview' })
+    expect(state.unsupportedCommand).toBe(false)
   } finally {
     await page.close()
   }
