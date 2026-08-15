@@ -595,15 +595,15 @@ func ValidateCompiledProjectArtifact(compiled CompiledProjectArtifact) error {
 }
 
 func readManifest(root string) (Manifest, error) {
-	bytes, err := os.ReadFile(filepath.Join(root, "manifest.json"))
+	data, err := os.ReadFile(filepath.Join(root, "manifest.json"))
 	if err != nil {
 		return Manifest{}, err
 	}
-	if err := rejectDuplicateJSONKeys(bytes); err != nil {
+	if err := rejectDuplicateJSONKeys(data); err != nil {
 		return Manifest{}, fmt.Errorf("decode bundle manifest: %w", err)
 	}
 	var manifest Manifest
-	decoder := json.NewDecoder(bytes.NewReader(bytes))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&manifest); err != nil {
 		return Manifest{}, err
