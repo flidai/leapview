@@ -1,11 +1,10 @@
 -- +goose Up
--- Global full-text search is a derived projection of the active serving-state
--- asset graphs. The active table deliberately contains no candidate or stale
--- serving-state documents, so BM25 statistics are comparable across workspaces.
+-- Global full-text search is a derived projection of the active project
+-- generation. It is keyed by project/environment rather than a workspace.
 
 CREATE TABLE active_search_documents (
   id INTEGER PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL,
   environment TEXT NOT NULL,
   serving_state_id TEXT NOT NULL REFERENCES serving_states(id) ON DELETE CASCADE,
   asset_snapshot_id TEXT NOT NULL,
@@ -15,19 +14,17 @@ CREATE TABLE active_search_documents (
   parent_asset_id TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
-  workspace_title TEXT NOT NULL DEFAULT '',
   terms TEXT NOT NULL DEFAULT '',
-  UNIQUE(workspace_id, environment, asset_id)
+  UNIQUE(project_id, environment, asset_id)
 );
 
 CREATE INDEX active_search_documents_scope_idx
-  ON active_search_documents(workspace_id, environment, asset_type, asset_id);
+  ON active_search_documents(project_id, environment, asset_type, asset_id);
 
 CREATE VIRTUAL TABLE active_search_documents_fts USING fts5(
   identifier,
   title,
   description,
-  workspace_title,
   terms,
   content = 'active_search_documents',
   content_rowid = 'id',
@@ -37,73 +34,75 @@ CREATE VIRTUAL TABLE active_search_documents_fts USING fts5(
 
 -- +goose StatementBegin
 CREATE TRIGGER active_search_documents_ai AFTER INSERT ON active_search_documents BEGIN
-  INSERT INTO active_search_documents_fts(rowid, identifier, title, description, workspace_title, terms)
-  VALUES (new.id, new.asset_key, new.title, new.description, new.workspace_title, new.terms);
+  INSERT INTO active_search_documents_fts(rowid, identifier, title, description, terms)
+  VALUES (new.id, new.asset_key, new.title, new.description, new.terms);
 END;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
 CREATE TRIGGER active_search_documents_ad AFTER DELETE ON active_search_documents BEGIN
-  INSERT INTO active_search_documents_fts(active_search_documents_fts, rowid, identifier, title, description, workspace_title, terms)
-  VALUES ('delete', old.id, old.asset_key, old.title, old.description, old.workspace_title, old.terms);
+  INSERT INTO active_search_documents_fts(active_search_documents_fts, rowid, identifier, title, description, terms)
+  VALUES ('delete', old.id, old.asset_key, old.title, old.description, old.terms);
 END;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
 CREATE TRIGGER active_search_documents_au AFTER UPDATE ON active_search_documents BEGIN
-  INSERT INTO active_search_documents_fts(active_search_documents_fts, rowid, identifier, title, description, workspace_title, terms)
-  VALUES ('delete', old.id, old.asset_key, old.title, old.description, old.workspace_title, old.terms);
-  INSERT INTO active_search_documents_fts(rowid, identifier, title, description, workspace_title, terms)
-  VALUES (new.id, new.asset_key, new.title, new.description, new.workspace_title, new.terms);
+  INSERT INTO active_search_documents_fts(active_search_documents_fts, rowid, identifier, title, description, terms)
+  VALUES ('delete', old.id, old.asset_key, old.title, old.description, old.terms);
+  INSERT INTO active_search_documents_fts(rowid, identifier, title, description, terms)
+  VALUES (new.id, new.asset_key, new.title, new.description, new.terms);
 END;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE TRIGGER active_search_pointer_ai AFTER INSERT ON workspace_active_serving_states BEGIN
+CREATE TRIGGER active_search_pointer_ai AFTER INSERT ON project_active_serving_states BEGIN
   DELETE FROM active_search_documents
-  WHERE workspace_id = new.workspace_id AND environment = new.environment;
+  WHERE project_id = new.project_id AND environment = new.environment;
 
   INSERT INTO active_search_documents (
-    workspace_id, environment, serving_state_id, asset_snapshot_id, asset_id,
-    asset_type, asset_key, parent_asset_id, title, description, workspace_title, terms
+    project_id, environment, serving_state_id, asset_snapshot_id, asset_id,
+    asset_type, asset_key, parent_asset_id, title, description, terms
   )
   SELECT
-    asset.workspace_id, new.environment, asset.serving_state_id, asset.snapshot_id,
+    state.project_id, new.environment, asset.serving_state_id, asset.snapshot_id,
     asset.logical_asset_id, asset.asset_type, asset.asset_key,
-    asset.parent_logical_asset_id, asset.title, asset.description, workspace.title,
+    asset.parent_logical_asset_id, asset.title, asset.description,
     asset.payload_json
   FROM assets asset
-  JOIN workspaces workspace ON workspace.id = asset.workspace_id
-  WHERE asset.serving_state_id = new.serving_state_id
+  JOIN serving_states state ON state.id = asset.serving_state_id
+  WHERE state.project_id = new.project_id
+    AND asset.serving_state_id = new.serving_state_id
     AND asset.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding');
 END;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE TRIGGER active_search_pointer_au AFTER UPDATE OF serving_state_id ON workspace_active_serving_states BEGIN
+CREATE TRIGGER active_search_pointer_au AFTER UPDATE OF serving_state_id ON project_active_serving_states BEGIN
   DELETE FROM active_search_documents
-  WHERE workspace_id = new.workspace_id AND environment = new.environment;
+  WHERE project_id = new.project_id AND environment = new.environment;
 
   INSERT INTO active_search_documents (
-    workspace_id, environment, serving_state_id, asset_snapshot_id, asset_id,
-    asset_type, asset_key, parent_asset_id, title, description, workspace_title, terms
+    project_id, environment, serving_state_id, asset_snapshot_id, asset_id,
+    asset_type, asset_key, parent_asset_id, title, description, terms
   )
   SELECT
-    asset.workspace_id, new.environment, asset.serving_state_id, asset.snapshot_id,
+    state.project_id, new.environment, asset.serving_state_id, asset.snapshot_id,
     asset.logical_asset_id, asset.asset_type, asset.asset_key,
-    asset.parent_logical_asset_id, asset.title, asset.description, workspace.title,
+    asset.parent_logical_asset_id, asset.title, asset.description,
     asset.payload_json
   FROM assets asset
-  JOIN workspaces workspace ON workspace.id = asset.workspace_id
-  WHERE asset.serving_state_id = new.serving_state_id
+  JOIN serving_states state ON state.id = asset.serving_state_id
+  WHERE state.project_id = new.project_id
+    AND asset.serving_state_id = new.serving_state_id
     AND asset.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding');
 END;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE TRIGGER active_search_pointer_ad AFTER DELETE ON workspace_active_serving_states BEGIN
+CREATE TRIGGER active_search_pointer_ad AFTER DELETE ON project_active_serving_states BEGIN
   DELETE FROM active_search_documents
-  WHERE workspace_id = old.workspace_id AND environment = old.environment;
+  WHERE project_id = old.project_id AND environment = old.environment;
 END;
 -- +goose StatementEnd
 
@@ -113,21 +112,22 @@ END;
 CREATE TRIGGER active_search_asset_ai AFTER INSERT ON assets
 WHEN new.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding')
  AND EXISTS (
-   SELECT 1 FROM workspace_active_serving_states active
-   WHERE active.workspace_id = new.workspace_id AND active.serving_state_id = new.serving_state_id
+   SELECT 1 FROM project_active_serving_states active
+   WHERE active.project_id = (SELECT project_id FROM serving_states WHERE id = new.serving_state_id)
+     AND active.serving_state_id = new.serving_state_id
  )
 BEGIN
   INSERT OR REPLACE INTO active_search_documents (
-    workspace_id, environment, serving_state_id, asset_snapshot_id, asset_id,
-    asset_type, asset_key, parent_asset_id, title, description, workspace_title, terms
+    project_id, environment, serving_state_id, asset_snapshot_id, asset_id,
+    asset_type, asset_key, parent_asset_id, title, description, terms
   )
   SELECT
-    new.workspace_id, active.environment, new.serving_state_id, new.snapshot_id,
+    active.project_id, active.environment, new.serving_state_id, new.snapshot_id,
     new.logical_asset_id, new.asset_type, new.asset_key, new.parent_logical_asset_id,
-    new.title, new.description, workspace.title, new.payload_json
-  FROM workspace_active_serving_states active
-  JOIN workspaces workspace ON workspace.id = new.workspace_id
-  WHERE active.workspace_id = new.workspace_id AND active.serving_state_id = new.serving_state_id;
+    new.title, new.description, new.payload_json
+  FROM project_active_serving_states active
+  WHERE active.project_id = (SELECT project_id FROM serving_states WHERE id = new.serving_state_id)
+    AND active.serving_state_id = new.serving_state_id;
 END;
 -- +goose StatementEnd
 
@@ -137,16 +137,15 @@ CREATE TRIGGER active_search_asset_au AFTER UPDATE ON assets BEGIN
   WHERE serving_state_id = old.serving_state_id AND asset_id = old.logical_asset_id;
 
   INSERT OR REPLACE INTO active_search_documents (
-    workspace_id, environment, serving_state_id, asset_snapshot_id, asset_id,
-    asset_type, asset_key, parent_asset_id, title, description, workspace_title, terms
+    project_id, environment, serving_state_id, asset_snapshot_id, asset_id,
+    asset_type, asset_key, parent_asset_id, title, description, terms
   )
   SELECT
-    new.workspace_id, active.environment, new.serving_state_id, new.snapshot_id,
+    active.project_id, active.environment, new.serving_state_id, new.snapshot_id,
     new.logical_asset_id, new.asset_type, new.asset_key, new.parent_logical_asset_id,
-    new.title, new.description, workspace.title, new.payload_json
-  FROM workspace_active_serving_states active
-  JOIN workspaces workspace ON workspace.id = new.workspace_id
-  WHERE active.workspace_id = new.workspace_id
+    new.title, new.description, new.payload_json
+  FROM project_active_serving_states active
+  WHERE active.project_id = (SELECT project_id FROM serving_states WHERE id = new.serving_state_id)
     AND active.serving_state_id = new.serving_state_id
     AND new.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding');
 END;
@@ -159,30 +158,23 @@ CREATE TRIGGER active_search_asset_ad AFTER DELETE ON assets BEGIN
 END;
 -- +goose StatementEnd
 
--- +goose StatementBegin
-CREATE TRIGGER active_search_workspace_au AFTER UPDATE OF title ON workspaces BEGIN
-  UPDATE active_search_documents SET workspace_title = new.title WHERE workspace_id = new.id;
-END;
--- +goose StatementEnd
-
 INSERT INTO active_search_documents (
-  workspace_id, environment, serving_state_id, asset_snapshot_id, asset_id,
-  asset_type, asset_key, parent_asset_id, title, description, workspace_title, terms
+  project_id, environment, serving_state_id, asset_snapshot_id, asset_id,
+  asset_type, asset_key, parent_asset_id, title, description, terms
 )
 SELECT
-  asset.workspace_id, active.environment, asset.serving_state_id, asset.snapshot_id,
+  active.project_id, active.environment, asset.serving_state_id, asset.snapshot_id,
   asset.logical_asset_id, asset.asset_type, asset.asset_key,
-  asset.parent_logical_asset_id, asset.title, asset.description, workspace.title,
-  asset.payload_json
-FROM workspace_active_serving_states active
+  asset.parent_logical_asset_id, asset.title, asset.description, asset.payload_json
+FROM project_active_serving_states active
 JOIN assets asset ON asset.serving_state_id = active.serving_state_id
-JOIN workspaces workspace ON workspace.id = asset.workspace_id
-WHERE asset.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding');
+JOIN serving_states state ON state.id = asset.serving_state_id
+WHERE state.project_id = active.project_id
+  AND asset.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding');
 
 INSERT INTO active_search_documents_fts(active_search_documents_fts) VALUES ('optimize');
 
 -- +goose Down
-DROP TRIGGER IF EXISTS active_search_workspace_au;
 DROP TRIGGER IF EXISTS active_search_asset_ad;
 DROP TRIGGER IF EXISTS active_search_asset_au;
 DROP TRIGGER IF EXISTS active_search_asset_ai;

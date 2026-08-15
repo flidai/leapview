@@ -1,10 +1,13 @@
 package module
 
-import "github.com/flidai/leapview/internal/servingstate"
+import (
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/servingstate"
+)
 
 type ID = servingstate.ID
-type WorkspaceID = servingstate.WorkspaceID
 type Environment = servingstate.Environment
+type ProjectID = projectgraph.ResourceID
 type PreparedRuntime = servingstate.PreparedRuntime
 type ActiveScope = servingstate.ActiveScope
 

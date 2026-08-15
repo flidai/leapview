@@ -2,24 +2,25 @@ package servingstate
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
-	servingstatevalidation "github.com/flidai/leapview/internal/servingstate/validation"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var ErrSnapshotLeaseLost = errors.New("snapshot lease is no longer active")
 
 var ErrNotFound = errors.New("serving state not found")
 
-type ID string
+var ErrActivationConflict = errors.New("serving-state activation compare-and-swap conflict")
 
-type WorkspaceID string
+type ID string
 
 type Environment string
 
 type ActiveScope struct {
-	WorkspaceID WorkspaceID
+	ProjectID   projectgraph.ResourceID
 	Environment Environment
 }
 
@@ -49,10 +50,8 @@ const (
 
 type State struct {
 	ID                        ID
-	WorkspaceID               WorkspaceID
-	ProjectID                 string
+	ProjectID                 projectgraph.ResourceID
 	ProjectDigest             string
-	ProjectWorkspaces         []string
 	AccessPolicyJSON          string
 	DashboardPublicationsJSON string
 	DashboardAppearancesJSON  string
@@ -74,8 +73,7 @@ func (d State) CanActivate() bool {
 }
 
 type CreateInput struct {
-	WorkspaceID WorkspaceID
-	ProjectID   string
+	ProjectID   projectgraph.ResourceID
 	Environment Environment
 	CreatedBy   string
 	Source      Source
@@ -84,8 +82,6 @@ type CreateInput struct {
 type Artifact struct {
 	ID             string
 	ServingStateID ID
-	WorkspaceID    WorkspaceID
-	Environment    Environment
 	Digest         string
 	Format         string
 	Path           string
@@ -95,8 +91,6 @@ type Artifact struct {
 }
 
 type SnapshotLeaseInput struct {
-	WorkspaceID        WorkspaceID
-	Environment        Environment
 	ServingStateID     ID
 	DuckLakeSnapshotID int64
 	OwnerID            string
@@ -107,14 +101,13 @@ type Validation struct {
 	Digest                    string
 	ManifestJSON              string
 	RootDir                   string
-	ProjectID                 string
+	ProjectID                 projectgraph.ResourceID
 	ProjectDigest             string
-	ProjectWorkspaces         []string
 	AccessPolicy              accesssnapshot.AccessPolicy
 	DashboardPublicationsJSON string
 	DashboardAppearancesJSON  string
 	ManagedDataRevisions      map[string]string
-	Graph                     servingstatevalidation.AssetGraph
+	Graph                     projectgraph.ProjectGraph
 }
 
 type PreparedRuntime interface {
@@ -126,6 +119,19 @@ func NormalizeEnvironment(value Environment) Environment {
 		return DefaultEnvironment
 	}
 	return value
+}
+
+// ValidateEnvironment checks the canonical serving-scope environment grammar.
+// Callers that accept an omitted environment should normalize it first; query
+// paths should reject an omitted scope instead of silently selecting dev.
+func ValidateEnvironment(value Environment) error {
+	if value == "" {
+		return fmt.Errorf("environment is required")
+	}
+	if _, err := projectgraph.NewServingIdentity(projectgraph.ResourceID("project"), string(value), "generation"); err != nil {
+		return fmt.Errorf("invalid environment %q: %w", value, err)
+	}
+	return nil
 }
 
 func NormalizeSource(value Source) Source {

@@ -6,13 +6,14 @@ import (
 	"reflect"
 	"testing"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 func TestServiceValidatesPromotesAndSaves(t *testing.T) {
 	ctx := context.Background()
 	repo := &fakeRepo{
-		deployment: servingstate.State{ID: "dep_1", WorkspaceID: "test", Status: servingstate.StatusPending},
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Status: servingstate.StatusPending},
 	}
 	artifacts := &fakeArtifacts{}
 	validator := &fakeValidator{
@@ -39,7 +40,6 @@ func TestServiceResumesAlreadyValidatedCandidateWithoutReprocessingArtifact(t *t
 	repo := &fakeRepo{
 		deployment: servingstate.State{
 			ID:            "dep_1",
-			WorkspaceID:   "test",
 			ProjectID:     "project",
 			ProjectDigest: "sha256:project",
 			Status:        servingstate.StatusValidated,
@@ -65,7 +65,7 @@ func TestServiceResumesAlreadyValidatedCandidateWithoutReprocessingArtifact(t *t
 func TestServiceMarksFailedWhenValidationFails(t *testing.T) {
 	ctx := context.Background()
 	repo := &fakeRepo{
-		deployment: servingstate.State{ID: "dep_1", WorkspaceID: "test", Status: servingstate.StatusPending},
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Status: servingstate.StatusPending},
 	}
 	validator := &fakeValidator{err: errors.New("bad bundle")}
 	service := NewService(repo, &fakeArtifacts{}, validator)
@@ -84,7 +84,7 @@ func TestServiceMarksFailedWhenValidationFails(t *testing.T) {
 func TestServiceRunsHookAfterArtifactValidationBeforePromotion(t *testing.T) {
 	events := []string{}
 	repo := &fakeRepo{
-		deployment: servingstate.State{ID: "dep_1", WorkspaceID: "test", Environment: "prod", Status: servingstate.StatusPending},
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Environment: "prod", Status: servingstate.StatusPending},
 		events:     &events,
 	}
 	artifacts := &fakeArtifacts{events: &events}
@@ -110,7 +110,7 @@ func TestServiceRunsHookAfterArtifactValidationBeforePromotion(t *testing.T) {
 func TestServiceMarksFailedAndDoesNotPromoteWhenHookFails(t *testing.T) {
 	hookErr := errors.New("managed data current revision is unavailable")
 	repo := &fakeRepo{
-		deployment: servingstate.State{ID: "dep_1", WorkspaceID: "test", Environment: "prod", Status: servingstate.StatusPending},
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Environment: "prod", Status: servingstate.StatusPending},
 	}
 	artifacts := &fakeArtifacts{}
 	validator := &fakeValidator{validation: servingstate.Validation{RootDir: "/tmp/extracted"}}
@@ -188,7 +188,7 @@ type fakeValidator struct {
 	events      *[]string
 }
 
-func (v *fakeValidator) ValidateArtifact(_ string, _ servingstate.WorkspaceID, environment servingstate.Environment, _ servingstate.ID) (servingstate.Validation, error) {
+func (v *fakeValidator) ValidateArtifact(_ string, _ projectgraph.ResourceID, environment servingstate.Environment, _ servingstate.ID) (servingstate.Validation, error) {
 	v.environment = environment
 	if v.err != nil {
 		return servingstate.Validation{}, v.err

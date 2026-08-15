@@ -1,6 +1,6 @@
 -- +goose Up
-
-ALTER TABLE serving_states ADD COLUMN dashboard_publications_json TEXT NOT NULL DEFAULT '{}';
+-- Dashboard publication metadata is unchanged; serving-state publication JSON
+-- is canonical in the baseline.
 
 CREATE TABLE dashboard_publications (
   id TEXT PRIMARY KEY,
@@ -67,7 +67,6 @@ CREATE INDEX dashboard_publication_stream_events_stream_idx
   ON dashboard_publication_stream_events(stream_id, id);
 
 -- +goose Down
-
 DROP INDEX dashboard_publication_stream_events_stream_idx;
 DROP TABLE dashboard_publication_stream_events;
 DROP INDEX dashboard_publication_streams_expiry_idx;
@@ -76,4 +75,3 @@ DROP INDEX dashboard_publication_events_publication_idx;
 DROP TABLE dashboard_publication_events;
 DROP INDEX dashboard_publications_workspace_idx;
 DROP TABLE dashboard_publications;
-ALTER TABLE serving_states DROP COLUMN dashboard_publications_json;

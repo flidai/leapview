@@ -1,9 +1,6 @@
 -- +goose Up
-ALTER TABLE serving_states ADD COLUMN project_digest TEXT NOT NULL DEFAULT '';
-ALTER TABLE serving_states ADD COLUMN project_workspaces_json TEXT NOT NULL DEFAULT '[]';
-ALTER TABLE serving_states ADD COLUMN access_policy_json TEXT NOT NULL DEFAULT '{}';
+-- Project serving contract fields are canonical in the serving-state baseline.
+SELECT 1;
 
 -- +goose Down
-ALTER TABLE serving_states DROP COLUMN access_policy_json;
-ALTER TABLE serving_states DROP COLUMN project_workspaces_json;
-ALTER TABLE serving_states DROP COLUMN project_digest;
+SELECT 1;

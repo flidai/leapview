@@ -3,808 +3,474 @@ package sqlite
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
-	refreshrun "github.com/flidai/leapview/internal/refresh/run"
-	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
-	refreshsqlite "github.com/flidai/leapview/internal/refresh/sqlite"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
-	servingstatevalidation "github.com/flidai/leapview/internal/servingstate/validation"
-	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
-func TestRepositorySaveValidatedCommitsDeploymentGraph(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
+func TestRepositoryCreateRejectsMalformedProjectIdentity(t *testing.T) {
+	_, repo := openRepo(t)
+	if _, err := repo.Create(t.Context(), servingstate.CreateInput{}); err == nil {
+		t.Fatal("Create() accepted empty project identity")
 	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	validation := validationGraph(created.ID)
-	artifact := artifact(created.ID, "test")
-	saved, err := repo.SaveValidated(ctx, created.ID, validation, artifact)
-	if err != nil {
-		t.Fatalf("save validated: %v", err)
-	}
-	if saved.Status != servingstate.StatusValidated || saved.Digest != "digest" {
-		t.Fatalf("saved = %#v, want validated digest", saved)
-	}
-	gotArtifact, err := repo.ArtifactByServingState(ctx, created.ID)
-	if err != nil {
-		t.Fatalf("artifact: %v", err)
-	}
-	if gotArtifact.Path != "artifact.tar.gz" {
-		t.Fatalf("artifact path = %q, want artifact.tar.gz", gotArtifact.Path)
+	if _, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectgraph.ResourceID("project/id")}); err == nil {
+		t.Fatal("Create() accepted malformed project identity")
 	}
 }
 
-func TestRepositorySaveValidatedRollsBackOnDuplicateEdge(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
+func TestRepositoryRejectsMalformedEnvironmentsForScopedOperations(t *testing.T) {
+	_, repo := openRepo(t)
+	for _, environment := range []servingstate.Environment{"prod ", "prod/env", "-prod"} {
+		if _, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectgraph.ResourceID("project"), Environment: environment}); err == nil {
+			t.Fatalf("Create accepted malformed environment %q", environment)
+		}
 	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	validation := validationGraph(created.ID)
-	validation.Graph.Edges[1].FromAssetID = validation.Graph.Edges[0].FromAssetID
-	validation.Graph.Edges[1].ToAssetID = validation.Graph.Edges[0].ToAssetID
-	validation.Graph.Edges[1].Type = validation.Graph.Edges[0].Type
-	if _, err := repo.SaveValidated(ctx, created.ID, validation, artifact(created.ID, "test")); err == nil {
-		t.Fatal("expected duplicate edge error")
-	}
-
-	after, err := repo.ByID(ctx, created.ID)
-	if err != nil {
-		t.Fatalf("get after rollback: %v", err)
-	}
-	if after.Status != servingstate.StatusPending {
-		t.Fatalf("status = %q, want pending rollback", after.Status)
-	}
-	if _, err := repo.ArtifactByServingState(ctx, created.ID); !errors.Is(err, servingstate.ErrNotFound) {
-		t.Fatalf("artifact error = %v, want ErrNotFound", err)
+	for _, environment := range []string{"", "prod ", "prod/env"} {
+		if _, err := repo.ReferencedDuckLakeSnapshots(t.Context(), environment); err == nil {
+			t.Fatalf("ReferencedDuckLakeSnapshots accepted malformed environment %q", environment)
+		}
+		if err := repo.ReconcileRetention(t.Context(), environment, time.Now()); err == nil {
+			t.Fatalf("ReconcileRetention accepted malformed environment %q", environment)
+		}
 	}
 }
 
-func TestRepositorySaveValidatedIsIdempotentAndRejectsCandidateMutation(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
-	if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
-	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
+func TestRepositoryRejectsInvalidArtifactDigestAndSize(t *testing.T) {
+	_, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatal(err)
 	}
-	original := validationGraph(created.ID)
-	if _, err := repo.SaveValidated(ctx, created.ID, original, artifact(created.ID, "test")); err != nil {
-		t.Fatalf("first save validated: %v", err)
+	invalidDigest := validValidation(projectID)
+	invalidDigest.Digest = "digest"
+	if _, err := repo.SaveValidated(t.Context(), created.ID, invalidDigest, validArtifact(created.ID)); err == nil {
+		t.Fatal("SaveValidated accepted invalid artifact digest")
 	}
-	if _, err := repo.SaveValidated(ctx, created.ID, original, artifact(created.ID, "test")); err != nil {
-		t.Fatalf("idempotent save validated: %v", err)
-	}
-
-	replacement := validationGraph(created.ID)
-	replacement.Digest = "replacement"
-	replacement.Graph.Edges = replacement.Graph.Edges[:1]
-	if _, err := repo.SaveValidated(ctx, created.ID, replacement, artifact(created.ID, "test")); err == nil {
-		t.Fatal("replacement save validated error = nil")
-	}
-	if _, err := repo.Activate(ctx, "test", servingstate.DefaultEnvironment, created.ID); err != nil {
-		t.Fatalf("activate: %v", err)
-	}
-	graph, ok, err := workspaceRepo.ActiveServingStateGraph(ctx, "test", string(servingstate.DefaultEnvironment))
-	if err != nil {
-		t.Fatalf("active graph: %v", err)
-	}
-	if !ok {
-		t.Fatal("active graph ok = false")
-	}
-	if len(graph.Edges) != len(original.Graph.Edges) {
-		t.Fatalf("edges after rejected replacement = %#v, want original graph", graph.Edges)
+	negativeSize := validArtifact(created.ID)
+	negativeSize.SizeBytes = -1
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validValidation(projectID), negativeSize); err == nil {
+		t.Fatal("SaveValidated accepted negative artifact size")
 	}
 }
 
-func TestAccessSnapshotRegistersSecurablesFromDeploymentGraph(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
-	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
+func TestRepositorySaveValidatedBindsProjectGraphAndArtifact(t *testing.T) {
+	store, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatal(err)
 	}
-	workspaceID := workspace.WorkspaceID("test")
-	servingStateID := workspace.ServingStateID(created.ID)
-	model := mustTestAsset(workspaceID, servingStateID, workspace.AssetTypeSemanticModel, "test.sales", "")
-	model.PayloadJSON = `{"Dimensions":{"activity_date":{}},"Measures":{"rating_count":{}},"Metrics":{"tags_per_rating":{}}}`
-	table := mustTestAsset(workspaceID, servingStateID, workspace.AssetTypeSemanticTable, "test.sales.orders", model.ID)
-	field := mustTestAsset(workspaceID, servingStateID, workspace.AssetTypeField, "test.sales.orders.email", table.ID)
-	dashboard := mustTestAsset(workspaceID, servingStateID, workspace.AssetTypeDashboard, "test.executive", "")
-	validation := servingstate.Validation{
-		Digest:            "digest",
-		ManifestJSON:      "{}",
-		ProjectID:         "project",
-		ProjectDigest:     "sha256:" + strings.Repeat("a", 64),
-		ProjectWorkspaces: []string{"test"},
-		Graph: mustSnapshotGraph(workspace.AssetGraph{
-			Assets: []workspace.Asset{model, table, field, dashboard},
-			Edges: []workspace.AssetEdge{
-				workspace.NewAssetEdge(workspaceID, servingStateID, dashboard.ID, model.ID, workspace.AssetEdgeUsesSemanticModel),
-				workspace.NewAssetEdge(workspaceID, servingStateID, field.ID, table.ID, workspace.AssetEdgeUsesSemanticTable),
-			},
-		}),
+	validation := validValidation(projectID)
+	artifact := validArtifact(created.ID)
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validation, artifact); err != nil {
+		t.Fatalf("SaveValidated() = %v", err)
 	}
-	if _, err := repo.SaveValidated(ctx, created.ID, validation, artifact(created.ID, "test")); err != nil {
-		t.Fatalf("save validated: %v", err)
-	}
-	tx, err := store.SQLDB().BeginTx(ctx, nil)
+	state, err := repo.ByID(t.Context(), created.ID)
 	if err != nil {
-		t.Fatalf("begin access snapshot: %v", err)
+		t.Fatal(err)
 	}
-	if err := accesssqlite.ApplySnapshotTx(ctx, tx, string(created.ID)); err != nil {
-		_ = tx.Rollback()
-		t.Fatalf("apply access snapshot: %v", err)
+	if state.ProjectID != projectID || state.Environment != servingstate.DefaultEnvironment || state.Status != servingstate.StatusValidated {
+		t.Fatalf("state = %#v", state)
 	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit access snapshot: %v", err)
+	for _, table := range []string{"serving_states", "serving_state_artifacts", "assets", "asset_edges", "query_snapshot_leases"} {
+		var workspaceColumns int
+		query := `SELECT count(*) FROM pragma_table_info('` + table + `') WHERE name IN ('workspace_id', 'workspace_title', 'workspace_scope')`
+		if err := store.SQLDB().QueryRowContext(t.Context(), query).Scan(&workspaceColumns); err != nil {
+			t.Fatal(err)
+		}
+		if workspaceColumns != 0 {
+			t.Fatalf("%s retained workspace identity", table)
+		}
 	}
-	if _, err := repo.Activate(ctx, "test", servingstate.DefaultEnvironment, created.ID); err != nil {
-		t.Fatalf("activate: %v", err)
+	var oldPointerTable int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'workspace_active_serving_states'`).Scan(&oldPointerTable); err != nil {
+		t.Fatal(err)
+	}
+	if oldPointerTable != 0 {
+		t.Fatal("legacy workspace active pointer table retained")
 	}
 
-	assertSecurableParent(t, store, "semantic_model:test:sales", "workspace:test")
-	assertSecurableParent(t, store, "semantic_field:test:sales/activity_date", "semantic_model:test:sales")
-	assertSecurableParent(t, store, "semantic_field:test:sales/rating_count", "semantic_model:test:sales")
-	assertSecurableParent(t, store, "semantic_field:test:sales/tags_per_rating", "semantic_model:test:sales")
-	assertSecurableParent(t, store, "dataset:test:sales/orders", "semantic_model:test:sales")
-	assertSecurableParent(t, store, "column:test:sales/orders/email", "dataset:test:sales/orders")
-	assertSecurableParent(t, store, "dashboard:test:executive", "workspace:test")
-}
-
-func TestRepositorySaveValidatedRollsBackOnDuplicateLogicalAsset(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
-	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	validation := validationGraph(created.ID)
-	validation.Graph.Assets = append(validation.Graph.Assets, validation.Graph.Assets[0])
-	if _, err := repo.SaveValidated(ctx, created.ID, validation, artifact(created.ID, "test")); err == nil {
-		t.Fatal("expected duplicate logical asset error")
-	}
-	after, err := repo.ByID(ctx, created.ID)
-	if err != nil {
-		t.Fatalf("get after rollback: %v", err)
-	}
-	if after.Status != servingstate.StatusPending {
-		t.Fatalf("status = %q, want pending rollback", after.Status)
-	}
-	if _, err := repo.ArtifactByServingState(ctx, created.ID); !errors.Is(err, servingstate.ErrNotFound) {
-		t.Fatalf("artifact error = %v, want ErrNotFound", err)
+	badArtifact := validArtifact(created.ID)
+	badArtifact.Digest = "different"
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validation, badArtifact); err == nil {
+		t.Fatal("SaveValidated() accepted artifact digest mismatch")
 	}
 }
 
-func TestRepositorySaveValidatedPersistsProjectIdentity(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
-	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
+func TestRepositorySaveValidatedIsIdempotentAndImmutable(t *testing.T) {
+	_, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatal(err)
 	}
-	validated, err := repo.SaveValidated(ctx, created.ID, validationGraph(created.ID), artifact(created.ID, "test"))
+	validation := validValidation(projectID)
+	artifact := validArtifact(created.ID)
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validation, artifact); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repo.ByID(t.Context(), created.ID)
 	if err != nil {
-		t.Fatalf("save validated: %v", err)
+		t.Fatal(err)
 	}
-	if validated.ProjectID != "project" {
-		t.Fatalf("project id = %q, want project", validated.ProjectID)
+	var assetsBefore int
+	if err := repo.db.QueryRowContext(t.Context(), `SELECT count(*) FROM assets WHERE serving_state_id = ?`, created.ID).Scan(&assetsBefore); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validation, artifact); err != nil {
+		t.Fatalf("idempotent save: %v", err)
+	}
+	mutated := validation
+	mutated.Digest = "sha256:" + strings.Repeat("b", 64)
+	mutated.ProjectDigest = "sha256:" + strings.Repeat("c", 64)
+	mutatedArtifact := artifact
+	mutatedArtifact.Digest = mutated.Digest
+	if _, err := repo.SaveValidated(t.Context(), created.ID, mutated, mutatedArtifact); err == nil {
+		t.Fatal("SaveValidated accepted immutable candidate mutation")
+	}
+	mutatedArtifact = artifact
+	mutatedArtifact.ID = "different-artifact"
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validation, mutatedArtifact); err == nil {
+		t.Fatal("SaveValidated accepted immutable artifact identity mutation")
+	}
+	after, err := repo.ByID(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Digest != before.Digest || after.ProjectDigest != before.ProjectDigest || after.Status != before.Status {
+		t.Fatalf("immutable state changed: before=%#v after=%#v", before, after)
+	}
+	var assetsAfter int
+	if err := repo.db.QueryRowContext(t.Context(), `SELECT count(*) FROM assets WHERE serving_state_id = ?`, created.ID).Scan(&assetsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if assetsAfter != assetsBefore {
+		t.Fatalf("asset count after rejected mutation = %d, want %d", assetsAfter, assetsBefore)
 	}
 }
 
-func assertSecurableParent(t *testing.T, store *platform.Store, id, wantParent string) {
-	t.Helper()
-	var parent string
-	if err := store.SQLDB().QueryRowContext(context.Background(), `SELECT parent_id FROM securable_objects WHERE id = ?`, id).Scan(&parent); err != nil {
-		t.Fatalf("securable %s: %v", id, err)
+func TestRepositorySaveValidatedRollsBackInvalidGraphAndArtifact(t *testing.T) {
+	store, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if parent != wantParent {
-		t.Fatalf("securable %s parent = %q, want %q", id, parent, wantParent)
+	invalid := validValidation(projectID)
+	invalid.Graph = projectgraph.ProjectGraph{}
+	if _, err := repo.SaveValidated(t.Context(), created.ID, invalid, validArtifact(created.ID)); err == nil {
+		t.Fatal("SaveValidated accepted zero graph")
+	}
+	assertPendingWithoutArtifacts(t, store, repo, created.ID)
+
+	first := createValidated(t, repo, projectID, "prod")
+	firstArtifact, err := repo.ArtifactByServingState(t.Context(), first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: "prod"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicateArtifact := validArtifact(second.ID)
+	duplicateArtifact.ID = firstArtifact.ID
+	if _, err := repo.SaveValidated(t.Context(), second.ID, validValidation(projectID), duplicateArtifact); err == nil {
+		t.Fatal("SaveValidated accepted duplicate artifact primary key")
+	}
+	assertPendingWithoutArtifacts(t, store, repo, second.ID)
+}
+
+func TestRepositorySaveValidatedRejectsProjectGraphAndArtifactMismatches(t *testing.T) {
+	store, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongProject := validValidation(projectgraph.ResourceID("other"))
+	if _, err := repo.SaveValidated(t.Context(), created.ID, wrongProject, validArtifact(created.ID)); err == nil {
+		t.Fatal("SaveValidated accepted validation project mismatch")
+	}
+	graphMismatch := validValidation(projectID)
+	graphMismatch.Graph = graphForProject(projectgraph.ResourceID("other"))
+	if _, err := repo.SaveValidated(t.Context(), created.ID, graphMismatch, validArtifact(created.ID)); err == nil {
+		t.Fatal("SaveValidated accepted graph root mismatch")
+	}
+	badDigest := validValidation(projectID)
+	badArtifact := validArtifact(created.ID)
+	badArtifact.Digest = "different"
+	if _, err := repo.SaveValidated(t.Context(), created.ID, badDigest, badArtifact); err == nil {
+		t.Fatal("SaveValidated accepted artifact digest mismatch")
+	}
+	badManifest := validArtifact(created.ID)
+	badManifest.ManifestJSON = `{"manifest":"different"}`
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validValidation(projectID), badManifest); err == nil {
+		t.Fatal("SaveValidated accepted artifact manifest mismatch")
+	}
+	wrongArtifactState := validArtifact(created.ID)
+	wrongArtifactState.ServingStateID = "other-state"
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validValidation(projectID), wrongArtifactState); err == nil {
+		t.Fatal("SaveValidated accepted artifact serving-state mismatch")
+	}
+	assertPendingWithoutArtifacts(t, store, repo, created.ID)
+}
+
+func TestRepositorySaveValidatedRejectsGraphProjectMismatch(t *testing.T) {
+	_, repo := openRepo(t)
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectgraph.ResourceID("project")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	validation := validValidation(projectgraph.ResourceID("other"))
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validation, validArtifact(created.ID)); err == nil {
+		t.Fatal("SaveValidated() accepted graph project mismatch")
 	}
 }
 
-func TestRepositorySaveValidatedAllowsSameLogicalAssetsAcrossDeployments(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
+func TestRepositoryActivationCompareAndSwapDrainsPreviousGeneration(t *testing.T) {
+	_, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	first := createValidated(t, repo, projectID, "dev")
+	second := createValidated(t, repo, projectID, "dev")
+	if _, err := repo.Activate(t.Context(), projectID, "dev", first.ID, ""); err != nil {
+		t.Fatalf("activate first: %v", err)
 	}
-	first, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
+	if _, err := repo.Activate(t.Context(), projectID, "dev", second.ID, "stale"); !errors.Is(err, servingstate.ErrActivationConflict) {
+		t.Fatalf("stale activation error = %v, want ErrActivationConflict", err)
+	}
+	active, _, err := repo.ActiveArtifact(t.Context(), projectID, "dev")
+	if err != nil || active.ID != first.ID {
+		t.Fatalf("active after stale activation = %s, %v", active.ID, err)
+	}
+	if _, err := repo.Activate(t.Context(), projectID, "dev", second.ID, first.ID); err != nil {
+		t.Fatalf("activate second: %v", err)
+	}
+	old, err := repo.ByID(t.Context(), first.ID)
 	if err != nil {
-		t.Fatalf("create first: %v", err)
+		t.Fatal(err)
 	}
-	second, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create second: %v", err)
+	if old.Status != servingstate.StatusDraining {
+		t.Fatalf("old generation status = %q, want draining", old.Status)
 	}
-	if _, err := repo.SaveValidated(ctx, first.ID, validationGraph(first.ID), artifact(first.ID, "test")); err != nil {
-		t.Fatalf("save first: %v", err)
-	}
-	if _, err := repo.SaveValidated(ctx, second.ID, validationGraph(second.ID), artifact(second.ID, "test")); err != nil {
-		t.Fatalf("save second: %v", err)
+	if old.SupersededAt == "" {
+		t.Fatal("old generation superseded_at is empty")
 	}
 }
 
-func TestRepositoryTracksActiveDeploymentsPerEnvironment(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
+func TestRepositoryTracksActiveGenerationsPerEnvironment(t *testing.T) {
+	_, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	dev := createValidated(t, repo, projectID, "dev")
+	prod := createValidated(t, repo, projectID, "prod")
+	if _, err := repo.Activate(t.Context(), projectID, "dev", dev.ID, ""); err != nil {
+		t.Fatal(err)
 	}
-	dev, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", Environment: "dev", CreatedBy: "tester"})
+	if _, err := repo.Activate(t.Context(), projectID, "prod", prod.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	activeDev, _, err := repo.ActiveArtifact(t.Context(), projectID, "dev")
 	if err != nil {
-		t.Fatalf("create dev: %v", err)
+		t.Fatal(err)
 	}
-	prod, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", Environment: "prod", CreatedBy: "tester"})
+	activeProd, _, err := repo.ActiveArtifact(t.Context(), projectID, "prod")
 	if err != nil {
-		t.Fatalf("create prod: %v", err)
-	}
-	if _, err := repo.SaveValidated(ctx, dev.ID, validationGraph(dev.ID), artifact(dev.ID, "test")); err != nil {
-		t.Fatalf("save dev: %v", err)
-	}
-	if _, err := repo.SaveValidated(ctx, prod.ID, validationGraph(prod.ID), artifactForEnvironment(prod.ID, "test", "prod")); err != nil {
-		t.Fatalf("save prod: %v", err)
-	}
-	if _, err := repo.Activate(ctx, "test", "dev", dev.ID); err != nil {
-		t.Fatalf("activate dev: %v", err)
-	}
-	if _, err := repo.Activate(ctx, "test", "prod", prod.ID); err != nil {
-		t.Fatalf("activate prod: %v", err)
-	}
-	activeDev, _, err := repo.ActiveArtifact(ctx, "test", "dev")
-	if err != nil {
-		t.Fatalf("active dev: %v", err)
-	}
-	activeProd, _, err := repo.ActiveArtifact(ctx, "test", "prod")
-	if err != nil {
-		t.Fatalf("active prod: %v", err)
+		t.Fatal(err)
 	}
 	if activeDev.ID != dev.ID || activeProd.ID != prod.ID {
-		t.Fatalf("active dev/prod = %s/%s, want %s/%s", activeDev.ID, activeProd.ID, dev.ID, prod.ID)
+		t.Fatalf("active generations dev=%s prod=%s, want %s/%s", activeDev.ID, activeProd.ID, dev.ID, prod.ID)
 	}
-}
-
-func TestRepositoryActivateRefreshAtomicallyAdvancesAllDataVersions(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatal(err)
-	}
-	first, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
+	scopes, err := repo.ListActiveScopes(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.SaveValidated(ctx, first.ID, validationGraph(first.ID), artifact(first.ID, "test")); err != nil {
+	if len(scopes) != 2 {
+		t.Fatalf("active scopes = %#v, want two environments", scopes)
+	}
+}
+
+func TestRepositoryConcurrentActivationRejectsStaleCAS(t *testing.T) {
+	_, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	first := createValidated(t, repo, projectID, "dev")
+	second := createValidated(t, repo, projectID, "dev")
+	third := createValidated(t, repo, projectID, "dev")
+	if _, err := repo.Activate(t.Context(), projectID, "dev", first.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.RecordDuckLakeSnapshot(ctx, first.ID, 7); err != nil {
-		t.Fatal(err)
+	start := make(chan struct{})
+	type activationResult struct {
+		id  servingstate.ID
+		err error
 	}
-	if _, err := repo.Activate(ctx, "test", servingstate.DefaultEnvironment, first.ID); err != nil {
-		t.Fatal(err)
+	results := make(chan activationResult, 2)
+	var wg sync.WaitGroup
+	for _, candidate := range []servingstate.ID{second.ID, third.ID} {
+		candidate := candidate
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := repo.Activate(context.Background(), projectID, "dev", candidate, first.ID)
+			results <- activationResult{id: candidate, err: err}
+		}()
 	}
-	oldTime := "2026-01-01T00:00:00Z"
-	for _, modelID := range []string{"b", "unchanged"} {
-		if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO semantic_model_data_versions (workspace_id, environment, semantic_model_id, snapshot_id, serving_state_id, refreshed_at, source) VALUES ('test', 'dev', ?, 7, ?, ?, 'publish')`, modelID, first.ID, oldTime); err != nil {
-			t.Fatal(err)
+	close(start)
+	wg.Wait()
+	close(results)
+	var succeeded, conflicts int
+	var winner servingstate.ID
+	for result := range results {
+		if result.err == nil {
+			succeeded++
+			winner = result.id
+		} else if errors.Is(result.err, servingstate.ErrActivationConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("concurrent activation %s error = %v", result.id, result.err)
 		}
 	}
-	second, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester", Source: servingstate.SourceRefresh})
+	if succeeded != 1 || conflicts != 1 {
+		t.Fatalf("concurrent activation results succeeded=%d conflicts=%d, want 1/1", succeeded, conflicts)
+	}
+	active, _, err := repo.ActiveArtifact(t.Context(), projectID, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.SaveValidated(ctx, second.ID, validationGraph(second.ID), artifact(second.ID, "test")); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.RecordDuckLakeSnapshot(ctx, second.ID, 9); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, `
-INSERT INTO refresh_jobs (id, workspace_id, serving_state_id, model_id, kind, status, lease_owner, lease_generation, lease_expires_at) VALUES ('job_1', 'test', ?, 'b', 'refresh_pipeline', 'running', 'worker-1', 1, datetime('now', '+5 minutes'));
-INSERT INTO refresh_job_runs (id, job_id, environment, target_type, target_id, target_generation, trigger_type, status, created_sequence) VALUES ('run_1', 'job_1', 'dev', 'refresh_pipeline', 'test.daily', 1, 'manual', 'prepared', 1);
-`, second.ID); err != nil {
-		t.Fatal(err)
-	}
-	refreshedAt := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
-	version := refreshschedule.DataVersion{
-		WorkspaceID: "test", Environment: "dev", SemanticModel: "b", SnapshotID: 9, ServingStateID: string(second.ID),
-		RefreshedAt: refreshedAt, Source: refreshschedule.DataVersionSourceRefresh, PipelineID: "daily", RunID: "run_1",
-		TargetGeneration: 1, LeaseOwner: "worker-1", LeaseGeneration: 1,
-	}
-	publication := refreshsqlite.NewPublicationUnitOfWork(store.SQLDB(), nil)
-	if _, err := store.SQLDB().ExecContext(ctx, `
-INSERT INTO refresh_jobs (id, workspace_id, serving_state_id, model_id, kind, status) VALUES ('job_2', 'test', ?, 'b', 'refresh_pipeline', 'queued');
-INSERT INTO refresh_job_runs (id, job_id, environment, target_type, target_id, target_generation, trigger_type, status, created_sequence) VALUES ('run_2', 'job_2', 'dev', 'refresh_pipeline', 'test.daily', 2, 'manual', 'queued', 2);
-`, second.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := publication.Publish(ctx, "test", servingstate.DefaultEnvironment, second.ID, version); !errors.Is(err, refreshrun.ErrLeaseLost) {
-		t.Fatalf("stale generation activation error = %v, want ErrLeaseLost", err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, `DELETE FROM refresh_jobs WHERE id = 'job_2'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE refresh_jobs SET lease_expires_at = datetime('now', '-1 second') WHERE id = 'job_1'`); err != nil {
-		t.Fatal(err)
-	}
-	if err := publication.Publish(ctx, "test", servingstate.DefaultEnvironment, second.ID, version); !errors.Is(err, refreshrun.ErrLeaseLost) {
-		t.Fatalf("expired lease activation error = %v, want ErrLeaseLost", err)
-	}
-	active, _, err := repo.ActiveArtifact(ctx, "test", servingstate.DefaultEnvironment)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if active.ID != first.ID {
-		t.Fatalf("active serving state after expired publication = %s, want %s", active.ID, first.ID)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE refresh_jobs SET lease_expires_at = datetime('now', '+5 minutes') WHERE id = 'job_1'`); err != nil {
-		t.Fatal(err)
-	}
-	if err := publication.Publish(ctx, "test", servingstate.DefaultEnvironment, second.ID, version); err != nil {
-		t.Fatal(err)
-	}
-	var runStatus, jobStatus string
-	if err := store.SQLDB().QueryRowContext(ctx, `
-SELECT r.status, j.status FROM refresh_job_runs r JOIN refresh_jobs j ON j.id = r.job_id WHERE r.id = 'run_1'
-`).Scan(&runStatus, &jobStatus); err != nil {
-		t.Fatal(err)
-	}
-	if runStatus != "succeeded" || jobStatus != "succeeded" {
-		t.Fatalf("publication statuses = %q/%q, want succeeded/succeeded", runStatus, jobStatus)
-	}
-	rows, err := store.SQLDB().QueryContext(ctx, `SELECT semantic_model_id, snapshot_id, serving_state_id, refreshed_at, source, COALESCE(pipeline_id, '') FROM semantic_model_data_versions ORDER BY semantic_model_id`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var got []string
-	for rows.Next() {
-		var model, state, timestamp, source, pipeline string
-		var snapshot int64
-		if err := rows.Scan(&model, &snapshot, &state, &timestamp, &source, &pipeline); err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, model+"|"+fmt.Sprint(snapshot)+"|"+state+"|"+timestamp+"|"+source+"|"+pipeline)
-	}
-	want := []string{
-		"b|9|" + string(second.ID) + "|" + refreshedAt.Format(time.RFC3339Nano) + "|refresh|daily",
-		"unchanged|9|" + string(second.ID) + "|" + oldTime + "|publish|",
-	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("data versions = %#v, want %#v", got, want)
+	if active.ID != winner {
+		t.Fatalf("active winner = %s, want %s", active.ID, winner)
 	}
 }
 
-func TestRepositoryCreateDefaultsToPublishSource(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
+func TestRepositoryReconcileRetentionOnlyDeletesTargetEnvironment(t *testing.T) {
+	_, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	devFirst := createValidated(t, repo, projectID, "dev")
+	devSecond := createValidated(t, repo, projectID, "dev")
+	if _, err := repo.Activate(t.Context(), projectID, "dev", devFirst.ID, ""); err != nil {
+		t.Fatal(err)
 	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create: %v", err)
+	if _, err := repo.Activate(t.Context(), projectID, "dev", devSecond.ID, devFirst.ID); err != nil {
+		t.Fatal(err)
 	}
-	if created.Source != servingstate.SourcePublish {
-		t.Fatalf("source = %q, want publish", created.Source)
+	prod := createValidated(t, repo, projectID, "prod")
+	if _, err := repo.db.ExecContext(t.Context(), `UPDATE serving_states SET status = 'draining' WHERE id = ?`, prod.ID); err != nil {
+		t.Fatal(err)
 	}
-	refresh, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester", Source: servingstate.SourceRefresh})
-	if err != nil {
-		t.Fatalf("create refresh: %v", err)
+	if err := repo.ReconcileRetention(t.Context(), "dev", time.Now()); err != nil {
+		t.Fatal(err)
 	}
-	if refresh.Source != servingstate.SourceRefresh {
-		t.Fatalf("refresh source = %q, want refresh", refresh.Source)
-	}
+	assertStatus(t, repo, devFirst.ID, servingstate.StatusDeleted)
+	assertStatus(t, repo, devSecond.ID, servingstate.StatusActive)
+	assertStatus(t, repo, prod.ID, servingstate.StatusDraining)
 }
 
-func TestRepositoryRecordsDuckLakeSnapshot(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
+func TestRepositoryReferencesSnapshotsAndLeasesByEnvironment(t *testing.T) {
+	_, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	dev := createValidated(t, repo, projectID, "dev")
+	prod := createValidated(t, repo, projectID, "prod")
+	if err := repo.RecordDuckLakeSnapshot(t.Context(), dev.ID, 7); err != nil {
+		t.Fatal(err)
 	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
+	if err := repo.RecordDuckLakeSnapshot(t.Context(), prod.ID, 11); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Activate(t.Context(), projectID, "dev", dev.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Activate(t.Context(), projectID, "prod", prod.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	refs, err := repo.ReferencedDuckLakeSnapshots(t.Context(), "dev")
+	if err != nil || len(refs) != 1 || refs[0] != 7 {
+		t.Fatalf("dev references = %#v, %v", refs, err)
+	}
+	foreign, err := repo.ForeignEnvironmentDuckLakeSnapshots(t.Context(), "dev")
+	if err != nil || len(foreign) != 1 || foreign[0] != 11 {
+		t.Fatalf("dev foreign references = %#v, %v", foreign, err)
+	}
+	devLease, err := repo.CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{ServingStateID: dev.ID, DuckLakeSnapshotID: 7, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatal(err)
 	}
-	if err := repo.RecordDuckLakeSnapshot(ctx, created.ID, 42); err != nil {
-		t.Fatalf("record snapshot: %v", err)
-	}
-	got, err := repo.ByID(ctx, created.ID)
+	prodLease, err := repo.CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{ServingStateID: prod.ID, DuckLakeSnapshotID: 11, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
-		t.Fatalf("by id: %v", err)
+		t.Fatal(err)
 	}
-	if got.DuckLakeSnapshotID != 42 {
-		t.Fatalf("snapshot = %d, want 42", got.DuckLakeSnapshotID)
+	leased, err := repo.LeasedDuckLakeSnapshots(t.Context(), "dev")
+	if err != nil || len(leased) != 1 || leased[0] != 7 {
+		t.Fatalf("dev leased snapshots = %#v, %v", leased, err)
 	}
-	if _, err := repo.SaveValidated(ctx, created.ID, validationGraph(created.ID), artifact(created.ID, "test")); err != nil {
-		t.Fatalf("save validated: %v", err)
+	if err := repo.ReleaseQuerySnapshotLease(t.Context(), devLease); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := repo.Activate(ctx, "test", servingstate.DefaultEnvironment, created.ID); err != nil {
-		t.Fatalf("activate: %v", err)
+	if err := repo.ExtendQuerySnapshotLease(t.Context(), devLease, time.Now().Add(time.Hour)); !errors.Is(err, servingstate.ErrSnapshotLeaseLost) {
+		t.Fatalf("extend released lease = %v, want ErrSnapshotLeaseLost", err)
 	}
-	active, _, err := repo.ActiveArtifact(ctx, "test", servingstate.DefaultEnvironment)
+	leased, err = repo.LeasedDuckLakeSnapshots(t.Context(), "dev")
 	if err != nil {
-		t.Fatalf("active artifact: %v", err)
-	}
-	if active.DuckLakeSnapshotID != 42 {
-		t.Fatalf("active snapshot = %d, want 42", active.DuckLakeSnapshotID)
-	}
-}
-
-func TestRepositoryListsReferencedDuckLakeSnapshots(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
-	}
-	first, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create first: %v", err)
-	}
-	second, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create second: %v", err)
-	}
-	third, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create third: %v", err)
-	}
-	prod, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", Environment: "prod", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create prod: %v", err)
-	}
-	if err := repo.RecordDuckLakeSnapshot(ctx, first.ID, 7); err != nil {
-		t.Fatalf("record first: %v", err)
-	}
-	if err := repo.RecordDuckLakeSnapshot(ctx, second.ID, 9); err != nil {
-		t.Fatalf("record second: %v", err)
-	}
-	if err := repo.RecordDuckLakeSnapshot(ctx, third.ID, 7); err != nil {
-		t.Fatalf("record third: %v", err)
-	}
-	if err := repo.RecordDuckLakeSnapshot(ctx, prod.ID, 11); err != nil {
-		t.Fatalf("record prod: %v", err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, "UPDATE serving_states SET status = ? WHERE id = ?", string(servingstate.StatusActive), string(first.ID)); err != nil {
-		t.Fatalf("mark first active: %v", err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, "UPDATE serving_states SET status = ? WHERE id = ?", string(servingstate.StatusDraining), string(third.ID)); err != nil {
-		t.Fatalf("mark third draining: %v", err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, "UPDATE serving_states SET status = ? WHERE id = ?", string(servingstate.StatusInactive), string(prod.ID)); err != nil {
-		t.Fatalf("mark prod inactive: %v", err)
-	}
-
-	got, err := repo.ReferencedDuckLakeSnapshots(ctx, string(servingstate.DefaultEnvironment))
-	if err != nil {
-		t.Fatalf("referenced snapshots: %v", err)
-	}
-	want := []int64{7}
-	if len(got) != len(want) {
-		t.Fatalf("referenced snapshots = %#v, want %#v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("referenced snapshots = %#v, want %#v", got, want)
-		}
-	}
-	foreign, err := repo.ForeignEnvironmentDuckLakeSnapshots(ctx, string(servingstate.DefaultEnvironment))
-	if err != nil {
-		t.Fatalf("foreign environment snapshots: %v", err)
-	}
-	if len(foreign) != 1 || foreign[0] != 11 {
-		t.Fatalf("foreign environment snapshots = %#v, want [11]", foreign)
-	}
-}
-
-func TestRepositoryPersistsQuerySnapshotLeaseLifecycle(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
-	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create deployment: %v", err)
-	}
-	if _, err := repo.SaveValidated(ctx, created.ID, validationGraph(created.ID), artifact(created.ID, "test")); err != nil {
-		t.Fatalf("save validated: %v", err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, "UPDATE serving_states SET status = ?, ducklake_snapshot_id = ? WHERE id = ?", string(servingstate.StatusDraining), int64(42), string(created.ID)); err != nil {
-		t.Fatalf("mark deployment draining: %v", err)
-	}
-
-	leaseID, err := repo.CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{
-		WorkspaceID:        "test",
-		Environment:        servingstate.DefaultEnvironment,
-		ServingStateID:     created.ID,
-		DuckLakeSnapshotID: 42,
-		OwnerID:            "test",
-		ExpiresAt:          time.Now().Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("create lease: %v", err)
-	}
-	leased, err := repo.LeasedDuckLakeSnapshots(ctx, string(servingstate.DefaultEnvironment))
-	if err != nil {
-		t.Fatalf("leased snapshots: %v", err)
-	}
-	if len(leased) != 1 || leased[0] != 42 {
-		t.Fatalf("leased snapshots = %#v, want [42]", leased)
-	}
-	if err := repo.ReleaseQuerySnapshotLease(ctx, leaseID); err != nil {
-		t.Fatalf("release lease: %v", err)
-	}
-	leased, err = repo.LeasedDuckLakeSnapshots(ctx, string(servingstate.DefaultEnvironment))
-	if err != nil {
-		t.Fatalf("leased snapshots after release: %v", err)
+		t.Fatal(err)
 	}
 	if len(leased) != 0 {
-		t.Fatalf("leased snapshots after release = %#v, want empty", leased)
+		t.Fatalf("dev leased snapshots after release = %#v, want empty", leased)
 	}
-}
-
-func TestRepositoryRejectsExtensionOfReleasedSnapshotLease(t *testing.T) {
-	ctx := t.Context()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "sales", Title: "Sales"}); err != nil {
+	if err := repo.ReleaseQuerySnapshotLease(t.Context(), prodLease); err != nil {
 		t.Fatal(err)
 	}
-	state, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "sales", CreatedBy: "tester"})
+}
+
+func TestRepositoryPointerForeignGenerationRejectedAndActiveUnique(t *testing.T) {
+	store, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	first := createValidated(t, repo, projectID, "dev")
+	second := createValidated(t, repo, projectID, "dev")
+	if _, err := repo.Activate(t.Context(), projectID, "dev", first.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO project_active_serving_states(project_id, environment, serving_state_id) VALUES ('other','dev',?)`, first.ID); err == nil {
+		t.Fatal("pointer accepted generation from another project")
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET status = 'active' WHERE id = ?`, second.ID); err == nil {
+		t.Fatal("serving_states allowed two active generations for one project/environment")
+	}
+}
+
+func TestRepositoryLeaseAndPointerCascadeWithGenerationDeletion(t *testing.T) {
+	store, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	state := createValidated(t, repo, projectID, "dev")
+	if _, err := repo.Activate(t.Context(), projectID, "dev", state.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	leaseID, err := repo.CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{ServingStateID: state.ID, DuckLakeSnapshotID: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaseID, err := repo.CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{
-		WorkspaceID: "sales", ServingStateID: state.ID, DuckLakeSnapshotID: 42,
-		ExpiresAt: time.Now().Add(time.Minute),
-	})
-	if err != nil {
+	if _, err := store.SQLDB().ExecContext(t.Context(), `DELETE FROM serving_states WHERE id = ?`, state.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.ReleaseQuerySnapshotLease(ctx, leaseID); err != nil {
+	var pointerCount, leaseCount int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM project_active_serving_states`).Scan(&pointerCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.ExtendQuerySnapshotLease(ctx, leaseID, time.Now().Add(time.Minute)); !errors.Is(err, servingstate.ErrSnapshotLeaseLost) {
-		t.Fatalf("extend released lease error = %v, want ErrSnapshotLeaseLost", err)
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM query_snapshot_leases WHERE id = ?`, leaseID).Scan(&leaseCount); err != nil {
+		t.Fatal(err)
+	}
+	if pointerCount != 0 || leaseCount != 0 {
+		t.Fatalf("cascade counts pointer=%d lease=%d", pointerCount, leaseCount)
 	}
 }
 
-func TestRepositoryActivationMarksPreviousActiveDeploymentDraining(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
-	}
-	first, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create first: %v", err)
-	}
-	second, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create second: %v", err)
-	}
-	if _, err := repo.SaveValidated(ctx, first.ID, validationGraph(first.ID), artifact(first.ID, "test")); err != nil {
-		t.Fatalf("save first: %v", err)
-	}
-	if _, err := repo.SaveValidated(ctx, second.ID, validationGraph(second.ID), artifact(second.ID, "test")); err != nil {
-		t.Fatalf("save second: %v", err)
-	}
-	if _, err := repo.Activate(ctx, "test", servingstate.DefaultEnvironment, first.ID); err != nil {
-		t.Fatalf("activate first: %v", err)
-	}
-	if _, err := repo.Activate(ctx, "test", servingstate.DefaultEnvironment, second.ID); err != nil {
-		t.Fatalf("activate second: %v", err)
-	}
-	requireDeploymentStatus(t, ctx, repo, first.ID, servingstate.StatusDraining)
-	requireDeploymentStatus(t, ctx, repo, second.ID, servingstate.StatusActive)
-	firstAfter, err := repo.ByID(ctx, first.ID)
-	if err != nil {
-		t.Fatalf("first after: %v", err)
-	}
-	if firstAfter.SupersededAt == "" {
-		t.Fatalf("first superseded_at = empty, want set")
-	}
-}
-
-func TestRepositoryReconcileRetentionDeletesDrainingDeploymentsOnlyInEnvironment(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
-	}
-	first, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create first: %v", err)
-	}
-	second, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create second: %v", err)
-	}
-	if _, err := repo.SaveValidated(ctx, first.ID, validationGraph(first.ID), artifact(first.ID, "test")); err != nil {
-		t.Fatalf("save first: %v", err)
-	}
-	if _, err := repo.SaveValidated(ctx, second.ID, validationGraph(second.ID), artifact(second.ID, "test")); err != nil {
-		t.Fatalf("save second: %v", err)
-	}
-	if _, err := repo.Activate(ctx, "test", servingstate.DefaultEnvironment, first.ID); err != nil {
-		t.Fatalf("activate first: %v", err)
-	}
-	if _, err := repo.Activate(ctx, "test", servingstate.DefaultEnvironment, second.ID); err != nil {
-		t.Fatalf("activate second: %v", err)
-	}
-	prod, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", Environment: "prod", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create prod: %v", err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, "UPDATE serving_states SET status = ? WHERE id = ?", string(servingstate.StatusDraining), string(prod.ID)); err != nil {
-		t.Fatalf("mark prod draining: %v", err)
-	}
-	requireDeploymentStatus(t, ctx, repo, first.ID, servingstate.StatusDraining)
-	if err := repo.ReconcileRetention(ctx, string(servingstate.DefaultEnvironment), time.Now()); err != nil {
-		t.Fatalf("reconcile retention: %v", err)
-	}
-	requireDeploymentStatus(t, ctx, repo, first.ID, servingstate.StatusDeleted)
-	requireDeploymentStatus(t, ctx, repo, second.ID, servingstate.StatusActive)
-	requireDeploymentStatus(t, ctx, repo, prod.ID, servingstate.StatusDraining)
-}
-
-func TestRepositorySaveValidatedRejectsMismatchedArtifactEnvironment(t *testing.T) {
-	ctx := context.Background()
-	store, repo := openRepo(t, ctx)
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
-	}
-	created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", Environment: "prod", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	wrongArtifact := artifact(created.ID, "test")
-	wrongArtifact.Environment = "dev"
-
-	if _, err := repo.SaveValidated(ctx, created.ID, validationGraph(created.ID), wrongArtifact); err == nil {
-		t.Fatal("SaveValidated() error = nil, want environment mismatch")
-	}
-	after, err := repo.ByID(ctx, created.ID)
-	if err != nil {
-		t.Fatalf("get after rollback: %v", err)
-	}
-	if after.Status != servingstate.StatusPending {
-		t.Fatalf("status = %q, want pending rollback", after.Status)
-	}
-	if _, err := repo.ArtifactByServingState(ctx, created.ID); !errors.Is(err, servingstate.ErrNotFound) {
-		t.Fatalf("artifact error = %v, want ErrNotFound", err)
-	}
-}
-
-func TestRepositorySaveValidatedRejectsMismatchedAssetGraph(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*servingstate.Validation)
-	}{
-		{
-			name: "asset workspace",
-			mutate: func(validation *servingstate.Validation) {
-				validation.Graph.Assets[0].WorkspaceID = "other"
-			},
-		},
-		{
-			name: "asset deployment",
-			mutate: func(validation *servingstate.Validation) {
-				validation.Graph.Assets[0].ServingStateID = "other"
-			},
-		},
-		{
-			name: "asset snapshot",
-			mutate: func(validation *servingstate.Validation) {
-				validation.Graph.Assets[0].SnapshotID = "asset_wrong"
-			},
-		},
-		{
-			name: "asset parent",
-			mutate: func(validation *servingstate.Validation) {
-				validation.Graph.Assets[0].ParentID = "dashboard:missing"
-			},
-		},
-		{
-			name: "edge workspace",
-			mutate: func(validation *servingstate.Validation) {
-				validation.Graph.Edges[0].WorkspaceID = "other"
-			},
-		},
-		{
-			name: "edge deployment",
-			mutate: func(validation *servingstate.Validation) {
-				validation.Graph.Edges[0].ServingStateID = "other"
-			},
-		},
-		{
-			name: "edge id",
-			mutate: func(validation *servingstate.Validation) {
-				validation.Graph.Edges[0].ID = "edge_wrong"
-			},
-		},
-		{
-			name: "edge from",
-			mutate: func(validation *servingstate.Validation) {
-				edge := validation.Graph.Edges[0]
-				validation.Graph.Edges[0] = servingstatevalidation.NewAssetEdge(edge.WorkspaceID, edge.ServingStateID, "dashboard:missing", edge.ToAssetID, edge.Type)
-			},
-		},
-		{
-			name: "edge to",
-			mutate: func(validation *servingstate.Validation) {
-				edge := validation.Graph.Edges[0]
-				validation.Graph.Edges[0] = servingstatevalidation.NewAssetEdge(edge.WorkspaceID, edge.ServingStateID, edge.FromAssetID, "semantic_model:missing", edge.Type)
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			store, repo := openRepo(t, ctx)
-			if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-				t.Fatalf("ensure workspace: %v", err)
-			}
-			created, err := repo.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", CreatedBy: "tester"})
-			if err != nil {
-				t.Fatalf("create: %v", err)
-			}
-			validation := validationGraph(created.ID)
-			tt.mutate(&validation)
-			if _, err := repo.SaveValidated(ctx, created.ID, validation, artifact(created.ID, "test")); err == nil {
-				t.Fatal("expected mismatched graph error")
-			}
-			after, err := repo.ByID(ctx, created.ID)
-			if err != nil {
-				t.Fatalf("get after rollback: %v", err)
-			}
-			if after.Status != servingstate.StatusPending {
-				t.Fatalf("status = %q, want pending rollback", after.Status)
-			}
-			if _, err := repo.ArtifactByServingState(ctx, created.ID); !errors.Is(err, servingstate.ErrNotFound) {
-				t.Fatalf("artifact error = %v, want ErrNotFound", err)
-			}
-		})
-	}
-}
-
-func openRepo(t *testing.T, ctx context.Context) (*platform.Store, *Repository) {
+func openRepo(t *testing.T) (*platform.Store, *Repository) {
 	t.Helper()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	store, err := platform.Open(context.Background(), filepath.Join(t.TempDir(), "leapview.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -812,66 +478,71 @@ func openRepo(t *testing.T, ctx context.Context) (*platform.Store, *Repository) 
 	return store, NewRepository(store.SQLDB())
 }
 
-func requireDeploymentStatus(t *testing.T, ctx context.Context, repo *Repository, id servingstate.ID, want servingstate.Status) {
+func assertPendingWithoutArtifacts(t *testing.T, store *platform.Store, repo *Repository, id servingstate.ID) {
 	t.Helper()
-	got, err := repo.ByID(ctx, id)
+	state, err := repo.ByID(t.Context(), id)
 	if err != nil {
-		t.Fatalf("deployment %s: %v", id, err)
+		t.Fatal(err)
 	}
-	if got.Status != want {
-		t.Fatalf("deployment %s status = %q, want %q", id, got.Status, want)
+	if state.Status != servingstate.StatusPending {
+		t.Fatalf("state %s status = %q, want pending", id, state.Status)
+	}
+	if _, err := repo.ArtifactByServingState(t.Context(), id); !errors.Is(err, servingstate.ErrNotFound) {
+		t.Fatalf("state %s artifact error = %v, want ErrNotFound", id, err)
+	}
+	var assets int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM assets WHERE serving_state_id = ?`, id).Scan(&assets); err != nil {
+		t.Fatal(err)
+	}
+	if assets != 0 {
+		t.Fatalf("state %s assets = %d, want zero after rollback", id, assets)
 	}
 }
 
-func validationGraph(servingStateID servingstate.ID) servingstate.Validation {
-	workspaceID := workspace.WorkspaceID("test")
-	assetA := mustTestAsset(workspaceID, workspace.ServingStateID(servingStateID), workspace.AssetTypeDashboard, "a", "")
-	assetB := mustTestAsset(workspaceID, workspace.ServingStateID(servingStateID), workspace.AssetTypeSemanticModel, "b", "")
+func assertStatus(t *testing.T, repo *Repository, id servingstate.ID, want servingstate.Status) {
+	t.Helper()
+	state, err := repo.ByID(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != want {
+		t.Fatalf("state %s status = %q, want %q", id, state.Status, want)
+	}
+}
+
+func createValidated(t *testing.T, repo *Repository, projectID projectgraph.ResourceID, environment servingstate.Environment) servingstate.State {
+	t.Helper()
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: environment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validValidation(projectID), validArtifact(created.ID)); err != nil {
+		t.Fatal(err)
+	}
+	return created
+}
+
+func validValidation(projectID projectgraph.ResourceID) servingstate.Validation {
 	return servingstate.Validation{
-		Digest:            "digest",
-		ManifestJSON:      "{}",
-		ProjectID:         "project",
-		ProjectDigest:     "sha256:" + strings.Repeat("a", 64),
-		ProjectWorkspaces: []string{"test"},
-		Graph: mustSnapshotGraph(workspace.AssetGraph{
-			Assets: []workspace.Asset{assetA, assetB},
-			Edges: []workspace.AssetEdge{
-				workspace.NewAssetEdge(workspaceID, workspace.ServingStateID(servingStateID), assetA.ID, assetB.ID, workspace.AssetEdgeUsesSemanticModel),
-				workspace.NewAssetEdge(workspaceID, workspace.ServingStateID(servingStateID), assetB.ID, assetA.ID, workspace.AssetEdgeContains),
-			},
-		}),
+		Digest:        "sha256:" + strings.Repeat("d", 64),
+		ManifestJSON:  "{}",
+		ProjectID:     projectID,
+		ProjectDigest: "sha256:" + strings.Repeat("a", 64),
+		Graph:         graphForProject(projectID),
 	}
 }
 
-func mustSnapshotGraph(graph workspace.AssetGraph) servingstatevalidation.AssetGraph {
-	converted, err := servingstatevalidation.ConvertAssetGraph(graph)
+func graphForProject(projectID projectgraph.ResourceID) projectgraph.ProjectGraph {
+	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: projectID, Kind: projectgraph.KindProject, Name: "project"},
+		{ID: projectgraph.ResourceID("dashboard"), Kind: projectgraph.KindDashboard, Name: "dashboard"},
+	}, []projectgraph.Edge{{From: projectID, To: "dashboard", Relation: "contains"}})
 	if err != nil {
 		panic(err)
 	}
-	return converted
+	return graphValue
 }
 
-func mustTestAsset(workspaceID workspace.WorkspaceID, servingStateID workspace.ServingStateID, typ workspace.AssetType, key string, parent workspace.AssetID) workspace.Asset {
-	asset, err := workspace.NewAssetWithSourceFile(workspaceID, servingStateID, typ, key, parent, key, "", "testdata/"+string(typ)+"-"+key+".yaml", string(typ)+".v1", map[string]any{"key": key})
-	if err != nil {
-		panic(err)
-	}
-	return asset
-}
-
-func artifact(servingStateID servingstate.ID, workspaceID servingstate.WorkspaceID) servingstate.Artifact {
-	return artifactForEnvironment(servingStateID, workspaceID, servingstate.DefaultEnvironment)
-}
-
-func artifactForEnvironment(servingStateID servingstate.ID, workspaceID servingstate.WorkspaceID, environment servingstate.Environment) servingstate.Artifact {
-	return servingstate.Artifact{
-		ID:             "artifact_" + string(servingStateID),
-		ServingStateID: servingStateID,
-		WorkspaceID:    workspaceID,
-		Environment:    environment,
-		Digest:         "digest",
-		Format:         "tar.gz",
-		Path:           "artifact.tar.gz",
-		ManifestJSON:   "{}",
-	}
+func validArtifact(id servingstate.ID) servingstate.Artifact {
+	return servingstate.Artifact{ID: "artifact_" + string(id), ServingStateID: id, Digest: "sha256:" + strings.Repeat("d", 64), Format: "tar.gz", Path: "artifact.tar.gz", ManifestJSON: "{}"}
 }
