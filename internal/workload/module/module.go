@@ -1,4 +1,4 @@
-// Package module owns process composition for node-local workload admission.
+// Package module owns process composition for instance-local workload admission.
 package module
 
 import (
@@ -20,13 +20,24 @@ type Stats = workload.Stats
 type Observer = workload.Observer
 type Request = workload.Request
 
+const (
+	backgroundPrincipal       = "system:background"
+	refreshPrincipal          = "system:refresh"
+	controlPrincipal          = "system:control"
+	maintenancePrincipal      = "system:maintenance"
+	jobMemoryEstimate         = int64(64 << 20)
+	controlMemoryEstimate     = int64(16 << 20)
+	maintenanceMemoryEstimate = int64(128 << 20)
+)
+
 func JobAdmitter(admitter Admitter) jobs.Admitter {
 	if admitter == nil {
 		return nil
 	}
 	return jobs.AdmitterFunc(func(ctx context.Context, request jobs.AdmissionRequest) (jobs.AdmissionLease, error) {
+		class := workload.Class(request.Class)
 		return admitter.Acquire(ctx, workload.Request{
-			Class: workload.Class(request.Class), WorkspaceID: request.WorkspaceID, Operation: request.Operation,
+			Class: class, PrincipalID: principalForClass(class), Operation: request.Operation, EstimatedMemoryBytes: estimateForClass(class),
 		})
 	})
 }
@@ -36,7 +47,6 @@ const (
 	RefreshClass     = workload.Refresh
 	ControlClass     = workload.Control
 	MaintenanceClass = workload.Maintenance
-	GlobalWorkspace  = workload.GlobalWorkspace
 )
 
 func DefaultConfig() workload.Config {
@@ -44,11 +54,37 @@ func DefaultConfig() workload.Config {
 }
 
 func MaintenanceRequest(operation string) Request {
-	return Request{Class: MaintenanceClass, Operation: operation}
+	return Request{Class: MaintenanceClass, PrincipalID: maintenancePrincipal, Operation: operation, EstimatedMemoryBytes: maintenanceMemoryEstimate}
 }
 
 func ControlRequest(operation string) Request {
-	return Request{Class: ControlClass, Operation: operation}
+	return Request{Class: ControlClass, PrincipalID: controlPrincipal, Operation: operation, EstimatedMemoryBytes: controlMemoryEstimate}
+}
+
+func principalForClass(class workload.Class) string {
+	switch class {
+	case workload.Background:
+		return backgroundPrincipal
+	case workload.Refresh:
+		return refreshPrincipal
+	case workload.Control:
+		return controlPrincipal
+	case workload.Maintenance:
+		return maintenancePrincipal
+	default:
+		return "system:job"
+	}
+}
+
+func estimateForClass(class workload.Class) int64 {
+	switch class {
+	case workload.Control:
+		return controlMemoryEstimate
+	case workload.Maintenance:
+		return maintenanceMemoryEstimate
+	default:
+		return jobMemoryEstimate
+	}
 }
 
 type Module struct {

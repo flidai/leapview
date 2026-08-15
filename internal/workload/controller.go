@@ -3,24 +3,35 @@ package workload
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
-type Controller struct {
-	mu sync.Mutex
+type usage struct {
+	running     int
+	memoryBytes int64
+}
 
+type Controller struct {
+	mu       sync.Mutex
 	config   Config
 	clock    Clock
 	observer Observer
 	closed   bool
 
-	running      int
-	runningClass map[Class]int
-	runningWS    map[Class]map[string]int
-	active       map[*lease]struct{}
-	queues       map[Class]*classQueue
-	classCursor  int
+	running          int
+	runningMemory    int64
+	runningClass     map[Class]int
+	classMemory      map[Class]int64
+	runningPrincipal map[string]usage
+	runningGroup     map[string]usage
+	queuedPrincipal  map[string]int
+	queuedGroup      map[string]int
+	active           map[*lease]struct{}
+	queues           map[Class]*classQueue
+	classCursor      int
 }
 
 type waiter struct {
@@ -45,16 +56,17 @@ type acquireResult struct {
 }
 
 type classQueue struct {
-	workspaces map[string][]*waiter
-	order      []string
-	cursor     int
-	queued     int
+	actors map[string][]*waiter
+	order  []string
+	cursor int
+	queued int
 }
 
 type admissionContext struct {
 	controller *Controller
 	class      Class
-	workspace  string
+	principal  string
+	groupsKey  string
 }
 
 type admissionContextKey struct{}
@@ -69,12 +81,10 @@ type lease struct {
 	once       sync.Once
 }
 
-type nestedLease struct {
-	ctx context.Context
-}
+type nestedLease struct{ ctx context.Context }
 
 func New(config Config, options ...Option) (*Controller, error) {
-	if config.MaxRunning == 0 && config.MaximumQueued == 0 && len(config.Classes) == 0 {
+	if config.MaxRunning == 0 && config.MaximumQueued == 0 && config.MaximumMemoryBytes == 0 && len(config.Classes) == 0 {
 		config = DefaultConfig()
 	}
 	config.Classes = clonePolicies(config.Classes)
@@ -82,16 +92,19 @@ func New(config Config, options ...Option) (*Controller, error) {
 		return nil, err
 	}
 	c := &Controller{
-		config:       config,
-		clock:        realClock{},
-		runningClass: make(map[Class]int, len(classOrder)),
-		runningWS:    make(map[Class]map[string]int, len(classOrder)),
-		active:       make(map[*lease]struct{}),
-		queues:       make(map[Class]*classQueue, len(classOrder)),
+		config:           config,
+		clock:            realClock{},
+		runningClass:     make(map[Class]int, len(classOrder)),
+		classMemory:      make(map[Class]int64, len(classOrder)),
+		runningPrincipal: make(map[string]usage),
+		runningGroup:     make(map[string]usage),
+		queuedPrincipal:  make(map[string]int),
+		queuedGroup:      make(map[string]int),
+		active:           make(map[*lease]struct{}),
+		queues:           make(map[Class]*classQueue, len(classOrder)),
 	}
 	for _, class := range classOrder {
-		c.runningWS[class] = make(map[string]int)
-		c.queues[class] = &classQueue{workspaces: make(map[string][]*waiter)}
+		c.queues[class] = &classQueue{actors: make(map[string][]*waiter)}
 	}
 	for _, option := range options {
 		if option != nil {
@@ -106,22 +119,28 @@ func New(config Config, options ...Option) (*Controller, error) {
 
 func (c *Controller) Acquire(ctx context.Context, request Request) (Lease, error) {
 	if c == nil {
-		return nil, &Rejection{Reason: ControllerShutdown, Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation}
+		return nil, &Rejection{Reason: ControllerShutdown, Class: request.Class, PrincipalID: request.PrincipalID, GroupIDs: append([]string(nil), request.GroupIDs...), Operation: request.Operation}
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	request, err := c.normalize(request)
 	if err != nil {
-		c.observeAdmission(AdmissionEvent{Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, Outcome: "rejected", Reason: InvalidRequest})
+		reason := InvalidRequest
+		if observed, ok := ReasonOf(err); ok {
+			reason = observed
+		}
+		event := admissionEvent(request, "rejected", reason)
+		c.observeAdmission(event)
 		return nil, err
 	}
+	groupsKey := strings.Join(request.GroupIDs, "\x00")
 	if active, _ := ctx.Value(admissionContextKey{}).(*admissionContext); active != nil {
-		if active.controller == c && active.class == request.Class && active.workspace == request.WorkspaceID {
+		if active.controller == c && active.class == request.Class && active.principal == request.PrincipalID && active.groupsKey == groupsKey {
 			return &nestedLease{ctx: ctx}, nil
 		}
 		err := c.rejection(request, ConflictingNestedAdmission, nil)
-		c.observeAdmission(AdmissionEvent{Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, Outcome: "rejected", Reason: ConflictingNestedAdmission})
+		c.observeAdmission(admissionEvent(request, "rejected", ConflictingNestedAdmission))
 		return nil, err
 	}
 
@@ -130,23 +149,29 @@ func (c *Controller) Acquire(ctx context.Context, request Request) (Lease, error
 	if c.closed {
 		c.mu.Unlock()
 		err := c.rejection(request, ControllerShutdown, nil)
-		c.observeAdmission(AdmissionEvent{Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, Outcome: "rejected", Reason: ControllerShutdown})
+		c.observeAdmission(admissionEvent(request, "rejected", ControllerShutdown))
 		return nil, err
 	}
 	queue := c.queues[request.Class]
 	queue.enqueue(w)
+	c.queuedPrincipal[request.PrincipalID]++
+	for _, group := range request.GroupIDs {
+		c.queuedGroup[group]++
+	}
 	c.scheduleLocked()
 	if w.state == waiting {
 		reason := c.queueLimitReasonLocked(request)
 		if reason != "" {
-			queue.remove(w)
+			c.removeWaiterLocked(w)
 			w.state = rejected
 			stats := c.statsLocked()
 			c.mu.Unlock()
 			err := c.rejection(request, reason, nil)
 			err.(*Rejection).QueueWait = c.clock.Now().Sub(w.enqueued)
 			c.observeStats(stats)
-			c.observeAdmission(AdmissionEvent{Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, Outcome: "rejected", Reason: reason})
+			event := admissionEvent(request, "rejected", reason)
+			event.QueueWait = err.(*Rejection).QueueWait
+			c.observeAdmission(event)
 			return nil, err
 		}
 	}
@@ -157,7 +182,12 @@ func (c *Controller) Acquire(ctx context.Context, request Request) (Lease, error
 
 	if immediate {
 		result := <-w.result
-		c.observeAdmission(AdmissionEvent{Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, Outcome: "admitted", QueueWait: result.lease.QueueWait()})
+		if result.err != nil {
+			return nil, result.err
+		}
+		event := admissionEvent(request, "admitted", "")
+		event.QueueWait = result.lease.QueueWait()
+		c.observeAdmission(event)
 		return result.lease, nil
 	}
 
@@ -178,19 +208,25 @@ func (c *Controller) Acquire(ctx context.Context, request Request) (Lease, error
 			result.lease.Release()
 			return nil, err
 		}
-		c.observeAdmission(AdmissionEvent{Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, Outcome: "admitted", QueueWait: result.lease.QueueWait()})
+		event := admissionEvent(request, "admitted", "")
+		event.QueueWait = result.lease.QueueWait()
+		c.observeAdmission(event)
 		return result.lease, nil
 	case <-ctx.Done():
 		if acquired := c.cancelWaiter(w); acquired != nil {
 			acquired.Release()
 		} else {
-			c.observeAdmission(AdmissionEvent{Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, Outcome: "canceled", QueueWait: c.clock.Now().Sub(w.enqueued)})
+			event := admissionEvent(request, "canceled", "")
+			event.QueueWait = c.clock.Now().Sub(w.enqueued)
+			c.observeAdmission(event)
 		}
 		return nil, ctx.Err()
 	case <-timeout:
 		if acquired := c.cancelWaiter(w); acquired != nil {
 			if err := ctx.Err(); err == nil {
-				c.observeAdmission(AdmissionEvent{Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, Outcome: "admitted", QueueWait: acquired.QueueWait()})
+				event := admissionEvent(request, "admitted", "")
+				event.QueueWait = acquired.QueueWait()
+				c.observeAdmission(event)
 				return acquired, nil
 			}
 			acquired.Release()
@@ -198,7 +234,9 @@ func (c *Controller) Acquire(ctx context.Context, request Request) (Lease, error
 		}
 		err := c.rejection(request, QueueTimeout, context.DeadlineExceeded)
 		err.(*Rejection).QueueWait = c.clock.Now().Sub(w.enqueued)
-		c.observeAdmission(AdmissionEvent{Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, Outcome: "rejected", Reason: QueueTimeout, QueueWait: c.clock.Now().Sub(w.enqueued)})
+		event := admissionEvent(request, "rejected", QueueTimeout)
+		event.QueueWait = err.(*Rejection).QueueWait
+		c.observeAdmission(event)
 		return nil, err
 	}
 }
@@ -206,7 +244,7 @@ func (c *Controller) Acquire(ctx context.Context, request Request) (Lease, error
 func (c *Controller) cancelWaiter(w *waiter) Lease {
 	c.mu.Lock()
 	if w.state == waiting {
-		c.queues[w.request.Class].remove(w)
+		c.removeWaiterLocked(w)
 		w.state = rejected
 		c.scheduleLocked()
 		stats := c.statsLocked()
@@ -236,17 +274,19 @@ func (c *Controller) Close() {
 	var rejectedWaiters []*waiter
 	for _, class := range classOrder {
 		queue := c.queues[class]
-		for _, workspace := range queue.order {
-			for _, w := range queue.workspaces[workspace] {
+		for _, actor := range queue.order {
+			for _, w := range queue.actors[actor] {
 				w.state = rejected
 				rejectedWaiters = append(rejectedWaiters, w)
 			}
 		}
-		queue.workspaces = make(map[string][]*waiter)
+		queue.actors = make(map[string][]*waiter)
 		queue.order = nil
 		queue.cursor = 0
 		queue.queued = 0
 	}
+	c.queuedPrincipal = make(map[string]int)
+	c.queuedGroup = make(map[string]int)
 	stats := c.statsLocked()
 	active := make([]*lease, 0, len(c.active))
 	for running := range c.active {
@@ -260,7 +300,9 @@ func (c *Controller) Close() {
 		err := c.rejection(w.request, ControllerShutdown, nil)
 		err.(*Rejection).QueueWait = c.clock.Now().Sub(w.enqueued)
 		w.result <- acquireResult{err: err}
-		c.observeAdmission(AdmissionEvent{Class: w.request.Class, WorkspaceID: w.request.WorkspaceID, Operation: w.request.Operation, Outcome: "rejected", Reason: ControllerShutdown, QueueWait: c.clock.Now().Sub(w.enqueued)})
+		event := admissionEvent(w.request, "rejected", ControllerShutdown)
+		event.QueueWait = err.(*Rejection).QueueWait
+		c.observeAdmission(event)
 	}
 	c.observeStats(stats)
 }
@@ -294,16 +336,38 @@ func (c *Controller) scheduleLocked() {
 		if !ok {
 			return
 		}
-		w := c.queues[class].pop()
+		queue := c.queues[class]
+		w := queue.popEligible(c.canGrantLocked)
 		if w == nil {
 			return
 		}
+		c.queuedPrincipal[w.request.PrincipalID]--
+		if c.queuedPrincipal[w.request.PrincipalID] == 0 {
+			delete(c.queuedPrincipal, w.request.PrincipalID)
+		}
+		for _, group := range w.request.GroupIDs {
+			c.queuedGroup[group]--
+			if c.queuedGroup[group] == 0 {
+				delete(c.queuedGroup, group)
+			}
+		}
 		w.state = granted
 		c.running++
+		c.runningMemory += w.request.EstimatedMemoryBytes
 		c.runningClass[class]++
-		c.runningWS[class][w.request.WorkspaceID]++
-		wait := c.clock.Now().Sub(w.enqueued)
+		c.classMemory[class] += w.request.EstimatedMemoryBytes
+		principal := c.runningPrincipal[w.request.PrincipalID]
+		principal.running++
+		principal.memoryBytes += w.request.EstimatedMemoryBytes
+		c.runningPrincipal[w.request.PrincipalID] = principal
+		for _, groupID := range w.request.GroupIDs {
+			group := c.runningGroup[groupID]
+			group.running++
+			group.memoryBytes += w.request.EstimatedMemoryBytes
+			c.runningGroup[groupID] = group
+		}
 		policy := c.config.Classes[class]
+		wait := c.clock.Now().Sub(w.enqueued)
 		var execCtx context.Context
 		var cancel context.CancelFunc
 		if policy.ExecutionTimeout > 0 {
@@ -311,7 +375,8 @@ func (c *Controller) scheduleLocked() {
 		} else {
 			execCtx, cancel = context.WithCancel(w.parent)
 		}
-		execCtx = context.WithValue(execCtx, admissionContextKey{}, &admissionContext{controller: c, class: class, workspace: w.request.WorkspaceID})
+		groupsKey := strings.Join(w.request.GroupIDs, "\x00")
+		execCtx = context.WithValue(execCtx, admissionContextKey{}, &admissionContext{controller: c, class: class, principal: w.request.PrincipalID, groupsKey: groupsKey})
 		grantedLease := &lease{controller: c, request: w.request, ctx: execCtx, cancel: cancel, queueWait: wait, started: c.clock.Now()}
 		c.active[grantedLease] = struct{}{}
 		w.result <- acquireResult{lease: grantedLease}
@@ -323,10 +388,14 @@ func (c *Controller) nextClassLocked(reservedOnly bool) (Class, bool) {
 		index := (c.classCursor + offset) % len(classOrder)
 		class := classOrder[index]
 		policy := c.config.Classes[class]
-		if c.queues[class].queued == 0 || c.runningClass[class] >= policy.MaximumRunning {
+		queue := c.queues[class]
+		if queue.queued == 0 || c.runningClass[class] >= policy.MaximumRunning {
 			continue
 		}
 		if reservedOnly && c.runningClass[class] >= policy.ReservedRunning {
+			continue
+		}
+		if queue.peekEligible(c.canGrantLocked) == nil {
 			continue
 		}
 		c.classCursor = (index + 1) % len(classOrder)
@@ -335,21 +404,89 @@ func (c *Controller) nextClassLocked(reservedOnly bool) (Class, bool) {
 	return "", false
 }
 
-func (c *Controller) queueLimitReasonLocked(request Request) RejectionReason {
-	queue := c.queues[request.Class]
+func (c *Controller) canGrantLocked(w *waiter) bool {
+	if w == nil || c.running >= c.config.MaxRunning {
+		return false
+	}
+	request := w.request
 	policy := c.config.Classes[request.Class]
+	if c.runningClass[request.Class] >= policy.MaximumRunning {
+		return false
+	}
+	if !memoryWithin(c.runningMemory, request.EstimatedMemoryBytes, c.config.MaximumMemoryBytes) {
+		return false
+	}
+	if !memoryWithin(c.classMemory[request.Class], request.EstimatedMemoryBytes, policy.MaximumMemoryBytes) {
+		return false
+	}
+	if limit := c.config.MaximumRunningPerPrincipal; limit > 0 && c.runningPrincipal[request.PrincipalID].running >= limit {
+		return false
+	}
+	if !memoryWithin(c.runningPrincipal[request.PrincipalID].memoryBytes, request.EstimatedMemoryBytes, c.config.MaximumMemoryBytesPerPrincipal) {
+		return false
+	}
+	for _, groupID := range request.GroupIDs {
+		if limit := c.config.MaximumRunningPerGroup; limit > 0 && c.runningGroup[groupID].running >= limit {
+			return false
+		}
+		if !memoryWithin(c.runningGroup[groupID].memoryBytes, request.EstimatedMemoryBytes, c.config.MaximumMemoryBytesPerGroup) {
+			return false
+		}
+	}
+	return true
+}
+
+func memoryWithin(current, requested, limit int64) bool {
+	if current < 0 || requested <= 0 || current > (int64(1<<63-1)-requested) {
+		return false
+	}
+	return limit <= 0 || current+requested <= limit
+}
+
+func (c *Controller) queueLimitReasonLocked(request Request) RejectionReason {
+	if reason := c.impossibleMemoryReason(request); reason != "" {
+		return reason
+	}
 	total := 0
 	for _, class := range classOrder {
 		total += c.queues[class].queued
 	}
 	if total > c.config.MaximumQueued {
-		return NodeQueueFull
+		return InstanceQueueFull
 	}
-	if queue.queued > policy.MaximumQueued {
+	queue := c.queues[request.Class]
+	if queue.queued > c.config.Classes[request.Class].MaximumQueued {
 		return ClassQueueFull
 	}
-	if len(queue.workspaces[request.WorkspaceID]) > policy.MaximumQueuedPerWorkspace {
-		return WorkspaceQueueFull
+	if limit := c.config.MaximumQueuedPerPrincipal; limit > 0 && c.queuedPrincipal[request.PrincipalID] > limit {
+		return PrincipalQueueFull
+	}
+	for _, group := range request.GroupIDs {
+		if limit := c.config.MaximumQueuedPerGroup; limit > 0 && c.queuedGroup[group] > limit {
+			return GroupQueueFull
+		}
+	}
+	return ""
+}
+
+func (c *Controller) impossibleMemoryReason(request Request) RejectionReason {
+	if request.EstimatedMemoryBytes <= 0 {
+		return InstanceMemoryLimit
+	}
+	if c.config.MaximumMemoryBytes > 0 && request.EstimatedMemoryBytes > c.config.MaximumMemoryBytes {
+		return InstanceMemoryLimit
+	}
+	policy := c.config.Classes[request.Class]
+	if policy.MaximumMemoryBytes > 0 && request.EstimatedMemoryBytes > policy.MaximumMemoryBytes {
+		return ClassMemoryLimit
+	}
+	if c.config.MaximumMemoryBytesPerPrincipal > 0 && request.EstimatedMemoryBytes > c.config.MaximumMemoryBytesPerPrincipal {
+		return PrincipalMemoryLimit
+	}
+	for range request.GroupIDs {
+		if c.config.MaximumMemoryBytesPerGroup > 0 && request.EstimatedMemoryBytes > c.config.MaximumMemoryBytesPerGroup {
+			return GroupMemoryLimit
+		}
 	}
 	return ""
 }
@@ -362,40 +499,81 @@ func (c *Controller) normalize(request Request) (Request, error) {
 			break
 		}
 	}
-	if !known || request.Operation == "" || len(request.Operation) > 96 {
+	request.PrincipalID = strings.TrimSpace(request.PrincipalID)
+	request.Operation = strings.TrimSpace(request.Operation)
+	groups, groupErr := normalizeGroups(request.GroupIDs)
+	if groupErr != nil {
+		return request, c.rejection(request, InvalidRequest, groupErr)
+	}
+	request.GroupIDs = groups
+	if !known || request.PrincipalID == "" || strings.IndexFunc(request.PrincipalID, unicode.IsControl) >= 0 || request.Operation == "" || len(request.Operation) > 96 || request.EstimatedMemoryBytes <= 0 {
 		return request, c.rejection(request, InvalidRequest, nil)
 	}
-	if request.Class == Control || request.Class == Maintenance {
-		request.WorkspaceID = NodeWorkspace
-	} else if request.WorkspaceID == "" || request.WorkspaceID == NodeWorkspace || (request.WorkspaceID == GlobalWorkspace && request.Class != Background) {
-		return request, c.rejection(request, InvalidRequest, nil)
+	if reason := c.impossibleMemoryReason(request); reason != "" {
+		return request, c.rejection(request, reason, nil)
 	}
 	return request, nil
 }
 
 func (c *Controller) rejection(request Request, reason RejectionReason, cause error) error {
-	return &Rejection{Reason: reason, Class: request.Class, WorkspaceID: request.WorkspaceID, Operation: request.Operation, cause: cause}
+	return &Rejection{Reason: reason, Class: request.Class, PrincipalID: request.PrincipalID, GroupIDs: append([]string(nil), request.GroupIDs...), Operation: request.Operation, cause: cause}
+}
+
+func admissionEvent(request Request, outcome string, reason RejectionReason) AdmissionEvent {
+	return AdmissionEvent{
+		Class:                request.Class,
+		PrincipalID:          request.PrincipalID,
+		GroupIDs:             append([]string(nil), request.GroupIDs...),
+		Operation:            request.Operation,
+		EstimatedMemoryBytes: request.EstimatedMemoryBytes,
+		Outcome:              outcome,
+		Reason:               reason,
+	}
+}
+
+func (c *Controller) removeWaiterLocked(w *waiter) {
+	if !c.queues[w.request.Class].remove(w) {
+		return
+	}
+	c.queuedPrincipal[w.request.PrincipalID]--
+	if c.queuedPrincipal[w.request.PrincipalID] == 0 {
+		delete(c.queuedPrincipal, w.request.PrincipalID)
+	}
+	for _, group := range w.request.GroupIDs {
+		c.queuedGroup[group]--
+		if c.queuedGroup[group] == 0 {
+			delete(c.queuedGroup, group)
+		}
+	}
 }
 
 func (c *Controller) statsLocked() Stats {
-	stats := Stats{MaxRunning: c.config.MaxRunning, Running: c.running, Classes: make(map[Class]ClassStats, len(classOrder))}
+	stats := Stats{MaxRunning: c.config.MaxRunning, MaximumQueued: c.config.MaximumQueued, MaximumMemoryBytes: c.config.MaximumMemoryBytes, Running: c.running, Queued: 0, MemoryBytes: c.runningMemory, Classes: make(map[Class]ClassStats, len(classOrder)), Principals: make(map[string]ActorStats), Groups: make(map[string]ActorStats)}
 	for _, class := range classOrder {
 		queue := c.queues[class]
-		classStats := ClassStats{Policy: c.config.Classes[class], Running: c.runningClass[class], Queued: queue.queued, Workspaces: make(map[string]WorkspaceStats)}
+		classStats := ClassStats{Policy: c.config.Classes[class], Running: c.runningClass[class], Queued: queue.queued, MemoryBytes: c.classMemory[class]}
 		classStats.Borrowed = classStats.Running - classStats.Policy.ReservedRunning
 		if classStats.Borrowed < 0 {
 			classStats.Borrowed = 0
 		}
-		for workspace, running := range c.runningWS[class] {
-			classStats.Workspaces[workspace] = WorkspaceStats{Running: running}
-		}
-		for workspace, waiters := range queue.workspaces {
-			workspaceStats := classStats.Workspaces[workspace]
-			workspaceStats.Queued = len(waiters)
-			classStats.Workspaces[workspace] = workspaceStats
-		}
 		stats.Queued += queue.queued
 		stats.Classes[class] = classStats
+	}
+	for principal, value := range c.runningPrincipal {
+		stats.Principals[principal] = ActorStats{Running: value.running, MemoryBytes: value.memoryBytes, Queued: c.queuedPrincipal[principal]}
+	}
+	for principal, queued := range c.queuedPrincipal {
+		value := stats.Principals[principal]
+		value.Queued = queued
+		stats.Principals[principal] = value
+	}
+	for group, value := range c.runningGroup {
+		stats.Groups[group] = ActorStats{Running: value.running, MemoryBytes: value.memoryBytes, Queued: c.queuedGroup[group]}
+	}
+	for group, queued := range c.queuedGroup {
+		value := stats.Groups[group]
+		value.Queued = queued
+		stats.Groups[group] = value
 	}
 	return stats
 }
@@ -408,6 +586,7 @@ func (c *Controller) observeStats(stats Stats) {
 		observer.ObserveWorkload(stats)
 	}
 }
+
 func (c *Controller) observeAdmission(event AdmissionEvent) {
 	c.mu.Lock()
 	observer := c.observer
@@ -429,12 +608,28 @@ func (l *lease) Release() {
 		c := l.controller
 		c.mu.Lock()
 		c.running--
+		c.runningMemory -= l.request.EstimatedMemoryBytes
 		c.runningClass[l.request.Class]--
-		c.runningWS[l.request.Class][l.request.WorkspaceID]--
-		delete(c.active, l)
-		if c.runningWS[l.request.Class][l.request.WorkspaceID] == 0 {
-			delete(c.runningWS[l.request.Class], l.request.WorkspaceID)
+		c.classMemory[l.request.Class] -= l.request.EstimatedMemoryBytes
+		principal := c.runningPrincipal[l.request.PrincipalID]
+		principal.running--
+		principal.memoryBytes -= l.request.EstimatedMemoryBytes
+		if principal.running == 0 {
+			delete(c.runningPrincipal, l.request.PrincipalID)
+		} else {
+			c.runningPrincipal[l.request.PrincipalID] = principal
 		}
+		for _, groupID := range l.request.GroupIDs {
+			group := c.runningGroup[groupID]
+			group.running--
+			group.memoryBytes -= l.request.EstimatedMemoryBytes
+			if group.running == 0 {
+				delete(c.runningGroup, groupID)
+			} else {
+				c.runningGroup[groupID] = group
+			}
+		}
+		delete(c.active, l)
 		c.scheduleLocked()
 		stats := c.statsLocked()
 		c.mu.Unlock()
@@ -445,7 +640,10 @@ func (l *lease) Release() {
 		} else if contextErr == context.Canceled {
 			outcome = "canceled"
 		}
-		c.observeAdmission(AdmissionEvent{Class: l.request.Class, WorkspaceID: l.request.WorkspaceID, Operation: l.request.Operation, Outcome: outcome, QueueWait: l.queueWait, Execution: c.clock.Now().Sub(l.started)})
+		event := admissionEvent(l.request, outcome, "")
+		event.QueueWait = l.queueWait
+		event.Execution = c.clock.Now().Sub(l.started)
+		c.observeAdmission(event)
 	})
 }
 
@@ -454,57 +652,86 @@ func (l *nestedLease) QueueWait() time.Duration { return 0 }
 func (l *nestedLease) Release()                 {}
 
 func (q *classQueue) enqueue(w *waiter) {
-	workspace := w.request.WorkspaceID
-	if _, ok := q.workspaces[workspace]; !ok {
-		q.order = append(q.order, workspace)
+	actor := w.request.PrincipalID
+	if _, ok := q.actors[actor]; !ok {
+		q.order = append(q.order, actor)
 	}
-	q.workspaces[workspace] = append(q.workspaces[workspace], w)
+	q.actors[actor] = append(q.actors[actor], w)
 	q.queued++
 }
 
-func (q *classQueue) pop() *waiter {
+func (q *classQueue) peekEligible(eligible func(*waiter) bool) *waiter {
 	if q.queued == 0 || len(q.order) == 0 {
 		return nil
 	}
 	if q.cursor >= len(q.order) {
 		q.cursor = 0
 	}
-	workspace := q.order[q.cursor]
-	waiters := q.workspaces[workspace]
+	for offset := 0; offset < len(q.order); offset++ {
+		index := (q.cursor + offset) % len(q.order)
+		waiters := q.actors[q.order[index]]
+		if len(waiters) > 0 && eligible(waiters[0]) {
+			return waiters[0]
+		}
+	}
+	return nil
+}
+
+func (q *classQueue) popEligible(eligible func(*waiter) bool) *waiter {
+	if q.queued == 0 || len(q.order) == 0 {
+		return nil
+	}
+	if q.cursor >= len(q.order) {
+		q.cursor = 0
+	}
+	index := -1
+	for offset := 0; offset < len(q.order); offset++ {
+		candidate := (q.cursor + offset) % len(q.order)
+		waiters := q.actors[q.order[candidate]]
+		if len(waiters) > 0 && eligible(waiters[0]) {
+			index = candidate
+			break
+		}
+	}
+	if index < 0 {
+		return nil
+	}
+	actor := q.order[index]
+	waiters := q.actors[actor]
 	w := waiters[0]
 	waiters = waiters[1:]
 	q.queued--
 	if len(waiters) == 0 {
-		delete(q.workspaces, workspace)
-		q.order = append(q.order[:q.cursor], q.order[q.cursor+1:]...)
-		if len(q.order) == 0 {
+		delete(q.actors, actor)
+		q.order = append(q.order[:index], q.order[index+1:]...)
+		if len(q.order) == 0 || index >= len(q.order) {
 			q.cursor = 0
-		} else if q.cursor >= len(q.order) {
-			q.cursor = 0
+		} else {
+			q.cursor = index
 		}
 	} else {
-		q.workspaces[workspace] = waiters
-		q.cursor = (q.cursor + 1) % len(q.order)
+		q.actors[actor] = waiters
+		q.cursor = (index + 1) % len(q.order)
 	}
 	return w
 }
 
 func (q *classQueue) remove(target *waiter) bool {
-	workspace := target.request.WorkspaceID
-	waiters := q.workspaces[workspace]
-	for i, w := range waiters {
-		if w != target {
+	actor := target.request.PrincipalID
+	waiters := q.actors[actor]
+	for i, candidate := range waiters {
+		if candidate != target {
 			continue
 		}
 		waiters = append(waiters[:i], waiters[i+1:]...)
 		q.queued--
 		if len(waiters) > 0 {
-			q.workspaces[workspace] = waiters
+			q.actors[actor] = waiters
 			return true
 		}
-		delete(q.workspaces, workspace)
-		for index, candidate := range q.order {
-			if candidate != workspace {
+		delete(q.actors, actor)
+		for index, queuedActor := range q.order {
+			if queuedActor != actor {
 				continue
 			}
 			q.order = append(q.order[:index], q.order[index+1:]...)

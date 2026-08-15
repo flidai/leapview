@@ -3,180 +3,252 @@ package workload
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 )
 
-func TestConfigValidation(t *testing.T) {
-	tests := []struct {
-		name string
-		edit func(*Config)
-	}{
-		{"negative node limit", func(c *Config) { c.MaxRunning = -1 }},
-		{"reservation above maximum", func(c *Config) {
-			p := c.Classes[Interactive]
-			p.ReservedRunning = p.MaximumRunning + 1
-			c.Classes[Interactive] = p
-		}},
-		{"class maximum above node", func(c *Config) {
-			p := c.Classes[Interactive]
-			p.MaximumRunning = c.MaxRunning + 1
-			c.Classes[Interactive] = p
-		}},
-		{"reservations above node", func(c *Config) {
-			p := c.Classes[Background]
-			p.ReservedRunning = p.MaximumRunning
-			c.Classes[Background] = p
-			c.MaxRunning = 3
-		}},
-		{"negative queue", func(c *Config) { p := c.Classes[Interactive]; p.MaximumQueued = -1; c.Classes[Interactive] = p }},
+func TestConfigValidationAndFiniteDefaults(t *testing.T) {
+	defaults := DefaultConfig()
+	if defaults.MaximumMemoryBytes <= 0 || defaults.MaximumQueued <= 0 || defaults.MaximumRunningPerPrincipal <= 0 || defaults.MaximumQueuedPerPrincipal <= 0 {
+		t.Fatal("default workload limits must be finite")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
-			tt.edit(&cfg)
-			if _, err := New(cfg); err == nil {
-				t.Fatal("New() error = nil")
-			}
-		})
+	if _, err := New(Config{}); err != nil {
+		t.Fatal(err)
+	}
+	invalid := defaults
+	invalid.MaxRunning = -1
+	if _, err := New(invalid); err == nil {
+		t.Fatal("negative instance limit accepted")
+	}
+	invalid = defaults
+	invalid.Classes[Interactive] = Policy{ReservedRunning: 2, MaximumRunning: 1}
+	if _, err := New(invalid); err == nil {
+		t.Fatal("reservation above class maximum accepted")
 	}
 }
 
-func TestReservedDemandReceivesNextCapacityBeforeBorrowing(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 2, MaximumQueued: 8, Classes: map[Class]Policy{
-		Interactive: {ReservedRunning: 1, MaximumRunning: 2, MaximumQueued: 8, MaximumQueuedPerWorkspace: 8},
-		Refresh:     {ReservedRunning: 1, MaximumRunning: 1, MaximumQueued: 8, MaximumQueuedPerWorkspace: 8},
+func TestReservedDemandReceivesCapacityBeforeBorrowing(t *testing.T) {
+	c := testController(t, Config{MaxRunning: 2, MaximumQueued: 8, Classes: map[Class]Policy{
+		Interactive: {ReservedRunning: 1, MaximumRunning: 2, MaximumQueued: 8},
+		Refresh:     {ReservedRunning: 1, MaximumRunning: 1, MaximumQueued: 8},
 	}})
-	first := acquire(t, c, Interactive, "one")
-	second := acquire(t, c, Interactive, "two")
-
-	interactiveGranted := acquireAsync(c, Interactive, "three")
-	refreshGranted := acquireAsync(c, Refresh, "refresh")
+	one := acquire(t, c, Interactive, "one", nil)
+	two := acquire(t, c, Interactive, "two", nil)
+	i3 := acquireAsync(c, Interactive, "three", nil)
+	r1 := acquireAsync(c, Refresh, "refresh", nil)
 	waitQueued(t, c, 2)
-	first.Release()
-	refresh := receiveLease(t, refreshGranted)
-	assertNotGranted(t, interactiveGranted)
+	one.Release()
+	refresh := receiveLease(t, r1)
+	assertPending(t, i3)
 	refresh.Release()
-	second.Release()
-	receiveLease(t, interactiveGranted).Release()
+	two.Release()
+	receiveLease(t, i3).Release()
 }
 
-func TestClassRoundRobinPreventsBorrowerStarvation(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 1, MaximumQueued: 8, Classes: map[Class]Policy{
-		Interactive: {MaximumRunning: 1, MaximumQueued: 8, MaximumQueuedPerWorkspace: 8},
-		Background:  {MaximumRunning: 1, MaximumQueued: 8, MaximumQueuedPerWorkspace: 8},
+func TestActorRoundRobinAndFIFO(t *testing.T) {
+	c := testController(t, Config{MaxRunning: 1, MaximumQueued: 8, Classes: map[Class]Policy{
+		Interactive: {MaximumRunning: 1, MaximumQueued: 8},
 	}})
-	running := acquire(t, c, Interactive, "running")
-	i1 := acquireAsync(c, Interactive, "i1")
+	running := acquire(t, c, Interactive, "holder", nil)
+	a1 := acquireAsync(c, Interactive, "a", nil)
 	waitQueued(t, c, 1)
-	b1 := acquireAsync(c, Background, "b1")
+	a2 := acquireAsync(c, Interactive, "a", nil)
 	waitQueued(t, c, 2)
-	i2 := acquireAsync(c, Interactive, "i2")
+	b1 := acquireAsync(c, Interactive, "b", nil)
 	waitQueued(t, c, 3)
 	running.Release()
-
-	first := receiveLease(t, b1)
-	assertNotGranted(t, i1)
-	first.Release()
-	receiveLease(t, i1).Release()
-	receiveLease(t, i2).Release()
-}
-
-func TestWorkspaceRoundRobinAndFIFO(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 1, MaximumQueued: 8, Classes: map[Class]Policy{
-		Interactive: {MaximumRunning: 1, MaximumQueued: 8, MaximumQueuedPerWorkspace: 8},
-	}})
-	running := acquire(t, c, Interactive, "a")
-	a1 := acquireAsyncOperation(c, Interactive, "a", "a1")
-	waitQueued(t, c, 1)
-	a2 := acquireAsyncOperation(c, Interactive, "a", "a2")
-	waitQueued(t, c, 2)
-	b1 := acquireAsyncOperation(c, Interactive, "b", "b1")
-	waitQueued(t, c, 3)
-	running.Release()
-
 	first := receiveLease(t, a1)
 	first.Release()
 	second := receiveLease(t, b1)
-	assertNotGranted(t, a2)
+	assertPending(t, a2)
 	second.Release()
 	receiveLease(t, a2).Release()
 }
 
-func TestQueueLimitsExposeTypedRejections(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 1, MaximumQueued: 2, Classes: map[Class]Policy{
-		Interactive: {MaximumRunning: 1, MaximumQueued: 1, MaximumQueuedPerWorkspace: 1},
-		Background:  {MaximumRunning: 1, MaximumQueued: 2, MaximumQueuedPerWorkspace: 1},
+func TestBlockedActorDoesNotCauseHeadOfLineBlocking(t *testing.T) {
+	c := testController(t, Config{MaxRunning: 2, MaximumQueued: 8, MaximumRunningPerPrincipal: 1, Classes: map[Class]Policy{
+		Interactive: {MaximumRunning: 2, MaximumQueued: 8},
 	}})
-	running := acquire(t, c, Interactive, "a")
-	queued := acquireAsync(c, Interactive, "a")
+	p1 := acquire(t, c, Interactive, "p1", nil)
+	holder := acquire(t, c, Interactive, "holder", nil)
+	blocked := acquireAsync(c, Interactive, "p1", nil)
 	waitQueued(t, c, 1)
-
-	_, err := c.Acquire(context.Background(), Request{Class: Interactive, WorkspaceID: "b", Operation: "query"})
-	assertReason(t, err, ClassQueueFull)
-	background := acquireAsync(c, Background, "b")
+	eligible := acquireAsync(c, Interactive, "p2", nil)
 	waitQueued(t, c, 2)
-	_, err = c.Acquire(context.Background(), Request{Class: Background, WorkspaceID: "c", Operation: "query"})
-	assertReason(t, err, NodeQueueFull)
-
-	running.Release()
-	first := receiveAny(t, queued, background)
-	first.lease.Release()
-	receiveLease(t, first.other).Release()
+	holder.Release()
+	p2 := receiveLease(t, eligible)
+	assertPending(t, blocked)
+	p2.Release()
+	p1.Release()
+	receiveLease(t, blocked).Release()
 }
 
-func TestWorkspaceQueueLimit(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 1, MaximumQueued: 4, Classes: map[Class]Policy{
-		Interactive: {MaximumRunning: 1, MaximumQueued: 4, MaximumQueuedPerWorkspace: 1},
+func TestBlockedGroupDoesNotCauseHeadOfLineBlocking(t *testing.T) {
+	c := testController(t, Config{MaxRunning: 2, MaximumQueued: 8, MaximumRunningPerGroup: 1, Classes: map[Class]Policy{
+		Interactive: {MaximumRunning: 2, MaximumQueued: 8},
 	}})
-	running := acquire(t, c, Interactive, "a")
-	queued := acquireAsync(c, Interactive, "a")
+	groupLease := acquire(t, c, Interactive, "group-owner", []string{"team"})
+	holder := acquire(t, c, Interactive, "holder", nil)
+	blocked := acquireAsync(c, Interactive, "group-waiter", []string{"team"})
 	waitQueued(t, c, 1)
-	_, err := c.Acquire(context.Background(), Request{Class: Interactive, WorkspaceID: "a", Operation: "query"})
-	assertReason(t, err, WorkspaceQueueFull)
+	eligible := acquireAsync(c, Interactive, "other", nil)
+	waitQueued(t, c, 2)
+	holder.Release()
+	other := receiveLease(t, eligible)
+	assertPending(t, blocked)
+	other.Release()
+	groupLease.Release()
+	receiveLease(t, blocked).Release()
+}
+
+func TestMemoryAccountingAndExactRelease(t *testing.T) {
+	c := testController(t, Config{MaxRunning: 2, MaximumQueued: 4, MaximumMemoryBytes: 100, Classes: map[Class]Policy{
+		Interactive: {MaximumRunning: 2, MaximumQueued: 4, MaximumMemoryBytes: 100},
+	}})
+	first := acquireMemory(t, c, Interactive, "a", 60)
+	second := acquireAsyncMemory(c, Interactive, "b", 50)
+	waitQueued(t, c, 1)
+	if got := c.Stats().MemoryBytes; got != 60 {
+		t.Fatalf("memory while queued = %d, want 60", got)
+	}
+	first.Release()
+	lease := receiveLease(t, second)
+	if got := c.Stats().MemoryBytes; got != 50 {
+		t.Fatalf("memory after grant = %d, want 50", got)
+	}
+	lease.Release()
+	stats := c.Stats()
+	if stats.Running != 0 || stats.Queued != 0 || stats.MemoryBytes != 0 {
+		t.Fatalf("unbalanced release: %#v", stats)
+	}
+}
+
+func TestQueueAndMemoryRejections(t *testing.T) {
+	c := testController(t, Config{MaxRunning: 1, MaximumQueued: 1, MaximumMemoryBytes: 100, MaximumQueuedPerGroup: 1, Classes: map[Class]Policy{
+		Interactive: {MaximumRunning: 1, MaximumQueued: 1, MaximumMemoryBytes: 100},
+	}})
+	running := acquire(t, c, Interactive, "holder", nil)
+	queued := acquireAsync(c, Interactive, "p1", []string{"team"})
+	waitQueued(t, c, 1)
+	_, err := c.Acquire(context.Background(), Request{Class: Interactive, PrincipalID: "p2", GroupIDs: []string{"team"}, Operation: "query", EstimatedMemoryBytes: 1})
+	assertReason(t, err, InstanceQueueFull)
+	_, err = c.Acquire(context.Background(), Request{Class: Interactive, PrincipalID: "p2", Operation: "query", EstimatedMemoryBytes: 101})
+	assertReason(t, err, InstanceMemoryLimit)
 	running.Release()
 	receiveLease(t, queued).Release()
 }
 
-func TestQueueTimeoutCancellationAndShutdownRemoveWaiters(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 1, MaximumQueued: 4, Classes: map[Class]Policy{
-		Interactive: {MaximumRunning: 1, MaximumQueued: 4, MaximumQueuedPerWorkspace: 4, QueueTimeout: 20 * time.Millisecond},
-	}})
-	running := acquire(t, c, Interactive, "a")
-	_, err := c.Acquire(context.Background(), Request{Class: Interactive, WorkspaceID: "b", Operation: "query"})
-	assertReason(t, err, QueueTimeout)
+func TestPrincipalAndGroupQueueCaps(t *testing.T) {
+	t.Run("principal", func(t *testing.T) {
+		c := testController(t, Config{MaxRunning: 1, MaximumQueued: 4, MaximumQueuedPerPrincipal: 1, Classes: map[Class]Policy{
+			Interactive: {MaximumRunning: 1, MaximumQueued: 4},
+		}})
+		running := acquire(t, c, Interactive, "holder", nil)
+		queued := acquireAsync(c, Interactive, "same", nil)
+		waitQueued(t, c, 1)
+		_, err := c.Acquire(context.Background(), request(Interactive, "same", nil))
+		assertReason(t, err, PrincipalQueueFull)
+		running.Release()
+		receiveLease(t, queued).Release()
+	})
+	t.Run("group", func(t *testing.T) {
+		c := testController(t, Config{MaxRunning: 1, MaximumQueued: 4, MaximumQueuedPerGroup: 1, Classes: map[Class]Policy{
+			Interactive: {MaximumRunning: 1, MaximumQueued: 4},
+		}})
+		running := acquire(t, c, Interactive, "holder", nil)
+		queued := acquireAsync(c, Interactive, "first", []string{"team"})
+		waitQueued(t, c, 1)
+		_, err := c.Acquire(context.Background(), request(Interactive, "second", []string{"team"}))
+		assertReason(t, err, GroupQueueFull)
+		running.Release()
+		receiveLease(t, queued).Release()
+	})
+}
 
+func TestGroupNormalizationAndNestedReuse(t *testing.T) {
+	c := testController(t, Config{MaxRunning: 1, Classes: map[Class]Policy{Interactive: {MaximumRunning: 1}}})
+	outer := acquireMemory(t, c, Interactive, "actor", 7, " z ", "a", "a")
+	if got := outer.Context(); got == nil {
+		t.Fatal("nil execution context")
+	}
+	class, principal, ok := Current(outer.Context())
+	if !ok || class != Interactive || principal != "actor" {
+		t.Fatalf("Current() = %s/%s/%v", class, principal, ok)
+	}
+	nested, err := c.Acquire(outer.Context(), Request{Class: Interactive, PrincipalID: "actor", GroupIDs: []string{"a", "z"}, Operation: "nested", EstimatedMemoryBytes: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nested.Context() != outer.Context() {
+		t.Fatal("equivalent nested admission did not reuse context")
+	}
+	nested.Release()
+	_, err = c.Acquire(outer.Context(), Request{Class: Interactive, PrincipalID: "actor", GroupIDs: []string{"other"}, Operation: "conflict", EstimatedMemoryBytes: 7})
+	assertReason(t, err, ConflictingNestedAdmission)
+	outer.Release()
+}
+
+func TestCallerGroupSliceCannotMutateAccountingOrEvents(t *testing.T) {
+	observer := &captureObserver{}
+	c, err := New(Config{MaxRunning: 1, Classes: map[Class]Policy{Interactive: {MaximumRunning: 1}}}, WithObserver(observer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.Close)
+	groups := []string{" z ", "a", "a"}
+	lease, err := c.Acquire(context.Background(), Request{Class: Interactive, PrincipalID: "actor", GroupIDs: groups, Operation: "test", EstimatedMemoryBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups[0], groups[1], groups[2] = "mutated", "other", "changed"
+	stats := c.Stats()
+	if _, ok := stats.Groups["z"]; !ok {
+		t.Fatalf("normalized group missing from stats: %#v", stats.Groups)
+	}
+	if _, ok := stats.Groups["mutated"]; ok {
+		t.Fatalf("caller mutation changed accounting: %#v", stats.Groups)
+	}
+	events := observer.Events()
+	if len(events) == 0 || !reflect.DeepEqual(events[0].GroupIDs, []string{"a", "z"}) {
+		t.Fatalf("admission event groups = %#v", events)
+	}
+	lease.Release()
+}
+
+func TestQueueTimeoutCancellationAndShutdown(t *testing.T) {
+	c := testController(t, Config{MaxRunning: 1, MaximumQueued: 4, Classes: map[Class]Policy{
+		Interactive: {MaximumRunning: 1, MaximumQueued: 4, QueueTimeout: 20 * time.Millisecond},
+	}})
+	running := acquire(t, c, Interactive, "holder", nil)
+	_, err := c.Acquire(context.Background(), Request{Class: Interactive, PrincipalID: "timeout", Operation: "query", EstimatedMemoryBytes: 1})
+	assertReason(t, err, QueueTimeout)
 	ctx, cancel := context.WithCancel(context.Background())
-	canceled := make(chan error, 1)
-	go func() {
-		_, err := c.Acquire(ctx, Request{Class: Interactive, WorkspaceID: "c", Operation: "query"})
-		canceled <- err
-	}()
+	canceled := acquireAsyncContext(c, ctx, Interactive, "cancel", nil)
 	waitQueued(t, c, 1)
 	cancel()
-	if err := <-canceled; !errors.Is(err, context.Canceled) {
+	if err := receiveError(t, canceled); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel error = %v", err)
 	}
 	waitQueued(t, c, 0)
-
-	shutdown := acquireAsync(c, Interactive, "d")
+	shutdown := acquireAsync(c, Interactive, "shutdown", nil)
 	waitQueued(t, c, 1)
 	c.Close()
 	assertReason(t, receiveError(t, shutdown), ControllerShutdown)
 	select {
 	case <-running.Context().Done():
 	case <-time.After(time.Second):
-		t.Fatal("shutdown did not cancel running lease")
+		t.Fatal("shutdown did not cancel running context")
 	}
 	running.Release()
 }
 
 func TestExecutionDeadlineAndIdempotentRelease(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 1, Classes: map[Class]Policy{
+	c := testController(t, Config{MaxRunning: 1, Classes: map[Class]Policy{
 		Interactive: {MaximumRunning: 1, ExecutionTimeout: 20 * time.Millisecond},
 	}})
-	lease := acquire(t, c, Interactive, "a")
+	lease := acquire(t, c, Interactive, "actor", nil)
 	select {
 	case <-lease.Context().Done():
 		if !errors.Is(lease.Context().Err(), context.DeadlineExceeded) {
@@ -192,69 +264,76 @@ func TestExecutionDeadlineAndIdempotentRelease(t *testing.T) {
 	}
 }
 
-func TestNestedAdmissionReuseAndConflict(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 1, Classes: map[Class]Policy{
-		Interactive: {MaximumRunning: 1}, Background: {MaximumRunning: 1},
-	}})
-	outer := acquire(t, c, Interactive, "a")
-	nested, err := c.Acquire(outer.Context(), Request{Class: Interactive, WorkspaceID: "a", Operation: "nested"})
+func TestObserverCallbacksRunOutsideControllerLock(t *testing.T) {
+	c, err := New(Config{MaxRunning: 1, Classes: map[Class]Policy{Interactive: {MaximumRunning: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nested.Context() != outer.Context() {
-		t.Fatal("nested admission did not reuse execution context")
+	observer := &reentrantObserver{controller: c, observed: make(chan struct{}, 1)}
+	c.SetObserver(observer)
+	select {
+	case <-observer.observed:
+	case <-time.After(time.Second):
+		t.Fatal("observer callback did not complete")
 	}
-	nested.Release()
-	if c.Stats().Running != 1 {
-		t.Fatal("nested release released parent permit")
-	}
-	_, err = c.Acquire(outer.Context(), Request{Class: Background, WorkspaceID: "a", Operation: "conflict"})
-	assertReason(t, err, ConflictingNestedAdmission)
-	outer.Release()
+	c.Close()
 }
 
-func TestStatisticsSnapshotsDoNotExposeControllerState(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 1, Classes: map[Class]Policy{Interactive: {MaximumRunning: 1}}})
-	lease := acquire(t, c, Interactive, "sales")
-	snapshot := c.Stats()
-	class := snapshot.Classes[Interactive]
-	class.Workspaces["sales"] = WorkspaceStats{Running: 99}
-	snapshot.Classes[Interactive] = class
-	if got := c.Stats().Classes[Interactive].Workspaces["sales"].Running; got != 1 {
-		t.Fatalf("controller statistics mutated through snapshot: %d", got)
-	}
-	lease.Release()
-}
-
-func TestNodeScopedClassesNormalizeWorkspace(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 2, Classes: map[Class]Policy{
-		Control: {MaximumRunning: 1}, Maintenance: {MaximumRunning: 1},
+func TestConcurrentStatsReleaseAndCancellation(t *testing.T) {
+	c := testController(t, Config{MaxRunning: 4, MaximumQueued: 64, Classes: map[Class]Policy{
+		Interactive: {MaximumRunning: 4, MaximumQueued: 64},
 	}})
-	for _, class := range []Class{Control, Maintenance} {
-		lease, err := c.Acquire(context.Background(), Request{Class: class, WorkspaceID: "ignored", Operation: "node"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := c.Stats().Classes[class].Workspaces[NodeWorkspace]; !ok {
-			t.Fatalf("%s workspace was not normalized", class)
-		}
-		lease.Release()
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			lease, err := c.Acquire(ctx, Request{Class: Interactive, PrincipalID: "race", Operation: "race", EstimatedMemoryBytes: 1})
+			if err == nil {
+				_ = c.Stats()
+				lease.Release()
+				lease.Release()
+			}
+		}()
 	}
-	if _, err := c.Acquire(context.Background(), Request{Class: Interactive, Operation: "query"}); err == nil {
-		t.Fatal("workspace-scoped admission accepted an empty workspace")
+	wg.Wait()
+	stats := c.Stats()
+	if stats.Running != 0 || stats.Queued != 0 || stats.MemoryBytes != 0 {
+		t.Fatalf("unbalanced stats: %#v", stats)
 	}
 }
 
-func TestCrossWorkspaceIdentityIsBackgroundOnly(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 2, Classes: map[Class]Policy{Interactive: {MaximumRunning: 1}, Background: {MaximumRunning: 1}}})
-	lease, err := c.Acquire(context.Background(), Request{Class: Background, WorkspaceID: GlobalWorkspace, Operation: "agent.run"})
-	if err != nil {
-		t.Fatal(err)
+type reentrantObserver struct {
+	controller *Controller
+	observed   chan struct{}
+}
+
+func (o *reentrantObserver) ObserveWorkload(Stats) {
+	_ = o.controller.Stats()
+	select {
+	case o.observed <- struct{}{}:
+	default:
 	}
-	lease.Release()
-	if _, err := c.Acquire(context.Background(), Request{Class: Interactive, WorkspaceID: GlobalWorkspace, Operation: "query"}); err == nil {
-		t.Fatal("interactive work accepted the global agent identity")
-	}
+}
+func (*reentrantObserver) ObserveAdmission(AdmissionEvent) {}
+
+type captureObserver struct {
+	mu     sync.Mutex
+	events []AdmissionEvent
+}
+
+func (*captureObserver) ObserveWorkload(Stats) {}
+func (o *captureObserver) ObserveAdmission(event AdmissionEvent) {
+	o.mu.Lock()
+	o.events = append(o.events, event)
+	o.mu.Unlock()
+}
+func (o *captureObserver) Events() []AdmissionEvent {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]AdmissionEvent(nil), o.events...)
 }
 
 type asyncResult struct {
@@ -262,7 +341,7 @@ type asyncResult struct {
 	err   error
 }
 
-func newTestController(t *testing.T, cfg Config) *Controller {
+func testController(t *testing.T, cfg Config) *Controller {
 	t.Helper()
 	c, err := New(cfg)
 	if err != nil {
@@ -272,24 +351,50 @@ func newTestController(t *testing.T, cfg Config) *Controller {
 	return c
 }
 
-func acquire(t *testing.T, c *Controller, class Class, workspace string) Lease {
+func request(class Class, principal string, groups []string) Request {
+	return Request{Class: class, PrincipalID: principal, GroupIDs: groups, Operation: "test", EstimatedMemoryBytes: 1}
+}
+
+func acquire(t *testing.T, c *Controller, class Class, principal string, groups []string) Lease {
 	t.Helper()
-	lease, err := c.Acquire(context.Background(), Request{Class: class, WorkspaceID: workspace, Operation: "test"})
+	lease, err := c.Acquire(context.Background(), request(class, principal, groups))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return lease
 }
 
-func acquireAsync(c *Controller, class Class, workspace string) <-chan asyncResult {
-	return acquireAsyncOperation(c, class, workspace, "test")
+func acquireMemory(t *testing.T, c *Controller, class Class, principal string, memory int64, groups ...string) Lease {
+	t.Helper()
+	r := request(class, principal, groups)
+	r.EstimatedMemoryBytes = memory
+	lease, err := c.Acquire(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lease
 }
 
-func acquireAsyncOperation(c *Controller, class Class, workspace, operation string) <-chan asyncResult {
+func acquireAsync(c *Controller, class Class, principal string, groups []string) <-chan asyncResult {
+	return acquireAsyncContext(c, context.Background(), class, principal, groups)
+}
+
+func acquireAsyncMemory(c *Controller, class Class, principal string, memory int64) <-chan asyncResult {
 	ch := make(chan asyncResult, 1)
 	go func() {
-		lease, err := c.Acquire(context.Background(), Request{Class: class, WorkspaceID: workspace, Operation: operation})
-		ch <- asyncResult{lease, err}
+		r := request(class, principal, nil)
+		r.EstimatedMemoryBytes = memory
+		lease, err := c.Acquire(context.Background(), r)
+		ch <- asyncResult{lease: lease, err: err}
+	}()
+	return ch
+}
+
+func acquireAsyncContext(c *Controller, ctx context.Context, class Class, principal string, groups []string) <-chan asyncResult {
+	ch := make(chan asyncResult, 1)
+	go func() {
+		lease, err := c.Acquire(ctx, request(class, principal, groups))
+		ch <- asyncResult{lease: lease, err: err}
 	}()
 	return ch
 }
@@ -319,14 +424,13 @@ func receiveError(t *testing.T, ch <-chan asyncResult) error {
 	}
 }
 
-func assertNotGranted(t *testing.T, ch <-chan asyncResult) {
+func assertPending(t *testing.T, ch <-chan asyncResult) {
 	t.Helper()
 	select {
 	case result := <-ch:
-		if result.err != nil {
-			t.Fatal(result.err)
+		if result.err == nil && result.lease != nil {
+			result.lease.Release()
 		}
-		result.lease.Release()
 		t.Fatal("admission granted out of order")
 	case <-time.After(20 * time.Millisecond):
 	}
@@ -349,55 +453,5 @@ func assertReason(t *testing.T, err error, want RejectionReason) {
 	var rejection *Rejection
 	if !errors.As(err, &rejection) || rejection.Reason != want {
 		t.Fatalf("error = %v, want rejection %s", err, want)
-	}
-}
-
-type anyResult struct {
-	class Class
-	lease Lease
-	other <-chan asyncResult
-}
-
-func receiveAny(t *testing.T, first, second <-chan asyncResult) anyResult {
-	t.Helper()
-	select {
-	case result := <-first:
-		if result.err != nil {
-			t.Fatal(result.err)
-		}
-		return anyResult{class: Interactive, lease: result.lease, other: second}
-	case result := <-second:
-		if result.err != nil {
-			t.Fatal(result.err)
-		}
-		return anyResult{class: Background, lease: result.lease, other: first}
-	case <-time.After(time.Second):
-		t.Fatal("no admission granted")
-		return anyResult{}
-	}
-}
-
-func TestConcurrentStatsReleaseAndCancellation(t *testing.T) {
-	c := newTestController(t, Config{MaxRunning: 4, MaximumQueued: 64, Classes: map[Class]Policy{
-		Interactive: {MaximumRunning: 4, MaximumQueued: 64, MaximumQueuedPerWorkspace: 64},
-	}})
-	var wg sync.WaitGroup
-	for i := 0; i < 64; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			lease, err := c.Acquire(ctx, Request{Class: Interactive, WorkspaceID: "race", Operation: "race"})
-			if err == nil {
-				_ = c.Stats()
-				lease.Release()
-				lease.Release()
-			}
-		}()
-	}
-	wg.Wait()
-	if stats := c.Stats(); stats.Running != 0 || stats.Queued != 0 {
-		t.Fatalf("unbalanced stats: %#v", stats)
 	}
 }
