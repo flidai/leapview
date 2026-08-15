@@ -172,3 +172,12 @@ func TestProjectRoundTripRetainsAuthoredSourceProvenance(t *testing.T) {
 		t.Fatalf("source = %#v, present = %v", source, ok)
 	}
 }
+
+func TestCloneValueDoesNotSilentlyReturnZeroOnEncodingFailure(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("cloneValue() did not report an impossible encoding failure")
+		}
+	}()
+	_ = cloneValue(func() {})
+}

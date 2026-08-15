@@ -69,7 +69,7 @@ func NewProject(graph projectgraph.ProjectGraph, project manifest.Project) (Proj
 	if err := graph.Validate(); err != nil {
 		return Project{}, fmt.Errorf("project graph: %w", err)
 	}
-	projectID := strings.TrimSpace(project.ID)
+	projectID := project.ID
 	if projectID == "" {
 		return Project{}, errors.New("project manifest id is required")
 	}
