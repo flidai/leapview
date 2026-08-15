@@ -212,7 +212,13 @@ func (m namedWorkspaceMetrics) Pages(dashboardID string) []dashboard.Page {
 	if dashboardID != m.dashboardID {
 		return nil
 	}
-	return []dashboard.Page{{ID: "overview", Title: "Overview"}}
+	return []dashboard.Page{{
+		ID: "overview", Title: "Overview",
+		Visuals: []dashboard.PageVisual{{
+			ID: "summary", Kind: "visual", Visual: "summary",
+			Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 12, RowSpan: 4},
+		}},
+	}}
 }
 
 func (m namedWorkspaceMetrics) dashboardDefinition(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
@@ -223,9 +229,20 @@ func (m namedWorkspaceMetrics) dashboardDefinition(dashboardID string) (dashboar
 		ID:            m.dashboardID,
 		Title:         m.title,
 		SemanticModel: "test",
-		Pages:         m.Pages(dashboardID),
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
+			"summary": {Type: "kpi", Title: "Summary", Query: dashboardauthoring.VisualQuery{Measures: fieldRefs("order_count")}},
+		}),
+		Pages: m.Pages(dashboardID),
 	}
-	model := &semanticmodel.Model{Name: "test", Title: "Test Model"}
+	model := &semanticmodel.Model{
+		Name: "test", Title: "Test Model",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {Source: "orders", PrimaryKey: "order_id", Grain: "order_id"},
+		},
+		Measures: map[string]semanticmodel.MetricMeasure{
+			"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero"},
+		},
+	}
 	return dashboardfixture.Compile(authored, model), model, true
 }
 

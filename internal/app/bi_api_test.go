@@ -406,7 +406,7 @@ func TestBIAPISemanticDatasetSurface(t *testing.T) {
 		},
 		{
 			method: http.MethodGet,
-			path:   "/api/v1/workspaces/test/semantic-models/test/datasets/orders/fields?limit=3",
+			path:   "/api/v1/workspaces/test/semantic-models/test/datasets/orders/fields?limit=4",
 			want:   []string{`"kind":"dimension"`, `"kind":"measure"`, `"order_count"`},
 		},
 		{
