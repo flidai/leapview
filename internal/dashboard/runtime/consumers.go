@@ -226,7 +226,10 @@ func (s *QueryService) executeVisualConsumerJob(ctx context.Context, request con
 }
 
 func (s *QueryService) executeTableConsumer(ctx context.Context, request consumer.Request, target consumer.Target, startedAt time.Time, publish consumer.Publisher) {
-	definition, _ := s.snapshots.reports.VisualizationDefinition(request.DashboardID, target.ID)
+	definition := visualizationdefinition.Definition{}
+	if resolved, err := s.snapshots.reports.Resolve(request.DashboardID); err == nil {
+		definition, _ = resolved.Visualization(target.ID)
+	}
 	table, err := s.visualizations.queryTableRowsPage(ctx, request.DashboardID, request.PageID, request.Filters, target.WindowRequest)
 	if err == nil && table.Error != "" {
 		err = errors.New(table.Error)

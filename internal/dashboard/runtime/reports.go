@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 )
 
@@ -28,12 +29,14 @@ func (m *Service) ModelIDForDashboard(dashboardID string) string {
 	return m.reports.ModelIDForDashboard(dashboardID)
 }
 
-func (m *Service) Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
-	return m.reports.Report(dashboardID)
-}
-
-func (m *Service) VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool) {
-	return m.reports.VisualizationDefinition(dashboardID, visualID)
+// Resolver exposes the workspace-scoped dashboard resolver used by runtime
+// query consumers. The service's compiled workspace is the project serving
+// source; no caller-supplied workspace ID can alter that scope.
+func (m *Service) Resolver() dashboardresolver.Resolver {
+	if m == nil {
+		return nil
+	}
+	return m.reports
 }
 
 func (m *Service) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
@@ -122,28 +125,28 @@ func (s *ReportService) ModelIDForDashboard(dashboardID string) string {
 	return ""
 }
 
-func (s *ReportService) Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
+// Resolve implements the capability-owned resolver contract for the compiled
+// project/deployment serving state currently held by this runtime.
+func (s *ReportService) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
+	if s == nil || s.workspace == nil {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
 	report, ok := s.compiledDashboard(dashboardID)
-	if !ok {
-		return dashboarddefinition.Definition{}, nil, false
+	if !ok || report.SemanticModel == "" {
+		return dashboardresolver.Resolved{}, fmt.Errorf("%w: %q", dashboardresolver.ErrNotFound, strings.TrimSpace(dashboardID))
 	}
-	if report.SemanticModel != "" {
-		model, ok := s.workspace.Models[report.SemanticModel]
-		if !ok {
-			return dashboarddefinition.Definition{}, nil, false
-		}
-		return *report, model, true
+	model, ok := s.workspace.Models[report.SemanticModel]
+	if !ok || model == nil {
+		return dashboardresolver.Resolved{}, fmt.Errorf("%w: semantic model %q for dashboard %q", dashboardresolver.ErrNotFound, report.SemanticModel, strings.TrimSpace(dashboardID))
 	}
-	return dashboarddefinition.Definition{}, nil, false
-}
-
-func (s *ReportService) VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool) {
-	dashboard, ok := s.workspace.Dashboards[dashboardID]
-	if !ok {
-		return visualizationdefinition.Definition{}, false
-	}
-	definition, ok := dashboard.Visualizations[visualID]
-	return definition, ok
+	return dashboardresolver.Resolved{
+		Definition: *report,
+		Model:      model,
+		Source: dashboardresolver.SourceMetadata{
+			Kind:        dashboardresolver.SourceProject,
+			WorkspaceID: s.workspace.Catalog.Workspace.ID,
+		},
+	}, nil
 }
 
 func (s *ReportService) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
@@ -226,18 +229,15 @@ func (s *ReportService) Pages(dashboardID string) []dashboard.Page {
 }
 
 func (s *ReportService) reportRuntime(dashboardID string, runtimes map[string]*modelRuntime) (*dashboarddefinition.Definition, *modelRuntime, error) {
-	report, ok := s.compiledDashboard(dashboardID)
+	resolved, err := s.Resolve(dashboardID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unknown dashboard %q: %w", dashboardID, err)
+	}
+	runtime, ok := runtimes[resolved.Definition.SemanticModel]
 	if !ok {
-		return nil, nil, fmt.Errorf("unknown dashboard %q", dashboardID)
+		return nil, nil, fmt.Errorf("unknown semantic model %q", resolved.Definition.SemanticModel)
 	}
-	if report.SemanticModel == "" {
-		return nil, nil, fmt.Errorf("dashboard %q has no semantic model", dashboardID)
-	}
-	runtime, ok := runtimes[report.SemanticModel]
-	if !ok {
-		return nil, nil, fmt.Errorf("unknown semantic model %q", report.SemanticModel)
-	}
-	return report, runtime, nil
+	return &resolved.Definition, runtime, nil
 }
 
 func (s *ReportService) compiledDashboard(dashboardID string) (*dashboarddefinition.Definition, bool) {

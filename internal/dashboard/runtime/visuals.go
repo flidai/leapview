@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
@@ -152,9 +153,9 @@ func (s *VisualizationDataService) contextFrames(ctx context.Context, runtime *m
 		for index, field := range query.Measures {
 			measures[index] = queryFieldRef(field, field.Alias)
 		}
-		queryTime := reportdef.QueryTime{}
+		queryTime := dashboardauthoring.QueryTime{}
 		if query.Time != nil {
-			queryTime = reportdef.QueryTime{Field: query.Time.FieldID, Alias: query.Time.Alias, Grain: query.Time.Grain}
+			queryTime = dashboardauthoring.QueryTime{Field: query.Time.FieldID, Alias: query.Time.Alias, Grain: query.Time.Grain}
 		}
 		sorts := make([]reportdef.QuerySort, len(query.Sort))
 		for index, value := range query.Sort {
@@ -530,9 +531,9 @@ func (s *VisualizationDataService) pointData(ctx context.Context, runtime *model
 	for _, measure := range visual.Measures {
 		measures = append(measures, queryFieldRef(measure, measure.Alias))
 	}
-	var queryTime reportdef.QueryTime
+	var queryTime dashboardauthoring.QueryTime
 	if visual.Time != nil {
-		queryTime = reportdef.QueryTime{Field: visual.Time.FieldID, Grain: visual.Time.Grain, Alias: visual.Time.Alias}
+		queryTime = dashboardauthoring.QueryTime{Field: visual.Time.FieldID, Grain: visual.Time.Grain, Alias: visual.Time.Alias}
 	}
 	sorts := make([]reportdef.QuerySort, 0, len(visual.Sort)+1)
 	for _, sort := range visual.Sort {
@@ -655,11 +656,11 @@ func (s *VisualizationDataService) categoryMultiMeasureData(ctx context.Context,
 	return categoryMultiMeasureDatums(runtime, visual, rows), nil
 }
 
-func categoryDimension(visual visualPlan, alias string) ([]reportdef.QueryField, reportdef.QueryTime) {
+func categoryDimension(visual visualPlan, alias string) ([]reportdef.QueryField, dashboardauthoring.QueryTime) {
 	if visual.Time != nil {
-		return nil, reportdef.QueryTime{Field: visual.Time.FieldID, Grain: visual.Time.Grain, Alias: alias}
+		return nil, dashboardauthoring.QueryTime{Field: visual.Time.FieldID, Grain: visual.Time.Grain, Alias: alias}
 	}
-	return []reportdef.QueryField{fieldRef(visual.Dimensions[0].FieldID, alias)}, reportdef.QueryTime{}
+	return []reportdef.QueryField{fieldRef(visual.Dimensions[0].FieldID, alias)}, dashboardauthoring.QueryTime{}
 }
 
 func (s *VisualizationDataService) categoryDeltaData(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, visualID string, visual visualPlan, filters dashboard.Filters) ([]dashboard.Datum, error) {
@@ -716,10 +717,10 @@ func (s *VisualizationDataService) hierarchyData(ctx context.Context, runtime *m
 		dimensions = append(dimensions, fieldRef(dimensionName.FieldID, alias))
 		levelAliases = append(levelAliases, alias)
 	}
-	queryTime := reportdef.QueryTime{}
+	queryTime := dashboardauthoring.QueryTime{}
 	if visual.Time != nil {
 		alias := visual.Time.Alias
-		queryTime = reportdef.QueryTime{Field: visual.Time.FieldID, Grain: visual.Time.Grain, Alias: alias}
+		queryTime = dashboardauthoring.QueryTime{Field: visual.Time.FieldID, Grain: visual.Time.Grain, Alias: alias}
 		levelAliases = append(levelAliases, alias)
 	}
 	rows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{

@@ -34,11 +34,12 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		dashboardID = metrics.DefaultDashboardID()
 	}
 	pageID := strings.TrimSpace(r.URL.Query().Get("page"))
-	reportDefinition, model, ok := metrics.Report(dashboardID)
-	if !ok {
+	resolved, err := resolveDashboard(metrics, dashboardID)
+	if err != nil {
 		nethttp.NotFound(w, r)
 		return
 	}
+	reportDefinition, model := resolved.Definition, resolved.Model
 	pages := metrics.Pages(dashboardID)
 	activePage, ok := streamActivePage(pages, pageID)
 	if !ok {
@@ -51,7 +52,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if id == "" {
 			continue
 		}
-		definition, exists := metrics.VisualizationDefinition(dashboardID, id)
+		definition, exists := resolved.Visualization(id)
 		if !exists {
 			nethttp.Error(w, "compiled visualization definition is missing", nethttp.StatusInternalServerError)
 			return

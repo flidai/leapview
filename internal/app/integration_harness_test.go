@@ -33,10 +33,9 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
-	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/platform"
@@ -83,10 +82,9 @@ type harnessOption func(*harnessConfig)
 type integrationMetrics interface {
 	consumer.Executor
 	Catalog() catalog.Catalog
+	Resolver() dashboardresolver.Resolver
 	DefaultDashboardID() string
 	ModelIDForDashboard(dashboardID string) string
-	Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool)
-	VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool)
 	SemanticModel(modelID string) (*semanticmodel.Model, bool)
 	DefaultFilters(dashboardID string) dashboard.Filters
 	NormalizeVisualizationWindow(dashboardID string, request dashboard.TableRequest) dashboard.TableRequest

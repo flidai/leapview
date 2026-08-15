@@ -4,8 +4,8 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
-	"github.com/flidai/leapview/internal/dashboard/report"
 	"gopkg.in/yaml.v3"
 )
 
@@ -83,13 +83,13 @@ type projectSemanticModelSpec struct {
 }
 
 type dashboardSpec struct {
-	Appearance        dashboardappearance.Patch                `yaml:"appearance"`
-	SemanticModel     string                                   `yaml:"semanticModel"`
-	Filters           map[string]dashboardfilter.Definition    `yaml:"filters"`
-	FilterBindings    map[string]dashboardfilter.Binding       `yaml:"filter_bindings"`
-	FilterApplication dashboardfilter.ApplicationPolicy        `yaml:"filter_application"`
-	Visuals           map[string]report.AuthoringVisualization `yaml:"visuals"`
-	Pages             []projectDashboardPage                   `yaml:"pages"`
+	Appearance        dashboardappearance.Patch                            `yaml:"appearance"`
+	SemanticModel     string                                               `yaml:"semanticModel"`
+	Filters           map[string]dashboardfilter.Definition                `yaml:"filters"`
+	FilterBindings    map[string]dashboardfilter.Binding                   `yaml:"filter_bindings"`
+	FilterApplication dashboardfilter.ApplicationPolicy                    `yaml:"filter_application"`
+	Visuals           map[string]dashboardauthoring.AuthoringVisualization `yaml:"visuals"`
+	Pages             []projectDashboardPage                               `yaml:"pages"`
 }
 
 type projectModelTableSpec struct {

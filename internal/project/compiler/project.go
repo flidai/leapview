@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	"github.com/flidai/leapview/internal/dashboard/report"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	"github.com/flidai/leapview/internal/project/manifest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -37,7 +37,7 @@ type WorkspaceProject struct {
 	AllowedSources        map[string]struct{}
 	Models                map[string]semanticmodel.Table
 	SemanticModels        map[string]projectSemanticModelSpec
-	Dashboards            map[string]*report.Dashboard
+	Dashboards            map[string]*dashboardauthoring.Dashboard
 	Publications          map[string]publication.Definition
 	AccessGroups          map[string]workspace.WorkspaceGroup
 	AccessRoleBindings    map[string]workspace.WorkspaceRoleBinding

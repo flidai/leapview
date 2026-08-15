@@ -14,8 +14,8 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
@@ -24,6 +24,13 @@ type runtimeMetrics struct {
 	provider    runtimehost.Provider
 	workspaceID string
 }
+
+type activeRuntime struct {
+	runtimehost.Runtime
+	servingStateID string
+}
+
+func (r activeRuntime) ServingStateID() string { return r.servingStateID }
 
 // Catalog is the dashboard-owned catalog contract exposed through the module
 // surface for application composition.
@@ -49,9 +56,8 @@ type catalogRuntime interface {
 	Pages(dashboardID string) []dashboard.Page
 }
 
-type reportRuntime interface {
-	Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool)
-	VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool)
+type runtimeResolver interface {
+	dashboardresolver.Resolver
 	SemanticModel(modelID string) (*semanticmodel.Model, bool)
 	DefaultFilters(dashboardID string) dashboard.Filters
 }
@@ -92,6 +98,40 @@ func SupportsNativeArrow(metrics Metrics) bool {
 
 func NewRuntimeMetrics(provider runtimehost.Provider, workspaceID string) Metrics {
 	return runtimeMetrics{provider: provider, workspaceID: workspaceID}
+}
+
+// Resolver exposes the project/deployment dashboard source through the shared
+// resolver boundary. The workspace is fixed when this metrics value is
+// composed; lookup callers provide only a dashboard ID.
+func (m runtimeMetrics) Resolver() dashboardresolver.Resolver {
+	return runtimeMetricsResolver{metrics: m}
+}
+
+type runtimeMetricsResolver struct {
+	metrics runtimeMetrics
+}
+
+func (r runtimeMetricsResolver) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
+	runtime, release, err := r.metrics.active(context.Background())
+	if err != nil {
+		return dashboardresolver.Resolved{}, err
+	}
+	defer release()
+	port, ok := runtime.(runtimeResolver)
+	if !ok {
+		return dashboardresolver.Resolved{}, fmt.Errorf("active runtime does not provide dashboard resolver")
+	}
+	resolved, err := port.Resolve(dashboardID)
+	if err != nil {
+		return dashboardresolver.Resolved{}, err
+	}
+	resolved.Source.Kind = dashboardresolver.SourceProject
+	resolved.Source.WorkspaceID = r.metrics.workspaceID
+	resolved.Source.Revision = ""
+	if lease, ok := runtime.(interface{ ServingStateID() string }); ok {
+		resolved.Source.ServingStateID = lease.ServingStateID()
+	}
+	return resolved, nil
 }
 
 func NewDynamicRuntimeMetrics(factory func(workspaceID string) runtimehost.Provider) Metrics {
@@ -181,39 +221,13 @@ func (m runtimeMetrics) ModelIDForDashboard(dashboardID string) string {
 	return port.ModelIDForDashboard(dashboardID)
 }
 
-func (m runtimeMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
-	runtime, release, err := m.active(context.Background())
-	if err != nil {
-		return dashboarddefinition.Definition{}, nil, false
-	}
-	defer release()
-	port, ok := runtime.(reportRuntime)
-	if !ok {
-		return dashboarddefinition.Definition{}, nil, false
-	}
-	return port.Report(dashboardID)
-}
-
-func (m runtimeMetrics) VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool) {
-	runtime, release, err := m.active(context.Background())
-	if err != nil {
-		return visualizationdefinition.Definition{}, false
-	}
-	defer release()
-	port, ok := runtime.(reportRuntime)
-	if !ok {
-		return visualizationdefinition.Definition{}, false
-	}
-	return port.VisualizationDefinition(dashboardID, visualID)
-}
-
 func (m runtimeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
 	runtime, release, err := m.active(context.Background())
 	if err != nil {
 		return nil, false
 	}
 	defer release()
-	port, ok := runtime.(reportRuntime)
+	port, ok := runtime.(runtimeResolver)
 	if !ok {
 		return nil, false
 	}
@@ -226,7 +240,7 @@ func (m runtimeMetrics) DefaultFilters(dashboardID string) dashboard.Filters {
 		return dashboard.Filters{}.WithDefaults()
 	}
 	defer release()
-	port, ok := runtime.(reportRuntime)
+	port, ok := runtime.(runtimeResolver)
 	if !ok {
 		return dashboard.Filters{}.WithDefaults()
 	}
@@ -478,12 +492,15 @@ func (m runtimeMetrics) RuntimeReady(ctx context.Context, workspaceID string) er
 	if defaultDashboardID == "" {
 		return fmt.Errorf("default dashboard is not configured")
 	}
-	reportPort, ok := activeRuntime.(reportRuntime)
+	reportPort, ok := activeRuntime.(runtimeResolver)
 	if !ok {
 		return fmt.Errorf("active runtime does not provide report metadata")
 	}
-	report, model, ok := reportPort.Report(defaultDashboardID)
-	return reportMetadataReady(catalogPort, defaultDashboardID, report, model, ok)
+	resolved, err := reportPort.Resolve(defaultDashboardID)
+	if err != nil {
+		return reportMetadataReady(catalogPort, defaultDashboardID, dashboarddefinition.Definition{}, nil, false)
+	}
+	return reportMetadataReady(catalogPort, defaultDashboardID, resolved.Definition, resolved.Model, true)
 }
 
 func (m runtimeMetrics) active(ctx context.Context) (runtimehost.Runtime, func(), error) {
@@ -494,5 +511,5 @@ func (m runtimeMetrics) active(ctx context.Context) (runtimehost.Runtime, func()
 	if err != nil {
 		return nil, func() {}, err
 	}
-	return lease.Runtime(), lease.Release, nil
+	return activeRuntime{Runtime: lease.Runtime(), servingStateID: string(lease.ServingStateID())}, lease.Release, nil
 }

@@ -22,13 +22,13 @@ import (
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workspace"
 	productsearch "github.com/flidai/leapview/internal/workspace/search"
@@ -44,17 +44,17 @@ func TestTypedChatArtifactsPreserveTabularTypeAcrossJSON(t *testing.T) {
 				Interaction: dashboard.InteractionConfig{}, Selection: []dashboard.InteractionSelectionEntry{},
 				Columns: []dashboard.TableColumn{{Key: "value", Label: "Value", Role: "measure"}}, Cardinality: dashboard.ExactCardinality(0), Blocks: map[string]dashboard.TableBlock{},
 			}
-			authored := reportdef.TableVisual{Title: "Orders", Columns: table.Columns, Query: reportdef.TableQuery{Table: "table", Fields: []string{"value"}}}
+			authored := dashboardauthoring.TableVisual{Title: "Orders", Columns: table.Columns, Query: dashboardauthoring.TableQuery{Table: "table", Fields: []string{"value"}}}
 			if visualType != "table" {
 				authored.Query.Fields = nil
-				authored.Query.Rows = []reportdef.FieldRef{{Field: "label", Alias: "label"}}
-				authored.Query.Measures = []reportdef.FieldRef{{Field: "value", Alias: "value"}}
+				authored.Query.Rows = []dashboardauthoring.FieldRef{{Field: "label", Alias: "label"}}
+				authored.Query.Measures = []dashboardauthoring.FieldRef{{Field: "value", Alias: "value"}}
 				table.Columns = []dashboard.TableColumn{{Key: "label", Label: "Label"}, {Key: "value", Label: "Value", Role: "measure"}}
 				authored.Columns = table.Columns
 			}
-			definitions, err := workspacecompiler.CompileVisualizationDefinitions(&reportdef.Dashboard{
+			definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
 				ID: "test", SemanticModel: "model",
-				Visuals: reportdef.TabularVisualizations(visualType, map[string]reportdef.TableVisual{"orders": authored}),
+				Visuals: dashboardauthoring.TabularVisualizations(visualType, map[string]dashboardauthoring.TableVisual{"orders": authored}),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -687,9 +687,9 @@ func TestChatConversationRouteLoadsArtifactSignalsOutsideTranscript(t *testing.T
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
 	}
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&reportdef.Dashboard{
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
 		ID: "agent", SemanticModel: "sales",
-		Visuals: reportdef.ChartVisualizations(map[string]reportdef.Visual{"agent_visual_123": {Type: "bar", Title: "Orders", Query: reportdef.VisualQuery{Table: "orders", Measures: []reportdef.FieldRef{{Field: "order_count"}}}}}),
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"agent_visual_123": {Type: "bar", Title: "Orders", Query: dashboardauthoring.VisualQuery{Table: "orders", Measures: []dashboardauthoring.FieldRef{{Field: "order_count"}}}}}),
 	})
 	if err != nil {
 		t.Fatalf("compile artifact definition: %v", err)

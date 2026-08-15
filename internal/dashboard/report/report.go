@@ -1,15 +1,14 @@
 package report
 
 import (
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 )
 
 type Metrics interface {
 	DefaultFilters(dashboardID string) dashboard.Filters
-	Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool)
+	Resolver() dashboardresolver.Resolver
 }
 
 func ActivePage(pages []dashboard.Page, pageID string) (dashboard.Page, bool) {
@@ -51,10 +50,11 @@ func DefaultPage() dashboard.Page {
 }
 
 func DefaultFilters(metrics Metrics, dashboardID, pageID string) dashboard.Filters {
-	report, _, ok := metrics.Report(dashboardID)
-	if !ok {
-		return metrics.DefaultFilters(dashboardID)
+	resolved, err := resolve(metrics, dashboardID)
+	if err != nil {
+		return dashboard.Filters{}.WithDefaults()
 	}
+	report := resolved.Definition
 	page, ok := report.PageOrDefault(pageID)
 	if !ok {
 		return dashboard.Filters{}.WithDefaults()
@@ -63,15 +63,16 @@ func DefaultFilters(metrics Metrics, dashboardID, pageID string) dashboard.Filte
 }
 
 func NormalizeFilters(metrics Metrics, dashboardID, pageID string, filters dashboard.Filters) dashboard.Filters {
-	report, _, ok := metrics.Report(dashboardID)
-	if ok {
+	resolved, err := resolve(metrics, dashboardID)
+	if err == nil {
+		report := resolved.Definition
 		page, ok := report.PageOrDefault(pageID)
 		if !ok {
 			return dashboard.Filters{}.WithDefaults()
 		}
 		return report.NormalizeFiltersForPage(page.ID, filters)
 	}
-	defaults := metrics.DefaultFilters(dashboardID)
+	defaults := dashboard.Filters{}.WithDefaults()
 	filters = filters.WithDefaults()
 	defaults.Selections = append([]dashboard.InteractionSelection{}, filters.Selections...)
 	defaults.SpatialSelections = append([]dashboard.SpatialInteractionSelection{}, filters.SpatialSelections...)
@@ -88,4 +89,11 @@ func NormalizeFilters(metrics Metrics, dashboardID, pageID string, filters dashb
 		}
 	}
 	return defaults.WithDefaults()
+}
+
+func resolve(metrics Metrics, dashboardID string) (dashboardresolver.Resolved, error) {
+	if metrics == nil || metrics.Resolver() == nil {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
+	return metrics.Resolver().Resolve(dashboardID)
 }

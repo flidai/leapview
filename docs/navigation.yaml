@@ -229,6 +229,11 @@ sections:
         type: how-to
         summary: Keep local, staging, and production changes explicit.
         source: guides/cli/targets.md
+      - slug: guides/operate/dashboard-authoring
+        title: Dashboard authoring and promotion
+        type: how-to
+        summary: Move private dashboard drafts through development, review, and production with explicit ownership boundaries.
+        source: articles/operate/dashboard-authoring.md
       - slug: guides/operate/production-configuration
         title: Production configuration
         type: how-to

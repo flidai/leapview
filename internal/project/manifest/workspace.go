@@ -8,7 +8,6 @@ import (
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/internal/workspace"
 )
@@ -46,7 +45,6 @@ type CatalogDashboard struct {
 type Workspace struct {
 	Catalog              Catalog
 	Models               map[string]*semanticmodel.Model
-	Dashboards           map[string]*reportdef.Dashboard
 	DashboardDefinitions map[string]dashboarddefinition.Definition
 	Publications         map[string]publication.Definition
 	Access               workspace.AccessPolicy

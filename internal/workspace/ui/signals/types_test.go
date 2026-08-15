@@ -7,12 +7,12 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardsignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 )
 
 func TestVisualizationSignalKeepsDataStateOpaque(t *testing.T) {
@@ -44,22 +44,23 @@ func TestVisualizationSignalKeepsDataStateOpaque(t *testing.T) {
 	}
 }
 
-func compiledTestVisualizations(t *testing.T, report *reportdef.Dashboard, model *semanticmodel.Model) map[string]visualizationdefinition.Definition {
+func compiledTestVisualizations(t *testing.T, report *dashboardauthoring.Dashboard, model *semanticmodel.Model) map[string]visualizationdefinition.Definition {
 	t.Helper()
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(report, model)
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(report, model)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return definitions
 }
 
-func compiledTestDashboard(t *testing.T, report *reportdef.Dashboard, model *semanticmodel.Model) (dashboarddefinition.Definition, map[string]visualizationdefinition.Definition) {
+func compiledTestDashboard(t *testing.T, report *dashboardauthoring.Dashboard, model *semanticmodel.Model) (dashboarddefinition.Definition, map[string]visualizationdefinition.Definition) {
 	t.Helper()
-	if err := workspacecompiler.ValidateDashboard(report, map[string]*semanticmodel.Model{model.Name: model}); err != nil {
+	normalizedReport, err := dashboardcompiler.ValidateAndNormalizeDashboard(report, map[string]*semanticmodel.Model{model.Name: model})
+	if err != nil {
 		t.Fatal(err)
 	}
-	definitions := compiledTestVisualizations(t, report, model)
-	compiled, err := workspacecompiler.CompileDashboardDefinition(report, definitions)
+	definitions := compiledTestVisualizations(t, normalizedReport, model)
+	compiled, err := dashboardcompiler.CompileDashboardDefinition(normalizedReport, definitions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,8 +128,8 @@ func TestDashboardEnvelopeRejectsUnusedPayload(t *testing.T) {
 	}
 }
 
-func testDashboardReport() reportdef.Dashboard {
-	return reportdef.Dashboard{
+func testDashboardReport() dashboardauthoring.Dashboard {
+	return dashboardauthoring.Dashboard{
 		ID:            "report",
 		Title:         "Report",
 		SemanticModel: "test",
@@ -143,11 +144,11 @@ func testDashboardReport() reportdef.Dashboard {
 				Predicates: []dashboardfilter.PredicatePolicy{{Kind: dashboardfilter.ExpressionComparison, Operators: []dashboardfilter.Operator{dashboardfilter.OperatorContains}}},
 			},
 		},
-		Visuals: reportdef.MergeVisualizations(reportdef.ChartVisualizations(map[string]reportdef.Visual{
-			"active_chart":   {Title: "Active", Type: "bar", Query: reportdef.VisualQuery{Dimensions: testFieldRefs("orders.status"), Measures: testFieldRefs("order_count")}},
-			"off_page_chart": {Title: "Off Page", Type: "bar", Query: reportdef.VisualQuery{Dimensions: testFieldRefs("orders.status"), Measures: testFieldRefs("order_count")}},
-		}), reportdef.TabularVisualizations("table", map[string]reportdef.TableVisual{
-			"orders": {Title: "Orders", Query: reportdef.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}}},
+		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
+			"active_chart":   {Title: "Active", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: testFieldRefs("orders.status"), Measures: testFieldRefs("order_count")}},
+			"off_page_chart": {Title: "Off Page", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: testFieldRefs("orders.status"), Measures: testFieldRefs("order_count")}},
+		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
+			"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}}},
 		})),
 		Pages: []dashboard.Page{
 			{
@@ -201,10 +202,10 @@ func testSemanticModel() *semanticmodel.Model {
 	}
 }
 
-func testFieldRefs(fields ...string) []reportdef.FieldRef {
-	refs := make([]reportdef.FieldRef, len(fields))
+func testFieldRefs(fields ...string) []dashboardauthoring.FieldRef {
+	refs := make([]dashboardauthoring.FieldRef, len(fields))
 	for i, field := range fields {
-		refs[i] = reportdef.FieldRef{Field: field}
+		refs[i] = dashboardauthoring.FieldRef{Field: field}
 	}
 	return refs
 }

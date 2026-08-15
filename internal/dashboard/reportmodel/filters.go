@@ -5,10 +5,10 @@ import (
 	"sort"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/dashboard/report"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 )
 
-func FieldAppliesToTarget(d *report.Dashboard, model *semanticmodel.Model, field, fact, targetKind, targetID string) (bool, error) {
+func FieldAppliesToTarget(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, field, fact, targetKind, targetID string) (bool, error) {
 	facts, err := TargetFacts(d, model, targetKind, targetID)
 	if err != nil {
 		return false, err
@@ -38,9 +38,9 @@ func FieldAppliesToTarget(d *report.Dashboard, model *semanticmodel.Model, field
 	return true, nil
 }
 
-func TargetFacts(d *report.Dashboard, model *semanticmodel.Model, targetKind, targetID string) ([]string, error) {
+func TargetFacts(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, targetKind, targetID string) ([]string, error) {
 	var table string
-	var measures []report.FieldRef
+	var measures []dashboardauthoring.FieldRef
 	switch targetKind {
 	case "visual":
 		if visual, ok := d.Visuals[targetID]; ok {
@@ -105,7 +105,7 @@ func TargetFacts(d *report.Dashboard, model *semanticmodel.Model, targetKind, ta
 	return facts, nil
 }
 
-func TargetBaseTable(d *report.Dashboard, model *semanticmodel.Model, targetKind, targetID string) (string, error) {
+func TargetBaseTable(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, targetKind, targetID string) (string, error) {
 	facts, err := TargetFacts(d, model, targetKind, targetID)
 	if err != nil {
 		return "", err

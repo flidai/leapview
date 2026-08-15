@@ -13,6 +13,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	"github.com/flidai/leapview/internal/platform"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -25,6 +26,10 @@ import (
 
 type sharedCatalogMetrics struct{ fakeMetrics }
 
+func (m sharedCatalogMetrics) Resolver() dashboardresolver.Resolver {
+	return fixtureResolver{provider: m, workspaceID: "test-workspace"}
+}
+
 func (sharedCatalogMetrics) Pages(dashboardID string) []dashboard.Page {
 	pages := fakeMetrics{}.Pages(dashboardID)
 	if len(pages) == 2 {
@@ -35,8 +40,8 @@ func (sharedCatalogMetrics) Pages(dashboardID string) []dashboard.Page {
 	return pages
 }
 
-func (m sharedCatalogMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
-	report, model, ok := m.fakeMetrics.Report(dashboardID)
+func (m sharedCatalogMetrics) dashboardDefinition(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
+	report, model, ok := m.fakeMetrics.dashboardDefinition(dashboardID)
 	if ok {
 		report.Pages = m.Pages(dashboardID)
 		orders := model.Tables["orders"]
@@ -70,7 +75,7 @@ func (m sharedCatalogMetrics) Report(dashboardID string) (dashboarddefinition.De
 }
 
 func (m sharedCatalogMetrics) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
-	_, model, ok := m.Report("executive-sales")
+	_, model, ok := m.dashboardDefinition("executive-sales")
 	if !ok || model.Name != modelID {
 		return nil, false
 	}
@@ -122,6 +127,7 @@ func TestAgentCatalogBrowsesEverySupportedRelationship(t *testing.T) {
 	assertCatalogRefs(t, tableChildren.Items,
 		"field:test.orders.customer_id",
 		"field:test.orders.order_id",
+		"field:test.orders.revenue",
 		"field:test.orders.status",
 	)
 }
@@ -451,7 +457,7 @@ func catalogTestServer(t *testing.T) *catalogTestHarness {
 		t.Fatalf("create serving state: %v", err)
 	}
 	metrics := sharedCatalogMetrics{}
-	report, model, ok := metrics.Report("executive-sales")
+	report, model, ok := metrics.dashboardDefinition("executive-sales")
 	if !ok {
 		t.Fatal("fixture report missing")
 	}

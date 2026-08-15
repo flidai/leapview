@@ -22,9 +22,10 @@ import (
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/api"
-	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
@@ -36,7 +37,7 @@ type Metrics interface {
 	Catalog() dashboard.Catalog
 	ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error)
 	Pages(dashboardID string) []dashboard.Page
-	Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool)
+	Resolver() dashboardresolver.Resolver
 	SemanticModel(modelID string) (*semanticmodel.Model, bool)
 }
 
@@ -678,15 +679,18 @@ func SemanticModelProjection(metrics Metrics, id string) (api.SemanticModelDescr
 func dashboardsForModel(metrics Metrics, modelID string) []api.ModelDashboardUsage {
 	out := make([]api.ModelDashboardUsage, 0)
 	for _, dashboardSummary := range metrics.Catalog().Dashboards {
-		report, model, ok := metrics.Report(dashboardSummary.ID)
-		if !ok || (report.SemanticModel != modelID && (model == nil || model.Name != modelID)) {
+		if metrics.Resolver() == nil {
+			continue
+		}
+		resolved, err := metrics.Resolver().Resolve(dashboardSummary.ID)
+		if err != nil || (resolved.Definition.SemanticModel != modelID && (resolved.Model == nil || resolved.Model.Name != modelID)) {
 			continue
 		}
 		out = append(out, api.ModelDashboardUsage{
-			ID:            report.ID,
-			Title:         report.Title,
-			SemanticModel: report.SemanticModel,
-			Pages:         len(metrics.Pages(report.ID)),
+			ID:            resolved.Definition.ID,
+			Title:         resolved.Definition.Title,
+			SemanticModel: resolved.Definition.SemanticModel,
+			Pages:         len(metrics.Pages(resolved.Definition.ID)),
 		})
 	}
 	return out
@@ -697,9 +701,12 @@ func semanticModelForID(metrics Metrics, modelID string) *semanticmodel.Model {
 		return model
 	}
 	for _, dashboardSummary := range metrics.Catalog().Dashboards {
-		_, model, ok := metrics.Report(dashboardSummary.ID)
-		if ok && model != nil && model.Name == modelID {
-			return model
+		if metrics.Resolver() == nil {
+			continue
+		}
+		resolved, err := metrics.Resolver().Resolve(dashboardSummary.ID)
+		if err == nil && resolved.Model != nil && resolved.Model.Name == modelID {
+			return resolved.Model
 		}
 	}
 	return nil
@@ -724,7 +731,7 @@ func semanticAggregateRequest(datasetID string, input api.SemanticQueryRequest, 
 		Offset:     offset,
 	}
 	if input.Time != nil {
-		request.Time = reportdef.QueryTime{Field: input.Time.Field, Grain: input.Time.Grain, Alias: input.Time.Alias}
+		request.Time = dashboardauthoring.QueryTime{Field: input.Time.Field, Grain: input.Time.Grain, Alias: input.Time.Alias}
 	}
 	return request, limit, nil
 }
@@ -929,7 +936,7 @@ func (h Handler) enrichSemanticQueryResponse(
 	metrics Metrics,
 	modelID string,
 	dimensions, measures []reportdef.QueryField,
-	timeRef *reportdef.QueryTime,
+	timeRef *dashboardauthoring.QueryTime,
 	response *api.SemanticQueryResponse,
 ) {
 	if response == nil {
@@ -954,7 +961,7 @@ func semanticQueryColumns(
 	model *semanticmodel.Model,
 	columns []api.QueryColumn,
 	dimensions, measures []reportdef.QueryField,
-	timeRef *reportdef.QueryTime,
+	timeRef *dashboardauthoring.QueryTime,
 ) []api.QueryColumn {
 	semantic := make(map[string]api.QueryColumn, len(dimensions)+len(measures)+1)
 	for _, field := range dimensions {

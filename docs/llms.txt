@@ -70,6 +70,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Deploy and operate LeapView](/docs/guides/operate): Understand the production delivery and operations workflow.
 - [Develop, review, and publish](/docs/cli/validate-deploy): Preview a private target candidate and publish that exact revision.
 - [Targets and environments](/docs/cli/targets): Keep local, staging, and production changes explicit.
+- [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring): Move private dashboard drafts through development, review, and production with explicit ownership boundaries.
 - [Production configuration](/docs/guides/operate/production-configuration): Configure secrets, storage, auth, and runtime boundaries.
 - [Self-hosting](/docs/guides/operate/self-hosting): Build and run a supported single-node deployment.
 - [Health and observability](/docs/guides/operate/observability): Monitor health, query activity, refreshes, and deployments.

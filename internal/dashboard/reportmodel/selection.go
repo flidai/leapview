@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/dashboard/report"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 )
 
 type SelectionScope string
@@ -43,14 +43,14 @@ type ResolvedSpatialSelectionInteraction struct {
 
 // ResolveSpatialSelectionInteraction proves that both governed coordinate
 // fields are numeric and can be applied to every explicitly targeted query.
-func ResolveSpatialSelectionInteraction(d *report.Dashboard, model *semanticmodel.Model, sourceID string) (ResolvedSpatialSelectionInteraction, error) {
+func ResolveSpatialSelectionInteraction(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, sourceID string) (ResolvedSpatialSelectionInteraction, error) {
 	visual, ok := d.Visuals[sourceID]
 	if !ok || visual.Chart == nil {
 		return ResolvedSpatialSelectionInteraction{}, fmt.Errorf("unknown source visualization %q", sourceID)
 	}
 	selection := visual.Chart.Interaction.SpatialSelection
-	resolve := func(axis string, mapping report.SpatialSelectionMapping) (ResolvedSelectionMapping, error) {
-		resolved, err := resolveSelectionMapping(model, report.SelectionMapping{Field: mapping.Field, Fact: mapping.Fact, Value: mapping.Source})
+	resolve := func(axis string, mapping dashboardauthoring.SpatialSelectionMapping) (ResolvedSelectionMapping, error) {
+		resolved, err := resolveSelectionMapping(model, dashboardauthoring.SelectionMapping{Field: mapping.Field, Fact: mapping.Fact, Value: mapping.Source})
 		if err != nil {
 			return ResolvedSelectionMapping{}, fmt.Errorf("visual %q spatial_selection %s: %w", sourceID, axis, err)
 		}
@@ -132,7 +132,7 @@ func (r ResolvedSelectionInteraction) CanonicalizeMappings(incoming []SelectionM
 // ResolveSelectionInteraction resolves and validates the configured interaction
 // for a report source. Its mapping order is canonical and matches the authored
 // order, so callers can use the result to validate command tuples exactly.
-func ResolveSelectionInteraction(d *report.Dashboard, model *semanticmodel.Model, sourceKind, sourceID string) (ResolvedSelectionInteraction, error) {
+func ResolveSelectionInteraction(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, sourceKind, sourceID string) (ResolvedSelectionInteraction, error) {
 	selection, err := sourceSelection(d, sourceKind, sourceID)
 	if err != nil {
 		return ResolvedSelectionInteraction{}, err
@@ -210,7 +210,7 @@ func authoredInteractionTargets(filter, highlight, none []string) ([]authoredInt
 	return targets, nil
 }
 
-func sourceSelection(d *report.Dashboard, sourceKind, sourceID string) (report.SelectionInteraction, error) {
+func sourceSelection(d *dashboardauthoring.Dashboard, sourceKind, sourceID string) (dashboardauthoring.SelectionInteraction, error) {
 	switch sourceKind {
 	case "visual":
 		if visual, ok := d.Visuals[sourceID]; ok {
@@ -221,13 +221,13 @@ func sourceSelection(d *report.Dashboard, sourceKind, sourceID string) (report.S
 				return visual.Tabular.Interaction.RowSelection, nil
 			}
 		}
-		return report.SelectionInteraction{}, fmt.Errorf("unknown source visual %q", sourceID)
+		return dashboardauthoring.SelectionInteraction{}, fmt.Errorf("unknown source visual %q", sourceID)
 	default:
-		return report.SelectionInteraction{}, fmt.Errorf("unknown source kind %q", sourceKind)
+		return dashboardauthoring.SelectionInteraction{}, fmt.Errorf("unknown source kind %q", sourceKind)
 	}
 }
 
-func sourceSelectionFields(d *report.Dashboard, sourceKind, sourceID string) (map[string]bool, report.QueryTime) {
+func sourceSelectionFields(d *dashboardauthoring.Dashboard, sourceKind, sourceID string) (map[string]bool, dashboardauthoring.QueryTime) {
 	fields := map[string]bool{}
 	if sourceKind == "visual" {
 		if visual, ok := d.Visuals[sourceID]; ok {
@@ -247,19 +247,19 @@ func sourceSelectionFields(d *report.Dashboard, sourceKind, sourceID string) (ma
 				for _, field := range visual.Tabular.Query.Fields {
 					fields[field] = true
 				}
-				for _, columns := range [][]report.FieldRef{visual.Tabular.Query.Columns, visual.Tabular.Query.Rows} {
+				for _, columns := range [][]dashboardauthoring.FieldRef{visual.Tabular.Query.Columns, visual.Tabular.Query.Rows} {
 					for _, field := range columns {
 						fields[field.Field] = true
 					}
 				}
 			}
 		}
-		return fields, report.QueryTime{}
+		return fields, dashboardauthoring.QueryTime{}
 	}
-	return fields, report.QueryTime{}
+	return fields, dashboardauthoring.QueryTime{}
 }
 
-func resolveSelectionMapping(model *semanticmodel.Model, mapping report.SelectionMapping) (ResolvedSelectionMapping, error) {
+func resolveSelectionMapping(model *semanticmodel.Model, mapping dashboardauthoring.SelectionMapping) (ResolvedSelectionMapping, error) {
 	if !strings.Contains(mapping.Field, ".") {
 		dimension, err := model.ResolveSemanticDimension(mapping.Field)
 		if err != nil {
@@ -289,7 +289,7 @@ func resolveSelectionMapping(model *semanticmodel.Model, mapping report.Selectio
 	return ResolvedSelectionMapping{Field: mapping.Field, Fact: mapping.Fact, Grain: mapping.Grain, Type: dimension.Type, Scope: SelectionScopeFactLocal}, nil
 }
 
-func validateSelectionGrain(mapping report.SelectionMapping, fieldType string, time report.QueryTime) error {
+func validateSelectionGrain(mapping dashboardauthoring.SelectionMapping, fieldType string, time dashboardauthoring.QueryTime) error {
 	if time.Field == mapping.Field {
 		if fieldType != "date" && fieldType != "timestamp" {
 			return fmt.Errorf("field %q type %q cannot be used as a grained time selection", mapping.Field, fieldType)
@@ -326,7 +326,7 @@ func validateSelectionTupleScope(mappings []ResolvedSelectionMapping) error {
 	return nil
 }
 
-func validateSelectionSourceFacts(d *report.Dashboard, model *semanticmodel.Model, sourceKind, sourceID string, mappings []ResolvedSelectionMapping) error {
+func validateSelectionSourceFacts(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, sourceKind, sourceID string, mappings []ResolvedSelectionMapping) error {
 	facts, err := TargetFacts(d, model, sourceKind, sourceID)
 	if err != nil {
 		return fmt.Errorf("%s %q interaction source facts: %w", sourceKind, sourceID, err)
@@ -357,7 +357,7 @@ func validateSelectionCompatibility(model *semanticmodel.Model, role, id string,
 	return nil
 }
 
-func selectionTargetKind(d *report.Dashboard, targetID string) (string, error) {
+func selectionTargetKind(d *dashboardauthoring.Dashboard, targetID string) (string, error) {
 	if _, ok := d.Visuals[targetID]; !ok {
 		return "", fmt.Errorf("interaction references unknown target %q", targetID)
 	}

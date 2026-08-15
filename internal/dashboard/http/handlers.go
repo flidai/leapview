@@ -9,7 +9,6 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
@@ -18,11 +17,11 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
 	"github.com/flidai/leapview/internal/dashboard/usage"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
@@ -49,14 +48,33 @@ type Metrics interface {
 	consumer.Executor
 	Catalog() catalog.Catalog
 	DefaultDashboardID() string
+	Resolver() dashboardresolver.Resolver
 	DefaultFilters(dashboardID string) dashboard.Filters
 	ModelIDForDashboard(dashboardID string) string
 	NormalizeVisualizationWindow(dashboardID string, request dashboard.TableRequest) dashboard.TableRequest
 	Pages(dashboardID string) []dashboard.Page
 	QueryDashboardPage(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters) (dashboard.Patch, error)
 	QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error)
-	Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool)
-	VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool)
+}
+
+// resolveDashboard is the transport boundary for the capability-owned
+// resolver. Workspace composition must select a concrete resolver before an
+// HTTP dashboard lookup; no caller-controlled workspace argument is accepted.
+func resolveDashboard(metrics Metrics, dashboardID string) (dashboardresolver.Resolved, error) {
+	if metrics == nil {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
+	resolver := metrics.Resolver()
+	if resolver == nil {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
+	return resolver.Resolve(dashboardID)
+}
+
+// ResolveDashboard exposes the shared transport adapter to dashboard module
+// compositions that need the same compiled definition/model pair.
+func ResolveDashboard(metrics Metrics, dashboardID string) (dashboardresolver.Resolved, error) {
+	return resolveDashboard(metrics, dashboardID)
 }
 
 type SignalBroker interface {
@@ -229,11 +247,12 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 		return
 	}
 	clientID := pagestream.EnsureClientID(w, r)
-	reportDefinition, model, ok := metrics.Report(dashboardID)
-	if !ok {
+	resolved, err := resolveDashboard(metrics, dashboardID)
+	if err != nil {
 		nethttp.NotFound(w, r)
 		return
 	}
+	reportDefinition, model := resolved.Definition, resolved.Model
 	pages := metrics.Pages(dashboardID)
 	activePage, ok := report.ActivePage(pages, pageID)
 	if !ok {

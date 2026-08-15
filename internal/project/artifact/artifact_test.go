@@ -8,7 +8,6 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	"github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/workspace"
 )
@@ -78,9 +77,6 @@ func TestDashboardDefinitionIsAnImmutableCapabilityProjection(t *testing.T) {
 				Models: map[string]*semanticmodel.Model{
 					"orders": {Name: "orders", Title: "Orders"},
 				},
-				Dashboards: map[string]*reportdef.Dashboard{
-					"overview": {ID: "overview", Title: "Overview"},
-				},
 				DashboardDefinitions: map[string]dashboarddefinition.Definition{
 					"overview": {ID: "overview", Title: "Overview"},
 				},
@@ -93,6 +89,28 @@ func TestDashboardDefinitionIsAnImmutableCapabilityProjection(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(project.Canonical(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	workspaces, ok := wire["workspaces"].(map[string]any)
+	if !ok {
+		t.Fatalf("canonical workspaces = %#v", wire["workspaces"])
+	}
+	sales, ok := workspaces["sales"].(map[string]any)
+	if !ok {
+		t.Fatalf("canonical sales workspace = %#v", workspaces["sales"])
+	}
+	manifest, ok := sales["manifest"].(map[string]any)
+	if !ok {
+		t.Fatalf("canonical manifest = %#v", sales["manifest"])
+	}
+	if _, ok := manifest["Dashboards"]; ok {
+		t.Fatalf("canonical manifest retained authored Dashboards collection: %#v", manifest["Dashboards"])
+	}
+	if _, ok := manifest["DashboardDefinitions"]; !ok {
+		t.Fatalf("canonical manifest omitted DashboardDefinitions: %#v", manifest)
 	}
 	compiled, ok := project.Workspace("sales")
 	if !ok {

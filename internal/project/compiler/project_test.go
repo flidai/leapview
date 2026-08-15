@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
@@ -107,7 +108,7 @@ spec:
 	if binding.Role != "viewer" || binding.Subject.Kind != "group" || binding.Subject.Group != "analysts" {
 		t.Fatalf("compiled access binding = %#v, want analysts viewer group binding", binding)
 	}
-	if got := mustCompiledWorkspace(t, compiled, "sales").Definition.Dashboards["executive-sales"].Pages[0].ID; got != "overview" {
+	if got := mustCompiledWorkspace(t, compiled, "sales").Definition.DashboardDefinitions["executive-sales"].Pages[0].ID; got != "overview" {
 		t.Fatalf("compiled dashboard page id = %q, want authored page name overview", got)
 	}
 }
@@ -404,6 +405,13 @@ spec:
 
 func TestCompileShowcaseProject(t *testing.T) {
 	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	authoredProject, err := LoadProject(projectPath)
+	if err != nil {
+		t.Fatalf("LoadProject() error = %v", err)
+	}
+	showcase := normalizedDashboardForTest(t, authoredProject, "visuals", "visual-showcase")
+	assertVisualShowcaseCoverage(t, showcase)
+
 	compiled, err := CompileProject(projectPath, Options{})
 	if err != nil {
 		t.Fatalf("CompileProject() error = %v", err)
@@ -417,21 +425,19 @@ func TestCompileShowcaseProject(t *testing.T) {
 	if _, ok := compiled.Workspace("visuals"); !ok {
 		t.Fatalf("compiled workspaces = %#v, want visuals", compiled.WorkspaceIDs())
 	}
-	if _, ok := mustCompiledWorkspace(t, compiled, "sales").Definition.Dashboards["executive-sales"]; !ok {
-		t.Fatalf("sales dashboards = %#v, want executive-sales", mustCompiledWorkspace(t, compiled, "sales").Definition.Dashboards)
+	if _, ok := mustCompiledWorkspace(t, compiled, "sales").Definition.DashboardDefinitions["executive-sales"]; !ok {
+		t.Fatalf("sales dashboards = %#v, want executive-sales", mustCompiledWorkspace(t, compiled, "sales").Definition.DashboardDefinitions)
 	}
-	if _, ok := mustCompiledWorkspace(t, compiled, "operations").Definition.Dashboards["fulfillment-operations"]; !ok {
-		t.Fatalf("operations dashboards = %#v, want fulfillment-operations", mustCompiledWorkspace(t, compiled, "operations").Definition.Dashboards)
+	if _, ok := mustCompiledWorkspace(t, compiled, "operations").Definition.DashboardDefinitions["fulfillment-operations"]; !ok {
+		t.Fatalf("operations dashboards = %#v, want fulfillment-operations", mustCompiledWorkspace(t, compiled, "operations").Definition.DashboardDefinitions)
 	}
 	visuals := mustCompiledWorkspace(t, compiled, "visuals")
-	showcase, ok := visuals.Definition.Dashboards["visual-showcase"]
-	if !ok {
-		t.Fatalf("visuals dashboards = %#v, want visual-showcase", visuals.Definition.Dashboards)
+	if _, ok := visuals.Definition.DashboardDefinitions["visual-showcase"]; !ok {
+		t.Fatalf("visuals dashboards = %#v, want visual-showcase", visuals.Definition.DashboardDefinitions)
 	}
 	if _, ok := visuals.Definition.Models["visuals"]; !ok {
 		t.Fatalf("visuals semantic models = %#v, want visuals", visuals.Definition.Models)
 	}
-	assertVisualShowcaseCoverage(t, showcase)
 	servingState, err := json.Marshal(visuals.Definition)
 	require.NoError(t, err)
 	serialized := string(servingState)
@@ -1318,6 +1324,49 @@ func TestCompileProjectRejectsSQLSourceMismatchAndCycles(t *testing.T) {
 	})
 }
 
+func normalizedDashboardForTest(t *testing.T, project Project, workspaceID, dashboardID string) *dashboardauthoring.Dashboard {
+	t.Helper()
+	workspaceProject, ok := project.Workspaces[workspaceID]
+	if !ok {
+		t.Fatalf("authored project has no workspace %q", workspaceID)
+	}
+	authored, ok := workspaceProject.Dashboards[dashboardID]
+	if !ok {
+		t.Fatalf("authored workspace %q has no dashboard %q", workspaceID, dashboardID)
+	}
+	compiledManifest, err := workspaceProject.definition(project)
+	if err != nil {
+		t.Fatalf("compile authored workspace %q: %v", workspaceID, err)
+	}
+	normalized, err := dashboardcompiler.ValidateAndNormalizeDashboard(authored, compiledManifest.Models)
+	if err != nil {
+		t.Fatalf("normalize dashboard %q: %v", dashboardID, err)
+	}
+	return normalized
+}
+
+func TestProjectDashboardAdapterMatchesDirectDashboardCompilation(t *testing.T) {
+	projectPath := writeProjectFixture(t, minimalProjectFiles(nil))
+	authoredProject, err := LoadProject(projectPath)
+	if err != nil {
+		t.Fatalf("LoadProject() error = %v", err)
+	}
+	workspaceProject := authoredProject.Workspaces["sales"]
+	compiledManifest, err := workspaceProject.definition(authoredProject)
+	if err != nil {
+		t.Fatalf("compile project workspace: %v", err)
+	}
+	authored := workspaceProject.Dashboards["executive-sales"]
+	direct, err := dashboardcompiler.Compile(*authored, compiledManifest.Models)
+	if err != nil {
+		t.Fatalf("direct dashboard compilation: %v", err)
+	}
+	got := compiledManifest.DashboardDefinitions["executive-sales"]
+	if !reflect.DeepEqual(got, direct.Definition) {
+		t.Fatalf("project adapter definition differs from direct compilation:\nproject=%#v\ndirect=%#v", got, direct.Definition)
+	}
+}
+
 func writeProjectFixture(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -1331,7 +1380,7 @@ func writeProjectFixture(t *testing.T, files map[string]string) string {
 	return filepath.Join(dir, "leapview.yaml")
 }
 
-func assertVisualShowcaseCoverage(t *testing.T, report *reportdef.Dashboard) {
+func assertVisualShowcaseCoverage(t *testing.T, report *dashboardauthoring.Dashboard) {
 	t.Helper()
 	assertFilterShowcaseCoverage(t, report)
 	assertOverviewStartsWithDecisionContext(t, report)
@@ -1380,7 +1429,7 @@ func assertVisualShowcaseCoverage(t *testing.T, report *reportdef.Dashboard) {
 	}
 }
 
-func assertOverviewStartsWithDecisionContext(t *testing.T, report *reportdef.Dashboard) {
+func assertOverviewStartsWithDecisionContext(t *testing.T, report *dashboardauthoring.Dashboard) {
 	t.Helper()
 	for _, page := range report.Pages {
 		if page.ID != "overview" {
@@ -1406,7 +1455,7 @@ func assertOverviewStartsWithDecisionContext(t *testing.T, report *reportdef.Das
 	t.Error("visual-showcase missing overview page")
 }
 
-func assertFilterShowcaseCoverage(t *testing.T, report *reportdef.Dashboard) {
+func assertFilterShowcaseCoverage(t *testing.T, report *dashboardauthoring.Dashboard) {
 	t.Helper()
 	valueKinds := map[dashboardfilter.ValueKind]struct{}{}
 	for _, definition := range report.FilterDefinitions {

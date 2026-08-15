@@ -551,7 +551,11 @@ func TestServiceTableInteractiveCap(t *testing.T) {
 		t.Fatalf("next block queries = %#v, want independent rows and count", recorder.queries)
 	}
 
-	definition, ok := metrics.VisualizationDefinition("executive-sales", "orders_table")
+	resolved, err := metrics.Resolver().Resolve("executive-sales")
+	if err != nil {
+		t.Fatal("compiled orders dashboard is missing")
+	}
+	definition, ok := resolved.Visualization("orders_table")
 	if !ok {
 		t.Fatal("compiled orders table definition is missing")
 	}
@@ -1281,10 +1285,11 @@ func compiledFiltersForTest(
 	expressions map[string]dashboardfilter.Expression,
 ) dashboard.Filters {
 	t.Helper()
-	definition, _, ok := metrics.Report(dashboardID)
-	if !ok {
+	resolved, err := metrics.Resolver().Resolve(dashboardID)
+	if err != nil {
 		t.Fatalf("dashboard %q not found", dashboardID)
 	}
+	definition := resolved.Definition
 	page, ok := definition.PageOrDefault(pageID)
 	if !ok {
 		t.Fatalf("dashboard page %q not found", pageID)

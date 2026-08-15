@@ -8,14 +8,14 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/stretchr/testify/require"
 
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 )
 
 func jsonString(value any) string {
@@ -26,10 +26,10 @@ func jsonString(value any) string {
 	return string(bytes)
 }
 
-func fieldRefs(fields ...string) []reportdef.FieldRef {
-	refs := make([]reportdef.FieldRef, len(fields))
+func fieldRefs(fields ...string) []dashboardauthoring.FieldRef {
+	refs := make([]dashboardauthoring.FieldRef, len(fields))
 	for i, field := range fields {
-		refs[i] = reportdef.FieldRef{Field: field}
+		refs[i] = dashboardauthoring.FieldRef{Field: field}
 	}
 	return refs
 }
@@ -48,7 +48,7 @@ func TestDashboardLayoutContextSelectsDashboardsNavigation(t *testing.T) {
 }
 
 func TestPageInitialSignalsArePageScoped(t *testing.T) {
-	report := reportdef.Dashboard{
+	report := dashboardauthoring.Dashboard{
 		ID:            "report",
 		Title:         "Report",
 		SemanticModel: "test",
@@ -63,17 +63,17 @@ func TestPageInitialSignalsArePageScoped(t *testing.T) {
 				Predicates: []dashboardfilter.PredicatePolicy{{Kind: dashboardfilter.ExpressionComparison, Operators: []dashboardfilter.Operator{dashboardfilter.OperatorContains}}},
 			},
 		},
-		Visuals: reportdef.MergeVisualizations(reportdef.ChartVisualizations(map[string]reportdef.Visual{
-			"active_chart":   {Title: "Active", Type: "bar", Query: reportdef.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Interaction: reportdef.Interaction{PointSelection: reportdef.SelectionInteraction{Mappings: []reportdef.SelectionMapping{{Field: "orders.status", Fact: "orders", Value: "label"}}, Targets: []string{"orders"}}}},
-			"active_kpi":     {Type: "kpi", Query: reportdef.VisualQuery{Measures: fieldRefs("order_count")}, Presentation: reportdef.VisualPresentation{Note: "Filtered", Tone: "ink"}},
-			"off_page_chart": {Title: "Off Page", Type: "bar", Query: reportdef.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}},
-		}), reportdef.TabularVisualizations("table", map[string]reportdef.TableVisual{
-			"orders":   {Title: "Orders", Query: reportdef.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Interaction: reportdef.Interaction{RowSelection: reportdef.SelectionInteraction{Mappings: []reportdef.SelectionMapping{{Field: "orders.order_id", Fact: "orders", Value: "order_id"}}, Targets: []string{"active_chart"}}}, Style: dashboard.TableStyle{Density: "compact", Grid: "full"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order", Width: 220, Format: "text"}}},
-			"off_page": {Title: "Off Page", Query: reportdef.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}}},
-		}), reportdef.TabularVisualizations("matrix", map[string]reportdef.TableVisual{
-			"matrix": {Title: "Matrix", Query: reportdef.TableQuery{Rows: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Columns: []dashboard.TableColumn{{Key: "status", Label: "Status"}}},
-		}), reportdef.TabularVisualizations("pivot", map[string]reportdef.TableVisual{
-			"pivot": {Title: "Pivot", Query: reportdef.TableQuery{Rows: fieldRefs("orders.status"), Columns: fieldRefs("orders.category"), Measures: fieldRefs("order_count")}, Columns: []dashboard.TableColumn{{Key: "status", Label: "Status"}}},
+		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
+			"active_chart":   {Title: "Active", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{Mappings: []dashboardauthoring.SelectionMapping{{Field: "orders.status", Fact: "orders", Value: "label"}}, Targets: []string{"orders"}}}},
+			"active_kpi":     {Type: "kpi", Query: dashboardauthoring.VisualQuery{Measures: fieldRefs("order_count")}, Presentation: dashboardauthoring.VisualPresentation{Note: "Filtered", Tone: "ink"}},
+			"off_page_chart": {Title: "Off Page", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}},
+		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
+			"orders":   {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Interaction: dashboardauthoring.Interaction{RowSelection: dashboardauthoring.SelectionInteraction{Mappings: []dashboardauthoring.SelectionMapping{{Field: "orders.order_id", Fact: "orders", Value: "order_id"}}, Targets: []string{"active_chart"}}}, Style: dashboard.TableStyle{Density: "compact", Grid: "full"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order", Width: 220, Format: "text"}}},
+			"off_page": {Title: "Off Page", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}}},
+		}), dashboardauthoring.TabularVisualizations("matrix", map[string]dashboardauthoring.TableVisual{
+			"matrix": {Title: "Matrix", Query: dashboardauthoring.TableQuery{Rows: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Columns: []dashboard.TableColumn{{Key: "status", Label: "Status"}}},
+		}), dashboardauthoring.TabularVisualizations("pivot", map[string]dashboardauthoring.TableVisual{
+			"pivot": {Title: "Pivot", Query: dashboardauthoring.TableQuery{Rows: fieldRefs("orders.status"), Columns: fieldRefs("orders.category"), Measures: fieldRefs("order_count")}, Columns: []dashboard.TableColumn{{Key: "status", Label: "Status"}}},
 		})),
 		Pages: []dashboard.Page{
 			{
@@ -128,12 +128,14 @@ func TestPageInitialSignalsArePageScoped(t *testing.T) {
 		},
 		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero", Label: "Orders"}},
 	}
-	if err := workspacecompiler.ValidateDashboard(&report, map[string]*semanticmodel.Model{"test": model}); err != nil {
+	normalizedReport, err := dashboardcompiler.ValidateAndNormalizeDashboard(&report, map[string]*semanticmodel.Model{"test": model})
+	if err != nil {
 		t.Fatal(err)
 	}
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&report, model)
+	report = *normalizedReport
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&report, model)
 	require.NoError(t, err)
-	compiled, err := workspacecompiler.CompileDashboardDefinition(&report, definitions)
+	compiled, err := dashboardcompiler.CompileDashboardDefinition(&report, definitions)
 	require.NoError(t, err)
 
 	showcase := renderPageForTest(t, compiled, model, report.Pages[0])

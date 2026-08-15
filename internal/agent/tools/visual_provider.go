@@ -13,10 +13,11 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -66,25 +67,25 @@ type VisualAuthorizationRequest struct {
 }
 
 type agentVisualInput struct {
-	Workspace    string                        `json:"workspace"`
-	Model        string                        `json:"model"`
-	Dataset      string                        `json:"dataset"`
-	Title        string                        `json:"title"`
-	Type         string                        `json:"type"`
-	Presentation agentVisualPresentation       `json:"presentation"`
-	Dimensions   []agentVisualFieldRef         `json:"dimensions"`
-	Series       *agentVisualFieldRef          `json:"series"`
-	Measures     []agentVisualFieldRef         `json:"measures"`
-	Fields       []agentVisualFieldRef         `json:"fields"`
-	Rows         []agentVisualFieldRef         `json:"rows"`
-	Columns      []dashboard.TableColumn       `json:"columns"`
-	Filters      []agentVisualFilter           `json:"filters"`
-	Sort         []agentVisualSort             `json:"sort"`
-	Limit        int                           `json:"limit"`
-	Calculations []reportdef.VisualCalculation `json:"calculations"`
+	Workspace    string                                 `json:"workspace"`
+	Model        string                                 `json:"model"`
+	Dataset      string                                 `json:"dataset"`
+	Title        string                                 `json:"title"`
+	Type         string                                 `json:"type"`
+	Presentation agentVisualPresentation                `json:"presentation"`
+	Dimensions   []agentVisualFieldRef                  `json:"dimensions"`
+	Series       *agentVisualFieldRef                   `json:"series"`
+	Measures     []agentVisualFieldRef                  `json:"measures"`
+	Fields       []agentVisualFieldRef                  `json:"fields"`
+	Rows         []agentVisualFieldRef                  `json:"rows"`
+	Columns      []dashboard.TableColumn                `json:"columns"`
+	Filters      []agentVisualFilter                    `json:"filters"`
+	Sort         []agentVisualSort                      `json:"sort"`
+	Limit        int                                    `json:"limit"`
+	Calculations []dashboardauthoring.VisualCalculation `json:"calculations"`
 }
 
-type agentVisualPresentation = reportdef.VisualPresentation
+type agentVisualPresentation = dashboardauthoring.VisualPresentation
 
 type agentVisualFieldRef struct {
 	Field string `json:"field"`
@@ -547,9 +548,9 @@ func (p VisualProvider) queryAgentChart(ctx context.Context, workspaceID string,
 	chartType := input.Type
 	authored := agentReportVisual(input)
 	authored.Title = title
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&reportdef.Dashboard{
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
 		ID: "agent-visual", Title: "Agent visual", SemanticModel: input.Model,
-		Visuals: reportdef.ChartVisualizations(map[string]reportdef.Visual{id: authored}),
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{id: authored}),
 	}, model)
 	if err != nil {
 		return agentVisualResult{}, fmt.Errorf("compile agent visualization: %w", err)
@@ -582,31 +583,31 @@ func agentVisualShape(input agentVisualInput) string {
 	return agentReportVisual(input).ResultShape()
 }
 
-func agentReportVisual(input agentVisualInput) reportdef.Visual {
-	dimensions := make([]reportdef.FieldRef, len(input.Dimensions))
+func agentReportVisual(input agentVisualInput) dashboardauthoring.Visual {
+	dimensions := make([]dashboardauthoring.FieldRef, len(input.Dimensions))
 	for index, field := range input.Dimensions {
-		dimensions[index] = reportdef.FieldRef{Field: field.Field, Alias: field.Alias}
+		dimensions[index] = dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias}
 	}
-	measures := make([]reportdef.FieldRef, len(input.Measures))
+	measures := make([]dashboardauthoring.FieldRef, len(input.Measures))
 	for index, field := range input.Measures {
-		measures[index] = reportdef.FieldRef{Field: field.Field, Alias: field.Alias}
+		measures[index] = dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias}
 	}
-	series := reportdef.FieldRef{}
+	series := dashboardauthoring.FieldRef{}
 	if input.Series != nil {
-		series = reportdef.FieldRef{Field: input.Series.Field, Alias: input.Series.Alias}
+		series = dashboardauthoring.FieldRef{Field: input.Series.Field, Alias: input.Series.Alias}
 	}
-	return reportdef.Visual{
+	return dashboardauthoring.Visual{
 		Title: firstNonEmpty(input.Title, "Agent visual"), Type: input.Type, Presentation: input.Presentation,
-		Query:        reportdef.VisualQuery{Table: input.Dataset, Dimensions: dimensions, Series: series, Measures: measures, Limit: input.Limit},
+		Query:        dashboardauthoring.VisualQuery{Table: input.Dataset, Dimensions: dimensions, Series: series, Measures: measures, Limit: input.Limit},
 		Calculations: input.Calculations,
 	}
 }
 
 func validateAgentChartContract(input agentVisualInput) error {
 	visual := agentReportVisual(input)
-	definition := reportdef.Dashboard{
+	definition := dashboardauthoring.Dashboard{
 		ID: "agent-visual", Title: "Agent visual", SemanticModel: "agent",
-		Visuals: reportdef.ChartVisualizations(map[string]reportdef.Visual{"visual": visual}),
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"visual": visual}),
 		Pages: []dashboard.Page{{
 			ID: "page", Title: "Page",
 			Visuals: []dashboard.PageVisual{{ID: "visual", Kind: "visual", Visual: "visual", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 6, RowSpan: 4}}},
@@ -871,9 +872,9 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, workspaceID string,
 	if len(input.Sort) > 0 {
 		sortSpec = dashboard.TableSort{Key: agentFieldAlias(input.Sort[0].Field), Direction: normalizedSortDirection(input.Sort[0].Direction)}
 	}
-	authored := reportdef.TableVisual{Title: title, DefaultSort: sortSpec, Style: dashboard.TableStyle{}.WithDefaults(), Columns: columns, Query: reportdef.TableQuery{Table: input.Dataset}, Calculations: input.Calculations}
+	authored := dashboardauthoring.TableVisual{Title: title, DefaultSort: sortSpec, Style: dashboard.TableStyle{}.WithDefaults(), Columns: columns, Query: dashboardauthoring.TableQuery{Table: input.Dataset}, Calculations: input.Calculations}
 	for _, field := range fields {
-		authored.DataColumns = append(authored.DataColumns, reportdef.FieldRef{Field: field.Field, Alias: agentFieldAliasForRef(field)})
+		authored.DataColumns = append(authored.DataColumns, dashboardauthoring.FieldRef{Field: field.Field, Alias: agentFieldAliasForRef(field)})
 	}
 	if input.Type == "table" {
 		for _, field := range fields {
@@ -881,15 +882,15 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, workspaceID string,
 		}
 	} else {
 		for _, field := range dimensions {
-			authored.Query.Rows = append(authored.Query.Rows, reportdef.FieldRef{Field: field.Field, Alias: field.Alias})
+			authored.Query.Rows = append(authored.Query.Rows, dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias})
 		}
 		for _, field := range measures {
-			authored.Query.Measures = append(authored.Query.Measures, reportdef.FieldRef{Field: field.Field, Alias: field.Alias})
+			authored.Query.Measures = append(authored.Query.Measures, dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias})
 		}
 	}
-	definitions, err := workspacecompiler.CompileVisualizationDefinitions(&reportdef.Dashboard{
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
 		ID: "agent", SemanticModel: input.Model,
-		Visuals: reportdef.TabularVisualizations(input.Type, map[string]reportdef.TableVisual{id: authored}),
+		Visuals: dashboardauthoring.TabularVisualizations(input.Type, map[string]dashboardauthoring.TableVisual{id: authored}),
 	}, model)
 	if err != nil {
 		return agentVisualResult{}, err

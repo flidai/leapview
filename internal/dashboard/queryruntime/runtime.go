@@ -8,9 +8,8 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
-	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
@@ -18,9 +17,8 @@ type Metrics interface {
 	consumer.Executor
 	Catalog() catalog.Catalog
 	DefaultDashboardID() string
+	Resolver() dashboardresolver.Resolver
 	ModelIDForDashboard(dashboardID string) string
-	Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool)
-	VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool)
 	SemanticModel(modelID string) (*semanticmodel.Model, bool)
 	DefaultFilters(dashboardID string) dashboard.Filters
 	NormalizeVisualizationWindow(dashboardID string, request dashboard.TableRequest) dashboard.TableRequest

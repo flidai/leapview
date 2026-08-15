@@ -16,10 +16,12 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
@@ -32,10 +34,10 @@ import (
 	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
-func fieldRefs(fields ...string) []reportdef.FieldRef {
-	refs := make([]reportdef.FieldRef, len(fields))
+func fieldRefs(fields ...string) []dashboardauthoring.FieldRef {
+	refs := make([]dashboardauthoring.FieldRef, len(fields))
 	for i, field := range fields {
-		refs[i] = reportdef.FieldRef{Field: field}
+		refs[i] = dashboardauthoring.FieldRef{Field: field}
 	}
 	return refs
 }
@@ -69,6 +71,36 @@ func typedComparisonURLValue(t *testing.T, operator dashboardfilter.Operator, va
 
 type fakeMetrics struct{}
 
+func (m fakeMetrics) Resolver() dashboardresolver.Resolver {
+	return fixtureResolver{provider: m, workspaceID: "test-workspace"}
+}
+
+// dashboardDefinitionProvider keeps the test fixture independent from the
+// runtime resolver's project adapter contract.
+type dashboardDefinitionProvider interface {
+	dashboardDefinition(string) (dashboarddefinition.Definition, *semanticmodel.Model, bool)
+}
+
+type fixtureResolver struct {
+	provider    dashboardDefinitionProvider
+	workspaceID string
+}
+
+func (r fixtureResolver) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
+	definition, model, ok := r.provider.dashboardDefinition(dashboardID)
+	if !ok {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
+	return dashboardresolver.Resolved{
+		Definition: definition,
+		Model:      model,
+		Source: dashboardresolver.SourceMetadata{
+			Kind:        dashboardresolver.SourceProject,
+			WorkspaceID: r.workspaceID,
+		},
+	}, nil
+}
+
 func (fakeMetrics) QueryCompiledFilterOptions(_ context.Context, _ string, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
 	return dashboardfilter.OptionResult{Items: []dashboardfilter.OptionItem{
 		{Value: dashboardfilter.Value{Kind: query.ValueKind, Value: "SP"}, Label: "SP", Available: true},
@@ -80,12 +112,12 @@ func (fakeMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Re
 	for _, target := range request.Targets {
 		switch target.Kind {
 		case consumer.KindVisual:
-			definition, _ := fakeMetrics{}.VisualizationDefinition(request.DashboardID, target.ID)
+			definition, _ := fakeMetrics{}.visualizationDefinition(request.DashboardID, target.ID)
 			envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
 			publish(consumer.Result{Target: target, Envelope: envelope, Err: err})
 		case consumer.KindWindow:
 			table, err := fakeMetrics{}.queryWindow(ctx, request.DashboardID, request.PageID, request.Filters, target.WindowRequest)
-			definition, _ := fakeMetrics{}.VisualizationDefinition(request.DashboardID, target.ID)
+			definition, _ := fakeMetrics{}.visualizationDefinition(request.DashboardID, target.ID)
 			envelope, envelopeErr := visualizationruntime.WindowEnvelopeFromDefinition(definition, table, 0, 0)
 			publish(consumer.Result{Target: target, Envelope: envelope, Err: errors.Join(err, envelopeErr)})
 		}
@@ -120,7 +152,7 @@ func (fakeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pa
 
 type fakeWindowSource interface {
 	queryWindow(context.Context, string, string, dashboard.Filters, dashboard.TableRequest) (dashboard.Table, error)
-	VisualizationDefinition(string, string) (visualizationdefinition.Definition, bool)
+	visualizationDefinition(string, string) (visualizationdefinition.Definition, bool)
 }
 
 func fakeVisualizationWindow(ctx context.Context, source fakeWindowSource, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
@@ -137,7 +169,7 @@ func fakeVisualizationWindow(ctx context.Context, source fakeWindowSource, dashb
 	if err != nil {
 		return visualizationir.VisualizationEnvelope{}, err
 	}
-	definition, _ := source.VisualizationDefinition(dashboardID, request.VisualID)
+	definition, _ := source.visualizationDefinition(dashboardID, request.VisualID)
 	return visualizationruntime.WindowEnvelopeFromDefinition(definition, table, request.DataRevision, 0)
 }
 
@@ -153,6 +185,10 @@ type namedWorkspaceMetrics struct {
 	workspaceID string
 	dashboardID string
 	title       string
+}
+
+func (m namedWorkspaceMetrics) Resolver() dashboardresolver.Resolver {
+	return fixtureResolver{provider: m, workspaceID: m.workspaceID}
 }
 
 func (m namedWorkspaceMetrics) Catalog() dashboard.Catalog {
@@ -179,11 +215,11 @@ func (m namedWorkspaceMetrics) Pages(dashboardID string) []dashboard.Page {
 	return []dashboard.Page{{ID: "overview", Title: "Overview"}}
 }
 
-func (m namedWorkspaceMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
+func (m namedWorkspaceMetrics) dashboardDefinition(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
 	if dashboardID != m.dashboardID {
 		return dashboarddefinition.Definition{}, nil, false
 	}
-	authored := reportdef.Dashboard{
+	authored := dashboardauthoring.Dashboard{
 		ID:            m.dashboardID,
 		Title:         m.title,
 		SemanticModel: "test",
@@ -216,11 +252,11 @@ func (fakeMetrics) ModelIDForDashboard(dashboardID string) string {
 	return ""
 }
 
-func (fakeMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
+func (fakeMetrics) dashboardDefinition(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
 	if dashboardID != "executive-sales" {
 		return dashboarddefinition.Definition{}, nil, false
 	}
-	authored := reportdef.Dashboard{
+	authored := dashboardauthoring.Dashboard{
 		ID:            "executive-sales",
 		Title:         "Executive Sales Dashboard",
 		SemanticModel: "test",
@@ -236,11 +272,11 @@ func (fakeMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *
 			},
 		},
 		FilterApplication: dashboardfilter.ApplicationPolicy{Mode: dashboardfilter.ApplicationImmediate},
-		Visuals: reportdef.MergeVisualizations(reportdef.ChartVisualizations(map[string]reportdef.Visual{
-			"orders":       {Title: "Orders", Type: "donut", Query: reportdef.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
-			"ops_pipeline": {Title: "Ops Pipeline", Type: "bar", Query: reportdef.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
-		}), reportdef.TabularVisualizations("table", map[string]reportdef.TableVisual{
-			"order_rows": {Title: "Orders", Query: reportdef.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, DefaultSort: dashboard.TableSort{Key: "order_id", Direction: "desc"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "measure", Format: "decimal"}}},
+		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
+			"orders":       {Title: "Orders", Type: "donut", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
+			"ops_pipeline": {Title: "Ops Pipeline", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
+		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
+			"order_rows": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id", "orders.revenue"}}, DefaultSort: dashboard.TableSort{Key: "order_id", Direction: "desc"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "measure", Format: "decimal"}}},
 		})),
 		Pages: fakeMetrics{}.Pages(dashboardID),
 	}
@@ -250,7 +286,7 @@ func (fakeMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				Source: "orders", PrimaryKey: "order_id", Grain: "order_id",
-				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Expr: "order_id", Type: "string"}, "status": {Expr: "status", Type: "string"}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Expr: "order_id", Type: "string"}, "status": {Expr: "status", Type: "string"}, "revenue": {Expr: "revenue", Type: "number"}},
 			},
 		},
 		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero", Label: "Orders"}},
@@ -259,7 +295,7 @@ func (fakeMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *
 }
 
 func (fakeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
-	_, model, ok := fakeMetrics{}.Report("executive-sales")
+	_, model, ok := fakeMetrics{}.dashboardDefinition("executive-sales")
 	if !ok || model.Name != modelID {
 		return nil, false
 	}
@@ -289,7 +325,7 @@ func (fakeMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query
 			Table:      request.Target,
 			Dimensions: dataFieldsToReportFields(request.Fields),
 			Measures:   dataFieldsToReportFields(request.Measures),
-			Time:       reportdef.QueryTime{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+			Time:       dashboardauthoring.QueryTime{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 			Filters:    dataFiltersToReportFilters(request.Filters),
 			Sort:       dataSortToReportSort(request.Sort),
 			Limit:      request.Limit,
@@ -375,23 +411,23 @@ func (fakeMetrics) ExplainSemanticPreview(_ string, request reportdef.RowQuery) 
 }
 
 func (fakeMetrics) mustSemanticModel() *semanticmodel.Model {
-	_, model, _ := fakeMetrics{}.Report("executive-sales")
+	_, model, _ := fakeMetrics{}.dashboardDefinition("executive-sales")
 	return model
 }
 
 func (fakeMetrics) DefaultFilters(_ string) dashboard.Filters {
-	definition, _, ok := (fakeMetrics{}).Report("executive-sales")
+	definition, _, ok := (fakeMetrics{}).dashboardDefinition("executive-sales")
 	if !ok {
 		return dashboard.Filters{}.WithDefaults()
 	}
 	return definition.DefaultFilters()
 }
 
-func pointInteraction(field, fact string, targets ...string) reportdef.Interaction {
-	return reportdef.Interaction{
-		PointSelection: reportdef.SelectionInteraction{
+func pointInteraction(field, fact string, targets ...string) dashboardauthoring.Interaction {
+	return dashboardauthoring.Interaction{
+		PointSelection: dashboardauthoring.SelectionInteraction{
 			Toggle: true,
-			Mappings: []reportdef.SelectionMapping{{
+			Mappings: []dashboardauthoring.SelectionMapping{{
 				Field: field,
 				Fact:  fact,
 				Value: "label",
@@ -409,8 +445,8 @@ func (fakeMetrics) NormalizeVisualizationWindow(_ string, request dashboard.Tabl
 	return request.WithDefaults()
 }
 
-func (fakeMetrics) VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool) {
-	report, _, ok := fakeMetrics{}.Report(dashboardID)
+func (fakeMetrics) visualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool) {
+	report, _, ok := fakeMetrics{}.dashboardDefinition(dashboardID)
 	if !ok {
 		return visualizationdefinition.Definition{}, false
 	}
@@ -437,10 +473,10 @@ func (fakeMetrics) Pages(dashboardID string) []dashboard.Page {
 				},
 			},
 			Visuals: []dashboard.PageVisual{
-				{ID: "header", Kind: "header", X: 0, Y: 0, Width: 100, Height: 40, Title: "Test"},
-				{ID: "state-filter", Kind: "slicer", Binding: dashboardfilter.BindingRef{Scope: dashboardfilter.ScopePage, ID: "state"}, Presentation: dashboardfilter.Presentation{Style: dashboardfilter.PresentationDropdown}, X: 0, Y: 42, Width: 100, Height: 32},
-				{ID: "orders-chart", Kind: "visual", Visual: "orders", X: 0, Y: 48, Width: 100, Height: 100},
-				{ID: "orders-table", Kind: "visual", Visual: "order_rows", X: 0, Y: 160, Width: 100, Height: 100},
+				{ID: "header", Kind: "header", X: 0, Y: 0, Width: 100, Height: 40, Title: "Test", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 12, RowSpan: 1}},
+				{ID: "state-filter", Kind: "slicer", Binding: dashboardfilter.BindingRef{Scope: dashboardfilter.ScopePage, ID: "state"}, Presentation: dashboardfilter.Presentation{Style: dashboardfilter.PresentationDropdown}, X: 0, Y: 42, Width: 100, Height: 32, Placement: dashboard.PagePlacement{Col: 1, Row: 2, ColSpan: 12, RowSpan: 2}},
+				{ID: "orders-chart", Kind: "visual", Visual: "orders", X: 0, Y: 48, Width: 100, Height: 100, Placement: dashboard.PagePlacement{Col: 1, Row: 3, ColSpan: 6, RowSpan: 4}},
+				{ID: "orders-table", Kind: "visual", Visual: "order_rows", X: 0, Y: 160, Width: 100, Height: 100, Placement: dashboard.PagePlacement{Col: 7, Row: 3, ColSpan: 6, RowSpan: 4}},
 			},
 		},
 		{
@@ -457,8 +493,8 @@ func (fakeMetrics) Pages(dashboardID string) []dashboard.Page {
 				},
 			},
 			Visuals: []dashboard.PageVisual{
-				{ID: "category-filter", Kind: "slicer", Binding: dashboardfilter.BindingRef{Scope: dashboardfilter.ScopePage, ID: "category"}, Presentation: dashboardfilter.Presentation{Style: dashboardfilter.PresentationInput}, X: 0, Y: 8, Width: 100, Height: 32},
-				{ID: "ops-pipeline-chart", Kind: "visual", Visual: "ops_pipeline", X: 0, Y: 48, Width: 100, Height: 100},
+				{ID: "category-filter", Kind: "slicer", Binding: dashboardfilter.BindingRef{Scope: dashboardfilter.ScopePage, ID: "category"}, Presentation: dashboardfilter.Presentation{Style: dashboardfilter.PresentationInput}, X: 0, Y: 8, Width: 100, Height: 32, Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 12, RowSpan: 2}},
+				{ID: "ops-pipeline-chart", Kind: "visual", Visual: "ops_pipeline", X: 0, Y: 48, Width: 100, Height: 100, Placement: dashboard.PagePlacement{Col: 1, Row: 2, ColSpan: 12, RowSpan: 4}},
 			},
 		},
 	}
@@ -473,14 +509,14 @@ func (fakeMetrics) QueryDashboardPage(_ context.Context, _ string, pageID string
 	if pageID == "operations" {
 		chartID = "ops_pipeline"
 	}
-	definition, _ := fakeMetrics{}.VisualizationDefinition("executive-sales", chartID)
+	definition, _ := fakeMetrics{}.visualizationDefinition("executive-sales", chartID)
 	envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
 	if err != nil {
 		return dashboard.Patch{}, err
 	}
 	visuals := map[string]visualizationir.VisualizationEnvelope{chartID: envelope}
 	if pageID == "" || pageID == "overview" {
-		definition, _ := fakeMetrics{}.VisualizationDefinition("executive-sales", "order_rows")
+		definition, _ := fakeMetrics{}.visualizationDefinition("executive-sales", "order_rows")
 		table, tableErr := fakeMetrics{}.queryWindow(context.Background(), "executive-sales", "overview", filters, dashboard.TableRequest{Table: "order_rows", Block: "a", Count: dashboard.TableChunkSize}.WithDefaults())
 		if tableErr != nil {
 			return dashboard.Patch{}, tableErr

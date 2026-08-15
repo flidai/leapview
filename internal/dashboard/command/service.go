@@ -7,6 +7,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/report"
 	"github.com/flidai/leapview/internal/dashboard/reportmodel"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
@@ -16,11 +17,20 @@ type Metrics interface {
 	NormalizeVisualizationWindow(dashboardID string, request dashboard.TableRequest) dashboard.TableRequest
 }
 
+func resolveDashboard(metrics Metrics, dashboardID string) (dashboardresolver.Resolved, bool) {
+	if metrics == nil || metrics.Resolver() == nil {
+		return dashboardresolver.Resolved{}, false
+	}
+	resolved, err := metrics.Resolver().Resolve(dashboardID)
+	return resolved, err == nil
+}
+
 func canonicalSpatialInteractionCommand(metrics Metrics, dashboardID string, filters dashboard.Filters, command dashboard.SpatialSelectionCommand) (dashboard.SpatialSelectionCommand, error) {
-	definition, model, ok := metrics.Report(dashboardID)
-	if !ok || model == nil {
+	resolved, ok := resolveDashboard(metrics, dashboardID)
+	if !ok || resolved.Model == nil {
 		return dashboard.SpatialSelectionCommand{}, fmt.Errorf("dashboard %q is not published", dashboardID)
 	}
+	definition, model := resolved.Definition, resolved.Model
 	source, ok := definition.Visualizations[command.VisualID]
 	if !ok {
 		return dashboard.SpatialSelectionCommand{}, fmt.Errorf("unknown source visual %q", command.VisualID)
@@ -117,10 +127,11 @@ type Request struct {
 }
 
 func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters dashboard.Filters, command dashboard.InteractionCommand) (dashboard.InteractionCommand, error) {
-	definition, model, ok := metrics.Report(dashboardID)
-	if !ok || model == nil {
+	resolved, ok := resolveDashboard(metrics, dashboardID)
+	if !ok || resolved.Model == nil {
 		return dashboard.InteractionCommand{}, fmt.Errorf("dashboard %q is not published", dashboardID)
 	}
+	definition, model := resolved.Definition, resolved.Model
 	wantKind := "point_selection"
 	var toggle bool
 	semanticMappingCount := 0
@@ -164,7 +175,7 @@ func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters da
 	if semanticMappingCount == 0 {
 		return dashboard.InteractionCommand{}, fmt.Errorf("%s %q has no semantic selection mappings", command.SourceKind, command.SourceID)
 	}
-	resolved, err := reportmodel.ResolveCompiledSelectionInteraction(&definition, model, command.SourceKind, command.SourceID)
+	interaction, err := reportmodel.ResolveCompiledSelectionInteraction(&definition, model, command.SourceKind, command.SourceID)
 	if err != nil {
 		return dashboard.InteractionCommand{}, err
 	}
@@ -181,7 +192,7 @@ func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters da
 		identities[index] = identity
 		incoming[identity] = mapping
 	}
-	canonical, err := resolved.CanonicalizeMappings(identities)
+	canonical, err := interaction.CanonicalizeMappings(identities)
 	if err != nil {
 		return dashboard.InteractionCommand{}, err
 	}

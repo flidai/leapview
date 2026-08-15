@@ -504,7 +504,7 @@ func (m auditedDashboardMetrics) QueryDashboardPage(ctx context.Context, dashboa
 	if err != nil {
 		return dashboard.Patch{}, err
 	}
-	definition, _ := m.VisualizationDefinition(dashboardID, "order_rows")
+	definition, _ := m.visualizationDefinition(dashboardID, "order_rows")
 	envelope, err := visualizationruntime.WindowEnvelopeFromDefinition(definition, table, 0, 0)
 	if err != nil {
 		return dashboard.Patch{}, err

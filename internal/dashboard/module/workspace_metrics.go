@@ -9,10 +9,9 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
@@ -66,13 +65,10 @@ func (m multiWorkspaceMetrics) ModelIDForDashboard(dashboardID string) string {
 	return ""
 }
 
-func (m multiWorkspaceMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
-	return dashboarddefinition.Definition{}, nil, false
-}
-
-func (m multiWorkspaceMetrics) VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool) {
-	return visualizationdefinition.Definition{}, false
-}
+// Resolver is intentionally unbound for the multi-workspace root. Callers
+// must select a workspace through MetricsForWorkspace before resolving a
+// dashboard.
+func (m multiWorkspaceMetrics) Resolver() dashboardresolver.Resolver { return nil }
 
 func (m multiWorkspaceMetrics) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
 	return nil, false
@@ -161,19 +157,9 @@ func (m *dynamicRuntimeMetrics) ModelIDForDashboard(dashboardID string) string {
 	return ""
 }
 
-func (m *dynamicRuntimeMetrics) Report(dashboardID string) (dashboarddefinition.Definition, *semanticmodel.Model, bool) {
-	if metrics := m.unboundMetrics(); metrics != nil {
-		return metrics.Report(dashboardID)
-	}
-	return dashboarddefinition.Definition{}, nil, false
-}
-
-func (m *dynamicRuntimeMetrics) VisualizationDefinition(dashboardID, visualID string) (visualizationdefinition.Definition, bool) {
-	if metrics := m.unboundMetrics(); metrics != nil {
-		return metrics.VisualizationDefinition(dashboardID, visualID)
-	}
-	return visualizationdefinition.Definition{}, false
-}
+// Resolver is intentionally unbound. Workspace composition must happen via
+// MetricsForWorkspace before a dashboard ID is resolved.
+func (m *dynamicRuntimeMetrics) Resolver() dashboardresolver.Resolver { return nil }
 
 func (m *dynamicRuntimeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
 	if metrics := m.unboundMetrics(); metrics != nil {

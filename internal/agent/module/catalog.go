@@ -19,6 +19,7 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	"github.com/flidai/leapview/internal/workspace"
 	productsearch "github.com/flidai/leapview/internal/workspace/search"
@@ -62,6 +63,14 @@ type CatalogConfig struct {
 	SkipAuthorization   bool
 	SignCursor          func(string, []byte) string
 	VerifyCursor        func(string, string) ([]byte, error)
+}
+
+func resolveDashboard(metrics queryruntime.Metrics, dashboardID string) (dashboardresolver.Resolved, bool) {
+	if metrics == nil || metrics.Resolver() == nil {
+		return dashboardresolver.Resolved{}, false
+	}
+	resolved, err := metrics.Resolver().Resolve(dashboardID)
+	return resolved, err == nil
 }
 
 func BuildCatalog(config CatalogConfig) agenttools.Catalog {
@@ -423,10 +432,11 @@ func (c CatalogService) childReferences(parent agenttools.CatalogRef, requested 
 		if !ok {
 			return nil, catalogNotFound()
 		}
-		report, _, ok := metrics.Report(dashboardID)
+		resolved, ok := resolveDashboard(metrics, dashboardID)
 		if !ok {
 			return nil, catalogNotFound()
 		}
+		report := resolved.Definition
 		page, ok := catalogPage(metrics.Pages(dashboardID), pageID)
 		if !ok {
 			return nil, catalogNotFound()
@@ -502,10 +512,11 @@ func (c CatalogService) details(ctx context.Context, scope agenttools.Scope, ref
 	}
 	switch ref.Type {
 	case agenttools.CatalogTypeDashboard:
-		report, _, ok := metrics.Report(ref.ID)
+		resolved, ok := resolveDashboard(metrics, ref.ID)
 		if !ok {
 			return nil, catalogNotFound()
 		}
+		report := resolved.Definition
 		return map[string]any{
 			"type":             string(ref.Type),
 			"semanticModelRef": catalogRefValue(ref.WorkspaceID, agenttools.CatalogTypeSemanticModel, report.SemanticModel),
@@ -518,10 +529,11 @@ func (c CatalogService) details(ctx context.Context, scope agenttools.Scope, ref
 		if !ok {
 			return nil, catalogNotFound()
 		}
-		report, _, ok := metrics.Report(dashboardID)
+		resolved, ok := resolveDashboard(metrics, dashboardID)
 		if !ok {
 			return nil, catalogNotFound()
 		}
+		report := resolved.Definition
 		page, ok := catalogPage(metrics.Pages(dashboardID), pageID)
 		if !ok {
 			return nil, catalogNotFound()
@@ -822,10 +834,11 @@ func catalogVisualDetails(metrics queryruntime.Metrics, ref agenttools.CatalogRe
 	if !ok || (location.DashboardID != "" && location.DashboardID != dashboardID) {
 		return nil, catalogNotFound()
 	}
-	report, _, ok := metrics.Report(dashboardID)
+	resolved, ok := resolveDashboard(metrics, dashboardID)
 	if !ok {
 		return nil, catalogNotFound()
 	}
+	report := resolved.Definition
 	page, ok := catalogPage(metrics.Pages(dashboardID), location.PageID)
 	if !ok {
 		return nil, catalogNotFound()
@@ -865,10 +878,11 @@ func catalogFilterDetails(metrics queryruntime.Metrics, ref agenttools.CatalogRe
 	if !ok || (location.DashboardID != "" && location.DashboardID != dashboardID) {
 		return nil, catalogNotFound()
 	}
-	report, _, ok := metrics.Report(dashboardID)
+	resolved, ok := resolveDashboard(metrics, dashboardID)
 	if !ok {
 		return nil, catalogNotFound()
 	}
+	report := resolved.Definition
 	filter, exists := report.FilterDefinitions[filterID]
 	if !exists {
 		return nil, catalogNotFound()
@@ -1111,11 +1125,11 @@ func catalogSemanticTableRoles(model *semanticmodel.Model, tableID string) []str
 func catalogDashboardsForModel(metrics queryruntime.Metrics, modelID string) []string {
 	dashboardIDs := make([]string, 0)
 	for _, summary := range metrics.Catalog().Dashboards {
-		report, model, ok := metrics.Report(summary.ID)
-		if !ok || (report.SemanticModel != modelID && (model == nil || model.Name != modelID)) {
+		resolved, ok := resolveDashboard(metrics, summary.ID)
+		if !ok || (resolved.Definition.SemanticModel != modelID && (resolved.Model == nil || resolved.Model.Name != modelID)) {
 			continue
 		}
-		dashboardIDs = append(dashboardIDs, report.ID)
+		dashboardIDs = append(dashboardIDs, resolved.Definition.ID)
 	}
 	sort.Strings(dashboardIDs)
 	return dashboardIDs
