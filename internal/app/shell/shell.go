@@ -37,7 +37,6 @@ type AdminNavigationAccess struct {
 	ManageWorkspace    bool
 	ManagePublications bool
 	ViewAudit          bool
-	ViewConnections    bool
 }
 
 type Chrome struct {
@@ -45,23 +44,33 @@ type Chrome struct {
 }
 
 type Sidebar struct {
-	Active         string   `json:"active"`
-	Admin          bool     `json:"admin,omitempty"`
-	Compact        bool     `json:"compact"`
-	DashboardID    *string  `json:"dashboardId,omitempty"`
-	DashboardTitle string   `json:"dashboardTitle"`
-	Groups         []Group  `json:"groups"`
-	History        *History `json:"history,omitempty"`
-	ModelID        *string  `json:"modelId,omitempty"`
-	ModelTitle     *string  `json:"modelTitle,omitempty"`
-	PageTitle      string   `json:"pageTitle"`
-	PrimaryAction  *Action  `json:"primaryAction,omitempty"`
-	ProductLogoURL *string  `json:"productLogoUrl,omitempty"`
-	ProductName    string   `json:"productName"`
-	UserAvatarURL  *string  `json:"userAvatarUrl,omitempty"`
-	UserName       *string  `json:"userName,omitempty"`
-	UserRole       *string  `json:"userRole,omitempty"`
-	WorkspaceTitle string   `json:"workspaceTitle"`
+	Active           string   `json:"active"`
+	Admin            bool     `json:"admin,omitempty"`
+	Area             string   `json:"area,omitempty"`
+	Areas            []Area   `json:"areas,omitempty"`
+	Compact          bool     `json:"compact"`
+	DashboardID      *string  `json:"dashboardId,omitempty"`
+	DashboardTitle   string   `json:"dashboardTitle"`
+	Groups           []Group  `json:"groups"`
+	History          *History `json:"history,omitempty"`
+	ModelID          *string  `json:"modelId,omitempty"`
+	ModelTitle       *string  `json:"modelTitle,omitempty"`
+	PageTitle        string   `json:"pageTitle"`
+	PrimaryAction    *Action  `json:"primaryAction,omitempty"`
+	ProductLogoURL   *string  `json:"productLogoUrl,omitempty"`
+	ProductName      string   `json:"productName"`
+	UserAvatarURL    *string  `json:"userAvatarUrl,omitempty"`
+	UserName         *string  `json:"userName,omitempty"`
+	UserRole         *string  `json:"userRole,omitempty"`
+	UserSettingsHref string   `json:"userSettingsHref"`
+	WorkspaceTitle   string   `json:"workspaceTitle"`
+}
+
+type Area struct {
+	Href  string `json:"href"`
+	Icon  string `json:"icon"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 type Action struct {
@@ -100,27 +109,32 @@ type HistoryItem struct {
 
 func Provider(config Config) webpage.Provider {
 	return func(context webpage.Context) webpage.Layout {
-		isAdmin := context.Active == "admin" || context.Active == "connections"
-		navigation := []Group{{Label: "Navigation", Items: globalNavigation()}}
+		isAdmin := context.Active == "admin"
+		area := areaForActive(context.Active)
+		navigation := areaNavigation(area)
 		if isAdmin {
 			navigation = adminNavigation(config.AdminAccess)
+			area = ""
 		}
 		sidebarActive := context.Active
 		if isAdmin {
 			sidebarActive = firstNonEmpty(context.PageID, context.Active)
 		}
 		sidebar := Sidebar{
-			Active: sidebarActive, Admin: isAdmin, Compact: context.Compact,
+			Active: sidebarActive, Admin: isAdmin, Area: area, Compact: context.Compact,
 			DashboardID: optional(context.SectionID), DashboardTitle: context.SectionTitle,
 			ModelID: optional(context.RelatedID), ModelTitle: optional(context.RelatedTitle),
 			PageTitle: context.PageTitle, ProductLogoURL: optional(config.ProductLogoURL), ProductName: firstNonEmpty(config.Presentation.ProductName, "LeapView"),
 			UserAvatarURL: optional(config.UserAvatarURL), UserName: optional(config.UserName), UserRole: optional(config.RoleLabel),
-			WorkspaceTitle: firstNonEmpty(context.ScopeTitle, context.ScopeID, config.Presentation.ProductName),
-			Groups:         navigation,
+			UserSettingsHref: "/admin/profile", WorkspaceTitle: firstNonEmpty(context.ScopeTitle, context.ScopeID, config.Presentation.ProductName),
+			Groups: navigation,
 		}
 		if isAdmin {
 			sidebar.PrimaryAction = &Action{Label: "Back to app", Href: "/", Icon: "back"}
 		} else {
+			sidebar.Areas = productAreas()
+		}
+		if area == "insights" {
 			sidebar.PrimaryAction = &Action{Label: "New chat", Href: "/chats/new", Icon: "plus"}
 			sidebar.History = &History{
 				Label: "Chats", EmptyText: optional("No chats yet."),
@@ -140,21 +154,52 @@ func Provider(config Config) webpage.Provider {
 	}
 }
 
-func globalNavigation() []Item {
+func productAreas() []Area {
+	return []Area{
+		{ID: "insights", Label: "Insights", Href: "/", Icon: "insights"},
+		{ID: "develop", Label: "Develop", Href: "/workspaces", Icon: "code"},
+	}
+}
+
+func areaForActive(active string) string {
+	switch strings.TrimSpace(active) {
+	case "workspaces", "connections", "pipelines", "develop":
+		return "develop"
+	default:
+		return "insights"
+	}
+}
+
+func areaNavigation(area string) []Group {
+	items := insightsNavigation()
+	label := "Insights"
+	if area == "develop" {
+		items = developNavigation()
+		label = "Develop"
+	}
+	return []Group{{Label: label, Items: items}}
+}
+
+func insightsNavigation() []Item {
 	return []Item{
 		{ID: "dashboards", Label: "Dashboards", Href: "/", Icon: "dashboard", Meta: optional("Reports")},
-		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow", Meta: optional("Refresh monitoring")},
+		{ID: "data", Label: "Explore", Href: "/data", Icon: "cache", Meta: optional("Ad hoc analysis")},
 		{ID: "chat", Label: "Chats", Href: "/chats", Icon: "chat", Meta: optional("Agent interface")},
+	}
+}
+
+func developNavigation() []Item {
+	return []Item{
 		{ID: "workspaces", Label: "Workspaces", Href: "/workspaces", Icon: "catalog", Meta: optional("Published assets")},
-		{ID: "data", Label: "Data", Href: "/data", Icon: "cache", Meta: optional("Inspect rows")},
-		{ID: "admin", Label: "Admin", Href: "/admin/profile", Icon: "settings", Meta: optional("Product administration")},
+		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow", Meta: optional("Refresh monitoring")},
+		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data", Meta: optional("Data sources")},
 	}
 }
 
 func adminNavigation(access *AdminNavigationAccess) []Group {
 	allowed := AdminNavigationAccess{
 		ManagePlatform: true, ManageGrants: true, ManageWorkspace: true,
-		ManagePublications: true, ViewAudit: true, ViewConnections: true,
+		ManagePublications: true, ViewAudit: true,
 	}
 	if access != nil {
 		allowed = *access
@@ -187,7 +232,6 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 		{
 			Label: "Data & sharing",
 			Items: filterItems([]conditionalItem{
-				{allowed: allowed.ViewConnections, item: Item{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "storage", Label: "Storage", Href: "/admin/storage", Icon: "database"}},
 				{allowed: allowed.ManagePublications, item: Item{ID: "publications", Label: "Publications", Href: "/admin/publications", Icon: "globe"}},
 			}),

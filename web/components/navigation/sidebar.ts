@@ -4,6 +4,8 @@ import {
 	Activity,
 	ArrowLeft,
 	Bot,
+	ChartNoAxesCombined,
+	Code2,
 	Database,
 	Globe,
 	History,
@@ -45,9 +47,18 @@ type NavGroup = {
   items: NavItem[]
 }
 
+type SidebarArea = {
+  id: string
+  label: string
+  href: string
+  icon: string
+}
+
 type SidebarConfig = {
   active: string
   admin?: boolean
+  area?: string
+  areas?: SidebarArea[]
   productLogoUrl?: string
   productName?: string
   workspaceTitle?: string
@@ -62,6 +73,7 @@ type SidebarConfig = {
   history?: SidebarHistory
   userAvatarUrl?: string
   userName?: string
+  userSettingsHref?: string
   groups: NavGroup[]
 }
 
@@ -100,6 +112,7 @@ type IconName =
   | 'chat'
   | 'globe'
   | 'history'
+  | 'insights'
   | 'model'
   | 'data'
   | 'cache'
@@ -114,11 +127,18 @@ type IconName =
   | 'expand'
   | 'menu'
   | 'close'
+  | 'code'
   | 'plus'
   | 'workflow'
 
 const defaultConfig: SidebarConfig = {
   active: 'dashboards',
+  area: 'insights',
+  areas: [
+    { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
+    { id: 'develop', label: 'Develop', href: '/workspaces', icon: 'code' },
+  ],
+  userSettingsHref: '/admin/profile',
   workspaceTitle: 'LeapView Workspace',
   groups: [
     { label: 'Workspace', items: [{ id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' }] },
@@ -282,6 +302,59 @@ class LeapViewSidebar extends LitElement {
       gap: var(--base-size-12);
     }
 
+		.area-switcher {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: var(--base-size-2);
+			border: 0;
+			border-radius: var(--lv-radius-default);
+			background: transparent;
+			padding: 0;
+    }
+
+    .area-item {
+      display: grid;
+      min-width: 0;
+      min-height: var(--control-small-size);
+      grid-template-columns: var(--control-xsmall-size) minmax(0, 1fr);
+      align-items: center;
+      justify-content: center;
+      gap: var(--base-size-4);
+      border-radius: calc(var(--lv-radius-default) - var(--base-size-2));
+      color: var(--lv-fg-muted);
+      padding: 0 var(--base-size-6);
+      text-decoration: none;
+      font: var(--lv-type-body-compact);
+    }
+
+    .area-item:hover,
+    .area-item:focus-visible {
+      background: var(--control-bgColor-hover);
+      color: var(--lv-fg-default);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+		.area-item[aria-current='page'] {
+			background: var(--control-bgColor-hover);
+			box-shadow: none;
+			color: var(--lv-fg-default);
+			font-weight: var(--base-text-weight-medium);
+    }
+
+    .area-icon {
+      display: grid;
+      width: var(--control-xsmall-size);
+      height: var(--control-xsmall-size);
+      place-items: center;
+    }
+
+    .area-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .brand-back {
       position: relative;
       box-sizing: border-box;
@@ -391,7 +464,9 @@ class LeapViewSidebar extends LitElement {
     .mobile-menu-button,
     .mobile-close-button,
     .mobile-backdrop,
-    .mobile-drawer-header {
+    .mobile-drawer-header,
+    .mobile-area-switcher,
+    .mobile-footer {
       display: none;
     }
 
@@ -670,17 +745,29 @@ class LeapViewSidebar extends LitElement {
 
     .user-card {
       display: grid;
-      grid-template-columns: var(--control-small-size) minmax(0, 1fr);
+      grid-template-columns: var(--control-small-size) minmax(0, 1fr) var(--control-xsmall-size);
       min-height: calc(var(--control-medium-size) + var(--base-size-2));
       align-items: center;
       gap: var(--base-size-8);
       border-radius: var(--lv-radius-default);
       color: var(--lv-fg-default);
       padding: 0 var(--control-xsmall-paddingInline-normal);
+      text-decoration: none;
     }
 
-    .user-card:hover {
+    .user-card:hover,
+    .user-card:focus-visible {
       background: var(--control-bgColor-hover);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+    .user-settings-icon {
+      display: grid;
+      width: var(--control-xsmall-size);
+      height: var(--control-xsmall-size);
+      place-items: center;
+      color: var(--lv-fg-muted);
     }
 
     .user-text {
@@ -724,6 +811,26 @@ class LeapViewSidebar extends LitElement {
     :host([data-collapsed]) .nav-text,
     :host([data-collapsed]) .history,
     :host([data-collapsed]) .user-text {
+      display: none;
+    }
+
+    :host([data-collapsed]) .user-settings-icon {
+      display: none;
+    }
+
+    :host([data-collapsed]) .area-switcher:not(.mobile-area-switcher) {
+      display: none;
+    }
+
+    :host([data-collapsed]) .area-item {
+      width: var(--base-size-36);
+      min-height: var(--base-size-36);
+      grid-template-columns: 1fr;
+      justify-items: center;
+      padding: 0;
+    }
+
+    :host([data-collapsed]) .area-label {
       display: none;
     }
 
@@ -876,10 +983,10 @@ class LeapViewSidebar extends LitElement {
         bottom: 0;
         left: 0;
         box-sizing: border-box;
-        display: grid;
+        display: flex;
+        flex-direction: column;
         width: min(20rem, calc(100vw - var(--base-size-32)));
         min-height: 100svh;
-        align-content: start;
         overflow-y: auto;
         overscroll-behavior: contain;
         border: 0;
@@ -913,6 +1020,31 @@ class LeapViewSidebar extends LitElement {
         margin-bottom: var(--base-size-8);
         border-bottom: var(--lv-border-muted);
         padding-bottom: var(--base-size-8);
+      }
+
+			.area-switcher,
+			:host([data-collapsed]) .area-switcher {
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				justify-items: stretch;
+				margin-bottom: var(--base-size-8);
+				border: 0;
+				background: transparent;
+				padding: 0;
+			}
+
+      .area-item,
+      :host([data-collapsed]) .area-item {
+        width: auto;
+        min-height: var(--control-small-size);
+        grid-template-columns: var(--control-xsmall-size) minmax(0, auto);
+        justify-items: stretch;
+        padding: 0 var(--base-size-6);
+      }
+
+      .area-label,
+      :host([data-collapsed]) .area-label {
+        display: block;
       }
 
       .mobile-drawer-title {
@@ -959,6 +1091,13 @@ class LeapViewSidebar extends LitElement {
       .footer {
         display: none;
       }
+
+      .mobile-footer {
+        display: grid;
+        margin-top: auto;
+        border-top: var(--lv-border-muted);
+        padding-top: var(--base-size-8);
+      }
     }
 
   `
@@ -993,6 +1132,8 @@ class LeapViewSidebar extends LitElement {
 
   protected updated(): void {
     this.toggleAttribute('data-admin', Boolean(this.config.admin))
+    if (this.config.area) this.setAttribute('data-area', this.config.area)
+    else this.removeAttribute('data-area')
     this.syncCollapsedState()
   }
 
@@ -1052,8 +1193,6 @@ class LeapViewSidebar extends LitElement {
     const collapsed = this.effectiveCollapsed
     const mobileNavigationClosed = this.isMobileViewport && !this.mobileOpen
     const groups = this.filteredGroups()
-    const userName = this.config.userName?.trim() || 'Local user'
-    const userAvatarUrl = this.liveUserAvatarUrl ?? this.config.userAvatarUrl?.trim()
     const productName = this.config.productName?.trim() || leapViewBrandName
     const productLogoUrl = this.config.productLogoUrl?.trim()
     const hasCustomIdentity = productName !== leapViewBrandName || Boolean(productLogoUrl)
@@ -1109,6 +1248,7 @@ class LeapViewSidebar extends LitElement {
               </button>
             `}
           </div>
+          ${this.config.admin ? null : this.renderAreaSwitcher()}
           ${this.config.admin ? this.renderSearch() : null}
         </header>
 
@@ -1159,6 +1299,7 @@ class LeapViewSidebar extends LitElement {
               ${icon('close')}
             </button>
           </div>
+          ${this.config.admin ? null : this.renderAreaSwitcher(true)}
           ${this.config.admin ? this.renderSearch(true) : null}
           ${this.config.primaryAction && !this.config.admin ? html`
             <section class="nav-group primary-action" aria-label=${this.config.primaryAction.label}>
@@ -1172,21 +1313,16 @@ class LeapViewSidebar extends LitElement {
           ` : null}
           ${groups.length > 0 ? groups.map((group) => html`
             <section class="nav-group" aria-label=${group.label}>
-              <strong class="nav-group-label">${group.label}</strong>
+              ${this.config.admin ? html`<strong class="nav-group-label">${group.label}</strong>` : null}
               ${group.items.map((item) => item.disabled ? this.renderDisabledItem(item) : this.renderLink(item))}
             </section>
           `) : this.config.admin ? html`<p class="search-empty">No matching pages</p>` : null}
           ${this.renderHistory()}
+          ${this.config.admin ? null : html`<div class="mobile-footer">${this.renderUserCard()}</div>`}
         </nav>
 
         <footer class="footer">
-          <div class="user-card" title=${userName}>
-            <lv-user-avatar .name=${userName} .imageUrl=${userAvatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>
-            <span class="user-text">
-              <strong class="user-name">${userName}</strong>
-              <span class="user-role">${this.config.userRole ?? 'Local workspace'}</span>
-            </span>
-          </div>
+          ${this.renderUserCard()}
         </footer>
       </aside>
     `
@@ -1301,6 +1437,75 @@ class LeapViewSidebar extends LitElement {
     this.searchQuery = (event.target as HTMLInputElement).value
   }
 
+  private renderAreaSwitcher(mobile = false) {
+    const areas = Array.isArray(this.config.areas) ? this.config.areas : []
+    if (areas.length < 2) return null
+    return html`
+      <div class=${mobile ? 'area-switcher mobile-area-switcher' : 'area-switcher'} role="group" aria-label="Product area">
+        ${areas.map((area) => {
+          const current = area.id === this.config.area
+          const href = this.areaHref(area, current)
+          return html`
+            <a
+              class="area-item"
+              href=${href}
+              aria-current=${current ? 'page' : 'false'}
+              aria-label=${area.label}
+              title=${area.label}
+              @click=${(event: MouseEvent) => this.followInternalLink(event, href)}
+            >
+              <span class="area-icon" aria-hidden="true">${icon(area.icon)}</span>
+              <span class="area-label">${area.label}</span>
+            </a>
+          `
+        })}
+      </div>
+    `
+  }
+
+  private renderUserCard() {
+    const userName = this.config.userName?.trim() || 'Local user'
+    const userAvatarUrl = this.liveUserAvatarUrl ?? this.config.userAvatarUrl?.trim()
+    const href = this.config.userSettingsHref || '/admin/profile'
+    return html`
+      <a
+        class="user-card"
+        href=${href}
+        aria-label=${`Open settings for ${userName}`}
+        title=${userName}
+        @click=${(event: MouseEvent) => this.followInternalLink(event, href)}
+      >
+        <lv-user-avatar .name=${userName} .imageUrl=${userAvatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>
+        <span class="user-text">
+          <strong class="user-name">${userName}</strong>
+          <span class="user-role">${this.config.userRole ?? 'Local workspace'}</span>
+        </span>
+        <span class="user-settings-icon" aria-hidden="true">${icon('settings')}</span>
+      </a>
+    `
+  }
+
+  private areaHref(area: SidebarArea, current: boolean): string {
+    if (current && typeof window !== 'undefined') return `${window.location.pathname}${window.location.search}${window.location.hash}`
+    try {
+      const stored = localStorage.getItem(areaStorageKey(area.id))
+      if (stored && stored.startsWith('/') && !stored.startsWith('//')) return stored
+    } catch {
+      // Storage is an enhancement; canonical area roots remain usable without it.
+    }
+    return area.href
+  }
+
+  private rememberCurrentArea(): void {
+    const area = this.config.area?.trim()
+    if (!area || this.config.admin || typeof window === 'undefined') return
+    try {
+      localStorage.setItem(areaStorageKey(area), `${window.location.pathname}${window.location.search}${window.location.hash}`)
+    } catch {
+      // Ignore storage failures; the link still follows the canonical area root.
+    }
+  }
+
   private filteredGroups(): NavGroup[] {
     if (!this.config.admin || !this.searchQuery.trim()) return this.config.groups
     const query = this.searchQuery.trim().toLocaleLowerCase()
@@ -1362,8 +1567,13 @@ class LeapViewSidebar extends LitElement {
   private followInternalLink(event: MouseEvent, href: string): void {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     const target = new URL(href, window.location.href)
-    if (target.origin !== window.location.origin || target.href === window.location.href) return
+    if (target.origin !== window.location.origin) return
+    if (target.href === window.location.href) {
+      event.preventDefault()
+      return
+    }
     event.preventDefault()
+    this.rememberCurrentArea()
     this.closeMobileNavigation()
     window.location.assign(target.href)
   }
@@ -1378,9 +1588,11 @@ function icon(name: string) {
     database: Database,
     globe: Globe,
     history: History,
+    insights: ChartNoAxesCombined,
     model: Database,
     data: Plug,
     cache: TableProperties,
+    code: Code2,
     settings: Settings,
     system: Monitor,
     activity: Activity,
@@ -1398,6 +1610,10 @@ function icon(name: string) {
   }
 
   return lucideIcon(icons[name as IconName] ?? Layers)
+}
+
+function areaStorageKey(area: string): string {
+  return `leapview-area-last-${area}`
 }
 
 function storedCollapsed(fallback = false): boolean {

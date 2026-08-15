@@ -644,7 +644,7 @@ func TestWorkspaceListUsesActiveDeploymentCatalogMetadata(t *testing.T) {
 	}
 }
 
-func TestWorkspaceListPageDoesNotRenderWorkspaceScopedChat(t *testing.T) {
+func TestWorkspaceListPageUsesDevelopNavigationWithoutChat(t *testing.T) {
 	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
@@ -665,8 +665,18 @@ func TestWorkspaceListPageDoesNotRenderWorkspaceScopedChat(t *testing.T) {
 			t.Fatalf("workspace list rendered workspace-scoped chat %q:\n%s", notWant, rec.Body.String())
 		}
 	}
-	if !strings.Contains(rendered, `"id":"chat"`) || !strings.Contains(rendered, `"href":"/chats"`) {
-		t.Fatalf("workspace list did not render global chat navigation:\n%s", rec.Body.String())
+	for _, notWant := range []string{`"id":"chat"`, `"href":"/chats"`, `"history":`, `"primaryAction":`} {
+		if strings.Contains(rendered, notWant) {
+			t.Fatalf("workspace list rendered Insights navigation %q:\n%s", notWant, rec.Body.String())
+		}
+	}
+	for _, want := range []string{`"area":"develop"`, `"label":"Develop"`, `"id":"workspaces"`, `"id":"pipelines"`, `"id":"connections"`} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("workspace list did not render Develop navigation %q:\n%s", want, rec.Body.String())
+		}
+	}
+	if strings.Contains(rendered, `"id":"data"`) {
+		t.Fatalf("workspace list rendered Insights Explore navigation:\n%s", rec.Body.String())
 	}
 	if !strings.Contains(rendered, `"workspaceTitle":"LeapView"`) {
 		t.Fatalf("workspace list did not render global app chrome:\n%s", rec.Body.String())
