@@ -757,9 +757,11 @@ test('sidebar switches between Insights and Develop and remembers the last area 
     expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
     expect(developState.visibleAreaSwitcherCount).toBe(1)
     expect(developState.currentAreaClickPrevented).toBe(true)
-    expect(developState.switcherStyle).toEqual({ borderTopWidth: '0px', backgroundColor: 'rgba(0, 0, 0, 0)' })
+    expect(developState.switcherStyle).toEqual({ display: 'flex', borderTopWidth: '0px', backgroundColor: 'rgba(0, 0, 0, 0)' })
     expect(developState.currentAreaStyle.boxShadow).toBe('none')
-    expect(developState.currentAreaStyle.backgroundColor).not.toBe(developState.switcherStyle.backgroundColor)
+    expect(developState.currentAreaStyle.backgroundColor).toBe(developState.switcherStyle.backgroundColor)
+    expect(developState.currentAreaStyle.borderBottomColor).not.toBe(developState.otherAreaStyle.borderBottomColor)
+    expect(developState.areaIconDisplay).toBe('none')
 
     await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
@@ -1176,12 +1178,17 @@ async function sidebarAreaState(page: import('@playwright/test').Page) {
       })(),
       switcherStyle: (() => {
         const style = getComputedStyle(root.querySelector('.brand .area-switcher') as HTMLElement)
-        return { borderTopWidth: style.borderTopWidth, backgroundColor: style.backgroundColor }
+        return { display: style.display, borderTopWidth: style.borderTopWidth, backgroundColor: style.backgroundColor }
       })(),
       currentAreaStyle: (() => {
         const style = getComputedStyle(root.querySelector('.brand .area-item[aria-current="page"]') as HTMLElement)
-        return { backgroundColor: style.backgroundColor, boxShadow: style.boxShadow }
+        return { backgroundColor: style.backgroundColor, borderBottomColor: style.borderBottomColor, boxShadow: style.boxShadow }
       })(),
+      otherAreaStyle: (() => {
+        const style = getComputedStyle(root.querySelector('.brand .area-item[aria-current="false"]') as HTMLElement)
+        return { borderBottomColor: style.borderBottomColor }
+      })(),
+      areaIconDisplay: getComputedStyle(root.querySelector('.brand .area-icon') as HTMLElement).display,
     }
   })
 }
