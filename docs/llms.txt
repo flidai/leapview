@@ -232,14 +232,12 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Architecture overview](/docs/architecture): See how the monolith, contracts, storage, and browser components fit together.
 - [Runtime architecture](/docs/architecture/runtime): Follow routing, query execution, and streamed UI updates.
-- [Incremental project reconciliation decision](/docs/architecture/incremental-reconciliation): Review the measurements and gate for preserving atomic whole-project compilation.
 - [GitHub-hosted CI](/docs/architecture/github-hosted-ci): Understand LeapView's ephemeral runners, bounded caches, and portable validation contract.
 - [Storage architecture](/docs/storage-architecture): Understand DuckLake, DuckDB, snapshots, and serving pointers.
 - [Datastar signal flow](/docs/architecture/datastar): Understand server-owned state and SSE response contracts.
 - [Filter and slicer target architecture](/docs/architecture/filters-slicers): Understand semantic filter definitions, scoped bindings, canonical state, pane controls, slicers, and governed option queries.
 - [Visualization architecture](/docs/architecture/visual-plugins): Understand the visualization IR, generated contracts, runtime data states, and renderer adapters.
-- [Geographic rendering decision](/docs/architecture/geographic-rendering): Understand why MapLibre exclusively owns built-in geographic rendering.
-- [Infisical Go SDK decision](/docs/architecture/infisical-go-sdk): Understand why LeapView retains its narrow Infisical resolver for SDK v0.8.0.
+- [Geographic rendering](/docs/architecture/geographic-rendering): Understand the MapLibre runtime boundary and geographic product guarantees.
 
 #### Contributing
 

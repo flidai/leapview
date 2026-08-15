@@ -494,11 +494,6 @@ sections:
             type: explanation
             summary: Follow routing, query execution, and streamed UI updates.
             source: articles/architecture/runtime.md
-          - slug: architecture/incremental-reconciliation
-            title: Incremental project reconciliation decision
-            type: explanation
-            summary: Review the measurements and gate for preserving atomic whole-project compilation.
-            source: articles/architecture/incremental-reconciliation.md
           - slug: architecture/github-hosted-ci
             title: GitHub-hosted CI
             type: explanation
@@ -525,15 +520,10 @@ sections:
             summary: Understand the visualization IR, generated contracts, runtime data states, and renderer adapters.
             source: articles/architecture/visual-plugins.md
           - slug: architecture/geographic-rendering
-            title: Geographic rendering decision
+            title: Geographic rendering
             type: explanation
-            summary: Understand why MapLibre exclusively owns built-in geographic rendering.
+            summary: Understand the MapLibre runtime boundary and geographic product guarantees.
             source: articles/architecture/geographic-rendering.md
-          - slug: architecture/infisical-go-sdk
-            title: Infisical Go SDK decision
-            type: explanation
-            summary: Understand why LeapView retains its narrow Infisical resolver for SDK v0.8.0.
-            source: articles/architecture/infisical-go-sdk.md
       - id: contributing
         title: Contributing
         summary: Develop LeapView and extend its generated contracts safely.

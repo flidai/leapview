@@ -7,9 +7,11 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -2318,15 +2320,93 @@ func TestProductionContainerContractExists(t *testing.T) {
 	}
 }
 
-func TestGeographicRendererDecisionIsExplicitAndNavigable(t *testing.T) {
+func TestArchitectureDecisionLogIsWellFormed(t *testing.T) {
 	root := repoRoot(t)
-	decision, err := os.ReadFile(filepath.Join(root, "docs", "articles", "architecture", "geographic-rendering.md"))
+	adrRoot := filepath.Join(root, "adr")
+	indexBody, err := os.ReadFile(filepath.Join(adrRoot, "README.md"))
+	if err != nil {
+		t.Fatalf("read ADR index: %v", err)
+	}
+	index := string(indexBody)
+	if !strings.Contains(index, "# Architecture decision records") {
+		t.Fatal("ADR index is missing its canonical heading")
+	}
+	if _, err := os.Stat(filepath.Join(adrRoot, "template.md")); err != nil {
+		t.Fatalf("ADR template is unavailable: %v", err)
+	}
+
+	paths, err := filepath.Glob(filepath.Join(adrRoot, "[0-9][0-9][0-9][0-9]-*.md"))
+	if err != nil {
+		t.Fatalf("glob ADRs: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("ADR log contains no numbered decisions")
+	}
+	namePattern := regexp.MustCompile(`^([0-9]{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$`)
+	statusPattern := regexp.MustCompile(`(?m)^Status: (proposed|accepted|rejected|deprecated|superseded)$`)
+	datePattern := regexp.MustCompile(`(?m)^Decision date: ([0-9]{4}-[0-9]{2}-[0-9]{2})$`)
+	implementationPattern := regexp.MustCompile(`(?m)^Implementation: \S.*$`)
+	seenIDs := make(map[string]string, len(paths))
+	for _, path := range paths {
+		name := filepath.Base(path)
+		match := namePattern.FindStringSubmatch(name)
+		if match == nil {
+			t.Fatalf("ADR filename %q does not use NNNN-descriptive-name.md", name)
+		}
+		id := match[1]
+		if prior, exists := seenIDs[id]; exists {
+			t.Fatalf("ADR ID %s is reused by %s and %s", id, prior, name)
+		}
+		seenIDs[id] = name
+
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read ADR %s: %v", name, readErr)
+		}
+		text := string(body)
+		for _, want := range []string{
+			"# ADR-" + id + ": ",
+			"\n## Confirmation\n",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("ADR %s missing %q", name, want)
+			}
+		}
+		if !statusPattern.MatchString(text) {
+			t.Fatalf("ADR %s has a missing or unsupported decision status", name)
+		}
+		dateMatch := datePattern.FindStringSubmatch(text)
+		if dateMatch == nil {
+			t.Fatalf("ADR %s has no YYYY-MM-DD decision date", name)
+		}
+		if _, parseErr := time.Parse("2006-01-02", dateMatch[1]); parseErr != nil {
+			t.Fatalf("ADR %s has invalid decision date %q: %v", name, dateMatch[1], parseErr)
+		}
+		if !implementationPattern.MatchString(text) {
+			t.Fatalf("ADR %s has no implementation status", name)
+		}
+		if !strings.Contains(index, "]("+name+")") {
+			t.Fatalf("ADR %s is missing from adr/README.md", name)
+		}
+	}
+
+	indexedPattern := regexp.MustCompile(`\]\(([0-9]{4}-[a-z0-9]+(?:-[a-z0-9]+)*\.md)\)`)
+	for _, match := range indexedPattern.FindAllStringSubmatch(index, -1) {
+		if _, err := os.Stat(filepath.Join(adrRoot, match[1])); err != nil {
+			t.Fatalf("ADR index links unavailable decision %s: %v", match[1], err)
+		}
+	}
+}
+
+func TestGeographicRendererDecisionAndDocumentationStayAligned(t *testing.T) {
+	root := repoRoot(t)
+	decision, err := os.ReadFile(filepath.Join(root, "adr", "0002-use-maplibre-for-geographic-rendering.md"))
 	if err != nil {
 		t.Fatalf("read geographic rendering decision: %v", err)
 	}
 	text := string(decision)
 	for _, want := range []string{
-		"# Geographic rendering decision",
+		"# ADR-0002: Use MapLibre for geographic rendering",
 		"Status: accepted",
 		"MapLibre is the sole geographic renderer",
 		"ECharts `geo`",
@@ -2339,12 +2419,29 @@ func TestGeographicRendererDecisionIsExplicitAndNavigable(t *testing.T) {
 			t.Fatalf("geographic rendering decision missing %q", want)
 		}
 	}
+	article, err := os.ReadFile(filepath.Join(root, "docs", "articles", "architecture", "geographic-rendering.md"))
+	if err != nil {
+		t.Fatalf("read geographic rendering documentation: %v", err)
+	}
+	articleText := string(article)
+	for _, want := range []string{
+		"# Geographic rendering",
+		"MapLibre is the sole geographic renderer",
+		"ECharts `geo`",
+		"same-origin",
+		"spatial-windowed queries",
+		"accessible tabular equivalent",
+	} {
+		if !strings.Contains(articleText, want) {
+			t.Fatalf("geographic rendering documentation missing %q", want)
+		}
+	}
 	navigation, err := os.ReadFile(filepath.Join(root, "docs", "navigation.yaml"))
 	if err != nil {
 		t.Fatalf("read docs navigation: %v", err)
 	}
 	if !strings.Contains(string(navigation), "source: articles/architecture/geographic-rendering.md") {
-		t.Fatal("geographic rendering decision is not registered in documentation navigation")
+		t.Fatal("geographic rendering documentation is not registered in documentation navigation")
 	}
 }
 
