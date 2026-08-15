@@ -90,6 +90,7 @@ type PreviewRequest struct {
 	WorkspaceID      string
 	ActorID          string
 	DashboardID      authoring.DashboardID
+	DraftID          authoring.DraftID
 	ExpectedRevision authoring.RevisionToken
 	PageID           string
 	Filters          dashboard.Filters
@@ -129,6 +130,9 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if err := request.DashboardID.Validate(); err != nil {
 		return Preview{}, err
 	}
+	if err := request.DraftID.Validate(); err != nil {
+		return Preview{}, fmt.Errorf("expected preview draft: %w", err)
+	}
 	if err := request.ExpectedRevision.ValidateComplete(); err != nil {
 		return Preview{}, fmt.Errorf("expected preview revision: %w", err)
 	}
@@ -150,15 +154,15 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		}
 		return Preview{}, err
 	}
-	if lifecycle.WorkspaceID != workspaceID || lifecycle.ID != request.DashboardID {
-		return Preview{}, fmt.Errorf("dashboard preview lifecycle identity does not match request")
-	}
 	if err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 		ActorID: actorID, WorkspaceID: workspaceID, DashboardID: request.DashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
 		Action: authoring.AuthorizationActionEdit,
 	}); err != nil {
 		return Preview{}, err
+	}
+	if lifecycle.WorkspaceID != workspaceID || lifecycle.ID != request.DashboardID {
+		return Preview{}, fmt.Errorf("dashboard preview lifecycle identity does not match request")
 	}
 
 	if lifecycle.Status == authoring.LifecycleStatusArchived {
@@ -172,6 +176,9 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	}
 	if lifecycle.Draft.DashboardID != lifecycle.ID {
 		return Preview{}, fmt.Errorf("dashboard preview draft identity does not match lifecycle")
+	}
+	if lifecycle.Draft.ID != request.DraftID {
+		return Preview{}, fmt.Errorf("%w: expected draft does not match current draft", ErrNotFound)
 	}
 	if !sameRevision(lifecycle.Draft.Revision, request.ExpectedRevision) {
 		return Preview{}, fmt.Errorf("%w: expected revision does not match current draft", ErrStaleRevision)

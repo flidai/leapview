@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
@@ -103,6 +104,7 @@ type SharedCommandPrepare func(
 type AuthoringApplication interface {
 	Builder(context.Context, builderview.Request) (uisignals.DashboardBuilderSignal, error)
 	Execute(context.Context, string, authoring.Command) (authoringservice.Result, error)
+	ExecuteIntent(context.Context, application.IntentRequest) (authoringservice.Result, error)
 	Preview(context.Context, preview.PreviewRequest) (preview.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }

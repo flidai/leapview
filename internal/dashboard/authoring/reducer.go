@@ -104,6 +104,9 @@ func ApplyEdit(lifecycle DashboardLifecycle, current Revision, command Command, 
 			nextLifecycle.Visibility = *metadata.Visibility
 		}
 	}
+	if visibility, ok := payload.(*SetVisibilityPayload); ok {
+		nextLifecycle.Visibility = visibility.Visibility
+	}
 	draftProvenance := provenance.Clone()
 	nextLifecycle.Draft = &Draft{
 		ID:          lifecycle.Draft.ID,
@@ -121,6 +124,17 @@ func applyPayload(document *Dashboard, payload authoringPayload) error {
 	switch value := payload.(type) {
 	case *MetadataPatch:
 		return applyMetadata(document, *value)
+	case *SetVisibilityPayload:
+		// Lifecycle visibility is applied by ApplyEdit after the document clone;
+		// keeping this payload a no-op here still gives it a transactional
+		// revision and prevents accidental document rewrites.
+		return nil
+	case *AddPagePayload:
+		return addPage(document, *value)
+	case *AddVisualPayload:
+		return addVisual(document, *value)
+	case *AssignFieldPayload:
+		return assignField(document, *value)
 	case *UpsertPagePayload:
 		page, err := cloneValueAs(value.Page, "upsert page")
 		if err != nil {
@@ -157,6 +171,240 @@ func applyPayload(document *Dashboard, payload authoringPayload) error {
 	default:
 		return fmt.Errorf("%w: unsupported payload %T", ErrInvalidPayload, payload)
 	}
+}
+
+func addPage(document *Dashboard, payload AddPagePayload) error {
+	pageID := strings.TrimSpace(payload.PageID)
+	if pageID == "" {
+		pageID = nextBuilderID("page", len(document.Pages)+1, func(candidate string) bool {
+			for _, page := range document.Pages {
+				if page.ID == candidate {
+					return true
+				}
+			}
+			return false
+		})
+	}
+	for _, page := range document.Pages {
+		if page.ID == pageID {
+			return fmt.Errorf("%w: page %q already exists", ErrConflict, pageID)
+		}
+	}
+	title := strings.TrimSpace(payload.Title)
+	if title == "" {
+		title = builderTitle(pageID)
+		if title == "" {
+			title = "Page"
+		}
+	}
+	document.Pages = append(document.Pages, dashboardmodel.Page{
+		ID: pageID, Title: title,
+		Canvas: dashboardmodel.PageCanvas{Width: 1366, Height: 940},
+		Grid:   dashboardmodel.PageGrid{Columns: 12, RowHeight: 48, Gap: 16},
+	}.WithDefaults())
+	return nil
+}
+
+func addVisual(document *Dashboard, payload AddVisualPayload) error {
+	pageIndex := -1
+	for index := range document.Pages {
+		if document.Pages[index].ID == payload.PageID {
+			pageIndex = index
+			break
+		}
+	}
+	if pageIndex < 0 {
+		return fmt.Errorf("%w: page %q", ErrNotFound, payload.PageID)
+	}
+	visualID := strings.TrimSpace(payload.VisualID)
+	if visualID == "" {
+		visualID = nextBuilderID("visual", len(document.Visuals)+1, func(candidate string) bool {
+			_, exists := document.Visuals[candidate]
+			return exists
+		})
+	}
+	if _, exists := document.Visuals[visualID]; exists {
+		return fmt.Errorf("%w: visual %q already exists", ErrConflict, visualID)
+	}
+	componentID := strings.TrimSpace(payload.ComponentID)
+	if componentID == "" {
+		componentID = visualID + "-tile"
+		if componentID == "-tile" || !identifierPattern.MatchString(componentID) {
+			componentID = nextBuilderID("component", len(document.Pages[pageIndex].Visuals)+1, func(candidate string) bool {
+				for _, component := range document.Pages[pageIndex].Visuals {
+					if component.ID == candidate {
+						return true
+					}
+				}
+				return false
+			})
+		}
+	}
+	for _, page := range document.Pages {
+		for _, component := range page.Visuals {
+			if component.ID == componentID {
+				return fmt.Errorf("%w: component %q already exists", ErrConflict, componentID)
+			}
+		}
+	}
+	title := strings.TrimSpace(payload.Title)
+	if title == "" {
+		title = builderTitle(visualID)
+		if title == "" {
+			title = "Visual"
+		}
+	}
+	capability, _ := VisualizationCapabilityForType(payload.Type)
+	var visual AuthoringVisualization
+	if capability.Kind == "grid" {
+		visual = TabularVisualization(payload.Type, TableVisual{Title: title})
+	} else {
+		visual = ChartVisualization(Visual{Title: title, Type: payload.Type})
+	}
+	if document.Visuals == nil {
+		document.Visuals = make(map[string]AuthoringVisualization)
+	}
+	document.Visuals[visualID] = visual
+	page := &document.Pages[pageIndex]
+	page.Visuals = append(page.Visuals, dashboardmodel.PageVisual{ID: componentID, Kind: "visual", Visual: visualID, Placement: defaultBuilderPlacement(page)})
+	document.Pages[pageIndex] = *page
+	return nil
+}
+
+func defaultBuilderPlacement(page *dashboardmodel.Page) dashboardmodel.PagePlacement {
+	pageValue := page.WithDefaults()
+	span := minInt(6, pageValue.Grid.Columns)
+	if span < 1 {
+		span = 1
+	}
+	// Scan row-major so repeated adds have a stable, non-overlapping location.
+	for row := 1; row <= 1<<20; row++ {
+		for col := 1; col+span-1 <= pageValue.Grid.Columns; col++ {
+			candidate := dashboardmodel.PagePlacement{Col: col, Row: row, ColSpan: span, RowSpan: 4}
+			occupied := false
+			for _, component := range pageValue.Visuals {
+				if component.Placement.IsZero() {
+					continue
+				}
+				if placementsOverlap(candidate, component.Placement) {
+					occupied = true
+					break
+				}
+			}
+			if !occupied {
+				return candidate
+			}
+		}
+	}
+	return dashboardmodel.PagePlacement{Col: 1, Row: 1, ColSpan: span, RowSpan: 4}
+}
+
+func placementsOverlap(left, right dashboardmodel.PagePlacement) bool {
+	return left.Col < right.Col+right.ColSpan && right.Col < left.Col+left.ColSpan &&
+		left.Row < right.Row+right.RowSpan && right.Row < left.Row+left.RowSpan
+}
+
+func assignField(document *Dashboard, payload AssignFieldPayload) error {
+	pageIndex, componentIndex := -1, -1
+	for index := range document.Pages {
+		if document.Pages[index].ID != payload.PageID {
+			continue
+		}
+		pageIndex = index
+		for component := range document.Pages[index].Visuals {
+			if document.Pages[index].Visuals[component].ID == payload.VisualID {
+				componentIndex = component
+				break
+			}
+		}
+		break
+	}
+	if pageIndex < 0 {
+		return fmt.Errorf("%w: page %q", ErrNotFound, payload.PageID)
+	}
+	if componentIndex < 0 {
+		return fmt.Errorf("%w: visual component %q on page %q", ErrNotFound, payload.VisualID, payload.PageID)
+	}
+	component := document.Pages[pageIndex].Visuals[componentIndex]
+	if component.Kind != "visual" || strings.TrimSpace(component.Visual) == "" {
+		return fmt.Errorf("%w: component %q is not a visual", ErrInvalidPayload, payload.VisualID)
+	}
+	visual, ok := document.Visuals[component.Visual]
+	if !ok {
+		return fmt.Errorf("%w: visual %q", ErrNotFound, component.Visual)
+	}
+	ref := FieldRef{Field: strings.TrimSpace(payload.FieldID), Alias: fieldAlias(payload.FieldID)}
+	if visual.Chart != nil {
+		switch payload.Role {
+		case FieldRoleMeasure:
+			visual.Chart.Query.Measures = appendUniqueFieldRef(visual.Chart.Query.Measures, ref)
+		case FieldRoleDimension, FieldRoleDetail:
+			visual.Chart.Query.Dimensions = appendUniqueFieldRef(visual.Chart.Query.Dimensions, ref)
+		}
+	} else if visual.Tabular != nil {
+		switch payload.Role {
+		case FieldRoleMeasure:
+			visual.Tabular.Query.Measures = appendUniqueFieldRef(visual.Tabular.Query.Measures, ref)
+		case FieldRoleDimension:
+			visual.Tabular.Query.Columns = appendUniqueFieldRef(visual.Tabular.Query.Columns, ref)
+		case FieldRoleDetail:
+			visual.Tabular.Query.Fields = appendUniqueString(visual.Tabular.Query.Fields, ref.Field)
+		}
+	} else {
+		return fmt.Errorf("%w: visual %q has no authored variant", ErrInvalidPayload, component.Visual)
+	}
+	document.Visuals[component.Visual] = visual
+	return nil
+}
+
+func appendUniqueFieldRef(values []FieldRef, value FieldRef) []FieldRef {
+	for _, item := range values {
+		if item.Field == value.Field {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, item := range values {
+		if item == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func fieldAlias(value string) string {
+	parts := strings.Split(strings.TrimSpace(value), ".")
+	return parts[len(parts)-1]
+}
+
+func builderTitle(value string) string {
+	value = strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(value), "-", " "), "_", " ")
+	if value == "" {
+		return ""
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
+}
+
+func nextBuilderID(prefix string, start int, exists func(string) bool) string {
+	if start < 1 {
+		start = 1
+	}
+	for index := start; ; index++ {
+		candidate := fmt.Sprintf("%s-%d", prefix, index)
+		if !exists(candidate) {
+			return candidate
+		}
+	}
+}
+
+func minInt(left, right int) int {
+	if right <= 0 || left < right {
+		return left
+	}
+	return right
 }
 
 func applyMetadata(document *Dashboard, patch MetadataPatch) error {

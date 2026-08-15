@@ -462,6 +462,18 @@ func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Resu
 // and command-result lookup happen before stale reducer evaluation so retries
 // remain successful even if a later edit has advanced the draft pointer.
 func (s *Service) Execute(ctx context.Context, workspaceID string, command authoring.Command) (Result, error) {
+	return s.execute(ctx, workspaceID, command, nil)
+}
+
+// ExecuteValidated is the narrow extension used by application-level builder
+// intents. The validator runs only after authorization and durable command
+// idempotency lookup, so a replay returns its original result without reading
+// a stale draft or acquiring a runtime lease again.
+func (s *Service) ExecuteValidated(ctx context.Context, workspaceID string, command authoring.Command, validator func(context.Context, authoring.DashboardLifecycle) error) (Result, error) {
+	return s.execute(ctx, workspaceID, command, validator)
+}
+
+func (s *Service) execute(ctx context.Context, workspaceID string, command authoring.Command, validator func(context.Context, authoring.DashboardLifecycle) error) (Result, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {
 		return Result{}, fmt.Errorf("workspace id is required")
@@ -501,6 +513,11 @@ func (s *Service) Execute(ctx context.Context, workspaceID string, command autho
 			replayed.Revision = currentToken(lifecycle)
 		}
 		return Result{Revision: replayed.Revision, Lifecycle: lifecycle}, nil
+	}
+	if validator != nil {
+		if err := validator(ctx, lifecycle); err != nil {
+			return Result{}, err
+		}
 	}
 
 	switch {

@@ -23,6 +23,11 @@ const emptyStatus: DashboardStatus = {
   progressPercent: 100,
 }
 
+// Keep the first picker intentionally small and accessible. These are the
+// established chart/table types with useful empty-draft defaults; the closed
+// server catalog remains authoritative for future visual types.
+const builderVisualTypes = ['bar', 'line', 'area', 'column', 'table'] as const
+
 /** Draft dashboard authoring surface. Runtime dashboard rendering remains a
  * separate component and envelope; this component only edits the bounded
  * builder projection delivered by the stream. */
@@ -34,6 +39,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private fieldQuery = ''
   @state() private localPageID = ''
   @state() private localVisualID = ''
+  @state() private visualType = 'bar'
 
   static styles = css`
     :host {
@@ -586,7 +592,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${(this.previewHref || builder.preview.href) && builder.capabilities.canPreview
             ? html`<a class="button" href=${this.previewHref || builder.preview.href}>Preview</a>`
             : builder.capabilities.canPreview ? html`<button disabled title="Preview is not available yet">Preview</button>` : nothing}
-          ${builder.capabilities.canShare ? html`<button disabled title="Sharing is not available yet">Share</button>` : nothing}
+          ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'shared' ? 'Make private' : 'Share'}</button>` : nothing}
           ${builder.capabilities.canExport
             ? this.exportYAMLHref ? html`<a class="button" href=${this.exportYAMLHref} download>Export YAML</a>` : html`<button disabled title="YAML export is not available yet">Export YAML</button>`
             : nothing}
@@ -621,7 +627,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <summary>${table.title}<span class="field-type">${table.fields.length}</span></summary>
         <div class="field-list">
           ${table.fields.map((field) => html`
-            <button class="field" draggable="false" disabled title="Adding fields is not available yet" aria-label="Add ${field.label}">
+            <button class="field" draggable=${this.builder?.capabilities.canEdit ? 'true' : 'false'} ?disabled=${!this.builder?.capabilities.canEdit} title=${this.builder?.capabilities.canEdit ? `Add ${field.label} to the selected visual` : 'Editing is not permitted'} aria-label="Add ${field.label}" @click=${() => this.addField(field)} @dragstart=${(event: DragEvent) => this.dragField(event, field)}>
               <span class="field-kind" aria-hidden="true">${field.kind === 'measure' ? '∑' : '◇'}</span>
               <span class="field-label">${field.label}</span>
               <span class="field-type">${field.dataType}</span>
@@ -634,19 +640,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderCanvas(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined) {
     if (!page) {
-      return html`<main class="canvas-pane" aria-label="Dashboard canvas"><div class="state"><div><strong>No pages yet</strong><span>Create a page to start designing this dashboard.</span></div></div></main>`
+      return html`<main class="canvas-pane" aria-label="Dashboard canvas"><div class="state"><div><strong>No pages yet</strong><span>Create a page to start designing this dashboard.</span>${builder.capabilities.canAddPage ? html`<div><button @click=${this.addPage} aria-label="Add page">Add page</button></div>` : nothing}</div></div></main>`
     }
     const width = Math.max(12, page.grid.columns || 12)
     return html`
       <main class="canvas-pane" aria-label="Dashboard canvas">
         <nav class="page-tabs" aria-label="Dashboard pages" role="tablist">
           ${builder.pages.map((item) => html`<button class="page-tab" role="tab" aria-selected=${item.id === page.id} @click=${() => this.selectPage(item.id)}>${item.title}</button>`)}
-          ${builder.capabilities.canAddPage ? html`<button class="page-tab" disabled title="Adding pages is not available yet" aria-label="Add page">＋</button>` : nothing}
+          ${builder.capabilities.canAddPage ? html`<button class="page-tab" @click=${this.addPage} aria-label="Add page">＋</button>` : nothing}
         </nav>
         <div class="canvas-scroll">
+          ${builder.capabilities.canAddVisual ? this.renderAddVisualControl() : nothing}
           <div class="canvas" style=${`aspect-ratio: ${page.canvas.width || 16} / ${page.canvas.height || 9}; grid-template-columns: repeat(${width}, 1fr);`} @dragover=${(event: DragEvent) => event.preventDefault()} @drop=${this.dropField}>
             ${page.visuals.length === 0
-              ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Drag a field here or add a visual to begin.</span>${builder.capabilities.canAddVisual ? html`<div><button disabled title="Adding visuals is not available yet">Add visual</button></div>` : nothing}</div></div>`
+              ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Drag a field here or add a visual to begin.</span></div></div>`
               : page.visuals.map((visual) => this.renderVisual(visual, page))}
           </div>
         </div>
@@ -754,23 +761,56 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return page.visuals[0]?.id ?? ''
   }
 
-  private share = (): void => this.emitCommand('share')
+  private toggleVisibility = (): void => {
+    const builder = this.builder
+    if (!builder?.capabilities.canShare) return
+    this.emitCommand('set_visibility', { visibility: builder.visibility === 'shared' ? 'private' : 'shared' })
+  }
   private publish = (): void => this.emitCommand('publish')
 
-  private addPage = (): void => this.emitCommand('add_page')
-  private addVisual = (): void => this.emitCommand('add_visual')
+  private addPage = (): void => this.emitCommand('add_page', { pageId: '', title: '' })
+  private addVisual = (): void => {
+    const builder = this.builder
+    if (!builder?.capabilities.canAddVisual) return
+    this.emitCommand('add_visual', { pageId: this.selectedPage(builder)?.id ?? '', visualId: '', componentId: '', type: this.visualType, title: '' })
+  }
 
   private addField(field: DashboardBuilderFieldSignal): void {
-    void field
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    const visual = page && builder ? this.selectedVisual(page, builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || !visual) return
+    this.emitCommand('assign_field', { pageId: page.id, visualId: visual.id, fieldId: field.id, role: field.kind })
   }
 
   private dropField = (event: DragEvent): void => {
     event.preventDefault()
+    const fieldID = event.dataTransfer?.getData('text/leapview-field') || event.dataTransfer?.getData('text/plain')
+    if (!fieldID || !this.builder?.capabilities.canEdit) return
+    const builder = this.builder
+    const page = this.selectedPage(builder)
+    if (!page) return
+    const visual = this.selectedVisual(page, builder)
+    const field = builder.semanticModel.tables.flatMap((table) => table.fields).find((item) => item.id === fieldID)
+    if (!field || !visual) return
+    this.emitCommand('assign_field', { pageId: page.id, visualId: visual.id, fieldId: field.id, role: field.kind })
   }
 
   private dragField(event: DragEvent, field: DashboardBuilderFieldSignal): void {
+    if (!this.builder?.capabilities.canEdit) return
     event.dataTransfer?.setData('text/leapview-field', field.id)
     event.dataTransfer?.setData('text/plain', field.id)
+  }
+
+  private renderAddVisualControl() {
+    return html`<div class="add-visual" aria-label="Add visual">
+      <label>Visual type
+        <select .value=${this.visualType} @change=${(event: Event) => { this.visualType = (event.currentTarget as HTMLSelectElement).value }}>
+          ${builderVisualTypes.map((type) => html`<option value=${type}>${type}</option>`)}
+        </select>
+      </label>
+      <button @click=${this.addVisual}>Add visual</button>
+    </div>`
   }
 
   private selectPage(pageID: string): void {

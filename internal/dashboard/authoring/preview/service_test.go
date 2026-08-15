@@ -53,7 +53,7 @@ func newPreviewFixture(t *testing.T) previewFixture {
 	}
 	return previewFixture{
 		repository: repository, authorizer: authorizer, provider: provider, runtime: runtime, service: service,
-		request:  PreviewRequest{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales", ExpectedRevision: revision.Token(), PageID: "overview"},
+		request:  PreviewRequest{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales", DraftID: "draft-1", ExpectedRevision: revision.Token(), PageID: "overview"},
 		revision: revision,
 	}
 }

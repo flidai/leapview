@@ -54,8 +54,8 @@ test('dashboard builder renders field explorer, canvas, and properties with type
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
-      let unsupportedCommand = false
-      element.addEventListener('lv-builder-command', () => { unsupportedCommand = true }, { once: true })
+      let builderCommand = false
+      element.addEventListener('lv-builder-command', () => { builderCommand = true }, { once: true })
       ;(root.querySelector('.field') as HTMLButtonElement).click()
       await new Promise((resolve) => setTimeout(resolve, 20))
       return {
@@ -65,7 +65,7 @@ test('dashboard builder renders field explorer, canvas, and properties with type
         visuals: root.querySelectorAll('.visual').length,
         diagnostics: root.querySelectorAll('.diagnostic').length,
         evidence: root.querySelector('.evidence')?.textContent?.trim(),
-        unsupportedCommand,
+        builderCommand,
       }
     })
     expect(state.title).toBe('Revenue draft')
@@ -74,7 +74,7 @@ test('dashboard builder renders field explorer, canvas, and properties with type
     expect(state.visuals).toBe(1)
     expect(state.diagnostics).toBe(1)
     expect(state.evidence).toContain('workspace')
-    expect(state.unsupportedCommand).toBe(false)
+    expect(state.builderCommand).toBe(true)
   } finally {
     await page.close()
   }

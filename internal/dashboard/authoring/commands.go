@@ -87,6 +87,76 @@ type MetadataPatch struct {
 	Appearance    *dashboardappearance.Patch `json:"appearance,omitempty"`
 }
 
+// SetVisibilityPayload changes only the dashboard lifecycle visibility. It is
+// intentionally separate from MetadataPatch so builder intent handling cannot
+// accidentally rewrite authored document metadata while sharing the same
+// optimistic, transactional command path.
+type SetVisibilityPayload struct {
+	Visibility Visibility `json:"visibility"`
+}
+
+func (SetVisibilityPayload) authoringPayload() {}
+func (SetVisibilityPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// AddPagePayload is a bounded builder intent. Empty ID/title values are
+// server-resolved by the reducer to deterministic safe values derived from the
+// current document; callers may provide an explicit safe value when restoring
+// a prepared intent.
+type AddPagePayload struct {
+	PageID string `json:"pageId,omitempty"`
+	Title  string `json:"title,omitempty"`
+}
+
+func (AddPagePayload) authoringPayload() {}
+func (AddPagePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// AddVisualPayload creates a definition and its page component in one reducer
+// transaction. The payload contains only closed visual-builder fields; it does
+// not accept a caller-supplied authored document or raw query expression.
+type AddVisualPayload struct {
+	PageID      string `json:"pageId"`
+	VisualID    string `json:"visualId,omitempty"`
+	ComponentID string `json:"componentId,omitempty"`
+	Type        string `json:"type"`
+	Title       string `json:"title,omitempty"`
+}
+
+func (AddVisualPayload) authoringPayload() {}
+func (AddVisualPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+type FieldRole string
+
+const (
+	FieldRoleMeasure   FieldRole = "measure"
+	FieldRoleDimension FieldRole = "dimension"
+	FieldRoleDetail    FieldRole = "detail"
+)
+
+func (r FieldRole) Valid() bool {
+	return r == FieldRoleMeasure || r == FieldRoleDimension || r == FieldRoleDetail
+}
+
+// AssignFieldPayload binds one governed semantic field to one exact placed
+// visual component. VisualID is the component identity, not a definition ID,
+// so two placements of one definition remain unambiguous.
+type AssignFieldPayload struct {
+	PageID   string    `json:"pageId"`
+	VisualID string    `json:"visualId"`
+	FieldID  string    `json:"fieldId"`
+	Role     FieldRole `json:"role"`
+}
+
+func (AssignFieldPayload) authoringPayload() {}
+func (AssignFieldPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 func (MetadataPatch) authoringPayload() {}
 func (MetadataPatch) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
@@ -192,6 +262,10 @@ type Command struct {
 	Provenance       Provenance    `json:"provenance"`
 
 	Metadata       *MetadataPatch         `json:"metadata,omitempty"`
+	SetVisibility  *SetVisibilityPayload  `json:"setVisibility,omitempty"`
+	AddPage        *AddPagePayload        `json:"addPage,omitempty"`
+	AddVisual      *AddVisualPayload      `json:"addVisual,omitempty"`
+	AssignField    *AssignFieldPayload    `json:"assignField,omitempty"`
 	UpsertPage     *UpsertPagePayload     `json:"upsertPage,omitempty"`
 	RemovePage     *RemovePagePayload     `json:"removePage,omitempty"`
 	UpsertVisual   *UpsertVisualPayload   `json:"upsertVisual,omitempty"`
@@ -207,6 +281,18 @@ func (c Command) payloads() []authoringPayload {
 	var payloads []authoringPayload
 	if c.Metadata != nil {
 		payloads = append(payloads, c.Metadata)
+	}
+	if c.SetVisibility != nil {
+		payloads = append(payloads, c.SetVisibility)
+	}
+	if c.AddPage != nil {
+		payloads = append(payloads, c.AddPage)
+	}
+	if c.AddVisual != nil {
+		payloads = append(payloads, c.AddVisual)
+	}
+	if c.AssignField != nil {
+		payloads = append(payloads, c.AssignField)
 	}
 	if c.UpsertPage != nil {
 		payloads = append(payloads, c.UpsertPage)
@@ -261,6 +347,23 @@ func (c Command) RequiredAction() (AuthorizationAction, error) {
 		return "", err
 	}
 	return action, nil
+}
+
+// IsBuilderIntent identifies the deliberately narrow application dispatcher
+// used by interactive builder transports. Generic authoring transports may
+// still use Execute for the broader union, but ExecuteIntent must not become
+// an alternate document-patch endpoint.
+func (c Command) IsBuilderIntent() bool {
+	payload, err := c.payloadValue()
+	if err != nil {
+		return false
+	}
+	switch payload.(type) {
+	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *AssignFieldPayload:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c Command) Validate() error {
@@ -321,6 +424,57 @@ func validatePayload(payload authoringPayload) error {
 				return err
 			}
 		}
+	case *SetVisibilityPayload:
+		if !value.Visibility.Valid() {
+			return fmt.Errorf("%w: unsupported visibility %q", ErrInvalidPayload, value.Visibility)
+		}
+	case *AddPagePayload:
+		if value.PageID != "" {
+			if err := validateBuilderIdentifier("page id", value.PageID); err != nil {
+				return err
+			}
+		}
+		if value.Title != "" && strings.TrimSpace(value.Title) == "" {
+			return fmt.Errorf("%w: page title cannot be blank", ErrInvalidPayload)
+		}
+	case *AddVisualPayload:
+		if strings.TrimSpace(value.PageID) == "" {
+			return fmt.Errorf("%w: add visual requires page id", ErrInvalidPayload)
+		}
+		if err := validateBuilderIdentifier("page id", value.PageID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value.VisualID) != "" {
+			if err := validateBuilderIdentifier("visual id", value.VisualID); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(value.ComponentID) != "" {
+			if err := validateBuilderIdentifier("component id", value.ComponentID); err != nil {
+				return err
+			}
+		}
+		if _, ok := VisualizationCapabilityForType(strings.TrimSpace(value.Type)); !ok {
+			return fmt.Errorf("%w: unsupported visual type %q", ErrInvalidPayload, value.Type)
+		}
+	case *AssignFieldPayload:
+		for kind, id := range map[string]string{"page id": value.PageID, "visual id": value.VisualID, "field id": value.FieldID} {
+			if strings.TrimSpace(id) == "" {
+				return fmt.Errorf("%w: assign field requires %s", ErrInvalidPayload, kind)
+			}
+		}
+		if err := validateBuilderIdentifier("page id", value.PageID); err != nil {
+			return err
+		}
+		if err := validateBuilderIdentifier("visual id", value.VisualID); err != nil {
+			return err
+		}
+		if !ValidGovernedFieldID(value.FieldID) {
+			return fmt.Errorf("%w: invalid governed field id %q", ErrInvalidPayload, value.FieldID)
+		}
+		if !value.Role.Valid() {
+			return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
+		}
 	case *UpsertPagePayload:
 		if value.Page.ID == "" {
 			return fmt.Errorf("%w: upsert page requires page id", ErrInvalidPayload)
@@ -369,6 +523,48 @@ func validatePayload(payload authoringPayload) error {
 		return fmt.Errorf("%w: unsupported payload %T", ErrInvalidPayload, payload)
 	}
 	return nil
+}
+
+func validateBuilderIdentifier(kind, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || value != strings.TrimSpace(value) || !identifierPattern.MatchString(value) {
+		return fmt.Errorf("%w: invalid %s %q", ErrInvalidPayload, kind, value)
+	}
+	return nil
+}
+
+// ValidGovernedFieldID is the canonical closed validator for semantic field
+// references accepted by builder intents and projections. A field is either a
+// model member (name) or a qualified physical dimension (table.field); no
+// expression, renderer alias, or raw SQL syntax is accepted.
+func ValidGovernedFieldID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || value != strings.TrimSpace(value) {
+		return false
+	}
+	parts := strings.Split(value, ".")
+	if len(parts) > 2 {
+		return false
+	}
+	for _, part := range parts {
+		if !validSemanticPart(part) {
+			return false
+		}
+	}
+	return true
+}
+
+func validSemanticPart(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index, char := range value {
+		if (char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z') || (index > 0 && char >= '0' && char <= '9') || char == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 type fingerprintInput struct {

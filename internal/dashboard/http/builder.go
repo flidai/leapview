@@ -13,6 +13,7 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
@@ -48,7 +49,7 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeBuilderError(w, r, authoring.ErrStaleRevision)
 		return
 	}
-	envelope := dashboardBuilderEnvelope(browserBuilderSignal(builder))
+	envelope := dashboardBuilderEnvelope(builder)
 	csrfToken := ""
 	if h.CSRFToken != nil {
 		csrfToken = h.CSRFToken(r)
@@ -94,15 +95,16 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	clientID := pagestream.EnsureClientID(w, r)
 	streamID := "dashboard_builder:" + clientID + ":" + workspaceID + ":" + dashboardID
 	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(h.traceStore(), streamID, "dashboard_builder.bootstrap"))
-	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(dashboardBuilderEnvelope(browserBuilderSignal(builder)))); err != nil {
+	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(dashboardBuilderEnvelope(builder))); err != nil {
 		return
 	}
 	<-r.Context().Done()
 }
 
-// DashboardBuilderCommand accepts the one browser mutation currently backed
-// by the closed authoring union: publish. Other visible UI actions are
-// rejected explicitly until their complete typed payloads exist.
+// DashboardBuilderCommand accepts the bounded builder intents and routes them
+// through the application intent service. The HTTP handler only translates
+// explicit wire fields into the closed authoring command union; it never
+// rewrites a dashboard document.
 func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), dashboardBuilderOperationID); err != nil {
 		nethttp.Error(w, "invalid dashboard builder command claim", nethttp.StatusBadRequest)
@@ -136,7 +138,11 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
 	}
-	_, err = h.Authoring.Execute(r.Context(), workspaceID, command)
+	if command.IsBuilderIntent() {
+		_, err = h.Authoring.ExecuteIntent(r.Context(), application.IntentRequest{WorkspaceID: workspaceID, ActorID: actorID, Command: command})
+	} else {
+		_, err = h.Authoring.Execute(r.Context(), workspaceID, command)
+	}
 	if err != nil {
 		writeBuilderError(w, r, err)
 		return
@@ -154,7 +160,7 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"builder": browserBuilderSignal(builder), "status": uisignals.DashboardStatus{Loading: false}})
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"builder": builder, "status": uisignals.DashboardStatus{Loading: false}})
 }
 
 // DashboardBuilderPreview renders one exact draft revision as JSON. No
@@ -216,13 +222,17 @@ type dashboardBuilderCommandSignal struct {
 	RevisionContentHash string          `json:"revisionContentHash"`
 	PageID              string          `json:"pageId"`
 	VisualID            string          `json:"visualId"`
+	ComponentID         string          `json:"componentId"`
+	FieldID             string          `json:"fieldId"`
+	Role                string          `json:"role"`
+	Type                string          `json:"type"`
+	Title               string          `json:"title"`
+	Visibility          string          `json:"visibility"`
 	Action              string          `json:"action"`
 }
 
 func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, actorID, workspaceID, dashboardID string) (authoring.Command, error) {
-	if strings.TrimSpace(s.Action) != "publish" {
-		return authoring.Command{}, fmt.Errorf("unsupported dashboard builder action %q", s.Action)
-	}
+	action := strings.TrimSpace(s.Action)
 	if strings.TrimSpace(s.DraftID) == "" || strings.TrimSpace(s.RevisionID) == "" || strings.TrimSpace(s.RevisionContentHash) == "" {
 		return authoring.Command{}, fmt.Errorf("draft id and complete expected revision are required")
 	}
@@ -237,11 +247,30 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 	if requestID == "" {
 		return authoring.Command{}, fmt.Errorf("X-Request-ID is required")
 	}
-	return authoring.Command{
+	command := authoring.Command{
 		ID: authoring.CommandID(requestID), DashboardID: authoring.DashboardID(dashboardID), DraftID: authoring.DraftID(s.DraftID),
 		ExpectedRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(s.RevisionID), Number: number, ContentHash: s.RevisionContentHash},
-		Provenance:       authoring.Provenance{Origin: authoring.OriginUI, ActorID: actorID}, Publish: &authoring.PublishPayload{},
-	}, nil
+		Provenance:       authoring.Provenance{Origin: authoring.OriginUI, ActorID: actorID},
+	}
+	switch action {
+	case "publish":
+		command.Publish = &authoring.PublishPayload{}
+	case "set_visibility":
+		visibility := authoring.Visibility(strings.TrimSpace(s.Visibility))
+		if err := visibility.Validate(); err != nil {
+			return authoring.Command{}, err
+		}
+		command.SetVisibility = &authoring.SetVisibilityPayload{Visibility: visibility}
+	case "add_page":
+		command.AddPage = &authoring.AddPagePayload{PageID: strings.TrimSpace(s.PageID), Title: strings.TrimSpace(s.Title)}
+	case "add_visual":
+		command.AddVisual = &authoring.AddVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), ComponentID: strings.TrimSpace(s.ComponentID), Type: strings.TrimSpace(s.Type), Title: strings.TrimSpace(s.Title)}
+	case "assign_field":
+		command.AssignField = &authoring.AssignFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
+	default:
+		return authoring.Command{}, fmt.Errorf("unsupported dashboard builder action %q", s.Action)
+	}
+	return command, nil
 }
 
 func parseRevisionNumber(raw json.RawMessage) (uint64, error) {
@@ -279,17 +308,6 @@ func dashboardBuilderEnvelope(builder uisignals.DashboardBuilderSignal) uisignal
 		Runtime: uisignals.RouteRuntimeSignal{Kind: uisignals.RouteKindDashboardBuilder, WorkspaceID: uisignals.Optional(builder.WorkspaceID), DashboardID: uisignals.Optional(builder.DashboardID)},
 		Status:  uisignals.DashboardStatus{Loading: false},
 	}
-}
-
-// browserBuilderSignal advertises only actions with a complete HTTP mapping.
-// The component still renders read-only field metadata and publish/preview/
-// export controls; unsupported edit intents are not presented as enabled.
-func browserBuilderSignal(builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderSignal {
-	builder.Capabilities.CanEdit = false
-	builder.Capabilities.CanShare = false
-	builder.Capabilities.CanAddPage = false
-	builder.Capabilities.CanAddVisual = false
-	return builder
 }
 
 func dashboardBuilderBasePath(workspaceID, dashboardID string) string {

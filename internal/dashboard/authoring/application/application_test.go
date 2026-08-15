@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
@@ -133,7 +134,7 @@ func TestPreviewUsesRequestedWorkspaceAndOneLease(t *testing.T) {
 
 	result, err := app.Preview(context.Background(), previewservice.PreviewRequest{
 		WorkspaceID: " workspace ", ActorID: "actor", DashboardID: lifecycle.ID,
-		ExpectedRevision: revision.Token(), PageID: "overview",
+		DraftID: "preview-draft", ExpectedRevision: revision.Token(), PageID: "overview",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +201,100 @@ func TestWorkspaceForkRejectsCrossWorkspaceTarget(t *testing.T) {
 	}
 }
 
-func newApplication(t *testing.T, repository *fakeRepository, authorizer *fakeAuthorizer, acquire sourceadapter.AcquireRuntime) *application.Application {
+func TestExecuteIntentRejectsGenericPayloadAndKeepsNonFieldIntentsLeaseFree(t *testing.T) {
+	repository, lifecycle, revision := previewRepository(t)
+	authorizer := &recordingAuthorizer{}
+	acquired := 0
+	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+		acquired++
+		return nil, errors.New("unexpected runtime acquisition")
+	})
+	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-page", &authoring.AddPagePayload{})
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); err != nil {
+		t.Fatal(err)
+	}
+	if acquired != 0 || repository.appendCalls != 1 {
+		t.Fatalf("non-field intent acquired runtime=%d append=%d", acquired, repository.appendCalls)
+	}
+	title := "unsafe"
+	generic := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-generic", &authoring.MetadataPatch{Title: &title})
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: generic}); !errors.Is(err, authoring.ErrInvalidPayload) {
+		t.Fatalf("generic payload error = %v", err)
+	}
+}
+
+func TestExecuteIntentAuthorizesBeforeDraftRevisionAndRuntimeReads(t *testing.T) {
+	repository, lifecycle, revision := previewRepository(t)
+	authorizer := &recordingAuthorizer{err: access.ErrForbidden}
+	acquired := 0
+	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+		acquired++
+		return nil, errors.New("runtime should not be acquired")
+	})
+	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMeasure})
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("denied intent error = %v", err)
+	}
+	if repository.getRevisionCalls != 0 || acquired != 0 {
+		t.Fatalf("denied intent leaked reads: getRevision=%d runtime=%d", repository.getRevisionCalls, acquired)
+	}
+}
+
+func TestExecuteIntentAssignFieldUsesOneLeaseAndGovernedRole(t *testing.T) {
+	repository, lifecycle, revision := previewRepository(t)
+	authorizer := &recordingAuthorizer{}
+	lease := &fakeLease{runtime: &previewRuntime{model: previewModel()}, servingState: "state-sales"}
+	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
+	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMeasure})
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); err != nil {
+		t.Fatal(err)
+	}
+	if lease.releaseCalls != 1 || repository.appendCalls != 1 {
+		t.Fatalf("field intent lease/revision = release=%d append=%d", lease.releaseCalls, repository.appendCalls)
+	}
+	// A role mismatch is rejected against the governed model before the
+	// transactional service can append a partial revision.
+	current := repository.lifecycles[lifecycle.ID].Draft.Revision
+	bad := intentCommandForApplication(repository.revisions[current.RevisionID], lifecycle.Draft.ID, "intent-field-bad", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "orders.status", Role: authoring.FieldRoleMeasure})
+	lease.releaseCalls = 0
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: bad}); !errors.Is(err, authoring.ErrInvalidPayload) {
+		t.Fatalf("spoofed role error = %v", err)
+	}
+	if lease.releaseCalls != 1 || repository.appendCalls != 1 {
+		t.Fatalf("spoofed role mutated state: release=%d append=%d", lease.releaseCalls, repository.appendCalls)
+	}
+	// A durable command retry replays before field/runtime validation even
+	// though the draft pointer has advanced.
+	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{WorkspaceID: "workspace", ActorID: "actor", Command: command}); err != nil {
+		t.Fatalf("idempotent field retry error = %v", err)
+	}
+	if lease.releaseCalls != 1 || repository.appendCalls != 1 {
+		t.Fatalf("idempotent field retry reacquired or appended: release=%d append=%d", lease.releaseCalls, repository.appendCalls)
+	}
+}
+
+func intentCommandForApplication(revision authoring.Revision, draftID authoring.DraftID, id string, payload authoringPayloadForApplication) authoring.Command {
+	command := authoring.Command{ID: authoring.CommandID(id), DashboardID: revision.DashboardID, DraftID: draftID, ExpectedRevision: revision.Token(), Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}}
+	switch value := payload.(type) {
+	case *authoring.AddPagePayload:
+		command.AddPage = value
+	case *authoring.AssignFieldPayload:
+		command.AssignField = value
+	case *authoring.MetadataPatch:
+		command.Metadata = value
+	}
+	return command
+}
+
+type authoringPayloadForApplication interface{}
+
+type recordingAuthorizer struct{ err error }
+
+func (a *recordingAuthorizer) Authorize(context.Context, authoringservice.AuthorizationRequest) error {
+	return a.err
+}
+
+func newApplication(t *testing.T, repository *fakeRepository, authorizer authoringservice.Authorizer, acquire sourceadapter.AcquireRuntime) *application.Application {
 	t.Helper()
 	authoringSvc := newAuthoringService(t, repository, authorizer)
 	app, err := application.New(application.Options{Authoring: authoringSvc, Repository: repository, Authorizer: authorizer, AcquireRuntime: acquire})
@@ -210,7 +304,7 @@ func newApplication(t *testing.T, repository *fakeRepository, authorizer *fakeAu
 	return app
 }
 
-func newAuthoringService(t *testing.T, repository *fakeRepository, authorizer *fakeAuthorizer) *authoringservice.Service {
+func newAuthoringService(t *testing.T, repository *fakeRepository, authorizer authoringservice.Authorizer) *authoringservice.Service {
 	t.Helper()
 	ids := []string{"dashboard-1", "draft-1", "revision-1", "revision-2"}
 	next := func() string {
@@ -243,12 +337,13 @@ func (a *fakeAuthorizer) Authorize(_ context.Context, _ authoringservice.Authori
 }
 
 type fakeRepository struct {
-	lifecycles  map[authoring.DashboardID]authoring.DashboardLifecycle
-	revisions   map[authoring.RevisionID]authoring.Revision
-	commands    map[authoring.CommandID]authoring.CommandResult
-	createCalls int
-	appendCalls int
-	created     []authoring.CreateInput
+	lifecycles       map[authoring.DashboardID]authoring.DashboardLifecycle
+	revisions        map[authoring.RevisionID]authoring.Revision
+	commands         map[authoring.CommandID]authoring.CommandResult
+	createCalls      int
+	appendCalls      int
+	created          []authoring.CreateInput
+	getRevisionCalls int
 }
 
 func newRepository() *fakeRepository {
@@ -282,6 +377,7 @@ func (r *fakeRepository) CountBySemanticModel(context.Context, string) ([]author
 	return nil, nil
 }
 func (r *fakeRepository) GetRevision(_ context.Context, _ string, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
+	r.getRevisionCalls++
 	revision, ok := r.revisions[id]
 	if !ok {
 		return authoring.Revision{}, authoring.ErrNotFound

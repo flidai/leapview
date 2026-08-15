@@ -404,18 +404,12 @@ func slot(id, label, kind, fieldID string, required bool) uisignals.DashboardBui
 	return value
 }
 
-// safeFieldID admits only the compact identifier alphabet used by semantic
-// field references. In particular, authored expressions or SQL snippets are
-// never copied into the builder signal.
+// safeFieldID admits only the governed semantic identifier alphabet used by
+// AssignFieldPayload. In particular, authored expressions, SQL snippets, and
+// renderer-only aliases are never copied into a clickable builder signal.
 func safeFieldID(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	for _, char := range value {
-		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '.' || char == ':' || char == '-' {
-			continue
-		}
+	if !authoring.ValidGovernedFieldID(value) {
 		return ""
 	}
 	return value

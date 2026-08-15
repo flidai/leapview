@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
@@ -20,21 +21,51 @@ import (
 )
 
 type builderAuthoringFake struct {
-	builder    uisignals.DashboardBuilderSignal
-	executed   authoring.Command
-	preview    preview.Preview
-	yaml       []byte
-	err        error
-	previewErr error
-	exportErr  error
+	builder      uisignals.DashboardBuilderSignal
+	executed     authoring.Command
+	preview      preview.Preview
+	yaml         []byte
+	err          error
+	previewErr   error
+	exportErr    error
+	executeCalls int
+	intentCalls  int
 }
 
 func (f *builderAuthoringFake) Builder(context.Context, builderview.Request) (uisignals.DashboardBuilderSignal, error) {
 	return f.builder, f.err
 }
 func (f *builderAuthoringFake) Execute(_ context.Context, _ string, command authoring.Command) (authoringservice.Result, error) {
+	f.executeCalls++
 	f.executed = command
 	return authoringservice.Result{Revision: command.ExpectedRevision}, f.err
+}
+func (f *builderAuthoringFake) ExecuteIntent(_ context.Context, request application.IntentRequest) (authoringservice.Result, error) {
+	f.intentCalls++
+	f.executed = request.Command
+	return authoringservice.Result{Revision: request.Command.ExpectedRevision}, f.err
+}
+
+func TestDashboardBuilderCommandRoutesBuilderIntentsWithServerGeneratedIDs(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{WorkspaceID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/workspaces/sales/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"workspaceId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"pageId": "overview", "visualId": "", "componentId": "", "type": "bar", "action": "add_visual",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "intent-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.intentCalls != 1 || fake.executeCalls != 0 || fake.executed.AddVisual == nil {
+		t.Fatalf("builder dispatch calls=%d/%d command=%#v", fake.intentCalls, fake.executeCalls, fake.executed)
+	}
+	if fake.executed.AddVisual.VisualID != "" || fake.executed.AddVisual.ComponentID != "" || fake.executed.AddVisual.Type != "bar" {
+		t.Fatalf("server-generated visual IDs were not preserved: %#v", fake.executed.AddVisual)
+	}
 }
 func (f *builderAuthoringFake) Preview(context.Context, preview.PreviewRequest) (preview.Preview, error) {
 	return f.preview, f.previewErr
