@@ -46,6 +46,7 @@ import (
 	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 	"github.com/flidai/leapview/internal/project/manifest"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
+	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 	servingstatevalidation "github.com/flidai/leapview/internal/servingstate/validation"
@@ -58,6 +59,8 @@ type harness struct {
 	handler     http.Handler
 	server      *httptest.Server
 	store       *platform.Store
+	metrics     integrationMetrics
+	runtime     runtimehost.Runtime
 	workspaceID string
 }
 
@@ -147,6 +150,8 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 
 	h := &harness{
 		handler:     newAppTestHarness(metricsForApp).Routes(),
+		metrics:     metricsForApp,
+		runtime:     metrics,
 		workspaceID: metricsForApp.Catalog().Workspace.ID,
 	}
 	h.server = httptest.NewServer(h.handler)
@@ -218,7 +223,7 @@ func newHarnessWithMetrics(t *testing.T, opts ...harnessOption) (*harness, integ
 	if config.wrapMetrics != nil {
 		metricsForApp = config.wrapMetrics(metrics)
 	}
-	return &harness{workspaceID: metricsForApp.Catalog().Workspace.ID}, metricsForApp, config.catalogPath
+	return &harness{metrics: metricsForApp, runtime: metrics, workspaceID: metricsForApp.Catalog().Workspace.ID}, metricsForApp, config.catalogPath
 }
 
 func newHarnessRuntime(dataDir, catalogPath, duckDBDir string) (*dashboardruntime.Service, error) {

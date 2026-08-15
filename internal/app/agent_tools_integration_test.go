@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -11,13 +12,27 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/app/config"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
+	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
+	authoringcompileradapter "github.com/flidai/leapview/internal/dashboard/authoring/compileradapter"
+	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
 	"github.com/flidai/leapview/internal/platform"
+	projectmodule "github.com/flidai/leapview/internal/project/module"
+	"github.com/flidai/leapview/internal/runtimehost"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workspace"
 	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestMCPIntegrationCallsEveryAdvertisedAgentTool(t *testing.T) {
 	harness := newStoreBackedHarness(t)
+	authoringApp := newIntegrationAuthoringApplication(t, harness.store, harness.runtime)
+	auth := NewAuth(testAccessRepository(harness.store), AuthConfig{DevBypass: true})
+	server := assembleRuntime(harness.metrics, testStoreOptions(harness.store, assemblyConfig{
+		Auth: auth, Authoring: authoringApp, WorkspaceID: harness.workspaceID,
+	}))
+	harness.handler = server.Routes()
 	called := map[string]bool{}
 
 	listed := mcpRequest(t, harness.handler, "dev", "2025-11-25", `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
@@ -124,6 +139,125 @@ func TestMCPIntegrationCallsEveryAdvertisedAgentTool(t *testing.T) {
 		t.Fatalf("docs_read result = %#v", read)
 	}
 
+	authoringList := callAgentToolThroughMCP(t, harness.handler, called, "list_dashboards", map[string]any{"workspace": "sales"})
+	if integrationInt(t, authoringList, "count") < 1 || len(integrationArray(t, authoringList, "items")) < 1 {
+		t.Fatalf("list_dashboards result = %#v", authoringList)
+	}
+	authoringGet := callAgentToolThroughMCP(t, harness.handler, called, "get_dashboard", map[string]any{
+		"workspace": "sales", "dashboard": "executive-sales",
+	})
+	if integrationString(t, integrationObject(t, authoringGet, "dashboard"), "id") != "executive-sales" {
+		t.Fatalf("get_dashboard result = %#v", authoringGet)
+	}
+
+	created := callAgentToolThroughMCP(t, harness.handler, called, "create_dashboard_draft", map[string]any{
+		"workspace": "sales", "title": "MCP Authoring Integration", "semanticModel": "sales",
+		"dashboardId": "mcp-authoring-integration", "slug": "mcp-authoring-integration",
+	})
+	dashboardID, draftID := integrationDraftIdentity(t, created)
+	revision := integrationRevision(t, created)
+	if integrationString(t, integrationObject(t, created, "lifecycle"), "title") != "MCP Authoring Integration" {
+		t.Fatalf("create_dashboard_draft result = %#v", created)
+	}
+
+	draft := callAgentToolThroughMCP(t, harness.handler, called, "get_dashboard_draft", map[string]any{
+		"workspace": "sales", "dashboard": dashboardID,
+	})
+	if integrationString(t, integrationObject(t, draft, "revision"), "id") != integrationString(t, revision, "revisionId") {
+		t.Fatalf("initial draft revision = %#v want %#v", draft, revision)
+	}
+
+	addedPage := callAgentToolThroughMCP(t, harness.handler, called, "add_dashboard_page", map[string]any{
+		"workspace": "sales", "dashboardId": dashboardID, "draftId": draftID, "expectedRevision": revision,
+		"pageId": "detail", "title": "Detail",
+	})
+	revision = integrationRevision(t, addedPage)
+	if integrationInt(t, revision, "number") <= 1 {
+		t.Fatalf("add_dashboard_page revision did not advance: %#v", addedPage)
+	}
+
+	addedVisual := callAgentToolThroughMCP(t, harness.handler, called, "add_dashboard_visual", map[string]any{
+		"workspace": "sales", "dashboardId": dashboardID, "draftId": draftID, "expectedRevision": revision,
+		"pageId": "detail", "visualId": "orders", "componentId": "orders-card", "type": "bar", "title": "Orders",
+	})
+	revision = integrationRevision(t, addedVisual)
+
+	assignedDimension := callAgentToolThroughMCP(t, harness.handler, called, "assign_dashboard_field", map[string]any{
+		"workspace": "sales", "dashboardId": dashboardID, "draftId": draftID, "expectedRevision": revision,
+		"pageId": "detail", "visualId": "orders-card", "fieldId": "orders.status", "role": "dimension",
+	})
+	revision = integrationRevision(t, assignedDimension)
+	assignedMeasure := callAgentToolThroughMCP(t, harness.handler, called, "assign_dashboard_field", map[string]any{
+		"workspace": "sales", "dashboardId": dashboardID, "draftId": draftID, "expectedRevision": revision,
+		"pageId": "detail", "visualId": "orders-card", "fieldId": "order_count", "role": "measure",
+	})
+	revision = integrationRevision(t, assignedMeasure)
+
+	draft = callAgentToolThroughMCP(t, harness.handler, called, "get_dashboard_draft", map[string]any{
+		"workspace": "sales", "dashboard": dashboardID,
+	})
+	draftRevision := integrationObject(t, draft, "revision")
+	document := integrationObject(t, draftRevision, "document")
+	pages := integrationArray(t, document, "Pages")
+	if len(pages) != 2 {
+		t.Fatalf("draft pages after builder edits = %#v", pages)
+	}
+	var detailPage map[string]any
+	for _, candidate := range pages {
+		page := integrationObjectValue(t, candidate, "draft page")
+		if integrationString(t, page, "id") == "detail" {
+			detailPage = page
+			break
+		}
+	}
+	if detailPage == nil {
+		t.Fatalf("draft pages omitted detail page = %#v", pages)
+	}
+	pageVisuals := integrationArray(t, detailPage, "visuals")
+	if len(pageVisuals) != 1 || integrationString(t, integrationObjectValue(t, pageVisuals[0], "draft visual"), "visual") != "orders" {
+		t.Fatalf("draft visuals after builder edits = %#v", pageVisuals)
+	}
+
+	visibility := callAgentToolThroughMCP(t, harness.handler, called, "set_dashboard_visibility", map[string]any{
+		"workspace": "sales", "dashboardId": dashboardID, "draftId": draftID, "expectedRevision": revision,
+		"visibility": "shared",
+	})
+	revision = integrationRevision(t, visibility)
+	if integrationString(t, integrationObject(t, visibility, "lifecycle"), "visibility") != "shared" {
+		t.Fatalf("set_dashboard_visibility result = %#v", visibility)
+	}
+
+	preview := callAgentToolThroughMCP(t, harness.handler, called, "preview_dashboard_draft", map[string]any{
+		"workspace": "sales", "dashboard": dashboardID, "draftId": draftID, "expectedRevision": revision, "page": "detail",
+	})
+	if integrationString(t, integrationObject(t, preview, "revision"), "revisionId") != integrationString(t, revision, "revisionId") || len(integrationObject(t, preview, "definition")) == 0 {
+		t.Fatalf("preview_dashboard_draft result = %#v", preview)
+	}
+
+	published := callAgentToolThroughMCP(t, harness.handler, called, "execute_dashboard_command", map[string]any{
+		"workspace": "sales", "dashboardId": dashboardID, "draftId": draftID, "expectedRevision": revision,
+		"publish": map[string]any{},
+	})
+	if integrationString(t, integrationObject(t, published, "lifecycle"), "status") != "published" {
+		t.Fatalf("execute_dashboard_command publish result = %#v", published)
+	}
+
+	forked := callAgentToolThroughMCP(t, harness.handler, called, "fork_dashboard", map[string]any{
+		"sourceKind": "workspace", "sourceWorkspace": "sales", "sourceDashboard": dashboardID,
+		"targetWorkspace": "sales", "title": "MCP Forked Dashboard", "slug": "mcp-forked-dashboard",
+	})
+	forkedID, _ := integrationDraftIdentity(t, forked)
+	if forkedID == dashboardID || integrationString(t, integrationObject(t, forked, "lifecycle"), "title") != "MCP Forked Dashboard" {
+		t.Fatalf("fork_dashboard result = %#v", forked)
+	}
+
+	exported := callAgentToolThroughMCP(t, harness.handler, called, "export_dashboard_yaml", map[string]any{
+		"sourceKind": "workspace", "workspace": "sales", "dashboard": dashboardID,
+	})
+	if !strings.Contains(integrationString(t, exported, "yaml"), "MCP Authoring Integration") {
+		t.Fatalf("export_dashboard_yaml result = %#v", exported)
+	}
+
 	advertised := make([]string, 0, len(listResponse.Result.Tools))
 	for _, tool := range listResponse.Result.Tools {
 		advertised = append(advertised, tool.Name)
@@ -135,6 +269,87 @@ func TestMCPIntegrationCallsEveryAdvertisedAgentTool(t *testing.T) {
 	if len(called) != len(advertised) {
 		t.Fatalf("called tools = %#v, advertised tools = %#v", called, advertised)
 	}
+}
+
+type integrationAuthoringAuthorizer struct{}
+
+func (integrationAuthoringAuthorizer) Authorize(context.Context, authoringservice.AuthorizationRequest) error {
+	return nil
+}
+
+type integrationAuthoringLease struct {
+	runtime    runtimehost.Runtime
+	servingID  servingstate.ID
+	releaseCnt int
+}
+
+func (l *integrationAuthoringLease) Runtime() runtimehost.Runtime { return l.runtime }
+
+func (l *integrationAuthoringLease) ServingStateID() servingstate.ID { return l.servingID }
+
+func (l *integrationAuthoringLease) DuckLakeSnapshotID() int64 { return 0 }
+
+func (l *integrationAuthoringLease) Release() { l.releaseCnt++ }
+
+func newIntegrationAuthoringApplication(t *testing.T, store *platform.Store, runtime runtimehost.Runtime) *authoringapplication.Application {
+	t.Helper()
+	repository := authoringsqlite.NewRepository(store.SQLDB())
+	authorizer := integrationAuthoringAuthorizer{}
+	acquireRuntime := func(context.Context, string) (runtimehost.Lease, error) {
+		return &integrationAuthoringLease{runtime: runtime, servingID: "integration-serving-state"}, nil
+	}
+	compiler, err := authoringcompileradapter.New(authoringcompileradapter.Options{AcquireRuntime: acquireRuntime})
+	if err != nil {
+		t.Fatalf("build integration authoring compiler: %v", err)
+	}
+	dashboardNumber, draftNumber, revisionNumber := 0, 0, 0
+	newDashboardID := func() (authoring.DashboardID, error) {
+		dashboardNumber++
+		return authoring.DashboardID(fmt.Sprintf("integration-dashboard-%d", dashboardNumber)), nil
+	}
+	newDraftID := func() (authoring.DraftID, error) {
+		draftNumber++
+		return authoring.DraftID(fmt.Sprintf("integration-draft-%d", draftNumber)), nil
+	}
+	newRevisionID := func() (authoring.RevisionID, error) {
+		revisionNumber++
+		return authoring.RevisionID(fmt.Sprintf("integration-revision-%d", revisionNumber)), nil
+	}
+	service, err := authoringservice.NewService(authoringservice.Options{
+		Repository: repository, Authorizer: authorizer, Compiler: compiler, Now: func() time.Time { return time.Now().UTC() },
+		NewDashboardID: newDashboardID, NewDraftID: newDraftID, NewRevisionID: newRevisionID,
+	})
+	if err != nil {
+		t.Fatalf("build integration authoring service: %v", err)
+	}
+	application, err := authoringapplication.New(authoringapplication.Options{
+		Authoring: service, Repository: repository, Authorizer: authorizer, AcquireRuntime: acquireRuntime,
+		ExportDashboard: projectmodule.ExportDashboard,
+	})
+	if err != nil {
+		t.Fatalf("build integration authoring application: %v", err)
+	}
+	return application
+}
+
+func integrationRevision(t *testing.T, result map[string]any) map[string]any {
+	t.Helper()
+	revision := integrationObject(t, result, "revision")
+	for _, key := range []string{"revisionId", "number", "contentHash"} {
+		if revision[key] == nil {
+			t.Fatalf("revision missing %q: %#v", key, revision)
+		}
+	}
+	return revision
+}
+
+func integrationDraftIdentity(t *testing.T, result map[string]any) (dashboardID, draftID string) {
+	t.Helper()
+	lifecycle := integrationObject(t, result, "lifecycle")
+	dashboardID = integrationString(t, lifecycle, "id")
+	draft := integrationObject(t, lifecycle, "draft")
+	draftID = integrationString(t, draft, "id")
+	return dashboardID, draftID
 }
 
 func TestMCPIntegrationAgentToolContractMatrix(t *testing.T) {

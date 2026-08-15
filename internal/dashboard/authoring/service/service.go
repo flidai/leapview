@@ -87,8 +87,8 @@ func NewService(options Options) (*Service, error) {
 // immutable result while Lifecycle is the repository-authoritative current
 // pointer (which may have advanced after an idempotent replay).
 type Result struct {
-	Revision  authoring.RevisionToken
-	Lifecycle authoring.DashboardLifecycle
+	Revision  authoring.RevisionToken      `json:"revision"`
+	Lifecycle authoring.DashboardLifecycle `json:"lifecycle"`
 }
 
 // CreateRequest creates a named workspace draft. DashboardID is optional; an
