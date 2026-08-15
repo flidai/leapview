@@ -91,7 +91,7 @@ func TestForkPublishedRevisionIntoPrivateDraft(t *testing.T) {
 	if forked.Document.Title != "Forked Orders" || forked.Document.ID != result.Lifecycle.ID.String() || forked.Document.SemanticModel != published.Document.SemanticModel {
 		t.Fatalf("fork document = %#v", forked.Document)
 	}
-	if forked.Provenance.Origin != authoring.OriginAgent || forked.Provenance.ForkedFrom == nil || forked.Provenance.ForkedFrom.SourceWorkspaceID != "workspace" || forked.Provenance.ForkedFrom.SourceDashboardID != source.ID || forked.Provenance.ForkedFrom.SourceRevision != published.Token() {
+	if forked.Provenance.Origin != authoring.OriginAgent || forked.Provenance.ForkedFrom == nil || forked.Provenance.ForkedFrom.Kind != authoring.ForkSourceWorkspace || forked.Provenance.ForkedFrom.Workspace == nil || forked.Provenance.ForkedFrom.Workspace.SourceWorkspaceID != "workspace" || forked.Provenance.ForkedFrom.Workspace.SourceDashboardID != source.ID || forked.Provenance.ForkedFrom.Workspace.SourceRevision != published.Token() {
 		t.Fatalf("fork provenance = %#v", forked.Provenance)
 	}
 	if forked.Document.Title == "Newer Draft" {
@@ -110,14 +110,14 @@ func TestForkDeepCopiesDocumentAndProvenance(t *testing.T) {
 	forked := repository.revisions[result.Revision.RevisionID]
 	forked.Document.Pages[0].Title = "mutated"
 	forked.Provenance.Source.Metadata["channel"] = "mutated"
-	forked.Provenance.ForkedFrom.SourceRevision.Number = 99
+	forked.Provenance.ForkedFrom.Workspace.SourceRevision.Number = 99
 	if repository.revisions["published-revision"].Document.Pages[0].Title == "mutated" {
 		t.Fatal("fork document aliases source document")
 	}
 	if repository.revisions["published-revision"].Provenance.Source != nil {
 		t.Fatal("source revision unexpectedly received fork source metadata")
 	}
-	if result.Lifecycle.Draft.Provenance.ForkedFrom.SourceRevision.Number == 99 {
+	if result.Lifecycle.Draft.Provenance.ForkedFrom.Workspace.SourceRevision.Number == 99 {
 		t.Fatal("mutating stored revision provenance changed lifecycle provenance")
 	}
 	if forked.Provenance.Digest() == sourcePublishedDigest(t, repository) {

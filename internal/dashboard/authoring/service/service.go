@@ -122,6 +122,44 @@ type ForkRequest struct {
 	BaseSemanticServingStateID string
 }
 
+// CreateFromDocumentRequest creates a new private draft from a complete
+// authored document supplied by an application source adapter. The document
+// is cloned and assigned fresh dashboard/revision/draft identities before it
+// crosses the repository boundary. This keeps project-artifact forks atomic:
+// callers never need to reconstruct a document through a sequence of edit
+// commands (which could lose fields or leave a partial draft behind).
+//
+// Source is descriptive provenance only. In particular, an adapter must not
+// manufacture a RevisionToken for a project artifact that does not have one.
+type CreateFromDocumentRequest struct {
+	WorkspaceID                string
+	ActorID                    string
+	OwnerPrincipalID           string
+	Document                   authoring.Dashboard
+	Title                      string
+	Slug                       string
+	Origin                     authoring.Origin
+	Source                     *authoring.SourceMetadata
+	ForkedFrom                 *authoring.ForkEvidence
+	ConversationID             string
+	ToolCallID                 string
+	BaseSemanticServingStateID string
+}
+
+// CreateFromDocument creates one private draft from an authored document.
+// It performs the same edit authorization and transactional repository create
+// as Create, while preserving every authored field in the supplied document.
+// No compiler, publication, deployment, or data/model mutation is involved.
+func (s *Service) CreateFromDocument(ctx context.Context, input CreateFromDocumentRequest) (Result, error) {
+	return s.createDraft(ctx, createDraftInput{
+		WorkspaceID: input.WorkspaceID, ActorID: input.ActorID, OwnerPrincipalID: input.OwnerPrincipalID,
+		Document: input.Document, Title: input.Title, Slug: input.Slug, Visibility: authoring.VisibilityPrivate,
+		Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom,
+		ConversationID: input.ConversationID, ToolCallID: input.ToolCallID,
+		BaseSemanticServingStateID: input.BaseSemanticServingStateID,
+	})
+}
+
 // Fork copies a published authored revision into a new private draft. It
 // never compiles, publishes, deploys, or mutates the source lifecycle.
 func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
@@ -227,7 +265,7 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 		Origin: origin, ActorID: actorID,
 		ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID),
 		BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Source: input.Source,
-		ForkedFrom: &authoring.ForkEvidence{SourceWorkspaceID: sourceWorkspaceID, SourceDashboardID: source.ID, SourceRevision: publishedToken},
+		ForkedFrom: &authoring.ForkEvidence{Kind: authoring.ForkSourceWorkspace, Workspace: &authoring.WorkspaceForkEvidence{SourceWorkspaceID: sourceWorkspaceID, SourceDashboardID: source.ID, SourceRevision: publishedToken}},
 	}
 	if err := provenance.Validate(); err != nil {
 		return Result{}, err
@@ -267,6 +305,53 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateRequest) (Result, error) {
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		return Result{}, fmt.Errorf("dashboard title is required")
+	}
+	semanticModel := strings.TrimSpace(input.SemanticModel)
+	if semanticModel == "" {
+		return Result{}, fmt.Errorf("semantic model is required")
+	}
+	visibility := input.Visibility
+	if visibility == "" {
+		visibility = authoring.VisibilityPrivate
+	}
+	if err := visibility.Validate(); err != nil {
+		return Result{}, err
+	}
+	defaultPage := dashboardmodel.Page{ID: "overview", Title: "Overview", Canvas: dashboardmodel.PageCanvas{Width: 1366, Height: 940}, Grid: dashboardmodel.PageGrid{Columns: 12, RowHeight: 48, Gap: 16}}.WithDefaults()
+	return s.createDraft(ctx, createDraftInput{
+		WorkspaceID: input.WorkspaceID, ActorID: input.ActorID, OwnerPrincipalID: input.OwnerPrincipalID,
+		DashboardID: input.DashboardID,
+		Document:    authoring.Dashboard{ID: input.DashboardID.String(), Title: title, SemanticModel: semanticModel, Visuals: map[string]authoring.AuthoringVisualization{}, Pages: []dashboardmodel.Page{defaultPage}},
+		Title:       title, Slug: input.Slug, Visibility: visibility, Origin: input.Origin, Source: input.Source,
+		ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, BaseSemanticServingStateID: input.BaseSemanticServingStateID,
+	})
+}
+
+type createDraftInput struct {
+	WorkspaceID                string
+	ActorID                    string
+	OwnerPrincipalID           string
+	DashboardID                authoring.DashboardID
+	Document                   authoring.Dashboard
+	Title                      string
+	Slug                       string
+	Visibility                 authoring.Visibility
+	Origin                     authoring.Origin
+	Source                     *authoring.SourceMetadata
+	ForkedFrom                 *authoring.ForkEvidence
+	ConversationID             string
+	ToolCallID                 string
+	BaseSemanticServingStateID string
+}
+
+// createDraft is the single transactional private-draft construction path
+// shared by ordinary creation and external authored-source forks. Keeping ID
+// allocation, provenance validation, edit authorization, and repository
+// insertion together prevents the two entry points from drifting.
+func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Result, error) {
 	workspaceID := strings.TrimSpace(input.WorkspaceID)
 	actorID := strings.TrimSpace(input.ActorID)
 	ownerID := strings.TrimSpace(input.OwnerPrincipalID)
@@ -276,23 +361,32 @@ func (s *Service) Create(ctx context.Context, input CreateRequest) (Result, erro
 	if ownerID == "" {
 		ownerID = actorID
 	}
-	title := strings.TrimSpace(input.Title)
-	if title == "" {
-		return Result{}, fmt.Errorf("dashboard title is required")
-	}
-	semanticModel := strings.TrimSpace(input.SemanticModel)
+	semanticModel := strings.TrimSpace(input.Document.SemanticModel)
 	if semanticModel == "" {
 		return Result{}, fmt.Errorf("semantic model is required")
 	}
-	dashboardID := input.DashboardID
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		title = strings.TrimSpace(input.Document.Title)
+	}
+	if title == "" {
+		return Result{}, fmt.Errorf("dashboard title is required")
+	}
+	targetID := input.DashboardID
 	var err error
-	if dashboardID == "" {
-		dashboardID, err = s.newDashboardID()
+	if targetID == "" {
+		targetID, err = s.newDashboardID()
 		if err != nil {
 			return Result{}, fmt.Errorf("allocate dashboard id: %w", err)
 		}
 	}
-	if err := dashboardID.Validate(); err != nil {
+	if err := targetID.Validate(); err != nil {
+		return Result{}, err
+	}
+	if strings.TrimSpace(input.Document.ID) == "" {
+		input.Document.ID = targetID.String()
+	}
+	if err := input.Document.ValidateDraftStructure(); err != nil {
 		return Result{}, err
 	}
 	slug := strings.TrimSpace(input.Slug)
@@ -325,25 +419,36 @@ func (s *Service) Create(ctx context.Context, input CreateRequest) (Result, erro
 	if origin == "" {
 		origin = authoring.OriginUI
 	}
-	provenance := authoring.Provenance{Origin: origin, ActorID: actorID, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Source: input.Source}
+	provenance := authoring.Provenance{
+		Origin: origin, ActorID: actorID,
+		ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID),
+		BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Source: input.Source, ForkedFrom: input.ForkedFrom,
+	}
 	if err := provenance.Validate(); err != nil {
 		return Result{}, err
 	}
-	defaultPage := dashboardmodel.Page{ID: "overview", Title: "Overview", Canvas: dashboardmodel.PageCanvas{Width: 1366, Height: 940}, Grid: dashboardmodel.PageGrid{Columns: 12, RowHeight: 48, Gap: 16}}.WithDefaults()
-	document := authoring.Dashboard{ID: dashboardID.String(), Title: title, SemanticModel: semanticModel, Visuals: map[string]authoring.AuthoringVisualization{}, Pages: []dashboardmodel.Page{defaultPage}}
-	revision, err := authoring.NewRevision(revisionID, dashboardID, 1, now, document, provenance)
+	document, err := input.Document.Clone()
+	if err != nil {
+		return Result{}, err
+	}
+	document.ID = targetID.String()
+	document.Title = title
+	revision, err := authoring.NewRevision(revisionID, targetID, 1, now, document, provenance)
 	if err != nil {
 		return Result{}, err
 	}
 	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
-		WorkspaceID: workspaceID, ID: dashboardID, OwnerPrincipalID: ownerID, Slug: slug,
+		WorkspaceID: workspaceID, ID: targetID, OwnerPrincipalID: ownerID, Slug: slug,
 		Title: title, SemanticModel: semanticModel, Visibility: visibility,
-		Draft: &authoring.Draft{ID: draftID, DashboardID: dashboardID, Revision: revision.Token(), Provenance: provenance},
+		Draft: &authoring.Draft{ID: draftID, DashboardID: targetID, Revision: revision.Token(), Provenance: provenance},
 	})
 	if err != nil {
 		return Result{}, err
 	}
-	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, WorkspaceID: workspaceID, DashboardID: dashboardID, OwnerPrincipalID: ownerID, SemanticModel: semanticModel, Action: authoring.AuthorizationActionEdit}); err != nil {
+	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{
+		ActorID: actorID, WorkspaceID: workspaceID, DashboardID: targetID,
+		OwnerPrincipalID: ownerID, SemanticModel: semanticModel, Action: authoring.AuthorizationActionEdit,
+	}); err != nil {
 		return Result{}, err
 	}
 	created, err := s.repository.Create(ctx, authoring.CreateInput{WorkspaceID: workspaceID, Lifecycle: lifecycle, Revision: revision})

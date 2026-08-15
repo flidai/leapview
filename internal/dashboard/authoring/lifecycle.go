@@ -113,26 +113,86 @@ type SourceMetadata struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
-// ForkEvidence is typed, immutable provenance for a dashboard fork. The
-// complete source revision token is retained so downstream consumers do not
-// need to infer source identity from free-form metadata.
-type ForkEvidence struct {
+// ForkSourceKind discriminates the two honest source authorities for a fork.
+// Workspace sources are backed by an exact retained authoring revision;
+// project sources are backed by the active serving artifact and deliberately
+// have no authoring revision token.
+type ForkSourceKind string
+
+const (
+	ForkSourceWorkspace ForkSourceKind = "workspace"
+	ForkSourceProject   ForkSourceKind = "project"
+)
+
+func (k ForkSourceKind) Valid() bool { return k == ForkSourceWorkspace || k == ForkSourceProject }
+
+// ProjectForkEvidence identifies a retained project-artifact source without
+// pretending it was authored in the authoring repository.
+type ProjectForkEvidence struct {
+	SourceWorkspaceID string      `json:"sourceWorkspaceId"`
+	SourceDashboardID DashboardID `json:"sourceDashboardId"`
+	ServingStateID    string      `json:"servingStateId"`
+	Path              string      `json:"path,omitempty"`
+}
+
+// WorkspaceForkEvidence identifies an exact retained published authoring
+// revision. It is kept as a sibling of ProjectForkEvidence so the union is
+// symmetric and cannot accidentally imply a project revision.
+type WorkspaceForkEvidence struct {
 	SourceWorkspaceID string        `json:"sourceWorkspaceId"`
 	SourceDashboardID DashboardID   `json:"sourceDashboardId"`
 	SourceRevision    RevisionToken `json:"sourceRevision"`
 }
 
+// ForkEvidence is typed, immutable provenance for a dashboard fork. The
+// discriminator and exactly one branch are persisted in the immutable
+// revision, preventing downstream consumers from inferring a fake source
+// revision from free-form metadata.
+type ForkEvidence struct {
+	Kind      ForkSourceKind         `json:"kind"`
+	Workspace *WorkspaceForkEvidence `json:"workspace,omitempty"`
+	Project   *ProjectForkEvidence   `json:"project,omitempty"`
+}
+
 func (e ForkEvidence) Validate() error {
-	if err := validateRequiredLifecycleValue("fork source workspace id", e.SourceWorkspaceID); err != nil {
-		return err
+	switch e.Kind {
+	case ForkSourceWorkspace:
+		if e.Workspace == nil || e.Project != nil {
+			return fmt.Errorf("%w: workspace fork requires only workspace evidence", ErrInvalidAuthoring)
+		}
+		if err := validateRequiredLifecycleValue("fork source workspace id", e.Workspace.SourceWorkspaceID); err != nil {
+			return err
+		}
+		if err := e.Workspace.SourceDashboardID.Validate(); err != nil {
+			return fmt.Errorf("%w: fork source dashboard: %v", ErrInvalidAuthoring, err)
+		}
+		if err := e.Workspace.SourceRevision.ValidateComplete(); err != nil {
+			return fmt.Errorf("%w: fork source revision: %v", ErrInvalidAuthoring, err)
+		}
+		return nil
+	case ForkSourceProject:
+		if e.Workspace != nil {
+			return fmt.Errorf("%w: project fork cannot contain workspace evidence", ErrInvalidAuthoring)
+		}
+		if e.Project == nil {
+			return fmt.Errorf("%w: project fork evidence is required", ErrInvalidAuthoring)
+		}
+		if err := validateRequiredLifecycleValue("project fork source workspace id", e.Project.SourceWorkspaceID); err != nil {
+			return err
+		}
+		if err := e.Project.SourceDashboardID.Validate(); err != nil {
+			return fmt.Errorf("%w: project fork source dashboard: %v", ErrInvalidAuthoring, err)
+		}
+		if strings.TrimSpace(e.Project.ServingStateID) == "" {
+			return fmt.Errorf("%w: project fork serving state id is required", ErrInvalidAuthoring)
+		}
+		if e.Project.ServingStateID != strings.TrimSpace(e.Project.ServingStateID) || !identifierPattern.MatchString(e.Project.ServingStateID) {
+			return fmt.Errorf("%w: invalid project fork serving state id %q", ErrInvalidAuthoring, e.Project.ServingStateID)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: unsupported fork source kind %q", ErrInvalidAuthoring, e.Kind)
 	}
-	if err := e.SourceDashboardID.Validate(); err != nil {
-		return fmt.Errorf("%w: fork source dashboard: %v", ErrInvalidAuthoring, err)
-	}
-	if err := e.SourceRevision.ValidateComplete(); err != nil {
-		return fmt.Errorf("%w: fork source revision: %v", ErrInvalidAuthoring, err)
-	}
-	return nil
 }
 
 type Provenance struct {
@@ -162,6 +222,14 @@ func (p Provenance) Clone() Provenance {
 	}
 	if p.ForkedFrom != nil {
 		fork := *p.ForkedFrom
+		if p.ForkedFrom.Workspace != nil {
+			workspace := *p.ForkedFrom.Workspace
+			fork.Workspace = &workspace
+		}
+		if p.ForkedFrom.Project != nil {
+			project := *p.ForkedFrom.Project
+			fork.Project = &project
+		}
 		cloned.ForkedFrom = &fork
 	}
 	return cloned
