@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
+	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
@@ -420,8 +421,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			},
 		},
 	}
-	runtimeMetrics := dashboardmodule.NewDynamicRuntimeMetrics(func(workspaceID string) runtimehostmodule.Provider {
-		return runtimeHostModule.ProviderForWorkspace(servingstatemodule.WorkspaceID(workspaceID))
+	runtimeMetrics := dashboardmodule.NewDynamicRuntimeMetrics(dashboardmodule.DynamicRuntimeMetricsOptions{
+		ProviderFactory: func(workspaceID string) runtimehostmodule.Provider {
+			return runtimeHostModule.ProviderForWorkspace(servingstatemodule.WorkspaceID(workspaceID))
+		},
+		PublishedCompilationReader: authoringsqlite.NewRepository(store.SQLDB()),
 	})
 	auth := accessModule.Auth()
 	rateLimits := apihttpmiddleware.ProductionRateLimitConfig()

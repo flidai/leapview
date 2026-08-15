@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -11,7 +12,7 @@ import (
 
 func TestCompositeProjectOnlyResolutionCarriesProjectSource(t *testing.T) {
 	project := fakeReports{definitions: map[string]dashboarddefinition.Definition{"sales": {ID: "sales", SemanticModel: "sales_model"}}, models: map[string]*semanticmodel.Model{"sales_model": {Name: "sales_model"}}, source: SourceMetadata{ServingStateID: "provider-state", SemanticServingStateID: "provider-semantic"}}
-	provider := NewProject(project, "workspace-1", SourceMetadata{ProjectID: "project-1", ServingStateID: "state-1", SemanticServingStateID: "semantic-state-1", Revision: "authoring-must-not-leak"})
+	provider := NewProject(project, "workspace-1", SourceMetadata{ProjectID: "project-1", ServingStateID: "state-1", SemanticServingStateID: "semantic-state-1", AuthoredRevision: AuthoredRevisionEvidence{ID: "authoring-must-not-leak"}})
 	composed, err := NewComposite("workspace-1", provider, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +24,7 @@ func TestCompositeProjectOnlyResolutionCarriesProjectSource(t *testing.T) {
 	if resolved.Definition.ID != "sales" || resolved.Model.Name != "sales_model" {
 		t.Fatalf("resolved dashboard = %#v model = %#v", resolved.Definition, resolved.Model)
 	}
-	if resolved.Source.Kind != SourceProject || resolved.Source.WorkspaceID != "workspace-1" || resolved.Source.ProjectID != "project-1" || resolved.Source.ServingStateID != "provider-state" || resolved.Source.SemanticServingStateID != "provider-semantic" || resolved.Source.Revision != "" {
+	if resolved.Source.Kind != SourceProject || resolved.Source.WorkspaceID != "workspace-1" || resolved.Source.ProjectID != "project-1" || resolved.Source.ServingStateID != "provider-state" || resolved.Source.SemanticServingStateID != "provider-semantic" || !resolved.Source.AuthoredRevision.IsZero() {
 		t.Fatalf("source = %#v", resolved.Source)
 	}
 }
@@ -32,9 +33,9 @@ func TestCompositePublishedResolutionCarriesWorkspaceSource(t *testing.T) {
 	published := fakePublished{resolved: Resolved{
 		Definition: dashboarddefinition.Definition{ID: "shared", SemanticModel: "model"},
 		Model:      &semanticmodel.Model{Name: "model"},
-		Source:     SourceMetadata{Kind: SourceProject, ProjectID: "forged", SemanticServingStateID: "semantic-state-exact", Revision: "published-revision-2"},
+		Source:     SourceMetadata{Kind: SourceProject, ProjectID: "forged", SemanticServingStateID: "semantic-state-exact", AuthoredRevision: AuthoredRevisionEvidence{ID: "published-revision-2", Number: 2, ContentHash: "sha256:" + strings.Repeat("a", 64)}},
 	}}
-	provider := NewPublished(published, "workspace-1", SourceMetadata{ProjectID: "project-must-not-leak", ServingStateID: "serving-state-must-not-leak", SemanticServingStateID: "forged-semantic-state", Revision: "published-revision"})
+	provider := NewPublished(published, "workspace-1", SourceMetadata{ProjectID: "project-must-not-leak", ServingStateID: "serving-state-must-not-leak", SemanticServingStateID: "forged-semantic-state", AuthoredRevision: AuthoredRevisionEvidence{ID: "published-revision"}})
 	composed, err := NewComposite("workspace-1", nil, provider)
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +44,7 @@ func TestCompositePublishedResolutionCarriesWorkspaceSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Source.Kind != SourceWorkspace || resolved.Source.WorkspaceID != "workspace-1" || resolved.Source.Revision != "published-revision-2" || resolved.Source.SemanticServingStateID != "semantic-state-exact" || resolved.Source.ProjectID != "" || resolved.Source.ServingStateID != "" {
+	if resolved.Source.Kind != SourceWorkspace || resolved.Source.WorkspaceID != "workspace-1" || resolved.Source.AuthoredRevision.ID != "published-revision-2" || resolved.Source.SemanticServingStateID != "semantic-state-exact" || resolved.Source.ProjectID != "" || resolved.Source.ServingStateID != "" {
 		t.Fatalf("source = %#v", resolved.Source)
 	}
 	if _, ok := resolved.Visualization("missing"); ok {
@@ -53,7 +54,7 @@ func TestCompositePublishedResolutionCarriesWorkspaceSource(t *testing.T) {
 
 func TestCompositeRejectsProjectWorkspaceIDCollision(t *testing.T) {
 	project := fakeReports{definitions: map[string]dashboarddefinition.Definition{"same": {ID: "same", SemanticModel: "project_model"}}, models: map[string]*semanticmodel.Model{"project_model": {Name: "project_model"}}}
-	published := fakePublished{resolved: Resolved{Definition: dashboarddefinition.Definition{ID: "same", SemanticModel: "workspace_model"}, Model: &semanticmodel.Model{Name: "workspace_model"}, Source: SourceMetadata{Revision: "revision", SemanticServingStateID: "semantic-state"}}}
+	published := fakePublished{resolved: Resolved{Definition: dashboarddefinition.Definition{ID: "same", SemanticModel: "workspace_model"}, Model: &semanticmodel.Model{Name: "workspace_model"}, Source: SourceMetadata{AuthoredRevision: AuthoredRevisionEvidence{ID: "revision", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)}, SemanticServingStateID: "semantic-state"}}}
 	composed, err := NewComposite("workspace-1", NewProject(project, "workspace-1", SourceMetadata{}), NewPublished(published, "workspace-1", SourceMetadata{}))
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +94,7 @@ func TestCompositeRejectsProjectScopeMismatchWithoutFallback(t *testing.T) {
 
 func TestCompositeRejectsPublishedScopeMismatchWithoutFallback(t *testing.T) {
 	project := fakeReports{definitions: map[string]dashboarddefinition.Definition{"sales": {ID: "sales", SemanticModel: "sales_model"}}, models: map[string]*semanticmodel.Model{"sales_model": {Name: "sales_model"}}}
-	published := fakePublished{resolved: Resolved{Definition: dashboarddefinition.Definition{ID: "sales", SemanticModel: "sales_model"}, Model: &semanticmodel.Model{Name: "sales_model"}, Source: SourceMetadata{Revision: "revision", SemanticServingStateID: "semantic-state"}}}
+	published := fakePublished{resolved: Resolved{Definition: dashboarddefinition.Definition{ID: "sales", SemanticModel: "sales_model"}, Model: &semanticmodel.Model{Name: "sales_model"}, Source: SourceMetadata{AuthoredRevision: AuthoredRevisionEvidence{ID: "revision", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)}, SemanticServingStateID: "semantic-state"}}}
 	composed, err := NewComposite("workspace-a", NewProject(project, "workspace-a", SourceMetadata{}), NewPublished(published, "workspace-b", SourceMetadata{}))
 	if err != nil {
 		t.Fatal(err)

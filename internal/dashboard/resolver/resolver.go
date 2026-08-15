@@ -7,6 +7,7 @@
 package resolver
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -26,6 +27,9 @@ var (
 	// ErrScopeMismatch indicates that a provider resolved a dashboard outside
 	// the workspace scope fixed when the composite resolver was constructed.
 	ErrScopeMismatch = errors.New("dashboard resolver scope mismatch")
+	// ErrStaleSemanticState indicates that a published compilation was built
+	// for a serving state other than the lease currently being used.
+	ErrStaleSemanticState = errors.New("published dashboard semantic serving state is stale")
 )
 
 // Source identifies the runtime authority that supplied a dashboard. It is
@@ -37,18 +41,56 @@ const (
 	SourceWorkspace Source = "workspace"
 )
 
+// AuthoredRevisionEvidence is the complete authored revision identity attached
+// to a workspace-published compiled dashboard. It is evidence only: lifecycle
+// and repository state remain the authority for publication workflow.
+type AuthoredRevisionEvidence struct {
+	ID          string `json:"id"`
+	Number      uint64 `json:"number"`
+	ContentHash string `json:"contentHash"`
+}
+
+func (e AuthoredRevisionEvidence) IsZero() bool {
+	return strings.TrimSpace(e.ID) == "" && e.Number == 0 && strings.TrimSpace(e.ContentHash) == ""
+}
+
+// Validate requires a complete authored revision identity. The content hash
+// uses the same canonical sha256 representation as authoring.RevisionToken.
+func (e AuthoredRevisionEvidence) Validate() error {
+	if strings.TrimSpace(e.ID) == "" {
+		return fmt.Errorf("authored revision id is required")
+	}
+	if e.ID != strings.TrimSpace(e.ID) {
+		return fmt.Errorf("authored revision id cannot have surrounding whitespace")
+	}
+	if e.Number == 0 {
+		return fmt.Errorf("authored revision number is required")
+	}
+	hash := e.ContentHash
+	if hash != strings.TrimSpace(hash) {
+		return fmt.Errorf("authored revision content hash cannot have surrounding whitespace")
+	}
+	if len(hash) != len("sha256:")+64 || !strings.HasPrefix(hash, "sha256:") {
+		return fmt.Errorf("authored revision content hash must be lowercase sha256")
+	}
+	if _, err := hex.DecodeString(hash[len("sha256:"):]); err != nil || hash != strings.ToLower(hash) {
+		return fmt.Errorf("authored revision content hash must be lowercase sha256")
+	}
+	return nil
+}
+
 // SourceMetadata is runtime source evidence. ServingStateID identifies the
 // deployment/project generation when available; SemanticServingStateID
 // identifies the exact semantic serving state of a published compiled
-// artifact; Revision identifies a published workspace-authoring revision when
-// available. Neither field is a workflow authority.
+// artifact; AuthoredRevision is complete workspace-authoring revision
+// evidence. Neither field is a workflow authority.
 type SourceMetadata struct {
-	Kind                   Source `json:"kind"`
-	WorkspaceID            string `json:"workspaceId,omitempty"`
-	ProjectID              string `json:"projectId,omitempty"`
-	ServingStateID         string `json:"servingStateId,omitempty"`
-	SemanticServingStateID string `json:"semanticServingStateId,omitempty"`
-	Revision               string `json:"revision,omitempty"`
+	Kind                   Source                   `json:"kind"`
+	WorkspaceID            string                   `json:"workspaceId,omitempty"`
+	ProjectID              string                   `json:"projectId,omitempty"`
+	ServingStateID         string                   `json:"servingStateId,omitempty"`
+	SemanticServingStateID string                   `json:"semanticServingStateId,omitempty"`
+	AuthoredRevision       AuthoredRevisionEvidence `json:"authoredRevision,omitempty"`
 }
 
 // Resolved is the compiled dashboard and semantic model used by a runtime
@@ -79,7 +121,7 @@ func NewProject(provider Resolver, workspaceID string, metadata SourceMetadata) 
 	metadata.WorkspaceID = strings.TrimSpace(workspaceID)
 	// Authoring revision evidence must never be attached to deployment/project
 	// state, even when a caller accidentally supplies it.
-	metadata.Revision = ""
+	metadata.AuthoredRevision = AuthoredRevisionEvidence{}
 	return projectProvider{provider: provider, metadata: metadata}
 }
 
@@ -97,6 +139,7 @@ func NewPublished(provider Resolver, workspaceID string, metadata SourceMetadata
 	// The provider is the only authority for semantic serving-state evidence;
 	// constructor metadata cannot forge or override the per-dashboard value.
 	metadata.SemanticServingStateID = ""
+	metadata.AuthoredRevision = AuthoredRevisionEvidence{}
 	return publishedProvider{provider: provider, metadata: metadata}
 }
 
@@ -150,14 +193,14 @@ func (p publishedProvider) Resolve(dashboardID string) (Resolved, error) {
 	if err := validateResolved(id, resolved); err != nil {
 		return Resolved{}, err
 	}
-	if strings.TrimSpace(resolved.Source.Revision) == "" {
-		return Resolved{}, fmt.Errorf("published dashboard %q is missing revision evidence", id)
+	if err := resolved.Source.AuthoredRevision.Validate(); err != nil {
+		return Resolved{}, fmt.Errorf("published dashboard %q has invalid authored revision evidence: %v", id, err)
 	}
 	if strings.TrimSpace(resolved.Source.SemanticServingStateID) == "" {
 		return Resolved{}, fmt.Errorf("published dashboard %q is missing semantic serving state evidence", id)
 	}
 	metadata := p.metadata
-	metadata.Revision = strings.TrimSpace(resolved.Source.Revision)
+	metadata.AuthoredRevision = resolved.Source.AuthoredRevision
 	metadata.SemanticServingStateID = strings.TrimSpace(resolved.Source.SemanticServingStateID)
 	resolved.Source = metadata
 	return resolved, nil

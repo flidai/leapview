@@ -342,7 +342,7 @@ func buildApplicationSurfaces(
 		if provider == nil || strings.TrimSpace(workspaceID) == "" {
 			return nil
 		}
-		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(provider, workspaceID)
+		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, WorkspaceID: workspaceID})
 		candidate = dashboardmodule.WithAdmission(candidate, controller)
 		if dataAuthorization != nil && (data.AccessRepo != nil || workflow.Auth != nil || capabilities.AccessModule != nil) {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{

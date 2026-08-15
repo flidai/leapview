@@ -21,16 +21,10 @@ import (
 )
 
 type runtimeMetrics struct {
-	provider    runtimehost.Provider
-	workspaceID string
+	provider                   runtimehost.Provider
+	workspaceID                string
+	publishedCompilationReader dashboardresolver.PublishedCompilationReader
 }
-
-type activeRuntime struct {
-	runtimehost.Runtime
-	servingStateID string
-}
-
-func (r activeRuntime) ServingStateID() string { return r.servingStateID }
 
 // Catalog is the dashboard-owned catalog contract exposed through the module
 // surface for application composition.
@@ -44,9 +38,10 @@ type dashboardRefreshRuntime struct {
 }
 
 type dynamicRuntimeMetrics struct {
-	factory func(workspaceID string) runtimehost.Provider
-	mu      sync.Mutex
-	metrics map[string]Metrics
+	factory                    func(workspaceID string) runtimehost.Provider
+	publishedCompilationReader dashboardresolver.PublishedCompilationReader
+	mu                         sync.Mutex
+	metrics                    map[string]Metrics
 }
 
 type catalogRuntime interface {
@@ -96,8 +91,18 @@ func SupportsNativeArrow(metrics Metrics) bool {
 	return ok
 }
 
-func NewRuntimeMetrics(provider runtimehost.Provider, workspaceID string) Metrics {
-	return runtimeMetrics{provider: provider, workspaceID: workspaceID}
+type RuntimeMetricsOptions struct {
+	Provider                   runtimehost.Provider
+	WorkspaceID                string
+	PublishedCompilationReader dashboardresolver.PublishedCompilationReader
+}
+
+func NewRuntimeMetrics(options RuntimeMetricsOptions) Metrics {
+	return runtimeMetrics{
+		provider:                   options.Provider,
+		workspaceID:                strings.TrimSpace(options.WorkspaceID),
+		publishedCompilationReader: options.PublishedCompilationReader,
+	}
 }
 
 // Resolver exposes the project/deployment dashboard source through the shared
@@ -112,32 +117,46 @@ type runtimeMetricsResolver struct {
 }
 
 func (r runtimeMetricsResolver) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
-	runtime, release, err := r.metrics.active(context.Background())
+	if r.metrics.provider == nil {
+		return dashboardresolver.Resolved{}, fmt.Errorf("runtime provider is not configured")
+	}
+	lease, err := r.metrics.provider.Acquire(context.Background())
 	if err != nil {
 		return dashboardresolver.Resolved{}, err
 	}
-	defer release()
+	defer lease.Release()
+	runtime := lease.Runtime()
 	port, ok := runtime.(runtimeResolver)
 	if !ok {
 		return dashboardresolver.Resolved{}, fmt.Errorf("active runtime does not provide dashboard resolver")
 	}
-	resolved, err := port.Resolve(dashboardID)
+	servingStateID := strings.TrimSpace(string(lease.ServingStateID()))
+	project := dashboardresolver.NewProject(port, r.metrics.workspaceID, dashboardresolver.SourceMetadata{ServingStateID: servingStateID})
+	var published dashboardresolver.Resolver
+	if r.metrics.publishedCompilationReader != nil {
+		published = dashboardresolver.NewPublished(
+			dashboardresolver.NewPublishedCompilationResolver(r.metrics.workspaceID, servingStateID, r.metrics.publishedCompilationReader, port),
+			r.metrics.workspaceID,
+			dashboardresolver.SourceMetadata{},
+		)
+	}
+	composite, err := dashboardresolver.NewComposite(r.metrics.workspaceID, project, published)
 	if err != nil {
 		return dashboardresolver.Resolved{}, err
 	}
-	resolved.Source.Kind = dashboardresolver.SourceProject
-	resolved.Source.WorkspaceID = r.metrics.workspaceID
-	resolved.Source.Revision = ""
-	if lease, ok := runtime.(interface{ ServingStateID() string }); ok {
-		resolved.Source.ServingStateID = lease.ServingStateID()
-	}
-	return resolved, nil
+	return composite.Resolve(dashboardID)
 }
 
-func NewDynamicRuntimeMetrics(factory func(workspaceID string) runtimehost.Provider) Metrics {
+type DynamicRuntimeMetricsOptions struct {
+	ProviderFactory            func(workspaceID string) runtimehost.Provider
+	PublishedCompilationReader dashboardresolver.PublishedCompilationReader
+}
+
+func NewDynamicRuntimeMetrics(options DynamicRuntimeMetricsOptions) Metrics {
 	return &dynamicRuntimeMetrics{
-		factory: factory,
-		metrics: map[string]Metrics{},
+		factory:                    options.ProviderFactory,
+		publishedCompilationReader: options.PublishedCompilationReader,
+		metrics:                    map[string]Metrics{},
 	}
 }
 
@@ -165,7 +184,7 @@ func (m *dynamicRuntimeMetrics) MetricsForWorkspace(workspaceID string) (Metrics
 	if provider == nil {
 		return nil, false
 	}
-	metrics := NewRuntimeMetrics(provider, workspaceID)
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, WorkspaceID: workspaceID, PublishedCompilationReader: m.publishedCompilationReader})
 	m.metrics[workspaceID] = metrics
 	return metrics, true
 }
@@ -511,5 +530,5 @@ func (m runtimeMetrics) active(ctx context.Context) (runtimehost.Runtime, func()
 	if err != nil {
 		return nil, func() {}, err
 	}
-	return activeRuntime{Runtime: lease.Runtime(), servingStateID: string(lease.ServingStateID())}, lease.Release, nil
+	return lease.Runtime(), lease.Release, nil
 }
