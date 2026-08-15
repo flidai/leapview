@@ -193,7 +193,7 @@
         },
         "tables": {
           "items": {
-            "$ref": "#/$defs/%23Identifier"
+            "$ref": "#/$defs/%23ResourceID"
           },
           "minItems": 1,
           "type": "array"

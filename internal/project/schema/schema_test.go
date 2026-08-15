@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -18,6 +19,7 @@ func TestValidateBytesRejectsUnknownEnvelopeField(t *testing.T) {
 apiVersion: leapview.dev/v1
 kind: Project
 metadata:
+  id: project:test
   name: test
 spec:
   connections:
@@ -32,20 +34,13 @@ surprise: true
 }
 
 func TestValidateBytesRejectsRemovedWorkspaceAgentPolicyInclude(t *testing.T) {
-	err := ValidateBytes(KindWorkspace, "workspace.yaml", []byte(`
+	err := ValidateBytes(KindGroup, "group.yaml", []byte(`
 apiVersion: leapview.dev/v1
-kind: Workspace
+kind: Group
 metadata:
+  id: group:sales
   name: sales
 spec:
-  uses:
-    sources: []
-  models:
-    include: []
-  semanticModels:
-    include: []
-  dashboards:
-    include: []
   agentPolicy:
     include: [agent/*.yaml]
 `))
@@ -53,29 +48,23 @@ spec:
 }
 
 func TestValidateBytesRejectsWrongEnvelopeType(t *testing.T) {
-	err := ValidateBytes(KindWorkspace, "workspace.yaml", []byte(`
+	err := ValidateBytes(KindGroup, "group.yaml", []byte(`
 apiVersion: leapview.dev/v1
-kind: Workspace
+kind: Group
 metadata:
+  id: group:sales
   name: sales
-spec:
-  uses:
-    sources: olist.orders
-  models:
-    include: [models/*.yaml]
-  semanticModels:
-    include: [semantic-models/*.yaml]
-  dashboards:
-    include: [dashboards/*.yaml]
+spec: []
 `))
 	assertDiagnostic(t, err, "schema.type", "mismatched types")
 }
 
 func TestValidateBytesRejectsUnsupportedEnum(t *testing.T) {
-	err := ValidateBytes(KindDashboardResource, "dashboard.yaml", []byte(`
+	err := ValidateBytes(KindDashboard, "dashboard.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
+  id: dashboard:sales
   name: sales
 spec:
   semanticModel: sales
@@ -94,10 +83,11 @@ spec:
 }
 
 func TestDashboardVisualContractUnifiesChartsAndTables(t *testing.T) {
-	err := ValidateBytes(KindDashboardResource, "dashboard.yaml", []byte(`
+	err := ValidateBytes(KindDashboard, "dashboard.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
+  id: dashboard:sales
   name: sales
 spec:
   semanticModel: sales
@@ -171,10 +161,11 @@ spec:
 }
 
 func TestDashboardVisualContractAcceptsDecisionContext(t *testing.T) {
-	err := ValidateBytes(KindDashboardResource, "dashboard.yaml", []byte(`
+	err := ValidateBytes(KindDashboard, "dashboard.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
+  id: dashboard:sales
   name: sales
 spec:
   semanticModel: sales
@@ -273,6 +264,7 @@ func TestDashboardVisualContractRejectsLegacyChartTableSplit(t *testing.T) {
 apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
+  id: dashboard:sales
   name: sales
 spec:
   semanticModel: sales
@@ -286,7 +278,7 @@ spec:
       title: Overview
       components: []
 ` + tt.body
-			if err := ValidateBytes(KindDashboardResource, "dashboard.yaml", []byte(content)); err == nil {
+			if err := ValidateBytes(KindDashboard, "dashboard.yaml", []byte(content)); err == nil {
 				t.Fatal("ValidateBytes() unexpectedly accepted legacy dashboard syntax")
 			}
 		})
@@ -298,6 +290,7 @@ func TestValidateBytesRejectsRemovedLocalConnectionKind(t *testing.T) {
 apiVersion: leapview.dev/v1
 kind: Connection
 metadata:
+  id: connection:files
   name: files
 spec:
   kind: local
@@ -306,10 +299,11 @@ spec:
 }
 
 func TestValidateBytesRejectsInvalidIdentifierKey(t *testing.T) {
-	err := ValidateBytes(KindModelTable, "orders.yaml", []byte(`
+	err := ValidateBytes(KindModel, "orders.yaml", []byte(`
 apiVersion: leapview.dev/v1
-kind: ModelTable
+kind: Model
 metadata:
+  id: model:orders
   name: orders
 spec:
   primaryKey: order_id
@@ -334,35 +328,44 @@ func TestValidateBytesRejectsMissingRequiredRootFields(t *testing.T) {
 apiVersion: leapview.dev/v1
 kind: Project
 metadata:
+  id: project:test
   name: test
 `,
 			contains: "spec",
 		},
 		{
-			name: "workspace uses",
-			kind: KindWorkspace,
+			name: "project access",
+			kind: KindProject,
 			content: `
 apiVersion: leapview.dev/v1
-kind: Workspace
+kind: Project
 metadata:
+  id: project:test
   name: sales
 spec:
+  connections:
+    include: [connections/*.yaml]
+  sources:
+    include: [sources/*.yaml]
   models:
     include: [models/*.yaml]
   semanticModels:
     include: [semantic-models/*.yaml]
+  pipelines:
+    include: [pipelines/*.yaml]
   dashboards:
     include: [dashboards/*.yaml]
 `,
-			contains: "uses",
+			contains: "access",
 		},
 		{
 			name: "dashboard semantic model",
-			kind: KindDashboardResource,
+			kind: KindDashboard,
 			content: `
 apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
+  id: dashboard:sales
   name: sales
 spec:
   visuals: {}
@@ -381,13 +384,21 @@ spec:
 
 func TestValidateFileAcceptsShowcaseResources(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "dashboards")
-	files, err := filepath.Glob(filepath.Join(root, "**", "*.yaml"))
-	if err == nil && len(files) == 0 {
-		err = filepath.SkipAll
-	}
+	var files []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
 	if err != nil {
-		files = explicitShowcaseResourceFiles(root)
+		t.Fatal(err)
 	}
+	sort.Strings(files)
 	for _, path := range files {
 		kind, ok := kindForResourceFile(t, path)
 		if !ok {
@@ -417,36 +428,39 @@ func TestGeneratedJSONSchemasRejectInvalidDocuments(t *testing.T) {
 			},
 		},
 		{
-			name: "workspace missing uses",
-			kind: KindWorkspace,
+			name: "project missing access",
+			kind: KindProject,
 			instance: map[string]any{
 				"apiVersion": "leapview.dev/v1",
-				"kind":       "Workspace",
-				"metadata":   map[string]any{"name": "sales"},
+				"kind":       "Project",
+				"metadata":   map[string]any{"id": "project:sales", "name": "sales"},
 				"spec": map[string]any{
+					"connections":    map[string]any{"include": []any{"connections/*.yaml"}},
+					"sources":        map[string]any{"include": []any{"sources/*.yaml"}},
 					"models":         map[string]any{"include": []any{"models/*.yaml"}},
 					"semanticModels": map[string]any{"include": []any{"semantic-models/*.yaml"}},
+					"pipelines":      map[string]any{"include": []any{"pipelines/*.yaml"}},
 					"dashboards":     map[string]any{"include": []any{"dashboards/*.yaml"}},
 				},
 			},
 		},
 		{
-			name: "model table missing primary key",
-			kind: KindModelTable,
+			name: "model missing primary key",
+			kind: KindModel,
 			instance: map[string]any{
 				"apiVersion": "leapview.dev/v1",
-				"kind":       "ModelTable",
-				"metadata":   map[string]any{"name": "orders"},
+				"kind":       "Model",
+				"metadata":   map[string]any{"id": "model:orders", "name": "orders"},
 				"spec":       map[string]any{},
 			},
 		},
 		{
 			name: "dashboard empty pages",
-			kind: KindDashboardResource,
+			kind: KindDashboard,
 			instance: map[string]any{
 				"apiVersion": "leapview.dev/v1",
 				"kind":       "Dashboard",
-				"metadata":   map[string]any{"name": "sales"},
+				"metadata":   map[string]any{"id": "dashboard:sales", "name": "sales"},
 				"spec": map[string]any{
 					"semanticModel": "sales",
 					"visuals":       map[string]any{"revenue": map[string]any{"query": map[string]any{}}},
@@ -482,29 +496,122 @@ func TestJSONSchemaFilesAreFresh(t *testing.T) {
 	}
 }
 
-func explicitShowcaseResourceFiles(root string) []string {
-	return []string{
-		filepath.Join(root, "leapview.yaml"),
-		filepath.Join(root, "connections", "olist.yaml"),
-		filepath.Join(root, "sources", "olist.customers.yaml"),
-		filepath.Join(root, "sources", "olist.order_items.yaml"),
-		filepath.Join(root, "sources", "olist.orders.yaml"),
-		filepath.Join(root, "sources", "olist.payments.yaml"),
-		filepath.Join(root, "sources", "olist.products.yaml"),
-		filepath.Join(root, "sources", "olist.reviews.yaml"),
-		filepath.Join(root, "sources", "olist.translations.yaml"),
-		filepath.Join(root, "workspaces", "sales", "workspace.yaml"),
-		filepath.Join(root, "workspaces", "sales", "agent", "default.yaml"),
-		filepath.Join(root, "workspaces", "sales", "models", "customers.yaml"),
-		filepath.Join(root, "workspaces", "sales", "models", "orders.yaml"),
-		filepath.Join(root, "workspaces", "sales", "semantic-models", "sales.yaml"),
-		filepath.Join(root, "workspaces", "sales", "dashboards", "executive-sales.yaml"),
-		filepath.Join(root, "workspaces", "operations", "workspace.yaml"),
-		filepath.Join(root, "workspaces", "operations", "agent", "default.yaml"),
-		filepath.Join(root, "workspaces", "operations", "models", "customers.yaml"),
-		filepath.Join(root, "workspaces", "operations", "models", "orders.yaml"),
-		filepath.Join(root, "workspaces", "operations", "semantic-models", "operations.yaml"),
-		filepath.Join(root, "workspaces", "operations", "dashboards", "fulfillment-operations.yaml"),
+func TestProjectContractIsProjectWide(t *testing.T) {
+	valid := []byte(`
+apiVersion: leapview.dev/v1
+kind: Project
+metadata:
+  id: project:showcase
+  name: showcase
+  displayName: Showcase
+  domain: analytics
+  documentation: docs/project.md
+  provenance: {origin: git, path: dashboards/leapview.yaml}
+spec:
+  connections: {include: [connections/*.yaml]}
+  sources: {include: [sources/*.yaml]}
+  models: {include: [models/*.yaml]}
+  semanticModels: {include: [semantic-models/*.yaml]}
+  pipelines: {include: [pipelines/*.yaml]}
+  dashboards: {include: [dashboards/*.yaml]}
+  access: {include: [access/*.yaml]}
+  publications: {include: [publications/*.yaml]}
+`)
+	if err := ValidateBytes(KindProject, "project.yaml", valid); err != nil {
+		t.Fatalf("ValidateBytes() error = %v", err)
+	}
+	for _, legacy := range []string{"workspace", "workspaces"} {
+		content := strings.Replace(string(valid), "  access:", "  "+legacy+": {include: [workspaces/*.yaml]}\n  access:", 1)
+		if err := ValidateBytes(KindProject, "project.yaml", []byte(content)); err == nil {
+			t.Fatalf("ValidateBytes() accepted removed project field %q", legacy)
+		}
+	}
+}
+
+func TestMetadataRequiresOpaqueIDAndSymbolicName(t *testing.T) {
+	base := `
+apiVersion: leapview.dev/v1
+kind: Connection
+metadata:
+  id: connection:files
+  name: files
+spec:
+  kind: managed
+`
+	if err := ValidateBytes(KindConnection, "connection.yaml", []byte(base)); err != nil {
+		t.Fatalf("valid metadata rejected: %v", err)
+	}
+	for _, field := range []string{"id", "name"} {
+		value := map[string]string{"id": "connection:files", "name": "files"}[field]
+		content := strings.Replace(base, "  "+field+": "+value+"\n", "", 1)
+		if err := ValidateBytes(KindConnection, "connection.yaml", []byte(content)); err == nil {
+			t.Fatalf("ValidateBytes() accepted metadata without %s", field)
+		}
+	}
+	if err := ValidateBytes(KindConnection, "connection.yaml", []byte(strings.Replace(base, "  id: connection:files", "  id: files/connection", 1))); err == nil {
+		t.Fatal("ValidateBytes() accepted malformed opaque resource ID")
+	}
+	if err := ValidateBytes(KindConnection, "connection.yaml", []byte(strings.Replace(base, "  name: files", "  name: 9files", 1))); err == nil {
+		t.Fatal("ValidateBytes() accepted malformed symbolic resource name")
+	}
+	if err := ValidateBytes(KindConnection, "connection.yaml", []byte(strings.Replace(base, "  name: files", "  workspace: sales\n  name: files", 1))); err == nil {
+		t.Fatal("ValidateBytes() accepted removed metadata.workspace")
+	}
+}
+
+func TestProjectSidecarsAndCanonicalGrantContract(t *testing.T) {
+	tests := []struct {
+		name string
+		kind Kind
+		doc  string
+	}{
+		{"group", KindGroup, `
+apiVersion: leapview.dev/v1
+kind: Group
+metadata: {id: group:analysts, name: analysts}
+spec: {members: [{email: analysts@example.com}]}
+`},
+		{"role binding", KindRoleBinding, `
+apiVersion: leapview.dev/v1
+kind: RoleBinding
+metadata: {id: binding:analysts, name: analysts_binding}
+spec: {role: viewer, subject: {kind: group, group: group:analysts}}
+`},
+		{"grant", KindGrant, `
+apiVersion: leapview.dev/v1
+kind: Grant
+metadata: {id: grant:dashboard, name: dashboard_view}
+spec: {object: {id: dashboard:sales, kind: dashboard}, subject: {kind: group, group: group:analysts}, capability: RESOURCE_READ}
+`},
+		{"data policy", KindDataPolicy, `
+apiVersion: leapview.dev/v1
+kind: DataPolicy
+metadata: {id: policy:region, name: region_filter}
+spec: {object: {kind: semantic_model, id: semantic_model:sales}, policyType: row_filter, expression: {field: region}}
+`},
+		{"publication", KindDashboardPublication, `
+apiVersion: leapview.dev/v1
+kind: DashboardPublication
+metadata: {id: publication:website, name: website}
+spec: {dashboard: dashboard:sales, defaultPage: overview, embedding: {allowedOrigins: [https://example.com]}}
+`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateBytes(tt.kind, tt.name+".yaml", []byte(tt.doc)); err != nil {
+				t.Fatalf("ValidateBytes() error = %v", err)
+			}
+		})
+	}
+	grant := tests[2].doc
+	for _, legacy := range []string{"privilege: VIEW_ITEM", "object: {type: dashboard, id: dashboard:sales}"} {
+		content := strings.Replace(grant, "capability: RESOURCE_READ", legacy, 1)
+		if strings.HasPrefix(legacy, "object:") {
+			content = strings.Replace(grant, "object: {id: dashboard:sales, kind: dashboard}", legacy, 1)
+		}
+		if err := ValidateBytes(KindGrant, "grant.yaml", []byte(content)); err == nil {
+			t.Fatalf("accepted removed Grant contract %q", legacy)
+		}
 	}
 }
 
@@ -531,18 +638,22 @@ func kindForResourceFile(t *testing.T, path string) (Kind, bool) {
 		return KindConnection, true
 	case "Source":
 		return KindSource, true
-	case "Workspace":
-		return KindWorkspace, true
-	case "WorkspaceGroup":
-		return KindWorkspaceGroup, true
-	case "WorkspaceRoleBinding":
-		return KindWorkspaceRoleBinding, true
-	case "ModelTable":
-		return KindModelTable, true
+	case "Model":
+		return KindModel, true
+	case "Pipeline":
+		return KindPipeline, true
 	case "SemanticModel":
-		return KindSemanticModelResource, true
+		return KindSemanticModel, true
 	case "Dashboard":
-		return KindDashboardResource, true
+		return KindDashboard, true
+	case "Group":
+		return KindGroup, true
+	case "RoleBinding":
+		return KindRoleBinding, true
+	case "Grant":
+		return KindGrant, true
+	case "DataPolicy":
+		return KindDataPolicy, true
 	case "DashboardPublication":
 		return KindDashboardPublication, true
 	default:

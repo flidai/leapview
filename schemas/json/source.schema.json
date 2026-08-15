@@ -7,10 +7,6 @@
       "additionalProperties": true,
       "type": "object"
     },
-    "#Identifier": {
-      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-      "type": "string"
-    },
     "#Metadata": {
       "additionalProperties": false,
       "properties": {
@@ -49,7 +45,7 @@
       "additionalProperties": false,
       "properties": {
         "connection": {
-          "$ref": "#/$defs/%23Identifier"
+          "$ref": "#/$defs/%23ResourceID"
         },
         "description": {
           "type": "string"
@@ -96,6 +92,9 @@
           "type": "string"
         }
       },
+      "required": [
+        "connection"
+      ],
       "type": "object"
     }
   },

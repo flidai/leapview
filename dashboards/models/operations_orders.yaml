@@ -1,0 +1,46 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:operations_orders
+  name: operations_orders
+  displayName: Fulfillment Orders
+spec:
+  primaryKey: order_id
+  sources:
+    - olist.orders
+    - olist.reviews
+  fields:
+    order_id: {label: Order ID}
+    customer_id: {label: Customer ID}
+    purchase_month: {label: Purchase month}
+    status: {label: Status}
+    review_score: {label: Review score}
+    delivery_days: {label: Delivery days}
+    delivery_bucket: {label: Delivery speed}
+  transform:
+    sql: |
+      WITH review AS (
+        SELECT order_id, AVG(try_cast(review_score AS DOUBLE)) AS review_score
+        FROM source."olist.reviews"
+        GROUP BY order_id
+      )
+      SELECT
+        o.order_id,
+        o.customer_id,
+        strftime(CAST(o.order_purchase_timestamp AS TIMESTAMP), '%Y-%m') AS purchase_month,
+        o.order_status AS status,
+        round(COALESCE(review.review_score, 0), 2) AS review_score,
+        CASE
+          WHEN o.order_delivered_customer_date IS NULL THEN NULL
+          ELSE datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP))
+        END AS delivery_days,
+        CASE
+          WHEN o.order_delivered_customer_date IS NULL THEN NULL
+          WHEN datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP)) <= 3 THEN '0-3 days'
+          WHEN datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP)) <= 7 THEN '4-7 days'
+          WHEN datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP)) <= 14 THEN '8-14 days'
+          WHEN datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP)) <= 30 THEN '15-30 days'
+          ELSE '31+ days'
+        END AS delivery_bucket
+      FROM source."olist.orders" o
+      LEFT JOIN review ON review.order_id = o.order_id

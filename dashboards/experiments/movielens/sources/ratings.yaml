@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:ratings
   name: movielens.ratings
-  title: Ratings
+  displayName: Ratings
 spec:
   connection: movielens
   path: ratings.csv

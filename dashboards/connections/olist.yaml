@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Connection
 metadata:
+  id: connection:olist
   name: olist
-  title: Olist CSV files
+  displayName: Olist CSV files
 spec:
   kind: managed
   description: Project-global managed Olist ecommerce demo data.

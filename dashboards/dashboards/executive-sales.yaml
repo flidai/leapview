@@ -1,0 +1,199 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:executive-sales
+  name: executive-sales
+  displayName: Executive Sales
+  description: Revenue, AOV, category, and order volume overview.
+  tags: [sales, revenue]
+spec:
+  appearance:
+    icon: chart-no-axes-combined
+    color: purple
+  semanticModel: sales
+  filters:
+    purchase_date:
+      label: Purchase date
+      field: purchase_date
+      predicates:
+        - kind: range
+        - kind: relative_period
+    state:
+      label: State
+      field: state
+      predicates:
+        - kind: set
+          operators: [in, not_in]
+      options:
+        kind: distinct
+        limit: 50
+    category:
+      label: Category
+      field: category
+      predicates:
+        - kind: comparison
+          operators: [contains, equals, starts_with, not_contains]
+  filter_bindings:
+    purchase_date:
+      filter: purchase_date
+      default: {kind: unfiltered}
+      url: {param: period, encoding: typed_v1}
+      pane: {visible: true, order: 10}
+    state:
+      filter: state
+      default: {kind: unfiltered}
+      selection: {mode: multiple, max_selected_values: 50}
+      url: {param: state, encoding: typed_v1}
+      pane: {visible: true, order: 20}
+    category:
+      filter: category
+      default: {kind: unfiltered}
+      url: {param: category, encoding: typed_v1}
+      pane: {visible: true, order: 30}
+  filter_application: {mode: immediate}
+  visuals:
+    revenue_kpi:
+      type: kpi
+      query:
+        measures:
+          revenue:
+      presentation:
+        note: Payment value
+        tone: success
+    aov_kpi:
+      type: kpi
+      query:
+        measures:
+          aov:
+      presentation:
+        note: Revenue per order
+        tone: warning
+    total_orders:
+      type: kpi
+      query:
+        measures:
+          order_count:
+      presentation:
+        note: Filtered order count
+        tone: ink
+    revenue_by_month:
+      title: Revenue by month
+      type: area
+      query:
+        dimensions:
+          purchase_month: orders.purchase_month
+        measures:
+          revenue:
+        sort:
+          - field: purchase_month
+            direction: asc
+        limit: 30
+    category_revenue:
+      title: Top categories by revenue
+      type: bar
+      query:
+        dimensions:
+          category: orders.category
+        measures:
+          revenue:
+        sort:
+          - field: value
+            direction: desc
+        limit: 10
+    orders_table:
+      title: Orders
+      type: table
+      query:
+        table: orders
+        fields:
+          - orders.order_id
+          - orders.purchase_date
+          - orders.status
+          - customers.state
+          - orders.category
+          - orders.revenue
+      default_sort:
+        key: purchase_date
+        direction: desc
+      interaction:
+        row_selection:
+          mappings:
+            - field: orders.order_id
+              fact: orders
+              value: order_id
+              label: order_id
+            - field: orders.status
+              fact: orders
+              value: status
+              label: status
+            - field: orders.category
+              fact: orders
+              value: category
+              label: category
+          targets:
+            - category_revenue
+      columns:
+        - key: order_id
+          label: Order
+        - key: purchase_date
+          label: Purchased
+        - key: status
+          label: Status
+        - key: state
+          label: State
+        - key: category
+          label: Category
+        - key: revenue
+          label: Revenue
+          align: right
+  pages:
+    - id: overview
+      title: Overview
+      canvas:
+        width: 1366
+        height: 1824
+      grid:
+        columns: 12
+        row_height: 48
+        gap: 16
+        padding: 16
+      components:
+        - id: purchase-date-filter
+          kind: slicer
+          binding: {scope: report, id: purchase_date}
+          presentation: {style: date_range}
+          placement: {col: 1, row: 1, col_span: 4, row_span: 2}
+        - id: state-filter
+          kind: slicer
+          binding: {scope: report, id: state}
+          presentation: {style: dropdown, search: true}
+          placement: {col: 5, row: 1, col_span: 4, row_span: 2}
+        - id: category-filter
+          kind: slicer
+          binding: {scope: report, id: category}
+          presentation: {style: input}
+          placement: {col: 9, row: 1, col_span: 4, row_span: 2}
+        - id: total-orders
+          kind: visual
+          visual: total_orders
+          placement: {col: 1, row: 4, col_span: 4, row_span: 3}
+        - id: revenue
+          kind: visual
+          visual: revenue_kpi
+          placement: {col: 5, row: 4, col_span: 4, row_span: 3}
+        - id: aov
+          kind: visual
+          visual: aov_kpi
+          placement: {col: 9, row: 4, col_span: 4, row_span: 3}
+        - id: revenue-trend
+          kind: visual
+          visual: revenue_by_month
+          placement: {col: 1, row: 8, col_span: 12, row_span: 6}
+        - id: categories
+          kind: visual
+          visual: category_revenue
+          placement: {col: 1, row: 14, col_span: 12, row_span: 6}
+        - id: orders_table
+          kind: visual
+          visual: orders_table
+          placement: {col: 1, row: 21, col_span: 12, row_span: 8}

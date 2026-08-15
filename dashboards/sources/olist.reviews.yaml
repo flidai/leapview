@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:olist.reviews
   name: olist.reviews
-  title: Reviews
+  displayName: Reviews
 spec:
   connection: olist
   path: olist_order_reviews_dataset.csv

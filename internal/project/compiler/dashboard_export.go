@@ -36,7 +36,6 @@ type canonicalDashboardResource struct {
 
 type canonicalDashboardMetadata struct {
 	Name        string   `yaml:"name"`
-	Workspace   string   `yaml:"workspace,omitempty"`
 	Title       string   `yaml:"title,omitempty"`
 	Description string   `yaml:"description,omitempty"`
 	Owner       string   `yaml:"owner,omitempty"`
@@ -371,7 +370,7 @@ func ExportDashboard(document dashboardauthoring.Dashboard, metadata DashboardEx
 		APIVersion: projectAPIVersion,
 		Kind:       "Dashboard",
 		Metadata: canonicalDashboardMetadata{
-			Name: name, Workspace: metadata.Workspace, Title: title,
+			Name: name, Title: title,
 			Description: description, Owner: metadata.Owner,
 			Tags: append([]string(nil), metadata.Tags...),
 		},
@@ -413,7 +412,7 @@ func ExportDashboard(document dashboardauthoring.Dashboard, metadata DashboardEx
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize dashboard YAML: %w", err)
 	}
-	if err := configschema.ValidateBytes(configschema.KindDashboardResource, "dashboard.yaml", bytes); err != nil {
+	if err := configschema.ValidateBytes(configschema.KindDashboard, "dashboard.yaml", bytes); err != nil {
 		return nil, fmt.Errorf("validate canonical dashboard: %w", err)
 	}
 	return bytes, nil

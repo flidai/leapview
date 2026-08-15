@@ -1,0 +1,114 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:orders
+  name: orders
+  displayName: Visual Orders
+  description: Order-grain model table with deliberately grain-aligned category, revenue, review, and delivery fields.
+spec:
+  description: Order-grain model table with deliberately grain-aligned category, revenue, review, and delivery fields.
+  primaryKey: order_id
+  sources:
+  - olist.orders
+  - olist.payments
+  - olist.reviews
+  - olist.order_items
+  - olist.products
+  - olist.translations
+  fields:
+    order_id:
+      label: Order ID
+      description: Stable order identifier from the Olist orders dataset.
+      type: string
+    customer_id:
+      label: Customer ID
+      description: Customer identifier associated with the order.
+      type: string
+    purchase_month:
+      label: Purchase month
+      description: Calendar month when the order was purchased.
+      type: string
+    purchase_timestamp:
+      label: Purchase timestamp
+      description: Timestamp when the customer placed the order.
+      type: timestamp
+    purchase_date:
+      label: Purchase date
+      description: Calendar date when the customer placed the order.
+      type: date
+    status:
+      label: Status
+      description: Current order lifecycle status.
+      type: string
+    category:
+      label: Category
+      description: English product category associated with the order.
+      type: string
+    revenue:
+      label: Revenue
+      description: Total payment revenue attributed to the order.
+      type: number
+    review_score:
+      label: Review
+      description: Average customer review score for the order.
+      type: number
+    delivery_days:
+      label: Delivery days
+      description: Days between purchase and customer delivery.
+      type: integer
+    is_delivered:
+      label: Delivered
+      description: Whether the order has a customer delivery timestamp.
+      type: boolean
+    delivery_bucket:
+      label: Delivery speed
+      description: Delivery speed bucket derived from delivery days.
+      type: string
+  transform:
+    sql: |
+      WITH revenue AS (
+        SELECT order_id, SUM(try_cast(payment_value AS DOUBLE)) AS revenue
+        FROM source."olist.payments"
+        GROUP BY order_id
+      ),
+      review AS (
+        SELECT order_id, AVG(try_cast(review_score AS DOUBLE)) AS review_score
+        FROM source."olist.reviews"
+        GROUP BY order_id
+      ),
+      category AS (
+        SELECT
+          oi.order_id,
+          MIN(COALESCE(t.product_category_name_english, p.product_category_name, 'uncategorized')) AS category
+        FROM source."olist.order_items" oi
+        LEFT JOIN source."olist.products" p ON p.product_id = oi.product_id
+        LEFT JOIN source."olist.translations" t ON t.product_category_name = p.product_category_name
+        GROUP BY oi.order_id
+      )
+      SELECT
+        o.order_id,
+        o.customer_id,
+        CAST(o.order_purchase_timestamp AS TIMESTAMP) AS purchase_timestamp,
+        strftime(CAST(o.order_purchase_timestamp AS TIMESTAMP), '%Y-%m') AS purchase_month,
+        CAST(o.order_purchase_timestamp AS DATE) AS purchase_date,
+        o.order_status AS status,
+        COALESCE(category.category, 'uncategorized') AS category,
+        round(COALESCE(revenue.revenue, 0), 2) AS revenue,
+        round(COALESCE(review.review_score, 0), 2) AS review_score,
+        o.order_delivered_customer_date IS NOT NULL AS is_delivered,
+        CASE
+          WHEN o.order_delivered_customer_date IS NULL THEN NULL
+          ELSE datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP))
+        END AS delivery_days,
+        CASE
+          WHEN o.order_delivered_customer_date IS NULL THEN 'Not delivered'
+          WHEN datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP)) <= 3 THEN '0-3 days'
+          WHEN datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP)) <= 7 THEN '4-7 days'
+          WHEN datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP)) <= 14 THEN '8-14 days'
+          WHEN datediff('day', CAST(o.order_purchase_timestamp AS TIMESTAMP), CAST(o.order_delivered_customer_date AS TIMESTAMP)) <= 30 THEN '15-30 days'
+          ELSE '31+ days'
+        END AS delivery_bucket
+      FROM source."olist.orders" o
+      LEFT JOIN revenue ON revenue.order_id = o.order_id
+      LEFT JOIN review ON review.order_id = o.order_id
+      LEFT JOIN category ON category.order_id = o.order_id

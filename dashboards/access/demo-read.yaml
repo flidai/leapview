@@ -1,0 +1,13 @@
+apiVersion: leapview.dev/v1
+kind: Grant
+metadata:
+  id: grant:demo-read
+  name: demo-read
+spec:
+  object:
+    kind: dashboard
+    id: dashboard:visual-showcase
+  subject:
+    kind: principal
+    email: demo@leapview.dev
+  capability: RESOURCE_READ

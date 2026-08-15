@@ -1,20 +1,21 @@
 package compiler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
-	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
-	"github.com/flidai/leapview/internal/workspace"
 )
 
 func projectModelTable(spec projectModelTableSpec) semanticmodel.Table {
@@ -67,19 +68,10 @@ func projectDashboardPages(pages []projectDashboardPage) []dashboard.Page {
 	return out
 }
 
-func projectWorkspaceGroup(name string, spec workspaceGroupSpec) workspace.WorkspaceGroup {
-	group := workspace.WorkspaceGroup{
-		ID:          name,
-		Name:        name,
-		Description: spec.Description,
-		Members:     make([]workspace.WorkspaceGroupMember, 0, len(spec.Members)),
-	}
+func projectAccessGroup(name string, spec projectGroupSpec) manifest.Group {
+	group := manifest.Group{ID: name, Name: name, Description: spec.Description, Members: make([]manifest.GroupMember, 0, len(spec.Members))}
 	for _, member := range spec.Members {
-		group.Members = append(group.Members, workspace.WorkspaceGroupMember{
-			PrincipalID: strings.TrimSpace(member.PrincipalID),
-			Email:       strings.TrimSpace(member.Email),
-			DisplayName: strings.TrimSpace(member.DisplayName),
-		})
+		group.Members = append(group.Members, manifest.GroupMember{PrincipalID: strings.TrimSpace(member.PrincipalID), Email: strings.TrimSpace(member.Email), DisplayName: strings.TrimSpace(member.DisplayName)})
 	}
 	sort.SliceStable(group.Members, func(i, j int) bool {
 		return accessMemberSortKey(group.Members[i]) < accessMemberSortKey(group.Members[j])
@@ -87,74 +79,29 @@ func projectWorkspaceGroup(name string, spec workspaceGroupSpec) workspace.Works
 	return group
 }
 
-func projectWorkspaceRoleBinding(name string, spec workspaceRoleBindingSpec) workspace.WorkspaceRoleBinding {
-	return workspace.WorkspaceRoleBinding{
-		ID:   name,
-		Name: name,
-		Role: strings.TrimSpace(spec.Role),
-		Subject: workspace.WorkspaceRoleBindingSubject{
-			Kind:        strings.TrimSpace(spec.Subject.Kind),
-			PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID),
-			Email:       strings.TrimSpace(spec.Subject.Email),
-			DisplayName: strings.TrimSpace(spec.Subject.DisplayName),
-			Group:       strings.TrimSpace(spec.Subject.Group),
-			Publication: strings.TrimSpace(spec.Subject.Publication),
-		},
-	}
+func projectAccessRoleBinding(name string, spec projectRoleBindingSpec) manifest.RoleBinding {
+	return manifest.RoleBinding{ID: name, Name: name, Role: strings.TrimSpace(spec.Role), Subject: manifest.Subject{Kind: strings.TrimSpace(spec.Subject.Kind), PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID), Email: strings.TrimSpace(spec.Subject.Email), DisplayName: strings.TrimSpace(spec.Subject.DisplayName), Group: strings.TrimSpace(spec.Subject.Group), Publication: strings.TrimSpace(spec.Subject.Publication)}}
 }
 
-func projectWorkspaceGrant(name string, spec workspaceGrantSpec) workspace.WorkspaceGrant {
-	return workspace.WorkspaceGrant{
-		ID:   name,
-		Name: name,
-		Object: workspace.WorkspaceSecurableObjectRef{
-			Type: strings.TrimSpace(spec.Object.Type),
-			ID:   strings.TrimSpace(spec.Object.ID),
-		},
-		Subject: workspace.WorkspaceRoleBindingSubject{
-			Kind:        strings.TrimSpace(spec.Subject.Kind),
-			PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID),
-			Email:       strings.TrimSpace(spec.Subject.Email),
-			DisplayName: strings.TrimSpace(spec.Subject.DisplayName),
-			Group:       strings.TrimSpace(spec.Subject.Group),
-			Publication: strings.TrimSpace(spec.Subject.Publication),
-		},
-		Privilege: strings.TrimSpace(spec.Privilege),
-	}
+func projectAccessGrant(name string, spec projectGrantSpec) manifest.Grant {
+	return manifest.Grant{ID: name, Name: name, Object: manifest.SecurableRef{Kind: strings.TrimSpace(spec.Object.Kind), ID: strings.TrimSpace(spec.Object.ID)}, Subject: manifest.Subject{Kind: strings.TrimSpace(spec.Subject.Kind), PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID), Email: strings.TrimSpace(spec.Subject.Email), DisplayName: strings.TrimSpace(spec.Subject.DisplayName), Group: strings.TrimSpace(spec.Subject.Group), Publication: strings.TrimSpace(spec.Subject.Publication)}, Capability: firstNonEmpty(spec.Capability, spec.Privilege)}
 }
 
-func projectWorkspaceDataPolicy(name string, spec workspaceDataPolicySpec) (workspace.WorkspaceDataPolicy, error) {
+func projectAccessDataPolicy(name string, spec projectDataPolicySpec) (manifest.DataPolicy, error) {
 	expressionJSON := "{}"
 	if spec.Expression.Kind != 0 {
 		var expression any
 		if err := spec.Expression.Decode(&expression); err != nil {
-			return workspace.WorkspaceDataPolicy{}, err
+			return manifest.DataPolicy{}, err
 		}
 		expression = normalizeYAMLValue(expression)
 		bytes, err := json.Marshal(expression)
 		if err != nil {
-			return workspace.WorkspaceDataPolicy{}, err
+			return manifest.DataPolicy{}, err
 		}
 		expressionJSON = string(bytes)
 	}
-	return workspace.WorkspaceDataPolicy{
-		ID:   name,
-		Name: name,
-		Object: workspace.WorkspaceSecurableObjectRef{
-			Type: strings.TrimSpace(spec.Object.Type),
-			ID:   strings.TrimSpace(spec.Object.ID),
-		},
-		Subject: workspace.WorkspaceRoleBindingSubject{
-			Kind:        strings.TrimSpace(spec.Subject.Kind),
-			PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID),
-			Email:       strings.TrimSpace(spec.Subject.Email),
-			DisplayName: strings.TrimSpace(spec.Subject.DisplayName),
-			Group:       strings.TrimSpace(spec.Subject.Group),
-			Publication: strings.TrimSpace(spec.Subject.Publication),
-		},
-		PolicyType:     strings.TrimSpace(spec.PolicyType),
-		ExpressionJSON: expressionJSON,
-	}, nil
+	return manifest.DataPolicy{ID: name, Name: name, Object: manifest.SecurableRef{Kind: strings.TrimSpace(spec.Object.Kind), ID: strings.TrimSpace(spec.Object.ID)}, Subject: manifest.Subject{Kind: strings.TrimSpace(spec.Subject.Kind), PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID), Email: strings.TrimSpace(spec.Subject.Email), DisplayName: strings.TrimSpace(spec.Subject.DisplayName), Group: strings.TrimSpace(spec.Subject.Group), Publication: strings.TrimSpace(spec.Subject.Publication)}, PolicyType: strings.TrimSpace(spec.PolicyType), ExpressionJSON: expressionJSON}, nil
 }
 
 func normalizeYAMLValue(value any) any {
@@ -199,176 +146,269 @@ func sortedUniqueTrimmed(values []string) []string {
 	return out
 }
 
-func (workspaceProject *WorkspaceProject) definition(project Project) (*manifest.Workspace, error) {
-	sourceAliases := map[string]string{}
-	sourceIDs := map[string]string{}
-	for source := range workspaceProject.AllowedSources {
-		alias := localSourceName(source)
-		if existing, exists := sourceIDs[alias]; exists && existing != source {
-			return nil, fmt.Errorf("workspace %q sources %q and %q resolve to duplicate runtime alias %q", workspaceProject.ID, existing, source, alias)
+// projectManifest projects flat authored values into the portable manifest
+// consumed by artifact compilation. It performs semantic-model and dashboard
+// normalization once, retaining canonical resource IDs and source provenance.
+func projectManifest(project Project) (manifest.Project, error) {
+	result := manifest.Project{
+		ID: string(project.ID), Name: project.Name, Title: project.Metadata.DisplayName, Description: project.Metadata.Description,
+		Connections: map[string]semanticmodel.Connection{}, Sources: map[string]semanticmodel.Source{}, Models: map[string]semanticmodel.Table{}, SemanticModels: map[string]*semanticmodel.Model{},
+		DashboardDefinitions: map[string]dashboarddefinition.Definition{}, DashboardSources: map[string]manifest.DashboardSource{}, Publications: map[string]publication.Definition{}, RefreshPipelines: map[string]refreshschedule.Definition{},
+		NameIndex:     manifest.NameIndex{Connections: map[string]string{}, Sources: map[string]string{}, Models: map[string]string{}, SemanticModels: map[string]string{}, Dashboards: map[string]string{}, Pipelines: map[string]string{}, Publications: map[string]string{}},
+		ResourceFiles: map[string]string{},
+	}
+	result.ResourceFiles[string(project.ID)] = projectRelativePath(&project, project.ProjectPath)
+	for id, path := range project.ResourcePaths {
+		result.ResourceFiles[id] = projectRelativePath(&project, path)
+	}
+	for name, value := range project.Connections {
+		id := project.ConnectionIDs[name]
+		if id == "" {
+			return manifest.Project{}, fmt.Errorf("connection %q has no stable id", name)
 		}
-		sourceAliases[source] = alias
-		sourceIDs[alias] = source
+		result.Connections[id] = value
+		result.NameIndex.Connections[name] = id
 	}
-	catalog := manifest.Catalog{
-		Workspace: manifest.CatalogWorkspace{
-			ID:          workspaceProject.ID,
-			Title:       workspaceProject.Title,
-			Description: workspaceProject.Description,
-		},
-		SemanticModels: []manifest.CatalogModel{},
-		Dashboards:     []manifest.CatalogDashboard{},
+	for name, value := range project.Sources {
+		id := project.SourceIDs[name]
+		if id == "" {
+			return manifest.Project{}, fmt.Errorf("source %q has no stable id", name)
+		}
+		value.Connection = canonicalRef(project, "connection", value.Connection)
+		result.Sources[id] = value
+		result.NameIndex.Sources[name] = id
 	}
-	definition := &manifest.Workspace{
-		Catalog:              catalog,
-		Models:               map[string]*semanticmodel.Model{},
-		DashboardDefinitions: map[string]dashboarddefinition.Definition{},
-		DashboardSources:     map[string]manifest.DashboardSource{},
-		Publications:         copyDashboardPublications(workspaceProject.Publications),
-		Access: workspace.AccessPolicy{
-			Groups:       copyWorkspaceGroups(workspaceProject.AccessGroups),
-			RoleBindings: copyWorkspaceRoleBindings(workspaceProject.AccessRoleBindings),
-			Grants:       copyWorkspaceGrants(workspaceProject.AccessGrants),
-			DataPolicies: copyWorkspaceDataPolicies(workspaceProject.AccessDataPolicies),
-		},
-		RefreshPipelines: copyRefreshPipelines(workspaceProject.RefreshPipelines),
-		BaseDir:          project.BaseDir,
-		SourceIDs:        sourceIDs,
-		SourceFiles:      workspaceProject.sourceFiles(project),
+	for name, value := range project.Models {
+		id := project.ModelIDs[name]
+		if id == "" {
+			return manifest.Project{}, fmt.Errorf("model %q has no stable id", name)
+		}
+		value.Source = canonicalRef(project, "source", value.Source)
+		value.Sources = canonicalRefs(project, "source", value.Sources)
+		value.SourceDependencies = canonicalRefs(project, "source", value.SourceDependencies)
+		value.ModelDependencies = canonicalRefs(project, "model", value.ModelDependencies)
+		result.Models[id] = value
+		result.NameIndex.Models[name] = id
 	}
-	for _, modelName := range sortedMapKeys(workspaceProject.SemanticModels) {
-		semanticSpec := workspaceProject.SemanticModels[modelName]
-		model, err := workspaceProject.semanticModel(project, modelName, semanticSpec, sourceAliases)
+	for name, spec := range project.SemanticModels {
+		id := project.SemanticModelIDs[name]
+		if id == "" {
+			return manifest.Project{}, fmt.Errorf("semantic model %q has no stable id", name)
+		}
+		runtimeTables := copyTables(project.Models)
+		for tableName, table := range runtimeTables {
+			table.Source = authoredNameByID(table.Source, project.SourceIDs)
+			table.Sources = authoredNamesByID(table.Sources, project.SourceIDs)
+			runtimeTables[tableName] = table
+		}
+		model := &semanticmodel.Model{Name: name, Title: name, Connections: copyConnections(project.Connections), Sources: copySources(project.Sources), Tables: translatedTablesForRuntime(runtimeTables, map[string]string{})}
+		authoredSpec := spec
+		authoredSpec.Tables = authoredNamesByID(spec.Tables, project.ModelIDs)
+		if err := applySemanticModelSpec(model, authoredSpec); err != nil {
+			return manifest.Project{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
+		}
+		if err := model.ValidateAuthored(); err != nil {
+			return manifest.Project{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
+		}
+		result.SemanticModels[id] = model
+		result.NameIndex.SemanticModels[name] = id
+	}
+	for name, dashboard := range project.Dashboards {
+		id := project.DashboardIDs[name]
+		if id == "" {
+			return manifest.Project{}, fmt.Errorf("dashboard %q has no stable id", name)
+		}
+		authoredDashboard := *dashboard
+		authoredDashboard.SemanticModel = authoredNameByID(dashboard.SemanticModel, project.SemanticModelIDs)
+		compiled, err := dashboardcompiler.Compile(authoredDashboard, semanticModelsByName(result.SemanticModels, project))
 		if err != nil {
-			return nil, err
+			return manifest.Project{}, resourceError(project.DashboardPaths[name], id, "spec", "loading dashboard %q: %s", name, err)
 		}
-		definition.Models[modelName] = model
-		definition.Catalog.SemanticModels = append(definition.Catalog.SemanticModels, manifest.CatalogModel{
-			ID:          modelName,
-			Title:       model.Title,
-			Description: model.Description,
-		})
+		// The dashboard definition's semantic-model field remains in the
+		// authored namespace; SemanticModelNames provides the canonical index.
+		result.DashboardDefinitions[id] = compiled.Definition
+		meta := project.DashboardMetadata[name]
+		result.DashboardSources[id] = manifest.DashboardSource{Document: compiled.Normalized, Metadata: manifest.DashboardSourceMetadata{Name: name, Title: dashboard.Title, Description: dashboard.Description, Owner: meta.Owner, Tags: append([]string(nil), meta.Tags...)}, Path: projectRelativePath(&project, project.DashboardPaths[name])}
+		result.NameIndex.Dashboards[name] = id
 	}
-	for name := range workspaceProject.Dashboards {
-		dashboard := workspaceProject.Dashboards[name]
-		compiledDashboardResult, err := dashboardcompiler.Compile(*dashboard, definition.Models)
-		if err != nil {
-			return nil, resourceError(workspaceProject.DashboardPaths[name], "dashboard:"+workspaceProject.ID+"."+name, "spec", "loading dashboard %q: %s", name, err.Error())
+	for name, value := range project.Publications {
+		id := project.ResourceIDs["dashboard_publication:"+name]
+		if id == "" {
+			return manifest.Project{}, fmt.Errorf("publication %q has no stable id", name)
 		}
-		normalizedDashboard := compiledDashboardResult.Normalized
-		definition.DashboardDefinitions[name] = compiledDashboardResult.Definition
-		definition.DashboardSources[name] = manifest.DashboardSource{
-			Document: normalizedDashboard,
-			Metadata: manifest.DashboardSourceMetadata{
-				Workspace:   workspaceProject.ID,
-				Name:        name,
-				Title:       workspaceProject.DashboardTitles[name],
-				Description: workspaceProject.DashboardDescriptions[name],
-				Owner:       workspaceProject.DashboardOwners[name],
-				Tags:        append([]string(nil), workspaceProject.DashboardTags[name]...),
-			},
-			Path: workspaceProject.DashboardPaths[name],
-		}
-		definition.Catalog.Dashboards = append(definition.Catalog.Dashboards, manifest.CatalogDashboard{
-			ID:          name,
-			Title:       firstNonEmpty(workspaceProject.DashboardTitles[name], normalizedDashboard.Title),
-			Description: workspaceProject.DashboardDescriptions[name],
-			Tags:        append([]string{}, workspaceProject.DashboardTags[name]...),
-			Appearance:  normalizedDashboard.Appearance,
-		})
+		value.Name = id
+		value.Dashboard = canonicalRef(project, "dashboard", value.Dashboard)
+		value.DependencyAssetIDs = projectDependencyClosure(project.Graph, value.Dashboard)
+		value.ConfigurationDigest = publicationConfigurationDigest(value)
+		result.Publications[id] = value
+		result.NameIndex.Publications[name] = id
 	}
-	sort.Slice(definition.Catalog.Dashboards, func(i, j int) bool {
-		return definition.Catalog.Dashboards[i].ID < definition.Catalog.Dashboards[j].ID
-	})
-	return definition, nil
+	for name, value := range project.RefreshPipelines {
+		id := project.PipelineIDs[name]
+		if id == "" {
+			return manifest.Project{}, fmt.Errorf("pipeline %q has no stable id", name)
+		}
+		value.ID = id
+		value.Name = name
+		value.SemanticModel = canonicalRef(project, "semantic_model", value.SemanticModel)
+		result.RefreshPipelines[id] = value
+		result.NameIndex.Pipelines[name] = id
+	}
+	access, err := canonicalAccessPolicy(project)
+	if err != nil {
+		return manifest.Project{}, err
+	}
+	result.Access = access
+	return result, nil
 }
 
-func copyDashboardPublications(in map[string]publication.Definition) map[string]publication.Definition {
-	out := make(map[string]publication.Definition, len(in))
-	for name, publication := range in {
-		publication.AllowedOrigins = append([]string(nil), publication.AllowedOrigins...)
-		publication.DependencyAssetIDs = append([]string(nil), publication.DependencyAssetIDs...)
-		out[name] = publication
+// projectDependencyClosure returns the canonical resource IDs reachable from
+// a dashboard through the authored graph. The dashboard itself is included so
+// publication authorization can enforce the complete project-wide closure.
+func projectDependencyClosure(graph projectgraph.ProjectGraph, root string) []string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return nil
+	}
+	seen := map[projectgraph.ResourceID]struct{}{projectgraph.ResourceID(root): {}}
+	queue := []projectgraph.ResourceID{projectgraph.ResourceID(root)}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, edge := range graph.Edges() {
+			if edge.From != current {
+				continue
+			}
+			if _, ok := seen[edge.To]; ok {
+				continue
+			}
+			seen[edge.To] = struct{}{}
+			queue = append(queue, edge.To)
+		}
+	}
+	closure := make([]string, 0, len(seen))
+	for id := range seen {
+		closure = append(closure, string(id))
+	}
+	sort.Strings(closure)
+	return closure
+}
+
+func publicationConfigurationDigest(value publication.Definition) string {
+	value.ConfigurationDigest = ""
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func canonicalRef(project Project, kind, ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	if _, ok := project.ResourceIDOwners[ref]; ok {
+		return ref
+	}
+	if id := project.ResourceIDs[kind+":"+ref]; id != "" {
+		return id
+	}
+	if kind == "semantic_model" {
+		if id := project.ResourceIDs["semantic_model:"+ref]; id != "" {
+			return id
+		}
+	}
+	return ref
+}
+func canonicalRefs(project Project, kind string, refs []string) []string {
+	out := make([]string, len(refs))
+	for i, ref := range refs {
+		out[i] = canonicalRef(project, kind, ref)
 	}
 	return out
 }
 
-func (workspaceProject *WorkspaceProject) sourceFiles(project Project) map[string]string {
-	sourceFiles := map[string]string{}
-	workspaceKey := func(name string) string {
-		return workspaceProject.ID + "." + name
-	}
-	sourceFiles[string(workspace.NewAssetID(workspace.AssetTypeCatalog, workspaceProject.ID))] = workspaceProject.Path
-	for name, path := range project.ConnectionPaths {
-		sourceFiles[string(workspace.NewAssetID(workspace.AssetTypeConnection, name))] = path
-	}
-	for name, path := range project.SourcePaths {
-		sourceFiles[string(workspace.NewAssetID(workspace.AssetTypeSource, name))] = path
-	}
-	for name, path := range workspaceProject.ModelPaths {
-		sourceFiles[string(workspace.NewAssetID(workspace.AssetTypeModelTable, workspaceKey(name)))] = path
-	}
-	for name, path := range workspaceProject.SemanticModelPaths {
-		sourceFiles[string(workspace.NewAssetID(workspace.AssetTypeSemanticModel, workspaceKey(name)))] = path
-	}
-	for name, path := range workspaceProject.DashboardPaths {
-		sourceFiles[string(workspace.NewAssetID(workspace.AssetTypeDashboard, workspaceKey(name)))] = path
-	}
-	for accessKey, path := range workspaceProject.AccessPaths {
-		kind, name, ok := strings.Cut(accessKey, ":")
-		if !ok {
-			continue
-		}
-		switch kind {
-		case "WorkspaceGroup":
-			sourceFiles[string(workspace.NewAssetID(workspace.AssetTypeWorkspaceGroup, workspaceKey(name)))] = path
-		case "WorkspaceRoleBinding":
-			sourceFiles[string(workspace.NewAssetID(workspace.AssetTypeWorkspaceRoleBinding, workspaceKey(name)))] = path
+func authoredNameByID(ref string, ids map[string]string) string {
+	for name, id := range ids {
+		if ref == id {
+			return name
 		}
 	}
-	for name, path := range workspaceProject.RefreshPipelinePaths {
-		sourceFiles[string(workspace.NewAssetID(workspace.AssetTypeRefreshPipeline, workspaceKey(name)))] = path
-	}
-	return sourceFiles
+	return ref
 }
-
-func copyRefreshPipelines(in map[string]refreshschedule.Definition) map[string]refreshschedule.Definition {
-	out := make(map[string]refreshschedule.Definition, len(in))
-	for name, pipeline := range in {
-		pipeline.Schedules = append([]refreshschedule.Schedule{}, pipeline.Schedules...)
-		out[name] = pipeline
+func authoredNamesByID(refs []string, ids map[string]string) []string {
+	out := make([]string, len(refs))
+	for i, ref := range refs {
+		out[i] = authoredNameByID(ref, ids)
 	}
 	return out
 }
 
-func (workspaceProject *WorkspaceProject) semanticModel(project Project, modelName string, semanticSpec projectSemanticModelSpec, sourceAliases map[string]string) (*semanticmodel.Model, error) {
-	model := &semanticmodel.Model{
-		Name:          modelName,
-		Title:         firstNonEmpty(workspaceProject.ModelTitles[modelName], modelName),
-		Description:   workspaceProject.ModelDescriptions[modelName],
-		Connections:   workspaceConnections(project, workspaceProject),
-		Sources:       map[string]semanticmodel.Source{},
-		Tables:        copyTables(workspaceProject.Models),
-		Relationships: append([]semanticmodel.Relationship{}, semanticSpec.Relationships...),
-		Dimensions:    map[string]semanticmodel.SemanticDimension{},
-		Measures:      map[string]semanticmodel.MetricMeasure{},
-		Metrics:       map[string]semanticmodel.Metric{},
+func semanticModelsByName(models map[string]*semanticmodel.Model, project Project) map[string]*semanticmodel.Model {
+	result := make(map[string]*semanticmodel.Model, len(models))
+	for name, id := range project.SemanticModelIDs {
+		if model := models[id]; model != nil {
+			result[name] = model
+		}
 	}
-	model.DefaultConnection = firstConnectionName(model.Connections)
-	for source, alias := range sourceAliases {
-		model.Sources[alias] = project.Sources[source]
+	return result
+}
+
+func canonicalAccessPolicy(project Project) (manifest.AccessPolicy, error) {
+	result := projectAccessPolicy()
+	for name, value := range project.Access.Groups {
+		if id := project.ResourceIDs["group:"+name]; id != "" {
+			value.ID = id
+			result.Groups[id] = value
+		}
 	}
-	model.Tables = translatedTablesForRuntime(model.Tables, sourceAliases)
-	if err := applySemanticModelSpec(model, semanticSpec); err != nil {
-		return nil, resourceError(workspaceProject.SemanticModelPaths[modelName], "semantic_model:"+workspaceProject.ID+"."+modelName, "spec", "%s", err.Error())
+	for name, value := range project.Access.RoleBindings {
+		if id := project.ResourceIDs["rolebinding:"+name]; id != "" {
+			value.ID = id
+			value.Subject.Group = canonicalRef(project, "group", value.Subject.Group)
+			value.Subject.Publication = canonicalRef(project, "dashboard_publication", value.Subject.Publication)
+			result.RoleBindings[id] = value
+		}
 	}
-	if err := model.ValidateAuthored(); err != nil {
-		return nil, resourceError(workspaceProject.SemanticModelPaths[modelName], "semantic_model:"+workspaceProject.ID+"."+modelName, "spec", "%s", err.Error())
+	for name, value := range project.Access.Grants {
+		if id := project.ResourceIDs["grant:"+name]; id != "" {
+			value.ID = id
+			value.Object.ID = canonicalRef(project, accessObjectKind(value.Object.Kind), value.Object.ID)
+			value.Subject.Group = canonicalRef(project, "group", value.Subject.Group)
+			value.Subject.Publication = canonicalRef(project, "dashboard_publication", value.Subject.Publication)
+			result.Grants[id] = value
+		}
 	}
-	if _, err := analyticsmaterialize.ModelTableOrder(model); err != nil {
-		return nil, resourceError(workspaceProject.SemanticModelPaths[modelName], "semantic_model:"+workspaceProject.ID+"."+modelName, "spec.tables", "%s", err.Error())
+	for name, value := range project.Access.DataPolicies {
+		if id := project.ResourceIDs["datapolicy:"+name]; id != "" {
+			value.ID = id
+			value.Object.ID = canonicalRef(project, accessObjectKind(value.Object.Kind), value.Object.ID)
+			value.Subject.Group = canonicalRef(project, "group", value.Subject.Group)
+			value.Subject.Publication = canonicalRef(project, "dashboard_publication", value.Subject.Publication)
+			result.DataPolicies[id] = value
+		}
 	}
-	return model, nil
+	return result, nil
+}
+func accessObjectKind(kind string) string {
+	switch strings.TrimSpace(kind) {
+	case "project":
+		return "project"
+	case "model":
+		return "model"
+	case "semantic_model":
+		return "semantic_model"
+	case "dashboard":
+		return "dashboard"
+	case "source":
+		return "source"
+	case "connection":
+		return "connection"
+	default:
+		return strings.TrimSpace(kind)
+	}
 }
 
 func translatedTablesForRuntime(in map[string]semanticmodel.Table, sourceAliases map[string]string) map[string]semanticmodel.Table {
@@ -410,22 +450,6 @@ func localSourceName(sourceID string) string {
 	out := builder.String()
 	if out == "" || out[0] >= '0' && out[0] <= '9' {
 		out = "source_" + out
-	}
-	return out
-}
-
-func workspaceConnections(project Project, workspaceProject *WorkspaceProject) map[string]semanticmodel.Connection {
-	out := map[string]semanticmodel.Connection{}
-	for sourceID := range workspaceProject.AllowedSources {
-		source, ok := project.Sources[sourceID]
-		if !ok {
-			continue
-		}
-		connection, ok := project.Connections[source.Connection]
-		if !ok {
-			continue
-		}
-		out[source.Connection] = connection
 	}
 	return out
 }
@@ -506,40 +530,11 @@ func copyModelColumns(in map[string]semanticmodel.ModelColumn) map[string]semant
 	return out
 }
 
-func copyWorkspaceGroups(in map[string]workspace.WorkspaceGroup) map[string]workspace.WorkspaceGroup {
-	out := make(map[string]workspace.WorkspaceGroup, len(in))
-	for key, value := range in {
-		value.Members = append([]workspace.WorkspaceGroupMember{}, value.Members...)
-		out[key] = value
-	}
-	return out
+func projectAccessPolicy() manifest.AccessPolicy {
+	return manifest.AccessPolicy{Groups: map[string]manifest.Group{}, RoleBindings: map[string]manifest.RoleBinding{}, Grants: map[string]manifest.Grant{}, DataPolicies: map[string]manifest.DataPolicy{}}
 }
 
-func copyWorkspaceRoleBindings(in map[string]workspace.WorkspaceRoleBinding) map[string]workspace.WorkspaceRoleBinding {
-	out := make(map[string]workspace.WorkspaceRoleBinding, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
-
-func copyWorkspaceGrants(in map[string]workspace.WorkspaceGrant) map[string]workspace.WorkspaceGrant {
-	out := make(map[string]workspace.WorkspaceGrant, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
-
-func copyWorkspaceDataPolicies(in map[string]workspace.WorkspaceDataPolicy) map[string]workspace.WorkspaceDataPolicy {
-	out := make(map[string]workspace.WorkspaceDataPolicy, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
-
-func accessMemberSortKey(member workspace.WorkspaceGroupMember) string {
+func accessMemberSortKey(member manifest.GroupMember) string {
 	return member.Email + "\x00" + member.PrincipalID + "\x00" + member.DisplayName
 }
 

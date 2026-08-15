@@ -951,5 +951,5 @@ func validateVisualExampleContract(id, filename string, node yaml.Node) error {
 	if err != nil {
 		return err
 	}
-	return configschema.ValidateBytes(configschema.KindDashboardResource, filename, content)
+	return configschema.ValidateBytes(configschema.KindDashboard, filename, content)
 }

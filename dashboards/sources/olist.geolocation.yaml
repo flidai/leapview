@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:olist.geolocation
   name: olist.geolocation
-  title: Brazilian ZIP Geolocation
+  displayName: Brazilian ZIP Geolocation
 spec:
   connection: olist
   path: olist_geolocation_dataset.csv

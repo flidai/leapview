@@ -2,7 +2,8 @@ package contracts
 
 #Identifier: =~"^[A-Za-z_][A-Za-z0-9_]*$"
 #ObjectID:   =~"^[A-Za-z_][A-Za-z0-9_-]*$"
-#ResourceID: =~"^[A-Za-z_][A-Za-z0-9_.-]*$"
+#ResourceID: =~"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+#ResourceName: =~"^[A-Za-z_][A-Za-z0-9_.-]*$"
 #FieldRef:   =~"^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$"
 #AnyObject: {
 	[string]: _
@@ -26,13 +27,22 @@ package contracts
 
 #APIVersion: "leapview.dev/v1"
 
+#Provenance: close({
+	origin?: string
+	path?:   string
+	source?: string
+})
+
 #Metadata: close({
-	name!:        #ResourceID
-	workspace?:   #ResourceID
-	title?:       string
-	description?: string
-	owner?:       string
-	tags?: [...string]
+	id!:            #ResourceID
+	name!:          #ResourceName
+	displayName?:   string
+	description?:   string
+	owner?:         string
+	domain?:        string
+	tags?:          [...string]
+	documentation?: string
+	provenance?:    #Provenance
 })
 
 #IncludeList: close({
@@ -46,7 +56,12 @@ package contracts
 	spec!: close({
 		connections!: #IncludeList
 		sources!:     #IncludeList
-		workspaces!:  #IncludeList
+		models!:         #IncludeList
+		semanticModels!: #IncludeList
+		pipelines!:      #IncludeList
+		dashboards!:     #IncludeList
+		access!:         #IncludeList
+		publications?:   #IncludeList
 	})
 })
 
@@ -64,59 +79,28 @@ package contracts
 	spec!:        #Source
 })
 
-#WorkspaceResource: close({
+#GroupResource: close({
 	apiVersion!: #APIVersion
-	kind!:       "Workspace"
+	kind!:       "Group"
 	metadata!:   #Metadata
-	spec!: close({
-		uses!: close({
-			sources!: [...#ResourceID]
-		})
-		models!:         #IncludeList
-		semanticModels!: #IncludeList
-		dashboards!:     #IncludeList
-		publications?:   #IncludeList
-		access!:           #IncludeList
-		refreshPipelines?: #IncludeList
-	})
+	spec!: #Group
 })
 
-#WorkspaceGroupResource: close({
+#RoleBindingResource: close({
 	apiVersion!: #APIVersion
-	kind!:       "WorkspaceGroup"
+	kind!:       "RoleBinding"
 	metadata!:   #Metadata
-	spec!: close({
-		description?: string
-		members?: [...close({
-			principalId?: #ResourceID
-			email?:       string
-			displayName?: string
-		})]
-	})
+	spec!: #RoleBinding
 })
 
-#WorkspaceRoleBindingResource: close({
-	apiVersion!: #APIVersion
-	kind!:       "WorkspaceRoleBinding"
-	metadata!:   #Metadata
-	spec!: close({
-		role!: "owner" | "admin" | "deployer" | "contributor" | "editor" | "member" | "viewer" | "platform_admin"
-		subject!: close({
-			kind!:        "principal" | "group" | "service_principal"
-			principalId?: #ResourceID
-			email?:       string
-			displayName?: string
-			group?:       #ResourceID
-		})
-	})
+#Group: close({
+	description?: string
+	members?: [...close({
+		principalId?: #ResourceID
+		email?:       string
+		displayName?: string
+	})]
 })
-
-#SecurableObjectRef: close({
-	type!: "workspace" | "dashboard" | "semantic_model" | "source" | "model_table" | "dataset" | "table" | "column"
-	id?:   string
-})
-
-#Privilege: "USE_WORKSPACE" | "VIEW_ITEM" | "EDIT_ITEM" | "MANAGE_ITEM" | "QUERY_DATA" | "PREVIEW_DATA" | "REFRESH_DATA" | "DEPLOY" | "ACTIVATE_DEPLOYMENT" | "MANAGE_PUBLICATIONS" | "USE_AGENT" | "VIEW_AGENT" | "MANAGE_GRANTS" | "VIEW_AUDIT" | "MANAGE_WORKSPACE" | "MANAGE_PLATFORM"
 
 #AccessSubject: close({
 	kind!:        "principal" | "group" | "service_principal"
@@ -124,6 +108,23 @@ package contracts
 	email?:       string
 	displayName?: string
 	group?:       #ResourceID
+})
+
+#RoleBinding: close({
+	role!: "owner" | "admin" | "deployer" | "contributor" | "editor" | "member" | "viewer" | "platform_admin"
+	subject!: #AccessSubject
+})
+
+#ResourceRef: close({
+	id!:   #ResourceID
+	kind!: "project" | "connection" | "source" | "model" | "semantic_model" | "pipeline" | "dashboard"
+})
+
+#Capability: "PROJECT_ADMIN" | "RESOURCE_USE" | "RESOURCE_READ" | "RESOURCE_EDIT" | "RESOURCE_MANAGE" | "RESOURCE_SHARE" | "RESOURCE_PUBLISH"
+
+#DataPolicyTarget: close({
+	kind!: "semantic_model" | "source" | "model"
+	id!:   #ResourceID
 })
 
 #DataPolicySubject: close({
@@ -140,9 +141,9 @@ package contracts
 	kind!:       "Grant"
 	metadata!:   #Metadata
 	spec!: close({
-		object!:    #SecurableObjectRef
+		object!:    #ResourceRef
 		subject!:   #AccessSubject
-		privilege!: #Privilege
+		capability!: #Capability
 	})
 })
 
@@ -151,16 +152,16 @@ package contracts
 	kind!:       "DataPolicy"
 	metadata!:   #Metadata
 	spec!: close({
-		object!:     #SecurableObjectRef
+		object!:     #DataPolicyTarget
 		subject?:    #DataPolicySubject
 		policyType!: "row_filter" | "column_mask"
 		expression!: #AnyObject
 	})
 })
 
-#RefreshPipelineResource: close({
+#PipelineResource: close({
 	apiVersion!: #APIVersion
-	kind!:       "RefreshPipeline"
+	kind!:       "Pipeline"
 	metadata!:   #Metadata
 	spec!: close({
 		semanticModel!: #ResourceID
@@ -172,11 +173,11 @@ package contracts
 		})
 	})
 })
-#ModelTableResource: close({
+#ModelResource: close({
 	apiVersion!: #APIVersion
-	kind!:       "ModelTable"
+	kind!:       "Model"
 	metadata!:   #Metadata
-	spec!:        #ModelTable
+	spec!:        #Model
 })
 
 #SemanticModelResource: close({
@@ -228,7 +229,7 @@ package contracts
 	format?:      "csv" | "json" | "parquet" | "excel" | "text" | "blob" | "vortex" | "delta" | "iceberg" | "lance"
 	description?: string
 	path?:        string
-	connection?:  #Identifier
+	connection!:  #ResourceID
 	object?:      string
 	options?:     #AnyObject
 	fields?: close({
@@ -239,7 +240,7 @@ package contracts
 	})
 })
 
-#ModelTable: close({
+#Model: close({
 	kind?:   string
 	source?: #ResourceID
 	sources?: [...#ResourceID]
@@ -262,7 +263,7 @@ package contracts
 })
 
 #ProjectSemanticModelSpec: close({
-	tables!: [...#Identifier]
+	tables!: [...#ResourceID]
 	relationships?: [...#Relationship]
 	dimensions?: close({
 		[#Identifier]: #SemanticDimension
@@ -346,7 +347,7 @@ package contracts
 		icon?:  #ObjectID | "default"
 		color?: "gray" | "blue" | "green" | "yellow" | "orange" | "red" | "purple" | "pink" | "coral" | "default"
 	})
-	semanticModel!: #Identifier
+	semanticModel!: #ResourceID
 	filters?: close({
 		[#Identifier]: #FilterDefinition
 	})

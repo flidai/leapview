@@ -48,8 +48,8 @@ func TestRunSchemaExportWritesJSONSchemas(t *testing.T) {
 	}
 	for _, name := range []string{
 		configschema.JSONSchemaFilename(configschema.KindProject),
-		configschema.JSONSchemaFilename(configschema.KindModelTable),
-		configschema.JSONSchemaFilename(configschema.KindDashboardResource),
+		configschema.JSONSchemaFilename(configschema.KindModel),
+		configschema.JSONSchemaFilename(configschema.KindDashboard),
 	} {
 		content, err := os.ReadFile(filepath.Join(outDir, name))
 		if err != nil {

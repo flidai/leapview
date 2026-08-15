@@ -1,0 +1,63 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:users
+  name: users
+  displayName: Users Dimension
+  description: Derived user dimension based on rating and tagging activity.
+spec:
+  primaryKey: user_id
+  grain: user_id
+  sources:
+    - movielens.ratings
+    - movielens.tags
+  fields:
+    user_id: {label: User ID, description: Anonymized MovieLens user identifier.}
+    rating_count: {label: Rating count, description: Number of ratings submitted by the user.}
+    average_rating: {label: Average rating, description: User-level average rating value.}
+    tag_count: {label: Tag count, description: Number of tags submitted by the user.}
+    first_rated_at: {label: First rated at, description: First observed rating timestamp.}
+    last_rated_at: {label: Last rated at, description: Last observed rating timestamp.}
+    first_rating_year: {label: First rating year, description: First observed rating calendar year.}
+    last_rating_year: {label: Last rating year, description: Last observed rating calendar year.}
+    activity_bucket: {label: Activity bucket, description: Rating-volume segment derived from user activity.}
+  transform:
+    sql: |
+      WITH rating_activity AS (
+        SELECT
+          try_cast(userId AS BIGINT) AS user_id,
+          COUNT(*) AS rating_count,
+          AVG(try_cast(rating AS DOUBLE)) AS average_rating,
+          MIN(CAST(to_timestamp(try_cast(timestamp AS BIGINT)) AS TIMESTAMP)) AS first_rated_at,
+          MAX(CAST(to_timestamp(try_cast(timestamp AS BIGINT)) AS TIMESTAMP)) AS last_rated_at
+        FROM source."movielens.ratings"
+        WHERE userId IS NOT NULL
+        GROUP BY user_id
+      ),
+      tag_activity AS (
+        SELECT
+          try_cast(userId AS BIGINT) AS user_id,
+          COUNT(*) AS tag_count
+        FROM source."movielens.tags"
+        WHERE userId IS NOT NULL
+        GROUP BY user_id
+      )
+      SELECT
+        r.user_id,
+        r.rating_count,
+        round(r.average_rating, 2) AS average_rating,
+        COALESCE(t.tag_count, 0) AS tag_count,
+        r.first_rated_at,
+        r.last_rated_at,
+        try_cast(strftime(r.first_rated_at, '%Y') AS INTEGER) AS first_rating_year,
+        try_cast(strftime(r.last_rated_at, '%Y') AS INTEGER) AS last_rating_year,
+        CASE
+          WHEN r.rating_count >= 1000 THEN '1000+ ratings'
+          WHEN r.rating_count >= 250 THEN '250-999 ratings'
+          WHEN r.rating_count >= 100 THEN '100-249 ratings'
+          WHEN r.rating_count >= 50 THEN '50-99 ratings'
+          ELSE '20-49 ratings'
+        END AS activity_bucket
+      FROM rating_activity r
+      LEFT JOIN tag_activity t ON t.user_id = r.user_id
+      WHERE r.user_id IS NOT NULL

@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:tags
   name: movielens.tags
-  title: Tags
+  displayName: Tags
 spec:
   connection: movielens
   path: tags.csv

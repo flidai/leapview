@@ -1,0 +1,10 @@
+apiVersion: leapview.dev/v1
+kind: Group
+metadata:
+  id: group:sales-analysts
+  name: sales-analysts
+  displayName: Sales Analysts
+spec:
+  members:
+    - email: analyst@example.com
+      displayName: Sales Analyst

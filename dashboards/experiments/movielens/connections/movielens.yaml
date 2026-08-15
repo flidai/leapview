@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Connection
 metadata:
+  id: connection:movielens
   name: movielens
-  title: MovieLens CSV files
+  displayName: MovieLens CSV files
 spec:
   kind: managed
   description: Project-global managed MovieLens 32M experimental data.

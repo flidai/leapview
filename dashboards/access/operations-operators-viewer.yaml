@@ -1,0 +1,10 @@
+apiVersion: leapview.dev/v1
+kind: RoleBinding
+metadata:
+  id: role-binding:operations-operators-viewer
+  name: operations-operators-viewer
+spec:
+  role: viewer
+  subject:
+    kind: group
+    group: group:operations-operators

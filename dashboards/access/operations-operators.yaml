@@ -1,0 +1,10 @@
+apiVersion: leapview.dev/v1
+kind: Group
+metadata:
+  id: group:operations-operators
+  name: operations-operators
+  displayName: Operations Team
+spec:
+  members:
+    - email: operator@example.com
+      displayName: Operations Operator

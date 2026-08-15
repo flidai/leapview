@@ -1,0 +1,14 @@
+apiVersion: leapview.dev/v1
+kind: Grant
+metadata:
+  id: grant:sales-demo-query-data
+  name: sales-demo-query-data
+spec:
+  object:
+    kind: project
+    id: project:leapview-showcase
+  subject:
+    kind: principal
+    email: demo@leapview.dev
+    displayName: LeapView Demo
+  capability: RESOURCE_READ
