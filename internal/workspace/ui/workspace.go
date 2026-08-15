@@ -897,6 +897,8 @@ func workspaceRouteUpdatesURL(routeKind uisignals.RouteKind, catalog catalog.Cat
 		}
 		pairs := []string{"workspace", firstNonEmpty(typed.WorkspaceID, catalog.Workspace.ID), "environment", uisignals.ValueOrZero(typed.Environment), "asset", typed.AssetID, "section", typed.ActiveSection}
 		return updatesURL(routeKind, pairs...)
+	case uisignals.PipelinePageSignal:
+		return updatesURL(routeKind, "view", typed.ActiveTab, "environment", typed.Environment)
 	default:
 		return updatesURL(routeKind)
 	}
@@ -929,6 +931,7 @@ func ValidWorkspaceAssetSection(section string) bool {
 type AssetRefreshState struct {
 	CSRFToken        string
 	RunCommand       uicommand.Binding
+	CancelCommand    uicommand.Binding
 	Runs             []AssetRefreshRun
 	Latest           AssetRefreshRun
 	LatestSuccessful AssetRefreshRun
@@ -945,9 +948,18 @@ type AssetDataVersion struct {
 
 type AssetRefreshRun struct {
 	ID                   string
+	Environment          string
+	ModelID              string
+	ServingStateID       string
+	PrincipalID          string
 	PrincipalDisplayName string
 	TriggerType          string
+	ParentRunID          string
+	RetryOf              string
+	TargetGeneration     int64
 	Status               string
+	CreatedAt            string
+	UpdatedAt            string
 	StartedAt            string
 	FinishedAt           string
 	Error                string

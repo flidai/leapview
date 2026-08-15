@@ -49294,6 +49294,8 @@ paths:
         - Refresh Runs
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: best-effort
           payload:
@@ -49337,6 +49339,8 @@ paths:
         target:
           parameter: workspace
           type: workspace
+        ui:
+          action_id: workspace.refresh.cancel
         privilege: USE_WORKSPACE
       x-authz:
         mode: privilege

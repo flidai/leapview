@@ -40,6 +40,11 @@ beforeAll(async () => {
       response.end(testDocument('source'))
       return
     }
+    if (url.pathname === '/pipelines') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument('pipelines'))
+      return
+    }
     const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
     const file = normalize(join(fileRoot, url.pathname))
     if (!file.startsWith(fileRoot)) {
@@ -835,7 +840,105 @@ test('connection source detail opens as a non-modal drawer over its connection',
   }
 })
 
-function testDocument(root: 'workspace' | 'connections' | 'connection' | 'asset' | 'source'): string {
+test('global pipelines page reuses the list pattern and exposes run history details', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/pipelines`)
+    await page.waitForFunction(() => customElements.get('lv-pipelines-page') && customElements.get('lv-entity-list') && customElements.get('lv-drawer'))
+    await page.waitForFunction(() => document.querySelector('lv-pipelines-page')?.shadowRoot?.querySelector('lv-entity-list tbody'))
+    const state = await page.evaluate(async () => {
+      const pipelines = document.querySelector('lv-pipelines-page') as any
+      const commands: unknown[] = []
+      pipelines.addEventListener('lv-pipeline-command', (event: CustomEvent) => commands.push(event.detail))
+      await pipelines.updateComplete
+      const list = pipelines.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const pipelineTitle = list.querySelector('tbody tr:first-child .entity-list-title')?.textContent?.trim()
+      ;(list.querySelector('button[aria-label="Run now"]') as HTMLButtonElement).click()
+      const metrics = Array.from(pipelines.shadowRoot.querySelectorAll('.metric-value')).map((item: any) => item.textContent?.trim())
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { activeTab: 'runs' } })
+      await pipelines.updateComplete
+      const runList = pipelines.shadowRoot.querySelector('lv-entity-list') as any
+      await runList.updateComplete
+      ;(runList.querySelectorAll('tbody tr')[1] as HTMLTableRowElement).click()
+      await pipelines.updateComplete
+      const drawer = pipelines.shadowRoot.querySelector('lv-drawer') as any
+      const drawerText = drawer?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+      const drawerIsNonModal = drawer?.modal === false
+      const hasErrorColumn = Array.from(runList.querySelectorAll('thead th')).some((cell: any) => cell.textContent?.trim() === 'Error')
+      const firstRunRow = runList.querySelector('tbody tr') as HTMLTableRowElement
+      const successStatus = firstRunRow.querySelector('.entity-list-status') as HTMLElement | null
+      const firstStatusCell = firstRunRow.querySelector(':scope > td:first-child') as HTMLElement | null
+      const pipelineTitleElement = firstRunRow.querySelector('.entity-list-title') as HTMLElement
+      const runTable = pipelines.shadowRoot.querySelector('.run-table') as HTMLElement
+      ;(runList.querySelector('button[aria-label="Retry run"]') as HTMLButtonElement).click()
+      ;(runList.querySelector('button[aria-label="Cancel run"]') as HTMLButtonElement).click()
+      drawer?.shadowRoot?.querySelector<HTMLButtonElement>('.close')?.click()
+      await pipelines.updateComplete
+      return {
+        title: pipelines.shadowRoot.querySelector('h1')?.textContent?.trim(),
+        pipelineTitle,
+        metrics,
+        activeTab: pipelines.shadowRoot.querySelector('.tabs a.active')?.textContent?.trim(),
+        runText: runList.textContent,
+        runListTag: runList.tagName,
+        runListCompact: runList.compact,
+        compactRowHeight: getComputedStyle(runList.querySelector('tbody tr') as HTMLElement).height,
+        runTableBorderWidth: getComputedStyle(runTable).borderTopWidth,
+        successStatusClass: successStatus?.className ?? '',
+        successStatusHasIcon: Boolean(successStatus?.querySelector('svg')),
+        firstStatusCellHasIcon: Boolean(firstStatusCell?.querySelector('svg')),
+        pipelineIconCount: runList.querySelectorAll('.entity-list-icon').length,
+        headers: Array.from(runList.querySelectorAll('thead th')).map((cell: any) => cell.textContent?.trim()),
+        secondColumnIsRowHeader: firstRunRow.children[1]?.tagName,
+        pipelineTitleWeight: getComputedStyle(pipelineTitleElement).fontWeight,
+        filterCount: pipelines.shadowRoot.querySelectorAll('.run-toolbar select').length,
+        statusFilterOptions: Array.from(pipelines.shadowRoot.querySelectorAll('.run-toolbar select')[1].options).map((option: any) => option.value),
+        drawerText,
+        drawerIsNonModal,
+        hasErrorColumn,
+        drawerClosed: !pipelines.shadowRoot.querySelector('lv-drawer'),
+        commands,
+      }
+    })
+    expect(state.title).toBe('Pipelines')
+    expect(state.pipelineTitle).toBe('Sales refresh')
+    expect(state.metrics).toEqual(['1', '2', '0', '1 / 1'])
+    expect(state.activeTab).toBe('Run history')
+    expect(state.runText).toMatch(/matrun_123/)
+    expect(state.runListTag).toBe('LV-ENTITY-LIST')
+    expect(state.runListCompact).toBe(true)
+    expect(parseFloat(state.compactRowHeight)).toBeLessThan(52)
+    expect(state.runTableBorderWidth).toBe('0px')
+    expect(state.successStatusClass).toContain('is-success')
+    expect(state.successStatusHasIcon).toBe(true)
+    expect(state.firstStatusCellHasIcon).toBe(true)
+    expect(state.pipelineIconCount).toBe(0)
+    expect(state.headers).toEqual(['Status', 'Pipeline', 'Workspace', 'Started', 'Duration', 'Trigger', 'Triggered by', ''])
+    expect(state.secondColumnIsRowHeader).toBe('TH')
+    expect(state.pipelineTitleWeight).toBe('400')
+    expect(state.filterCount).toBe(3)
+    expect(state.statusFilterOptions).toEqual(['all', 'queued', 'running', 'prepared', 'succeeded', 'failed', 'cancelled', 'superseded'])
+    expect(state.drawerText).toMatch(/Failed/)
+    expect(state.drawerText).toMatch(/matrun_failed/)
+    expect(state.drawerText).toMatch(/Sales Workspace/)
+    expect(state.drawerText).toMatch(/source unavailable/)
+    expect(state.drawerText).toMatch(/serving_42/)
+    expect(state.drawerIsNonModal).toBe(true)
+    expect(state.hasErrorColumn).toBe(false)
+    expect(state.drawerClosed).toBe(true)
+    expect(state.commands).toEqual([
+      { action: 'run', workspaceId: 'sales', pipelineId: 'sales-refresh', assetId: 'refresh_pipeline:sales-refresh', runId: '' },
+      { action: 'retry', workspaceId: 'sales', pipelineId: 'sales-refresh', assetId: 'refresh_pipeline:sales-refresh', runId: 'matrun_failed' },
+      { action: 'cancel', workspaceId: 'sales', pipelineId: 'sales-refresh', assetId: 'refresh_pipeline:sales-refresh', runId: 'matrun_queued' },
+    ])
+  } finally {
+    await page.close()
+  }
+})
+
+function testDocument(root: 'workspace' | 'connections' | 'connection' | 'asset' | 'source' | 'pipelines'): string {
   const assetList = {
     workspaceId: 'leapview',
     searchHref: '/workspaces/leapview',
@@ -1042,6 +1145,49 @@ function testDocument(root: 'workspace' | 'connections' | 'connection' | 'asset'
       }],
     },
   }
+  const pipelinesPage = {
+    kind: 'pipelines',
+    title: 'Pipelines',
+    description: 'Monitor refresh pipelines.',
+    environment: 'dev',
+    activeTab: 'pipelines',
+    metrics: [
+      { label: 'Running', value: '1', tone: 'accent' },
+      { label: 'Queued', value: '2', tone: 'attention' },
+      { label: 'Failed', value: '0', tone: 'success' },
+      { label: 'Refresh capacity', value: '1 / 1', tone: 'muted' },
+    ],
+    pipelines: [{
+      id: 'sales.sales-refresh', title: 'Sales refresh', href: '/workspaces/sales/assets/refresh_pipeline:sales-refresh/details',
+      workspace: 'Sales Workspace', workspaceId: 'sales', semanticModel: 'sales', schedule: '0 6 * * * · Europe/Copenhagen',
+      nextRun: '2026-08-15T04:00:00Z', status: 'succeeded', assetId: 'refresh_pipeline:sales-refresh', pipelineId: 'sales-refresh', canRun: true, running: false,
+    }],
+    workspaceFilters: [{ id: 'sales', title: 'Sales Workspace' }],
+    runsTable: {
+      rowAction: 'detail',
+      columns: [
+        { id: 'status', header: 'Status', kind: 'status' },
+        { id: 'pipeline', header: 'Pipeline', kind: 'link', hrefKey: 'pipeline_href' },
+        { id: 'run', header: 'Run ID', kind: 'code' },
+        { id: 'actions', header: '', kind: 'actions', toggleable: false },
+      ],
+      rows: [{
+        status: { label: 'succeeded', tone: 'success' }, pipeline: 'Sales refresh', pipeline_href: '/workspaces/sales/assets/refresh_pipeline:sales-refresh/refreshes',
+        run: 'matrun_123', workspace_id: 'sales', status_value: 'succeeded', trigger_value: 'manual', pipeline_search: 'sales refresh matrun_123',
+      }, {
+        status: { label: 'failed', tone: 'danger' }, pipeline: 'Sales refresh', run: 'matrun_failed', run_id: 'matrun_failed', workspace_id: 'sales',
+        workspace: 'Sales Workspace', semantic_model: 'sales', environment: 'dev', created_at: '2026-08-14T08:59:59Z', started_at: '2026-08-14T09:00:00Z', finished_at: '2026-08-14T09:01:00Z',
+        principal_id: 'principal_ada', principal_display_name: 'Ada', retry_of: 'matrun_prior', serving_state_id: 'serving_42', target_generation: 42, error: 'source unavailable',
+        asset_id: 'refresh_pipeline:sales-refresh', pipeline_id: 'sales-refresh', status_value: 'failed', trigger_value: 'retry', pipeline_search: 'sales refresh matrun_failed',
+        actions: [{ label: 'Retry run', action: 'retry', icon: 'refresh' }],
+      }, {
+        status: { label: 'queued', tone: 'attention' }, pipeline: 'Sales refresh', run: 'matrun_queued', run_id: 'matrun_queued', workspace_id: 'sales',
+        asset_id: 'refresh_pipeline:sales-refresh', pipeline_id: 'sales-refresh', status_value: 'queued', trigger_value: 'manual', pipeline_search: 'sales refresh matrun_queued',
+        actions: [{ label: 'Cancel run', action: 'cancel', icon: 'cancel' }],
+      }],
+      empty: 'No pipeline runs.',
+    },
+  }
   const access = {
     workspace: { ID: 'leapview', Title: 'LeapView Workspace' },
     roles: [{ Name: 'viewer' }, { Name: 'workspace_admin' }, { Name: 'data_deployer' }],
@@ -1085,7 +1231,9 @@ function testDocument(root: 'workspace' | 'connections' | 'connection' | 'asset'
       ? { signals: { page: sourcePage }, element: '<lv-workspace-asset-page></lv-workspace-asset-page>' }
     : root === 'asset'
       ? { signals: { page: assetPage }, element: '<lv-workspace-asset-page></lv-workspace-asset-page>' }
-      : { signals: { page: workspacePage, workspaceAccess: access }, element: '<lv-workspace-page></lv-workspace-page>' }
+      : root === 'pipelines'
+        ? { signals: { page: pipelinesPage }, element: '<lv-pipelines-page></lv-pipelines-page>' }
+        : { signals: { page: workspacePage, workspaceAccess: access }, element: '<lv-workspace-page></lv-workspace-page>' }
   return `
     <!doctype html>
     <html>
@@ -1094,7 +1242,7 @@ function testDocument(root: 'workspace' | 'connections' | 'connection' | 'asset'
           html, body { margin: 0; min-height: 100%; }
           body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #eef2f6; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-accent: #0969da; --lv-accent-fg: #fff; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-tight: 4px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-workspace-detail-max-width: 72rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --lv-space-control: 10px; --control-medium-size: 32px; --control-xlarge-size: 40px; --lv-spinner-size-md: 16px; --lv-spinner-duration: 1800ms; --lv-asset-dashboard-bg: #fbefff; --lv-asset-dashboard-accent: #8250df; --lv-asset-dashboard-border: #d2bfff; --lv-asset-semantic-model-bg: #ddf4ff; --lv-asset-semantic-model-accent: #0969da; --lv-asset-semantic-model-border: #b6e3ff; --z-index-inspector: 1000; --lv-modal-backdrop: rgb(0 0 0 / .28); }
           body { --focus-outline: 2px solid var(--lv-line-accent); --focus-outline-offset: 2px; }
-          lv-workspace-page, lv-connections-page, lv-workspace-asset-page { display: block; min-height: 720px; }
+          lv-workspace-page, lv-connections-page, lv-workspace-asset-page, lv-pipelines-page { display: block; min-height: 720px; }
         </style>
       </head>
       <body>

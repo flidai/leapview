@@ -18,7 +18,7 @@ func TestProviderOwnsGlobalNavigationAndAgentHistory(t *testing.T) {
 	if !ok {
 		t.Fatalf("signal = %T, want shell.Chrome", layout.Signal)
 	}
-	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 5 {
+	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 6 {
 		t.Fatalf("navigation = %#v", chrome.Sidebar.Groups)
 	}
 	if chrome.Sidebar.UserName == nil || *chrome.Sidebar.UserName != "Ada Lovelace" {
@@ -33,6 +33,19 @@ func TestProviderOwnsGlobalNavigationAndAgentHistory(t *testing.T) {
 	if chrome.Sidebar.History == nil || len(chrome.Sidebar.History.Items) != 1 || !chrome.Sidebar.History.Items[0].Active {
 		t.Fatalf("history = %#v", chrome.Sidebar.History)
 	}
+}
+
+func TestGlobalNavigationIncludesInstancePipelines(t *testing.T) {
+	items := globalNavigation()
+	for _, item := range items {
+		if item.ID == "pipelines" {
+			if item.Href != "/pipelines" || item.Label != "Pipelines" || item.Icon != "workflow" {
+				t.Fatalf("pipelines navigation = %#v", item)
+			}
+			return
+		}
+	}
+	t.Fatal("global navigation does not include pipelines")
 }
 
 func TestProviderProjectsCustomProductIdentity(t *testing.T) {

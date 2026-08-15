@@ -65,3 +65,22 @@ func (r moduleRefreshRunner) RefreshAsset(ctx context.Context, input workspaceht
 		Asset: input.Asset, Assets: input.Assets, Edges: input.Edges,
 	})
 }
+
+func (r moduleRefreshRunner) RetryAsset(ctx context.Context, input workspacehttp.AssetRefreshInput, retryOf string) error {
+	if r.upstream == nil {
+		return nil
+	}
+	return r.upstream.RetryAsset(ctx, AssetRefreshInput{
+		Request: input.Request, WorkspaceID: input.WorkspaceID,
+		Asset: input.Asset, Assets: input.Assets, Edges: input.Edges,
+	}, retryOf)
+}
+
+func (r moduleRefreshRunner) CancelRefreshRun(ctx context.Context, input workspacehttp.PipelineRunCancelInput) error {
+	if r.upstream == nil {
+		return nil
+	}
+	return r.upstream.CancelRefreshRun(ctx, PipelineRunCancelInput{
+		Request: input.Request, WorkspaceID: input.WorkspaceID, PipelineID: input.PipelineID, RunID: input.RunID,
+	})
+}

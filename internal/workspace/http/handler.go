@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
@@ -35,6 +36,7 @@ type Handler struct {
 	Environment              func(*nethttp.Request) string
 	ReadModel                ReadModel
 	RefreshState             RefreshStateProvider
+	RefreshCapacity          func(context.Context) (ui.PipelineMonitorCapacity, error)
 	RefreshRunner            AssetRefreshRunner
 	Broker                   *pagestream.Broker
 	CSRFToken                func(*nethttp.Request) string
@@ -50,6 +52,7 @@ type Handler struct {
 	AgentBootstrap           func(*nethttp.Request, string) ui.DataExplorerAgentBootstrap
 	AgentCommands            ui.DataExplorerAgentCommandBindings
 	Layout                   func(*nethttp.Request) webpage.Provider
+	AuthorizeObject          func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error)
 }
 
 type workspaceAccessSignalPayload struct {
@@ -68,6 +71,10 @@ type workspaceAssetFilterSignalPayload struct {
 type entityListSignalPayload struct {
 	Query  *string `json:"entityListQuery"`
 	Filter *string `json:"entityListFilter"`
+}
+
+type pipelineCommandSignalPayload struct {
+	PipelineCommand uisignals.PipelineCommandSignal `json:"pipelineCommand"`
 }
 
 func (h Handler) AccessSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -110,6 +117,202 @@ func (h Handler) WorkspaceCatalog(w nethttp.ResponseWriter, r *nethttp.Request) 
 	if err := ui.WorkspacesPageForEnvironmentQuery(h.catalogForWorkspacesPage(r, workspaces), workspaces, h.environment(r), query, h.currentRoleLabel(r), h.csrfToken(r), h.chromeOptions(r)...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
+}
+
+func (h Handler) Pipelines(w nethttp.ResponseWriter, r *nethttp.Request) {
+	state, workspaces, err := h.pipelineMonitorState(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(nethttp.StatusOK)
+	if err := ui.PipelinesPage(h.catalogForWorkspacesPage(r, workspaces), state, r.URL.Query().Get("view"), h.currentRoleLabel(r), h.chromeOptions(r)...).Render(w); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+	}
+}
+
+func (h Handler) PipelinesBootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
+	clientID := pagestream.EnsureClientID(w, r)
+	var trace *pagestream.TraceStore
+	if broker := h.broker(); broker != nil {
+		trace = broker.TraceStore()
+	}
+	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(trace, "pipelines:"+clientID, "pipelines.bootstrap"))
+	view := r.URL.Query().Get("view")
+	state, workspaces, err := h.pipelineMonitorState(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	if err := updates.Patch(ui.PipelinesBootstrapSignals(h.catalogForWorkspacesPage(r, workspaces), state, view, h.currentRoleLabel(r), h.chromeOptions(r)...)); err != nil {
+		return
+	}
+
+	poll := time.NewTicker(2 * time.Second)
+	defer poll.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-poll.C:
+			state, _, err = h.pipelineMonitorState(r)
+			if err != nil {
+				if patchErr := updates.Patch(pagestream.SignalPatch{"status": map[string]any{"loading": false, "error": err.Error()}}); patchErr != nil {
+					return
+				}
+				continue
+			}
+			if err := updates.Patch(ui.PipelinesPagePatch(state, view)); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (h Handler) PipelineCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var signals pipelineCommandSignalPayload
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	command := signals.PipelineCommand
+	command.Action = strings.ToLower(strings.TrimSpace(command.Action))
+	command.WorkspaceID = h.workspaceID(command.WorkspaceID)
+	command.AssetID = strings.TrimSpace(command.AssetID)
+	command.PipelineID = strings.TrimSpace(command.PipelineID)
+	command.RunID = strings.TrimSpace(command.RunID)
+	if command.WorkspaceID == "" || command.AssetID == "" || command.PipelineID == "" {
+		nethttp.Error(w, "pipeline command target is required", nethttp.StatusBadRequest)
+		return
+	}
+	if command.Action != "run" && command.Action != "retry" && command.Action != "cancel" {
+		nethttp.Error(w, "unsupported pipeline command", nethttp.StatusBadRequest)
+		return
+	}
+	if command.Action != "run" && command.RunID == "" {
+		nethttp.Error(w, "pipeline run id is required", nethttp.StatusBadRequest)
+		return
+	}
+	visible := false
+	workspaces, err := h.workspaceList(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	for _, candidate := range workspaces {
+		if candidate.ID == command.WorkspaceID {
+			visible = true
+			break
+		}
+	}
+	if !visible {
+		nethttp.Error(w, "pipeline was not found", nethttp.StatusNotFound)
+		return
+	}
+	assets, edges, err := h.assetsAndEdges(r, command.WorkspaceID)
+	if err != nil {
+		nethttp.Error(w, err.Error(), statusForNotFound(err))
+		return
+	}
+	asset, ok := workspace.AssetByID(assets, command.AssetID)
+	if !ok || asset.Type != string(workspace.AssetTypeRefreshPipeline) || strings.TrimPrefix(asset.Key, command.WorkspaceID+".") != command.PipelineID {
+		nethttp.Error(w, "pipeline was not found", nethttp.StatusNotFound)
+		return
+	}
+	privilege := access.PrivilegeRefreshData
+	if command.Action == "cancel" {
+		privilege = access.PrivilegeUseWorkspace
+	}
+	allowed, err := h.canPipelineCommand(r, command.WorkspaceID, privilege)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		nethttp.Error(w, "pipeline command is not permitted", nethttp.StatusForbidden)
+		return
+	}
+	if h.RefreshRunner == nil {
+		nethttp.Error(w, "pipeline command service is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	input := AssetRefreshInput{Request: r, WorkspaceID: command.WorkspaceID, Asset: asset, Assets: assets, Edges: edges}
+	var message string
+	switch command.Action {
+	case "run":
+		err = h.RefreshRunner.RefreshAsset(r.Context(), input)
+		message = "Pipeline run queued."
+	case "retry":
+		err = h.RefreshRunner.RetryAsset(r.Context(), input, command.RunID)
+		message = "Pipeline retry queued."
+	case "cancel":
+		err = h.RefreshRunner.CancelRefreshRun(r.Context(), PipelineRunCancelInput{Request: r, WorkspaceID: command.WorkspaceID, PipelineID: command.PipelineID, RunID: command.RunID})
+		message = "Pipeline run cancelled."
+	}
+	status := uisignals.PipelineCommandStatusSignal{Message: message}
+	if err != nil {
+		status.Message = ""
+		status.Error = err.Error()
+	}
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"pipelineCommandStatus": status})
+}
+
+func (h Handler) canPipelineCommand(r *nethttp.Request, workspaceID string, privilege access.Privilege) (bool, error) {
+	principal, ok := h.ReadModel.currentPrincipal(r)
+	if !ok {
+		return !h.ReadModel.AuthConfigured, nil
+	}
+	if principal.DevBypass {
+		return true, nil
+	}
+	if h.AuthorizeObject == nil {
+		return false, nil
+	}
+	return h.AuthorizeObject(r.Context(), principal.ID, privilege, access.WorkspaceObject(workspaceID))
+}
+
+func (h Handler) pipelineMonitorState(r *nethttp.Request) (ui.PipelineMonitorState, []workspace.WorkspaceView, error) {
+	workspaces, err := h.workspaceList(r)
+	if err != nil {
+		return ui.PipelineMonitorState{}, nil, err
+	}
+	state := ui.PipelineMonitorState{Environment: h.environment(r), CSRFToken: h.csrfToken(r)}
+	if h.RefreshCapacity != nil {
+		state.Capacity, err = h.RefreshCapacity(r.Context())
+		if err != nil {
+			return ui.PipelineMonitorState{}, nil, err
+		}
+	}
+	for _, workspaceView := range workspaces {
+		assets, _, assetsErr := h.assetsAndEdges(r, workspaceView.ID)
+		if assetsErr != nil {
+			return ui.PipelineMonitorState{}, nil, assetsErr
+		}
+		for _, asset := range assets {
+			if asset.Type != "refresh_pipeline" {
+				continue
+			}
+			refresh, refreshErr := h.assetRefreshState(r.Context(), workspaceView.ID, state.Environment, asset)
+			if refreshErr != nil {
+				return ui.PipelineMonitorState{}, nil, refreshErr
+			}
+			canRun, authErr := h.canPipelineCommand(r, workspaceView.ID, access.PrivilegeRefreshData)
+			if authErr != nil {
+				return ui.PipelineMonitorState{}, nil, authErr
+			}
+			canCancel, authErr := h.canPipelineCommand(r, workspaceView.ID, access.PrivilegeUseWorkspace)
+			if authErr != nil {
+				return ui.PipelineMonitorState{}, nil, authErr
+			}
+			if state.RunCommand.OperationID() == "" {
+				state.RunCommand = refresh.RunCommand
+				state.CancelCommand = refresh.CancelCommand
+			}
+			state.Pipelines = append(state.Pipelines, ui.PipelineMonitorPipeline{Workspace: workspaceView, Asset: asset, Refresh: refresh, CanRun: canRun, CanCancel: canCancel})
+		}
+	}
+	return state, workspaces, nil
 }
 
 func (h Handler) WorkspaceListSearch(w nethttp.ResponseWriter, r *nethttp.Request) {

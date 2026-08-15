@@ -46,6 +46,7 @@ func workspaceAssetRefreshState(state refreshmodule.AssetRefreshState) workspace
 	return workspacemodule.AssetRefreshState{
 		CSRFToken:        state.CSRFToken,
 		RunCommand:       state.RunCommand,
+		CancelCommand:    state.CancelCommand,
 		Runs:             workspaceAssetRefreshRuns(state.Runs),
 		Latest:           workspaceAssetRefreshRun(state.Latest),
 		LatestSuccessful: workspaceAssetRefreshRun(state.LatestSuccessful),
@@ -67,8 +68,11 @@ func workspaceAssetRefreshRuns(runs []refreshmodule.AssetRefreshRun) []workspace
 
 func workspaceAssetRefreshRun(run refreshmodule.AssetRefreshRun) workspacemodule.AssetRefreshRun {
 	return workspacemodule.AssetRefreshRun{
-		ID: run.ID, PrincipalDisplayName: run.PrincipalDisplayName, TriggerType: run.TriggerType,
-		Status: run.Status, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: run.Error,
+		ID: run.ID, Environment: run.Environment, ModelID: run.ModelID, ServingStateID: run.ServingStateID,
+		PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName, TriggerType: run.TriggerType,
+		ParentRunID: run.ParentRunID, RetryOf: run.RetryOf, TargetGeneration: run.TargetGeneration,
+		Status: run.Status, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
+		StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: run.Error,
 	}
 }
 
@@ -121,6 +125,20 @@ func workspaceRefreshSupport(deps *workspaceRefreshDependencies) refreshmodule.W
 				return fmt.Errorf("refresh module is required")
 			}
 			return refresh.VerifyRunCreated(ctx, run)
+		},
+		CancelRun: func(ctx context.Context, workspaceID, runID string) (refreshmodule.RunRecord, error) {
+			refresh := deps.refresh()
+			if refresh == nil {
+				return refreshmodule.RunRecord{}, fmt.Errorf("refresh module is required")
+			}
+			return refresh.CancelRun(ctx, workspaceID, runID)
+		},
+		RunCancelled: func(ctx context.Context, run refreshmodule.RunRecord) error {
+			refresh := deps.refresh()
+			if refresh == nil {
+				return fmt.Errorf("refresh module is required")
+			}
+			return refresh.VerifyRunCancelled(ctx, run)
 		},
 		Environment: func(r *http.Request) servingstatemodule.Environment {
 			return requestServingEnvironment(deps.defaultEnvironment, r)

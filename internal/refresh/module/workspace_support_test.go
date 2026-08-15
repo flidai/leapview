@@ -50,3 +50,80 @@ func TestWorkspaceRefreshExecutesGeneratedUICommandContract(t *testing.T) {
 		t.Fatalf("queued=%v completed=%v", queued, completed)
 	}
 }
+
+func TestWorkspaceRefreshRetryAndCancelExecuteGeneratedUICommandContracts(t *testing.T) {
+	asset := workspace.AssetView{ID: "refresh_pipeline:daily", Key: "sales.daily", Type: string(workspace.AssetTypeRefreshPipeline)}
+	prior := refreshrun.RunRecord{
+		ID: "run_failed", WorkspaceID: "sales", Environment: "dev", TargetType: refreshrun.TargetRefreshPipeline,
+		TargetID: "sales.daily", Status: refreshrun.RunStatusFailed,
+	}
+	reader := workspaceSupportRunReader{run: prior}
+	var retryQueued, cancelled bool
+	support := WorkspaceSupport{
+		Runs: func() (RunReader, error) { return reader, nil },
+		QueuePipeline: func(ctx context.Context, input refreshrun.QueuePipelineInput) (refreshrun.QueueAssetResult, error) {
+			operationID, ok := apigencommand.OperationID(ctx)
+			if !ok || operationID != string(refreshgen.GenOperationCreateRefreshRun) || input.TriggerType != refreshrun.TriggerRetry || input.RetryOf != prior.ID {
+				t.Fatalf("retry invocation = operation %q, input %#v", operationID, input)
+			}
+			retryQueued = true
+			return refreshrun.QueueAssetResult{Run: refreshrun.RunRecord{ID: "run_retry"}}, nil
+		},
+		RunCreated: func(ctx context.Context, _ refreshrun.RunRecord) error {
+			return executeWorkspaceSupportCommand(ctx, string(refreshgen.GenOperationCreateRefreshRun))
+		},
+		CancelRun: func(_ context.Context, workspaceID, runID string) (refreshrun.RunRecord, error) {
+			if workspaceID != "sales" || runID != prior.ID {
+				t.Fatalf("cancel target = %s/%s", workspaceID, runID)
+			}
+			cancelled = true
+			row := prior
+			row.Status = refreshrun.RunStatusCancelled
+			return row, nil
+		},
+		RunCancelled: func(ctx context.Context, _ refreshrun.RunRecord) error {
+			return executeWorkspaceSupportCommand(ctx, string(refreshgen.GenOperationCancelRefreshRun))
+		},
+	}
+
+	retryRequest := httptest.NewRequest(http.MethodPost, "/pipelines/command", nil)
+	retryRequest.Header.Set(uicommand.HeaderOperationID, string(refreshgen.GenOperationCreateRefreshRun))
+	retryRequest.Header.Set("X-Request-ID", "retry-request")
+	if err := support.RetryAsset(t.Context(), retryRequest, "sales", asset, nil, nil, prior.ID); err != nil {
+		t.Fatalf("retry asset: %v", err)
+	}
+
+	cancelRequest := httptest.NewRequest(http.MethodPost, "/pipelines/command", nil)
+	cancelRequest.Header.Set(uicommand.HeaderOperationID, string(refreshgen.GenOperationCancelRefreshRun))
+	cancelRequest.Header.Set("X-Request-ID", "cancel-request")
+	if err := support.CancelRefreshRun(t.Context(), cancelRequest, "sales", "daily", prior.ID); err != nil {
+		t.Fatalf("cancel refresh run: %v", err)
+	}
+	if !retryQueued || !cancelled {
+		t.Fatalf("retryQueued=%v cancelled=%v", retryQueued, cancelled)
+	}
+}
+
+type workspaceSupportRunReader struct{ run refreshrun.RunRecord }
+
+func (r workspaceSupportRunReader) GetRun(context.Context, string, string) (refreshrun.RunRecord, error) {
+	return r.run, nil
+}
+
+func (workspaceSupportRunReader) ListTargetRuns(context.Context, string, string, string, refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
+	return nil, nil
+}
+
+func (workspaceSupportRunReader) LatestSuccessfulTargetRun(context.Context, string, string, string, string) (refreshrun.RunRecord, bool, error) {
+	return refreshrun.RunRecord{}, false, nil
+}
+
+func executeWorkspaceSupportCommand(ctx context.Context, operationID string) error {
+	executor, err := apigencommand.NewExecutor(refreshgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(ctx, operationID, apigencommand.Execution{
+		BestEffortAudit: func(context.Context, apigencommand.Contract) error { return nil },
+	})
+}

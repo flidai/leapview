@@ -143,6 +143,7 @@ func Provider(config Config) webpage.Provider {
 func globalNavigation() []Item {
 	return []Item{
 		{ID: "dashboards", Label: "Dashboards", Href: "/", Icon: "dashboard", Meta: optional("Reports")},
+		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow", Meta: optional("Refresh monitoring")},
 		{ID: "chat", Label: "Chats", Href: "/chats", Icon: "chat", Meta: optional("Agent interface")},
 		{ID: "workspaces", Label: "Workspaces", Href: "/workspaces", Icon: "catalog", Meta: optional("Published assets")},
 		{ID: "data", Label: "Data", Href: "/data", Icon: "cache", Meta: optional("Inspect rows")},

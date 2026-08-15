@@ -49,6 +49,7 @@ import '../shared/code-block'
 import '../shared/drawer'
 import '../shared/workspace-access-control'
 import './connection-administration'
+import './pipelines-page'
 
 const emptyWorkspaceAccess: WorkspaceAccessSignal = {
   workspace: {},

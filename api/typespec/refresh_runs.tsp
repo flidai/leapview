@@ -129,6 +129,7 @@ interface RefreshRuns {
   @route("/{run}/cancel")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
+  @apigen.ui("workspace.refresh.cancel")
   @apigen.failsWith(RefreshRunNotFoundFailure)
   @apigen.failsWith(RefreshRunForbiddenFailure)
   @apigen.failsWith(RefreshRunNotCancellableFailure)

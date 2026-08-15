@@ -36,6 +36,10 @@ func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 	if create.UI == nil || create.UI.ActionID != "workspace.refresh.run" || len(create.AdditionalExposures) != 1 || string(create.AdditionalExposures[0]) != "ui" {
 		t.Errorf("create refresh UI contract = %#v", create)
 	}
+	cancel := contracts["cancelRefreshRun"].Command
+	if cancel.UI == nil || cancel.UI.ActionID != "workspace.refresh.cancel" || len(cancel.AdditionalExposures) != 1 || string(cancel.AdditionalExposures[0]) != "ui" {
+		t.Errorf("cancel refresh UI contract = %#v", cancel)
+	}
 	if create.Execution == nil || create.Execution.Guarantee != "transactional" ||
 		create.Execution.JobKind != "refresh_pipeline" || create.Execution.ResourceKind != "refresh" ||
 		create.Execution.InitialEvent != refreshQueuedAuditAction || create.Execution.InitialState != "queued" ||
