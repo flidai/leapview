@@ -359,7 +359,7 @@ MapLibre owns geographic visuals. Maps use versioned, verified geometry or vecto
 
 The map adapter supports choropleth, point, heat, and density layers without pretending schematic rectangles are geographic boundaries. It reports unmatched identifiers and never guesses region mappings. Geometry is loaded from LeapView-controlled same-origin assets and cached by content digest; query refreshes transmit measure frames, not repeated boundary geometry.
 
-MapLibre exclusively owns built-in geographic rendering; ECharts `geo` is not a fallback map adapter. The rationale and the boundary for future typed map glyphs are recorded in the [geographic rendering decision](/docs/architecture/geographic-rendering).
+MapLibre exclusively owns built-in geographic rendering; ECharts `geo` is not a fallback map adapter. The runtime boundary for future typed map glyphs is described in [Geographic rendering](/docs/architecture/geographic-rendering).
 
 ## Renderer-independent formatting
 
