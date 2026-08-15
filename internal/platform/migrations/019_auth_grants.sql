@@ -1,49 +1,76 @@
 -- +goose Up
--- Canonical Fabric/Unity-Catalog-style grant engine. The product is still in
--- development, so legacy role-permission tables remain only as inert metadata.
+-- Canonical project-generation capability grants. Resource identity is the
+-- graph ResourceID plus kind; no workspace, path, domain, or parent scope is
+-- persisted in authorization.
 
 ALTER TABLE principals ADD COLUMN kind TEXT NOT NULL DEFAULT 'user';
 
-CREATE TABLE IF NOT EXISTS securable_objects (
-  id TEXT PRIMARY KEY,
-  object_type TEXT NOT NULL,
-  workspace_id TEXT NOT NULL DEFAULT '',
-  parent_id TEXT NOT NULL DEFAULT '',
-  owner_principal_id TEXT NOT NULL DEFAULT '',
-  display_name TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS securable_objects_workspace_idx
-  ON securable_objects(workspace_id, object_type);
-
-CREATE TABLE IF NOT EXISTS grants (
-  id TEXT PRIMARY KEY,
-  object_id TEXT NOT NULL REFERENCES securable_objects(id) ON DELETE CASCADE,
-  subject_type TEXT NOT NULL,
-  subject_id TEXT NOT NULL,
-  privilege TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(object_id, subject_type, subject_id, privilege)
-);
-
-CREATE INDEX IF NOT EXISTS grants_subject_idx
-  ON grants(subject_type, subject_id, privilege);
-
 CREATE TABLE IF NOT EXISTS role_grant_templates (
   role_name TEXT NOT NULL,
-  privilege TEXT NOT NULL,
+  capability TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY(role_name, privilege)
+  PRIMARY KEY(role_name, capability)
 );
 
-CREATE TABLE IF NOT EXISTS data_policies (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL DEFAULT '',
-  object_id TEXT NOT NULL REFERENCES securable_objects(id) ON DELETE CASCADE,
-  policy_type TEXT NOT NULL,
-  expression_json TEXT NOT NULL DEFAULT '{}',
+CREATE TABLE IF NOT EXISTS authorization_snapshots (
+  project_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  digest TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  PRIMARY KEY(project_id, environment, generation_id)
 );
+
+CREATE TABLE IF NOT EXISTS authorization_grants (
+  id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  subject_kind TEXT NOT NULL CHECK(subject_kind IN ('principal', 'group')),
+  subject_id TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  resource_kind TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(project_id, environment, generation_id, id),
+  FOREIGN KEY(project_id, environment, generation_id)
+    REFERENCES authorization_snapshots(project_id, environment, generation_id)
+    ON DELETE CASCADE,
+  UNIQUE(project_id, environment, generation_id, subject_kind, subject_id, resource_id, capability)
+);
+CREATE INDEX IF NOT EXISTS authorization_grants_subject_idx
+  ON authorization_grants(project_id, environment, generation_id, subject_kind, subject_id);
+CREATE INDEX IF NOT EXISTS authorization_grants_resource_idx
+  ON authorization_grants(project_id, environment, generation_id, resource_id, capability);
+
+CREATE TABLE IF NOT EXISTS authorization_data_policies (
+  id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  resource_kind TEXT NOT NULL,
+  subject_kind TEXT CHECK(subject_kind IS NULL OR subject_kind IN ('principal', 'group')),
+  subject_id TEXT,
+  policy_type TEXT NOT NULL,
+  expression_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(project_id, environment, generation_id, id),
+  CHECK ((subject_kind IS NULL AND subject_id IS NULL) OR (subject_kind IS NOT NULL AND subject_id IS NOT NULL)),
+  FOREIGN KEY(project_id, environment, generation_id)
+    REFERENCES authorization_snapshots(project_id, environment, generation_id)
+    ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS authorization_data_policies_resource_idx
+  ON authorization_data_policies(project_id, environment, generation_id, resource_id);
+
+-- +goose Down
+DROP INDEX IF EXISTS authorization_data_policies_resource_idx;
+DROP TABLE IF EXISTS authorization_data_policies;
+DROP INDEX IF EXISTS authorization_grants_resource_idx;
+DROP INDEX IF EXISTS authorization_grants_subject_idx;
+DROP TABLE IF EXISTS authorization_grants;
+DROP TABLE IF EXISTS authorization_snapshots;
+DROP TABLE IF EXISTS role_grant_templates;
