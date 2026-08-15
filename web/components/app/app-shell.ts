@@ -12,6 +12,7 @@ const emptyChrome: ChromeSignal = {
     dashboardId: '',
     dashboardTitle: '',
     pageTitle: '',
+    userSettingsHref: '/admin/profile',
     modelId: '',
     modelTitle: '',
     compact: false,

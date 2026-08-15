@@ -6,7 +6,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 )
 
-func TestProviderOwnsGlobalNavigationAndAgentHistory(t *testing.T) {
+func TestProviderOwnsInsightsNavigationAndAgentHistory(t *testing.T) {
 	provider := Provider(Config{
 		Presentation: webpage.Presentation{ProductName: "LeapView"},
 		RoleLabel:    "Owner", UserName: "Ada Lovelace", UserAvatarURL: "/profile/avatars/ada/avatar-digest",
@@ -18,8 +18,20 @@ func TestProviderOwnsGlobalNavigationAndAgentHistory(t *testing.T) {
 	if !ok {
 		t.Fatalf("signal = %T, want shell.Chrome", layout.Signal)
 	}
-	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 6 {
+	if chrome.Sidebar.Area != "insights" || len(chrome.Sidebar.Areas) != 2 {
+		t.Fatalf("areas = %q %#v, want insights with two available areas", chrome.Sidebar.Area, chrome.Sidebar.Areas)
+	}
+	if chrome.Sidebar.Areas[0].ID != "insights" || chrome.Sidebar.Areas[0].Icon != "insights" {
+		t.Fatalf("insights area = %#v, want a distinct insights icon", chrome.Sidebar.Areas[0])
+	}
+	if chrome.Sidebar.UserSettingsHref != "/admin/profile" {
+		t.Fatalf("user settings href = %q, want /admin/profile", chrome.Sidebar.UserSettingsHref)
+	}
+	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 3 {
 		t.Fatalf("navigation = %#v", chrome.Sidebar.Groups)
+	}
+	if chrome.Sidebar.Groups[0].Items[0].ID != "dashboards" || chrome.Sidebar.Groups[0].Items[1].ID != "data" || chrome.Sidebar.Groups[0].Items[1].Label != "Explore" || chrome.Sidebar.Groups[0].Items[2].ID != "chat" {
+		t.Fatalf("insights navigation = %#v", chrome.Sidebar.Groups)
 	}
 	if chrome.Sidebar.UserName == nil || *chrome.Sidebar.UserName != "Ada Lovelace" {
 		t.Fatalf("sidebar user name = %v, want Ada Lovelace", chrome.Sidebar.UserName)
@@ -35,17 +47,56 @@ func TestProviderOwnsGlobalNavigationAndAgentHistory(t *testing.T) {
 	}
 }
 
-func TestGlobalNavigationIncludesInstancePipelines(t *testing.T) {
-	items := globalNavigation()
-	for _, item := range items {
-		if item.ID == "pipelines" {
-			if item.Href != "/pipelines" || item.Label != "Pipelines" || item.Icon != "workflow" {
-				t.Fatalf("pipelines navigation = %#v", item)
+func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
+	provider := Provider(Config{Presentation: webpage.Presentation{ProductName: "LeapView"}})
+	for _, active := range []string{"workspaces", "connections", "pipelines"} {
+		t.Run(active, func(t *testing.T) {
+			layout := provider(webpage.Context{Active: active})
+			chrome := layout.Signal.(Chrome)
+			if chrome.Sidebar.Area != "develop" || chrome.Sidebar.Admin {
+				t.Fatalf("sidebar = %#v, want develop area", chrome.Sidebar)
 			}
-			return
+			if len(chrome.Sidebar.Groups) != 1 {
+				t.Fatalf("develop navigation = %#v", chrome.Sidebar.Groups)
+			}
+			got := []string{}
+			for _, item := range chrome.Sidebar.Groups[0].Items {
+				got = append(got, item.ID)
+			}
+			want := []string{"workspaces", "pipelines", "connections"}
+			if len(got) != len(want) {
+				t.Fatalf("develop navigation = %v, want %v", got, want)
+			}
+			for index := range want {
+				if got[index] != want[index] {
+					t.Fatalf("develop navigation = %v, want %v", got, want)
+				}
+			}
+			if chrome.Sidebar.History != nil || chrome.Sidebar.PrimaryAction != nil {
+				t.Fatalf("develop sidebar should not project insights actions: %#v", chrome.Sidebar)
+			}
+		})
+	}
+}
+
+func TestProviderPlacesExploreInInsightsNavigation(t *testing.T) {
+	provider := Provider(Config{Presentation: webpage.Presentation{ProductName: "LeapView"}})
+	layout := provider(webpage.Context{Active: "data"})
+	chrome := layout.Signal.(Chrome)
+	if chrome.Sidebar.Admin || chrome.Sidebar.Area != "insights" || chrome.Sidebar.Active != "data" {
+		t.Fatalf("sidebar = %#v, want insights Explore navigation", chrome.Sidebar)
+	}
+	for _, group := range chrome.Sidebar.Groups {
+		for _, item := range group.Items {
+			if item.ID == "data" {
+				if item.Label != "Explore" || item.Href != "/data" || item.Icon != "cache" {
+					t.Fatalf("Explore item = %#v", item)
+				}
+				return
+			}
 		}
 	}
-	t.Fatal("global navigation does not include pipelines")
+	t.Fatal("Insights navigation did not contain Explore")
 }
 
 func TestProviderProjectsCustomProductIdentity(t *testing.T) {
@@ -69,6 +120,9 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 	chrome := layout.Signal.(Chrome)
 	if chrome.Sidebar.Active != "principals" || !chrome.Sidebar.Admin || !chrome.Sidebar.Compact {
 		t.Fatalf("sidebar = %#v", chrome.Sidebar)
+	}
+	if chrome.Sidebar.Area != "" || len(chrome.Sidebar.Areas) != 0 {
+		t.Fatalf("admin sidebar areas = %q %#v, want none", chrome.Sidebar.Area, chrome.Sidebar.Areas)
 	}
 	if len(chrome.Sidebar.Groups) != 5 {
 		t.Fatalf("navigation = %#v", chrome.Sidebar.Groups)
@@ -95,7 +149,7 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 		{label: "Data & sharing", items: []struct {
 			label string
 			icon  string
-		}{{label: "Connections", icon: "data"}, {label: "Storage", icon: "database"}, {label: "Publications", icon: "globe"}}},
+		}{{label: "Storage", icon: "database"}, {label: "Publications", icon: "globe"}}},
 		{label: "Operations", items: []struct {
 			label string
 			icon  string
@@ -124,7 +178,7 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 func TestProviderFiltersAdminNavigationByPrivileges(t *testing.T) {
 	provider := Provider(Config{
 		Presentation: webpage.Presentation{ProductName: "LeapView"},
-		AdminAccess:  &AdminNavigationAccess{ManageGrants: true, ViewConnections: true},
+		AdminAccess:  &AdminNavigationAccess{ManageGrants: true},
 	})
 	layout := provider(webpage.Context{Active: "admin", PageID: "principals"})
 	chrome := layout.Signal.(Chrome)
@@ -134,7 +188,7 @@ func TestProviderFiltersAdminNavigationByPrivileges(t *testing.T) {
 			got[item.ID] = true
 		}
 	}
-	for _, id := range []string{"profile", "security", "api-tokens", "principals", "groups", "connections"} {
+	for _, id := range []string{"profile", "security", "api-tokens", "principals", "groups"} {
 		if !got[id] {
 			t.Fatalf("navigation is missing %q: %#v", id, chrome.Sidebar.Groups)
 		}
@@ -146,12 +200,12 @@ func TestProviderFiltersAdminNavigationByPrivileges(t *testing.T) {
 	}
 }
 
-func TestProviderPlacesConnectionsInAdminSettingsNavigation(t *testing.T) {
+func TestProviderPlacesConnectionsInDevelopNavigation(t *testing.T) {
 	provider := Provider(Config{Presentation: webpage.Presentation{ProductName: "LeapView"}})
 	layout := provider(webpage.Context{Active: "connections"})
 	chrome := layout.Signal.(Chrome)
-	if !chrome.Sidebar.Admin || chrome.Sidebar.Active != "connections" {
-		t.Fatalf("sidebar = %#v, want admin connections navigation", chrome.Sidebar)
+	if chrome.Sidebar.Admin || chrome.Sidebar.Area != "develop" || chrome.Sidebar.Active != "connections" {
+		t.Fatalf("sidebar = %#v, want develop connections navigation", chrome.Sidebar)
 	}
 	for _, group := range chrome.Sidebar.Groups {
 		for _, item := range group.Items {
@@ -163,7 +217,7 @@ func TestProviderPlacesConnectionsInAdminSettingsNavigation(t *testing.T) {
 			}
 		}
 	}
-	t.Fatal("admin navigation did not contain Connections")
+	t.Fatal("develop navigation did not contain Connections")
 }
 
 func TestRouteContextSelectsActiveHistoryWithoutOwningHistory(t *testing.T) {

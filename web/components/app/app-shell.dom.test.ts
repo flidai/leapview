@@ -39,6 +39,16 @@ beforeAll(async () => {
       response.end(testDocument(true, false, false, true))
       return
     }
+    if (url.pathname === '/') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument(true, false, true))
+      return
+    }
+    if (url.pathname === '/workspaces') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument(true, false, false, true))
+      return
+    }
     if (url.pathname === '/admin-sidebar') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument(true, true, false, false, true))
@@ -271,6 +281,11 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
           return button ? { label: button.getAttribute('aria-label'), disabled: button.disabled } : null
         })(),
         collapsedAttribute: sidebar.hasAttribute('data-collapsed'),
+        visibleAreaSwitcherCount: Array.from(root.querySelectorAll('.area-switcher')).filter((item) => {
+          const rect = item.getBoundingClientRect()
+          const style = getComputedStyle(item)
+          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+        }).length,
       }
     })
 
@@ -285,6 +300,7 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
       markCount: 0,
       collapseControl: { label: 'Expand navigation', disabled: false },
       collapsedAttribute: true,
+      visibleAreaSwitcherCount: 0,
     })
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
@@ -379,6 +395,12 @@ test('mobile navigation opens in an accessible drawer', async () => {
       const backdrop = root.querySelector('.mobile-backdrop') as HTMLButtonElement
       const drawerHeader = root.querySelector('.mobile-drawer-header') as HTMLElement
       const drawer = root.querySelector('aside') as HTMLElement
+      const visible = (target: Element) => {
+        const box = target.getBoundingClientRect()
+        const style = getComputedStyle(target)
+        return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+      }
+      const mobileSettings = root.querySelector('.mobile-footer .user-card') as HTMLAnchorElement | null
       return {
         drawerOpen: root.querySelector('aside')?.hasAttribute('data-mobile-open'),
         expanded: menuButton.getAttribute('aria-expanded'),
@@ -390,6 +412,11 @@ test('mobile navigation opens in an accessible drawer', async () => {
         headerBorderBottomWidth: getComputedStyle(drawerHeader).borderBottomWidth,
         navBoxShadow: getComputedStyle(nav).boxShadow,
         closeControlCount: root.querySelectorAll('button[aria-label="Close navigation"]:not([inert])').length,
+        visibleAreaSwitcherCount: Array.from(root.querySelectorAll('.area-switcher')).filter(visible).length,
+        mobileSettings: mobileSettings && visible(mobileSettings) ? {
+          href: mobileSettings.getAttribute('href'),
+          label: mobileSettings.getAttribute('aria-label'),
+        } : null,
       }
     })
 
@@ -402,6 +429,8 @@ test('mobile navigation opens in an accessible drawer', async () => {
     expect(openState.headerBorderBottomWidth).not.toBe('0px')
     expect(openState.navBoxShadow).not.toBe('none')
     expect(openState.closeControlCount).toBe(1)
+    expect(openState.visibleAreaSwitcherCount).toBe(1)
+    expect(openState.mobileSettings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
@@ -703,10 +732,59 @@ test('admin sidebar replaces global navigation and provides a back to app action
       const root = sidebar.shadowRoot!
       return {
         groupLabels: Array.from(root.querySelectorAll('.nav-group:not(.primary-action)')).map((group) => group.getAttribute('aria-label')),
-        links: Array.from(root.querySelectorAll('a[href^="/admin/"]')).map((link) => link.getAttribute('href')),
+        links: Array.from(root.querySelectorAll('#mobile-navigation a[href^="/admin/"]')).map((link) => link.getAttribute('href')),
       }
     })
     expect(filtered).toEqual({ groupLabels: ['Data & sharing'], links: ['/admin/storage'] })
+  } finally {
+    await page.close()
+  }
+})
+
+test('sidebar switches between Insights and Develop and remembers the last area location', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-active-nav`)
+    await page.evaluate(() => {
+      localStorage.removeItem('leapview-area-last-insights')
+      localStorage.removeItem('leapview-area-last-develop')
+    })
+    await page.reload()
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+
+    const developState = await sidebarAreaState(page)
+    expect(developState.area).toBe('develop')
+    expect(developState.areas).toEqual([
+      { label: 'Insights', current: 'false', href: '/' },
+      { label: 'Develop', current: 'page', href: '/sidebar-active-nav' },
+    ])
+    expect(developState.items).toEqual(['Workspaces', 'Pipelines', 'Connections'])
+    expect(developState.visibleGroupLabels).toEqual([])
+    expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
+    expect(developState.visibleAreaSwitcherCount).toBe(1)
+    expect(developState.currentAreaClickPrevented).toBe(true)
+    expect(developState.switcherStyle).toEqual({ display: 'grid', borderTopWidth: '0px', backgroundColor: 'rgba(0, 0, 0, 0)' })
+    expect(developState.currentAreaStyle.boxShadow).toBe('none')
+    expect(developState.currentAreaStyle.backgroundColor).not.toBe(developState.switcherStyle.backgroundColor)
+    expect(developState.areaIconDisplay).toBe('grid')
+
+    await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      ;(sidebar.shadowRoot!.querySelector('.area-item[aria-label="Insights"]') as HTMLAnchorElement).click()
+    })
+    await page.waitForURL(`${baseURL}/`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+
+    const insightsState = await sidebarAreaState(page)
+    expect(insightsState.area).toBe('insights')
+    expect(insightsState.items).toEqual(['Dashboards', 'Explore', 'Chats'])
+    expect(insightsState.visibleGroupLabels).toEqual([])
+
+    await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      ;(sidebar.shadowRoot!.querySelector('.area-item[aria-label="Develop"]') as HTMLAnchorElement).click()
+    })
+    await page.waitForURL(`${baseURL}/sidebar-active-nav`)
   } finally {
     await page.close()
   }
@@ -911,18 +989,23 @@ function signalShellDocument(): string {
       sidebar: {
         workspaceTitle: 'LeapView Workspace',
         active: 'chat',
+        area: 'insights',
+        areas: [
+          { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
+          { id: 'develop', label: 'Develop', href: '/workspaces', icon: 'code' },
+        ],
         dashboardId: '',
         dashboardTitle: '',
         pageTitle: '',
         modelId: '',
         modelTitle: '',
         compact: false,
+        userSettingsHref: '/admin/profile',
         groups: [{
           label: 'Navigation',
           items: [
             { id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' },
             { id: 'chat', label: 'Chats', href: '/chats', icon: 'chat' },
-            { id: 'workspaces', label: 'Workspaces', href: '/workspaces', icon: 'catalog' },
           ],
         }],
       },
@@ -953,6 +1036,11 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
       workspaceTitle: 'LeapView Workspace',
       active: admin ? 'principals' : history ? 'chat' : 'workspaces',
       admin,
+      area: admin ? undefined : history ? 'insights' : 'develop',
+      areas: admin ? undefined : [
+        { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
+        { id: 'develop', label: 'Develop', href: '/workspaces', icon: 'code' },
+      ],
       dashboardId: '',
       dashboardTitle: '',
       pageTitle: '',
@@ -962,6 +1050,7 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
       userName: admin ? 'Ada Lovelace' : 'Current User',
       userAvatarUrl: admin ? '/profile/avatars/ada/avatar-digest' : undefined,
       userRole: admin ? 'Platform admin' : 'Workspace member',
+      userSettingsHref: '/admin/profile',
       primaryAction: admin ? { label: 'Back to app', href: '/', icon: 'back' } : history ? { label: 'New chat', href: '/chats/new', icon: 'plus' } : undefined,
       history: history ? {
         label: 'Chats',
@@ -999,7 +1088,6 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
         {
           label: 'Data & sharing',
           items: [
-            { id: 'connections', label: 'Connections', href: '/connections', icon: 'data' },
             { id: 'storage', label: 'Storage', href: '/admin/storage', icon: 'database' },
             { id: 'publications', label: 'Publications', href: '/admin/publications', icon: 'globe' },
           ],
@@ -1013,12 +1101,19 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
             { id: 'system', label: 'System', href: '/admin/system', icon: 'system' },
           ],
         },
-      ] : history || nav ? [{
-        label: 'Navigation',
+      ] : history ? [{
+        label: 'Insights',
         items: [
           { id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' },
+          { id: 'data', label: 'Explore', href: '/data', icon: 'cache' },
           { id: 'chat', label: 'Chats', href: '/chats', icon: 'chat' },
+        ],
+      }] : nav ? [{
+        label: 'Develop',
+        items: [
           { id: 'workspaces', label: 'Workspaces', href: '/workspaces', icon: 'catalog' },
+          { id: 'pipelines', label: 'Pipelines', href: '/pipelines', icon: 'workflow' },
+          { id: 'connections', label: 'Connections', href: '/connections', icon: 'data' },
         ],
       }] : [],
     },
@@ -1053,6 +1148,50 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
       </body>
     </html>
   `
+}
+
+async function sidebarAreaState(page: import('@playwright/test').Page) {
+  return page.locator('lv-app-shell').evaluate((element: any) => {
+    const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+    const root = sidebar.shadowRoot!
+    return {
+      area: sidebar.getAttribute('data-area'),
+      areas: Array.from(root.querySelectorAll('.brand .area-item')).map((item) => ({
+        label: item.getAttribute('aria-label'),
+        current: item.getAttribute('aria-current'),
+        href: item.getAttribute('href'),
+      })),
+      items: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group:not(.primary-action) .nav-text strong')).map((item) => item.textContent?.trim()),
+      visibleGroupLabels: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group .nav-group-label')).filter((item) => {
+        const style = getComputedStyle(item)
+        return style.display !== 'none' && style.visibility !== 'hidden'
+      }).map((item) => item.textContent?.trim()),
+      settings: (() => {
+        const link = root.querySelector('.user-card') as HTMLAnchorElement
+        return { href: link.getAttribute('href'), label: link.getAttribute('aria-label') }
+      })(),
+      visibleAreaSwitcherCount: Array.from(root.querySelectorAll('.area-switcher')).filter((item) => {
+        const box = item.getBoundingClientRect()
+        const style = getComputedStyle(item)
+        return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+      }).length,
+      currentAreaClickPrevented: (() => {
+        const current = root.querySelector('.brand .area-item[aria-current="page"]') as HTMLAnchorElement
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, composed: true, button: 0 })
+        current.dispatchEvent(event)
+        return event.defaultPrevented
+      })(),
+      switcherStyle: (() => {
+        const style = getComputedStyle(root.querySelector('.brand .area-switcher') as HTMLElement)
+        return { display: style.display, borderTopWidth: style.borderTopWidth, backgroundColor: style.backgroundColor }
+      })(),
+      currentAreaStyle: (() => {
+        const style = getComputedStyle(root.querySelector('.brand .area-item[aria-current="page"]') as HTMLElement)
+        return { backgroundColor: style.backgroundColor, boxShadow: style.boxShadow }
+      })(),
+      areaIconDisplay: getComputedStyle(root.querySelector('.brand .area-icon') as HTMLElement).display,
+    }
+  })
 }
 
 function escapeHTML(value: string): string {

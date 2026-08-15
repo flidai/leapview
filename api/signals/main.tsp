@@ -1846,6 +1846,15 @@ model SidebarActionSignal {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["shared", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "shared" })
+model SidebarAreaSignal {
+  `href`: string;
+  `icon`: string;
+  `id`: string;
+  `label`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["shared", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "shared" })
 model SidebarGroupSignal {
   `items`: SidebarItemSignal[];
   `label`: string;
@@ -1885,6 +1894,8 @@ model SidebarItemSignal {
 model SidebarSignal {
   `active`: string;
   `admin`?: boolean;
+  `area`?: string;
+  `areas`?: SidebarAreaSignal[];
   `compact`: boolean;
   `dashboardId`?: string;
   `dashboardTitle`: string;
@@ -1899,6 +1910,7 @@ model SidebarSignal {
   `userAvatarUrl`?: string;
   `userName`?: string;
   `userRole`?: string;
+  `userSettingsHref`: string;
   `workspaceTitle`: string;
 }
 

@@ -32,8 +32,8 @@ func TestApplicationLayoutUsesCurrentPrincipalIdentity(t *testing.T) {
 func TestAdminLayoutRequestRecognizesDocumentsAndAdminStreams(t *testing.T) {
 	tests := map[string]bool{
 		"/admin/profile":                     true,
-		"/connections":                       true,
-		"/connections/warehouse":             true,
+		"/connections":                       false,
+		"/connections/warehouse":             false,
 		"/updates?route=admin&section=audit": true,
 		"/workspaces":                        false,
 		"/updates?route=workspace":           false,

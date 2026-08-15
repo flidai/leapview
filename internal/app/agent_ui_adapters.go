@@ -43,7 +43,7 @@ func applicationLayout(access *accessmodule.Module, agent *agentmodule.Module, p
 			config.AdminAccess = &appshell.AdminNavigationAccess{
 				ManagePlatform: privileges.ManagePlatform, ManageGrants: privileges.ManageGrants,
 				ManageWorkspace: privileges.ManageWorkspace, ManagePublications: privileges.ManagePublications,
-				ViewAudit: privileges.ViewAudit, ViewConnections: privileges.ViewConnections,
+				ViewAudit: privileges.ViewAudit,
 			}
 		}
 	}
@@ -75,7 +75,7 @@ func adminLayoutRequest(r *http.Request) bool {
 		return false
 	}
 	path := strings.TrimSpace(r.URL.Path)
-	return strings.HasPrefix(path, "/admin") || path == "/connections" || strings.HasPrefix(path, "/connections/") ||
+	return strings.HasPrefix(path, "/admin") ||
 		(path == "/updates" && strings.TrimSpace(r.URL.Query().Get("route")) == routeAdmin)
 }
 
