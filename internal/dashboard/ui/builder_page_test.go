@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	apigenui "github.com/Yacobolo/toolbelt/apigen/runtime/ui"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +22,7 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 		PreviewHref:    "/workspaces/sales/dashboards/revenue/preview",
 		ExportYAMLHref: "/workspaces/sales/dashboards/revenue/export.yaml",
 		CommandPath:    "/workspaces/sales/dashboards/revenue/draft/command",
-		CommandBinding: apigenui.MustAction("dashboard.builder.command", "dashboardBuilderCommand"),
+		CommandBinding: dashboardgen.GenUIActionExecuteDashboardAuthoringCommand(),
 	}
 
 	var rendered strings.Builder
@@ -32,7 +32,7 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 	for _, want := range []string{
 		`<lv-dashboard-builder`, `slot="page"`, `workspace-id="sales"`, `dashboard-id="revenue"`, `draft-id="draft-7"`,
 		`/static/dashboard-builder.js`, `route=dashboard_builder`, `workspace=sales`, `dashboard=revenue`, `draft=draft-7`,
-		`data-on:lv-builder-command`, `@post('/workspaces/sales/dashboards/revenue/draft/command'`, `headers: window.LeapViewCommand.headers('dashboardBuilderCommand')`,
+		`data-on:lv-builder-command`, `@post('/workspaces/sales/dashboards/revenue/draft/command'`, `headers: window.LeapViewCommand.headers('executeDashboardAuthoringCommand')`,
 		`back-href="/workspaces/sales/dashboards"`, `preview-href="/workspaces/sales/dashboards/revenue/preview"`,
 	} {
 		if !strings.Contains(output, want) {

@@ -237,6 +237,7 @@ interface DashboardAuthoring {
   @route("/commands")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "EDIT_ITEM" })
+  @apigen.ui("dashboard.builder.command")
   @apigen.command(#{ auditAction: "dashboard_authoring.command_executed", guarantee: "best-effort", failures: #[] })
   executeDashboardAuthoringCommand(@path @apigen.target workspace: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringCommandRequest): OkJson<DashboardAuthoringMutationResponse> | CommonErrors;
 

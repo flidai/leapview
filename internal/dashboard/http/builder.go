@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	apigenui "github.com/Yacobolo/toolbelt/apigen/runtime/ui"
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
@@ -24,9 +24,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const dashboardBuilderOperationID = "dashboardBuilderCommand"
+const dashboardBuilderOperationID = dashboardgen.GenOperationExecuteDashboardAuthoringCommand
 
-var dashboardBuilderCommandBinding = apigenui.MustAction("dashboard.builder.command", dashboardBuilderOperationID)
+var dashboardBuilderCommandBinding = dashboardgen.GenUIActionExecuteDashboardAuthoringCommand()
 
 // DashboardBuilder serves the governed draft builder document shell. The
 // application boundary authorizes before loading the draft revision.

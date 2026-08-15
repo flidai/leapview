@@ -171,6 +171,12 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.HasPrefix(path, "/candidates/{candidate}/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "AUTHOR_PROJECT"
+	case path == "/workspaces/{workspace}/dashboards/{dashboard}/edit" || path == "/workspaces/{workspace}/dashboards/{dashboard}/draft/command":
+		authenticated.owner = "dashboard"
+		authenticated.privilege = "EDIT_ITEM"
+	case path == "/workspaces/{workspace}/dashboards/{dashboard}/preview" || path == "/workspaces/{workspace}/dashboards/{dashboard}/export.yaml":
+		authenticated.owner = "dashboard"
+		authenticated.privilege = "VIEW_ITEM"
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "VIEW_ITEM"
@@ -313,6 +319,9 @@ GET /workspaces/{workspace}/access/search
 GET /workspaces/{workspace}/assets/{asset}
 GET /workspaces/{workspace}/assets/{asset}/{section}
 GET /workspaces/{workspace}/dashboards/{dashboard}
+GET /workspaces/{workspace}/dashboards/{dashboard}/edit
+GET /workspaces/{workspace}/dashboards/{dashboard}/export.yaml
+GET /workspaces/{workspace}/dashboards/{dashboard}/preview
 GET /workspaces/{workspace}/dashboards/{dashboard}/pages/{page}
 GET /workspaces/{workspace}/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /workspaces/{workspace}/data
@@ -373,6 +382,7 @@ POST /workspaces/{workspace}/commands/navigate
 POST /workspaces/{workspace}/commands/select
 POST /workspaces/{workspace}/commands/spatial-select
 POST /workspaces/{workspace}/commands/visual-window
+POST /workspaces/{workspace}/dashboards/{dashboard}/draft/command
 POST /workspaces/search
 POST /workspaces/{workspace}/search
 PUT /metrics
