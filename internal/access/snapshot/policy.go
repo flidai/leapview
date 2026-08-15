@@ -24,6 +24,9 @@ type AuthorizationSnapshot struct {
 	Identity     graph.ServingIdentity
 	Grants       []Grant
 	DataPolicies []DataPolicy
+	// project is retained privately so exported fields cannot be replaced with
+	// values from another graph and then serialized as an installable snapshot.
+	project graph.ProjectGraph
 }
 
 // Grant is one graph-validated capability binding. Canonical is immutable
@@ -73,11 +76,11 @@ func NewAuthorizationSnapshot(identity graph.ServingIdentity, project graph.Proj
 	if err := project.Validate(); err != nil {
 		return AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot project graph: %w", err)
 	}
+	if err := identity.Validate(); err != nil {
+		return AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot identity: %w", err)
+	}
 	if identity.ProjectID != project.ProjectID() {
 		return AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot project %q does not match graph %q", identity.ProjectID, project.ProjectID())
-	}
-	if identity.Environment == "" || identity.GenerationID == "" {
-		return AuthorizationSnapshot{}, errors.New("authorization snapshot requires environment and generation")
 	}
 	normalizedGrants := cloneGrants(grants)
 	sort.Slice(normalizedGrants, func(i, j int) bool { return normalizedGrants[i].ID < normalizedGrants[j].ID })
@@ -127,7 +130,7 @@ func NewAuthorizationSnapshot(identity graph.ServingIdentity, project graph.Proj
 		}
 		policy.Compiled = compiled
 	}
-	return AuthorizationSnapshot{Identity: identity, Grants: normalizedGrants, DataPolicies: normalizedPolicies}, nil
+	return AuthorizationSnapshot{Identity: identity, Grants: normalizedGrants, DataPolicies: normalizedPolicies, project: project}, nil
 }
 
 // Decode validates strict canonical snapshot JSON against the supplied graph.
@@ -177,12 +180,15 @@ func Decode(data []byte, project graph.ProjectGraph) (AuthorizationSnapshot, err
 }
 
 func (s AuthorizationSnapshot) Validate(project graph.ProjectGraph) error {
+	if err := s.Identity.Validate(); err != nil {
+		return fmt.Errorf("authorization snapshot identity: %w", err)
+	}
 	_, err := NewAuthorizationSnapshot(s.Identity, project, s.Grants, s.DataPolicies)
 	return err
 }
 
 func (s AuthorizationSnapshot) Digest() (string, error) {
-	encoded, err := json.Marshal(s)
+	encoded, err := s.MarshalJSON()
 	if err != nil {
 		return "", err
 	}
@@ -191,9 +197,18 @@ func (s AuthorizationSnapshot) Digest() (string, error) {
 }
 
 func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
+	if err := s.Identity.Validate(); err != nil {
+		return nil, fmt.Errorf("authorization snapshot identity: %w", err)
+	}
+	if err := s.project.Validate(); err != nil {
+		return nil, fmt.Errorf("authorization snapshot project graph: %w", err)
+	}
+	if s.Identity.ProjectID != s.project.ProjectID() {
+		return nil, fmt.Errorf("authorization snapshot project %q does not match graph %q", s.Identity.ProjectID, s.project.ProjectID())
+	}
 	grants := make([]grantWire, 0, len(s.Grants))
 	for _, item := range s.Grants {
-		if err := item.Canonical.Validate(); err != nil {
+		if err := item.Canonical.ValidateAgainst(s.project); err != nil {
 			return nil, err
 		}
 		grants = append(grants, grantWire{ID: item.ID, Name: item.Name, Subject: item.Canonical.Subject(), Resource: item.Canonical.Resource(), Capability: item.Canonical.Capability()})
@@ -202,6 +217,14 @@ func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
 	for _, item := range s.DataPolicies {
 		if item.ID == "" || item.PolicyType == "" || item.ExpressionJSON == "" {
 			return nil, fmt.Errorf("data policy %q is incomplete", item.ID)
+		}
+		if err := item.Resource.ValidateAgainst(s.project); err != nil {
+			return nil, err
+		}
+		if item.Subject != nil {
+			if err := item.Subject.Validate(); err != nil {
+				return nil, err
+			}
 		}
 		policies = append(policies, dataPolicyWire{ID: item.ID, Name: item.Name, Resource: item.Resource, Subject: cloneSubject(item.Subject), PolicyType: item.PolicyType, ExpressionJSON: item.ExpressionJSON})
 	}

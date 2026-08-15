@@ -107,3 +107,34 @@ func TestAuthorizationSnapshotRejectsDuplicateIDsAndCanonicalKeys(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, "a", normalized.Grants[0].ID)
 }
+
+func TestAuthorizationSnapshotRejectsMalformedServingIdentity(t *testing.T) {
+	project := testGraph(t)
+	for _, identity := range []graph.ServingIdentity{
+		{ProjectID: "project_demo", Environment: "", GenerationID: "generation_1"},
+		{ProjectID: "project_demo", Environment: "prod/uction", GenerationID: "generation_1"},
+		{ProjectID: "project_demo", Environment: "production", GenerationID: ""},
+		{ProjectID: "other_project", Environment: "production", GenerationID: "generation_1"},
+	} {
+		_, err := NewAuthorizationSnapshot(identity, project, nil, nil)
+		require.Error(t, err)
+	}
+}
+
+func TestAuthorizationSnapshotMarshalRejectsPostConstructionMutation(t *testing.T) {
+	project := testGraph(t)
+	grant := testGrant(t, project)
+	snapshot, err := NewAuthorizationSnapshot(testIdentity(), project, []Grant{{ID: "grant_1", Canonical: grant}}, nil)
+	require.NoError(t, err)
+	// The exported slice is intentionally tolerated for source compatibility,
+	// but serialization must never emit a value that was mutated after install.
+	snapshot.Grants[0].Canonical = access.CanonicalGrant{}
+	_, err = json.Marshal(snapshot)
+	require.ErrorIs(t, err, access.ErrUnboundCanonicalGrant)
+
+	snapshot, err = NewAuthorizationSnapshot(testIdentity(), project, []Grant{{ID: "grant_1", Canonical: grant}}, nil)
+	require.NoError(t, err)
+	snapshot.Identity.Environment = "prod/uction"
+	_, err = snapshot.Digest()
+	require.Error(t, err)
+}
