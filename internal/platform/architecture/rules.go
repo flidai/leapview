@@ -71,6 +71,26 @@ var WorkloadImportPrefixes = []string{
 	"internal/analytics/materialize", "internal/analytics/ducklake", "internal/dashboard/semanticapi",
 }
 
+// SharedContractPrefixes are narrow cross-capability contracts whose package
+// ownership remains with another capability. They are checked explicitly
+// before capability dependency edges so a consumer cannot import the owning
+// capability's broader implementation packages by accident.
+var SharedContractPrefixes = map[string][]string{
+	"access": {"internal/project/graph"},
+}
+
+// IsSharedContractImport reports whether packagePath is one of the explicitly
+// published shared contracts for sourceCapability. Matching is exact, never a
+// broad capability root.
+func IsSharedContractImport(sourceCapability, packagePath string) bool {
+	for _, prefix := range SharedContractPrefixes[sourceCapability] {
+		if packagePath == prefix {
+			return true
+		}
+	}
+	return false
+}
+
 func AllowsWorkloadImport(packagePath string) bool {
 	for _, prefix := range WorkloadImportPrefixes {
 		if packagePath == prefix || strings.HasPrefix(packagePath, prefix+"/") {
@@ -134,6 +154,9 @@ func CapabilityImportViolation(sourcePath string, source PackageRule, packagePat
 	if target.Capability == "workload" && AllowsWorkloadImport(sourcePath) {
 		return ""
 	}
+	if IsSharedContractImport(source.Capability, packagePath) {
+		return ""
+	}
 	if IsDeferredPackageEdge(sourcePath, target.Capability) {
 		return ""
 	}
@@ -155,6 +178,7 @@ var PackageRules = []PackageRule{
 	{Prefix: "site", Capability: "composition", Layer: LayerAdapter},
 	{Prefix: "desktop/native/windowspolicy", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "pkg/agent", Capability: "agent", Layer: LayerContract},
+	{Prefix: "internal/project/graph", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/project/compiler", Capability: "project", Layer: LayerUseCase},
 	{Prefix: "internal/project/artifact", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/analytics/runtime", Capability: "analytics", Layer: LayerContract},
