@@ -1,0 +1,262 @@
+// Package application is the canonical transport-facing dashboard authoring
+// boundary. It composes the existing transactional authoring, governed
+// catalog, source, and preview services without owning any of their domain
+// state or business rules.
+package application
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
+	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
+	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	"github.com/flidai/leapview/internal/runtimehost"
+)
+
+// Options wires the already-built authoring service and the read-side ports
+// used by the composed application boundary. Runtime acquisition remains a
+// callback so the transport does not depend on registry topology.
+type Options struct {
+	Authoring      *authoringservice.Service
+	Repository     authoring.Repository
+	Authorizer     authoringservice.Authorizer
+	AcquireRuntime sourceadapter.AcquireRuntime
+}
+
+// Application is the small canonical dashboard authoring application
+// surface. The source adapter is built once; catalog and preview services are
+// created only for the request that needs them, each with a fixed workspace
+// provider.
+type Application struct {
+	authoring      *authoringservice.Service
+	sources        *sourceadapter.Adapter
+	repository     authoring.Repository
+	authorizer     authoringservice.Authorizer
+	acquireRuntime sourceadapter.AcquireRuntime
+}
+
+// New validates the composition ports and builds the source adapter once.
+// The runtime callback is guarded at this boundary so every composed
+// operation receives a non-empty workspace, runtime, and serving-state lease.
+func New(options Options) (*Application, error) {
+	if options.Authoring == nil {
+		return nil, fmt.Errorf("dashboard authoring service is required")
+	}
+	if options.Repository == nil {
+		return nil, fmt.Errorf("dashboard authoring repository is required")
+	}
+	if options.Authorizer == nil {
+		return nil, fmt.Errorf("dashboard authoring authorizer is required")
+	}
+	if options.AcquireRuntime == nil {
+		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
+	}
+
+	acquireRuntime := guardedAcquire(options.AcquireRuntime)
+	sources, err := sourceadapter.New(sourceadapter.Options{
+		Repository:     options.Repository,
+		Authorizer:     options.Authorizer,
+		AcquireRuntime: acquireRuntime,
+		Authoring:      options.Authoring,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Application{
+		authoring:      options.Authoring,
+		sources:        sources,
+		repository:     options.Repository,
+		authorizer:     options.Authorizer,
+		acquireRuntime: acquireRuntime,
+	}, nil
+}
+
+// Create creates one dashboard draft through the transactional authoring
+// service.
+func (a *Application) Create(ctx context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
+	if err := a.validate(); err != nil {
+		return authoringservice.Result{}, err
+	}
+	workspaceID, err := workspaceID(request.WorkspaceID)
+	if err != nil {
+		return authoringservice.Result{}, err
+	}
+	request.WorkspaceID = workspaceID
+	return a.authoring.Create(ctx, request)
+}
+
+// Execute executes one typed authoring command through the transactional
+// service.
+func (a *Application) Execute(ctx context.Context, workspace string, command authoring.Command) (authoringservice.Result, error) {
+	if err := a.validate(); err != nil {
+		return authoringservice.Result{}, err
+	}
+	workspaceID, err := workspaceID(workspace)
+	if err != nil {
+		return authoringservice.Result{}, err
+	}
+	return a.authoring.Execute(ctx, workspaceID, command)
+}
+
+// List returns the governed dashboard catalog for one workspace. A provider
+// is fixed to the normalized request workspace and exists only for this call.
+func (a *Application) List(ctx context.Context, request catalog.ListRequest) (catalog.ListResult, error) {
+	if err := a.validate(); err != nil {
+		return catalog.ListResult{}, err
+	}
+	workspaceID, err := workspaceID(request.WorkspaceID)
+	if err != nil {
+		return catalog.ListResult{}, err
+	}
+	service, err := catalog.NewService(catalog.Options{
+		Provider:   workspaceProvider{workspaceID: workspaceID, acquire: a.acquireRuntime},
+		Repository: a.repository,
+		Authorizer: a.authorizer,
+	})
+	if err != nil {
+		return catalog.ListResult{}, err
+	}
+	request.WorkspaceID = workspaceID
+	return service.List(ctx, request)
+}
+
+// Get returns one governed dashboard for one workspace. The runtime provider
+// is fixed to the requested workspace and cannot be reused for another one.
+func (a *Application) Get(ctx context.Context, request catalog.GetRequest) (catalog.Dashboard, error) {
+	if err := a.validate(); err != nil {
+		return catalog.Dashboard{}, err
+	}
+	workspaceID, err := workspaceID(request.WorkspaceID)
+	if err != nil {
+		return catalog.Dashboard{}, err
+	}
+	service, err := catalog.NewService(catalog.Options{
+		Provider:   workspaceProvider{workspaceID: workspaceID, acquire: a.acquireRuntime},
+		Repository: a.repository,
+		Authorizer: a.authorizer,
+	})
+	if err != nil {
+		return catalog.Dashboard{}, err
+	}
+	request.WorkspaceID = workspaceID
+	return service.Get(ctx, request)
+}
+
+// Fork copies an authored source into a private draft through the source
+// adapter and existing authoring service.
+func (a *Application) Fork(ctx context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
+	if err := a.validate(); err != nil {
+		return authoringservice.Result{}, err
+	}
+	workspace, err := workspaceID(request.Source.WorkspaceID)
+	if err != nil {
+		return authoringservice.Result{}, err
+	}
+	request.Source.WorkspaceID = workspace
+	if target := strings.TrimSpace(request.TargetWorkspaceID); target != "" {
+		request.TargetWorkspaceID = target
+	}
+	return a.sources.Fork(ctx, request)
+}
+
+// ExportYAML exports the exact authored source as canonical project YAML.
+func (a *Application) ExportYAML(ctx context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
+	if err := a.validate(); err != nil {
+		return nil, err
+	}
+	workspace, err := workspaceID(request.Source.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	request.Source.WorkspaceID = workspace
+	return a.sources.Export(ctx, request)
+}
+
+// Preview renders one exact draft revision through a request-scoped provider
+// and the existing read-only preview service.
+func (a *Application) Preview(ctx context.Context, request preview.PreviewRequest) (preview.Preview, error) {
+	if err := a.validate(); err != nil {
+		return preview.Preview{}, err
+	}
+	workspaceID, err := workspaceID(request.WorkspaceID)
+	if err != nil {
+		return preview.Preview{}, err
+	}
+	service, err := preview.NewService(preview.Options{
+		Repository: a.repository,
+		Authorizer: a.authorizer,
+		Provider:   workspaceProvider{workspaceID: workspaceID, acquire: a.acquireRuntime},
+	})
+	if err != nil {
+		return preview.Preview{}, err
+	}
+	request.WorkspaceID = workspaceID
+	return service.Preview(ctx, request)
+}
+
+func (a *Application) validate() error {
+	if a == nil || a.authoring == nil || a.sources == nil || a.repository == nil || a.authorizer == nil || a.acquireRuntime == nil {
+		return fmt.Errorf("dashboard authoring application is not configured")
+	}
+	return nil
+}
+
+func workspaceID(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("workspace id is required")
+	}
+	return value, nil
+}
+
+// guardedAcquire is shared by source, catalog, and preview paths. The
+// callback owns acquisition; downstream services own release after a valid
+// lease is returned. Invalid leases are released here exactly once.
+func guardedAcquire(acquire sourceadapter.AcquireRuntime) sourceadapter.AcquireRuntime {
+	return func(ctx context.Context, requestedWorkspace string) (runtimehost.Lease, error) {
+		workspace, err := workspaceID(requestedWorkspace)
+		if err != nil {
+			return nil, err
+		}
+		lease, err := acquire(ctx, workspace)
+		if err != nil {
+			return nil, err
+		}
+		if lease == nil {
+			return nil, fmt.Errorf("dashboard authoring runtime lease is empty")
+		}
+		if lease.Runtime() == nil {
+			lease.Release()
+			return nil, fmt.Errorf("dashboard authoring runtime is empty")
+		}
+		if strings.TrimSpace(string(lease.ServingStateID())) == "" {
+			lease.Release()
+			return nil, fmt.Errorf("dashboard authoring serving-state identity is empty")
+		}
+		return lease, nil
+	}
+}
+
+// workspaceProvider closes over one normalized workspace. It intentionally
+// implements only runtimehost.Provider, so catalog and preview cannot acquire
+// a different workspace through a request after construction.
+type workspaceProvider struct {
+	workspaceID string
+	acquire     sourceadapter.AcquireRuntime
+}
+
+func (p workspaceProvider) Acquire(ctx context.Context) (runtimehost.Lease, error) {
+	if strings.TrimSpace(p.workspaceID) == "" {
+		return nil, fmt.Errorf("workspace id is required")
+	}
+	if p.acquire == nil {
+		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
+	}
+	return p.acquire(ctx, p.workspaceID)
+}
+
+var _ runtimehost.Provider = workspaceProvider{}
