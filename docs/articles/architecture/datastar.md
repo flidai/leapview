@@ -12,7 +12,7 @@ A component binds to a specific signal path through its host attributes or route
 
 The shared `DatastarLit` bridge tracks signal reads during rendering and schedules a Lit update when a relevant signal changes. It handles cold hydration where roots appear after the element connects and disposes effects when the component disconnects.
 
-Components receive presentation-shaped payloads such as chart data, table windows, filters, workspace asset summaries, access state, refresh progress, or chat messages. They do not receive a database connection or semantic planner.
+Components receive presentation-shaped payloads such as chart data, table windows, filters, project asset summaries, access state, refresh progress, or chat messages. They do not receive a database connection or semantic planner.
 
 ## Initial dashboard update
 
@@ -28,7 +28,7 @@ Components emit small commands for actions such as:
 - selecting a chart datum;
 - selecting a table row;
 - requesting another table window;
-- refreshing a workspace asset;
+- refreshing a project asset;
 - changing access configuration;
 - submitting an agent turn.
 

@@ -51,7 +51,7 @@ Confirm that:
 - the revision belongs to the same project and connection;
 - the local project has not added or removed a managed connection since staging;
 - the token can deploy and any explicit environment assertion matches the target instance;
-- the target can prepare every workspace candidate with its selected pins and validated connection bindings.
+- the target can prepare the project candidate with its selected pins and validated connection bindings.
 
 Use `leapview data revisions list` to confirm the revision is staged and `current` to see which digest remains active.
 
@@ -59,7 +59,7 @@ Use `leapview data revisions list` to confirm the revision is staged and `curren
 
 If a refresh run cannot resolve inputs:
 
-- confirm the workspace lists every source under `spec.uses.sources`;
+- confirm each model lists every source under `spec.sources`;
 - confirm the active deployment pins required managed connections;
 - verify external connection credentials and network reachability;
 - check that model files and source IDs match the active artifact, not only the working tree;

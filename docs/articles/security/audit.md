@@ -1,6 +1,6 @@
 # Audit events
 
-Audit events record security-sensitive and administrative activity with acting principal and workspace or resource context. Query events separately record governed data operations and their execution context. Use both when an incident crosses authorization and analytical activity.
+Audit events record security-sensitive and administrative activity with acting principal and project-resource context. Query events separately record governed data operations and their execution context. Use both when an incident crosses authorization and analytical activity.
 
 ## What to investigate
 
@@ -20,16 +20,16 @@ Not every request is an administrative audit event. Query events provide filters
 
 ## Query the API
 
-The generated [Audit API](/docs/api/audit) exposes workspace-scoped endpoints:
+The generated [Audit API](/docs/api/audit) exposes project-scoped endpoints:
 
 ```text
-GET /api/v1/workspaces/{workspace}/audit-events
-GET /api/v1/workspaces/{workspace}/query-events
+GET /api/v1/projects/{project}/audit-events
+GET /api/v1/projects/{project}/query-events
 ```
 
 Use bounded time ranges and pagination. Filter by actor/action/target for administrative changes or principal/surface/operation/status for queries. Record the request time and page tokens when exporting an investigation set so the collection process can be repeated.
 
-Audit access requires its own privilege. Restrict it to security and operational roles that need the relevant workspace visibility. Query text and target metadata can reveal sensitive business context even when row data is absent.
+Audit access requires its own privilege. Restrict it to security and operational roles that need the relevant project visibility. Query text and target metadata can reveal sensitive business context even when row data is absent.
 
 ## Correlate sources
 
@@ -67,4 +67,4 @@ Audit history supports accountability but does not replace least privilege, secu
 
 ## Verify audit coverage
 
-Exercise a representative administrative change and a governed query in a non-production workspace. Confirm that the audit and query APIs record the expected principal, action, resource, status, and correlation identifiers, and verify that secret values are absent from every emitted record.
+Exercise a representative administrative change and a governed query in a non-production project target. Confirm that the audit and query APIs record the expected principal, action, resource, status, and correlation identifiers, and verify that secret values are absent from every emitted record.

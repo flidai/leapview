@@ -1,7 +1,7 @@
 sections:
   - id: start
     title: Start here
-    summary: Install LeapView, run the sample workspace, and understand the project layout.
+    summary: Install LeapView, run the sample project, and understand the project layout.
     documents:
       - slug: introduction
         title: What is LeapView?
@@ -27,7 +27,7 @@ sections:
       - slug: project-structure
         title: Project structure
         type: explanation
-        summary: Learn how project-global resources and workspace resources are organized.
+        summary: Learn how project-wide resources are organized.
         source: articles/start/project-structure.md
 
   - id: concepts
@@ -40,11 +40,11 @@ sections:
         navigationTitle: Overview
         summary: A map of the concepts used throughout LeapView.
         source: articles/concepts/overview.md
-      - slug: concepts/projects-workspaces-environments
-        title: Projects, workspaces, and environments
+      - slug: concepts/projects-environments
+        title: Projects and environments
         type: explanation
         summary: Understand ownership, isolation, and deployment scope.
-        source: articles/concepts/projects-workspaces-environments.md
+        source: articles/concepts/projects-environments.md
       - slug: concepts/connections-sources
         title: Connections and sources
         type: explanation
@@ -68,7 +68,7 @@ sections:
       - slug: concepts/dashboards
         title: Dashboards, pages, and visuals
         type: explanation
-        summary: Understand the presentation resources rendered by the BI workspace.
+        summary: Understand the presentation resources rendered from the project graph.
         source: articles/concepts/dashboards.md
       - slug: concepts/query-lifecycle
         title: Query and interaction lifecycle
@@ -150,7 +150,7 @@ sections:
       - slug: guides/build/dashboard
         title: Create a dashboard
         type: how-to
-        summary: Define a workspace dashboard and its first report page.
+        summary: Define a project dashboard and its first report page.
         source: articles/build/dashboard.md
       - slug: guides/build/pages-layout
         title: Pages and layout

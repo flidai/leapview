@@ -69,7 +69,7 @@ leapview dev \
 
 In production, the target returns a canonical-origin, token-free HTTPS URL; the loopback evaluator uses the same URL shape over local HTTP. `dev` opens it in the system browser by default. Use `--no-browser` only on a headless workstation and open the printed URL in an authenticated browser. The preview does not require LeapView Desktop, and Desktop is not an authoring client; browsers and Desktop may only consume the same authenticated target-hosted page.
 
-Review the candidate using the author principal's real effective grants. RBAC, row-level security, column policy, and workspace policy apply exactly as they do elsewhere. A developer does not receive a production viewer's data visibility merely because the candidate is private. Use separate representative verifier identities when a change must be qualified across several data-policy populations.
+Review the candidate using the author principal's real effective grants. RBAC, row-level security, column policy, and project-resource policy apply exactly as they do elsewhere. A developer does not receive a production viewer's data visibility merely because the candidate is private. Use separate representative verifier identities when a change must be qualified across several data-policy populations.
 
 Run `dev` again after every source edit. `--once` performs one synchronization for trusted automation, but it calls the same Project, Access, Release, and Deployment APIs as the interactive loop.
 
@@ -132,7 +132,7 @@ The modular monolith keeps the user lifecycle singular while preserving domain o
 | Capability | Owns | Dependency direction |
 | --- | --- | --- |
 | Access | Human CLI sessions, workload identities, RBAC, RLS inputs, grants, and audit identity. | Foundation contract; it does not depend on Project, Release, or Deployment. |
-| Project | Local source snapshots, compilation inputs, dev-loop orchestration, and non-secret candidate handoff. | Depends on public analytical, workspace, access, refresh, and serving contracts; never on Deployment adapters. |
+| Project | Local source snapshots, compilation inputs, dev-loop orchestration, and non-secret candidate handoff. | Depends on public analytical, project-resource, access, refresh, and serving contracts; never on Deployment adapters. |
 | Release | Immutable artifact and provenance identity. | Depends on Project and serving contracts; never on Deployment. |
 | Deployment | Private candidates, approval policy, publication requests, activation orchestration, retry, and rollback. | Depends inward on Access, Project, Release, Serving State, Managed Data, and Runtime Host contracts. |
 | Analytics | Logical target bindings, Infisical and explicit development resolver adapters, pool rotation, and governed query execution. | Exposes contracts; provider adapters remain internal to Analytics. |

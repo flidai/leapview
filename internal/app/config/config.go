@@ -229,28 +229,26 @@ func (c Config) Validate(profile Profile) error {
 
 func (c Config) validateAnalyticalResources() error {
 	positive := map[string]int64{
-		"LEAPVIEW_DUCKDB_NODE_MEMORY_MAX_BYTES":      c.DuckDBNodeMemoryMaxBytes,
-		"LEAPVIEW_DUCKDB_NODE_TEMP_MAX_BYTES":        c.DuckDBNodeTempMaxBytes,
-		"LEAPVIEW_DUCKDB_NODE_MAX_THREADS":           int64(c.DuckDBNodeMaxThreads),
-		"LEAPVIEW_QUERY_RESULT_MAX_ROWS":             int64(c.QueryResultMaxRows),
-		"LEAPVIEW_QUERY_RESULT_MAX_BYTES":            c.QueryResultMaxBytes,
-		"LEAPVIEW_QUERY_CACHE_RUNTIME_MAX_ENTRIES":   int64(c.QueryCacheRuntimeMaxEntries),
-		"LEAPVIEW_QUERY_CACHE_RUNTIME_MAX_BYTES":     c.QueryCacheRuntimeMaxBytes,
-		"LEAPVIEW_QUERY_CACHE_WORKSPACE_MAX_ENTRIES": int64(c.QueryCacheWorkspaceMaxEntries),
-		"LEAPVIEW_QUERY_CACHE_WORKSPACE_MAX_BYTES":   c.QueryCacheWorkspaceMaxBytes,
-		"LEAPVIEW_QUERY_CACHE_NODE_MAX_ENTRIES":      int64(c.QueryCacheNodeMaxEntries),
-		"LEAPVIEW_QUERY_CACHE_NODE_MAX_BYTES":        c.QueryCacheNodeMaxBytes,
+		"LEAPVIEW_DUCKDB_NODE_MEMORY_MAX_BYTES":    c.DuckDBNodeMemoryMaxBytes,
+		"LEAPVIEW_DUCKDB_NODE_TEMP_MAX_BYTES":      c.DuckDBNodeTempMaxBytes,
+		"LEAPVIEW_DUCKDB_NODE_MAX_THREADS":         int64(c.DuckDBNodeMaxThreads),
+		"LEAPVIEW_QUERY_RESULT_MAX_ROWS":           int64(c.QueryResultMaxRows),
+		"LEAPVIEW_QUERY_RESULT_MAX_BYTES":          c.QueryResultMaxBytes,
+		"LEAPVIEW_QUERY_CACHE_RUNTIME_MAX_ENTRIES": int64(c.QueryCacheRuntimeMaxEntries),
+		"LEAPVIEW_QUERY_CACHE_RUNTIME_MAX_BYTES":   c.QueryCacheRuntimeMaxBytes,
+		"LEAPVIEW_QUERY_CACHE_NODE_MAX_ENTRIES":    int64(c.QueryCacheNodeMaxEntries),
+		"LEAPVIEW_QUERY_CACHE_NODE_MAX_BYTES":      c.QueryCacheNodeMaxBytes,
 	}
 	for name, value := range positive {
 		if value <= 0 {
 			return fmt.Errorf("%s must be positive", name)
 		}
 	}
-	if c.QueryCacheRuntimeMaxEntries > c.QueryCacheWorkspaceMaxEntries || c.QueryCacheWorkspaceMaxEntries > c.QueryCacheNodeMaxEntries {
-		return fmt.Errorf("query cache entry limits must satisfy runtime <= workspace <= node")
+	if c.QueryCacheRuntimeMaxEntries > c.QueryCacheNodeMaxEntries {
+		return fmt.Errorf("query cache entry limits must satisfy runtime <= node")
 	}
-	if c.QueryCacheRuntimeMaxBytes > c.QueryCacheWorkspaceMaxBytes || c.QueryCacheWorkspaceMaxBytes > c.QueryCacheNodeMaxBytes {
-		return fmt.Errorf("query cache byte limits must satisfy runtime <= workspace <= node")
+	if c.QueryCacheRuntimeMaxBytes > c.QueryCacheNodeMaxBytes {
+		return fmt.Errorf("query cache byte limits must satisfy runtime <= node")
 	}
 	return nil
 }
@@ -271,17 +269,17 @@ func (c Config) WorkloadConfig() workload.Config {
 		MaxRunning:    c.WorkloadMaxRunning,
 		MaximumQueued: c.WorkloadMaxQueued,
 		Classes: map[workload.Class]workload.Policy{
-			workload.Interactive: workloadPolicy(c.WorkloadInteractiveReservedRunning, c.WorkloadInteractiveMaxRunning, c.WorkloadInteractiveMaxQueued, c.WorkloadInteractiveMaxQueuedPerWorkspace, c.WorkloadInteractiveQueueTimeout, c.WorkloadInteractiveExecutionTimeout),
-			workload.Background:  workloadPolicy(c.WorkloadBackgroundReservedRunning, c.WorkloadBackgroundMaxRunning, c.WorkloadBackgroundMaxQueued, c.WorkloadBackgroundMaxQueuedPerWorkspace, c.WorkloadBackgroundQueueTimeout, c.WorkloadBackgroundExecutionTimeout),
-			workload.Refresh:     workloadPolicy(c.WorkloadRefreshReservedRunning, c.WorkloadRefreshMaxRunning, c.WorkloadRefreshMaxQueued, c.WorkloadRefreshMaxQueuedPerWorkspace, c.WorkloadRefreshQueueTimeout, c.WorkloadRefreshExecutionTimeout),
-			workload.Control:     workloadPolicy(c.WorkloadControlReservedRunning, c.WorkloadControlMaxRunning, c.WorkloadControlMaxQueued, c.WorkloadControlMaxQueuedPerWorkspace, c.WorkloadControlQueueTimeout, c.WorkloadControlExecutionTimeout),
-			workload.Maintenance: workloadPolicy(c.WorkloadMaintenanceReservedRunning, c.WorkloadMaintenanceMaxRunning, c.WorkloadMaintenanceMaxQueued, c.WorkloadMaintenanceMaxQueuedPerWorkspace, c.WorkloadMaintenanceQueueTimeout, c.WorkloadMaintenanceExecutionTimeout),
+			workload.Interactive: workloadPolicy(c.WorkloadInteractiveReservedRunning, c.WorkloadInteractiveMaxRunning, c.WorkloadInteractiveMaxQueued, c.WorkloadInteractiveQueueTimeout, c.WorkloadInteractiveExecutionTimeout),
+			workload.Background:  workloadPolicy(c.WorkloadBackgroundReservedRunning, c.WorkloadBackgroundMaxRunning, c.WorkloadBackgroundMaxQueued, c.WorkloadBackgroundQueueTimeout, c.WorkloadBackgroundExecutionTimeout),
+			workload.Refresh:     workloadPolicy(c.WorkloadRefreshReservedRunning, c.WorkloadRefreshMaxRunning, c.WorkloadRefreshMaxQueued, c.WorkloadRefreshQueueTimeout, c.WorkloadRefreshExecutionTimeout),
+			workload.Control:     workloadPolicy(c.WorkloadControlReservedRunning, c.WorkloadControlMaxRunning, c.WorkloadControlMaxQueued, c.WorkloadControlQueueTimeout, c.WorkloadControlExecutionTimeout),
+			workload.Maintenance: workloadPolicy(c.WorkloadMaintenanceReservedRunning, c.WorkloadMaintenanceMaxRunning, c.WorkloadMaintenanceMaxQueued, c.WorkloadMaintenanceQueueTimeout, c.WorkloadMaintenanceExecutionTimeout),
 		},
 	}
 }
 
-func workloadPolicy(reserved, running, queued, perWorkspace int, queueTimeout, executionTimeout time.Duration) workload.Policy {
-	return workload.Policy{ReservedRunning: reserved, MaximumRunning: running, MaximumQueued: queued, MaximumQueuedPerWorkspace: perWorkspace, QueueTimeout: queueTimeout, ExecutionTimeout: executionTimeout}
+func workloadPolicy(reserved, running, queued int, queueTimeout, executionTimeout time.Duration) workload.Policy {
+	return workload.Policy{ReservedRunning: reserved, MaximumRunning: running, MaximumQueued: queued, QueueTimeout: queueTimeout, ExecutionTimeout: executionTimeout}
 }
 
 func redactSecrets(err error) error {

@@ -51,9 +51,9 @@ When a principal is no longer trusted, deactivate the principal and revoke sessi
 
 ## Authorization behavior
 
-Local users map to ordinary user principals. They use the same sessions, roles, grants, API tokens, data policies, and audit events as OIDC or SCIM identities. Authentication proves the principal; it does not grant workspace access by itself.
+Local users map to ordinary user principals. They use the same sessions, roles, grants, API tokens, data policies, and audit events as OIDC or SCIM identities. Authentication proves the principal; it does not grant project-resource access by itself.
 
-Local workspace groups use `provider: local` in the runtime access model and can be represented in project access resources. Prefer group-based workspace bindings for teams and direct user grants only for exceptions.
+Local groups use `provider: local` in the runtime access model and can be represented in project access declarations. Prefer group-based project bindings for teams and direct user grants only for exceptions.
 
 ## Operate a break-glass path
 

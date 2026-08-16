@@ -51,7 +51,7 @@ LeapView intentionally does not treat OIDC group claims as the enterprise group 
 
 ## Assign access
 
-A successful login can still result in no visible workspace. OIDC proves who the user is; it does not grant product access. Bind a provisioned or known principal/group to an appropriate workspace role or explicit grant.
+A successful login can still result in no visible project resource. OIDC proves who the user is; it does not grant product access. Bind a provisioned or known principal/group to an appropriate project role or explicit grant.
 
 Test with a non-administrator user. An owner account can hide missing group provisioning or role binding because it already has broad access.
 
@@ -72,7 +72,7 @@ Validate that the reverse proxy overwrites forwarding headers, the application t
 Use the non-administrator test account to complete these checks:
 
 1. Sign in through the provider and confirm the expected issuer-subject principal is used.
-2. Verify only explicitly granted workspaces and actions are available.
+2. Verify only explicitly granted projects, resources, and actions are available.
 3. Sign out and confirm the browser session is no longer accepted.
 4. Remove or suspend access and verify the next authorization check denies it.
 5. Inspect audit and provider logs for the same event without raw tokens or secrets.

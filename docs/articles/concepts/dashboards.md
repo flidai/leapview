@@ -1,6 +1,6 @@
 # Dashboards, pages, and visuals
 
-A dashboard is a workspace-owned presentation resource backed by one semantic model. It defines reusable filters, visuals, and one or more report pages that place those definitions on a canvas.
+A dashboard is a project presentation resource backed by one semantic model. It defines reusable filters, visuals, and one or more report pages that place those definitions on a canvas.
 
 ## Dashboard identity
 

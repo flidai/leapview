@@ -1,20 +1,20 @@
 # Agent integrations
 
-LeapView conversations are global and owned by the authenticated principal. Workspaces are asset containers: a workspace-aware tool requires an explicit workspace ID, then enforces the principal's privileges, any REST credential restrictions, data policies, and the governed query layer.
+LeapView conversations are global and owned by the authenticated principal. Project resources are governed catalog assets: a resource-aware tool uses an exact `{kind,id}` reference, then enforces the principal's privileges, any REST credential restrictions, data policies, and the governed query layer.
 
 ## Curated tool catalog
 
 Built-in chat, MCP discovery, and `leapview agent tools` expose one governed catalog. Its discovery, query, and documentation subset remains read-only; the dashboard-authoring subset adds the twelve bounded authoring tools documented in [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring).
 
-- `catalog_search` searches every authorized workspace when a resource's location is unknown.
-- `catalog_list` browses one deterministic hierarchy level. Omit `parent` to list workspaces, then pass a returned `{workspaceId, type, id}` ref to continue.
+- `catalog_search` searches every authorized project resource when a resource's location is unknown.
+- `catalog_list` browses one deterministic hierarchy level. Omit `parent` to list authorized projects, then pass a returned `{kind,id}` ref to continue.
 - `catalog_get` returns the compact definition for one exact ref. Shared visuals and filters may require one of the returned dashboard/page locations.
 - `query_semantic_model` executes governed semantic queries.
 - `query_dashboard_visual` queries one existing dashboard visual.
 - `query_visual` creates a read-only visualization from governed semantic fields.
 - `docs_search` and `docs_read` search and read the version-matched product documentation.
 
-Catalog search and list silently omit inaccessible resources. Exact lookup returns the same not-found result for missing and inaccessible refs. These discovery/query/documentation tools are read-only, idempotent, non-destructive, and closed-world. Dashboard authoring is the explicit exception: its twelve tools can create private drafts and apply the four bounded intents or lifecycle commands, while still enforcing workspace grants, governed fields, exact revisions, and no access to connections, raw sources, lineage, refresh runs, raw SQL, credentials, semantic-model mutation, or data mutation.
+Catalog search and list silently omit inaccessible resources. Exact lookup returns the same not-found result for missing and inaccessible refs. These discovery/query/documentation tools are read-only, idempotent, non-destructive, and closed-world. Dashboard authoring is the explicit exception: its twelve tools can create private drafts and apply the four bounded intents or lifecycle commands, while still enforcing project-resource grants, governed fields, exact revisions, and no access to connections, raw sources, lineage, refresh runs, raw SQL, credentials, semantic-model mutation, or data mutation.
 
 See [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, hierarchy, pagination, shared-resource locations, tool-selection guidance, and stable error behavior. Use the generated [Agent tool reference](/docs/agent-tools) for exact schemas and metadata.
 
@@ -44,7 +44,7 @@ The MCP endpoint does not depend on this provider configuration. External MCP ho
 leapview agent ask \
   --target "$LEAPVIEW_TARGET" \
   --token "$LEAPVIEW_API_TOKEN" \
-  "Which categories contributed most to revenue in the sales workspace?"
+  "Which categories contributed most to revenue in the sales project?"
 ```
 
 Use `--conversation <id>` to continue an existing principal-owned conversation and `--json` for machine processing. List conversations with bounded pagination through `leapview agent conversations`. The CLI follows the asynchronous run to a terminal state.
@@ -75,6 +75,6 @@ Cross-origin MCP requests are rejected. OAuth tokens are bearer credentials on t
 
 Natural-language output is not a replacement for governed results. Present tool evidence, resource identity, filters, and relevant time or deployment context so a user can validate claims. Use deterministic semantic or dashboard queries for automated decisions that cannot tolerate interpretive variation.
 
-Test empty results, authorization failures, workspace-bound credentials, ambiguous questions, provider timeouts, cancelled runs, and active deployment changes. Audit conversation and tool activity, apply bounded retention with `leapview admin maintenance`, and never log provider API keys or raw sensitive prompts into general diagnostics.
+Test empty results, authorization failures, project-scoped credentials, ambiguous questions, provider timeouts, cancelled runs, and active deployment changes. Audit conversation and tool activity, apply bounded retention with `leapview admin maintenance`, and never log provider API keys or raw sensitive prompts into general diagnostics.
 
 See [Service principals and API tokens](/docs/security/tokens) and the generated [`agent` CLI reference](/docs/cli/agent).

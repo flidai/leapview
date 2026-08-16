@@ -4,7 +4,7 @@ The target tells the CLI which LeapView instance to contact. The environment is 
 
 ## Choose explicit boundaries
 
-Give development, staging, and production separate URLs and credentials. A workspace name may exist in more than one instance, so it is not a sufficient deployment boundary by itself.
+Give development, staging, and production separate URLs and credentials. A project ID may exist in more than one instance, so it is not a sufficient deployment boundary by itself.
 
 Create private candidates directly on the intended target:
 

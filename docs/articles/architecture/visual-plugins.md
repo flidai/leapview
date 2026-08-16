@@ -45,7 +45,7 @@ One visual surface does not imply one data shape or browser component. The IR us
 
 ## Architectural invariants
 
-1. The workspace compiler owns visual meaning.
+1. The project compiler owns visual meaning.
 2. The governed query layer owns data production and bounds.
 3. The visualization IR is independent of rendering libraries.
 4. A renderer consumes valid IR; it does not repair or reinterpret invalid IR.
@@ -64,7 +64,7 @@ One visual surface does not imply one data shape or browser component. The IR us
 flowchart LR
   accTitle: LeapView visualization target architecture
   accDescr: Dashboard configuration and semantic metadata compile into an immutable visualization specification. Governed query results become revisioned inline or windowed data. Typed pagestream signals deliver both to a Lit host that selects a renderer adapter.
-  source["Dashboard YAML and semantic model"] --> compiler["Workspace compiler"]
+  source["Dashboard YAML and semantic model"] --> compiler["Project compiler"]
   compiler --> spec["Visualization specification IR"]
   query["Governed query execution"] --> frames["Revisioned runtime data"]
   spec --> stream["Typed pagestream state"]
@@ -199,7 +199,7 @@ Generated nodes, totals, stack helpers, layout artifacts, cluster centroids, and
 
 ## Compilation
 
-The workspace compiler creates the visualization specification during deployment, after it has resolved the dashboard resource against the semantic model.
+The project compiler creates the visualization specification during deployment, after it has resolved the dashboard resource against the semantic model.
 
 Compilation performs:
 
@@ -266,7 +266,7 @@ Target server packages:
 ```text
 internal/dashboard/visualization/ir/          generated models, canonicalization, versions
 internal/dashboard/visualization/definition/  immutable compiled definition and query-result contracts
-internal/workspace/compiler/        semantic model and dashboard -> immutable spec
+internal/project/compiler/          semantic model and dashboard -> immutable spec
 internal/dashboard/visualization/runtime/     query result -> validated inline or windowed state
 internal/dashboard/visualization/format/      format contract and Go implementation
 internal/dashboard/command/         datum and spatial selection -> semantic commands
@@ -440,7 +440,7 @@ The [visual catalog](/docs/visuals/overview) exercises production lazy loading, 
 
 ## Versioning and compatibility
 
-The product is pre-release and supports exactly one current visualization schema and one current compiled-workspace artifact version. The version fields remain explicit compatibility guards, not a promise to operate several schemas concurrently.
+The product is pre-release and supports exactly one current visualization schema and one current compiled-project artifact version. The version fields remain explicit compatibility guards, not a promise to operate several schemas concurrently.
 
 When a breaking contract change is required, TypeSpec, generated models, compiler output, serving artifacts, browser validators, fixtures, examples, and first-party dashboards move atomically. Older artifacts are rejected with a redeployment-required error. LeapView does not carry adjacent-version migrations, dual readers, or legacy renderer adapters.
 
@@ -461,7 +461,7 @@ The remaining renderer-specific work is ongoing product hardening rather than ar
 ## Production guarantees
 
 - TypeSpec generates the canonical Go, TypeScript, and JSON Schema visualization contracts.
-- The workspace compiler emits deterministic specifications and rejects unsupported presentation or interaction capabilities.
+- The project compiler emits deterministic specifications and rejects unsupported presentation or interaction capabilities.
 - Inline, windowed, and spatial-windowed data validate against declared schemas, budgets, revisions, and source identities.
 - ECharts, TanStack, HTML, and MapLibre consume the same envelope through one host lifecycle.
 - Go and TypeScript use the shared formatting contract and conformance fixtures.

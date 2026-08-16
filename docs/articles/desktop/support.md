@@ -29,7 +29,7 @@ LeapView never reuses the authorization code or silently launches a second sign-
 
 A **session expired**, signed-out, or revoked message is expected after the idle or absolute lifetime, an administrator action, or server-side policy change. Reopen the profile and complete a new browser sign-in. Do not clear every profile unless the problem affects all of them.
 
-Authorization failures remain server-owned. Updating or reinstalling the desktop client cannot grant missing workspace, dashboard, or data permissions.
+Authorization failures remain server-owned. Updating or reinstalling the desktop client cannot grant missing project, dashboard, or data permissions.
 
 ## A remote window closed or stopped responding
 
@@ -50,4 +50,3 @@ Open **Diagnostics** from the native menu or trusted shell and copy the report. 
 Diagnostics exclude cookies, authorization material, customer URLs and query strings, dashboard data, release notes, HTML, network payloads, and secrets. Review the text before sharing it.
 
 When contacting support, include the application version, operating system and architecture, safe error category, whether the issue survives a restart, and the approximate time. Do not send passwords, cookies, tokens, or confidential dashboard content.
-

@@ -1,6 +1,6 @@
 # Build your first dashboard
 
-The included Sales workspace is a complete example of the dashboard-as-code workflow. Make and validate a small change there before creating connections, model tables, and semantic models from scratch.
+The included Sales project is a complete example of the dashboard-as-code workflow. Make and validate a small change there before creating connections, model tables, and semantic models from scratch.
 
 ## Before you begin
 
@@ -31,7 +31,7 @@ task bootstrap
 task dev
 ```
 
-The server writes worktree-local process state and logs beneath `.tmp/`. Open the URL printed by `task dev`, select **Sales Workspace**, and open **Executive Sales**. Confirm that the KPI cards, revenue trend, category chart, filters, and orders table load before editing files.
+The server writes worktree-local process state and logs beneath `.tmp/`. Open the URL printed by `task dev`, open the project resource browser, and choose **Executive Sales**. Confirm that the KPI cards, revenue trend, category chart, filters, and orders table load before editing files.
 
 ## Trace the resources
 
@@ -41,17 +41,18 @@ The report is assembled from these files:
 dashboards/leapview.yaml
 dashboards/connections/olist.yaml
 dashboards/sources/olist.*.yaml
-dashboards/workspaces/sales/workspace.yaml
-dashboards/workspaces/sales/models/*.yaml
-dashboards/workspaces/sales/semantic-models/sales.yaml
-dashboards/workspaces/sales/dashboards/executive-sales.yaml
+dashboards/models/*.yaml
+dashboards/semantic-models/sales.yaml
+dashboards/pipelines/*.yaml
+dashboards/dashboards/executive-sales.yaml
+dashboards/access/*.yaml
 ```
 
-Read them from the outside in. The project discovers the Sales workspace. The workspace permits specific Olist sources and discovers its models, semantic model, dashboard, and access rules. The dashboard finally refers to fields and measures exposed by the `sales` semantic model.
+Read them from the outside in. The project discovers shared Olist inputs, model tables, the `sales` semantic model, refresh pipelines, dashboards, and access rules from one graph. The dashboard refers to fields and measures exposed by the `sales` semantic model.
 
 ## Add a semantic metric
 
-Open `dashboards/workspaces/sales/semantic-models/sales.yaml`. Its `revenue` and `order_count` measures are the inputs to the existing average-order-value metric:
+Open `dashboards/semantic-models/sales.yaml`. Its `revenue` and `order_count` measures are the inputs to the existing average-order-value metric:
 
 ```yaml
 metrics:
@@ -73,7 +74,7 @@ If validation reports a location, fix the resource before continuing. Common fir
 
 ## Change the dashboard
 
-Open `dashboards/workspaces/sales/dashboards/executive-sales.yaml`. Find the `aov_kpi` visual and change its note:
+Open `dashboards/dashboards/executive-sales.yaml`. Find the `aov_kpi` visual and change its note:
 
 ```yaml
 aov_kpi:
@@ -117,7 +118,7 @@ The plan should contain only the resources you intended to change. Unexpected ad
 
 Reload Executive Sales and confirm both label changes. Also change a date or state filter to verify that the KPI still participates in the shared query lifecycle.
 
-LeapView validates all workspace candidates before switching the active project. A rejected candidate does not replace the last valid serving state. This makes validation and plan review normal parts of authoring rather than recovery steps.
+LeapView validates the complete project graph before switching the active serving state. A rejected candidate does not replace the last valid serving state. This makes validation and plan review normal parts of authoring rather than recovery steps.
 
 ## Troubleshooting
 

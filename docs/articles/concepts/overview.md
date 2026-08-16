@@ -4,7 +4,7 @@ LeapView separates physical data access, reusable analytical state, business mea
 
 ## Organize the project
 
-- [Projects, workspaces, and environments](/docs/concepts/projects-workspaces-environments) explains configuration ownership, authorization scope, and atomic delivery.
+- [Projects and environments](/docs/concepts/projects-environments) explains configuration ownership, authorization scope, and atomic delivery.
 - [Connections and sources](/docs/concepts/connections-sources) separates physical access from stable reusable input definitions.
 - [Managed data and revisions](/docs/concepts/managed-data) explains immutable file revisions, staging, activation, upload boundaries, and storage responsibility.
 

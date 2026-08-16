@@ -6,7 +6,7 @@ LeapView keeps query state, semantic resolution, authorization, and data access 
 
 When a user opens a report page:
 
-1. The HTTP route resolves the requested workspace, dashboard, and page against the instance environment.
+1. The HTTP route resolves the requested project, dashboard, and page against the instance environment.
 2. Authorization confirms that the principal can view the resource.
 3. Go renders the document shell, page component hosts, and initial Datastar signal contract with gomponents.
 4. Lit custom elements connect to the signal paths they render.
@@ -19,7 +19,7 @@ The initial HTML provides stable structure and bootstrap state. Data-dependent c
 For each required result, the server combines:
 
 - the active project and managed-data revision;
-- workspace and resource authorization;
+- project-resource authorization;
 - the dashboard's semantic model;
 - page filter values and operators;
 - validated visual or table selections;

@@ -88,7 +88,7 @@ Candidates also expire on the target, so a missed close event does not leave an 
 
 The `dev` and `publish` output records the exact source revision when present, artifact, target, candidate revision, principal, and result. Retain those logs with the source-control run. The Release and Deployment APIs expose the same source revision and digest-bound evidence after the runner disappears.
 
-After activation, verify readiness and exercise a representative workspace query or dashboard with a separate verifier identity. A transport retry must reuse the same stable candidate key and immutable revision; never rebuild from a moving branch between attempts.
+After activation, verify readiness and exercise a representative project query or dashboard with a separate verifier identity. A transport retry must reuse the same stable candidate key and immutable revision; never rebuild from a moving branch between attempts.
 
 The maintained GitHub Actions reference is [`/.github/examples/leapview-authoring.yml`](https://github.com/flidai/leapview/blob/main/.github/examples/leapview-authoring.yml). It keeps fork validation credential-free, gates trusted candidate creation, uses protected publication, and reconciles closed pull requests. Adapt only the source-control event syntax; keep the LeapView commands and target policy unchanged.
 

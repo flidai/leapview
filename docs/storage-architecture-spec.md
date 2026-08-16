@@ -14,12 +14,12 @@ Runtime generations do not own DuckDB engines or catalog attachments. They own i
   ducklake/catalog.duckdb   # DuckDB-backed DuckLake metadata catalog
   ducklake/catalog.sqlite   # retained legacy migration backup, when present
   data/                     # DuckLake-managed Parquet files
-  artifacts/                # immutable workspace bundles
+  artifacts/                # immutable project bundles
   runtime/                  # ephemeral extracted artifacts
   tmp/duckdb/               # bounded DuckDB temporary storage
 ```
 
-SQLite owns workspaces, releases, deployments, active serving pointers, authorization, durable jobs, idempotency, leases, and audit records.
+SQLite owns projects, releases, deployments, active serving pointers, authorization, durable jobs, idempotency, leases, and audit records.
 
 DuckLake owns analytical schemas, snapshots, changesets, statistics, schema evolution, and physical-file manifests. Parquet owns materialized analytical data. Disposable query caches are never authoritative.
 
@@ -63,7 +63,7 @@ A failed refresh leaves the previous active snapshot unchanged.
 
 ## Resource and access boundaries
 
-Node-wide configuration bounds DuckDB memory, temporary storage, threads, connection concurrency, retained query results, and cache data. Workload admission provides fairness across classes and workspaces; it is not a hard per-workspace CPU or intermediate-memory partition. Workloads requiring hard isolation use separate deployments or OS/container resource domains.
+Node-wide configuration bounds DuckDB memory, temporary storage, threads, connection concurrency, retained query results, and cache data. Workload admission provides fairness across classes and project resources; it is not a hard per-project CPU or intermediate-memory partition. Workloads requiring hard isolation use separate deployments or OS/container resource domains.
 
 Maintained DuckDB connectors acquire declared external sources only inside admitted refresh sessions. Each refresh pins one connection, stages remote data into connection-local temporary tables, validates the schema, and removes attachments and temporary secrets before the single-writer DuckLake commit. Serving and Data Explorer paths are snapshot-only and never resolve source credentials. DuckDB permits only LeapView's fixed official signed extension allowlist; automatic loading, unsigned extensions, authored extension names, and custom repositories remain disabled.
 

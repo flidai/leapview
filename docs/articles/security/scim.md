@@ -26,7 +26,7 @@ Begin with a small test group. Provision a test user, update profile metadata, a
 
 ## Identity lifecycle
 
-SCIM users become ordinary user principals. SCIM groups are global directory groups that may receive access in several workspaces. Membership changes affect effective access immediately.
+SCIM users become ordinary user principals. SCIM groups are global directory groups that may receive access to resources in several projects. Membership changes affect effective access immediately.
 
 LeapView preserves identity and audit continuity during deactivation. Setting `active=false` or deleting a SCIM user disables the principal, removes SCIM group memberships, and revokes sessions and API tokens. It is a soft disable rather than erasing historical attribution.
 
@@ -40,7 +40,7 @@ Use the directory as the source of truth for enterprise group membership. Use Le
 
 This separation means:
 
-- creating a group does not grant a workspace automatically;
+- creating a group does not grant a project automatically;
 - removing a user from a directory group immediately removes access inherited through that group;
 - direct user grants remain effective until removed separately;
 - OIDC group claims do not compete with SCIM membership;
@@ -48,7 +48,7 @@ This separation means:
 
 The administration API therefore exposes SCIM profiles, groups, and memberships as read-only resources. Profile edits, group deletion, and membership changes must be made in the directory, while LeapView role bindings and grants remain writable.
 
-Prefer binding stable directory groups to roles. Avoid granting every synchronized employee a default workspace merely because they exist in the tenant.
+Prefer binding stable directory groups to roles. Avoid granting every synchronized employee a default project merely because they exist in the tenant.
 
 ## Rotate the token
 

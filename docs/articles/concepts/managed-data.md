@@ -1,6 +1,6 @@
 # Managed data and revisions
 
-Managed data gives file-backed analytical inputs an immutable identity that can move through the same reviewed delivery boundary as project configuration. A managed connection belongs to the project, while workspaces consume permitted project sources derived from that connection.
+Managed data gives file-backed analytical inputs an immutable identity that can move through the same reviewed delivery boundary as project configuration. A managed connection and its source definitions belong to the project graph.
 
 ## Content-addressed revisions
 
@@ -10,7 +10,7 @@ This makes planning and transfer repeatable. Content already present in the back
 
 ## Staging and activation
 
-Staging makes a revision available to LeapView but does not change what dashboards query. Activation happens through project deployment, which pins one revision for every managed connection alongside the compiled workspace artifacts.
+Staging makes a revision available to LeapView but does not change what dashboards query. Activation happens through project deployment, which pins one revision for every managed connection alongside the compiled project artifact.
 
 The distinction prevents partially updated serving state. A model change and the data revision it expects become active together, or the prior project and revision pointers remain active together when validation fails.
 

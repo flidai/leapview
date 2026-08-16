@@ -1,6 +1,6 @@
 # Semantic models
 
-A semantic model exposes business concepts independently from dashboard presentation. It selects workspace model tables and defines the dimensions, measures, metrics, and relationships that dashboards, CLI commands, API clients, and agent tools are allowed to query.
+A semantic model exposes business concepts independently from dashboard presentation. It selects project model tables and defines the dimensions, measures, metrics, and relationships that dashboards, CLI commands, API clients, and agent tools are allowed to query.
 
 ## Tables and field references
 
@@ -71,7 +71,7 @@ Dashboard visual queries map result aliases to semantic dimensions and measures.
 
 Before publishing a model, verify that:
 
-- every table exists in the workspace;
+- every table exists in the project graph;
 - relationship fields have compatible types;
 - every relationship's `one` endpoint is the table's declared primary key, and those keys are unique in the data;
 - measures identify the correct fact and aggregation;

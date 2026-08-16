@@ -1,16 +1,16 @@
 # Connect a data source
 
-Connections are project-global access definitions. Sources give individual files, objects, or tables stable logical names that workspaces can consume. This guide follows one managed-file workflow so that the procedure stays reproducible; use [Connection configuration](/docs/config/connection) and [Source configuration](/docs/config/source) for the complete set of external-system providers, credentials, formats, and fields.
+Connections are project-level access definitions. Sources give individual files, objects, or tables stable logical names in the project graph. This guide follows one managed-file workflow so that the procedure stays reproducible; use [Connection configuration](/docs/config/connection) and [Source configuration](/docs/config/source) for the complete set of external-system providers, credentials, formats, and fields.
 
 ## Before you begin
 
-Choose a development workspace, prepare a representative CSV with a stable header, and confirm that the project validates before your change. Do not begin with production credentials or an unbounded shared directory.
+Choose a development environment, prepare a representative CSV with a stable header, and confirm that the project validates before your change. Do not begin with production credentials or an unbounded shared directory.
 
 The procedure is:
 
 1. Define one connection for the access and operational boundary.
 2. Define logical sources for the physical objects it exposes.
-3. Discover those resources and permit only the required workspace usage.
+3. Discover those resources from the project manifest and grant only the required resource privileges.
 4. Plan and stage the managed revision.
 5. Validate the graph and verify the source contract before modeling.
 
@@ -23,7 +23,7 @@ Before writing YAML, decide:
 - whether LeapView will own uploaded file revisions or read an external system;
 - which credentials and defaults belong to the connection;
 - which physical objects deserve stable source identities;
-- which workspaces may consume each source;
+- which project resources may consume each source;
 - how source field types and missing values will be interpreted.
 
 Use one connection for inputs that share access method, credentials, and operational lifecycle. Do not create a new connection merely to give every file a name; that is the source's responsibility.
@@ -36,8 +36,9 @@ Create `dashboards/connections/commerce.yaml`:
 apiVersion: leapview.dev/v1
 kind: Connection
 metadata:
+  id: connection:commerce
   name: commerce
-  title: Commerce managed files
+  displayName: Commerce managed files
   owner: data-platform
 spec:
   kind: managed
@@ -61,8 +62,9 @@ Create `dashboards/sources/commerce.orders.yaml`:
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:commerce.orders
   name: commerce.orders
-  title: Orders
+  displayName: Orders
   owner: data-platform
 spec:
   connection: commerce
@@ -93,18 +95,17 @@ spec:
 
 Include patterns are relative to the project manifest. A duplicate match or undiscovered resource should be corrected in the manifest rather than worked around with an absolute path.
 
-### Permit the source in a workspace
+### Reference the source in the project graph
 
-Add the logical source name to the target `workspace.yaml`:
+Model resources declare their source dependencies directly:
 
 ```yaml
 spec:
-  uses:
-    sources:
-      - commerce.orders
+  sources:
+    - commerce.orders
 ```
 
-This makes the source eligible for that workspace's model tables. It does not stage managed data or grant every user access to the resulting workspace.
+This records lineage and keeps SQL reads within the governed project graph. It does not stage managed data or grant every user access to the resulting model.
 
 ## Validate ingestion
 
@@ -129,13 +130,13 @@ Then stage it to a target with `leapview data sync`. Staging returns an immutabl
 
 ## Verify the source boundary
 
-Check that filenames match source paths exactly, source fields reflect the actual header, credentials resolve in the target instance, and the workspace lists every source its model SQL will read. Continue with [Define model tables](/docs/guides/build/model-tables).
+Check that filenames match source paths exactly, source fields reflect the actual header, credentials resolve in the target instance, and each model lists every source its SQL will read. Continue with [Define model tables](/docs/guides/build/model-tables).
 
 For managed data, retain the revision digest returned by staging and confirm that the target can resolve it before deployment. Re-run the plan against the same input directory; an unchanged directory should produce the same reviewed revision.
 
 ## Troubleshooting
 
-If validation cannot discover the connection or source, resolve include patterns relative to `dashboards/leapview.yaml` and check for duplicate matches. If staging reports missing files, compare the source `path` with the case-sensitive filename beneath `--from`. If a model later reports denied source access, add the logical source ID to the workspace rather than bypassing the workspace boundary.
+If validation cannot discover the connection or source, resolve include patterns relative to `dashboards/leapview.yaml` and check for duplicate matches. If staging reports missing files, compare the source `path` with the case-sensitive filename beneath `--from`. If a model later reports a missing source dependency, add the logical source ID to that model's `spec.sources` rather than bypassing project validation.
 
 ## Next steps
 

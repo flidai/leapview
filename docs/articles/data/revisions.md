@@ -53,7 +53,7 @@ Candidate preparation resolves the exact staged revision for every managed
 connection and retains those pins in immutable provenance. Missing,
 incompatible, or unavailable revisions reject the candidate. After review,
 `publish` activates that exact candidate without rebuilding it. Successful
-activation moves project configuration, workspace serving state, and managed
+activation moves project configuration, project serving state, and managed
 revision pointers as one reviewed rollout.
 
 This coupling matters when model SQL changes alongside input data. Activating only the file or only the model could create an incompatible serving state; the project deployment makes their intended combination explicit.

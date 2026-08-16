@@ -1,6 +1,6 @@
 # API conventions
 
-LeapView APIs use explicit workspace/resource paths, bearer authentication, JSON payloads, bounded pagination, and conventional HTTP status. The OpenAPI document is authoritative for each operation's parameters and schemas.
+LeapView APIs use explicit project/resource paths, bearer authentication, JSON payloads, bounded pagination, and conventional HTTP status. The OpenAPI document is authoritative for each operation's parameters and schemas.
 
 ## Base path and content
 
@@ -18,13 +18,13 @@ Authorization: Bearer <token>
 
 Use a dedicated service principal and never place the token in a URL. Protect it from logs, traces, error reporting, and request dumps. TLS validation must remain enabled.
 
-Authorization combines the principal's effective privileges with token restrictions and data policies. A valid token can still receive `403` for a workspace or operation outside its scope.
+Authorization combines the principal's effective privileges with token restrictions and data policies. A valid token can still receive `403` for a project resource or operation outside its scope.
 
 ## Resource identity
 
-Workspace, dashboard, semantic-model, dataset, page, visual, table, principal, and run identifiers are explicit path parameters. Use IDs returned by discovery operations, not titles or labels.
+Project, dashboard, semantic-model, dataset, page, visual, table, principal, and run identifiers are explicit path parameters. Use IDs returned by discovery operations, not titles or labels.
 
-Percent-encode path segments through a proper URL builder. Do not concatenate untrusted IDs into raw URLs or assume an ID from one workspace is valid in another.
+Percent-encode path segments through a proper URL builder. Do not concatenate untrusted IDs into raw URLs or assume an ID from one project is valid in another.
 
 ## Pagination
 

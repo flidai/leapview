@@ -4,13 +4,13 @@ Dashboard publications expose one compiled dashboard as an anonymous, governed r
 
 ## Declare a publication
 
-Add a `DashboardPublication` resource to the workspace publication include path:
+Add a `DashboardPublication` resource to the project's publication include path:
 
 ```yaml
 apiVersion: leapview.dev/v1
 kind: DashboardPublication
 metadata:
-  workspace: visuals
+  id: publication:website-showcase
   name: website-showcase
 spec:
   dashboard: visual-showcase
@@ -32,12 +32,12 @@ Public execution uses a credential-less `dashboard_publication` principal scoped
 apiVersion: leapview.dev/v1
 kind: DataPolicy
 metadata:
-  workspace: visuals
+  id: data-policy:website-public-region
   name: website-public-region
 spec:
   object:
-    type: semantic_model
-    id: visuals
+    kind: semantic_model
+    id: semantic-model:visuals
   subject:
     kind: dashboard_publication
     publication: website-showcase

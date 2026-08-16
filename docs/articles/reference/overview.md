@@ -4,7 +4,7 @@ Reference pages describe exact accepted syntax and supported machine contracts. 
 
 ## Configuration
 
-- Use [Configuration reference](/docs/config) for generated project, connection, source, workspace, model-table, semantic-model, dashboard, access, and refresh-pipeline fields.
+- Use [Configuration reference](/docs/config) for generated project, connection, source, model, semantic-model, pipeline, dashboard, access, and publication fields.
 - Use [Environment variable reference](/docs/configuration) for process settings, defaults, lifecycle, secret classification, and production relationships.
 - Use [Supported capabilities](/docs/reference/capabilities) for the current boundary of resource, data, visual, security, operational, and integration surfaces.
 

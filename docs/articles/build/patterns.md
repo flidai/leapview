@@ -1,6 +1,6 @@
 # Dashboard authoring patterns
 
-These patterns keep a dashboard repository understandable as the number of workspaces, semantic definitions, and report pages grows. They are review heuristics rather than substitutes for the generated contracts.
+These patterns keep a dashboard repository understandable as the number of project resources, semantic definitions, and report pages grows. They are review heuristics rather than substitutes for the generated contracts.
 
 ## Model trustworthy data
 
