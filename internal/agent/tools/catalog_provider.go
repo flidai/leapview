@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
@@ -70,6 +71,10 @@ type CatalogGetResult struct {
 	Item    CatalogItem    `json:"item"`
 	Details map[string]any `json:"details"`
 }
+
+// ResourceResolver resolves an exact graph resource through the authorized
+// active-generation catalog before an authoring or query tool executes.
+type ResourceResolver func(context.Context, Scope, projectgraph.ResourceID, projectgraph.Kind, access.Capability) (projectgraph.ResourceID, error)
 
 // Catalog is the sole model-facing catalog port. Implementations must resolve
 // against the immutable active serving-generation snapshot and an

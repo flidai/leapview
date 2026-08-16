@@ -27,6 +27,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	productsearch "github.com/flidai/leapview/internal/workspace/search"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
@@ -37,6 +38,7 @@ type Module struct {
 	jobs                     JobStore
 	runWorkloadClass         string
 	globalWorkspaceID        string
+	projectID                projectgraph.ResourceID
 	search                   SearchPort
 	environment              func(*http.Request) string
 	dashboardMetrics         func(string) (queryruntime.Metrics, bool)
@@ -59,6 +61,7 @@ type Module struct {
 	buildVersion             string
 	apiOperations            []agenttools.APIGenOperation
 	dashboardAuthoring       *authoringapplication.Application
+	resolveResource          agenttools.ResourceResolver
 	runExecution             apigencommand.AsyncExecutionContract
 }
 
@@ -91,6 +94,7 @@ type Config struct {
 	Jobs                     JobStore
 	RunWorkloadClass         string
 	GlobalWorkspaceID        string
+	ProjectID                projectgraph.ResourceID
 	Search                   SearchPort
 	Environment              func(*http.Request) string
 	DashboardMetrics         func(string) (queryruntime.Metrics, bool)
@@ -110,6 +114,7 @@ type Config struct {
 	BuildVersion             string
 	APIGenOperations         []agenttools.APIGenOperation
 	DashboardAuthoring       *authoringapplication.Application
+	ResolveResource          agenttools.ResourceResolver
 	HTTP                     HTTPConfig
 }
 
@@ -226,6 +231,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		service: service, jobs: config.Jobs,
 		runWorkloadClass:  config.RunWorkloadClass,
 		globalWorkspaceID: config.GlobalWorkspaceID, search: config.Search, environment: config.Environment,
+		projectID:        config.ProjectID,
 		dashboardMetrics: config.DashboardMetrics, authorizeAnyObject: config.AuthorizeAnyObject,
 		skipContextAuthorization: config.SkipContextAuthorization,
 		recordAudit:              config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
@@ -237,6 +243,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		productName: config.ProductName, buildVersion: config.BuildVersion,
 		apiOperations:      append([]agenttools.APIGenOperation(nil), config.APIGenOperations...),
 		dashboardAuthoring: config.DashboardAuthoring,
+		resolveResource:    config.ResolveResource,
 		runExecution:       runExecution,
 	}
 	if err := validateRunJobHandlers(runExecution, m.JobHandlers(nil)); err != nil {

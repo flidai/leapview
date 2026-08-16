@@ -100,6 +100,8 @@ enum CatalogType {
 
 model CatalogRef {
   @minLength(1)
+  @maxLength(256)
+  @pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
   id: string;
   kind: CatalogType;
 }
@@ -405,6 +407,7 @@ model CatalogSearchInput {
 model CatalogListInput {
   parent?: CatalogRef;
   childKinds?: CatalogType[];
+  domain?: string;
   cursor?: string;
   @minValue(1)
   @maxValue(50)

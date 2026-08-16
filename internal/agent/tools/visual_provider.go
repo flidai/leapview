@@ -34,10 +34,6 @@ type VisualQueryContextFunc func(ctx context.Context, scope Scope) context.Conte
 
 type VisualModelFunc func(workspaceID, modelID string) (*semanticmodel.Model, bool)
 
-// VisualResourceResolver resolves semantic model IDs through the authorized
-// active-generation catalog before query execution.
-type VisualResourceResolver func(context.Context, Scope, projectgraph.ResourceID, projectgraph.Kind, access.Capability) (projectgraph.ResourceID, error)
-
 type VisualAggregateRowsFunc func(ctx context.Context, workspaceID, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error)
 
 type VisualPreviewRowsFunc func(ctx context.Context, workspaceID, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error)
@@ -55,7 +51,7 @@ type VisualQueryMetadataFunc func(ctx context.Context, workspaceID, modelID stri
 
 type VisualProvider struct {
 	Authorize     VisualAuthorizeFunc
-	Resolve       VisualResourceResolver
+	Resolve       ResourceResolver
 	QueryContext  VisualQueryContextFunc
 	SemanticModel VisualModelFunc
 	AggregateRows VisualAggregateRowsFunc

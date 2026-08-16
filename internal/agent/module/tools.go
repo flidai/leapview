@@ -13,7 +13,6 @@ import (
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
@@ -50,16 +49,8 @@ func (m *Module) ToolDefinitions(scope agentcap.Scope) []agentcore.ToolDefinitio
 func (m *Module) DashboardAuthoringToolProvider() agenttools.DashboardAuthoringProvider {
 	return agenttools.DashboardAuthoringProvider{
 		Application: m.dashboardAuthoring,
-		Authorize: func(ctx context.Context, scope agenttools.Scope, workspace string, action dashboardauthoring.AuthorizationAction) (agentcore.ToolResult, bool) {
-			privilege := access.PrivilegeViewItem
-			switch action {
-			case dashboardauthoring.AuthorizationActionEdit:
-				privilege = access.PrivilegeEditItem
-			case dashboardauthoring.AuthorizationActionPublish, dashboardauthoring.AuthorizationActionArchive:
-				privilege = access.PrivilegeManageItem
-			}
-			return m.authorizePrivilege(ctx, scopeFromTools(scope), privilege, []access.ObjectRef{access.WorkspaceObject(workspace)}, "agent_tool", "dashboard_authoring")
-		},
+		ProjectID:   m.projectID,
+		Resolve:     m.resolveResource,
 	}
 }
 
@@ -73,6 +64,7 @@ func (m *Module) CatalogToolProvider() agenttools.CatalogProvider {
 
 func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 	return agenttools.VisualProvider{
+		Resolve: m.resolveResource,
 		QueryContext: func(ctx context.Context, scope agenttools.Scope) context.Context {
 			if m.queryContext == nil {
 				return ctx

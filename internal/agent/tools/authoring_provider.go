@@ -52,26 +52,12 @@ type DashboardAuthoring interface {
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
-// DashboardAuthoringDraftExporter is the optional draft-aware export
-// capability implemented by the composed application. Keeping it optional
-// preserves compatibility for focused provider fakes and older adapters;
-// callers use it whenever available while project exports always use ExportYAML
-// against the active serving artifact.
-type DashboardAuthoringDraftExporter interface {
-	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
-}
-
-// DashboardResourceResolver resolves an exact graph resource through the
-// authorized active-generation catalog before authoring executes. It must
-// return the canonical ID and fail closed for unknown/unauthorized IDs.
-type DashboardResourceResolver func(context.Context, Scope, projectgraph.ResourceID, projectgraph.Kind, access.Capability) (projectgraph.ResourceID, error)
-
 type DashboardAuthoringProvider struct {
 	Application DashboardAuthoring
 	// ProjectID is fixed by composition; callers never choose a project
 	// selector in a model-facing tool request.
-	ProjectID string
-	Resolve   DashboardResourceResolver
+	ProjectID projectgraph.ResourceID
+	Resolve   ResourceResolver
 }
 
 type dashboardAuthoringListInput struct {
@@ -180,6 +166,11 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err != nil {
 				return authoringToolError(err)
 			}
+			filtered, result, ok := p.filterAuthorizedDashboards(ctx, scope, value)
+			if !ok {
+				return result
+			}
+			value = filtered
 			return agentcore.ToolResult{Content: value}
 		}),
 		p.definition(GetDashboardToolName, "Get one authorized dashboard's governed metadata.", "read", agentcontracts.DashboardAuthoringGetInputSchemaJSON, agentcontracts.DashboardAuthoringGetResultSchemaJSON, []string{"dashboard", "authoring", "catalog"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
@@ -360,17 +351,42 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 	}
 }
 
+func (p DashboardAuthoringProvider) filterAuthorizedDashboards(ctx context.Context, scope Scope, value catalog.ListResult) (catalog.ListResult, agentcore.ToolResult, bool) {
+	if p.Resolve == nil {
+		return catalog.ListResult{}, ToolError("catalog_unavailable", "authorized project catalog is not configured"), false
+	}
+	filtered := make([]catalog.Dashboard, 0, len(value.Items))
+	for _, dashboard := range value.Items {
+		id, err := p.Resolve(ctx, scope, dashboard.ID, projectgraph.KindDashboard, access.CapabilityResourceRead)
+		if err != nil || id != dashboard.ID {
+			continue
+		}
+		filtered = append(filtered, dashboard)
+	}
+	value.Items = filtered
+	value.Count = len(filtered)
+	value.InstanceCount, value.ProjectCount = 0, 0
+	for _, dashboard := range filtered {
+		if dashboard.Source == catalog.SourceInstance {
+			value.InstanceCount++
+		} else if dashboard.Source == catalog.SourceProject {
+			value.ProjectCount++
+		}
+	}
+	return value, agentcore.ToolResult{}, true
+}
+
 func (p DashboardAuthoringProvider) definition(name, description, effect, input, output string, tags []string, run func(context.Context, agentcore.ToolCall) agentcore.ToolResult) agentcore.ToolDefinition {
 	return agentcore.ToolDefinition{Name: name, Description: description, InputSchema: json.RawMessage(input), OutputSchema: json.RawMessage(output), Effect: effect, Tags: tags, Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
 		return run(ctx, call), nil
 	})}
 }
 
-func (p DashboardAuthoringProvider) prepare(ctx context.Context, scope Scope, action dashboardauthoring.AuthorizationAction) (string, agentcore.ToolResult, bool) {
+func (p DashboardAuthoringProvider) prepare(ctx context.Context, scope Scope, action dashboardauthoring.AuthorizationAction) (projectgraph.ResourceID, agentcore.ToolResult, bool) {
 	_ = ctx
 	_ = action
-	project := strings.TrimSpace(p.ProjectID)
-	if project == "" {
+	project, err := projectgraph.NewResourceID(p.ProjectID.String())
+	if err != nil {
 		return "", ToolError("catalog_unavailable", "trusted project identity is not configured"), false
 	}
 	if strings.TrimSpace(scope.PrincipalID) == "" {

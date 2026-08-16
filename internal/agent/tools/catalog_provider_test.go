@@ -81,12 +81,12 @@ func assertToolLimitMaximum(t *testing.T, raw json.RawMessage, want int) {
 func TestCatalogProviderAppliesDefaultsAndDelegates(t *testing.T) {
 	service := &fakeCatalogService{
 		searchResult: CatalogPage{
-			Items:      []CatalogItem{{Ref: CatalogRef{WorkspaceID: "acme", Type: CatalogTypeDashboard, ID: "sales"}, Name: "Sales"}},
+			Items:      []CatalogItem{{Ref: CatalogRef{Kind: CatalogTypeDashboard, ID: "sales"}, Name: "Sales"}},
 			NextCursor: "opaque",
 		},
 		listResult: CatalogPage{Items: []CatalogItem{}},
 		getResult: CatalogGetResult{
-			Item:    CatalogItem{Ref: CatalogRef{WorkspaceID: "acme", Type: CatalogTypeDashboard, ID: "sales"}, Name: "Sales"},
+			Item:    CatalogItem{Ref: CatalogRef{Kind: CatalogTypeDashboard, ID: "sales"}, Name: "Sales"},
 			Details: map[string]any{"pageCount": 2},
 		},
 	}
@@ -107,8 +107,8 @@ func TestCatalogProviderAppliesDefaultsAndDelegates(t *testing.T) {
 		t.Fatalf("list limit = %d, want %d", service.listRequest.Limit, DefaultCatalogListLimit)
 	}
 
-	runCatalogTool(t, definitions, CatalogGetToolName, `{"ref":{"workspaceId":"acme","type":"dashboard","id":"sales"}}`)
-	if service.getRequest.Ref.Type != CatalogTypeDashboard {
+	runCatalogTool(t, definitions, CatalogGetToolName, `{"ref":{"id":"sales","kind":"dashboard"}}`)
+	if service.getRequest.Ref.Kind != CatalogTypeDashboard {
 		t.Fatalf("get ref = %#v", service.getRequest.Ref)
 	}
 }
@@ -123,8 +123,8 @@ func TestCatalogProviderRejectsInvalidArgumentsBeforeCallingService(t *testing.T
 		{CatalogSearchToolName, `{}`},
 		{CatalogSearchToolName, `{"query":"sales","limit":26}`},
 		{CatalogListToolName, `{"limit":51}`},
-		{CatalogGetToolName, `{"ref":{"workspaceId":"acme","type":"connection","id":"warehouse"}}`},
-		{CatalogGetToolName, `{"ref":{"workspaceId":"acme","type":"dashboard","id":""}}`},
+		{CatalogGetToolName, `{"ref":{"id":"warehouse","kind":"connection"}}`},
+		{CatalogGetToolName, `{"ref":{"id":"","kind":"dashboard"}}`},
 	} {
 		result := runCatalogTool(t, definitions, test.name, test.args)
 		if !result.IsError {
@@ -138,14 +138,14 @@ func TestCatalogProviderRejectsInvalidArgumentsBeforeCallingService(t *testing.T
 }
 
 func TestCatalogProviderPreservesStableServiceErrors(t *testing.T) {
-	service := &fakeCatalogService{err: &CatalogError{Code: "catalog_location_required", Message: "location is required"}}
+	service := &fakeCatalogService{err: &CatalogError{Code: "catalog_not_found", Message: "resource not found"}}
 	definitions := (CatalogProvider{Catalog: service}).Definitions(Scope{})
-	result := runCatalogTool(t, definitions, CatalogGetToolName, `{"ref":{"workspaceId":"acme","type":"visual","id":"revenue"}}`)
+	result := runCatalogTool(t, definitions, CatalogGetToolName, `{"ref":{"id":"revenue","kind":"dashboard"}}`)
 	if !result.IsError {
 		t.Fatal("error = false, want true")
 	}
-	if code := catalogTestErrorCode(result); code != "catalog_location_required" {
-		t.Fatalf("code = %#v, want catalog_location_required", code)
+	if code := catalogTestErrorCode(result); code != "catalog_not_found" {
+		t.Fatalf("code = %#v, want catalog_not_found", code)
 	}
 
 	service.err = errors.New("database unavailable")

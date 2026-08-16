@@ -34,6 +34,7 @@ type CatalogItem struct {
 type CatalogListInput struct {
 	Parent     *CatalogRef    `json:"parent,omitempty"`
 	ChildKinds *[]CatalogType `json:"childKinds,omitempty"`
+	Domain     *string        `json:"domain,omitempty"`
 	Cursor     *string        `json:"cursor,omitempty"`
 	Limit      *int32         `json:"limit,omitempty"`
 }
