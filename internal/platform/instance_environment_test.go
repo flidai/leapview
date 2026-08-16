@@ -54,11 +54,16 @@ func TestBindInstanceEnvironmentRejectsConflictingManagedDataPointer(t *testing.
 	}
 	defer store.Close()
 	if _, err := store.SQLDB().ExecContext(ctx, `
-INSERT INTO managed_data_collections (id, project_id, connection_name, name) VALUES ('orders', 'commerce', 'lake', 'Orders');
+INSERT INTO managed_data_collections (id, project_id, connection_id, name) VALUES ('orders', 'commerce', 'connection:lake', 'Orders');
 INSERT INTO managed_data_revisions (id, collection_id, sequence, digest, status, manifest_json, file_count, size_bytes, ready_at)
 VALUES ('revision_1', 'orders', 1, 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'ready', '{}', 0, 0, CURRENT_TIMESTAMP);
-INSERT INTO project_deployments (id, project_id, environment, request_digest, status, activated_at)
-VALUES ('deployment_1', 'commerce', 'prod', 'sha256:deployment', 'active', CURRENT_TIMESTAMP);
+INSERT INTO serving_states (id, project_id, environment, status, source)
+VALUES ('generation_1', 'commerce', 'prod', 'validated', 'publish');
+INSERT INTO project_deployments (id, project_id, environment, generation_id, artifact_digest, request_digest, status, activated_at)
+VALUES ('deployment_1', 'commerce', 'prod', 'generation_1',
+  'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'active', CURRENT_TIMESTAMP);
 INSERT INTO managed_data_environment_pointers (collection_id, environment, revision_id, deployment_id, generation)
 VALUES ('orders', 'prod', 'revision_1', 'deployment_1', 1);`); err != nil {
 		t.Fatal(err)
