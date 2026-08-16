@@ -12,7 +12,6 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
-	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
@@ -30,12 +29,12 @@ type fakeRepository struct {
 	getRevisionIDs  []authoring.RevisionID
 }
 
-func (r *fakeRepository) Get(_ context.Context, _ string, dashboardID authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) Get(_ context.Context, _ projectgraph.ResourceID, dashboardID authoring.DashboardID) (authoring.DashboardLifecycle, error) {
 	r.getIDs = append(r.getIDs, dashboardID)
 	return r.lifecycle, nil
 }
 
-func (r *fakeRepository) GetRevision(_ context.Context, _ string, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
+func (r *fakeRepository) GetRevision(_ context.Context, _ projectgraph.ResourceID, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
 	r.getRevisionCall++
 	r.getRevisionIDs = append(r.getRevisionIDs, id)
 	revision, ok := r.revisions[id]
@@ -75,16 +74,16 @@ func (r *fakeRepository) LookupCreateOperation(_ context.Context, operation auth
 }
 
 func operationKey(operation authoring.CreateOperation) string {
-	return operation.ProjectID + "|" + operation.ActorID + "|" + operation.Kind + "|" + operation.IdempotencyKey
+	return operation.ProjectID.String() + "|" + operation.ActorID + "|" + operation.Kind + "|" + operation.IdempotencyKey
 }
 
-func (r *fakeRepository) List(context.Context, string) ([]authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) List(context.Context, projectgraph.ResourceID) ([]authoring.DashboardLifecycle, error) {
 	return []authoring.DashboardLifecycle{r.lifecycle}, nil
 }
-func (r *fakeRepository) CountBySemanticModel(context.Context, string) ([]authoring.SemanticModelUsage, error) {
+func (r *fakeRepository) CountBySemanticModel(context.Context, projectgraph.ResourceID) ([]authoring.SemanticModelUsage, error) {
 	return nil, nil
 }
-func (r *fakeRepository) LookupCommandResult(context.Context, string, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
+func (r *fakeRepository) LookupCommandResult(context.Context, projectgraph.ResourceID, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
 	return authoring.CommandResult{}, false, nil
 }
 func (r *fakeRepository) AppendDraft(context.Context, authoring.AppendDraftInput) (authoring.Revision, error) {
@@ -96,7 +95,7 @@ func (r *fakeRepository) Publish(context.Context, authoring.PublishInput) (autho
 func (r *fakeRepository) Archive(context.Context, authoring.ArchiveInput) (authoring.DashboardLifecycle, error) {
 	return authoring.DashboardLifecycle{}, errors.New("unexpected archive")
 }
-func (r *fakeRepository) GetPublishedCompilation(context.Context, string, authoring.DashboardID) (authoring.CompiledRevision, error) {
+func (r *fakeRepository) GetPublishedCompilation(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	return authoring.CompiledRevision{}, authoring.ErrNotFound
 }
 
@@ -111,19 +110,19 @@ func (a *fakeAuthorizer) Authorize(_ context.Context, request service.Authorizat
 }
 
 type fakeRuntime struct {
-	source projectartifact.AuthoredDashboardSource
+	source authoring.AuthoredDashboardSource
 	called bool
 	fail   bool
 }
 
 func (r *fakeRuntime) Close() error { return nil }
-func (r *fakeRuntime) AuthoredDashboardSource(id string) (projectartifact.AuthoredDashboardSource, bool) {
+func (r *fakeRuntime) AuthoredDashboardSource(id string) (authoring.AuthoredDashboardSource, bool) {
 	r.called = true
 	if r.fail {
-		return projectartifact.AuthoredDashboardSource{}, false
+		return authoring.AuthoredDashboardSource{}, false
 	}
-	if id != r.source.Document.ID {
-		return projectartifact.AuthoredDashboardSource{}, false
+	if projectgraph.ResourceID(id) != r.source.Document.ID {
+		return authoring.AuthoredDashboardSource{}, false
 	}
 	return r.source, true
 }
@@ -138,7 +137,7 @@ func (l *fakeLease) Runtime() projectruntime.Runtime        { return l.runtime }
 func (l *fakeLease) Identity() projectgraph.ServingIdentity { return l.identity }
 func (l *fakeLease) Release()                               { *l.released++ }
 
-func TestLoadProjectUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *testing.T) {
+func TestLoadInstanceUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *testing.T) {
 	published, newer, lifecycle := publishedFixture(t)
 	repository := &fakeRepository{lifecycle: lifecycle, revisions: map[authoring.RevisionID]authoring.Revision{
 		published.ID: published, newer.ID: newer,
@@ -146,14 +145,14 @@ func TestLoadProjectUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *test
 	authorizer := &fakeAuthorizer{}
 	adapter := newAdapter(t, repository, authorizer, nil)
 
-	source, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "sales"}, "actor")
+	source, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: "sales"}, "actor")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if source.Document.Title != "Published title" {
 		t.Fatalf("loaded title = %q, want exact published title", source.Document.Title)
 	}
-	if source.Provenance.Kind != sourceadapter.SourceProject || source.Provenance.Project == nil || source.Provenance.Project.PublishedRevision != published.Token() {
+	if source.Provenance.Kind != sourceadapter.SourceInstance || source.Provenance.Instance == nil || source.Provenance.Instance.PublishedRevision != published.Token() {
 		t.Fatalf("project provenance = %#v", source.Provenance)
 	}
 	if source.Lifecycle == nil || source.Lifecycle.Status != authoring.LifecycleStatusPublished {
@@ -166,7 +165,7 @@ func TestLoadProjectUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *test
 	deniedRepo := &fakeRepository{lifecycle: lifecycle, revisions: repository.revisions}
 	denied := &fakeAuthorizer{err: errors.New("view denied")}
 	deniedAdapter := newAdapter(t, deniedRepo, denied, nil)
-	if _, err := deniedAdapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "sales"}, "actor"); err == nil {
+	if _, err := deniedAdapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: "sales"}, "actor"); err == nil {
 		t.Fatal("Load succeeded despite VIEW denial")
 	}
 	if deniedRepo.getRevisionCall != 0 {
@@ -192,7 +191,7 @@ func TestExportDraftUsesLifecycleDraftRevisionByDashboardID(t *testing.T) {
 	}
 
 	exported, err := adapter.ExportDraft(t.Context(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: lifecycle.ID}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: lifecycle.ID}, ActorID: "actor",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -203,15 +202,15 @@ func TestExportDraftUsesLifecycleDraftRevisionByDashboardID(t *testing.T) {
 	// The authored title is deliberately changed only in the draft revision;
 	// its document content must still be the current lifecycle draft, not the
 	// published source selected by Adapter.Export.
-	source, err := adapter.LoadDraft(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: lifecycle.ID}, "actor")
+	source, err := adapter.LoadDraft(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: lifecycle.ID}, "actor")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.Document.Title != "Newer draft" || source.Provenance.Project == nil || source.Provenance.Project.DraftRevision == nil || *source.Provenance.Project.DraftRevision != newer.Token() {
-		t.Fatalf("draft source = title %q provenance %#v", source.Document.Title, source.Provenance.Project)
+	if source.Document.Title != "Newer draft" || source.Provenance.Instance == nil || source.Provenance.Instance.DraftRevision == nil || *source.Provenance.Instance.DraftRevision != newer.Token() {
+		t.Fatalf("draft source = title %q provenance %#v", source.Document.Title, source.Provenance.Instance)
 	}
-	if source.Provenance.Project.PublishedRevision != (authoring.RevisionToken{}) {
-		t.Fatalf("draft source fabricated published provenance: %#v", source.Provenance.Project)
+	if source.Provenance.Instance.PublishedRevision != (authoring.RevisionToken{}) {
+		t.Fatalf("draft source fabricated published provenance: %#v", source.Provenance.Instance)
 	}
 }
 
@@ -221,7 +220,7 @@ func TestProjectForkReplaySkipsSourceReads(t *testing.T) {
 	authorizer := &fakeAuthorizer{}
 	authoringService := newAuthoringService(t, repository, authorizer)
 	adapter := newAdapterWithService(t, repository, authorizer, authoringService, nil)
-	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "sales"}, ActorID: "actor", Title: "Forked", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-project"}
+	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: "sales"}, ActorID: "actor", Title: "Forked", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-project"}
 	first, err := adapter.Fork(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -245,9 +244,9 @@ func TestProjectForkReplaySkipsSourceReads(t *testing.T) {
 func TestLoadProjectUsesOneActiveLeaseAndHasNoFakeRevision(t *testing.T) {
 	_, _, _ = publishedFixture(t)
 	document := authoredDocument("project-sales", "Project title")
-	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{
+	runtime := &fakeRuntime{source: authoring.AuthoredDashboardSource{
 		Document: document,
-		Metadata: projectartifact.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title},
+		Metadata: authoring.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title},
 		Path:     "projects/project/dashboards/project-sales.yaml",
 	}}
 	released := 0
@@ -281,7 +280,7 @@ func TestLoadProjectUsesOneActiveLeaseAndHasNoFakeRevision(t *testing.T) {
 }
 
 func TestMissingProjectSourceIsTypedUnavailableAndAuthPrecedesDisclosure(t *testing.T) {
-	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{Document: authoredDocument("other", "Other")}}
+	runtime := &fakeRuntime{source: authoring.AuthoredDashboardSource{Document: authoredDocument("other", "Other")}}
 	released := 0
 	authorizer := &fakeAuthorizer{}
 	identity, _ := projectgraph.NewServingIdentity("project", "production", "missing-state")
@@ -302,9 +301,9 @@ func TestMissingProjectSourceIsTypedUnavailableAndAuthPrecedesDisclosure(t *test
 
 func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *testing.T) {
 	document := authoredDocument("project-sales", "Project title")
-	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{
+	runtime := &fakeRuntime{source: authoring.AuthoredDashboardSource{
 		Document: document,
-		Metadata: projectartifact.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"},
+		Metadata: authoring.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"},
 		Path:     "dashboards/project-sales.yaml",
 	}}
 	repository := &fakeRepository{}
@@ -347,7 +346,7 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 
 func TestProjectForkReplaySkipsUnavailableSourceLoad(t *testing.T) {
 	document := authoredDocument("project-sales", "Project title")
-	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{Document: document, Metadata: projectartifact.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"}, Path: "dashboards/project-sales.yaml"}}
+	runtime := &fakeRuntime{source: authoring.AuthoredDashboardSource{Document: document, Metadata: authoring.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"}, Path: "dashboards/project-sales.yaml"}}
 	repository := &fakeRepository{}
 	authorizer := &fakeAuthorizer{}
 	authoringService := newAuthoringService(t, repository, authorizer)
@@ -408,7 +407,7 @@ func newAuthoringService(t *testing.T, repository *fakeRepository, authorizer *f
 
 type fakeCompiler struct{}
 
-func (fakeCompiler) Compile(context.Context, string, string, authoring.Dashboard) (service.Compilation, error) {
+func (fakeCompiler) Compile(context.Context, projectgraph.ResourceID, projectgraph.ResourceID, authoring.Dashboard) (service.Compilation, error) {
 	identity, _ := projectgraph.NewServingIdentity("project", "production", "unused")
 	return service.Compilation{Definition: dashboarddefinition.Definition{ID: "unused", SemanticModel: "sales"}, SemanticIdentity: identity}, nil
 }
@@ -417,7 +416,7 @@ func authoredDocument(id, title string) authoring.Dashboard {
 	page := dashboard.Page{ID: "overview", Title: "Overview", Canvas: dashboard.PageCanvas{Width: 1366, Height: 940}, Grid: dashboard.PageGrid{Columns: 12, RowHeight: 48, Gap: 16}}.WithDefaults()
 	page.Visuals = []dashboard.PageVisual{{ID: "revenue-tile", Kind: "visual", Visual: "revenue", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 6, RowSpan: 4}}}
 	return authoring.Dashboard{
-		ID: id, Title: title, SemanticModel: "sales",
+		ID: projectgraph.ResourceID(id), Title: title, SemanticModel: "sales",
 		Visuals: map[string]authoring.AuthoringVisualization{
 			"revenue": authoring.ChartVisualization(authoring.Visual{Title: "Revenue", Type: "line", Query: authoring.VisualQuery{
 				Dimensions: []authoring.FieldRef{{Field: "month", Alias: "month"}},
