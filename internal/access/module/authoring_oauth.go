@@ -34,9 +34,9 @@ func (m *Module) AuthoringDeviceAuthorization(w http.ResponseWriter, r *http.Req
 		writeAuthoringOAuthError(w, http.StatusBadRequest, "invalid_scope", err.Error())
 		return
 	}
-	scope, err := access.NewAuthoringScope(service.InstanceID(), graph.ResourceID(r.Form.Get("project_id")), capabilities)
+	scope, err := m.authoringOAuthScope(r.Context(), service.InstanceID(), r.Form.Get("project_id"), capabilities)
 	if err != nil {
-		writeAuthoringOAuthError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		writeAuthoringOAuthScopeError(w, err)
 		return
 	}
 	response, err := service.BeginDeviceAuthorization(r.Context(), scope)
@@ -80,7 +80,7 @@ func (m *Module) AuthoringOAuthToken(w http.ResponseWriter, r *http.Request) {
 		}
 		tokens, err = service.Refresh(r.Context(), r.Form.Get("refresh_token"))
 	case "client_credentials":
-		tokens, err = exchangeAuthoringClientCredentials(r, service)
+		tokens, err = m.exchangeAuthoringClientCredentials(r, service)
 	default:
 		writeAuthoringOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "unsupported authoring grant type")
 		return
@@ -125,14 +125,14 @@ func requireAuthoringCLIClient(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func exchangeAuthoringClientCredentials(r *http.Request, service authoringOAuthAuthentication) (access.AuthoringTokenSet, error) {
+func (m *Module) exchangeAuthoringClientCredentials(r *http.Request, service authoringOAuthAuthentication) (access.AuthoringTokenSet, error) {
 	capabilities, err := authoringOAuthCapabilities(r.Form.Get("scope"))
 	if err != nil {
 		return access.AuthoringTokenSet{}, fmt.Errorf("%w: %v", access.ErrAuthoringScopeDenied, err)
 	}
-	scope, err := access.NewAuthoringScope(service.InstanceID(), graph.ResourceID(r.Form.Get("project_id")), capabilities)
+	scope, err := m.authoringOAuthScope(r.Context(), service.InstanceID(), r.Form.Get("project_id"), capabilities)
 	if err != nil {
-		return access.AuthoringTokenSet{}, fmt.Errorf("%w: %v", access.ErrAuthoringScopeDenied, err)
+		return access.AuthoringTokenSet{}, err
 	}
 	lifetimeSeconds, err := strconv.ParseInt(r.Form.Get("lifetime_seconds"), 10, 64)
 	if err != nil || lifetimeSeconds <= 0 || lifetimeSeconds > math.MaxInt64/int64(time.Second) {
@@ -175,6 +175,37 @@ type authoringOAuthAuthentication interface {
 	Refresh(context.Context, string) (access.AuthoringTokenSet, error)
 	ExchangeWorkloadIdentity(context.Context, access.WorkloadIdentityInput) (access.AuthoringTokenSet, error)
 	RevokeAccessToken(context.Context, string) error
+}
+
+// authoringOAuthScope binds a requested scope to the immutable project served
+// by this instance. The project ID in an OAuth request is untrusted input: a
+// syntactically valid foreign ID must never reach an issuance service, since
+// those services persist the resulting scope.
+func (m *Module) authoringOAuthScope(ctx context.Context, targetID, requestedProjectID string, capabilities []access.Capability) (access.AuthoringScope, error) {
+	activeProjectID, err := m.CurrentProjectID(ctx)
+	if err != nil {
+		return access.AuthoringScope{}, fmt.Errorf("resolve active authoring project: %w", err)
+	}
+	if err := activeProjectID.Validate(); err != nil {
+		return access.AuthoringScope{}, fmt.Errorf("active authoring project is invalid: %w", err)
+	}
+	requested, err := graph.NewResourceID(requestedProjectID)
+	if err != nil || requested != activeProjectID {
+		return access.AuthoringScope{}, access.ErrAuthoringScopeDenied
+	}
+	scope, err := access.NewAuthoringScope(targetID, requested, capabilities)
+	if err != nil {
+		return access.AuthoringScope{}, fmt.Errorf("%w: %v", access.ErrAuthoringScopeDenied, err)
+	}
+	return scope, nil
+}
+
+func writeAuthoringOAuthScopeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, access.ErrAuthoringScopeDenied) {
+		writeAuthoringOAuthError(w, http.StatusBadRequest, "invalid_scope", "authoring scope was denied")
+		return
+	}
+	writeAuthoringOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "active authoring project is unavailable")
 }
 
 func (m *Module) authoringOAuthService(w http.ResponseWriter) (authoringOAuthAuthentication, bool) {
