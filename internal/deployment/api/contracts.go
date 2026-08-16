@@ -106,18 +106,19 @@ type ApprovalResponse struct {
 }
 
 type PublishEvidenceResponse struct {
-	ReleaseDigest     string                   `json:"releaseDigest"`
-	ArtifactDigest    string                   `json:"artifactDigest"`
-	PlanDigest        string                   `json:"planDigest"`
-	CandidateID       string                   `json:"candidateId"`
-	CandidateRevision int64                    `json:"candidateRevision"`
-	TargetID          string                   `json:"targetId"`
-	Environment       string                   `json:"environment"`
-	GenerationID      string                   `json:"generationId"`
-	BaseGenerationID  *string                  `json:"baseGenerationId,omitempty"`
-	RuntimeVersion    string                   `json:"runtimeVersion"`
-	PolicyDigest      string                   `json:"policyDigest"`
-	SourceRevision    *CandidateSourceRevision `json:"sourceRevision,omitempty"`
+	ReleaseDigest            string                   `json:"releaseDigest"`
+	ArtifactContentDigest    string                   `json:"artifactContentDigest"`
+	ArtifactProvenanceDigest string                   `json:"artifactProvenanceDigest"`
+	PlanDigest               string                   `json:"planDigest"`
+	CandidateID              string                   `json:"candidateId"`
+	CandidateRevision        int64                    `json:"candidateRevision"`
+	TargetID                 string                   `json:"targetId"`
+	Environment              string                   `json:"environment"`
+	GenerationID             string                   `json:"generationId"`
+	BaseGenerationID         *string                  `json:"baseGenerationId,omitempty"`
+	RuntimeVersion           string                   `json:"runtimeVersion"`
+	PolicyDigest             string                   `json:"policyDigest"`
+	SourceRevision           *CandidateSourceRevision `json:"sourceRevision,omitempty"`
 }
 
 type ManagedDataPinEvidence struct {

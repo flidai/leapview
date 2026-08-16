@@ -39,8 +39,25 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 	if r == nil || r.db == nil {
 		return release.Release{}, release.ErrInvalid
 	}
-	if input.Provenance == nil || input.ID == "" || input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" || digest.ValidateSHA256Identity(input.ProjectDigest) != nil || digest.ValidateSHA256Identity(input.ArtifactDigest) != nil || digest.ValidateSHA256Identity(input.RequestDigest) != nil {
+	identity, identityErr := input.Identity()
+	if identityErr != nil || input.Provenance == nil || input.ID == "" || digest.ValidateSHA256Identity(input.ProjectDigest) != nil || digest.ValidateSHA256Identity(input.ArtifactDigest) != nil || digest.ValidateSHA256Identity(input.RequestDigest) != nil {
 		return release.Release{}, release.ErrInvalid
+	}
+	if err := input.Provenance.Validate(); err != nil {
+		return release.Release{}, release.ErrInvalid
+	}
+	if input.Provenance.Plan.Identity != identity || input.Provenance.Artifact.ProjectDigest != input.ProjectDigest || input.Provenance.Artifact.ContentDigest != input.ArtifactDigest {
+		return release.Release{}, release.ErrInvalid
+	}
+	seenConnections := make(map[string]struct{}, len(input.Connections))
+	for _, pin := range input.Connections {
+		if pin.ConnectionID == "" || pin.RevisionID == "" {
+			return release.Release{}, release.ErrInvalid
+		}
+		if _, exists := seenConnections[pin.ConnectionID]; exists {
+			return release.Release{}, release.ErrInvalid
+		}
+		seenConnections[pin.ConnectionID] = struct{}{}
 	}
 	provenanceBytes, err := json.Marshal(input.Provenance)
 	if err != nil {

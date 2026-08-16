@@ -26,7 +26,7 @@ type ConnectionPin struct {
 type ProjectArtifactProvenance struct {
 	SourceDigest    string `json:"sourceDigest"`
 	ProjectDigest   string `json:"projectDigest"`
-	ArtifactDigest  string `json:"artifactDigest"`
+	ContentDigest   string `json:"contentDigest"`
 	CompilerVersion string `json:"compilerVersion"`
 	SchemaVersion   int32  `json:"schemaVersion"`
 }
@@ -67,6 +67,7 @@ type AuthoredConnectionEvidence struct {
 type GenerationPlanProvenance struct {
 	Identity            ServingIdentity              `json:"identity"`
 	BaseIdentity        *ServingIdentity             `json:"baseIdentity,omitempty"`
+	TargetID            string                       `json:"targetId"`
 	RuntimeVersion      string                       `json:"runtimeVersion"`
 	PolicyDigest        string                       `json:"policyDigest"`
 	DataRevision        string                       `json:"dataRevision"`
@@ -77,14 +78,14 @@ type GenerationPlanProvenance struct {
 }
 
 type Provenance struct {
-	Version        int32                     `json:"version"`
-	Artifact       ProjectArtifactProvenance `json:"artifact"`
-	Candidate      CandidateProvenance       `json:"candidate"`
-	SourceRevision *SourceRevisionProvenance `json:"sourceRevision,omitempty"`
-	Plan           GenerationPlanProvenance  `json:"plan"`
-	ArtifactDigest string                    `json:"artifactDigest"`
-	PlanDigest     string                    `json:"planDigest"`
-	Digest         string                    `json:"digest"`
+	Version                  int32                     `json:"version"`
+	Artifact                 ProjectArtifactProvenance `json:"artifact"`
+	Candidate                CandidateProvenance       `json:"candidate"`
+	SourceRevision           *SourceRevisionProvenance `json:"sourceRevision,omitempty"`
+	Plan                     GenerationPlanProvenance  `json:"plan"`
+	ArtifactProvenanceDigest string                    `json:"artifactProvenanceDigest"`
+	PlanDigest               string                    `json:"planDigest"`
+	Digest                   string                    `json:"digest"`
 }
 
 type CreateRequest struct {

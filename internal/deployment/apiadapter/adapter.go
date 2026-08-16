@@ -46,17 +46,18 @@ type CreateRequest struct {
 // generation submitted for publication. Resolved credentials and provider
 // references are deliberately excluded.
 type PublishEvidence struct {
-	ReleaseDigest     string `json:"releaseDigest"`
-	ArtifactDigest    string `json:"artifactDigest"`
-	PlanDigest        string `json:"planDigest"`
-	CandidateID       string `json:"candidateId"`
-	CandidateRevision int64  `json:"candidateRevision"`
-	TargetID          string `json:"targetId"`
-	Environment       string `json:"environment"`
-	GenerationID      string `json:"generationId"`
-	BaseGenerationID  string `json:"baseGenerationId,omitempty"`
-	RuntimeVersion    string `json:"runtimeVersion"`
-	PolicyDigest      string `json:"policyDigest"`
+	ReleaseDigest            string `json:"releaseDigest"`
+	ArtifactContentDigest    string `json:"artifactContentDigest"`
+	ArtifactProvenanceDigest string `json:"artifactProvenanceDigest"`
+	PlanDigest               string `json:"planDigest"`
+	CandidateID              string `json:"candidateId"`
+	CandidateRevision        int64  `json:"candidateRevision"`
+	TargetID                 string `json:"targetId"`
+	Environment              string `json:"environment"`
+	GenerationID             string `json:"generationId"`
+	BaseGenerationID         string `json:"baseGenerationId,omitempty"`
+	RuntimeVersion           string `json:"runtimeVersion"`
+	PolicyDigest             string `json:"policyDigest"`
 }
 
 type Scope struct {
@@ -190,10 +191,10 @@ func stableID(project, actor, key string) string {
 }
 
 func normalizePublishEvidence(evidence *PublishEvidence) error {
-	if evidence.ReleaseDigest != strings.TrimSpace(evidence.ReleaseDigest) || evidence.ArtifactDigest != strings.TrimSpace(evidence.ArtifactDigest) || evidence.PlanDigest != strings.TrimSpace(evidence.PlanDigest) || evidence.PolicyDigest != strings.TrimSpace(evidence.PolicyDigest) || evidence.CandidateID != strings.TrimSpace(evidence.CandidateID) || evidence.TargetID != strings.TrimSpace(evidence.TargetID) || evidence.Environment != strings.TrimSpace(evidence.Environment) || evidence.GenerationID != strings.TrimSpace(evidence.GenerationID) {
+	if evidence.ReleaseDigest != strings.TrimSpace(evidence.ReleaseDigest) || evidence.ArtifactContentDigest != strings.TrimSpace(evidence.ArtifactContentDigest) || evidence.ArtifactProvenanceDigest != strings.TrimSpace(evidence.ArtifactProvenanceDigest) || evidence.PlanDigest != strings.TrimSpace(evidence.PlanDigest) || evidence.PolicyDigest != strings.TrimSpace(evidence.PolicyDigest) || evidence.CandidateID != strings.TrimSpace(evidence.CandidateID) || evidence.TargetID != strings.TrimSpace(evidence.TargetID) || evidence.Environment != strings.TrimSpace(evidence.Environment) || evidence.GenerationID != strings.TrimSpace(evidence.GenerationID) {
 		return fmt.Errorf("%w: immutable publish evidence must be canonical", ErrInvalid)
 	}
-	if platformdigest.ValidateSHA256Identity(evidence.ReleaseDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.ArtifactDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.PlanDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.PolicyDigest) != nil || evidence.CandidateID == "" || evidence.CandidateRevision < 1 || evidence.TargetID == "" || evidence.Environment == "" || evidence.GenerationID == "" || evidence.RuntimeVersion == "" {
+	if platformdigest.ValidateSHA256Identity(evidence.ReleaseDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.ArtifactContentDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.ArtifactProvenanceDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.PlanDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.PolicyDigest) != nil || evidence.CandidateID == "" || evidence.CandidateRevision < 1 || evidence.TargetID == "" || evidence.Environment == "" || evidence.GenerationID == "" || evidence.RuntimeVersion == "" {
 		return fmt.Errorf("%w: immutable publish evidence is incomplete", ErrInvalid)
 	}
 	return nil

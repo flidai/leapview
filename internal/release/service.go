@@ -118,7 +118,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error
 	if err := input.Provenance.Validate(); err != nil {
 		return Release{}, fmt.Errorf("%w: provenance: %v", ErrInvalid, err)
 	}
-	if input.Provenance.Artifact.ProjectDigest != input.ProjectDigest || input.Provenance.Artifact.ArtifactDigest != input.ArtifactDigest || input.Provenance.Plan.Identity != identity {
+	if input.Provenance.Artifact.ProjectDigest != input.ProjectDigest || input.Provenance.Artifact.ContentDigest != input.ArtifactDigest || input.Provenance.Plan.Identity != identity {
 		return Release{}, fmt.Errorf("%w: provenance does not match project generation", ErrInvalid)
 	}
 	input.ID = stableID("rel", input.ProjectID, input.IdempotencyKey)

@@ -163,9 +163,7 @@ func publishEvidence(
 	instanceID,
 	environment string,
 ) (apiadapter.PublishEvidence, error) {
-	instanceID = strings.TrimSpace(instanceID)
-	environment = strings.TrimSpace(environment)
-	if targetRelease.Provenance == nil || targetRelease.ProjectID == "" || targetRelease.ProjectDigest == "" || targetRelease.ProjectDigest != targetRelease.Provenance.Artifact.ProjectDigest || targetRelease.Provenance.Plan.Identity.ProjectID.String() != targetRelease.ProjectID || targetRelease.Provenance.Plan.Identity.Environment != environment {
+	if instanceID != strings.TrimSpace(instanceID) || environment != strings.TrimSpace(environment) || targetRelease.Provenance == nil || targetRelease.ProjectID == "" || targetRelease.ProjectDigest == "" || targetRelease.ProjectDigest != targetRelease.Provenance.Artifact.ProjectDigest || targetRelease.Provenance.Plan.TargetID != instanceID || targetRelease.Provenance.Plan.Identity.ProjectID.String() != targetRelease.ProjectID || targetRelease.Provenance.Plan.Identity.Environment != environment {
 		return apiadapter.PublishEvidence{}, fmt.Errorf(
 			"%w: release provenance does not belong to this target",
 			deployment.ErrConflict,
@@ -178,24 +176,29 @@ func publishEvidence(
 			err,
 		)
 	}
-	if targetRelease.ActualDigest != targetRelease.ArtifactDigest || targetRelease.GenerationID != targetRelease.Provenance.Plan.Identity.GenerationID { return apiadapter.PublishEvidence{}, fmt.Errorf("%w: release generation artifact drifted", deployment.ErrConflict) }
+	if targetRelease.ActualDigest != targetRelease.ArtifactDigest || targetRelease.GenerationID != targetRelease.Provenance.Plan.Identity.GenerationID {
+		return apiadapter.PublishEvidence{}, fmt.Errorf("%w: release generation artifact drifted", deployment.ErrConflict)
+	}
 	return apiadapter.PublishEvidence{
-		ReleaseDigest:     targetRelease.Provenance.Digest,
-		ArtifactDigest:    targetRelease.Provenance.ArtifactDigest,
-		PlanDigest:        targetRelease.Provenance.PlanDigest,
-		CandidateID:       targetRelease.Provenance.Candidate.ID,
-		CandidateRevision: targetRelease.Provenance.Candidate.Revision,
-		TargetID:          instanceID,
-		Environment:       targetRelease.Provenance.Plan.Identity.Environment,
-		GenerationID:      targetRelease.Provenance.Plan.Identity.GenerationID,
-		BaseGenerationID:  baseGenerationID(targetRelease.Provenance.Plan.BaseIdentity),
-		RuntimeVersion:    targetRelease.Provenance.Plan.RuntimeVersion,
-		PolicyDigest:      targetRelease.Provenance.Plan.PolicyDigest,
+		ReleaseDigest:            targetRelease.Provenance.Digest,
+		ArtifactContentDigest:    targetRelease.ArtifactDigest,
+		ArtifactProvenanceDigest: targetRelease.Provenance.ArtifactProvenanceDigest,
+		PlanDigest:               targetRelease.Provenance.PlanDigest,
+		CandidateID:              targetRelease.Provenance.Candidate.ID,
+		CandidateRevision:        targetRelease.Provenance.Candidate.Revision,
+		TargetID:                 targetRelease.Provenance.Plan.TargetID,
+		Environment:              targetRelease.Provenance.Plan.Identity.Environment,
+		GenerationID:             targetRelease.Provenance.Plan.Identity.GenerationID,
+		BaseGenerationID:         baseGenerationID(targetRelease.Provenance.Plan.BaseIdentity),
+		RuntimeVersion:           targetRelease.Provenance.Plan.RuntimeVersion,
+		PolicyDigest:             targetRelease.Provenance.Plan.PolicyDigest,
 	}, nil
 }
 
 func baseGenerationID(identity *projectgraph.ServingIdentity) string {
-	if identity == nil { return "" }
+	if identity == nil {
+		return ""
+	}
 	return identity.GenerationID
 }
 
@@ -932,7 +935,9 @@ func deploymentResponse(
 		Evidence: publishEvidenceResponse(targetRelease), Status: status,
 		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt,
 	}
-	if row.PriorGenerationID != "" { result.PriorGenerationID = &row.PriorGenerationID }
+	if row.PriorGenerationID != "" {
+		result.PriorGenerationID = &row.PriorGenerationID
+	}
 	if row.ActivatedAt != "" {
 		result.StartedAt = &row.ActivatedAt
 		result.FinishedAt = &row.ActivatedAt
@@ -958,16 +963,17 @@ func publishEvidenceResponse(
 		return deploymentapi.PublishEvidenceResponse{}
 	}
 	response := deploymentapi.PublishEvidenceResponse{
-		ReleaseDigest:     targetRelease.Provenance.Digest,
-		ArtifactDigest:    targetRelease.Provenance.ArtifactDigest,
-		PlanDigest:        targetRelease.Provenance.PlanDigest,
-		CandidateID:       targetRelease.Provenance.Candidate.ID,
-		CandidateRevision: targetRelease.Provenance.Candidate.Revision,
-		TargetID:          "",
-		Environment:       targetRelease.Provenance.Plan.Identity.Environment,
-		GenerationID:      targetRelease.Provenance.Plan.Identity.GenerationID,
-		RuntimeVersion:    targetRelease.Provenance.Plan.RuntimeVersion,
-		PolicyDigest:      targetRelease.Provenance.Plan.PolicyDigest,
+		ReleaseDigest:            targetRelease.Provenance.Digest,
+		ArtifactContentDigest:    targetRelease.ArtifactDigest,
+		ArtifactProvenanceDigest: targetRelease.Provenance.ArtifactProvenanceDigest,
+		PlanDigest:               targetRelease.Provenance.PlanDigest,
+		CandidateID:              targetRelease.Provenance.Candidate.ID,
+		CandidateRevision:        targetRelease.Provenance.Candidate.Revision,
+		TargetID:                 targetRelease.Provenance.Plan.TargetID,
+		Environment:              targetRelease.Provenance.Plan.Identity.Environment,
+		GenerationID:             targetRelease.Provenance.Plan.Identity.GenerationID,
+		RuntimeVersion:           targetRelease.Provenance.Plan.RuntimeVersion,
+		PolicyDigest:             targetRelease.Provenance.Plan.PolicyDigest,
 	}
 	if source := targetRelease.Provenance.SourceRevision; source != nil {
 		response.SourceRevision = &deploymentapi.CandidateSourceRevision{

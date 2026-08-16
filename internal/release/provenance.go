@@ -65,7 +65,7 @@ const (
 type ProjectArtifactProvenance struct {
 	SourceDigest    string `json:"sourceDigest"`
 	ProjectDigest   string `json:"projectDigest"`
-	ArtifactDigest  string `json:"artifactDigest"`
+	ContentDigest   string `json:"contentDigest"`
 	CompilerVersion string `json:"compilerVersion"`
 	SchemaVersion   int    `json:"schemaVersion"`
 }
@@ -75,6 +75,7 @@ type ProjectArtifactProvenance struct {
 type GenerationPlanProvenance struct {
 	Identity            projectgraph.ServingIdentity  `json:"identity"`
 	BaseIdentity        *projectgraph.ServingIdentity `json:"baseIdentity,omitempty"`
+	TargetID            string                        `json:"targetId"`
 	RuntimeVersion      string                        `json:"runtimeVersion"`
 	PolicyDigest        string                        `json:"policyDigest"`
 	DataRevision        string                        `json:"dataRevision"`
@@ -92,14 +93,14 @@ type ProvenanceInput struct {
 }
 
 type Provenance struct {
-	Version        int                       `json:"version"`
-	Artifact       ProjectArtifactProvenance `json:"artifact"`
-	Candidate      CandidateProvenance       `json:"candidate"`
-	SourceRevision *SourceRevisionProvenance `json:"sourceRevision,omitempty"`
-	Plan           GenerationPlanProvenance  `json:"plan"`
-	ArtifactDigest string                    `json:"artifactDigest"`
-	PlanDigest     string                    `json:"planDigest"`
-	Digest         string                    `json:"digest"`
+	Version                  int                       `json:"version"`
+	Artifact                 ProjectArtifactProvenance `json:"artifact"`
+	Candidate                CandidateProvenance       `json:"candidate"`
+	SourceRevision           *SourceRevisionProvenance `json:"sourceRevision,omitempty"`
+	Plan                     GenerationPlanProvenance  `json:"plan"`
+	ArtifactProvenanceDigest string                    `json:"artifactProvenanceDigest"`
+	PlanDigest               string                    `json:"planDigest"`
+	Digest                   string                    `json:"digest"`
 }
 
 func NewProvenance(input ProvenanceInput) (Provenance, error) {
@@ -132,14 +133,14 @@ func NewProvenance(input ProvenanceInput) (Provenance, error) {
 		return Provenance{}, provenanceInvalid(err)
 	}
 	digest, err := canonicalDigest(struct {
-		Version        int    `json:"version"`
-		ArtifactDigest string `json:"artifactDigest"`
-		PlanDigest     string `json:"planDigest"`
+		Version                  int    `json:"version"`
+		ArtifactProvenanceDigest string `json:"artifactProvenanceDigest"`
+		PlanDigest               string `json:"planDigest"`
 	}{ProvenanceVersion, artifactDigest, planDigest})
 	if err != nil {
 		return Provenance{}, provenanceInvalid(err)
 	}
-	return Provenance{Version: ProvenanceVersion, Artifact: artifact, Candidate: candidate, SourceRevision: source, Plan: plan, ArtifactDigest: artifactDigest, PlanDigest: planDigest, Digest: digest}, nil
+	return Provenance{Version: ProvenanceVersion, Artifact: artifact, Candidate: candidate, SourceRevision: source, Plan: plan, ArtifactProvenanceDigest: artifactDigest, PlanDigest: planDigest, Digest: digest}, nil
 }
 
 func (p Provenance) Validate() error {
@@ -150,7 +151,7 @@ func (p Provenance) Validate() error {
 	if err != nil {
 		return err
 	}
-	if p.ArtifactDigest != expected.ArtifactDigest || p.PlanDigest != expected.PlanDigest || p.Digest != expected.Digest {
+	if p.ArtifactProvenanceDigest != expected.ArtifactProvenanceDigest || p.PlanDigest != expected.PlanDigest || p.Digest != expected.Digest {
 		return provenanceInvalid(errors.New("content digest mismatch"))
 	}
 	return nil
@@ -180,10 +181,10 @@ func NormalizeSourceRevisionProvenance(value *SourceRevisionProvenance) (*Source
 }
 
 func normalizeProjectArtifactProvenance(a ProjectArtifactProvenance) (ProjectArtifactProvenance, error) {
-	if !canonicalLiteral(a.SourceDigest) || !canonicalLiteral(a.ProjectDigest) || !canonicalLiteral(a.ArtifactDigest) || !canonicalLiteral(a.CompilerVersion) {
+	if !canonicalLiteral(a.SourceDigest) || !canonicalLiteral(a.ProjectDigest) || !canonicalLiteral(a.ContentDigest) || !canonicalLiteral(a.CompilerVersion) {
 		return ProjectArtifactProvenance{}, provenanceInvalid(errors.New("artifact provenance literals must be canonical"))
 	}
-	if platformdigest.ValidateSHA256Identity(a.SourceDigest) != nil || platformdigest.ValidateSHA256Identity(a.ProjectDigest) != nil || platformdigest.ValidateSHA256Identity(a.ArtifactDigest) != nil || a.CompilerVersion == "" || a.SchemaVersion < 1 {
+	if platformdigest.ValidateSHA256Identity(a.SourceDigest) != nil || platformdigest.ValidateSHA256Identity(a.ProjectDigest) != nil || platformdigest.ValidateSHA256Identity(a.ContentDigest) != nil || a.CompilerVersion == "" || a.SchemaVersion < 1 {
 		return ProjectArtifactProvenance{}, provenanceInvalid(errors.New("source, project, artifact, compiler, and schema are required"))
 	}
 	return a, nil
@@ -218,7 +219,7 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 	if !canonicalLiteral(p.RuntimeVersion) || !canonicalLiteral(p.PolicyDigest) || !canonicalLiteral(p.DataRevision) {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("generation plan literals must be canonical"))
 	}
-	if p.RuntimeVersion == "" || platformdigest.ValidateSHA256Identity(p.PolicyDigest) != nil || p.DataRevision == "" || artifact.ArtifactDigest == "" {
+	if validateOperationalID(p.TargetID) != nil || p.RuntimeVersion == "" || platformdigest.ValidateSHA256Identity(p.PolicyDigest) != nil || p.DataRevision == "" || artifact.ContentDigest == "" {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("runtime, policy, data, and artifact evidence are required"))
 	}
 	if p.DataMode != GenerationDataReuseSnapshot && p.DataMode != GenerationDataRefreshSources {
