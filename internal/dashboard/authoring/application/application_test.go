@@ -19,10 +19,9 @@ import (
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
-	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 var applicationTestTime = time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
@@ -63,7 +62,7 @@ func TestCreateAndExecuteDelegateToTransactionalService(t *testing.T) {
 	})
 
 	created, err := app.Create(context.Background(), authoringservice.CreateRequest{
-		ProjectID: " project ", ActorID: "actor", OwnerPrincipalID: "owner",
+		ProjectID: "project", ActorID: "actor", OwnerPrincipalID: "owner",
 		Title: "Orders", Slug: "orders", SemanticModel: "sales", Origin: authoring.OriginUI,
 	})
 	if err != nil {
@@ -79,7 +78,7 @@ func TestCreateAndExecuteDelegateToTransactionalService(t *testing.T) {
 		ExpectedRevision: created.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"},
 		Metadata: &authoring.MetadataPatch{Title: &title},
 	}
-	updated, err := app.Execute(context.Background(), " project ", command)
+	updated, err := app.Execute(context.Background(), "project", command)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,25 +92,29 @@ func TestCatalogOperationsUseRequestedProjectAndOneLeaseEach(t *testing.T) {
 	authorizer := &fakeAuthorizer{}
 	var acquired []string
 	var leases []*fakeLease
+	projects := []string{"sales", "finance"}
 	app := newApplication(t, repository, authorizer, func(_ context.Context) (runtimehost.Lease, error) {
-		project := "project"
+		if len(projects) == 0 {
+			return nil, errors.New("unexpected runtime acquisition")
+		}
+		project := projects[0]
+		projects = projects[1:]
 		acquired = append(acquired, project)
-		lease := &fakeLease{runtime: &catalogRuntime{catalog: dashboardcatalog.Catalog{
-			Project:    dashboardcatalog.Project{ID: project},
+		lease := newFakeLease(t, projectgraph.ResourceID(project), &catalogRuntime{catalog: dashboardcatalog.Catalog{
 			Dashboards: []dashboardcatalog.Dashboard{{ID: project + "-sales", Title: project + " sales", SemanticModel: "sales"}},
-		}}, servingState: servingstate.ID("state-" + project)}
+		}})
 		leases = append(leases, lease)
 		return lease, nil
 	})
 
-	listed, err := app.List(context.Background(), catalog.ListRequest{ProjectID: " sales ", ActorID: "actor"})
+	listed, err := app.List(context.Background(), catalog.ListRequest{ProjectID: "sales", ActorID: "actor"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if listed.Count != 1 || listed.Items[0].ProjectID != "sales" {
 		t.Fatalf("catalog list = %#v", listed)
 	}
-	got, err := app.Get(context.Background(), catalog.GetRequest{ProjectID: " finance ", ActorID: "actor", DashboardID: "finance-sales"})
+	got, err := app.Get(context.Background(), catalog.GetRequest{ProjectID: "finance", ActorID: "actor", DashboardID: "finance-sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +133,7 @@ func TestPreviewUsesRequestedProjectAndOneLease(t *testing.T) {
 	repository, lifecycle, revision := previewRepository(t)
 	authorizer := &fakeAuthorizer{}
 	var acquired string
-	lease := &fakeLease{runtime: &previewRuntime{model: previewModel()}, servingState: "serving-sales"}
+	lease := newFakeLease(t, "project", &previewRuntime{model: previewModel()})
 	app := newApplication(t, repository, authorizer, func(_ context.Context) (runtimehost.Lease, error) {
 		project := "project"
 		acquired = project
@@ -138,7 +141,7 @@ func TestPreviewUsesRequestedProjectAndOneLease(t *testing.T) {
 	})
 
 	result, err := app.Preview(context.Background(), previewservice.PreviewRequest{
-		ProjectID: " project ", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		DraftID: "preview-draft", ExpectedRevision: revision.Token(), PageID: "overview",
 	})
 	if err != nil {
@@ -152,34 +155,39 @@ func TestPreviewUsesRequestedProjectAndOneLease(t *testing.T) {
 func TestProjectExportNormalizesSourceProjectAndDoesNotCrossProject(t *testing.T) {
 	repository := newRepository()
 	authorizer := &fakeAuthorizer{}
-	sources := map[string]projectartifact.AuthoredDashboardSource{
+	sources := map[string]authoring.AuthoredDashboardSource{
 		"sales": {
 			Document: exportDocument("sales-dashboard", "Sales"),
-			Metadata: projectartifact.AuthoredDashboardMetadata{Project: "sales", Name: "sales-dashboard", Title: "Sales"},
+			Metadata: authoring.AuthoredDashboardMetadata{Project: "sales", Name: "sales-dashboard", Title: "Sales"},
 		},
 		"finance": {
 			Document: exportDocument("finance-dashboard", "Finance"),
-			Metadata: projectartifact.AuthoredDashboardMetadata{Project: "finance", Name: "finance-dashboard", Title: "Finance"},
+			Metadata: authoring.AuthoredDashboardMetadata{Project: "finance", Name: "finance-dashboard", Title: "Finance"},
 		},
 	}
 	var acquired []string
 	var leases []*fakeLease
+	projects := []string{"sales", "finance"}
 	app := newApplication(t, repository, authorizer, func(_ context.Context) (runtimehost.Lease, error) {
-		project := "project"
+		if len(projects) == 0 {
+			return nil, errors.New("unexpected runtime acquisition")
+		}
+		project := projects[0]
+		projects = projects[1:]
 		acquired = append(acquired, project)
-		lease := &fakeLease{runtime: &sourceRuntime{source: sources[project]}, servingState: servingstate.ID("state-" + project)}
+		lease := newFakeLease(t, projectgraph.ResourceID(project), &sourceRuntime{source: sources[project]})
 		leases = append(leases, lease)
 		return lease, nil
 	})
 
 	sales, err := app.ExportYAML(context.Background(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: " sales ", DashboardID: "sales-dashboard"}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "sales", DashboardID: "sales-dashboard"}, ActorID: "actor",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	finance, err := app.ExportYAML(context.Background(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: " finance ", DashboardID: "finance-dashboard"}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "finance", DashboardID: "finance-dashboard"}, ActorID: "actor",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +215,7 @@ func TestDraftExportNormalizesProjectAndUsesCurrentLifecycleDraft(t *testing.T) 
 	})
 
 	exported, err := app.ExportDraftYAML(context.Background(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: " project ", DashboardID: lifecycle.ID}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: lifecycle.ID}, ActorID: "actor",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +232,7 @@ func TestProjectForkRejectsCrossProjectTarget(t *testing.T) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 	_, err := app.Fork(context.Background(), sourceadapter.ForkRequest{
-		Source:          sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: " project ", DashboardID: "sales"},
+		Source:          sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: "sales"},
 		TargetProjectID: "other", ActorID: "actor",
 	})
 	if err == nil || !strings.Contains(err.Error(), "must remain in the source project") {
@@ -274,7 +282,7 @@ func TestExecuteIntentAuthorizesBeforeDraftRevisionAndRuntimeReads(t *testing.T)
 func TestExecuteIntentAssignFieldUsesOneLeaseAndGovernedRole(t *testing.T) {
 	repository, lifecycle, revision := previewRepository(t)
 	authorizer := &recordingAuthorizer{}
-	lease := &fakeLease{runtime: &previewRuntime{model: previewModel()}, servingState: "state-sales"}
+	lease := newFakeLease(t, "project", &previewRuntime{model: previewModel()})
 	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMeasure})
 	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command}); err != nil {
@@ -323,7 +331,7 @@ func TestExecuteIntentAssignFieldInfersTableAndCompilesTableVisual(t *testing.T)
 	model.Tables["customers"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
 		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
 	}}
-	lease := &fakeLease{runtime: &previewRuntime{model: model}, servingState: "state-sales"}
+	lease := newFakeLease(t, "project", &previewRuntime{model: model})
 	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-customers-field", &authoring.AssignFieldPayload{
 		PageID: "overview", VisualID: "orders", FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
@@ -370,7 +378,7 @@ func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 	model.Tables["customers"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
 		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
 	}}
-	lease := &fakeLease{runtime: &previewRuntime{model: model}, servingState: "state-sales"}
+	lease := newFakeLease(t, "project", &previewRuntime{model: model})
 	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 
 	pageResult, err := app.ExecuteIntent(context.Background(), application.IntentRequest{
@@ -410,7 +418,7 @@ func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := app.ExportDraftYAML(context.Background(), sourceadapter.ExportRequest{
-		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: lifecycle.ID}, ActorID: "actor",
+		Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: lifecycle.ID}, ActorID: "actor",
 	}); err != nil {
 		t.Fatalf("export server-generated builder IDs: %v", err)
 	}
@@ -425,7 +433,7 @@ func TestExecuteIntentAssignFieldDoesNotRewriteExistingFactForAnotherGovernedTab
 	model.Tables["customers"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
 		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
 	}}
-	lease := &fakeLease{runtime: &previewRuntime{model: model}, servingState: "state-sales"}
+	lease := newFakeLease(t, "project", &previewRuntime{model: model})
 	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-cross-table-field", &authoring.AssignFieldPayload{
 		PageID: "overview", VisualID: "orders", FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
@@ -495,8 +503,8 @@ func newAuthoringService(t *testing.T, repository *fakeRepository, authorizer au
 
 type fakeCompiler struct{}
 
-func (fakeCompiler) Compile(_ context.Context, _ string, _ string, document authoring.Dashboard) (authoringservice.Compilation, error) {
-	return authoringservice.Compilation{Definition: dashboarddefinition.Definition{ID: document.ID, Title: document.Title, SemanticModel: document.SemanticModel}}, nil
+func (fakeCompiler) Compile(_ context.Context, _ projectgraph.ResourceID, _ projectgraph.ResourceID, document authoring.Dashboard) (authoringservice.Compilation, error) {
+	return authoringservice.Compilation{Definition: dashboarddefinition.Definition{ID: document.ID.String(), Title: document.Title, SemanticModel: document.SemanticModel.String()}}, nil
 }
 
 type fakeAuthorizer struct{ err error }
@@ -526,14 +534,14 @@ func (r *fakeRepository) Create(_ context.Context, input authoring.CreateInput) 
 	r.revisions[input.Revision.ID] = input.Revision
 	return input.Lifecycle, nil
 }
-func (r *fakeRepository) Get(_ context.Context, _ string, id authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) Get(_ context.Context, _ projectgraph.ResourceID, id authoring.DashboardID) (authoring.DashboardLifecycle, error) {
 	lifecycle, ok := r.lifecycles[id]
 	if !ok {
 		return authoring.DashboardLifecycle{}, authoring.ErrNotFound
 	}
 	return lifecycle, nil
 }
-func (r *fakeRepository) List(_ context.Context, project string) ([]authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) List(_ context.Context, project projectgraph.ResourceID) ([]authoring.DashboardLifecycle, error) {
 	items := make([]authoring.DashboardLifecycle, 0, len(r.lifecycles))
 	for _, lifecycle := range r.lifecycles {
 		if lifecycle.ProjectID == project {
@@ -542,10 +550,10 @@ func (r *fakeRepository) List(_ context.Context, project string) ([]authoring.Da
 	}
 	return items, nil
 }
-func (r *fakeRepository) CountBySemanticModel(context.Context, string) ([]authoring.SemanticModelUsage, error) {
+func (r *fakeRepository) CountBySemanticModel(context.Context, projectgraph.ResourceID) ([]authoring.SemanticModelUsage, error) {
 	return nil, nil
 }
-func (r *fakeRepository) GetRevision(_ context.Context, _ string, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
+func (r *fakeRepository) GetRevision(_ context.Context, _ projectgraph.ResourceID, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
 	r.getRevisionCalls++
 	revision, ok := r.revisions[id]
 	if !ok {
@@ -553,7 +561,7 @@ func (r *fakeRepository) GetRevision(_ context.Context, _ string, _ authoring.Da
 	}
 	return revision, nil
 }
-func (r *fakeRepository) LookupCommandResult(_ context.Context, _ string, _ authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
+func (r *fakeRepository) LookupCommandResult(_ context.Context, _ projectgraph.ResourceID, _ authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
 	result, ok := r.commands[evidence.ID]
 	return result, ok, nil
 }
@@ -574,7 +582,7 @@ func (r *fakeRepository) Publish(context.Context, authoring.PublishInput) (autho
 func (r *fakeRepository) Archive(context.Context, authoring.ArchiveInput) (authoring.DashboardLifecycle, error) {
 	return authoring.DashboardLifecycle{}, errors.New("unexpected archive")
 }
-func (r *fakeRepository) GetPublishedCompilation(context.Context, string, authoring.DashboardID) (authoring.CompiledRevision, error) {
+func (r *fakeRepository) GetPublishedCompilation(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	return authoring.CompiledRevision{}, authoring.ErrNotFound
 }
 
@@ -611,7 +619,7 @@ func authoredDocumentWithField(id, title, measureField string) authoring.Dashboa
 	page := dashboard.Page{ID: "overview", Title: "Overview", Canvas: dashboard.PageCanvas{Width: 1366, Height: 940}, Grid: dashboard.PageGrid{Columns: 12, RowHeight: 48, Gap: 16}}.WithDefaults()
 	page.Visuals = []dashboard.PageVisual{{ID: "orders", Kind: "visual", Visual: "orders", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 4, RowSpan: 4}}}
 	return authoring.Dashboard{
-		ID: id, Title: title, SemanticModel: "sales",
+		ID: projectgraph.ResourceID(id), Title: title, SemanticModel: "sales",
 		Visuals: authoring.TabularVisualizations("table", map[string]authoring.TableVisual{
 			"orders": {Title: "Orders", Query: authoring.TableQuery{Table: "orders", Fields: []string{"orders.status", measureField}}},
 		}),
@@ -631,14 +639,22 @@ func previewModel() *semanticmodel.Model {
 
 type fakeLease struct {
 	runtime      runtimehost.Runtime
-	servingState servingstate.ID
+	identity     projectgraph.ServingIdentity
 	releaseCalls int
 }
 
-func (l *fakeLease) Runtime() runtimehost.Runtime    { return l.runtime }
-func (l *fakeLease) ServingStateID() servingstate.ID { return l.servingState }
-func (l *fakeLease) DuckLakeSnapshotID() int64       { return 42 }
-func (l *fakeLease) Release()                        { l.releaseCalls++ }
+func (l *fakeLease) Runtime() runtimehost.Runtime           { return l.runtime }
+func (l *fakeLease) Identity() projectgraph.ServingIdentity { return l.identity }
+func (l *fakeLease) Release()                               { l.releaseCalls++ }
+
+func newFakeLease(t *testing.T, projectID projectgraph.ResourceID, runtime runtimehost.Runtime) *fakeLease {
+	t.Helper()
+	identity, err := projectgraph.NewServingIdentity(projectID, "production", "state-"+projectID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fakeLease{runtime: runtime, identity: identity}
+}
 
 type catalogRuntime struct{ catalog dashboardcatalog.Catalog }
 
@@ -646,13 +662,13 @@ func (r *catalogRuntime) Close() error                      { return nil }
 func (r *catalogRuntime) Catalog() dashboardcatalog.Catalog { return r.catalog }
 
 type sourceRuntime struct {
-	source projectartifact.AuthoredDashboardSource
+	source authoring.AuthoredDashboardSource
 }
 
 func (r *sourceRuntime) Close() error { return nil }
-func (r *sourceRuntime) AuthoredDashboardSource(id string) (projectartifact.AuthoredDashboardSource, bool) {
-	if r.source.Document.ID != id {
-		return projectartifact.AuthoredDashboardSource{}, false
+func (r *sourceRuntime) AuthoredDashboardSource(id string) (authoring.AuthoredDashboardSource, bool) {
+	if r.source.Document.ID.String() != id {
+		return authoring.AuthoredDashboardSource{}, false
 	}
 	return r.source, true
 }
@@ -660,8 +676,8 @@ func (r *sourceRuntime) AuthoredDashboardSource(id string) (projectartifact.Auth
 type previewRuntime struct{ model *semanticmodel.Model }
 
 func (r *previewRuntime) Close() error { return nil }
-func (r *previewRuntime) SemanticModelProjection(id string) (*semanticmodel.Model, bool) {
-	if r.model == nil || r.model.Name != id {
+func (r *previewRuntime) SemanticModelProjection(id projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	if r.model == nil || r.model.Name != id.String() {
 		return nil, false
 	}
 	copy := *r.model
