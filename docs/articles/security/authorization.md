@@ -37,16 +37,16 @@ Use a Grant when one subject needs one privilege on a specific securable object 
 apiVersion: leapview.dev/v1
 kind: Grant
 metadata:
-  id: grant:analysts-audit-view
-  name: analysts-audit-view
+  id: grant:analysts-dashboard-read
+  name: analysts-dashboard-read
 spec:
   object:
-    kind: project
-    id: project:commerce
+    kind: dashboard
+    id: dashboard:executive
   subject:
     kind: group
     group: analysts
-  privilege: VIEW_AUDIT
+  privilege: RESOURCE_READ
 ```
 
 Choose the narrowest object and privilege that supports the task. Avoid accumulating one-off direct user grants; they are harder to review and can survive team changes.

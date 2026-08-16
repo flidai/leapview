@@ -1124,14 +1124,14 @@ func TestSiteAPIReferenceIsGeneratedFromOpenAPI(t *testing.T) {
 
 	response, err := server.Client().Get(server.URL + "/docs/api/projects")
 	if err != nil {
-		t.Fatalf("get API project reference: %v", err)
+		t.Fatalf("get API reference: %v", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("API reference status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 	body := readBody(t, response)
-	for _, want := range []string{"<title>Projects</title>", `<h1 id="projects">Projects</h1>`, "Active project graph assertion", "<code>GET /api/v1/projects/"} {
+	for _, want := range []string{"<title>Projects</title>", `<h1 id="projects">Projects</h1>`, "Get a materialized project", "<code>GET /api/v1/projects/{project}"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("API reference missing %q:\n%s", want, body)
 		}

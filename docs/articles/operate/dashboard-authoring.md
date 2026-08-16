@@ -107,11 +107,11 @@ The generated API is rooted at `/api/v1/projects/{project}/authoring`. Authentic
 
 | Method and path | Purpose and access |
 | --- | --- |
-| `GET /api/v1/projects/{project}/authoring/catalog` | List governed dashboard identities (`VIEW_ITEM`). |
-| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}` | Read one dashboard summary (`VIEW_ITEM`). |
-| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}/draft` | Read the current private draft, lifecycle pointer, document, and exact revision (`EDIT_ITEM`). |
-| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}/drafts/{draft}/revisions/{revision}` | Read that exact current draft revision (`EDIT_ITEM`); the draft and revision path values must match. |
-| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}/revisions/{revision}` | Read that exact published revision (`VIEW_ITEM`); this path never means “latest draft.” |
+| `GET /api/v1/projects/{project}/authoring/catalog` | List governed dashboard identities (`RESOURCE_READ`). |
+| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}` | Read one dashboard summary (`RESOURCE_READ`). |
+| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}/draft` | Read the current private draft, lifecycle pointer, document, and exact revision (`RESOURCE_EDIT`). |
+| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}/drafts/{draft}/revisions/{revision}` | Read that exact current draft revision (`RESOURCE_EDIT`); the draft and revision path values must match. |
+| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}/revisions/{revision}` | Read that exact published revision (`RESOURCE_READ`); this path never means “latest draft.” |
 | `POST /api/v1/projects/{project}/authoring/drafts` | Create one named private draft. |
 | `POST /api/v1/projects/{project}/authoring/commands` | Apply one closed command: one builder intent, `publish`, or `archive`. |
 | `POST /api/v1/projects/{project}/authoring/forks` | Fork a retained project source into a new private draft. |

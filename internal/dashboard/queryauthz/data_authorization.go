@@ -186,7 +186,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	capabilityAction := dataQueryCapability(request)
 	if candidateQuery {
 		// Candidate execution is always preview, even when it renders a normal
-		// dashboard interaction whose production equivalent uses QUERY_DATA.
+		// dashboard interaction whose production equivalent uses RESOURCE_USE.
 		capabilityAction = access.CapabilityResourceRead
 	}
 	objects := m.dataQueryObjects(resourceIndex, request)

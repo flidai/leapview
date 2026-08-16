@@ -392,7 +392,7 @@ model InvalidDeploymentFailure {}
   kind: "publication_forbidden",
   statusCode: 403,
   code: "PUBLICATION_MANAGEMENT_REQUIRED",
-  publicDetail: "MANAGE_PUBLICATIONS is required to activate this publication.",
+  publicDetail: "PROJECT_ADMIN is required to activate this publication.",
 })
 model PublicationManagementRequiredFailure {}
 

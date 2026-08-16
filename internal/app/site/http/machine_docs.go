@@ -55,7 +55,7 @@ type machineAgentTool struct {
 	Name         string                 `json:"name"`
 	Description  string                 `json:"description"`
 	AuthzMode    string                 `json:"authzMode"`
-	Privilege    string                 `json:"privilege"`
+	Privilege    string                 `json:"privilege,omitempty"`
 	Effect       string                 `json:"effect"`
 	OperationID  string                 `json:"operationId"`
 	Defaults     map[string]any         `json:"defaults"`
@@ -254,7 +254,7 @@ func renderMachineAgentTool(tool machineAgentTool) string {
 	if tool.AuthzMode == "authenticated" {
 		out.WriteString("- Authorization: `authenticated`\n")
 	} else {
-		out.WriteString("- Required privilege: `" + tool.Privilege + "`\n")
+		out.WriteString("- Required capability: `" + tool.Privilege + "`\n")
 	}
 	out.WriteString("- Effect: `" + tool.Effect + "`\n")
 	out.WriteString("- Operation: `" + tool.OperationID + "`\n")

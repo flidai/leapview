@@ -52,7 +52,7 @@ Publication subjects are supported only by data policies, not role bindings or g
 
 ## Operate publications
 
-Users with `MANAGE_PUBLICATIONS` can use **Admin → Publications** or the dashboard-publication API to copy URLs, inspect origins and history, suspend, resume, or rotate a public ID. Owner, admin, and platform-admin roles receive this privilege by default.
+Users with `RESOURCE_PUBLISH` on the governed dashboard can use **Admin → Publications** or the dashboard-publication API to copy URLs, inspect origins and history, suspend, resume, or rotate a public ID. Project administrators and other principals with this dashboard capability can manage publications.
 
 - Suspension immediately makes documents and commands unavailable and terminates active streams.
 - Resume succeeds only while the publication remains in the active production configuration.

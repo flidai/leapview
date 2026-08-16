@@ -157,7 +157,7 @@ func renderIndex(tools []agenttools.ToolReference) string {
 	out.WriteString("Machine-readable: [complete tool manifest](/docs/agent-tools/manifest.json). Focused JSON and Markdown slices are available at `/docs/agent-tools/tools/{name}.json` and `.md`.\n\n")
 	out.WriteString("## Tools\n\n| Tool | Authorization | Effect | Description |\n| --- | --- | --- | --- |\n")
 	for _, tool := range tools {
-		out.WriteString("| [`" + tool.Name + "`](/docs/agent-tools/" + tool.Name + ") | `" + authorizationLabel(tool) + "` | `" + tool.Effect + "` | " + escapeTable(firstSentence(tool.Description)) + " |\n")
+		out.WriteString("| [`" + tool.Name + "`](/docs/agent-tools/" + tool.Name + ") | `" + toolAuthorization(tool) + "` | `" + tool.Effect + "` | " + escapeTable(firstSentence(tool.Description)) + " |\n")
 	}
 	return out.String()
 }
@@ -168,11 +168,7 @@ func renderTool(tool agenttools.ToolReference) string {
 	out.WriteString(strings.TrimSpace(tool.Description) + "\n\n")
 	out.WriteString("Machine-readable: [focused JSON](/docs/agent-tools/tools/" + tool.Name + ".json) · [complete manifest](/docs/agent-tools/manifest.json)\n\n")
 	out.WriteString("## Contract\n\n| Property | Value |\n| --- | --- |\n")
-	if tool.AuthzMode == "authenticated" {
-		out.WriteString("| Authorization | `authenticated` |\n")
-	} else {
-		out.WriteString("| Required privilege | `" + tool.Privilege + "` |\n")
-	}
+	out.WriteString("| Authorization | `" + toolAuthorization(tool) + "` |\n")
 	out.WriteString("| Effect | `" + tool.Effect + "` |\n")
 	out.WriteString("| Operation | `" + tool.OperationID + "` |\n")
 	out.WriteString("| Tags | " + codeList(tool.Tags) + " |\n")
@@ -183,7 +179,7 @@ func renderTool(tool agenttools.ToolReference) string {
 	return out.String()
 }
 
-func authorizationLabel(tool agenttools.ToolReference) string {
+func toolAuthorization(tool agenttools.ToolReference) string {
 	if tool.AuthzMode == "authenticated" {
 		return "authenticated"
 	}
