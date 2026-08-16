@@ -1,4 +1,4 @@
-// Package deployment coordinates project-scoped atomic serving-state cutovers.
+// Package deployment coordinates one project-generation cutover.
 package deployment
 
 import (
@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -24,18 +26,13 @@ const (
 	StatusSuperseded Status = "superseded"
 )
 
-type TargetStatus string
-
-const (
-	TargetStatusPending TargetStatus = "pending"
-	TargetStatusActive  TargetStatus = "active"
-	TargetStatusFailed  TargetStatus = "failed"
-)
-
 type Deployment struct {
 	ID                  string
 	ProjectID           string
 	Environment         string
+	GenerationID        string
+	ArtifactDigest      string
+	PriorGenerationID   string
 	RequestDigest       string
 	Status              Status
 	CreatedBy           string
@@ -45,89 +42,72 @@ type Deployment struct {
 	VerificationDigest  string
 	VerifiedAt          string
 	Error               string
-	Targets             []Target
-	Connections         []ConnectionPointer
-}
-
-type Target struct {
-	DeploymentID        string
-	WorkspaceID         string
-	ServingStateID      string
-	PriorServingStateID string
-	Status              TargetStatus
-	ActivatedAt         string
-	Error               string
-}
-
-type ConnectionPointer struct {
-	DeploymentID        string
-	CollectionID        string
-	RevisionID          string
-	PriorRevisionID     string
-	PriorGeneration     int64
-	ActivatedGeneration int64
-}
-
-type TargetInput struct {
-	WorkspaceID    string
-	ServingStateID string
 }
 
 type CreateInput struct {
-	ID            string
-	ProjectID     string
-	Environment   string
-	RequestDigest string
-	Targets       []TargetInput
-	CreatedBy     string
-	ReleaseID     string
-	RollbackOf    string
-	Workflow      jobs.WorkflowIntent
+	ID                string
+	ProjectID         string
+	Environment       string
+	GenerationID      string
+	ArtifactDigest    string
+	PriorGenerationID string
+	RequestDigest     string
+	CreatedBy         string
+	ReleaseID         string
+	RollbackOf        string
+	Workflow          jobs.WorkflowIntent
 }
 
 type Scope struct {
 	ProjectID    string
 	DeploymentID string
 }
-
 type ActivationRequest struct {
 	Scope
 	ActorID string
 }
-
 type ActivationInput struct {
 	DeploymentID        string
+	ProjectID           string
+	Environment         string
+	GenerationID        string
+	ArtifactDigest      string
+	PriorGenerationID   string
 	ActivationPrincipal string
 	VerificationDigest  string
 }
+type Verification struct{ Digest string }
 
-type Verification struct {
-	Digest string
+func ValidateCreate(input CreateInput) error {
+	input.ProjectID, input.Environment, input.GenerationID, input.ArtifactDigest = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ArtifactDigest)
+	if input.ID == "" || input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" || input.RequestDigest == "" || input.CreatedBy == "" {
+		return fmt.Errorf("deployment id, project, environment, generation, request digest, and actor are required")
+	}
+	if _, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.GenerationID); err != nil {
+		return err
+	}
+	if digest.ValidateSHA256Identity(input.ArtifactDigest) != nil {
+		return fmt.Errorf("artifact digest must be canonical sha256")
+	}
+	if input.PriorGenerationID != "" {
+		if _, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.PriorGenerationID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func validateCreate(input CreateInput) error {
-	if strings.TrimSpace(input.ID) == "" || strings.TrimSpace(input.ProjectID) == "" || strings.TrimSpace(input.Environment) == "" || strings.TrimSpace(input.RequestDigest) == "" {
-		return fmt.Errorf("deployment id, project, environment, and request digest are required")
+func ValidateActivation(input ActivationInput) error {
+	if strings.TrimSpace(input.DeploymentID) == "" || strings.TrimSpace(input.ActivationPrincipal) == "" || digest.ValidateSHA256Identity(input.VerificationDigest) != nil {
+		return fmt.Errorf("deployment, activation principal, and verification digest are required")
 	}
-	if len(input.Targets) == 0 {
-		return fmt.Errorf("deployment requires at least one workspace target")
+	if input.ProjectID != "" && input.Environment != "" && input.GenerationID != "" {
+		if _, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.GenerationID); err != nil {
+			return err
+		}
 	}
-	workspaces := make(map[string]struct{}, len(input.Targets))
-	states := make(map[string]struct{}, len(input.Targets))
-	for _, target := range input.Targets {
-		workspaceID := strings.TrimSpace(target.WorkspaceID)
-		servingStateID := strings.TrimSpace(target.ServingStateID)
-		if workspaceID == "" || servingStateID == "" {
-			return fmt.Errorf("deployment target workspace and serving state are required")
-		}
-		if _, duplicate := workspaces[workspaceID]; duplicate {
-			return fmt.Errorf("deployment has duplicate workspace target %q", workspaceID)
-		}
-		if _, duplicate := states[servingStateID]; duplicate {
-			return fmt.Errorf("deployment has duplicate serving state target %q", servingStateID)
-		}
-		workspaces[workspaceID] = struct{}{}
-		states[servingStateID] = struct{}{}
+	if input.ArtifactDigest != "" && digest.ValidateSHA256Identity(input.ArtifactDigest) != nil {
+		return fmt.Errorf("artifact digest must be canonical sha256")
 	}
 	return nil
 }

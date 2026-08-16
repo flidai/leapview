@@ -7,7 +7,7 @@ var (
 	ErrInvalid    = apigenfailure.New("invalid", "invalid release")
 	ErrNotFound   = apigenfailure.New("not_found", "release not found")
 	ErrConflict   = apigenfailure.New("conflict", "release conflict")
-	ErrIncomplete = apigenfailure.New("incomplete", "release artifacts are incomplete")
+	ErrIncomplete = apigenfailure.New("incomplete", "release artifact is incomplete")
 	ErrImmutable  = apigenfailure.New("immutable", "release is immutable")
 	ErrDigest     = apigenfailure.New("digest_mismatch", "content digest mismatch")
 )
@@ -21,56 +21,58 @@ const (
 	StatusFailed     Status = "failed"
 )
 
-type WorkspaceManifest struct {
-	WorkspaceID    string `json:"workspace"`
-	ArtifactDigest string `json:"artifactDigest"`
-	ServingStateID string `json:"servingStateId,omitempty"`
-}
-
 type ConnectionPin struct {
 	ConnectionID string `json:"connection"`
 	RevisionID   string `json:"revisionId"`
 }
-
 type Manifest struct {
-	Workspaces  []WorkspaceManifest `json:"workspaces"`
-	Connections []ConnectionPin     `json:"connections"`
+	Connections []ConnectionPin `json:"connections"`
 }
 
-type CreateInput struct {
-	ID             string
-	ProjectID      string
-	ProjectDigest  string
-	RequestDigest  string
-	IdempotencyKey string
-	CreatedBy      string
-	Workspaces     []WorkspaceManifest
-	Connections    []ConnectionPin
-	Provenance     *Provenance
+// Release is one immutable project artifact bound to one exact serving
+// identity. A release never contains workspace sets or target selectors.
+type Release struct {
+	ID                 string
+	ProjectID          string
+	Environment        string
+	GenerationID       string
+	ProjectDigest      string
+	ArtifactDigest     string
+	ActualDigest       string
+	ArtifactSizeBytes  int64
+	ArtifactUploadedAt string
+	RequestDigest      string
+	IdempotencyKey     string
+	Status             Status
+	Manifest           Manifest
+	Provenance         *Provenance
+	CreatedBy          string
+	CreatedAt          string
+	FinalizedAt        string
+	Error              string
 }
 
 type Artifact struct {
 	ReleaseID      string
-	WorkspaceID    string
+	ProjectID      string
+	Environment    string
+	GenerationID   string
 	ExpectedDigest string
-	ServingStateID string
 	ActualDigest   string
 	SizeBytes      int64
 	UploadedAt     string
 }
 
-type Release struct {
+type CreateInput struct {
 	ID             string
 	ProjectID      string
+	Environment    string
+	GenerationID   string
 	ProjectDigest  string
+	ArtifactDigest string
 	RequestDigest  string
 	IdempotencyKey string
-	Status         Status
-	Manifest       Manifest
-	Artifacts      []Artifact
-	Provenance     *Provenance
 	CreatedBy      string
-	CreatedAt      string
-	FinalizedAt    string
-	Error          string
+	Connections    []ConnectionPin
+	Provenance     *Provenance
 }
