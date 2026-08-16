@@ -170,22 +170,22 @@ func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettin
 		})
 	case "update_group":
 		return begin(accessgen.GenUIActionUpdateGroup(), func() (context.Context, error) {
-			ctx, _, err := accessgen.BeginGenUpdateGroupCommand(r.Context(), accessgen.GenUpdateGroupCommandInvocation{Surface: apigencommand.SurfaceUI, ConcurrencyToken: command.Revision, RequestID: requestID, CorrelationID: correlationID})
+			ctx, _, err := accessgen.BeginGenUpdateGroupCommand(r.Context(), accessgen.GenUpdateGroupCommandInvocation{Surface: apigencommand.SurfaceUI, Group: command.GroupID, ConcurrencyToken: command.Revision, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	case "delete_group":
 		return begin(accessgen.GenUIActionDeleteGroup(), func() (context.Context, error) {
-			ctx, _, err := accessgen.BeginGenDeleteGroupCommand(r.Context(), accessgen.GenDeleteGroupCommandInvocation{Surface: apigencommand.SurfaceUI, RequestID: requestID, CorrelationID: correlationID})
+			ctx, _, err := accessgen.BeginGenDeleteGroupCommand(r.Context(), accessgen.GenDeleteGroupCommandInvocation{Surface: apigencommand.SurfaceUI, Group: command.GroupID, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	case "add_group_member":
 		return begin(accessgen.GenUIActionAddGroupMember(), func() (context.Context, error) {
-			ctx, _, err := accessgen.BeginGenAddGroupMemberCommand(r.Context(), accessgen.GenAddGroupMemberCommandInvocation{Surface: apigencommand.SurfaceUI, RequestID: requestID, CorrelationID: correlationID})
+			ctx, _, err := accessgen.BeginGenAddGroupMemberCommand(r.Context(), accessgen.GenAddGroupMemberCommandInvocation{Surface: apigencommand.SurfaceUI, Group: command.GroupID, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	case "remove_group_member":
 		return begin(accessgen.GenUIActionRemoveGroupMember(), func() (context.Context, error) {
-			ctx, _, err := accessgen.BeginGenRemoveGroupMemberCommand(r.Context(), accessgen.GenRemoveGroupMemberCommandInvocation{Surface: apigencommand.SurfaceUI, RequestID: requestID, CorrelationID: correlationID})
+			ctx, _, err := accessgen.BeginGenRemoveGroupMemberCommand(r.Context(), accessgen.GenRemoveGroupMemberCommandInvocation{Surface: apigencommand.SurfaceUI, Group: command.GroupID, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	default:

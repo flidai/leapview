@@ -29,6 +29,8 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.RevokeCurrentSession(w, r)
 	case "listCurrentAuthoringSessions":
 		m.handler.ListCurrentAuthoringSessions(w, r)
+	case "listCurrentEffectiveCapabilities":
+		m.handler.ListCurrentEffectiveCapabilities(w, r)
 	case "revokeCurrentAuthoringSession":
 		m.handler.RevokeCurrentAuthoringSession(w, r)
 	case "decideDeviceAuthorization":

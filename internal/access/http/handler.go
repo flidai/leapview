@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/access/avatar"
@@ -97,6 +98,15 @@ func (h Handler) ListCurrentEffectiveCapabilities(w stdhttp.ResponseWriter, r *s
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
+	}
+	if h.CurrentCredential != nil {
+		if credential, ok := h.CurrentCredential(r); ok {
+			if credential.Token.ID != "" && credential.Token.Capabilities != nil && len(credential.Token.Capabilities) == 0 {
+				writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+				return
+			}
+			capabilities = access.IntersectTokenCapabilities(credential.Token.Capabilities, capabilities)
+		}
 	}
 	if capabilities == nil {
 		capabilities = []access.Capability{}
@@ -374,7 +384,7 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	}
 	var secret string
 	var token access.APIToken
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationCreateCurrentAPIToken(), func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
 		secret, token, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: input.Name, Capabilities: capabilities, ExpiresAt: expires})
 		return auditInput(r, "api_token.created", principal.ID, "api_token", token.ID, "", "success", nil), mutationErr
@@ -405,7 +415,7 @@ func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	id := chi.URLParam(r, "token")
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationRevokeCurrentAPIToken(), func(tx access.Repository) (access.AuditEventInput, error) {
 		mutationErr := tx.RevokeAPITokenForPrincipal(r.Context(), principal.ID, id)
 		return auditInput(r, "api_token.revoked", principal.ID, "api_token", id, "", "success", nil), mutationErr
 	})
@@ -492,7 +502,7 @@ func (h Handler) revokeSession(w stdhttp.ResponseWriter, r *stdhttp.Request, act
 		return
 	}
 	id := chi.URLParam(r, "session")
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationRevokeCurrentSession(), func(tx access.Repository) (access.AuditEventInput, error) {
 		mutationErr := tx.RevokeSessionForPrincipal(r.Context(), target, id)
 		return auditInput(r, "session.revoked", actor, "session", id, "", "success", nil), mutationErr
 	})
@@ -554,7 +564,7 @@ func (h Handler) CreatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	var created access.LocalPasswordReset
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationCreatePrincipal(), func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
 		created, mutationErr = tx.CreateLocalUser(r.Context(), access.LocalUserInput{Email: input.Email, DisplayName: input.DisplayName, MustChange: true})
 		return auditInput(r, "principal.local_user.created", h.currentPrincipalID(r), "principal", created.Principal.ID, "", "success", map[string]any{"email": created.Principal.Email}), mutationErr
@@ -755,7 +765,7 @@ func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return
 	}
 	var reset access.LocalPasswordReset
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationResetPrincipalPassword(), func(tx access.Repository) (access.AuditEventInput, error) {
 		current, currentErr := tx.PrincipalByID(r.Context(), principalID)
 		if currentErr != nil {
 			return access.AuditEventInput{}, currentErr
@@ -1081,7 +1091,7 @@ func (h Handler) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 	}
 	var secret string
 	var row access.ServicePrincipalSecret
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationCreateServicePrincipalSecret(), func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
 		secret, row, mutationErr = tx.CreateServicePrincipalSecret(r.Context(), chi.URLParam(r, "servicePrincipal"), access.ServicePrincipalSecretInput{Name: request.Name, ExpiresAt: expiresAt})
 		return auditInput(r, "service_principal_secret.created", h.currentPrincipalID(r), "service_principal", row.ServicePrincipalID, "", "success", map[string]any{"secretId": row.ID}), mutationErr
@@ -1610,9 +1620,7 @@ func principalManagedExternallyError(management access.PrincipalIdentityManageme
 }
 
 func localPasswordResetDTO(row access.LocalPasswordReset) map[string]any {
-	out := principalDTO(row.Principal)
-	out["temporaryPassword"] = row.Password
-	return out
+	return map[string]any{"principal": principalDTO(row.Principal), "temporaryPassword": row.Password}
 }
 func groupDTO(row access.Group) map[string]any {
 	local := groupIsLocallyManaged(row)
@@ -1669,6 +1677,31 @@ func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation fun
 		return errors.New("transactional access repository is required")
 	}
 	return transactional.RunAuditedMutation(r.Context(), mutation)
+}
+
+// executeAuditedMutation keeps the existing repository transaction as the
+// generated command's transactional execution capability. Direct browser
+// handlers still use the repository helper unchanged; generated API/CLI
+// transports additionally need the command executor to mark the invocation
+// complete before the transport guard flushes a successful response.
+func executeAuditedMutation(
+	r *stdhttp.Request,
+	repo access.Repository,
+	operationID accessgen.GenCommandOperationID,
+	mutation func(access.Repository) (access.AuditEventInput, error),
+) error {
+	if _, generated := apigencommand.OperationID(r.Context()); !generated {
+		return runAuditedMutation(r, repo, mutation)
+	}
+	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(r.Context(), operationID.APIGenOperationID(), apigencommand.Execution{
+		Transactional: func(context.Context, apigencommand.Contract) error {
+			return runAuditedMutation(r, repo, mutation)
+		},
+	})
 }
 
 // runAuditedMutationWithRevision keeps the optimistic-concurrency read and
@@ -1733,7 +1766,11 @@ func writeJSON(w stdhttp.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
-func writeSecretJSON(w stdhttp.ResponseWriter, status int, value any) { writeJSON(w, status, value) }
+func writeSecretJSON(w stdhttp.ResponseWriter, status int, value any) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	writeJSON(w, status, value)
+}
 func writeJSONError(w stdhttp.ResponseWriter, err error, status int) {
 	writeJSON(w, status, map[string]any{"error": err.Error()})
 }

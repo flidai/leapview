@@ -43,8 +43,8 @@ func TestAPITokenCapabilityAllowlistIsEnforced(t *testing.T) {
 	foreignProjectReq.Header.Set("Accept", "application/json")
 	foreignProjectRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(foreignProjectRec, foreignProjectReq)
-	if foreignProjectRec.Code != http.StatusForbidden {
-		t.Fatalf("foreign project status = %d, want %d body=%s", foreignProjectRec.Code, http.StatusForbidden, foreignProjectRec.Body.String())
+	if foreignProjectRec.Code != http.StatusNotFound {
+		t.Fatalf("foreign project status = %d, want concealed %d body=%s", foreignProjectRec.Code, http.StatusNotFound, foreignProjectRec.Body.String())
 	}
 
 	effectiveReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-capabilities", nil)
