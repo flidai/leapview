@@ -675,7 +675,7 @@ op listDashboards(@query limit?: ListLimit, @query pageToken?: PageToken): OkJso
 @summary("Describe dashboard")
 @route("/dashboards/{dashboard}")
 @get
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "describe"], args: #[#{ source: "path", name: "dashboard", displayName: "dashboard-id" }], output: #{ mode: "raw" } })
 op getDashboard(@path dashboard: ResourceId): OkJson<DashboardManifestResponse> | CommonErrors;
