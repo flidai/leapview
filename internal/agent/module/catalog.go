@@ -82,7 +82,12 @@ func (c CatalogService) Get(ctx context.Context, scope agenttools.Scope, request
 	if err != nil {
 		return agenttools.CatalogGetResult{}, catalogError(err)
 	}
-	return agenttools.CatalogGetResult{Item: projectItem(result), Details: map[string]any{"id": result.Ref.ID.String(), "kind": string(result.Ref.Kind), "domain": result.Domain}}, nil
+	return agenttools.CatalogGetResult{Item: projectItem(result), Details: map[string]any{
+		"kind": string(result.Ref.Kind),
+		"metadata": map[string]any{
+			"id": result.Ref.ID.String(), "domain": result.Domain, "owner": result.Owner,
+		},
+	}}, nil
 }
 
 func catalogRef(ref *agentcontracts.CatalogRef) (projectcatalog.Ref, error) {
