@@ -102,7 +102,6 @@ COPY --from=sourcegen /src/internal/access/ui/signals/models.gen.go ./internal/a
 COPY --from=sourcegen /src/internal/admin/ui/signals/models.gen.go ./internal/admin/ui/signals/models.gen.go
 COPY --from=sourcegen /src/internal/agent/ui/signals/models.gen.go ./internal/agent/ui/signals/models.gen.go
 COPY --from=sourcegen /src/internal/dashboard/ui/signals/models.gen.go ./internal/dashboard/ui/signals/models.gen.go
-COPY --from=sourcegen /src/internal/project/ui/signals/models.gen.go ./internal/project/ui/signals/models.gen.go
 COPY --from=sourcegen /src/docs ./docs
 COPY --from=sourcegen /src/schemas ./schemas
 COPY --from=sourcegen /src/web/generated ./web/generated
