@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
@@ -145,7 +146,14 @@ func (f canonicalRefreshRuntimeFactory) Prepare(_ context.Context, input runtime
 	if err != nil {
 		return nil, err
 	}
-	authorization, err := accesssnapshot.NewAuthorizationSnapshot(identity, f.graph, nil, nil)
+	dev, err := access.NewSubjectRef(access.SubjectKindPrincipal, "dev")
+	if err != nil {
+		return nil, err
+	}
+	authorization, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, f.graph, []accesssnapshot.RoleBinding{{
+		ID: "binding_dev", Name: "test fixture dev admin", Subject: dev,
+		Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin),
+	}}, nil, nil)
 	if err != nil {
 		return nil, err
 	}
