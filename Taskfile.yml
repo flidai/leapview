@@ -691,6 +691,7 @@ tasks:
       - internal/admin/ui/signals/models.gen.go
       - internal/agent/ui/signals/models.gen.go
       - internal/dashboard/ui/signals/models.gen.go
+      - internal/project/ui/signals/models.gen.go
       - web/generated/signals/index.ts
     cmds:
       - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target ui-signals

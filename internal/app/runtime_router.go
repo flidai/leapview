@@ -68,6 +68,7 @@ type capabilityRoutes struct {
 	product            *adminmodule.ProductService
 	dashboardTelemetry dashboardmodule.Telemetry
 	projectCatalog     *projectcatalog.Service
+	projectBrowser     *projecthttp.BrowserHandler
 }
 
 type runtimeServices struct {
@@ -198,6 +199,7 @@ type capabilityAssemblyInputs struct {
 	Product           *adminmodule.ProductService
 	ProductStatus     adminmodule.ProductStatus
 	ProjectCatalog    *projectcatalog.Service
+	ProjectGraph      projecthttp.GraphReader
 }
 
 type workflowAssemblyInputs struct {
@@ -479,6 +481,19 @@ func buildApplicationSurfaces(
 	policy.requestLogging = httpConfig.RequestLogging
 	routes.managedDataModule = capabilities.ManagedDataModule
 	routes.projectCatalog = capabilities.ProjectCatalog
+	routes.projectBrowser = &projecthttp.BrowserHandler{
+		Graph: capabilities.ProjectGraph, Catalog: capabilities.ProjectCatalog,
+		ProjectID: runtime.projectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
+		Layout: func(r *http.Request) webpage.Provider {
+			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
+		},
+		CSRFToken: func(r *http.Request) string { return routes.accessModule.CSRFToken(r) },
+		CurrentUser: func(r *http.Request) (projecthttp.Principal, bool) {
+			principal, ok := routes.accessModule.CurrentPrincipal(r)
+			return projecthttp.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
+		},
+		Authenticate: routes.accessModule.Authenticate,
+	}
 	if runtime.runtimeHostModule != nil && routes.accessModule != nil {
 		authorizationSnapshot := func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
 			lease, err := runtime.runtimeHostModule.Acquire(ctx)

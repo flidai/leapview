@@ -89,3 +89,10 @@ func (m *Module) ListActiveScopes(ctx context.Context) ([]servingstate.ActiveSco
 func (m *Module) ArtifactByServingState(ctx context.Context, id servingstate.ID) (servingstate.Artifact, error) {
 	return m.states.ArtifactByServingState(ctx, id)
 }
+
+// ActiveServingStateGraph returns the project-owned asset projection for the
+// exact active serving generation. It is a read-only browser composition port;
+// callers still bind project identity through the runtime host.
+func (m *Module) ActiveServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string) (servingstate.AssetGraph, bool, error) {
+	return m.states.ActiveServingStateGraph(ctx, projectID, environment)
+}

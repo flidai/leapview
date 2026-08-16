@@ -71,7 +71,13 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	mux.Group(func(r chi.Router) {
 		r.Use(csrf)
 		r.With(policy.rateLimits.Updates()).Get("/updates", runtime.pageStreams.ServeHTTP)
-		r.Get("/", routes.accessModule.Authenticate(http.HandlerFunc(projectHome(runtime.metrics))).ServeHTTP)
+		if routes.projectBrowser != nil {
+			routes.projectBrowser.MountAuthenticated(r)
+		} else {
+			r.Get("/", routes.accessModule.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			})).ServeHTTP)
+		}
 		candidateProjectGuard := func(next http.HandlerFunc) http.HandlerFunc {
 			return protectProjectResources(
 				routes.accessModule, runtime.runtimeHostModule, access.CapabilityProjectAdmin,
@@ -190,24 +196,8 @@ func isPublicAPIPath(path string) bool {
 }
 
 // projectHome keeps the Insights entry point independent of project
-// selection. The composed dashboard runtime owns the single project graph;
-// redirecting to its default dashboard preserves the existing shell and
-// Datastar bootstrap flow without inventing a selector.
-func projectHome(metrics QueryMetrics) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if metrics == nil {
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
-		}
-		dashboardID := strings.TrimSpace(metrics.DefaultDashboardID())
-		if dashboardID == "" {
-			http.NotFound(w, r)
-			return
-		}
-		http.Redirect(w, r, "/dashboards/"+dashboardID, http.StatusFound)
-	}
-}
-
+// selection. The composed runtime owns the single project graph; canonical
+// browser surfaces are mounted by project/browser without a request selector.
 func csrfMiddleware(access *accessmodule.Module, next http.Handler) http.Handler {
 	return access.CSRFMiddleware(next)
 }

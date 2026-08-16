@@ -559,13 +559,14 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		dataAssemblyInputs{
 			Database: store.SQLDB(), PlatformHealth: store, AdminDatabase: store.SQLDB(),
 			ServingStateRepo: servingStateRepo, StorageRetention: retention,
-			AccessRepo:       accessRepo,
+			AccessRepo: accessRepo,
 		},
 		capabilityAssemblyInputs{
 			AnalyticsModule: analyticsModule, DashboardAssets: dashboardAssets,
 			ReleaseModule: releaseModule, JobModule: jobModule,
 			AccessModule: accessModule, ManagedDataModule: managedDataModule,
 			ProjectCatalog: projectCatalog,
+			ProjectGraph:   servingStateRepo,
 			Authoring:      authoringApplication,
 			Product:        productService, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), identity),
 		},

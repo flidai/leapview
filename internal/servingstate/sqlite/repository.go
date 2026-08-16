@@ -23,6 +23,71 @@ type Repository struct {
 	q  *platformdb.Queries
 }
 
+// ActiveServingStateGraph exposes the immutable asset projection stored with
+// the exact active serving generation. The project/environment arguments are
+// resolved by the runtime host before this read; no browser-provided project
+// selector is accepted here.
+func (r *Repository) ActiveServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string) (servingstate.AssetGraph, bool, error) {
+	state, _, err := r.ActiveArtifact(ctx, projectID, servingstate.Environment(environment))
+	if err != nil {
+		if errors.Is(err, servingstate.ErrNotFound) {
+			return servingstate.AssetGraph{}, false, nil
+		}
+		return servingstate.AssetGraph{}, false, err
+	}
+	assets, err := r.q.ListAssetsByServingState(ctx, string(state.ID))
+	if err != nil {
+		return servingstate.AssetGraph{}, false, err
+	}
+	edges, err := r.q.ListAssetEdgesByServingState(ctx, string(state.ID))
+	if err != nil {
+		return servingstate.AssetGraph{}, false, err
+	}
+	graph := servingstate.AssetGraph{
+		Assets: make([]servingstate.Asset, 0, len(assets)),
+		Edges:  make([]servingstate.AssetEdge, 0, len(edges)),
+	}
+	for _, asset := range assets {
+		id, err := projectgraph.NewResourceID(asset.LogicalAssetID)
+		if err != nil {
+			return servingstate.AssetGraph{}, false, fmt.Errorf("active asset %q id: %w", asset.LogicalAssetID, err)
+		}
+		parent := projectgraph.ResourceID(asset.ParentLogicalAssetID)
+		// The serving graph stores canonical graph kinds. The browser projection
+		// keeps its existing presentation buckets for model and pipeline assets,
+		// while retaining the opaque canonical IDs unchanged.
+		typ := asset.AssetType
+		switch typ {
+		case "model":
+			typ = "model_table"
+		case "pipeline":
+			typ = "refresh_pipeline"
+		}
+		graph.Assets = append(graph.Assets, servingstate.Asset{
+			ID: id, SnapshotID: asset.SnapshotID,
+			ProjectID: projectID, ServingStateID: state.ID, Type: typ,
+			Key: asset.AssetKey, ParentID: parent, Title: asset.Title, Description: asset.Description,
+			SourceFile: asset.SourceFile, PayloadSchema: asset.PayloadSchema, PayloadJSON: asset.PayloadJson,
+			ContentHash: asset.ContentHash,
+		})
+	}
+	for _, edge := range edges {
+		from, err := projectgraph.NewResourceID(edge.FromLogicalAssetID)
+		if err != nil {
+			return servingstate.AssetGraph{}, false, fmt.Errorf("active asset edge source %q: %w", edge.FromLogicalAssetID, err)
+		}
+		to, err := projectgraph.NewResourceID(edge.ToLogicalAssetID)
+		if err != nil {
+			return servingstate.AssetGraph{}, false, fmt.Errorf("active asset edge target %q: %w", edge.ToLogicalAssetID, err)
+		}
+		graph.Edges = append(graph.Edges, servingstate.AssetEdge{
+			ID: edge.ID, ProjectID: projectID, ServingStateID: state.ID,
+			FromAssetID: from, ToAssetID: to, Type: edge.EdgeType,
+		})
+	}
+	return graph, true, nil
+}
+
 func NewRepository(sqlDB *sql.DB) *Repository {
 	return &Repository{db: sqlDB, q: platformdb.New(sqlDB)}
 }

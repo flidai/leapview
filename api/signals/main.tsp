@@ -13,6 +13,7 @@ namespace LeapViewUISignals;
 
 /** Route surfaces supported by the shared UI signal transport. */
 enum RouteKind {
+	catalog: "catalog",
   dashboard: "dashboard",
   dashboardBuilder: "dashboard_builder",
   pipelines: "pipelines",

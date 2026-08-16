@@ -13,6 +13,12 @@ import (
 
 const (
 	routeLogin            = "login"
+	routeCatalog          = "catalog"
+	routeData             = "data"
+	routeConnections      = "connections"
+	routeConnectionAsset  = "connection_asset"
+	routePipelines        = "pipelines"
+	routeAsset            = "asset"
 	routeDashboard        = "dashboard"
 	routeDashboardBuilder = "dashboard_builder"
 	routeChat             = "chat"
@@ -20,56 +26,67 @@ const (
 )
 
 func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *platformServices, _ *httpPolicy) {
-	runtime.pageStreams = uitransport.NewPageStream(uitransport.PageStreamConfig{
-		Trace: runtime.pageStreamTrace,
-		Authorize: func(route, section string, next http.Handler) (http.Handler, bool) {
-			switch route {
-			case routeLogin:
-				return next, true
-			case routeDashboard:
-				return protectPageStreamResource(
-					routes.accessModule, runtime.runtimeHostModule,
-					access.CapabilityResourceRead, dashboardPageStreamResource,
-					next,
-				), true
-			case routeDashboardBuilder:
-				return protectPageStreamResource(
-					routes.accessModule, runtime.runtimeHostModule,
-					access.CapabilityResourceEdit, dashboardPageStreamResource,
-					next,
-				), true
-			case routeChat:
+	authorize := func(route, section string, next http.Handler) (http.Handler, bool) {
+		switch route {
+		case routeLogin:
+			return next, true
+		case routeCatalog, routeData, routeConnections, routeConnectionAsset, routePipelines, routeAsset:
+			if routes.projectBrowser == nil {
+				return nil, false
+			}
+			return routes.projectBrowser.ProtectStream(next), true
+		case routeDashboard:
+			return protectPageStreamResource(
+				routes.accessModule, runtime.runtimeHostModule,
+				access.CapabilityResourceRead, dashboardPageStreamResource,
+				next,
+			), true
+		case routeDashboardBuilder:
+			return protectPageStreamResource(
+				routes.accessModule, runtime.runtimeHostModule,
+				access.CapabilityResourceEdit, dashboardPageStreamResource,
+				next,
+			), true
+		case routeChat:
+			return routes.accessModule.Authenticate(next), true
+		case routeAdmin:
+			switch strings.TrimSpace(section) {
+			case "", "profile", "security", "api-tokens":
 				return routes.accessModule.Authenticate(next), true
-			case routeAdmin:
-				switch strings.TrimSpace(section) {
-				case "", "profile", "security", "api-tokens":
-					return routes.accessModule.Authenticate(next), true
-				case "general", "service-accounts", "authentication", "storage", "storage-detail", "agent", "system", "principals", "principal-detail", "groups", "group-detail", "queries", "audit", "publications":
-					return routes.accessModule.RequirePlatformAdmin(next), true
-				default:
-					return nil, false
-				}
+			case "general", "service-accounts", "authentication", "storage", "storage-detail", "agent", "system", "principals", "principal-detail", "groups", "group-detail", "queries", "audit", "publications":
+				return routes.accessModule.RequirePlatformAdmin(next), true
 			default:
 				return nil, false
 			}
-		},
-		Handlers: map[string]http.Handler{
-			routeDashboard:        http.HandlerFunc(routes.dashboardModule.HTTP().Updates),
-			routeDashboardBuilder: http.HandlerFunc(routes.dashboardModule.HTTP().DashboardBuilderUpdates),
-			routeChat:             http.HandlerFunc(routes.agentModule.HTTP().ChatUpdates),
-			routeAdmin: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				adminHTTP := routes.adminModule.HTTP()
-				if strings.TrimSpace(r.URL.Query().Get("section")) == "queries" {
-					adminHTTP.QueryUpdates(w, r)
-					return
-				}
-				adminHTTP.BootstrapUpdates(w, r)
-			}),
-			routeLogin: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_ = uitransport.PatchOnce(runtime.pageStreamTrace, w, r, routes.accessModule.LoginBootstrapSignals(r))
-			}),
-		},
-	})
+		default:
+			return nil, false
+		}
+	}
+	handlers := map[string]http.Handler{
+		routeDashboard:        http.HandlerFunc(routes.dashboardModule.HTTP().Updates),
+		routeDashboardBuilder: http.HandlerFunc(routes.dashboardModule.HTTP().DashboardBuilderUpdates),
+		routeChat:             http.HandlerFunc(routes.agentModule.HTTP().ChatUpdates),
+		routeAdmin: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			adminHTTP := routes.adminModule.HTTP()
+			if strings.TrimSpace(r.URL.Query().Get("section")) == "queries" {
+				adminHTTP.QueryUpdates(w, r)
+				return
+			}
+			adminHTTP.BootstrapUpdates(w, r)
+		}),
+		routeLogin: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = uitransport.PatchOnce(runtime.pageStreamTrace, w, r, routes.accessModule.LoginBootstrapSignals(r))
+		}),
+	}
+	if routes.projectBrowser != nil {
+		handlers[routeCatalog] = http.HandlerFunc(routes.projectBrowser.Updates)
+		handlers[routeData] = http.HandlerFunc(routes.projectBrowser.Updates)
+		handlers[routeConnections] = http.HandlerFunc(routes.projectBrowser.Updates)
+		handlers[routeConnectionAsset] = http.HandlerFunc(routes.projectBrowser.Updates)
+		handlers[routePipelines] = http.HandlerFunc(routes.projectBrowser.Updates)
+		handlers[routeAsset] = http.HandlerFunc(routes.projectBrowser.Updates)
+	}
+	runtime.pageStreams = uitransport.NewPageStream(uitransport.PageStreamConfig{Trace: runtime.pageStreamTrace, Authorize: authorize, Handlers: handlers})
 }
 
 func dashboardPageStreamResource(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
