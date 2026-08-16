@@ -16,9 +16,9 @@ type governedDataRuntime struct {
 	service reportdef.DataService
 }
 
-func newGovernedDataRuntime(_ projectgraph.ResourceID, modelID projectgraph.ResourceID, runtime DataRuntime) DataRuntime {
+func newGovernedDataRuntime(projectID projectgraph.ResourceID, modelID projectgraph.ResourceID, runtime DataRuntime) DataRuntime {
 	wrapped := &governedDataRuntime{DataRuntime: runtime}
-	wrapped.service = reportdef.NewDataQueryService(modelID.String(), wrapped)
+	wrapped.service = reportdef.NewDataQueryService(projectID, modelID.String(), wrapped)
 	return wrapped
 }
 

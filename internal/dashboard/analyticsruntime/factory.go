@@ -64,7 +64,7 @@ func (f Factory) OpenDashboardProjectDataRuntimes(ctx context.Context, config da
 	runtimes := make(map[projectgraph.ResourceID]dashboardruntime.DataRuntime, len(config.Definition.Models()))
 	for id := range config.Definition.Models() {
 		modelID := id.String()
-		runtimes[id] = projectRuntime{modelID: modelID, runtime: runtime, close: sharedClose, data: reportdef.NewDataQueryService(modelID, runtime)}
+		runtimes[id] = projectRuntime{modelID: modelID, runtime: runtime, close: sharedClose, data: reportdef.NewDataQueryService(options.ProjectID, modelID, runtime)}
 	}
 	return runtimes, nil
 }

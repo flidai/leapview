@@ -11,6 +11,7 @@ import (
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -52,7 +53,7 @@ func (testDataRuntimeFactory) OpenDashboardWorkspaceDataRuntimes(ctx context.Con
 			modelID: modelID,
 			runtime: runtime,
 			close:   sharedClose,
-			data:    reportdef.NewDataQueryService(modelID, runtime),
+			data:    reportdef.NewDataQueryService(projectgraph.ResourceID("project_test"), modelID, runtime),
 		}
 	}
 	return runtimes, nil

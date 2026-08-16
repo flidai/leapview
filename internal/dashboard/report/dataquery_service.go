@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
-	"github.com/flidai/leapview/internal/dashboard/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -13,26 +12,18 @@ type DataQueryExecutor interface {
 }
 
 type dataQueryService struct {
-	modelID  string
-	executor DataQueryExecutor
+	projectID projectgraph.ResourceID
+	modelID   string
+	executor  DataQueryExecutor
 }
 
-type catalogProvider interface{ Catalog() catalog.Catalog }
-
-func (s dataQueryService) projectID() projectgraph.ResourceID {
-	if provider, ok := s.executor.(catalogProvider); ok {
-		return provider.Catalog().Project.ID
-	}
-	return ""
-}
-
-func NewDataQueryService(modelID string, executor DataQueryExecutor) DataService {
-	return dataQueryService{modelID: modelID, executor: executor}
+func NewDataQueryService(projectID projectgraph.ResourceID, modelID string, executor DataQueryExecutor) DataService {
+	return dataQueryService{projectID: projectID, modelID: modelID, executor: executor}
 }
 
 func (s dataQueryService) Query(ctx context.Context, request AggregateQuery) (QueryRows, error) {
 	result, err := s.executor.ExecuteDataQuery(ctx, dataquery.Query{
-		ProjectID: s.projectID(),
+		ProjectID: s.projectID,
 		Surface:   dataquery.SurfaceDashboard,
 		Operation: dataquery.OperationDashboardAggregate,
 		ModelID:   s.modelID,
@@ -51,7 +42,7 @@ func (s dataQueryService) Query(ctx context.Context, request AggregateQuery) (Qu
 
 func (s dataQueryService) Rows(ctx context.Context, request RowQuery) (QueryRows, error) {
 	result, err := s.executor.ExecuteDataQuery(ctx, dataquery.Query{
-		ProjectID: s.projectID(),
+		ProjectID: s.projectID,
 		Surface:   dataquery.SurfaceDashboard,
 		Operation: dataquery.OperationDashboardRows,
 		ModelID:   s.modelID,
@@ -69,7 +60,7 @@ func (s dataQueryService) Rows(ctx context.Context, request RowQuery) (QueryRows
 
 func (s dataQueryService) Count(ctx context.Context, request CountQuery) (int, error) {
 	result, err := s.executor.ExecuteDataQuery(ctx, dataquery.Query{
-		ProjectID:    s.projectID(),
+		ProjectID:    s.projectID,
 		Surface:      dataquery.SurfaceDashboard,
 		Operation:    dataquery.OperationDashboardCount,
 		ModelID:      s.modelID,
@@ -87,7 +78,7 @@ func (s dataQueryService) Count(ctx context.Context, request CountQuery) (int, e
 
 func (s dataQueryService) Histogram(ctx context.Context, request RawValueQuery, binCount int) ([]HistogramBin, error) {
 	result, err := s.executor.ExecuteDataQuery(ctx, dataquery.Query{
-		ProjectID: s.projectID(),
+		ProjectID: s.projectID,
 		Surface:   dataquery.SurfaceDashboard,
 		Operation: dataquery.OperationDashboardHistogram,
 		ModelID:   s.modelID,
@@ -115,7 +106,7 @@ func (s dataQueryService) Histogram(ctx context.Context, request RawValueQuery, 
 
 func (s dataQueryService) Distribution(ctx context.Context, request RawValueQuery, sort []QuerySort, limit int) (QueryRows, error) {
 	result, err := s.executor.ExecuteDataQuery(ctx, dataquery.Query{
-		ProjectID: s.projectID(),
+		ProjectID: s.projectID,
 		Surface:   dataquery.SurfaceDashboard,
 		Operation: dataquery.OperationDashboardDistribution,
 		ModelID:   s.modelID,
