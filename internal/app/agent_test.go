@@ -236,8 +236,8 @@ func TestAgentConfigurationCommandUsesGeneratedPublicContract(t *testing.T) {
 	if err != nil || len(events) != 1 {
 		t.Fatalf("agent config audits=%d err=%v", len(events), err)
 	}
-	if events[0].ResourceID != "" {
-		t.Fatalf("agent config audit resource=%q, want platform scope", events[0].ResourceID)
+	if events[0].ResourceID != agentconfig.SystemPromptSettingKey {
+		t.Fatalf("agent config audit resource=%q, want stable setting target %q", events[0].ResourceID, agentconfig.SystemPromptSettingKey)
 	}
 }
 
