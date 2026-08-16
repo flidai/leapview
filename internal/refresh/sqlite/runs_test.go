@@ -288,6 +288,32 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	}
 }
 
+func TestMaterializationRunMappingRejectsCorruptPersistedIdentity(t *testing.T) {
+	base := materializationRunDBRow{
+		ID: "run_1", ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_a",
+		SemanticModelID: "semantic_sales", TargetType: refreshrun.TargetRefreshPipeline,
+		TargetID: "pipeline_daily", TargetRevision: 1, TriggerType: refreshrun.TriggerManual,
+		Status: refreshrun.RunStatusQueued,
+	}
+	if _, err := materializationRunFromDB(base); err != nil {
+		t.Fatalf("valid persisted run rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*materializationRunDBRow){
+		"generation alias":     func(row *materializationRunDBRow) { row.GenerationID = " generation_a" },
+		"semantic model alias": func(row *materializationRunDBRow) { row.SemanticModelID = " semantic_sales" },
+		"target alias":         func(row *materializationRunDBRow) { row.TargetID = " pipeline_daily" },
+		"status enum":          func(row *materializationRunDBRow) { row.Status = "unknown" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			row := base
+			mutate(&row)
+			if _, err := materializationRunFromDB(row); err == nil {
+				t.Fatal("corrupt persisted run accepted")
+			}
+		})
+	}
+}
+
 func seedExpiredRefreshJob(t *testing.T, runStatus string) (*platform.Store, *SQLRunRepository, refreshrun.JobRecord) {
 	t.Helper()
 	return seedRefreshJob(t, runStatus, "-1 second")

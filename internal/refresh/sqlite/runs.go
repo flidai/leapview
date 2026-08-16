@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -166,16 +167,23 @@ func (r *SQLRunRepository) ListExecutableJobs(ctx context.Context, identity proj
 	}
 	jobs := make([]refreshrun.JobRecord, 0, len(rows))
 	for _, row := range rows {
+		rowIdentity, identityErr := projectgraph.NewServingIdentity(projectgraph.ResourceID(row.ProjectID), row.Environment, row.GenerationID)
+		if identityErr != nil || rowIdentity != identity {
+			return nil, fmt.Errorf("invalid persisted refresh job serving identity for %s", row.ID)
+		}
 		pipelineID := projectgraph.ResourceID("")
 		if row.TargetType == refreshrun.TargetRefreshPipeline {
 			pipelineID = projectgraph.ResourceID(row.TargetID)
 		}
 		jobs = append(jobs, refreshrun.JobRecord{
-			ID: row.ID, Identity: identity, PipelineID: pipelineID, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID),
+			ID: row.ID, Identity: rowIdentity, PipelineID: pipelineID, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID),
 			Kind: row.Kind, PayloadJSON: row.PayloadJson, RunID: row.RunID, TargetType: row.TargetType,
 			TargetID: projectgraph.ResourceID(row.TargetID), TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, AttemptCount: int(row.AttemptCount),
 			LeaseOwner: row.LeaseOwner, LeaseRevision: row.LeaseRevision,
 		})
+		if err := jobs[len(jobs)-1].Validate(); err != nil {
+			return nil, fmt.Errorf("invalid persisted refresh job %s: %w", row.ID, err)
+		}
 	}
 	return jobs, nil
 }
@@ -202,7 +210,8 @@ func (r *SQLRunRepository) ClaimExecutableJob(ctx context.Context, job refreshru
 	leaseExpr := sqliteLeaseModifier(lease)
 	result, err := q.ClaimRefreshJob(ctx, platformdb.ClaimRefreshJobParams{
 		RunningStatus: refreshrun.RunStatusRunning, LeaseOwner: owner, LeaseModifier: leaseExpr,
-		ID: job.ID, QueuedStatus: refreshrun.RunStatusQueued, PreviousRunningStatus: refreshrun.RunStatusRunning,
+		ID: job.ID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID,
+		QueuedStatus: refreshrun.RunStatusQueued, PreviousRunningStatus: refreshrun.RunStatusRunning,
 	})
 	if err != nil {
 		return refreshrun.JobRecord{}, false, err
@@ -214,7 +223,9 @@ func (r *SQLRunRepository) ClaimExecutableJob(ctx context.Context, job refreshru
 	if affected == 0 {
 		return refreshrun.JobRecord{}, false, nil
 	}
-	if err := q.MarkRefreshJobRunClaimed(ctx, platformdb.MarkRefreshJobRunClaimedParams{Status: refreshrun.RunStatusRunning, ID: job.RunID}); err != nil {
+	if err := q.MarkRefreshJobRunClaimed(ctx, platformdb.MarkRefreshJobRunClaimedParams{
+		Status: refreshrun.RunStatusRunning, ID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID, Environment: job.Identity.Environment,
+	}); err != nil {
 		return refreshrun.JobRecord{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -235,7 +246,8 @@ func (r *SQLRunRepository) RenewJobLease(ctx context.Context, job refreshrun.Job
 	}
 	changed, err := r.q.RenewRefreshJobLease(ctx, platformdb.RenewRefreshJobLeaseParams{
 		LeaseModifier: sqliteLeaseModifier(lease), ID: job.ID,
-		LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision, Status: refreshrun.RunStatusRunning,
+		LeaseOwner: job.LeaseOwner, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID,
+		LeaseRevision: job.LeaseRevision, Status: refreshrun.RunStatusRunning,
 	})
 	if err != nil {
 		return err
@@ -297,7 +309,7 @@ func (r *SQLRunRepository) GetRun(ctx context.Context, identity projectgraph.Ser
 	if err != nil {
 		return refreshrun.RunRecord{}, err
 	}
-	return materializationRunFromGetRow(row), nil
+	return materializationRunFromGetRow(row)
 }
 
 func (r *SQLRunRepository) ListRuns(ctx context.Context, identity projectgraph.ServingIdentity, page refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
@@ -325,7 +337,11 @@ func (r *SQLRunRepository) ListRuns(ctx context.Context, identity projectgraph.S
 	}
 	out := make([]refreshrun.RunRecord, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, materializationRunFromListRow(row))
+		run, mapErr := materializationRunFromListRow(row)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		out = append(out, run)
 	}
 	return out, nil
 }
@@ -362,7 +378,11 @@ func (r *SQLRunRepository) ListTargetRuns(ctx context.Context, identity projectg
 	}
 	out := make([]refreshrun.RunRecord, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, materializationRunFromTargetListRow(row))
+		run, mapErr := materializationRunFromTargetListRow(row)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		out = append(out, run)
 	}
 	return out, nil
 }
@@ -382,7 +402,11 @@ func (r *SQLRunRepository) ListChildRuns(ctx context.Context, identity projectgr
 	}
 	out := make([]refreshrun.RunRecord, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, materializationRunFromChildRow(row))
+		run, mapErr := materializationRunFromChildRow(row)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		out = append(out, run)
 	}
 	return out, nil
 }
@@ -418,7 +442,11 @@ func (r *SQLRunRepository) LatestSuccessfulTargetRun(ctx context.Context, identi
 	if err != nil {
 		return refreshrun.RunRecord{}, false, err
 	}
-	return materializationRunFromLatestRow(row), true, nil
+	run, mapErr := materializationRunFromLatestRow(row)
+	if mapErr != nil {
+		return refreshrun.RunRecord{}, false, mapErr
+	}
+	return run, true, nil
 }
 
 func (r *SQLRunRepository) MarkRunRunning(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (refreshrun.RunRecord, error) {
@@ -696,7 +724,7 @@ type materializationRunDBRow struct {
 	ID                   string
 	ProjectID            string
 	Environment          string
-	GenerationID         sql.NullString
+	GenerationID         string
 	SemanticModelID      string
 	PrincipalID          sql.NullString
 	PrincipalDisplayName string
@@ -714,7 +742,7 @@ type materializationRunDBRow struct {
 	Error                string
 }
 
-func materializationRunFromGetRow(row platformdb.GetMaterializationRunRow) refreshrun.RunRecord {
+func materializationRunFromGetRow(row platformdb.GetMaterializationRunRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
@@ -723,7 +751,7 @@ func materializationRunFromGetRow(row platformdb.GetMaterializationRunRow) refre
 	})
 }
 
-func materializationRunFromChildRow(row platformdb.ListChildMaterializationRunsRow) refreshrun.RunRecord {
+func materializationRunFromChildRow(row platformdb.ListChildMaterializationRunsRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
@@ -732,7 +760,7 @@ func materializationRunFromChildRow(row platformdb.ListChildMaterializationRunsR
 	})
 }
 
-func materializationRunFromLatestRow(row platformdb.LatestSuccessfulMaterializationRunRow) refreshrun.RunRecord {
+func materializationRunFromLatestRow(row platformdb.LatestSuccessfulMaterializationRunRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
@@ -741,7 +769,7 @@ func materializationRunFromLatestRow(row platformdb.LatestSuccessfulMaterializat
 	})
 }
 
-func materializationRunFromListRow(row platformdb.ListMaterializationRunsRow) refreshrun.RunRecord {
+func materializationRunFromListRow(row platformdb.ListMaterializationRunsRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
@@ -750,7 +778,7 @@ func materializationRunFromListRow(row platformdb.ListMaterializationRunsRow) re
 	})
 }
 
-func materializationRunFromTargetListRow(row platformdb.ListTargetMaterializationRunsRow) refreshrun.RunRecord {
+func materializationRunFromTargetListRow(row platformdb.ListTargetMaterializationRunsRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
@@ -759,8 +787,11 @@ func materializationRunFromTargetListRow(row platformdb.ListTargetMaterializatio
 	})
 }
 
-func materializationRunFromDB(row materializationRunDBRow) refreshrun.RunRecord {
-	identity, _ := projectgraph.NewServingIdentity(projectgraph.ResourceID(row.ProjectID), row.Environment, row.GenerationID.String)
+func materializationRunFromDB(row materializationRunDBRow) (refreshrun.RunRecord, error) {
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(row.ProjectID), row.Environment, row.GenerationID)
+	if err != nil {
+		return refreshrun.RunRecord{}, fmt.Errorf("invalid refresh run serving identity: %w", err)
+	}
 	run := refreshrun.RunRecord{
 		ID: row.ID, Identity: identity, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID),
 		PrincipalID: row.PrincipalID.String, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
@@ -773,7 +804,62 @@ func materializationRunFromDB(row materializationRunDBRow) refreshrun.RunRecord 
 	if run.Status == refreshrun.RunStatusQueued {
 		run.StartedAt = ""
 	}
-	return run
+	if err := validateMappedRun(run); err != nil {
+		return refreshrun.RunRecord{}, err
+	}
+	return run, nil
+}
+
+func validateMappedRun(run refreshrun.RunRecord) error {
+	if err := validateStoredID(run.ID, "run id", true); err != nil {
+		return err
+	}
+	if err := run.Identity.Validate(); err != nil {
+		return err
+	}
+	if err := run.SemanticModelID.Validate(); err != nil {
+		return fmt.Errorf("invalid refresh run semantic model id: %w", err)
+	}
+	if err := run.TargetID.Validate(); err != nil {
+		return fmt.Errorf("invalid refresh run target id: %w", err)
+	}
+	if run.TargetType != refreshrun.TargetModelTable && run.TargetType != refreshrun.TargetRefreshPipeline {
+		return fmt.Errorf("unsupported refresh target type %q", run.TargetType)
+	}
+	if run.TriggerType != refreshrun.TriggerDependency && run.TriggerType != refreshrun.TriggerManual && run.TriggerType != refreshrun.TriggerSchedule && run.TriggerType != refreshrun.TriggerRetry {
+		return fmt.Errorf("unsupported refresh trigger type %q", run.TriggerType)
+	}
+	switch run.Status {
+	case refreshrun.RunStatusQueued, refreshrun.RunStatusRunning, refreshrun.RunStatusPrepared, refreshrun.RunStatusSucceeded, refreshrun.RunStatusFailed, refreshrun.RunStatusCancelled, refreshrun.RunStatusSuperseded:
+	default:
+		return fmt.Errorf("unsupported refresh run status %q", run.Status)
+	}
+	if run.TargetType == refreshrun.TargetRefreshPipeline {
+		run.PipelineID = run.TargetID
+	}
+	if err := validateStoredID(run.PrincipalID, "principal id", false); err != nil {
+		return err
+	}
+	if err := validateStoredID(run.ParentRunID, "parent run id", false); err != nil {
+		return err
+	}
+	if err := validateStoredID(run.RetryOf, "retry of", false); err != nil {
+		return err
+	}
+	if run.TargetRevision < 0 {
+		return fmt.Errorf("refresh target revision must not be negative")
+	}
+	return nil
+}
+
+func validateStoredID(value, name string, required bool) error {
+	if !required && value == "" {
+		return nil
+	}
+	if value == "" || value != strings.TrimSpace(value) || len(value) > 256 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return fmt.Errorf("refresh %s is not canonical", name)
+	}
+	return nil
 }
 
 type runPageCursor struct {

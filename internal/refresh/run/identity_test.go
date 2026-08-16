@@ -49,6 +49,11 @@ func TestJobRecordRequiresCanonicalLeaseFence(t *testing.T) {
 	if err := job.Validate(); err == nil {
 		t.Fatal("Validate() = nil for whitespace lease owner")
 	}
+	job.LeaseOwner = "worker_1"
+	job.AttemptCount = -1
+	if err := job.Validate(); err == nil {
+		t.Fatal("Validate() = nil for negative attempt count")
+	}
 }
 
 func TestRunInputKeepsModelTargetDistinctFromPipeline(t *testing.T) {

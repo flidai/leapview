@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -236,7 +237,7 @@ func validateOperational(value, name string, required bool) error {
 	if !required && value == "" {
 		return nil
 	}
-	if value == "" || value != strings.TrimSpace(value) {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > 256 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
 		return errors.New("refresh " + name + " must be canonical")
 	}
 	return nil

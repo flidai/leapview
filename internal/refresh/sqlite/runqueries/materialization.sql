@@ -92,6 +92,8 @@ FROM refresh_jobs j
 JOIN refresh_job_runs r ON r.job_id = j.id
 WHERE COALESCE(r.parent_run_id, '') = ''
   AND j.kind = sqlc.arg(refresh_pipeline_kind)
+  AND j.project_id = sqlc.arg(project_id)
+  AND j.generation_id = sqlc.arg(generation_id)
   AND r.environment = sqlc.arg(environment)
   AND (
     (j.status = sqlc.arg(queued_status) AND r.status = sqlc.arg(run_queued_status))
@@ -134,6 +136,8 @@ SET status = sqlc.arg(running_status), started_at = COALESCE(started_at, CURRENT
     lease_owner = sqlc.arg(lease_owner), lease_expires_at = datetime('now', CAST(sqlc.arg(lease_modifier) AS TEXT)),
     attempt_count = attempt_count + 1, lease_revision = lease_revision + 1, updated_at = CURRENT_TIMESTAMP
 WHERE id = sqlc.arg(id)
+  AND project_id = sqlc.arg(project_id)
+  AND generation_id = sqlc.arg(generation_id)
   AND (
     status = sqlc.arg(queued_status)
     OR (status = sqlc.arg(previous_running_status) AND (lease_expires_at IS NULL OR lease_expires_at <= CURRENT_TIMESTAMP))
@@ -142,12 +146,17 @@ WHERE id = sqlc.arg(id)
 -- name: MarkRefreshJobRunClaimed :exec
 UPDATE refresh_job_runs
 SET status = sqlc.arg(status), started_at = CURRENT_TIMESTAMP, finished_at = NULL, error = ''
-WHERE id = sqlc.arg(id);
+WHERE id = sqlc.arg(id)
+  AND environment = sqlc.arg(environment)
+  AND job_id IN (SELECT id FROM refresh_jobs
+                 WHERE project_id = sqlc.arg(project_id)
+                   AND generation_id = sqlc.arg(generation_id));
 
 -- name: MarkRefreshRunPrepared :execrows
 UPDATE refresh_job_runs
 SET status = 'prepared', finished_at = NULL, error = ''
 WHERE refresh_job_runs.id = sqlc.arg(run_id) AND refresh_job_runs.status = 'running'
+  AND refresh_job_runs.environment = sqlc.arg(environment)
   AND refresh_job_runs.job_id IN (
 	SELECT refresh_jobs.id FROM refresh_jobs
     WHERE project_id = sqlc.arg(project_id) AND generation_id = sqlc.arg(generation_id) AND status = 'running'
@@ -188,6 +197,7 @@ SELECT EXISTS(
 UPDATE refresh_job_runs
 SET status = 'superseded', finished_at = CURRENT_TIMESTAMP, error = 'superseded by a newer target revision'
 WHERE refresh_job_runs.id = sqlc.arg(run_id)
+  AND refresh_job_runs.environment = sqlc.arg(environment)
   AND refresh_job_runs.job_id IN (SELECT refresh_jobs.id FROM refresh_jobs WHERE project_id = sqlc.arg(project_id) AND generation_id = sqlc.arg(generation_id))
   AND refresh_job_runs.status IN ('running', 'prepared');
 
@@ -195,6 +205,7 @@ WHERE refresh_job_runs.id = sqlc.arg(run_id)
 UPDATE refresh_jobs
 SET lease_expires_at = datetime('now', CAST(sqlc.arg(lease_modifier) AS TEXT)), updated_at = CURRENT_TIMESTAMP
 WHERE id = sqlc.arg(id) AND lease_owner = sqlc.arg(lease_owner)
+  AND project_id = sqlc.arg(project_id) AND generation_id = sqlc.arg(generation_id)
   AND lease_revision = sqlc.arg(lease_revision) AND status = sqlc.arg(status)
   AND lease_expires_at IS NOT NULL AND lease_expires_at > CURRENT_TIMESTAMP;
 
