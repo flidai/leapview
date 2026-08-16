@@ -44,11 +44,6 @@ var generationTargets = []generationTarget{
 		outputPath: "internal/dashboard/ui/signals/models.gen.go",
 		tags:       []string{"dashboard"},
 	},
-	{
-		name:       "project",
-		outputPath: "internal/project/ui/signals/models.gen.go",
-		tags:       []string{"project", "resource", "catalog", "connections", "data"},
-	},
 }
 
 func main() {

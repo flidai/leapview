@@ -6,23 +6,20 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
-	workspacegen "github.com/flidai/leapview/internal/workspace/api/gen"
 )
 
 func TestAPIPackageStaysTransportContractOnly(t *testing.T) {
 	forbidden := map[string]bool{
-		"github.com/flidai/leapview/internal/app":          true,
-		"github.com/flidai/leapview/internal/workspace/ui": true,
-		"github.com/go-chi/chi/v5":                         true,
-		"github.com/starfederation/datastar-go/datastar":   true,
-		"maragu.dev/gomponents":                            true,
-		"maragu.dev/gomponents-datastar":                   true,
-		"net/http":                                         true,
+		"github.com/flidai/leapview/internal/app":        true,
+		"github.com/go-chi/chi/v5":                       true,
+		"github.com/starfederation/datastar-go/datastar": true,
+		"maragu.dev/gomponents":                          true,
+		"maragu.dev/gomponents-datastar":                 true,
+		"net/http":                                       true,
 	}
 	assertPackageDoesNotImport(t, ".", forbidden)
 }
@@ -31,36 +28,6 @@ func TestAgentDoesNotDependOnHeadlessAPIContract(t *testing.T) {
 	assertPackageDoesNotImport(t, filepath.Join("..", "..", "agent"), map[string]bool{
 		"github.com/flidai/leapview/internal/app/api/gen": true,
 	})
-}
-
-func TestGeneratedAssetResponseRequiresSnapshotAndPayload(t *testing.T) {
-	typ := reflect.TypeOf(workspacegen.AssetResponse{})
-	for _, name := range []string{"SnapshotId", "Payload"} {
-		field, ok := typ.FieldByName(name)
-		if !ok {
-			t.Fatalf("AssetResponse.%s missing", name)
-		}
-		if field.Type.Kind() == reflect.Pointer {
-			t.Fatalf("AssetResponse.%s is optional pointer type %s", name, field.Type)
-		}
-		if strings.Contains(string(field.Tag), "omitempty") {
-			t.Fatalf("AssetResponse.%s JSON tag is optional: %s", name, field.Tag)
-		}
-	}
-}
-
-func TestGeneratedAssetListUsesSummaryWithoutPayload(t *testing.T) {
-	listTyp := reflect.TypeOf(workspacegen.AssetListResponse{})
-	items, ok := listTyp.FieldByName("Items")
-	if !ok {
-		t.Fatal("AssetListResponse.Items missing")
-	}
-	if items.Type.Kind() != reflect.Slice || items.Type.Elem() != reflect.TypeOf(workspacegen.AssetSummaryResponse{}) {
-		t.Fatalf("AssetListResponse.Items type = %s, want []AssetSummaryResponse", items.Type)
-	}
-	if _, ok := reflect.TypeOf(workspacegen.AssetSummaryResponse{}).FieldByName("Payload"); ok {
-		t.Fatal("AssetSummaryResponse unexpectedly includes Payload")
-	}
 }
 
 func TestGeneratedAssetPayloadOpenAPIAllowsArbitraryJSON(t *testing.T) {

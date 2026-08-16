@@ -40,7 +40,7 @@ var PublicContractPrefixes = map[string][]string{
 	"project":      {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/artifact", "internal/project/bundle", "internal/project/compiler"},
 	"release":      {"internal/release"},
 	"deployment":   {"internal/deployment"},
-	"servingstate": {"internal/servingstate", "internal/servingstate/validate", "internal/servingstate/validation", "internal/servingstate/retention"},
+	"servingstate": {"internal/servingstate", "internal/servingstate/validate", "internal/servingstate/retention"},
 	"refresh":      {"internal/refresh/artifact", "internal/refresh/plan", "internal/refresh/run", "internal/refresh/schedule"},
 	"runtimehost":  {"internal/runtimehost"},
 	"workload":     {"internal/workload"},
@@ -242,8 +242,6 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/dashboard/ui/signals", Capability: "dashboard", Layer: LayerContract},
 	{Prefix: "internal/app", Capability: "composition", Layer: LayerComposition},
 	{Prefix: "internal/admin", Capability: "admin", Layer: LayerAdapter},
-	{Prefix: "internal/project/ui/signals", Capability: "project", Layer: LayerContract},
-	{Prefix: "internal/project/ui", Capability: "project", Layer: LayerAdapter},
 }
 
 var adapterSegments = []string{

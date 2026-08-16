@@ -24,7 +24,6 @@ import (
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
-	workspacemodule "github.com/flidai/leapview/internal/workspace/module"
 )
 
 // assemblyConfig is deliberately test-only. Focused capability tests use it
@@ -39,9 +38,6 @@ type assemblyConfig struct {
 	StorageRetention      *servingstatemodule.Retention
 	ManagedDataValidation refreshmodule.CandidateValidationHook
 	ManagedDataResolver   runtimehostmodule.ManagedDataResolver
-	WorkspaceRepo         workspacemodule.Repository
-	WorkspaceDirectory    workspacemodule.Directory
-	AssetCatalog          workspacemodule.AssetCatalogReader
 	ReleaseModule         *releasemodule.Module
 	JobModule             *jobsmodule.Module
 	AccessRepo            accessmodule.Repository
@@ -188,20 +184,6 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			Database:     options.Database,
 			ExistingAuth: options.Auth, Auth: accessmodule.AuthConfig{Disabled: options.Auth == nil},
 			Assets: options.Assets, InstanceID: instanceID, PublicURL: publicURL,
-			WorkspaceIDs: func(ctx context.Context) ([]string, error) {
-				workspaceIDs := make([]string, 0, 1)
-				if options.WorkspaceID != "" {
-					workspaceIDs = append(workspaceIDs, options.WorkspaceID)
-				}
-				if options.WorkspaceDirectory != nil {
-					directoryWorkspaceIDs, err := options.WorkspaceDirectory.WorkspaceIDs(ctx)
-					if err != nil {
-						return nil, err
-					}
-					workspaceIDs = append(workspaceIDs, directoryWorkspaceIDs...)
-				}
-				return workspaceIDs, nil
-			},
 		})
 		if err != nil {
 			return nil, err
@@ -211,9 +193,8 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		dataAssemblyInputs{
 			Database: options.Database, PlatformHealth: options.PlatformHealth,
 			AdminDatabase: options.AdminDatabase, ServingStateRepo: options.ServingStateRepo,
-			StorageRetention: options.StorageRetention, WorkspaceReadModel: options.WorkspaceRepo,
-			WorkspaceDirectory: options.WorkspaceDirectory, AssetCatalog: options.AssetCatalog,
-			AccessRepo: options.AccessRepo,
+			StorageRetention: options.StorageRetention,
+			AccessRepo:       options.AccessRepo,
 		},
 		capabilityAssemblyInputs{
 			ReleaseModule: options.ReleaseModule, JobModule: options.JobModule,

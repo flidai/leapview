@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -24,37 +23,9 @@ import (
 	projectgen "github.com/flidai/leapview/internal/project/api/gen"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
-	"github.com/flidai/leapview/internal/workspace"
-	workspacegen "github.com/flidai/leapview/internal/workspace/api/gen"
 )
 
 const expectedAPIGenAggregateOperationCount = 196
-
-type apiSnapshotWorkspaceRepository struct{ summary workspace.Summary }
-
-func (r apiSnapshotWorkspaceRepository) Ensure(context.Context, workspace.EnsureInput) error {
-	return nil
-}
-func (r apiSnapshotWorkspaceRepository) ByID(context.Context, workspace.WorkspaceID) (workspace.Summary, error) {
-	summary := r.summary
-	summary.ActiveServingStateID = ""
-	return summary, nil
-}
-func (r apiSnapshotWorkspaceRepository) List(context.Context) ([]workspace.Summary, error) {
-	return []workspace.Summary{r.summary}, nil
-}
-func (r apiSnapshotWorkspaceRepository) ByIDWithActiveMetadata(context.Context, workspace.WorkspaceID, string) (workspace.Summary, error) {
-	return r.summary, nil
-}
-func (r apiSnapshotWorkspaceRepository) ListWithActiveMetadata(context.Context, string) ([]workspace.Summary, error) {
-	return []workspace.Summary{r.summary}, nil
-}
-func (r apiSnapshotWorkspaceRepository) ActiveServingStateGraph(context.Context, workspace.WorkspaceID, string) (workspace.AssetGraph, bool, error) {
-	return workspace.AssetGraph{}, false, nil
-}
-func (r apiSnapshotWorkspaceRepository) AssetVersions(context.Context, workspace.WorkspaceID, string, workspace.AssetID) ([]workspace.AssetVersion, error) {
-	return nil, nil
-}
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -90,7 +61,6 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 		"LeapViewAPI.Protocol:",
 		"LeapViewAPI.Refresh:",
 		"LeapViewAPI.Release:",
-		"LeapViewAPI.Workspace:",
 		"import_path: github.com/flidai/leapview/internal/app/api/gen",
 	} {
 		if !strings.Contains(manifestText, want) {
@@ -510,54 +480,6 @@ func TestAPIGenReleaseCapabilityOwnsItsOperationSurface(t *testing.T) {
 	}
 }
 
-func TestAPIGenWorkspaceCapabilityOwnsItsGeneratedPackage(t *testing.T) {
-	root := projectRoot(t)
-	manifest, err := os.ReadFile(filepath.Join(root, "api", "apigen.yaml"))
-	if err != nil {
-		t.Fatalf("read manifest: %v", err)
-	}
-	manifestText := string(manifest)
-	want := "LeapViewAPI.Workspace:\n          dir: ../internal/workspace/api/gen\n          package: gen\n          import_path: github.com/flidai/leapview/internal/workspace/api/gen"
-	if !strings.Contains(manifestText, want) {
-		t.Fatalf("manifest missing Workspace capability package plan %q", want)
-	}
-	if strings.Contains(manifestText, "LeapViewAPI.Workspace: *leapview_api_go_package") {
-		t.Fatal("Workspace namespace is still coalesced into the application generated package")
-	}
-	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
-	if err != nil {
-		t.Fatalf("read Taskfile.yml: %v", err)
-	}
-	for _, path := range []string{
-		"internal/workspace/api/gen/request_models.gen.go",
-		"internal/workspace/api/gen/server.apigen.gen.go",
-	} {
-		if !strings.Contains(string(taskfile), path) {
-			t.Fatalf("Taskfile.yml does not track generated Workspace artifact %q", path)
-		}
-	}
-}
-
-func TestAPIGenWorkspaceCapabilityOwnsItsOperationSurface(t *testing.T) {
-	contracts := workspacegen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 10; got != want {
-		t.Fatalf("Workspace generated operations = %d, want %d", got, want)
-	}
-	allowedTags := map[string]bool{"Search": true, "Workspaces": true}
-	appContracts := apigenapi.GetAPIGenOperationContracts()
-	for operationID, contract := range contracts {
-		if len(contract.Tags) != 1 || !allowedTags[contract.Tags[0]] {
-			t.Errorf("Workspace operation %q tags = %v", operationID, contract.Tags)
-		}
-		if _, exists := appContracts[operationID]; exists {
-			t.Errorf("Workspace operation %q is still emitted by the application package", operationID)
-		}
-	}
-	if got, want := len(apiaggregate.GetAPIGenOperationContracts()), expectedAPIGenAggregateOperationCount; got != want {
-		t.Fatalf("aggregate generated operations = %d, want %d", got, want)
-	}
-}
-
 func TestAPIGenManagedDataCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 	root := projectRoot(t)
 	manifest, err := os.ReadFile(filepath.Join(root, "api", "apigen.yaml"))
@@ -709,8 +631,6 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"Projects":            "LeapViewAPI.Project",
 		"Refresh Runs":        "LeapViewAPI.Refresh",
 		"Releases":            "LeapViewAPI.Release",
-		"Search":              "LeapViewAPI.Workspace",
-		"Workspaces":          "LeapViewAPI.Workspace",
 	}
 	for _, endpoint := range document.Endpoints {
 		if len(endpoint.Tags) != 1 {
@@ -742,7 +662,6 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"LeapViewAPI.Protocol":    {},
 		"LeapViewAPI.Refresh":     {},
 		"LeapViewAPI.Release":     {},
-		"LeapViewAPI.Workspace":   {},
 		"LeapViewVisualization":   {},
 	}
 	for name, schema := range document.Schemas {
@@ -770,9 +689,6 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 		if !strings.Contains(manifestText, want) {
 			t.Fatalf("APIGen manifest missing UI signal contract setting %q", want)
 		}
-	}
-	if strings.Contains(manifestText, "go_models_out: ../internal/workspace/ui/signals/models.gen.go") {
-		t.Fatal("APIGen manifest still emits one workspace-owned Go signal package")
 	}
 	if strings.Contains(manifestText, "json_schema_out: ../schemas/signals/ui-signals.schema.json") {
 		t.Fatal("APIGen manifest should not generate an unused UI signal JSON Schema")
@@ -808,7 +724,6 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 		"internal/admin/ui/signals/models.gen.go",
 		"internal/agent/ui/signals/models.gen.go",
 		"internal/dashboard/ui/signals/models.gen.go",
-		"internal/workspace/ui/signals/models.gen.go",
 	} {
 		if !strings.Contains(string(gitignore), path) {
 			t.Fatalf("generated Go UI signal models should ignore %s", path)
@@ -820,7 +735,6 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 		"internal/admin/ui/signals/models.gen.go",
 		"internal/agent/ui/signals/models.gen.go",
 		"internal/dashboard/ui/signals/models.gen.go",
-		"internal/workspace/ui/signals/models.gen.go",
 	} {
 		if !strings.Contains(taskText, path) {
 			t.Fatalf("repository generation contract does not include %s", path)
@@ -843,7 +757,6 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 		{"internal", "admin", "ui", "signals", "models.gen.go"},
 		{"internal", "agent", "ui", "signals", "models.gen.go"},
 		{"internal", "dashboard", "ui", "signals", "models.gen.go"},
-		{"internal", "workspace", "ui", "signals", "models.gen.go"},
 	} {
 		generatedGo, err := os.ReadFile(filepath.Join(append([]string{root}, path...)...))
 		if err != nil {
@@ -930,34 +843,30 @@ func TestAPIGenRoutesCoverHeadlessAPINotUITransports(t *testing.T) {
 		"/api/v1/principals",
 		"/api/v1/principals/{principal}",
 		"/api/v1/search",
-		"/api/v1/workspaces",
-		"/api/v1/workspaces/{workspace}",
-		"/api/v1/workspaces/{workspace}/assets",
-		"/api/v1/workspaces/{workspace}/asset-edges",
-		"/api/v1/workspaces/{workspace}/dashboards",
-		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}",
-		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}",
-		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/visuals/{visual}",
-		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/visuals/{visual}/query",
-		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/filters/{filter}",
-		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/filters/{filter}/values",
-		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/query",
-		"/api/v1/workspaces/{workspace}/semantic-models",
-		"/api/v1/workspaces/{workspace}/semantic-models/{model}",
-		"/api/v1/workspaces/{workspace}/semantic-models/{model}/datasets",
-		"/api/v1/workspaces/{workspace}/semantic-models/{model}/datasets/{dataset}",
-		"/api/v1/workspaces/{workspace}/semantic-models/{model}/datasets/{dataset}/fields",
-		"/api/v1/workspaces/{workspace}/semantic-models/{model}/datasets/{dataset}/preview",
-		"/api/v1/workspaces/{workspace}/semantic-models/{model}/datasets/{dataset}/preview/explain",
-		"/api/v1/workspaces/{workspace}/semantic-models/{model}/relationships",
-		"/api/v1/workspaces/{workspace}/semantic-models/{model}/query",
-		"/api/v1/workspaces/{workspace}/semantic-models/{model}/query/explain",
+		"/api/v1/dashboards",
+		"/api/v1/dashboards/{dashboard}",
+		"/api/v1/dashboards/{dashboard}/pages/{page}",
+		"/api/v1/dashboards/{dashboard}/pages/{page}/visuals/{visual}",
+		"/api/v1/dashboards/{dashboard}/pages/{page}/visuals/{visual}/query",
+		"/api/v1/dashboards/{dashboard}/pages/{page}/filters/{filter}",
+		"/api/v1/dashboards/{dashboard}/pages/{page}/filters/{filter}/values",
+		"/api/v1/dashboards/{dashboard}/pages/{page}/query",
+		"/api/v1/semantic-models",
+		"/api/v1/semantic-models/{model}",
+		"/api/v1/semantic-models/{model}/datasets",
+		"/api/v1/semantic-models/{model}/datasets/{dataset}",
+		"/api/v1/semantic-models/{model}/datasets/{dataset}/fields",
+		"/api/v1/semantic-models/{model}/datasets/{dataset}/preview",
+		"/api/v1/semantic-models/{model}/datasets/{dataset}/preview/explain",
+		"/api/v1/semantic-models/{model}/relationships",
+		"/api/v1/semantic-models/{model}/query",
+		"/api/v1/semantic-models/{model}/query/explain",
 		"/api/v1/projects/{project}/releases",
-		"/api/v1/projects/{project}/releases/{release}/workspaces/{workspace}/artifact",
+		"/api/v1/projects/{project}/releases/{release}/artifact",
 		"/api/v1/projects/{project}/releases/{release}/finalize",
 		"/api/v1/projects/{project}/deployments",
-		"/api/v1/workspaces/{workspace}/refresh-runs",
-		"/api/v1/workspaces/{workspace}/refresh-runs/{run}",
+		"/api/v1/projects/{project}/refresh-runs",
+		"/api/v1/projects/{project}/refresh-runs/{run}",
 		"/api/v1/agent/config",
 		"/api/v1/agent/conversations",
 		"/api/v1/agent/conversations/{conversation}",
@@ -968,21 +877,21 @@ func TestAPIGenRoutesCoverHeadlessAPINotUITransports(t *testing.T) {
 		"/api/v1/principals",
 		"/api/v1/principals/{principal}",
 		"/api/v1/principals/{principal}/password-reset",
-		"/api/v1/workspaces/{workspace}/roles",
-		"/api/v1/workspaces/{workspace}/groups",
-		"/api/v1/workspaces/{workspace}/groups/{group}",
-		"/api/v1/workspaces/{workspace}/groups/{group}/members",
-		"/api/v1/workspaces/{workspace}/groups/{group}/members/{principal}",
-		"/api/v1/workspaces/{workspace}/role-bindings",
-		"/api/v1/workspaces/{workspace}/role-bindings/{binding}",
-		"/api/v1/workspaces/{workspace}/audit-events",
+		"/api/v1/projects/{project}/roles",
+		"/api/v1/groups",
+		"/api/v1/groups/{group}",
+		"/api/v1/groups/{group}/members",
+		"/api/v1/groups/{group}/members/{principal}",
+		"/api/v1/projects/{project}/role-bindings",
+		"/api/v1/projects/{project}/role-bindings/{binding}",
+		"/api/v1/projects/{project}/audit-events",
 	} {
 		if _, ok := paths[path]; !ok {
 			t.Fatalf("generated OpenAPI missing path %s", path)
 		}
 	}
 
-	for _, path := range []string{"/api/workspaces", "/api/publishes", "/api/v1/workspaces/{workspace}/publishes", "/api/v1/workspaces/{workspace}/publishes/{publish}", "/api/v1/admin/agent/config", "/updates", "/commands/select", "/workspaces/{workspace}/chat/updates", "/dashboards/{dashboard}"} {
+	for _, path := range []string{"/api/publishes", "/api/v1/admin/agent/config", "/updates", "/commands/select", "/chat/updates", "/dashboards/{dashboard}"} {
 		if _, ok := paths[path]; ok {
 			t.Fatalf("generated OpenAPI should not include UI transport path %s", path)
 		}
@@ -1302,7 +1211,7 @@ func TestRoleBindingOperationsPublishTransportNeutralCommandContract(t *testing.
 		if command.Owner != "LeapViewAPI.Access" || !command.Audit.Required || command.Audit.SuccessAction != want.audit {
 			t.Errorf("operation %q audit/owner contract = %#v", operationID, command)
 		}
-		if command.Target == nil || command.Target.Type != "workspace" || command.Target.Parameter != "workspace" {
+		if command.Target == nil || command.Target.Type != "project" || command.Target.Parameter != "project" {
 			t.Errorf("operation %q target = %#v", operationID, command.Target)
 		}
 		if command.AuthzMode != "privilege" || command.Privilege != string(access.PrivilegeManageGrants) {
@@ -1329,7 +1238,7 @@ func TestAPIGenUploadArtifactUsesNativeOctetStreamBody(t *testing.T) {
 	if !ok {
 		t.Fatalf("openapi paths missing: %#v", spec["paths"])
 	}
-	operation := mustOpenAPIOperation(t, paths, "/api/v1/projects/{project}/releases/{release}/workspaces/{workspace}/artifact", "put")
+	operation := mustOpenAPIOperation(t, paths, "/api/v1/projects/{project}/releases/{release}/artifact", "put")
 	if _, ok := operation["x-leapview-dispatch"]; ok {
 		t.Fatalf("upload operation should not use x-leapview-dispatch: %#v", operation["x-leapview-dispatch"])
 	}
@@ -1402,16 +1311,14 @@ func TestAPIGenListOperationsUseStandardEnvelope(t *testing.T) {
 		path   string
 		method string
 	}{
-		{"/api/v1/workspaces", "get"},
-		{"/api/v1/search", "get"},
-		{"/api/v1/workspaces/{workspace}/assets", "get"},
-		{"/api/v1/workspaces/{workspace}/asset-edges", "get"},
-		{"/api/v1/workspaces/{workspace}/dashboards", "get"},
-		{"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/filters/{filter}/values", "post"},
-		{"/api/v1/workspaces/{workspace}/semantic-models", "get"},
-		{"/api/v1/workspaces/{workspace}/semantic-models/{model}/datasets", "get"},
-		{"/api/v1/workspaces/{workspace}/semantic-models/{model}/datasets/{dataset}/fields", "get"},
-		{"/api/v1/workspaces/{workspace}/refresh-runs", "get"},
+		{"/api/v1/dashboards", "get"},
+		{"/api/v1/projects/{project}/connections", "get"},
+		{"/api/v1/projects/{project}/audit-events", "get"},
+		{"/api/v1/projects/{project}/refresh-runs", "get"},
+		{"/api/v1/projects/{project}/releases", "get"},
+		{"/api/v1/projects/{project}/deployments", "get"},
+		{"/api/v1/projects/{project}/role-bindings", "get"},
+		{"/api/v1/semantic-models", "get"},
 		{"/api/v1/agent/conversations", "get"},
 	} {
 		operation := mustOpenAPIOperation(t, paths, tc.path, tc.method)

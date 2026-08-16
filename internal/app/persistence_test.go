@@ -9,7 +9,6 @@ import (
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
-	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
 
@@ -21,9 +20,6 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 	if options.AccessRepo == nil {
 		options.AccessRepo = accesssqlite.NewRepository(store.SQLDB())
 	}
-	if options.WorkspaceRepo == nil && options.WorkspaceDirectory == nil {
-		options.WorkspaceRepo = projectsqlite.NewRepository(store.SQLDB())
-	}
 	if options.AccessModule == nil && options.Auth != nil {
 		publicURL := options.PublicURL
 		if publicURL == "" {
@@ -33,20 +29,6 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 			Database:     store.SQLDB(),
 			ExistingAuth: options.Auth, PublicURL: publicURL,
 			MCPIssuerURL: options.MCPOAuth.IssuerURL,
-			WorkspaceIDs: func(ctx context.Context) ([]string, error) {
-				if options.WorkspaceDirectory != nil {
-					return options.WorkspaceDirectory.WorkspaceIDs(ctx)
-				}
-				rows, err := options.WorkspaceRepo.List(ctx)
-				if err != nil {
-					return nil, err
-				}
-				ids := make([]string, 0, len(rows))
-				for _, row := range rows {
-					ids = append(ids, string(row.ID))
-				}
-				return ids, nil
-			},
 		})
 		if err != nil {
 			panic(err)

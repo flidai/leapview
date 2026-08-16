@@ -8,19 +8,15 @@ import (
 	"testing"
 
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
-	"github.com/flidai/leapview/internal/workspace"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDemoUsesCanonicalOlistShowcase(t *testing.T) {
 	root := filepath.Join("..", "..")
 	projectPath := filepath.Join(root, "dashboards", "leapview.yaml")
-	compiled, err := projectcompiler.CompileProject(
-		projectPath,
-		projectcompiler.Options{ServingStateID: workspace.ServingStateID("hosted-demo-test")},
-	)
+	compiled, err := projectcompiler.CompileProject(projectPath)
 	require.NoError(t, err)
-	require.Equal(t, "leapview-showcase", compiled.ID())
+	require.Equal(t, "project:leapview-showcase", compiled.ProjectID().String())
 
 	paths, err := projectcompiler.SourceFiles(projectPath)
 	require.NoError(t, err)
@@ -47,32 +43,26 @@ func TestDemoUsesCanonicalOlistShowcase(t *testing.T) {
 
 func TestDemoSharedLoginIsDashboardOnly(t *testing.T) {
 	root := filepath.Join("..", "..")
-	compiled, err := projectcompiler.CompileProject(
-		filepath.Join(root, "dashboards", "leapview.yaml"),
-		projectcompiler.Options{ServingStateID: workspace.ServingStateID("hosted-demo-access-test")},
-	)
+	compiled, err := projectcompiler.CompileProject(filepath.Join(root, "dashboards", "leapview.yaml"))
 	require.NoError(t, err)
 
-	for _, workspaceID := range []string{"operations", "sales", "visuals"} {
-		compiledWorkspace, ok := compiled.Workspace(workspaceID)
-		require.True(t, ok, "compiled demo workspace %q", workspaceID)
-
-		var privileges []string
-		for _, grant := range compiledWorkspace.Manifest().Access.Grants {
-			if grant.Subject.Email != "demo@leapview.dev" {
-				continue
-			}
-			require.Equal(t, "principal", grant.Subject.Kind)
-			require.Equal(t, "workspace", grant.Object.Type)
-			require.Empty(t, grant.Object.ID)
-			privileges = append(privileges, grant.Privilege)
+	var capabilities []string
+	for _, grant := range compiled.Manifest().Access.Grants {
+		if grant.Subject.Email != "demo@leapview.dev" {
+			continue
 		}
-		require.ElementsMatch(t, []string{"USE_WORKSPACE", "VIEW_ITEM", "QUERY_DATA"}, privileges)
-
-		for _, binding := range compiledWorkspace.Manifest().Access.RoleBindings {
-			require.NotEqual(t, "demo@leapview.dev", binding.Subject.Email,
-				"shared demo login must not inherit a role that enables chat or mutations")
-		}
+		require.Equal(t, "principal", grant.Subject.Kind)
+		require.Contains(t, []string{"project", "dashboard"}, grant.Object.Kind)
+		require.NotEmpty(t, grant.Object.ID)
+		capabilities = append(capabilities, grant.Capability)
+	}
+	require.ElementsMatch(t, []string{
+		"RESOURCE_USE", "RESOURCE_USE",
+		"RESOURCE_READ", "RESOURCE_READ", "RESOURCE_READ", "RESOURCE_READ", "RESOURCE_READ",
+	}, capabilities)
+	for _, binding := range compiled.Manifest().Access.RoleBindings {
+		require.NotEqual(t, "demo@leapview.dev", binding.Subject.Email,
+			"shared demo login must not inherit a role that enables chat or mutations")
 	}
 }
 
@@ -106,8 +96,8 @@ func TestDemoDeploymentIsAutomaticAndDigestPinned(t *testing.T) {
 		"approveDeployment",
 		"activateDeployment",
 		"getDeployment",
-		"listProjectWorkspaces",
-		"workspaceId == \"visuals\"",
+		"getProject",
+		"project:leapview-showcase",
 		"leapviewctl upgrade",
 		"StrictHostKeyChecking=yes",
 		"ssh-keygen -lf",

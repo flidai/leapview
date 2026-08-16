@@ -14,7 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/manageddata/localplan"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	"github.com/stretchr/testify/require"
 )
 
@@ -173,10 +173,10 @@ func TestBundledEvaluationProjectCompilesAndPlansOneSmallManagedFile(t *testing.
 	root, err := evaluationAssetsRoot()
 	require.NoError(t, err)
 	projectPath := filepath.Join(root, evaluationProjectRelativePath)
-	compiled, err := workspacecompiler.CompileProject(projectPath, workspacecompiler.Options{ServingStateID: "evaluation-test"})
+	compiled, err := projectcompiler.CompileProject(projectPath)
 	require.NoError(t, err)
-	if got := compiled.WorkspaceIDs(); len(got) != 1 || got[0] != evaluationWorkspaceID {
-		t.Fatalf("compiled evaluation workspaces = %#v", got)
+	if compiled.ProjectID().String() != evaluationProjectID {
+		t.Fatalf("compiled evaluation project = %q, want %q", compiled.ProjectID(), evaluationProjectID)
 	}
 	plan, err := localplan.NewService(loadManagedDataPlanProject).Plan(context.Background(), localplan.Request{
 		ProjectPath: projectPath,
@@ -193,7 +193,6 @@ func TestEvaluationCompletionMarkerIsStrictAndPrivate(t *testing.T) {
 	home := t.TempDir()
 	completion := evaluationCompletion{
 		ProjectID:  evaluationProjectID,
-		Workspace:  evaluationWorkspaceID,
 		Dashboard:  evaluationDashboardID,
 		RevisionID: "sha256:" + strings.Repeat("a", 64),
 	}

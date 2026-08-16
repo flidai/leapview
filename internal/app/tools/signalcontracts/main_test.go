@@ -20,7 +20,6 @@ func TestGenerationTargetsPartitionCapabilityRoots(t *testing.T) {
 		"admin":     {"AdminPageEnvelope", "AdminQueryHistoryCommand"},
 		"agent":     {"AgentContextSignal", "ChatEnvelope"},
 		"dashboard": {"DashboardEnvelope", "DashboardVisualizationSignal"},
-		"workspace": {"CatalogPageEnvelope", "DataExplorerPageEnvelope", "WorkspacePageEnvelope"},
 	}
 	for _, target := range generationTargets {
 		contracts := contractsForTarget(doc, target)
@@ -70,7 +69,4 @@ func TestGeneratedOutputsContainOnlyNeededCapabilityModels(t *testing.T) {
 	assertOmits("internal/agent/ui/signals/models.gen.go", "AdminPageSignal")
 	assertContains("internal/dashboard/ui/signals/models.gen.go", "DashboardPageSignal")
 	assertOmits("internal/dashboard/ui/signals/models.gen.go", "AdminPageSignal")
-	assertContains("internal/workspace/ui/signals/models.gen.go", "WorkspacePageSignal")
-	assertOmits("internal/workspace/ui/signals/models.gen.go", "AdminPageSignal")
-	assertOmits("internal/workspace/ui/signals/models.gen.go", "ChatPageSignal")
 }
