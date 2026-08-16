@@ -469,19 +469,26 @@ func TestRepositoryReferencesSnapshotsAndLeasesByEnvironment(t *testing.T) {
 	}
 }
 
-func TestRepositoryPointerForeignGenerationRejectedAndActiveUnique(t *testing.T) {
+func TestRepositoryRejectsForeignProjectSecondActiveGeneration(t *testing.T) {
 	store, repo := openRepo(t)
 	projectID := projectgraph.ResourceID("project")
 	first := createValidated(t, repo, projectID, "dev")
-	second := createValidated(t, repo, projectID, "dev")
+	foreign := createValidated(t, repo, projectgraph.ResourceID("other"), "dev")
 	if _, err := repo.Activate(t.Context(), projectID, "dev", first.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO project_active_serving_states(project_id, environment, generation_id) VALUES ('other','dev',?)`, first.ID); err == nil {
-		t.Fatal("pointer accepted generation from another project")
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO project_active_serving_states(project_id, environment, generation_id) VALUES ('other','dev',?)`, foreign.ID); err == nil {
+		t.Fatal("pointer accepted a second project in the same environment")
 	}
-	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET status = 'active' WHERE id = ?`, second.ID); err == nil {
-		t.Fatal("serving_states allowed two active generations for one project/environment")
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET status = 'active' WHERE id = ?`, foreign.ID); err == nil {
+		t.Fatal("serving_states allowed a second project to become active in the same environment")
+	}
+	separate := createValidated(t, repo, projectgraph.ResourceID("other"), "prod")
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO project_active_serving_states(project_id, environment, generation_id) VALUES ('other','prod',?)`, separate.ID); err != nil {
+		t.Fatalf("pointer rejected a separate environment: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET status = 'active' WHERE id = ?`, separate.ID); err != nil {
+		t.Fatalf("serving state rejected a separate environment: %v", err)
 	}
 }
 

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS project_active_serving_states (
   generation_id TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(project_id, environment),
+  UNIQUE(environment),
   FOREIGN KEY(generation_id, project_id, environment)
     REFERENCES serving_states(id, project_id, environment) ON DELETE CASCADE
 );
@@ -193,8 +194,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 
 CREATE INDEX IF NOT EXISTS serving_states_project_environment_created_idx ON serving_states(project_id, environment, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS serving_states_active_project_environment_idx
-  ON serving_states(project_id, environment)
+CREATE UNIQUE INDEX IF NOT EXISTS serving_states_active_environment_idx
+  ON serving_states(environment)
   WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS assets_serving_state_type_idx ON assets(serving_state_id, asset_type);
 CREATE INDEX IF NOT EXISTS assets_serving_state_logical_idx ON assets(serving_state_id, logical_asset_id);

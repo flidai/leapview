@@ -361,7 +361,7 @@ func TestSQLRunRepositoryListsExecutableJobsAcrossGenerationsWithinReadScope(t *
 INSERT INTO serving_states (id, project_id, environment, status) VALUES
   ('generation_a', 'project_sales', 'dev', 'active'),
   ('generation_b', 'project_sales', 'dev', 'validated'),
-  ('generation_other', 'project_other', 'dev', 'active'),
+  ('generation_other', 'project_other', 'dev', 'validated'),
   ('generation_prod', 'project_sales', 'prod', 'active');
 INSERT INTO principals (id, email, display_name) VALUES
   ('user:a', 'a@example.test', 'A'),
