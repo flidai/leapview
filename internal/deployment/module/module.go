@@ -9,9 +9,11 @@ import (
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -81,13 +83,13 @@ func (admit CandidatePreparationAdmitterFunc) AcquireCandidatePreparation(
 
 // CandidateSourceBlobAuditEvent is the transport-neutral audit record emitted
 // after an immutable candidate source blob has been accepted. Action and
-// Privilege are copied from the generated command contract by the module.
+// Capability is copied from the generated command contract by the module.
 type CandidateSourceBlobAuditEvent struct {
 	PrincipalID   string
-	ProjectID     string
+	ProjectID     projectgraph.ResourceID
 	Digest        string
 	Action        string
-	Privilege     string
+	Capability    access.Capability
 	Status        string
 	RequestID     string
 	CorrelationID string

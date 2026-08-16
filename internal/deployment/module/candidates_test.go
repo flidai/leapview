@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
@@ -176,7 +177,7 @@ func TestCandidateSourceBlobUploadPersistsGeneratedCommandAuditExactlyOnce(t *te
 	event := events[0]
 	if event.PrincipalID != "principal_1" || event.ProjectID != "finance" ||
 		event.Digest != blobDigest || event.Action != "candidate.source_blob_uploaded" ||
-		event.Privilege != "AUTHOR_PROJECT" || event.Status != "success" ||
+		event.Capability != access.CapabilityProjectAdmin || event.Status != "success" ||
 		event.RequestID != "req-source-blob" || event.CorrelationID != "corr-source-blob" {
 		t.Fatalf("candidate source blob audit = %#v", event)
 	}

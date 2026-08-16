@@ -15,6 +15,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
@@ -36,11 +37,16 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeCandidateAPIError(w, r, err)
+		return
+	}
 	if !m.validateExpectedCandidate(w, r, project, principalID, request, nil) {
 		return
 	}
 	missing, err := m.candidateSources.Plan(r.Context(), deployment.CandidateSourceScope{
-		ProjectID: project, OwnerID: principalID, CandidateKey: request.CandidateKey,
+		ProjectID: projectID, OwnerID: principalID, CandidateKey: request.CandidateKey,
 	}, request)
 	if err != nil {
 		writeCandidateAPIError(w, r, err)
@@ -61,6 +67,11 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return
+	}
 	if contentType != "application/octet-stream" ||
 		identity != strings.TrimSpace(identity) || contentDigest != strings.TrimSpace(contentDigest) ||
 		digest.ValidateSHA256Identity(identity) != nil ||
@@ -72,7 +83,7 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 		w, r.Body, maxCandidateSourceBlobBytes,
 	)}
 	if err := m.candidateSources.Upload(r.Context(), deployment.CandidateSourceScope{
-		ProjectID: project, OwnerID: principalID,
+		ProjectID: projectID, OwnerID: principalID,
 	}, identity, counter); err != nil {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), err)
 		return
@@ -120,6 +131,14 @@ func (m *Module) recordCandidateSourceBlobAudit(
 	if m == nil || m.candidateSourceBlobAudit == nil {
 		return errors.New("required candidate source blob audit sink is unavailable")
 	}
+	parsedProjectID, err := projectgraph.NewResourceID(projectID)
+	if err != nil {
+		return fmt.Errorf("candidate source blob project ID: %w", err)
+	}
+	capability, err := access.ParseCapability(contract.Command.Privilege)
+	if err != nil {
+		return fmt.Errorf("candidate source blob capability: %w", err)
+	}
 	// Caller surface headers affect audit attribution only. APIGen authorization
 	// has already enforced the generated privilege independently of this value.
 	surface := "api"
@@ -139,8 +158,8 @@ func (m *Module) recordCandidateSourceBlobAudit(
 		correlationID = requestID
 	}
 	return m.candidateSourceBlobAudit(r.Context(), CandidateSourceBlobAuditEvent{
-		PrincipalID: principalID, ProjectID: strings.TrimSpace(projectID), Digest: identity,
-		Action: contract.Command.Audit.SuccessAction, Privilege: contract.Command.Privilege,
+		PrincipalID: principalID, ProjectID: parsedProjectID, Digest: identity,
+		Action: contract.Command.Audit.SuccessAction, Capability: capability,
 		Status: "success", RequestID: requestID, CorrelationID: correlationID,
 		MetadataJSON: metadata,
 	})
@@ -160,10 +179,15 @@ func (m *Module) CommitProjectCandidateSynchronization(
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return
+	}
 	if !m.validateExpectedCandidate(w, r, project, principalID, request, deploymentCommandOperation(operationID)) {
 		return
 	}
-	scope := deployment.CandidateSourceScope{ProjectID: project, OwnerID: principalID}
+	scope := deployment.CandidateSourceScope{ProjectID: projectID, OwnerID: principalID}
 	scope.CandidateKey = request.CandidateKey
 	source, err := m.candidateSources.Commit(r.Context(), scope, request)
 	if err != nil {
@@ -174,7 +198,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 	if request.ExpectedCandidateID == "" {
 		var started deployment.CandidateStartResult
 		started, err = m.candidates.Start(r.Context(), deployment.StartCandidateRequest{
-			ProjectID: projectgraph.ResourceID(project), OwnerID: principalID, ArtifactDigest: request.ArtifactDigest,
+			ProjectID: projectID, OwnerID: principalID, ArtifactDigest: request.ArtifactDigest,
 			Key: request.CandidateKey,
 		})
 		candidate = started.Candidate
@@ -183,7 +207,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 		}
 	} else {
 		candidate, err = m.candidates.Get(r.Context(), deployment.CandidateAccessScope{
-			ProjectID: projectgraph.ResourceID(project), CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
+			ProjectID: projectID, CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
 		})
 	}
 	if err != nil {
@@ -659,8 +683,17 @@ func (m *Module) validateExpectedCandidate(
 	if !hasID {
 		return true
 	}
+	projectID, projectErr := projectgraph.NewResourceID(project)
+	if projectErr != nil {
+		if operationID == nil {
+			writeCandidateAPIError(w, r, projectErr)
+		} else {
+			m.writeCandidateCommandFailure(w, r, *operationID, projectErr)
+		}
+		return false
+	}
 	candidate, err := m.candidates.Get(r.Context(), deployment.CandidateAccessScope{
-		ProjectID: projectgraph.ResourceID(project), CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
+		ProjectID: projectID, CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
 	})
 	if err != nil {
 		if operationID == nil {

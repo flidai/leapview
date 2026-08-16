@@ -80,8 +80,13 @@ func (m *Module) StartProjectCandidate(w http.ResponseWriter, r *http.Request, p
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationStartProjectCandidate(), err)
+		return
+	}
 	startRequest := deployment.StartCandidateRequest{
-		ProjectID: projectgraph.ResourceID(project), OwnerID: principalID, ArtifactDigest: body.ArtifactDigest,
+		ProjectID: projectID, OwnerID: principalID, ArtifactDigest: body.ArtifactDigest,
 	}
 	if body.CandidateKey != nil {
 		startRequest.Key = *body.CandidateKey
@@ -112,9 +117,14 @@ func (m *Module) ReviewProjectCandidate(
 	if _, ok := m.candidatePrincipalID(w, r); !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeCandidateAPIError(w, r, err)
+		return
+	}
 	candidate, err := m.candidates.Review(
 		r.Context(),
-		projectgraph.ResourceID(project),
+		projectID,
 		candidateID,
 	)
 	if err != nil {
@@ -138,8 +148,13 @@ func (m *Module) ReplaceProjectCandidateArtifact(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationReplaceProjectCandidateArtifact(), err)
+		return
+	}
 	candidate, err := m.candidates.ReplaceArtifact(r.Context(), deployment.CandidateAccessScope{
-		ProjectID: projectgraph.ResourceID(project), CandidateID: candidateID, OwnerID: principalID,
+		ProjectID: projectID, CandidateID: candidateID, OwnerID: principalID,
 	}, body.ExpectedArtifactDigest, body.ArtifactDigest)
 	if err != nil {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationReplaceProjectCandidateArtifact(), err)
@@ -153,8 +168,13 @@ func (m *Module) RetryProjectCandidate(w http.ResponseWriter, r *http.Request, p
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationRetryProjectCandidate(), err)
+		return
+	}
 	candidate, err := m.candidates.Retry(r.Context(), deployment.CandidateAccessScope{
-		ProjectID: projectgraph.ResourceID(project), CandidateID: candidateID, OwnerID: principalID,
+		ProjectID: projectID, CandidateID: candidateID, OwnerID: principalID,
 	})
 	if err != nil {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationRetryProjectCandidate(), err)
@@ -168,8 +188,13 @@ func (m *Module) CancelProjectCandidate(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCancelProjectCandidate(), err)
+		return
+	}
 	candidate, err := m.candidates.Cancel(r.Context(), deployment.CandidateAccessScope{
-		ProjectID: projectgraph.ResourceID(project), CandidateID: candidateID, OwnerID: principalID,
+		ProjectID: projectID, CandidateID: candidateID, OwnerID: principalID,
 	})
 	if err != nil {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCancelProjectCandidate(), err)
@@ -189,9 +214,14 @@ func (m *Module) CancelProjectCandidateByKey(
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCancelProjectCandidateByKey(), err)
+		return
+	}
 	candidate, err := m.candidates.CancelActive(
 		r.Context(),
-		projectgraph.ResourceID(project),
+		projectID,
 		principalID,
 		candidateKey,
 	)
@@ -273,8 +303,13 @@ func (m *Module) ownedCandidate(w http.ResponseWriter, r *http.Request, project,
 	if !ok {
 		return deployment.Candidate{}, false
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeCandidateAPIError(w, r, err)
+		return deployment.Candidate{}, false
+	}
 	candidate, err := m.candidates.Get(r.Context(), deployment.CandidateAccessScope{
-		ProjectID: projectgraph.ResourceID(project), CandidateID: candidateID, OwnerID: principalID,
+		ProjectID: projectID, CandidateID: candidateID, OwnerID: principalID,
 	})
 	if err != nil {
 		writeCandidateAPIError(w, r, err)
@@ -288,8 +323,13 @@ func (m *Module) ownedCandidateCommand(w http.ResponseWriter, r *http.Request, p
 	if !ok {
 		return deployment.Candidate{}, false
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return deployment.Candidate{}, false
+	}
 	candidate, err := m.candidates.Get(r.Context(), deployment.CandidateAccessScope{
-		ProjectID: projectgraph.ResourceID(project), CandidateID: candidateID, OwnerID: principalID,
+		ProjectID: projectID, CandidateID: candidateID, OwnerID: principalID,
 	})
 	if err != nil {
 		m.writeCandidateCommandFailure(w, r, operationID, err)
