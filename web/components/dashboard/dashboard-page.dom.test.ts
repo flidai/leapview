@@ -1000,7 +1000,7 @@ test('dashboard agent drawer carries page context and explicit visual references
         query: 'orders', requestId: 1,
         results: [
 		  { reference: { kind: 'visual', id: 'executive-sales.orders_chart' }, name: 'Orders by status', hierarchy: ['Sales', 'Executive Sales', 'Overview'], href: '/orders', locations: [{ dashboardId: 'executive-sales', pageId: 'overview', href: '/orders' }], context: ['current_page'] },
-		  { reference: { kind: 'visual', id: 'executive-sales.foreign_orders' }, name: 'Finance orders', description: 'From another project', hierarchy: ['Finance', 'Executive Sales', 'Overview'], href: '/finance', locations: [{ dashboardId: 'executive-sales', pageId: 'overview', href: '/finance' }], context: [] },
+		  { reference: { kind: 'visual', id: 'executive-sales.finance_orders' }, name: 'Finance orders', description: 'Finance domain metric', hierarchy: ['Finance', 'Executive Sales', 'Overview'], href: '/finance', locations: [{ dashboardId: 'executive-sales', pageId: 'overview', href: '/finance' }], context: [] },
 		  { reference: { kind: 'measure', id: 'olist.order_count' }, name: 'Orders count', description: 'Across the sales model', hierarchy: ['Sales', 'Olist'], href: '/measure', locations: [], context: [] },
         ],
       } })
@@ -1022,8 +1022,8 @@ test('dashboard agent drawer carries page context and explicit visual references
     })
     expect(groupedSearch.labels).toEqual(['On this page', 'All accessible'])
     expect(groupedSearch.options[0]).toContain('Orders')
-	expect(groupedSearch.onPage).not.toContain('Finance orders Finance › Executive Sales › Overview Visual')
-	expect(groupedSearch.accessible).toContain('Finance orders Finance › Executive Sales › Overview Visual')
+	expect(groupedSearch.onPage).toContain('Finance orders Finance › Executive Sales › Overview Visual')
+	expect(groupedSearch.accessible).not.toContain('Finance orders Finance › Executive Sales › Overview Visual')
 	expect(groupedSearch.options.at(-1)).toBe('Orders count Sales › Olist Measure')
 
     await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
@@ -1085,10 +1085,10 @@ test('dashboard agent drawer carries page context and explicit visual references
         reference: { kind: 'visual', id: 'executive-sales.orders_chart' },
         name: 'Orders by status',
         visualType: 'bar',
-        hierarchy: ['sales', 'Executive Sales Dashboard', 'Overview'],
+        hierarchy: ['project:leapview-evaluation', 'Executive Sales Dashboard', 'Overview'],
         href: '/dashboards/executive-sales/pages/overview',
         locations: [{ dashboardId: 'executive-sales', dashboardName: 'Executive Sales Dashboard', pageId: 'overview', pageName: 'Overview', href: '/dashboards/executive-sales/pages/overview' }],
-        context: ['current_page', 'current_dashboard'],
+        context: ['current_page', 'current_dashboard', 'current_project'],
       }],
     })
 
@@ -2873,7 +2873,7 @@ function testDocument(): string {
     },
     runtime: {
       kind: 'dashboard', clientId: 'dashboard-test', streamInstanceId: 'stream-test',
-      dashboardId: 'executive-sales', pageId: 'overview', servingStateId: 'serving-test',
+      projectId: 'project:leapview-evaluation', dashboardId: 'executive-sales', pageId: 'overview', servingStateId: 'serving-test',
     },
     interactionSelections,
     interactionRevision: 0,
