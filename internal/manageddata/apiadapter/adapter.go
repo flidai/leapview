@@ -11,30 +11,34 @@ import (
 
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/control"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-var canonicalRevisionID = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type Repository interface {
-	CollectionByProjectConnection(context.Context, string, string) (manageddata.Collection, error)
-	RevisionByID(context.Context, string) (manageddata.Revision, error)
-	ListRevisions(context.Context, string) ([]manageddata.Revision, error)
-	ListUploadSessions(context.Context, string) ([]manageddata.UploadSession, error)
-	UploadSessionIDByRevisionID(context.Context, string) (string, error)
-	EnvironmentPointer(context.Context, string, manageddata.Environment) (manageddata.EnvironmentPointer, error)
+	CollectionByProjectConnection(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (manageddata.Collection, error)
+	RevisionByID(context.Context, manageddata.RevisionID) (manageddata.Revision, error)
+	ListRevisions(context.Context, projectgraph.ResourceID) ([]manageddata.Revision, error)
+	ListUploadSessions(context.Context, projectgraph.ResourceID) ([]manageddata.UploadSession, error)
+	UploadSessionIDByRevisionID(context.Context, manageddata.RevisionID) (manageddata.UploadID, error)
+	EnvironmentPointer(context.Context, projectgraph.ResourceID, manageddata.Environment) (manageddata.EnvironmentPointer, error)
 }
 
 func (a *Adapter) ListUploadSessions(ctx context.Context, collectionID string) ([]manageddata.UploadSession, error) {
-	collectionID = strings.TrimSpace(collectionID)
-	if collectionID == "" {
+	if collectionID != strings.TrimSpace(collectionID) {
 		return nil, control.ErrInvalid
 	}
-	rows, err := a.repository.ListUploadSessions(ctx, collectionID)
+	parsedCollectionID, err := projectgraph.NewResourceID(collectionID)
+	if err != nil {
+		return nil, control.ErrInvalid
+	}
+	rows, err := a.repository.ListUploadSessions(ctx, parsedCollectionID)
 	if err != nil {
 		return nil, publicError(err)
 	}
 	for _, row := range rows {
-		if row.CollectionID != collectionID {
+		if row.CollectionID != parsedCollectionID {
 			return nil, control.ErrBackend
 		}
 	}
@@ -59,23 +63,36 @@ func New(repository Repository) (*Adapter, error) {
 }
 
 func (a *Adapter) CollectionByProjectConnection(ctx context.Context, project, connection string) (manageddata.Collection, error) {
-	collection, err := a.repository.CollectionByProjectConnection(ctx, strings.TrimSpace(project), strings.TrimSpace(connection))
+	if project != strings.TrimSpace(project) || connection != strings.TrimSpace(connection) {
+		return manageddata.Collection{}, control.ErrInvalid
+	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		return manageddata.Collection{}, control.ErrInvalid
+	}
+	connectionID, err := projectgraph.NewResourceID(connection)
+	if err != nil {
+		return manageddata.Collection{}, control.ErrInvalid
+	}
+	collection, err := a.repository.CollectionByProjectConnection(ctx, projectID, connectionID)
 	if err != nil {
 		return manageddata.Collection{}, publicError(err)
 	}
-	if collection.ProjectID != strings.TrimSpace(project) || collection.ConnectionName != strings.TrimSpace(connection) || collection.Status != manageddata.CollectionStatusActive {
+	if collection.ProjectID != projectID || collection.ConnectionID != connectionID || collection.Status != manageddata.CollectionStatusActive {
 		return manageddata.Collection{}, control.ErrNotFound
 	}
 	return collection, nil
 }
 
 func (a *Adapter) RevisionByID(ctx context.Context, collectionID, publicID string) (control.RevisionMetadata, error) {
-	collectionID = strings.TrimSpace(collectionID)
-	publicID = strings.TrimSpace(publicID)
-	if collectionID == "" || !canonicalRevisionID.MatchString(publicID) {
+	if collectionID != strings.TrimSpace(collectionID) || publicID != strings.TrimSpace(publicID) {
 		return control.RevisionMetadata{}, control.ErrInvalid
 	}
-	revision, err := a.scopedRevisionByDigest(ctx, collectionID, publicID)
+	parsedCollectionID, collectionErr := projectgraph.NewResourceID(collectionID)
+	if collectionErr != nil || !canonicalDigest.MatchString(publicID) {
+		return control.RevisionMetadata{}, control.ErrInvalid
+	}
+	revision, err := a.scopedRevisionByDigest(ctx, parsedCollectionID, publicID)
 	if err != nil {
 		return control.RevisionMetadata{}, err
 	}
@@ -83,8 +100,14 @@ func (a *Adapter) RevisionByID(ctx context.Context, collectionID, publicID strin
 }
 
 func (a *Adapter) ListRevisions(ctx context.Context, collectionID string) ([]control.RevisionMetadata, error) {
-	collectionID = strings.TrimSpace(collectionID)
-	rows, err := a.repository.ListRevisions(ctx, collectionID)
+	if collectionID != strings.TrimSpace(collectionID) {
+		return nil, control.ErrInvalid
+	}
+	parsedCollectionID, parseErr := projectgraph.NewResourceID(collectionID)
+	if parseErr != nil {
+		return nil, control.ErrInvalid
+	}
+	rows, err := a.repository.ListRevisions(ctx, parsedCollectionID)
 	if err != nil {
 		return nil, publicError(err)
 	}
@@ -96,7 +119,7 @@ func (a *Adapter) ListRevisions(ctx context.Context, collectionID string) ([]con
 	})
 	out := make([]control.RevisionMetadata, 0, len(rows))
 	for _, revision := range rows {
-		if revision.CollectionID != collectionID {
+		if revision.CollectionID != parsedCollectionID {
 			return nil, control.ErrBackend
 		}
 		if revision.Status != manageddata.RevisionStatusReady {
@@ -112,40 +135,46 @@ func (a *Adapter) ListRevisions(ctx context.Context, collectionID string) ([]con
 }
 
 func (a *Adapter) EnvironmentPointer(ctx context.Context, collectionID string, environment manageddata.Environment) (manageddata.EnvironmentPointer, error) {
-	pointer, err := a.repository.EnvironmentPointer(ctx, strings.TrimSpace(collectionID), environment)
+	if collectionID != strings.TrimSpace(collectionID) {
+		return manageddata.EnvironmentPointer{}, control.ErrInvalid
+	}
+	parsedCollectionID, parseErr := projectgraph.NewResourceID(collectionID)
+	if parseErr != nil {
+		return manageddata.EnvironmentPointer{}, control.ErrInvalid
+	}
+	pointer, err := a.repository.EnvironmentPointer(ctx, parsedCollectionID, environment)
 	if err != nil {
 		return manageddata.EnvironmentPointer{}, publicError(err)
 	}
-	if pointer.CollectionID != collectionID || pointer.Environment != environment {
+	if pointer.CollectionID != parsedCollectionID || pointer.Environment != environment {
 		return manageddata.EnvironmentPointer{}, control.ErrNotFound
 	}
 	revision, err := a.repository.RevisionByID(ctx, pointer.RevisionID)
 	if err != nil {
 		return manageddata.EnvironmentPointer{}, publicError(err)
 	}
-	if revision.CollectionID != collectionID || revision.Status != manageddata.RevisionStatusReady || !canonicalRevisionID.MatchString(revision.Digest) {
+	if revision.CollectionID != parsedCollectionID || revision.Status != manageddata.RevisionStatusReady || !canonicalDigest.MatchString(revision.Digest) {
 		return manageddata.EnvironmentPointer{}, control.ErrBackend
 	}
-	pointer.RevisionID = revision.Digest
+	pointer.RevisionDigest = revision.Digest
 	return pointer, nil
 }
 
 func (a *Adapter) revisionMetadata(ctx context.Context, revision manageddata.Revision) (control.RevisionMetadata, error) {
-	if revision.Status != manageddata.RevisionStatusReady || !canonicalRevisionID.MatchString(revision.Digest) {
+	if revision.Status != manageddata.RevisionStatusReady || !canonicalDigest.MatchString(revision.Digest) {
 		return control.RevisionMetadata{}, control.ErrNotFound
 	}
 	uploadID, err := a.repository.UploadSessionIDByRevisionID(ctx, revision.ID)
 	if err != nil {
 		return control.RevisionMetadata{}, publicError(err)
 	}
-	if strings.TrimSpace(uploadID) == "" {
+	if uploadID.String() == "" {
 		return control.RevisionMetadata{}, control.ErrBackend
 	}
-	revision.ID = revision.Digest
-	return control.RevisionMetadata{Revision: revision, UploadSessionID: uploadID}, nil
+	return control.RevisionMetadata{Revision: revision, PublicID: revision.Digest, UploadSessionID: uploadID.String()}, nil
 }
 
-func (a *Adapter) scopedRevisionByDigest(ctx context.Context, collectionID, digest string) (manageddata.Revision, error) {
+func (a *Adapter) scopedRevisionByDigest(ctx context.Context, collectionID projectgraph.ResourceID, digest string) (manageddata.Revision, error) {
 	rows, err := a.repository.ListRevisions(ctx, collectionID)
 	if err != nil {
 		return manageddata.Revision{}, publicError(err)

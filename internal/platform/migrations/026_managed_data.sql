@@ -185,7 +185,26 @@ CREATE TABLE IF NOT EXISTS managed_data_serving_state_bindings (
 CREATE INDEX IF NOT EXISTS managed_data_serving_state_bindings_revision_idx
   ON managed_data_serving_state_bindings(revision_id);
 
+-- A serving generation's managed-data binding set is installed as one
+-- immutable evidence record.  The marker also seals an intentionally empty
+-- set, preventing a later request from appending bindings to the generation.
+CREATE TABLE IF NOT EXISTS managed_data_serving_state_binding_sets (
+  project_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  binding_digest TEXT NOT NULL,
+  binding_count INTEGER NOT NULL CHECK(binding_count >= 0),
+  installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(project_id, environment, generation_id),
+  FOREIGN KEY(generation_id, project_id, environment) REFERENCES serving_states(id, project_id, environment) ON DELETE CASCADE,
+  CHECK(length(environment) BETWEEN 1 AND 128 AND environment = trim(environment)),
+  CHECK(length(project_id) > 0 AND project_id = trim(project_id)),
+  CHECK(length(generation_id) > 0 AND generation_id = trim(generation_id)),
+  CHECK(length(binding_digest) = 71 AND substr(binding_digest, 1, 7) = 'sha256:' AND binding_digest = lower(binding_digest))
+);
+
 -- +goose Down
+DROP TABLE IF EXISTS managed_data_serving_state_binding_sets;
 DROP TABLE IF EXISTS managed_data_serving_state_bindings;
 DROP TABLE IF EXISTS managed_data_environment_pointers;
 DROP TABLE IF EXISTS project_deployment_connections;

@@ -97,7 +97,7 @@ func (b *Binder) AfterArtifactValidation(ctx context.Context, candidate servings
 // AfterArtifactValidation exactly match the release manifest. Release pins are
 // content digests, while serving-state bindings use internal revision IDs, so
 // each expected digest must first be resolved within its project connection.
-func (b *Binder) ValidateServingStatePins(ctx context.Context, identity projectgraph.ServingIdentity, expected map[string]string) error {
+func (b *Binder) ValidateServingStatePins(ctx context.Context, identity projectgraph.ServingIdentity, expected map[projectgraph.ResourceID]string) error {
 	if b == nil || b.repository == nil {
 		return ErrRepository
 	}
@@ -121,12 +121,8 @@ func (b *Binder) ValidateServingStatePins(ctx context.Context, identity projectg
 		}
 		actualByCollection[binding.CollectionID] = binding
 	}
-	for connection, digest := range expected {
-		if connection == "" || connection != strings.TrimSpace(connection) || manageddata.ValidateRevisionID(digest) != nil {
-			return ErrArtifactMetadata
-		}
-		connectionID, parseErr := projectgraph.NewResourceID(connection)
-		if parseErr != nil {
+	for connectionID, digest := range expected {
+		if !connectionID.Valid() || manageddata.ValidateRevisionID(digest) != nil {
 			return ErrArtifactMetadata
 		}
 		resolved, resolveErr := b.pinnedBinding(ctx, identity, identity.ProjectID, connectionID, digest, manageddata.Environment(identity.Environment))

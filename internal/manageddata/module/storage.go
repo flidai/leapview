@@ -33,6 +33,7 @@ import (
 	managedtus "github.com/flidai/leapview/internal/manageddata/storage/tus"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -235,8 +236,8 @@ func (m *Module) Materializer() manageddata.RevisionMaterializer { return m.mate
 
 type BindingValidation interface {
 	AfterArtifactValidation(context.Context, servingstate.State, servingstate.Validation) error
-	ValidateServingStatePins(context.Context, string, string, map[string]string) error
-	ResolveCandidatePins(context.Context, string, []string, string) (map[string]string, error)
+	ValidateServingStatePins(context.Context, projectgraph.ServingIdentity, map[projectgraph.ResourceID]string) error
+	ResolveCandidatePins(context.Context, projectgraph.ResourceID, []projectgraph.ResourceID, string) (map[projectgraph.ResourceID]string, error)
 }
 
 func (m *Module) BindingValidation() BindingValidation {
@@ -247,7 +248,7 @@ func (m *Module) BindingValidation() BindingValidation {
 }
 
 type RuntimeResolver interface {
-	ResolveManagedData(context.Context, servingstate.ID) (manageddataresolver.Resolution, error)
+	ResolveManagedData(context.Context, projectgraph.ServingIdentity) (manageddataresolver.Resolution, error)
 }
 
 func (m *Module) RuntimeResolution() RuntimeResolver {
@@ -265,24 +266,24 @@ func (m *Module) RuntimeResolution() RuntimeResolver {
 // having no managed-data roots, so callers never need nil checks.
 type disabledRuntimeResolver struct{}
 
-func (disabledRuntimeResolver) ResolveManagedData(context.Context, servingstate.ID) (manageddataresolver.Resolution, error) {
-	return manageddataresolver.Resolution{Roots: map[string]string{}}, nil
+func (disabledRuntimeResolver) ResolveManagedData(context.Context, projectgraph.ServingIdentity) (manageddataresolver.Resolution, error) {
+	return manageddataresolver.Resolution{Roots: map[projectgraph.ResourceID]string{}}, nil
 }
 
 type DeploymentMetadata interface {
-	CollectionByID(context.Context, string) (manageddata.Collection, error)
-	RevisionByID(context.Context, string) (manageddata.Revision, error)
+	CollectionByID(context.Context, projectgraph.ResourceID) (manageddata.Collection, error)
+	RevisionByID(context.Context, manageddata.RevisionID) (manageddata.Revision, error)
 }
 
 type metadataReader struct {
 	repository repository
 }
 
-func (r metadataReader) CollectionByID(ctx context.Context, id string) (manageddata.Collection, error) {
+func (r metadataReader) CollectionByID(ctx context.Context, id projectgraph.ResourceID) (manageddata.Collection, error) {
 	return r.repository.CollectionByID(ctx, id)
 }
 
-func (r metadataReader) RevisionByID(ctx context.Context, id string) (manageddata.Revision, error) {
+func (r metadataReader) RevisionByID(ctx context.Context, id manageddata.RevisionID) (manageddata.Revision, error) {
 	return r.repository.RevisionByID(ctx, id)
 }
 

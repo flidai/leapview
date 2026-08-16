@@ -219,7 +219,6 @@ func (c *queryResultCache) cacheKey(request dataquery.Query) (string, uint64, er
 	}
 	keyBytes, err := json.Marshal(queryResultCacheKey{
 		Namespace:                    c.namespace,
-		WorkspaceID:                  request.WorkspaceID,
 		CandidateID:                  request.CandidateID,
 		EffectivePolicyFingerprint:   request.EffectivePolicyFingerprint,
 		Operation:                    request.Operation,
@@ -260,7 +259,6 @@ func (e canceledQueryCacheFlightError) Unwrap() error { return e.err }
 
 type queryResultCacheKey struct {
 	Namespace                    string
-	WorkspaceID                  string
 	CandidateID                  string
 	EffectivePolicyFingerprint   string
 	Operation                    string

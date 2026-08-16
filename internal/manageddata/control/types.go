@@ -8,6 +8,7 @@ import (
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -23,17 +24,17 @@ var (
 
 type Repository interface {
 	CreateCollection(context.Context, manageddata.CreateCollectionInput) (manageddata.Collection, error)
-	CollectionByProjectConnection(context.Context, string, string) (manageddata.Collection, error)
+	CollectionByProjectConnection(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (manageddata.Collection, error)
 	CreateUploadSession(context.Context, manageddata.CreateUploadSessionInput) (manageddata.UploadSession, error)
-	UploadSessionByID(context.Context, string) (manageddata.UploadSession, error)
-	UpdateUploadProgress(context.Context, string, manageddata.UploadProgress) error
-	BeginUploadFinalization(context.Context, string, jobs.WorkflowIntent) (manageddata.UploadSession, error)
-	FailUploadFinalization(context.Context, string, string) (manageddata.UploadSession, error)
-	AbortUploadSession(context.Context, string) error
+	UploadSessionByID(context.Context, manageddata.UploadID) (manageddata.UploadSession, error)
+	UpdateUploadProgress(context.Context, manageddata.UploadID, manageddata.UploadProgress) error
+	BeginUploadFinalization(context.Context, manageddata.UploadID, jobs.WorkflowIntent) (manageddata.UploadSession, error)
+	FailUploadFinalization(context.Context, manageddata.UploadID, string) (manageddata.UploadSession, error)
+	AbortUploadSession(context.Context, manageddata.UploadID) error
 	ExpireUploadSessions(context.Context, time.Time) (int64, error)
 	CompleteUpload(context.Context, manageddata.CompleteUploadInput) (manageddata.Revision, error)
-	RevisionByID(context.Context, string) (manageddata.Revision, error)
-	ListRevisionFiles(context.Context, string) ([]manageddata.RevisionFile, error)
+	RevisionByID(context.Context, manageddata.RevisionID) (manageddata.Revision, error)
+	ListRevisionFiles(context.Context, manageddata.RevisionID) ([]manageddata.RevisionFile, error)
 }
 
 var _ Repository = (manageddata.Repository)(nil)

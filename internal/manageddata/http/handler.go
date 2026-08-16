@@ -45,7 +45,7 @@ func (h *Handler) GetActiveManagedDataRevision(w stdhttp.ResponseWriter, r *stdh
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	pointer, err := h.options.Repository.EnvironmentPointer(r.Context(), collection.ID, manageddata.Environment(environment))
+	pointer, err := h.options.Repository.EnvironmentPointer(r.Context(), collection.ID.String(), manageddata.Environment(environment))
 	if errors.Is(err, manageddata.ErrNotFound) || errors.Is(err, ErrNotFound) {
 		h.writeJSON(w, stdhttp.StatusOK, apigenapi.ManagedDataActiveRevisionResponse{})
 		return
@@ -54,16 +54,20 @@ func (h *Handler) GetActiveManagedDataRevision(w stdhttp.ResponseWriter, r *stdh
 		h.writeError(w, r, err)
 		return
 	}
-	if pointer.CollectionID != collection.ID || string(pointer.Environment) != environment {
+	if pointer.CollectionID.String() != collection.ID.String() || string(pointer.Environment) != environment {
 		h.writeError(w, r, ErrNotFound)
 		return
 	}
-	metadata, err := h.options.Repository.RevisionByID(r.Context(), collection.ID, pointer.RevisionID)
+	if pointer.RevisionDigest == "" {
+		h.writeError(w, r, ErrNotFound)
+		return
+	}
+	metadata, err := h.options.Repository.RevisionByID(r.Context(), collection.ID.String(), pointer.RevisionDigest)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	summary, err := revisionSummary(metadata, collection.ID)
+	summary, err := revisionSummary(metadata, collection.ID.String())
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -79,14 +83,14 @@ func (h *Handler) ListManagedDataRevisions(w stdhttp.ResponseWriter, r *stdhttp.
 	if !ok {
 		return
 	}
-	rows, err := h.options.Repository.ListRevisions(r.Context(), collection.ID)
+	rows, err := h.options.Repository.ListRevisions(r.Context(), collection.ID.String())
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Revision.CreatedAt == rows[j].Revision.CreatedAt {
-			return rows[i].Revision.ID > rows[j].Revision.ID
+			return rows[i].PublicID > rows[j].PublicID
 		}
 		return rows[i].Revision.CreatedAt > rows[j].Revision.CreatedAt
 	})
@@ -95,14 +99,14 @@ func (h *Handler) ListManagedDataRevisions(w stdhttp.ResponseWriter, r *stdhttp.
 		if row.Revision.Status != manageddata.RevisionStatusReady {
 			continue
 		}
-		item, mapErr := revisionSummary(row, collection.ID)
+		item, mapErr := revisionSummary(row, collection.ID.String())
 		if mapErr != nil {
 			h.writeError(w, r, mapErr)
 			return
 		}
 		items = append(items, item)
 	}
-	page, next, err := pageSlice(items, params.Limit, params.PageToken, "revisions\x00"+collection.ID, func(item apigenapi.ManagedDataRevisionSummaryResponse) string {
+	page, next, err := pageSlice(items, params.Limit, params.PageToken, "revisions\x00"+collection.ID.String(), func(item apigenapi.ManagedDataRevisionSummaryResponse) string {
 		return item.CreatedAt + "\x00" + item.Id
 	})
 	if err != nil {
@@ -121,12 +125,12 @@ func (h *Handler) GetManagedDataRevision(w stdhttp.ResponseWriter, r *stdhttp.Re
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	metadata, err := h.options.Repository.RevisionByID(r.Context(), collection.ID, revisionID)
+	metadata, err := h.options.Repository.RevisionByID(r.Context(), collection.ID.String(), revisionID)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	response, err := revisionResponse(metadata, collection.ID)
+	response, err := revisionResponse(metadata, collection.ID.String())
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -204,7 +208,7 @@ func (h *Handler) ListManagedDataUploadSessions(w stdhttp.ResponseWriter, r *std
 	if !ok {
 		return
 	}
-	rows, err := h.options.Repository.ListUploadSessions(r.Context(), collection.ID)
+	rows, err := h.options.Repository.ListUploadSessions(r.Context(), collection.ID.String())
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -215,19 +219,19 @@ func (h *Handler) ListManagedDataUploadSessions(w stdhttp.ResponseWriter, r *std
 		}
 		return rows[i].CreatedAt > rows[j].CreatedAt
 	})
-	page, next, err := pageSlice(rows, params.Limit, params.PageToken, "upload-sessions\x00"+collection.ID, func(item manageddata.UploadSession) string { return item.CreatedAt + "\x00" + item.ID })
+	page, next, err := pageSlice(rows, params.Limit, params.PageToken, "upload-sessions\x00"+collection.ID.String(), func(item manageddata.UploadSession) string { return item.CreatedAt + "\x00" + item.ID.String() })
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
 	items := make([]apigenapi.ManagedDataUploadSessionResponse, 0, len(page))
 	for _, row := range page {
-		result, recoverErr := h.options.Uploads.RecoverUpload(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: row.ID})
+		result, recoverErr := h.options.Uploads.RecoverUpload(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: row.ID.String()})
 		if recoverErr != nil {
 			h.writeError(w, r, recoverErr)
 			return
 		}
-		item, mapErr := uploadResponse(result, project, connection, row.ID)
+		item, mapErr := uploadResponse(result, project, connection, row.ID.String())
 		if mapErr != nil {
 			h.writeError(w, r, mapErr)
 			return
@@ -533,7 +537,7 @@ func (h *Handler) collection(w stdhttp.ResponseWriter, r *stdhttp.Request, proje
 		h.writeError(w, r, err)
 		return manageddata.Collection{}, false
 	}
-	if collection.ProjectID != project || collection.ConnectionName != connection || collection.Status != manageddata.CollectionStatusActive {
+	if collection.ProjectID.String() != project || collection.ConnectionID.String() != connection || collection.Status != manageddata.CollectionStatusActive {
 		h.writeError(w, r, ErrNotFound)
 		return manageddata.Collection{}, false
 	}
@@ -714,9 +718,13 @@ func statusForError(err error) int {
 
 func revisionSummary(metadata RevisionMetadata, collectionID string) (apigenapi.ManagedDataRevisionSummaryResponse, error) {
 	revision := metadata.Revision
+	publicID := metadata.PublicID
+	if publicID == "" {
+		publicID = revision.Digest
+	}
 	fileCount, err := checkedInt32(revision.FileCount)
-	if err != nil || revision.CollectionID != collectionID || revision.Status != manageddata.RevisionStatusReady || !revisionPattern.MatchString(revision.ID) || !validResourceID(metadata.UploadSessionID, 160) || revision.CreatedAt == "" {
-		if revision.CollectionID != collectionID {
+	if err != nil || revision.CollectionID.String() != collectionID || revision.Status != manageddata.RevisionStatusReady || !revisionPattern.MatchString(publicID) || !validResourceID(metadata.UploadSessionID, 160) || revision.CreatedAt == "" {
+		if revision.CollectionID.String() != collectionID {
 			return apigenapi.ManagedDataRevisionSummaryResponse{}, ErrNotFound
 		}
 		return apigenapi.ManagedDataRevisionSummaryResponse{}, errors.New("invalid revision metadata")
@@ -724,7 +732,7 @@ func revisionSummary(metadata RevisionMetadata, collectionID string) (apigenapi.
 	if fileCount < 1 || revision.SizeBytes < 0 {
 		return apigenapi.ManagedDataRevisionSummaryResponse{}, errors.New("invalid revision metadata")
 	}
-	return apigenapi.ManagedDataRevisionSummaryResponse{Id: revision.ID, Status: apigenapi.ManagedDataRevisionStatusAvailable, FileCount: fileCount, Size: revision.SizeBytes, CreatedAt: revision.CreatedAt, UploadSessionId: metadata.UploadSessionID}, nil
+	return apigenapi.ManagedDataRevisionSummaryResponse{Id: publicID, Status: apigenapi.ManagedDataRevisionStatusAvailable, FileCount: fileCount, Size: revision.SizeBytes, CreatedAt: revision.CreatedAt, UploadSessionId: metadata.UploadSessionID}, nil
 }
 
 func revisionResponse(metadata RevisionMetadata, collectionID string) (apigenapi.ManagedDataRevisionResponse, error) {

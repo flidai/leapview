@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -166,8 +167,8 @@ func (r *Repository) UploadSessionByID(ctx context.Context, id manageddata.Uploa
 	return mapUploadSession(row), nil
 }
 
-func (r *Repository) ListUploadSessions(ctx context.Context, collectionID string) ([]manageddata.UploadSession, error) {
-	rows, err := r.q.ListManagedDataUploadSessions(ctx, strings.TrimSpace(collectionID))
+func (r *Repository) ListUploadSessions(ctx context.Context, collectionID projectgraph.ResourceID) ([]manageddata.UploadSession, error) {
+	rows, err := r.q.ListManagedDataUploadSessions(ctx, collectionID.String())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -193,8 +194,8 @@ func (r *Repository) ListUploadSessionsForCleanup(ctx context.Context, limit int
 	return out, nil
 }
 
-func (r *Repository) MarkUploadCleanupComplete(ctx context.Context, id string) error {
-	_, err := r.q.MarkManagedDataUploadCleanupComplete(ctx, strings.TrimSpace(id))
+func (r *Repository) MarkUploadCleanupComplete(ctx context.Context, id manageddata.UploadID) error {
+	_, err := r.q.MarkManagedDataUploadCleanupComplete(ctx, id.String())
 	return err
 }
 
@@ -854,31 +855,84 @@ func (r *Repository) InstallServingStateBindings(ctx context.Context, identity p
 		normalized = append(normalized, binding)
 	}
 	sort.Slice(normalized, func(i, j int) bool { return normalized[i].CollectionID < normalized[j].CollectionID })
+	digest, err := servingBindingDigest(normalized)
+	if err != nil {
+		return err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	for _, binding := range normalized {
-		result, err := q.InstallManagedDataServingStateBinding(ctx, platformdb.InstallManagedDataServingStateBindingParams{
-			ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, CollectionID: binding.CollectionID.String(), RevisionID: binding.RevisionID.String(),
+	markerResult, err := q.InstallManagedDataServingStateBindingSet(ctx, platformdb.InstallManagedDataServingStateBindingSetParams{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+		BindingDigest: digest, BindingCount: int64(len(normalized)),
+	})
+	if err != nil {
+		return mapError(err)
+	}
+	markerAffected := markerResult
+	if markerAffected == 0 {
+		marker, getErr := q.GetManagedDataServingStateBindingSet(ctx, platformdb.GetManagedDataServingStateBindingSetParams{
+			ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
 		})
-		if err != nil {
-			return mapError(err)
+		if getErr != nil {
+			return mapError(getErr)
 		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return err
+		if marker.BindingDigest != digest || marker.BindingCount != int64(len(normalized)) {
+			return fmt.Errorf("%w: serving binding set conflicts with immutable generation evidence", manageddata.ErrConflict)
 		}
-		if affected == 0 {
-			existing, getErr := q.GetManagedDataServingStateBinding(ctx, platformdb.GetManagedDataServingStateBindingParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, CollectionID: binding.CollectionID.String()})
-			if getErr != nil || existing.RevisionID != binding.RevisionID.String() {
-				return fmt.Errorf("%w: serving binding conflicts with immutable generation evidence", manageddata.ErrConflict)
+	}
+	if markerAffected == 1 {
+		for _, binding := range normalized {
+			if err := q.InstallManagedDataServingStateBinding(ctx, platformdb.InstallManagedDataServingStateBindingParams{
+				ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+				CollectionID: binding.CollectionID.String(), RevisionID: binding.RevisionID.String(),
+			}); err != nil {
+				return mapError(err)
 			}
 		}
 	}
+	rows, err := q.ListManagedDataServingStateBindings(ctx, platformdb.ListManagedDataServingStateBindingsParams{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+	})
+	if err != nil {
+		return mapError(err)
+	}
+	if !servingBindingRowsMatch(rows, normalized) {
+		return fmt.Errorf("%w: serving binding rows do not match immutable generation evidence", manageddata.ErrConflict)
+	}
 	return tx.Commit()
+}
+
+func servingBindingDigest(bindings []manageddata.ServingStateBinding) (string, error) {
+	type digestEntry struct {
+		CollectionID string `json:"collection_id"`
+		RevisionID   string `json:"revision_id"`
+	}
+	entries := make([]digestEntry, 0, len(bindings))
+	for _, binding := range bindings {
+		entries = append(entries, digestEntry{CollectionID: binding.CollectionID.String(), RevisionID: binding.RevisionID.String()})
+	}
+	payload, err := json.Marshal(entries)
+	if err != nil {
+		return "", fmt.Errorf("marshal serving binding set: %w", err)
+	}
+	digest := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func servingBindingRowsMatch(rows []platformdb.ManagedDataServingStateBinding, want []manageddata.ServingStateBinding) bool {
+	if len(rows) != len(want) {
+		return false
+	}
+	for i, row := range rows {
+		if row.CollectionID != want[i].CollectionID.String() || row.RevisionID != want[i].RevisionID.String() {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Repository) ListServingStateBindings(ctx context.Context, identity projectgraph.ServingIdentity) ([]manageddata.ServingStateBinding, error) {

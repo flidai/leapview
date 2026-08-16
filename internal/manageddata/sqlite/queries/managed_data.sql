@@ -280,12 +280,23 @@ ORDER BY logical_path;
 SELECT * FROM managed_data_environment_pointers
 WHERE collection_id = ? AND environment = ?;
 
--- name: InstallManagedDataServingStateBinding :execrows
+-- name: InstallManagedDataServingStateBindingSet :execrows
+INSERT INTO managed_data_serving_state_binding_sets (
+  project_id, environment, generation_id, binding_digest, binding_count
+)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(project_id, environment, generation_id) DO NOTHING;
+
+-- name: GetManagedDataServingStateBindingSet :one
+SELECT * FROM managed_data_serving_state_binding_sets
+WHERE project_id = ? AND environment = ? AND generation_id = ?;
+
+-- name: InstallManagedDataServingStateBinding :exec
 INSERT INTO managed_data_serving_state_bindings (
   project_id, environment, generation_id, collection_id, revision_id
 )
 VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(project_id, environment, generation_id, collection_id) DO NOTHING;
+;
 
 -- name: ListManagedDataServingStateBindings :many
 SELECT * FROM managed_data_serving_state_bindings

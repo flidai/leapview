@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -100,11 +101,11 @@ func TestBeginUploadEnforcesLimitsAndChecksBaseRevision(t *testing.T) {
 		t.Fatalf("limit error = %v, want ErrInvalid", err)
 	}
 
-	collection, err := repo.CreateCollection(t.Context(), manageddata.CreateCollectionInput{ProjectID: "project-a", ConnectionName: "orders", Name: "orders"})
+	collection, err := repo.CreateCollection(t.Context(), manageddata.CreateCollectionInput{ProjectID: projectgraph.ResourceID("project-a"), ConnectionID: projectgraph.ResourceID("orders"), Name: "orders"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.revisions["other-revision"] = manageddata.Revision{ID: "other-revision", CollectionID: "other-collection", Status: manageddata.RevisionStatusReady}
+	repo.revisions["other-revision"] = manageddata.Revision{ID: manageddata.RevisionID("other-revision"), CollectionID: projectgraph.ResourceID("other-collection"), Status: manageddata.RevisionStatusReady}
 	_, err = service.BeginUpload(t.Context(), control.BeginUploadRequest{
 		Project: "project-a", Connection: "orders", IdempotencyKey: "bad-base", BaseRevisionID: "other-revision",
 		Manifest: manageddata.Manifest{Files: []manageddata.File{{Path: "orders.csv", Size: 4, SHA256: digestA}}},
@@ -324,27 +325,27 @@ func newFakeRepository() *fakeRepository {
 	}
 }
 
-func collectionKey(project, connection string) string {
-	return project + "\x00" + strings.ToLower(connection)
+func collectionKey(project, connection projectgraph.ResourceID) string {
+	return project.String() + "\x00" + strings.ToLower(connection.String())
 }
 
 func (r *fakeRepository) CreateCollection(_ context.Context, input manageddata.CreateCollectionInput) (manageddata.Collection, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key := collectionKey(input.ProjectID, input.ConnectionName)
+	key := collectionKey(input.ProjectID, input.ConnectionID)
 	if existing, ok := r.collections[key]; ok {
 		return existing, nil
 	}
 	collection := manageddata.Collection{
-		ID: "collection-" + input.ProjectID + "-" + input.ConnectionName, ProjectID: input.ProjectID,
-		ConnectionName: input.ConnectionName, Name: input.Name, Description: input.Description,
+		ID: projectgraph.ResourceID("collection-" + input.ProjectID.String() + "-" + input.ConnectionID.String()), ProjectID: input.ProjectID,
+		ConnectionID: input.ConnectionID, Name: input.Name, Description: input.Description,
 		Status: manageddata.CollectionStatusActive, CreatedBy: input.CreatedBy,
 	}
 	r.collections[key] = collection
 	return collection, nil
 }
 
-func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, project, connection string) (manageddata.Collection, error) {
+func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, project, connection projectgraph.ResourceID) (manageddata.Collection, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	collection, ok := r.collections[collectionKey(project, connection)]
@@ -358,7 +359,7 @@ func (r *fakeRepository) CreateUploadSession(_ context.Context, input manageddat
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.createUploadCalls++
-	if _, ok := r.sessions[input.ID]; ok {
+	if _, ok := r.sessions[input.ID.String()]; ok {
 		return manageddata.UploadSession{}, manageddata.ErrConflict
 	}
 	canonical, err := input.Manifest.CanonicalJSON()
@@ -375,24 +376,24 @@ func (r *fakeRepository) CreateUploadSession(_ context.Context, input manageddat
 		ExpectedSizeBytes: total, StorageBackend: input.StorageBackend, StagingPrefix: input.StagingPrefix,
 		CreatedBy: input.CreatedBy, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), ExpiresAt: input.ExpiresAt.UTC().Format(time.RFC3339Nano),
 	}
-	r.sessions[input.ID] = session
+	r.sessions[input.ID.String()] = session
 	return session, nil
 }
 
-func (r *fakeRepository) UploadSessionByID(_ context.Context, id string) (manageddata.UploadSession, error) {
+func (r *fakeRepository) UploadSessionByID(_ context.Context, id manageddata.UploadID) (manageddata.UploadSession, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	session, ok := r.sessions[id]
+	session, ok := r.sessions[id.String()]
 	if !ok {
 		return manageddata.UploadSession{}, manageddata.ErrNotFound
 	}
 	return session, nil
 }
 
-func (r *fakeRepository) UpdateUploadProgress(_ context.Context, id string, progress manageddata.UploadProgress) error {
+func (r *fakeRepository) UpdateUploadProgress(_ context.Context, id manageddata.UploadID, progress manageddata.UploadProgress) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	session, ok := r.sessions[id]
+	session, ok := r.sessions[id.String()]
 	if !ok {
 		return manageddata.ErrNotFound
 	}
@@ -401,14 +402,14 @@ func (r *fakeRepository) UpdateUploadProgress(_ context.Context, id string, prog
 	}
 	session.UploadedFileCount = progress.UploadedFileCount
 	session.UploadedSizeBytes = progress.UploadedSizeBytes
-	r.sessions[id] = session
+	r.sessions[id.String()] = session
 	return nil
 }
 
-func (r *fakeRepository) BeginUploadFinalization(_ context.Context, id string, _ jobs.WorkflowIntent) (manageddata.UploadSession, error) {
+func (r *fakeRepository) BeginUploadFinalization(_ context.Context, id manageddata.UploadID, _ jobs.WorkflowIntent) (manageddata.UploadSession, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	session, ok := r.sessions[id]
+	session, ok := r.sessions[id.String()]
 	if !ok {
 		return manageddata.UploadSession{}, manageddata.ErrNotFound
 	}
@@ -416,14 +417,14 @@ func (r *fakeRepository) BeginUploadFinalization(_ context.Context, id string, _
 		return manageddata.UploadSession{}, manageddata.ErrConflict
 	}
 	session.Status = manageddata.UploadStatusCommitting
-	r.sessions[id] = session
+	r.sessions[id.String()] = session
 	return session, nil
 }
 
-func (r *fakeRepository) FailUploadFinalization(_ context.Context, id, message string) (manageddata.UploadSession, error) {
+func (r *fakeRepository) FailUploadFinalization(_ context.Context, id manageddata.UploadID, message string) (manageddata.UploadSession, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	session, ok := r.sessions[id]
+	session, ok := r.sessions[id.String()]
 	if !ok {
 		return manageddata.UploadSession{}, manageddata.ErrNotFound
 	}
@@ -431,14 +432,14 @@ func (r *fakeRepository) FailUploadFinalization(_ context.Context, id, message s
 		return manageddata.UploadSession{}, manageddata.ErrConflict
 	}
 	session.Status, session.Error = manageddata.UploadStatusFailed, message
-	r.sessions[id] = session
+	r.sessions[id.String()] = session
 	return session, nil
 }
 
-func (r *fakeRepository) AbortUploadSession(_ context.Context, id string) error {
+func (r *fakeRepository) AbortUploadSession(_ context.Context, id manageddata.UploadID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	session, ok := r.sessions[id]
+	session, ok := r.sessions[id.String()]
 	if !ok {
 		return manageddata.ErrNotFound
 	}
@@ -446,7 +447,7 @@ func (r *fakeRepository) AbortUploadSession(_ context.Context, id string) error 
 		return manageddata.ErrConflict
 	}
 	session.Status = manageddata.UploadStatusAborted
-	r.sessions[id] = session
+	r.sessions[id.String()] = session
 	return nil
 }
 
@@ -469,12 +470,12 @@ func (r *fakeRepository) CompleteUpload(_ context.Context, input manageddata.Com
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.completeCalls++
-	session, ok := r.sessions[input.SessionID]
+	session, ok := r.sessions[input.SessionID.String()]
 	if !ok {
 		return manageddata.Revision{}, manageddata.ErrNotFound
 	}
 	if session.Status == manageddata.UploadStatusComplete {
-		return r.revisions[session.RevisionID], nil
+		return r.revisions[session.RevisionID.String()], nil
 	}
 	if session.Status != manageddata.UploadStatusOpen {
 		return manageddata.Revision{}, manageddata.ErrConflict
@@ -485,31 +486,31 @@ func (r *fakeRepository) CompleteUpload(_ context.Context, input manageddata.Com
 		Digest: decodeManifest(session.ManifestJSON).RevisionID(), Status: manageddata.RevisionStatusReady,
 		ManifestJSON: session.ManifestJSON, FileCount: session.ExpectedFileCount, SizeBytes: session.ExpectedSizeBytes,
 	}
-	r.revisions[revision.ID] = revision
+	r.revisions[revision.ID.String()] = revision
 	for _, file := range input.Files {
-		r.revisionFiles[revision.ID] = append(r.revisionFiles[revision.ID], manageddata.RevisionFile{RevisionID: revision.ID, StoredFile: file})
+		r.revisionFiles[revision.ID.String()] = append(r.revisionFiles[revision.ID.String()], manageddata.RevisionFile{RevisionID: revision.ID, StoredFile: file})
 	}
 	session.Status = manageddata.UploadStatusComplete
 	session.RevisionID = revision.ID
 	session.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	r.sessions[input.SessionID] = session
+	r.sessions[input.SessionID.String()] = session
 	return revision, nil
 }
 
-func (r *fakeRepository) RevisionByID(_ context.Context, id string) (manageddata.Revision, error) {
+func (r *fakeRepository) RevisionByID(_ context.Context, id manageddata.RevisionID) (manageddata.Revision, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	revision, ok := r.revisions[id]
+	revision, ok := r.revisions[id.String()]
 	if !ok {
 		return manageddata.Revision{}, manageddata.ErrNotFound
 	}
 	return revision, nil
 }
 
-func (r *fakeRepository) ListRevisionFiles(_ context.Context, revisionID string) ([]manageddata.RevisionFile, error) {
+func (r *fakeRepository) ListRevisionFiles(_ context.Context, revisionID manageddata.RevisionID) ([]manageddata.RevisionFile, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]manageddata.RevisionFile(nil), r.revisionFiles[revisionID]...), nil
+	return append([]manageddata.RevisionFile(nil), r.revisionFiles[revisionID.String()]...), nil
 }
 
 func decodeManifest(value string) manageddata.Manifest {

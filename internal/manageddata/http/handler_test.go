@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/control"
 	managedhttp "github.com/flidai/leapview/internal/manageddata/http"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -294,20 +295,20 @@ type fakeRepository struct {
 }
 
 func metadataFixture() *fakeRepository {
-	collection := manageddata.Collection{ID: "collection-a", ProjectID: "project-a", ConnectionName: "orders", Status: manageddata.CollectionStatusActive}
+	collection := manageddata.Collection{ID: projectgraph.ResourceID("collection-a"), ProjectID: projectgraph.ResourceID("project-a"), ConnectionID: projectgraph.ResourceID("orders"), Status: manageddata.CollectionStatusActive}
 	return &fakeRepository{
 		collection: collection,
 		revisions: map[string]managedhttp.RevisionMetadata{
-			revisionA: {Revision: manageddata.Revision{ID: revisionA, CollectionID: collection.ID, Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"orders.csv","size":3,"sha256":"` + digestA + `"}]}`, FileCount: 1, SizeBytes: 3, CreatedAt: "2026-01-01T00:00:00Z"}, UploadSessionID: "upload-a"},
-			revisionB: {Revision: manageddata.Revision{ID: revisionB, CollectionID: collection.ID, Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"customers.csv","size":4,"sha256":"` + digestB + `"}]}`, FileCount: 1, SizeBytes: 4, CreatedAt: "2026-01-02T00:00:00Z"}, UploadSessionID: "upload-b"},
-			revisionC: {Revision: manageddata.Revision{ID: revisionC, CollectionID: "collection-other", Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"unrelated-secret.csv","size":4,"sha256":"` + digestC + `"}]}`}, UploadSessionID: "upload-secret"},
+			revisionA: {Revision: manageddata.Revision{ID: manageddata.RevisionID("revision-a"), CollectionID: collection.ID, Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"orders.csv","size":3,"sha256":"` + digestA + `"}]}`, FileCount: 1, SizeBytes: 3, CreatedAt: "2026-01-01T00:00:00Z"}, PublicID: revisionA, UploadSessionID: "upload-a"},
+			revisionB: {Revision: manageddata.Revision{ID: manageddata.RevisionID("revision-b"), CollectionID: collection.ID, Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"customers.csv","size":4,"sha256":"` + digestB + `"}]}`, FileCount: 1, SizeBytes: 4, CreatedAt: "2026-01-02T00:00:00Z"}, PublicID: revisionB, UploadSessionID: "upload-b"},
+			revisionC: {Revision: manageddata.Revision{ID: manageddata.RevisionID("revision-c"), CollectionID: projectgraph.ResourceID("collection-other"), Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"unrelated-secret.csv","size":4,"sha256":"` + digestC + `"}]}`}, PublicID: revisionC, UploadSessionID: "upload-secret"},
 		},
-		pointer: manageddata.EnvironmentPointer{CollectionID: collection.ID, Environment: "prod", RevisionID: revisionA, DeploymentID: "deployment-a", UpdatedAt: "2026-01-03T00:00:00Z"},
+		pointer: manageddata.EnvironmentPointer{CollectionID: collection.ID, Environment: "prod", RevisionID: manageddata.RevisionID("revision-a"), RevisionDigest: revisionA, DeploymentID: "deployment-a", UpdatedAt: "2026-01-03T00:00:00Z"},
 	}
 }
 
 func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, project, connection string) (manageddata.Collection, error) {
-	if project != r.collection.ProjectID || connection != r.collection.ConnectionName {
+	if project != r.collection.ProjectID.String() || connection != r.collection.ConnectionID.String() {
 		return manageddata.Collection{}, manageddata.ErrNotFound
 	}
 	return r.collection, nil
@@ -318,7 +319,7 @@ func (r *fakeRepository) RevisionByID(_ context.Context, collectionID, id string
 		return managedhttp.RevisionMetadata{}, r.revisionErr
 	}
 	revision, ok := r.revisions[id]
-	if !ok || revision.Revision.CollectionID != collectionID {
+	if !ok || revision.Revision.CollectionID.String() != collectionID {
 		return managedhttp.RevisionMetadata{}, manageddata.ErrNotFound
 	}
 	return revision, nil

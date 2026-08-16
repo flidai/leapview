@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/storage"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -19,18 +20,18 @@ const (
 const defaultSignExpiry = 15 * time.Minute
 
 type Repository interface {
-	CollectionByProjectConnection(context.Context, string, string) (manageddata.Collection, error)
-	UploadSessionByID(context.Context, string) (manageddata.UploadSession, error)
+	CollectionByProjectConnection(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (manageddata.Collection, error)
+	UploadSessionByID(context.Context, manageddata.UploadID) (manageddata.UploadSession, error)
 	CreateS3MultipartUpload(context.Context, manageddata.CreateS3MultipartUploadInput) (manageddata.S3MultipartUpload, error)
-	S3MultipartUploadByID(context.Context, string) (manageddata.S3MultipartUpload, error)
+	S3MultipartUploadByID(context.Context, manageddata.MultipartUploadID) (manageddata.S3MultipartUpload, error)
 	InitializeS3MultipartUpload(context.Context, manageddata.InitializeS3MultipartUploadInput) (manageddata.S3MultipartUpload, error)
 	ReserveS3MultipartPart(context.Context, manageddata.S3MultipartPart) (manageddata.S3MultipartPart, error)
-	ListS3MultipartParts(context.Context, string) ([]manageddata.S3MultipartPart, error)
+	ListS3MultipartParts(context.Context, manageddata.MultipartUploadID) ([]manageddata.S3MultipartPart, error)
 	BeginS3MultipartCompletion(context.Context, manageddata.BeginS3MultipartCompletionInput) (manageddata.S3MultipartCompletion, error)
-	FinishS3MultipartCompletion(context.Context, string) (manageddata.S3MultipartUpload, error)
+	FinishS3MultipartCompletion(context.Context, manageddata.MultipartUploadID) (manageddata.S3MultipartUpload, error)
 	BeginS3MultipartAbort(context.Context, manageddata.BeginS3MultipartAbortInput) (manageddata.S3MultipartAbort, error)
-	FinishS3MultipartAbort(context.Context, string) (manageddata.S3MultipartUpload, error)
-	FailS3MultipartUpload(context.Context, string, string) (manageddata.S3MultipartUpload, error)
+	FinishS3MultipartAbort(context.Context, manageddata.MultipartUploadID) (manageddata.S3MultipartUpload, error)
+	FailS3MultipartUpload(context.Context, manageddata.MultipartUploadID, string) (manageddata.S3MultipartUpload, error)
 	ListRecoverableS3MultipartUploads(context.Context, time.Time, int64) ([]manageddata.S3MultipartUpload, error)
 }
 

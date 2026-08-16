@@ -253,10 +253,13 @@ type EnvironmentPointer struct {
 	CollectionID projectgraph.ResourceID
 	Environment  Environment
 	RevisionID   RevisionID
-	DeploymentID string
-	Generation   int64
-	UpdatedBy    string
-	UpdatedAt    string
+	// RevisionDigest is the content-addressed public revision identifier. It
+	// is separate from the operational RevisionID used for storage joins.
+	RevisionDigest string
+	DeploymentID   string
+	Generation     int64
+	UpdatedBy      string
+	UpdatedAt      string
 }
 
 type ServingStateBinding struct {
