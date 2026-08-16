@@ -27238,7 +27238,7 @@ paths:
             status_code: !!float 404
           - code: PUBLICATION_MANAGEMENT_REQUIRED
             kind: publication_forbidden
-            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            public_detail: PROJECT_ADMIN is required to activate this publication.
             status_code: !!float 403
           - code: RELEASE_INCOMPLETE
             kind: release_incomplete
@@ -36477,7 +36477,7 @@ paths:
             status_code: !!float 404
           - code: PUBLICATION_MANAGEMENT_REQUIRED
             kind: publication_forbidden
-            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            public_detail: PROJECT_ADMIN is required to activate this publication.
             status_code: !!float 403
           - code: RELEASE_INCOMPLETE
             kind: release_incomplete
@@ -39763,7 +39763,7 @@ paths:
             status_code: !!float 404
           - code: PUBLICATION_MANAGEMENT_REQUIRED
             kind: publication_forbidden
-            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            public_detail: PROJECT_ADMIN is required to activate this publication.
             status_code: !!float 403
           - code: RELEASE_INCOMPLETE
             kind: release_incomplete
@@ -40171,7 +40171,7 @@ paths:
             status_code: !!float 404
           - code: PUBLICATION_MANAGEMENT_REQUIRED
             kind: publication_forbidden
-            public_detail: MANAGE_PUBLICATIONS is required to activate this publication.
+            public_detail: PROJECT_ADMIN is required to activate this publication.
             status_code: !!float 403
           - code: RELEASE_INCOMPLETE
             kind: release_incomplete

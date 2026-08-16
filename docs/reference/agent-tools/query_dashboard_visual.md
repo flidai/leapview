@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_dashboard_visual.
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `RESOURCE_READ` |
+| Authorization | `RESOURCE_READ` |
 | Effect | `read` |
 | Operation | `queryDashboardVisualData` |
 | Tags | `dashboard`, `visual`, `query` |

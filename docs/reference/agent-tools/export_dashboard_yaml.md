@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/export_dashboard_yaml.j
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `RESOURCE_READ` |
+| Authorization | `RESOURCE_READ` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `export` |

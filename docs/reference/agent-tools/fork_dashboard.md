@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/fork_dashboard.json) ·
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `RESOURCE_EDIT` |
+| Authorization | `RESOURCE_EDIT` |
 | Effect | `write` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `fork` |

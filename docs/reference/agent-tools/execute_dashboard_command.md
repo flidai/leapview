@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/execute_dashboard_comma
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `RESOURCE_MANAGE` |
+| Authorization | `RESOURCE_MANAGE` |
 | Effect | `destructive` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `command` |

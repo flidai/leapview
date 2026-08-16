@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `RESOURCE_USE` |
+| Authorization | `RESOURCE_USE` |
 | Effect | `read` |
 | Operation | `querySemanticModel` |
 | Tags | `semantic-model`, `query` |

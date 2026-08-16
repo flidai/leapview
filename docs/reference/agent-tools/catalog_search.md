@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_search.json) ·
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `RESOURCE_READ` |
+| Authorization | `RESOURCE_READ` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `catalog`, `search` |

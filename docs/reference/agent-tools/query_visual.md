@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `RESOURCE_USE` |
+| Authorization | `RESOURCE_USE` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `analytics`, `visualization` |

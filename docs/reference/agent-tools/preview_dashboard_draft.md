@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/preview_dashboard_draft
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `RESOURCE_EDIT` |
+| Authorization | `RESOURCE_EDIT` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `preview` |
