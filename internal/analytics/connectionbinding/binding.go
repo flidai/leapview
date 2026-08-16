@@ -94,8 +94,10 @@ func (reference CredentialReference) valid() bool {
 		reference.Environment == strings.TrimSpace(reference.Environment) &&
 		reference.ProjectID.Valid() &&
 		strings.TrimSpace(reference.Environment) != "" &&
-		strings.HasPrefix(strings.TrimSpace(reference.SecretPath), "/") &&
-		strings.TrimSpace(reference.SecretKey) != ""
+		reference.SecretPath == strings.TrimSpace(reference.SecretPath) &&
+		reference.SecretKey == strings.TrimSpace(reference.SecretKey) &&
+		strings.HasPrefix(reference.SecretPath, "/") &&
+		reference.SecretKey != ""
 }
 
 type TargetBinding struct {
@@ -154,7 +156,13 @@ func NewTargetBinding(input TargetBindingInput) (TargetBinding, error) {
 	if _, err := ParseTargetID(input.TargetID.String()); err != nil {
 		return TargetBinding{}, err
 	}
-	input.ConnectorKind = strings.TrimSpace(input.ConnectorKind)
+	if input.ConnectorKind != strings.TrimSpace(input.ConnectorKind) ||
+		input.CredentialReference.SecretPath != strings.TrimSpace(input.CredentialReference.SecretPath) ||
+		input.CredentialReference.SecretKey != strings.TrimSpace(input.CredentialReference.SecretKey) {
+		return TargetBinding{}, fmt.Errorf("%w: binding connector and credential fields must be canonical", ErrInvalidBinding)
+	}
+	// Connector and credential fields are execution identities; preserve their
+	// canonical spelling instead of silently rewriting aliases.
 	input.Scope.ProjectID = projectgraph.ResourceID(input.Scope.ProjectID.String())
 	// Environment is a serving-scope identity; preserve its canonical spelling.
 	input.Now = input.Now.UTC()
@@ -334,7 +342,11 @@ func (binding TargetBinding) UpdateConfiguration(configuration TargetBindingConf
 	if now.IsZero() || now.Before(binding.UpdatedAt) {
 		return TargetBinding{}, fmt.Errorf("%w: monotonic update time is required", ErrInvalidBinding)
 	}
-	configuration.ConnectorKind = strings.TrimSpace(configuration.ConnectorKind)
+	if configuration.ConnectorKind != strings.TrimSpace(configuration.ConnectorKind) ||
+		configuration.CredentialReference.SecretPath != strings.TrimSpace(configuration.CredentialReference.SecretPath) ||
+		configuration.CredentialReference.SecretKey != strings.TrimSpace(configuration.CredentialReference.SecretKey) {
+		return TargetBinding{}, fmt.Errorf("%w: binding connector and credential fields must be canonical", ErrInvalidBinding)
+	}
 	configuration.CredentialReference = canonicalReference(configuration.CredentialReference)
 	candidate := binding
 	candidate.ConnectorKind = configuration.ConnectorKind
@@ -457,8 +469,8 @@ func cloneEndpoint(endpoint EndpointConfig) EndpointConfig {
 
 func canonicalReference(reference CredentialReference) CredentialReference {
 	return CredentialReference{
-		ProjectID: strings.TrimSpace(reference.ProjectID), Environment: strings.TrimSpace(reference.Environment),
-		SecretPath: strings.TrimSpace(reference.SecretPath), SecretKey: strings.TrimSpace(reference.SecretKey),
+		ProjectID: reference.ProjectID, Environment: reference.Environment,
+		SecretPath: reference.SecretPath, SecretKey: reference.SecretKey,
 	}
 }
 
