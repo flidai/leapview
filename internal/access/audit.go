@@ -43,7 +43,6 @@ func PersistAuditEvent(ctx context.Context, recorder AuditEventRecorder, input A
 	}
 	slog.ErrorContext(ctx, "audit event persistence failed",
 		"action", input.Action,
-		"workspace_id", input.WorkspaceID,
 		"principal_id", input.PrincipalID,
 		"request_id", input.RequestID,
 		"error", lastErr,

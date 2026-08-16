@@ -7,26 +7,6 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 )
 
-// RoleBindingRevision is the transport-neutral concurrency revision for a
-// role binding. Every surface compares the same domain fields.
-func RoleBindingRevision(row RoleBinding) (string, error) {
-	return apigencommand.RevisionToken(struct {
-		ID          string
-		WorkspaceID string
-		SubjectType SubjectType
-		SubjectID   string
-		Email       string
-		DisplayName string
-		GroupName   string
-		Role        string
-		CreatedAt   string
-	}{
-		ID: row.ID, WorkspaceID: row.WorkspaceID, SubjectType: row.SubjectType,
-		SubjectID: row.SubjectID, Email: row.Email, DisplayName: row.DisplayName,
-		GroupName: row.GroupName, Role: row.Role, CreatedAt: row.CreatedAt,
-	})
-}
-
 // PrincipalRevision is the transport-neutral concurrency revision for a
 // principal. Keep this derived from domain fields so every command surface
 // compares the same value without depending on an HTTP representation.
@@ -57,56 +37,16 @@ func revisionTimestamp(value string) string {
 	return ""
 }
 
-// GroupRevision is the transport-neutral concurrency revision for a group.
+// GroupRevision is the transport-neutral concurrency revision for a global group.
 func GroupRevision(row Group) (string, error) {
 	return apigencommand.RevisionToken(struct {
-		ID          string
-		WorkspaceID string
-		Provider    string
-		ExternalID  string
-		Name        string
-		CreatedAt   string
+		ID         string
+		Provider   string
+		ExternalID string
+		Name       string
+		CreatedAt  string
 	}{
-		ID: row.ID, WorkspaceID: row.WorkspaceID, Provider: row.Provider,
-		ExternalID: row.ExternalID, Name: row.Name, CreatedAt: row.CreatedAt,
-	})
-}
-
-// GrantRevision is the transport-neutral concurrency revision for a grant.
-func GrantRevision(row Grant) (string, error) {
-	return apigencommand.RevisionToken(struct {
-		ID          string
-		ObjectID    string
-		ObjectType  SecurableType
-		WorkspaceID string
-		SubjectType SubjectType
-		SubjectID   string
-		Privilege   Privilege
-		CreatedAt   string
-	}{
-		ID: row.ID, ObjectID: row.ObjectID, ObjectType: row.ObjectType,
-		WorkspaceID: row.WorkspaceID, SubjectType: row.SubjectType,
-		SubjectID: row.SubjectID, Privilege: row.Privilege, CreatedAt: row.CreatedAt,
-	})
-}
-
-// DataPolicyRevision is the transport-neutral concurrency revision for a data
-// policy. ExpressionJSON is intentionally included because policy semantics
-// can change without any other field changing.
-func DataPolicyRevision(row DataPolicy) (string, error) {
-	return apigencommand.RevisionToken(struct {
-		ID             string
-		WorkspaceID    string
-		ObjectID       string
-		SubjectType    SubjectType
-		SubjectID      string
-		PolicyType     string
-		ExpressionJSON string
-		CreatedAt      string
-		UpdatedAt      string
-	}{
-		ID: row.ID, WorkspaceID: row.WorkspaceID, ObjectID: row.ObjectID,
-		SubjectType: row.SubjectType, SubjectID: row.SubjectID, PolicyType: row.PolicyType,
-		ExpressionJSON: row.ExpressionJSON, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		ID: row.ID, Provider: row.Provider, ExternalID: row.ExternalID,
+		Name: row.Name, CreatedAt: row.CreatedAt,
 	})
 }

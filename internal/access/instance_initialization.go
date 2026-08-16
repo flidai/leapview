@@ -30,21 +30,18 @@ type InstanceInitializer interface {
 	InitializeInstance(context.Context, InstanceInitializationInput, func(InitialInstanceCredentials) error) (InitialInstanceCredentials, error)
 }
 
-func InitialPublisherPrivileges() []Privilege {
-	return []Privilege{
-		PrivilegeUseWorkspace,
-		PrivilegeViewItem,
-		PrivilegeAuthorProject,
-		PrivilegePublishRelease,
-		PrivilegeRequestDeployment,
-		PrivilegeViewAudit,
+func InitialPublisherCapabilities() []Capability {
+	return []Capability{
+		CapabilityResourceUse,
+		CapabilityResourceRead,
+		CapabilityResourceEdit,
+		CapabilityResourcePublish,
 	}
 }
 
-// LocalEvaluationPublisherPrivileges extend the one-time publisher only far
-// enough to stage the bundled synthetic dataset. Evaluation remains unable to
-// approve or activate deployments directly.
-func LocalEvaluationPublisherPrivileges() []Privilege {
-	privileges := InitialPublisherPrivileges()
-	return append(privileges, PrivilegeIngestData)
+// LocalEvaluationPublisherCapabilities extends the one-time publisher only
+// far enough to stage the bundled synthetic dataset.
+func LocalEvaluationPublisherCapabilities() []Capability {
+	capabilities := InitialPublisherCapabilities()
+	return append(capabilities, CapabilityResourceManage)
 }

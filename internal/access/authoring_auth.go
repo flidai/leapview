@@ -52,12 +52,12 @@ const (
 // action; this scope additionally prevents replay against another LeapView
 // instance, project, or action.
 type AuthoringScope struct {
-	TargetID   string
-	ProjectID  string
-	Privileges []Privilege
+	TargetID     string
+	ProjectID    string
+	Capabilities []Capability
 }
 
-func NewAuthoringScope(targetID, projectID string, privileges []Privilege) (AuthoringScope, error) {
+func NewAuthoringScope(targetID, projectID string, capabilities []Capability) (AuthoringScope, error) {
 	targetID = strings.TrimSpace(targetID)
 	projectID = strings.TrimSpace(projectID)
 	if targetID == "" {
@@ -66,30 +66,29 @@ func NewAuthoringScope(targetID, projectID string, privileges []Privilege) (Auth
 	if projectID == "" {
 		return AuthoringScope{}, fmt.Errorf("authoring project ID is required")
 	}
-	if len(privileges) == 0 {
+	if len(capabilities) == 0 {
 		return AuthoringScope{}, fmt.Errorf("at least one authoring action is required")
 	}
-	validated := make([]Privilege, 0, len(privileges))
-	seen := make(map[Privilege]struct{}, len(privileges))
-	for _, requested := range privileges {
-		privilege, ok := ParsePrivilege(string(requested))
-		if !ok {
-			return AuthoringScope{}, fmt.Errorf("unknown authoring action %q", requested)
+	validated := make([]Capability, 0, len(capabilities))
+	seen := make(map[Capability]struct{}, len(capabilities))
+	for _, requested := range capabilities {
+		if err := requested.Validate(); err != nil {
+			return AuthoringScope{}, fmt.Errorf("unknown authoring capability %q: %w", requested, err)
 		}
-		if _, duplicate := seen[privilege]; duplicate {
-			return AuthoringScope{}, fmt.Errorf("duplicate authoring action %q", privilege)
+		if _, duplicate := seen[requested]; duplicate {
+			return AuthoringScope{}, fmt.Errorf("duplicate authoring capability %q", requested)
 		}
-		seen[privilege] = struct{}{}
-		validated = append(validated, privilege)
+		seen[requested] = struct{}{}
+		validated = append(validated, requested)
 	}
 	slices.Sort(validated)
-	return AuthoringScope{TargetID: targetID, ProjectID: projectID, Privileges: validated}, nil
+	return AuthoringScope{TargetID: targetID, ProjectID: projectID, Capabilities: validated}, nil
 }
 
-func (scope AuthoringScope) Authorize(targetID, projectID string, privilege Privilege) error {
+func (scope AuthoringScope) Authorize(targetID, projectID string, capability Capability) error {
 	if strings.TrimSpace(targetID) != scope.TargetID ||
 		strings.TrimSpace(projectID) != scope.ProjectID ||
-		!slices.Contains(scope.Privileges, privilege) {
+		!slices.Contains(scope.Capabilities, capability) {
 		return ErrAuthoringScopeDenied
 	}
 	return nil
@@ -428,12 +427,12 @@ func (service *AuthoringAuthService) ExchangeWorkloadIdentity(ctx context.Contex
 	return tokenSet(accessToken, "", now, credential), nil
 }
 
-func (service *AuthoringAuthService) Authenticate(ctx context.Context, accessToken, targetID, projectID string, privilege Privilege) (AuthoringCredential, error) {
+func (service *AuthoringAuthService) Authenticate(ctx context.Context, accessToken, targetID, projectID string, capability Capability) (AuthoringCredential, error) {
 	credential, err := service.Resolve(ctx, accessToken)
 	if err != nil {
 		return AuthoringCredential{}, err
 	}
-	if err := credential.Session.Scope.Authorize(targetID, projectID, privilege); err != nil {
+	if err := credential.Session.Scope.Authorize(targetID, projectID, capability); err != nil {
 		return AuthoringCredential{}, err
 	}
 	return credential, nil
@@ -483,7 +482,7 @@ func (service *AuthoringAuthService) RevokeAccessToken(ctx context.Context, acce
 }
 
 func (service *AuthoringAuthService) validateScope(scope AuthoringScope) error {
-	validated, err := NewAuthoringScope(scope.TargetID, scope.ProjectID, scope.Privileges)
+	validated, err := NewAuthoringScope(scope.TargetID, scope.ProjectID, scope.Capabilities)
 	if err != nil {
 		return err
 	}
