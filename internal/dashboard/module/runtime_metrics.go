@@ -3,7 +3,6 @@ package module
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
@@ -146,7 +145,7 @@ type runtimeMetricsResolver struct {
 	metrics runtimeMetrics
 }
 
-func (r runtimeMetricsResolver) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
+func (r runtimeMetricsResolver) Resolve(dashboardID projectgraph.ResourceID) (dashboardresolver.Resolved, error) {
 	if r.metrics.provider == nil {
 		return dashboardresolver.Resolved{}, fmt.Errorf("runtime provider is not configured")
 	}
@@ -168,7 +167,7 @@ func runtimeResolverPort(runtime runtimehost.Runtime) (runtimeResolver, bool) {
 	return port, ok
 }
 
-func (m runtimeMetrics) resolveOnRuntime(runtime runtimehost.Runtime, identity projectgraph.ServingIdentity, dashboardID string) (dashboardresolver.Resolved, error) {
+func (m runtimeMetrics) resolveOnRuntime(runtime runtimehost.Runtime, identity projectgraph.ServingIdentity, dashboardID projectgraph.ResourceID) (dashboardresolver.Resolved, error) {
 	port, ok := runtimeResolverPort(runtime)
 	if !ok {
 		return dashboardresolver.Resolved{}, fmt.Errorf("active runtime does not provide dashboard resolver")
@@ -470,7 +469,8 @@ func (m runtimeMetrics) activeResolvedForDashboardRefreshRaw(ctx context.Context
 	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && m.pinnedProjectMatches(pinned) {
 		return pinned.runtime, func() {}, pinned.servingStateID, pinned.identity, nil
 	}
-	return m.activeWithState(ctx)
+	runtime, release, identity, err := m.activeWithState(ctx)
+	return runtime, release, identity.GenerationID, identity, err
 }
 
 func (m runtimeMetrics) pinnedProjectMatches(pinned dashboardRefreshRuntime) bool {
@@ -608,7 +608,11 @@ func (m runtimeMetrics) RuntimeReady(ctx context.Context, projectID projectgraph
 	if !ok {
 		return fmt.Errorf("active runtime does not provide report metadata")
 	}
-	resolved, err := reportPort.Resolver().Resolve(defaultDashboardID)
+	defaultDashboardResourceID, err := projectgraph.NewResourceID(defaultDashboardID)
+	if err != nil {
+		return fmt.Errorf("default dashboard ID: %w", err)
+	}
+	resolved, err := reportPort.Resolver().Resolve(defaultDashboardResourceID)
 	if err != nil {
 		return reportMetadataReady(catalogPort, defaultDashboardID, dashboarddefinition.Definition{}, nil, false)
 	}
@@ -641,7 +645,12 @@ func (m runtimeMetrics) activeResolved(ctx context.Context, dashboardID string) 
 	if err != nil {
 		return nil, func() {}, dashboardresolver.Resolved{}, err
 	}
-	resolved, err := m.resolveOnRuntime(runtime, identity, dashboardID)
+	dashboardResourceID, err := projectgraph.NewResourceID(dashboardID)
+	if err != nil {
+		release()
+		return nil, func() {}, dashboardresolver.Resolved{}, err
+	}
+	resolved, err := m.resolveOnRuntime(runtime, identity, dashboardResourceID)
 	if err != nil {
 		release()
 		return nil, func() {}, dashboardresolver.Resolved{}, err
@@ -651,7 +660,11 @@ func (m runtimeMetrics) activeResolved(ctx context.Context, dashboardID string) 
 
 func (m runtimeMetrics) activeResolvedForDashboardRefresh(ctx context.Context, dashboardID string) (runtimehost.Runtime, func(), dashboardresolver.Resolved, error) {
 	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && m.pinnedProjectMatches(pinned) && pinned.resolutions != nil {
-		id := strings.TrimSpace(dashboardID)
+		id := dashboardID
+		dashboardResourceID, err := projectgraph.NewResourceID(id)
+		if err != nil {
+			return nil, func() {}, dashboardresolver.Resolved{}, err
+		}
 		pinned.resolutions.mu.Lock()
 		defer pinned.resolutions.mu.Unlock()
 		if resolved, ok := pinned.resolutions.values[id]; ok {
@@ -660,7 +673,7 @@ func (m runtimeMetrics) activeResolvedForDashboardRefresh(ctx context.Context, d
 		if err, ok := pinned.resolutions.errors[id]; ok {
 			return nil, func() {}, dashboardresolver.Resolved{}, err
 		}
-		resolved, err := m.resolveOnRuntime(pinned.runtime, pinned.identity, id)
+		resolved, err := m.resolveOnRuntime(pinned.runtime, pinned.identity, dashboardResourceID)
 		if err != nil {
 			pinned.resolutions.errors[id] = err
 			return nil, func() {}, dashboardresolver.Resolved{}, err
@@ -672,7 +685,14 @@ func (m runtimeMetrics) activeResolvedForDashboardRefresh(ctx context.Context, d
 	if err != nil {
 		return nil, func() {}, dashboardresolver.Resolved{}, err
 	}
-	resolved, err := m.resolveOnRuntime(runtime, identity, dashboardID)
+	dashboardResourceID, err := projectgraph.NewResourceID(dashboardID)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return nil, func() {}, dashboardresolver.Resolved{}, err
+	}
+	resolved, err := m.resolveOnRuntime(runtime, identity, dashboardResourceID)
 	if err != nil {
 		if release != nil {
 			release()

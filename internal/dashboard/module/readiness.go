@@ -42,7 +42,11 @@ func metricsMetadataReady(metrics queryruntime.Metrics, projectID projectgraph.R
 	if metrics.Resolver() == nil {
 		return reportMetadataReady(metrics, dashboardID, dashboarddefinition.Definition{}, nil, false)
 	}
-	resolved, err := metrics.Resolver().Resolve(dashboardID)
+	dashboardResourceID, err := projectgraph.NewResourceID(dashboardID)
+	if err != nil {
+		return fmt.Errorf("default dashboard ID: %w", err)
+	}
+	resolved, err := metrics.Resolver().Resolve(dashboardResourceID)
 	if err != nil {
 		return reportMetadataReady(metrics, dashboardID, dashboarddefinition.Definition{}, nil, false)
 	}
