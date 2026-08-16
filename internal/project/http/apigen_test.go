@@ -39,5 +39,5 @@ func (h *recordingProjectHandler) ListProjects(_ stdhttp.ResponseWriter, _ *stdh
 
 func (*recordingProjectHandler) GetProject(stdhttp.ResponseWriter, *stdhttp.Request, string) {}
 
-func (*recordingProjectHandler) ListProjectWorkspaces(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string) {
+func (*recordingProjectHandler) Search(stdhttp.ResponseWriter, *stdhttp.Request, projectgen.GenSearchParams) {
 }

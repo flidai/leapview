@@ -14,6 +14,7 @@ import (
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
+	projectapi "github.com/flidai/leapview/internal/project/api/gen"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releaseapi "github.com/flidai/leapview/internal/release/api"
@@ -27,6 +28,12 @@ type Principal struct {
 }
 
 type PageParams = releaseapi.PageParams
+
+// Search remains a project-surface dispatch seam while the search index is
+// owned by application composition. Release does not expose workspace search.
+func (m *Module) Search(w http.ResponseWriter, r *http.Request, _ projectapi.GenSearchParams) {
+	apitransport.WriteProblem(w, r, http.StatusNotImplemented, "SEARCH_UNAVAILABLE", "Project search is unavailable", nil)
+}
 
 type JobStore interface {
 	Enqueue(context.Context, jobs.EnqueueInput) (jobs.Job, error)

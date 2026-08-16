@@ -105,11 +105,13 @@ type HTTPConfig struct {
 }
 
 type SemanticConfig struct {
-	Metrics             queryruntime.Metrics
-	MetricsForWorkspace func(string) (queryruntime.Metrics, bool)
-	CurrentPrincipalID  func(*http.Request) string
-	AuthorizeListObject func(context.Context, string, access.ObjectRef) (bool, error)
-	QueryFreshness      func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	Metrics               queryruntime.Metrics
+	ProjectID             projectgraph.ResourceID
+	MetricsForWorkspace   func(string) (queryruntime.Metrics, bool)
+	CurrentPrincipalID    func(*http.Request) string
+	AuthorizeListObject   func(context.Context, string, access.ObjectRef) (bool, error)
+	AuthorizeListResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
+	QueryFreshness        func(context.Context, string, string, string) (api.QueryFreshness, bool)
 }
 
 type SignalBroker interface {
@@ -282,10 +284,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		handler:   handler,
 		authoring: config.Authoring,
 		semantic: semanticapi.Handler{
-			Metrics: config.Semantic.Metrics, MetricsForWorkspace: metricsForSemantic,
-			CurrentPrincipalID:  config.Semantic.CurrentPrincipalID,
-			AuthorizeListObject: config.Semantic.AuthorizeListObject,
-			QueryFreshness:      config.Semantic.QueryFreshness,
+			Metrics: config.Semantic.Metrics, ProjectID: config.Semantic.ProjectID, MetricsForWorkspace: metricsForSemantic,
+			CurrentPrincipalID:    config.Semantic.CurrentPrincipalID,
+			AuthorizeListObject:   config.Semantic.AuthorizeListObject,
+			AuthorizeListResource: config.Semantic.AuthorizeListResource,
+			QueryFreshness:        config.Semantic.QueryFreshness,
 		},
 		snapshot:  config.ServingSnapshot,
 		publicURL: config.PublicURL, currentActor: config.CurrentActor, recordAudit: config.RecordAudit,

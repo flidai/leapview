@@ -15,7 +15,11 @@ import (
 type Handler interface {
 	ListProjects(stdhttp.ResponseWriter, *stdhttp.Request, *int32, *string)
 	GetProject(stdhttp.ResponseWriter, *stdhttp.Request, string)
-	ListProjectWorkspaces(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
+	Search(stdhttp.ResponseWriter, *stdhttp.Request, projectgen.GenSearchParams)
+}
+
+func (d *APIGenDispatcher) Search(w stdhttp.ResponseWriter, r *stdhttp.Request, params projectgen.GenSearchParams) {
+	d.handler.Search(w, r, params)
 }
 
 type APIGenDispatcher struct {
@@ -32,10 +36,6 @@ func (d *APIGenDispatcher) ListProjects(w stdhttp.ResponseWriter, r *stdhttp.Req
 
 func (d *APIGenDispatcher) GetProject(w stdhttp.ResponseWriter, r *stdhttp.Request, project string) {
 	d.handler.GetProject(w, r, project)
-}
-
-func (d *APIGenDispatcher) ListProjectWorkspaces(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, params projectgen.GenListProjectWorkspacesParams) {
-	d.handler.ListProjectWorkspaces(w, r, project, params.Limit, params.PageToken)
 }
 
 type APIGenTransportErrorResponder struct {

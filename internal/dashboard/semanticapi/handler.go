@@ -29,6 +29,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/go-chi/chi/v5"
 )
@@ -42,11 +43,13 @@ type Metrics interface {
 }
 
 type Handler struct {
-	Metrics             Metrics
-	MetricsForWorkspace func(workspaceID string) (Metrics, bool)
-	CurrentPrincipalID  func(r *nethttp.Request) string
-	AuthorizeListObject func(ctx context.Context, principalID string, object access.ObjectRef) (bool, error)
-	QueryFreshness      func(ctx context.Context, workspaceID, modelID, servingSnapshot string) (api.QueryFreshness, bool)
+	Metrics               Metrics
+	ProjectID             projectgraph.ResourceID
+	MetricsForWorkspace   func(workspaceID string) (Metrics, bool)
+	CurrentPrincipalID    func(r *nethttp.Request) string
+	AuthorizeListObject   func(ctx context.Context, principalID string, object access.ObjectRef) (bool, error)
+	AuthorizeListResource func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error)
+	QueryFreshness        func(ctx context.Context, workspaceID, modelID, servingSnapshot string) (api.QueryFreshness, bool)
 }
 
 func filterAuthorized[T any](h Handler, r *nethttp.Request, objectFor func(T) access.ObjectRef, rows []T) ([]T, error) {
@@ -96,18 +99,41 @@ func (h Handler) ListSemanticModels(w nethttp.ResponseWriter, r *nethttp.Request
 	for _, row := range catalog.Models {
 		out = append(out, semanticModelSummaryDTO(row))
 	}
-	workspaceID := chi.URLParam(r, "workspace")
-	if strings.TrimSpace(workspaceID) == "" {
-		writeJSONError(w, fmt.Errorf("workspace ID is required"), nethttp.StatusBadRequest)
+	principalID := ""
+	if h.CurrentPrincipalID != nil {
+		principalID = h.CurrentPrincipalID(r)
+	}
+	if h.AuthorizeListResource == nil {
+		writeJSONError(w, fmt.Errorf("semantic model authorization is unavailable"), nethttp.StatusServiceUnavailable)
 		return
 	}
-	out, err := filterAuthorized(h, r, func(row api.SemanticModelSummary) access.ObjectRef {
-		return access.ItemObjectWithParent(access.SecurableSemanticModel, workspaceID, row.ID, access.WorkspaceObject(workspaceID))
-	}, out)
-	if err != nil {
-		writeJSONError(w, err, nethttp.StatusInternalServerError)
+	projectID := h.ProjectID
+	if err := projectID.Validate(); err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
 		return
 	}
+	filtered := make([]api.SemanticModelSummary, 0, len(out))
+	for _, row := range out {
+		modelID, err := projectgraph.NewResourceID(row.ID)
+		if err != nil {
+			writeJSONError(w, err, nethttp.StatusInternalServerError)
+			return
+		}
+		resource, err := access.NewResourceRef(modelID, projectgraph.KindSemanticModel)
+		if err != nil {
+			writeJSONError(w, err, nethttp.StatusInternalServerError)
+			return
+		}
+		allowed, err := h.AuthorizeListResource(r.Context(), principalID, projectID, resource, access.CapabilityResourceRead)
+		if err != nil {
+			writeJSONError(w, err, nethttp.StatusInternalServerError)
+			return
+		}
+		if allowed {
+			filtered = append(filtered, row)
+		}
+	}
+	out = filtered
 	page, nextCursor, ok := pageSliceForRequest(w, r, out)
 	if !ok {
 		return

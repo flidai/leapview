@@ -607,12 +607,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
-			WorkspaceID: func(value string) string {
+			ProjectID: func(value string) string {
 				return value
 			},
 		},
 		Connections: analyticsmodule.ConnectionBindingAPIGenConfig{
 			Administration: connectionAdministration,
+			Environment:    runtimeConfig.DefaultEnvironment,
 			CurrentPrincipal: func(r *http.Request) (string, bool) {
 				principal, ok := routes.accessModule.CurrentPrincipal(r)
 				return principal.ID, ok
@@ -903,7 +904,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Assets:       platform.assets,
 			},
 			Semantic: dashboardmodule.SemanticConfig{
-				Metrics: runtime.metrics,
+				Metrics:   runtime.metrics,
+				ProjectID: runtimeConfig.ProjectID,
 				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
 					return metricsForWorkspace(runtime.metrics, workspaceID)
 				},
@@ -916,6 +918,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				},
 				AuthorizeListObject: func(ctx context.Context, principalID string, object accessmodule.ObjectRef) (bool, error) {
 					return authorizeListObject(routes.accessModule, platform.auth != nil, ctx, principalID, object)
+				},
+				AuthorizeListResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 				},
 				QueryFreshness: func(ctx context.Context, workspaceID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
 					if routes.refreshModule == nil {
@@ -1077,9 +1082,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return true
 				}
 				if routes.releaseModule != nil && routes.releaseModule.DispatchAPIGenOperation(operationID, platform.logger, writer, request) {
-					return true
-				}
-				if routes.workspaceModule != nil && routes.workspaceModule.DispatchAPIGenOperation(operationID, platform.logger, writer, request) {
 					return true
 				}
 				if routes.managedDataModule != nil && routes.managedDataModule.DispatchAPIGenOperation(operationID, routes.releaseModule, platform.logger, writer, request) {
@@ -1311,12 +1313,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if err != nil {
 		return fmt.Errorf("build Release APIGen transport: %w", err)
 	}
-	workspaceAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
-		return routes.workspaceModule.DispatchAPIGenOperation(operationID, platform.logger, w, r)
-	}, apiaggregate.GetAPIGenCommandRuntimeContract)
-	if err != nil {
-		return fmt.Errorf("build Workspace APIGen transport: %w", err)
-	}
 	managedDataAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.managedDataModule.DispatchAPIGenOperation(operationID, routes.releaseModule, platform.logger, w, r)
 	}, apiaggregate.GetAPIGenCommandRuntimeContract)
@@ -1333,7 +1329,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		Access: accessAPIHandler, Agent: agentAPIHandler, Analytics: analyticsAPIHandler,
 		Dashboard: dashboardAPIHandler, Deployment: deploymentAPIHandler, LeapViewAPI: appAPIHandler,
 		ManagedData: managedDataAPIHandler, Project: projectAPIHandler,
-		Refresh: refreshAPIHandler, Release: releaseAPIHandler, Workspace: workspaceAPIHandler,
+		Refresh: refreshAPIHandler, Release: releaseAPIHandler,
 	}
 	configurePageStream(routes, runtime, platform, policy)
 	platform.health = newHealth(healthConfig{

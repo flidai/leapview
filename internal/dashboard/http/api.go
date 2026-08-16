@@ -36,6 +36,10 @@ func (h Handler) ListDashboards(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	out, err := h.filterAuthorizedDashboards(r.Context(), principalID, out)
 	if err != nil {
+		if errors.Is(err, ErrDashboardAuthorizationUnavailable) {
+			writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+			return
+		}
 		writeJSONError(w, err, nethttp.StatusInternalServerError)
 		return
 	}

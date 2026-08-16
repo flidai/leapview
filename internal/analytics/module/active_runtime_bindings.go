@@ -11,6 +11,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // ActiveRuntimeBindingEvidence is the non-secret, immutable connection proof
@@ -76,7 +77,7 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
 	}
 	binding, err := r.module.connectionBindings.Binding(ctx, connectionbinding.BindingScope{
-		WorkspaceID: r.workspaceID, Environment: r.environment,
+		ProjectID: projectgraph.ResourceID(r.workspaceID), Environment: r.environment,
 	}, r.module.targetID, logicalID)
 	if err != nil {
 		return semanticmodel.Connection{}, err

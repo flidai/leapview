@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	nethttp "net/http"
 	"strings"
@@ -37,6 +39,11 @@ import (
 )
 
 type publicPresentationContextKey struct{}
+
+// ErrDashboardAuthorizationUnavailable is returned when a dashboard list
+// cannot evaluate its resource policy. Lists must fail closed rather than
+// exposing the catalog when composition omitted the authorization callback.
+var ErrDashboardAuthorizationUnavailable = errors.New("dashboard authorization is unavailable")
 
 type PublicPresentation struct {
 	PublicID     string
@@ -245,11 +252,15 @@ func (h Handler) analyticalStreamContext(ctx context.Context, streamID string) c
 
 func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID string, rows []api.DashboardSummary) ([]api.DashboardSummary, error) {
 	if h.AuthorizeListResource == nil {
-		return rows, nil
+		return nil, ErrDashboardAuthorizationUnavailable
 	}
 	out := make([]api.DashboardSummary, 0, len(rows))
 	for _, row := range rows {
-		resource, err := access.NewResourceRef(projectgraph.ResourceID(row.ID), projectgraph.KindDashboard)
+		resourceID, err := projectgraph.NewResourceID(strings.TrimSpace(row.ID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid dashboard resource ID %q: %w", row.ID, err)
+		}
+		resource, err := access.NewResourceRef(resourceID, projectgraph.KindDashboard)
 		if err != nil {
 			return nil, err
 		}

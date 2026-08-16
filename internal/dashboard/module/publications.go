@@ -9,10 +9,12 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func (m *Module) PublicationsConfigured() bool {
@@ -91,19 +93,19 @@ func beginGeneratedPublicationInvocation(ctx context.Context, action publication
 	switch action {
 	case publication.ActionSuspend:
 		started, _, err := dashboardgen.BeginGenSuspendDashboardPublicationCommand(ctx, dashboardgen.GenSuspendDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Project: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
 	case publication.ActionResume:
 		started, _, err := dashboardgen.BeginGenResumeDashboardPublicationCommand(ctx, dashboardgen.GenResumeDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Project: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
 	case publication.ActionRotate:
 		started, _, err := dashboardgen.BeginGenRotateDashboardPublicationCommand(ctx, dashboardgen.GenRotateDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Project: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
@@ -142,6 +144,14 @@ func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Reques
 	}
 	items := make([]dashboardapi.PublicationResponse, 0, len(rows))
 	for _, row := range rows {
+		allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID, row.Dashboard, access.CapabilityResourceRead)
+		if authErr != nil {
+			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "DASHBOARD_AUTHORIZATION_FAILED", "Dashboard authorization could not be evaluated", nil)
+			return
+		}
+		if !allowed {
+			continue
+		}
 		items = append(items, m.dashboardPublicationDTO(row))
 	}
 	writeJSON(w, http.StatusOK, dashboardapi.PublicationListResponse{Items: items})
@@ -150,6 +160,15 @@ func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Reques
 func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) {
 	row, ok := m.dashboardPublication(w, r, workspaceID, name)
 	if !ok {
+		return
+	}
+	allowed, err := m.authorizeDashboardPublication(r, row.ProjectID, row.Dashboard, access.CapabilityResourceRead)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "DASHBOARD_AUTHORIZATION_FAILED", "Dashboard authorization could not be evaluated", nil)
+		return
+	}
+	if !allowed {
+		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATION_NOT_FOUND", "Dashboard publication not found", nil)
 		return
 	}
 	writeJSON(w, http.StatusOK, m.dashboardPublicationDTO(row))
@@ -184,6 +203,19 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, errPublicationCommandAuditUnavailable)
 		return
 	}
+	row, lookupErr := m.dashboardPublication(w, r, workspaceID, name)
+	if lookupErr {
+		return
+	}
+	allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID, row.Dashboard, access.CapabilityResourcePublish)
+	if authErr != nil {
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, authErr)
+		return
+	}
+	if !allowed {
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, publication.ErrNotFound)
+		return
+	}
 	actor := ""
 	if m.currentActor != nil {
 		actor = m.currentActor(r)
@@ -214,6 +246,29 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	m.writePublicationMutation(w, r, operationID, row, err)
+}
+
+func (m *Module) authorizeDashboardPublication(r *http.Request, projectID, dashboardID string, capability access.Capability) (bool, error) {
+	if m == nil || m.handler.CurrentPrincipalID == nil || m.handler.AuthorizeListResource == nil {
+		return false, errors.New("dashboard authorization is unavailable")
+	}
+	principalID := strings.TrimSpace(m.handler.CurrentPrincipalID(r))
+	if principalID == "" {
+		return false, nil
+	}
+	project, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
+	if err != nil {
+		return false, err
+	}
+	dashboard, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return false, err
+	}
+	resource, err := access.NewResourceRef(dashboard, projectgraph.KindDashboard)
+	if err != nil {
+		return false, err
+	}
+	return m.handler.AuthorizeListResource(r.Context(), principalID, resource, capability)
 }
 
 func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) (publication.Publication, bool) {
