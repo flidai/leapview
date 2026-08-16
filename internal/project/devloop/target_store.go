@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/digest"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -35,7 +36,7 @@ type TargetStore struct {
 }
 
 type StoredSnapshot struct {
-	ProjectID           string
+	ProjectID           projectgraph.ResourceID
 	Digest              string
 	ProjectPath         string
 	ProjectDigest       string
@@ -209,14 +210,14 @@ func (store *TargetStore) Commit(
 		}
 	}
 	projectPath := filepath.Join(sourceRoot, filepath.FromSlash(request.ProjectFile))
-	compiled, err := projectcompiler.CompileProjectArtifact(projectPath)
+	compiled, err := projectcompiler.Compile(projectPath)
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
-	if compiled.ID() != request.ProjectID {
+	if compiled.ProjectID() != request.ProjectID {
 		return StoredSnapshot{}, fmt.Errorf(
 			"compiled project id %q does not match synchronized project %q",
-			compiled.ID(), request.ProjectID,
+			compiled.ProjectID(), request.ProjectID,
 		)
 	}
 	if err := writeRetainedProjectArtifact(
@@ -259,11 +260,11 @@ func (store *TargetStore) verifyStoredSnapshot(
 		}
 	}
 	projectPath := filepath.Join(sourceRoot, filepath.FromSlash(request.ProjectFile))
-	compiled, err := projectcompiler.CompileProjectArtifact(projectPath)
+	compiled, err := projectcompiler.Compile(projectPath)
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
-	if compiled.ID() != request.ProjectID {
+	if compiled.ProjectID() != request.ProjectID {
 		return StoredSnapshot{}, fmt.Errorf("stored project identity changed")
 	}
 	retained, err := os.ReadFile(filepath.Join(directory, targetProjectArtifact))
@@ -292,12 +293,11 @@ func writeRetainedProjectArtifact(path string, content []byte) error {
 
 func normalizePlanRequest(request SynchronizationPlanRequest) (SynchronizationPlanRequest, error) {
 	request = clonePlanRequest(request)
-	request.ProjectID = strings.TrimSpace(request.ProjectID)
 	request.ProjectFile = strings.TrimSpace(request.ProjectFile)
 	request.ArtifactDigest = strings.TrimSpace(request.ArtifactDigest)
 	request.ExpectedCandidateID = strings.TrimSpace(request.ExpectedCandidateID)
 	request.ExpectedArtifactDigest = strings.TrimSpace(request.ExpectedArtifactDigest)
-	if request.ProjectID == "" || !canonicalArtifactPath(request.ProjectFile) ||
+	if err := request.ProjectID.Validate(); err != nil || !canonicalArtifactPath(request.ProjectFile) ||
 		len(request.Artifacts) == 0 || len(request.Artifacts) > maxTargetSnapshotFiles {
 		return SynchronizationPlanRequest{}, fmt.Errorf("project synchronization manifest is incomplete")
 	}

@@ -11,7 +11,7 @@ import (
 	"sort"
 
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
-	"github.com/flidai/leapview/internal/workspace"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const stableCaptureAttempts = 3
@@ -52,17 +52,15 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 		}
 		artifacts = append(artifacts, contentArtifact(filepath.ToSlash(relative), content))
 	}
-	compiled, err := projectcompiler.CompileProject(
-		filepath.Join(root, filepath.Base(projectPath)),
-		projectcompiler.Options{ServingStateID: workspace.ServingStateID("candidate-artifact")},
-	)
+	compiled, err := projectcompiler.Compile(filepath.Join(root, filepath.Base(projectPath)))
 	if err != nil {
 		return Snapshot{}, err
 	}
 	projectFile := filepath.ToSlash(filepath.Base(projectPath))
+	projectID := compiled.ProjectID()
 	return normalizeSnapshot(Snapshot{
-		ProjectID: compiled.ID(), ProjectFile: projectFile,
-		Digest: candidateSetDigest(compiled.ID(), projectFile, artifacts), Artifacts: artifacts,
+		ProjectID: projectID, ProjectFile: projectFile,
+		Digest: candidateSetDigest(projectID, projectFile, artifacts), Artifacts: artifacts,
 		SourceRevision: builder.SourceRevision,
 		CandidateKey:   builder.CandidateKey,
 	})
@@ -120,11 +118,12 @@ func contentArtifact(path string, content []byte) Artifact {
 	return Artifact{Path: path, Digest: "sha256:" + hex.EncodeToString(sum[:]), Content: append([]byte(nil), content...)}
 }
 
-func candidateSetDigest(projectID, projectFile string, artifacts []Artifact) string {
+func candidateSetDigest(projectID projectgraph.ResourceID, projectFile string, artifacts []Artifact) string {
 	ordered := append([]Artifact(nil), artifacts...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
 	hash := sha256.New()
-	_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:", len(projectID), projectID, len(projectFile), projectFile)
+	projectIDValue := projectID.String()
+	_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:", len(projectIDValue), projectIDValue, len(projectFile), projectFile)
 	for _, artifact := range ordered {
 		_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:", len(artifact.Path), artifact.Path, len(artifact.Digest), artifact.Digest)
 	}

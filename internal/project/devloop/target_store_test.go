@@ -118,8 +118,8 @@ func TestTargetStoreCommitsValidatedSnapshotIdempotently(t *testing.T) {
 	require.NoError(t, err)
 	compiled, err := projectartifact.Decode(encoded)
 	require.NoError(t, err)
-	if compiled.ID() != snapshot.ProjectID || compiled.Digest() != projectDigest {
-		t.Fatalf("retained project artifact = id %q digest %q, want %q %q", compiled.ID(), compiled.Digest(), snapshot.ProjectID, projectDigest)
+	if compiled.ProjectID() != snapshot.ProjectID || compiled.Digest() != projectDigest {
+		t.Fatalf("retained project artifact = id %q digest %q, want %q %q", compiled.ProjectID(), compiled.Digest(), snapshot.ProjectID, projectDigest)
 	}
 	if bytes.Contains(encoded, []byte(filepath.Dir(committedPath))) {
 		t.Fatalf("retained project artifact contains target filesystem path %q", filepath.Dir(committedPath))

@@ -98,7 +98,7 @@ func TestPackProjectPreservesAuthoredSourcesDeterministically(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	manifestValue, _, err := PackProject(projectPath, PackProjectOptions{Project: project}, &output)
+	manifestValue, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project)}, &output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestPackProjectIncludesOnlyManifestAndGraphProvenanceFiles(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	manifestValue, _, err := PackProject(projectPath, PackProjectOptions{Project: project}, &output)
+	manifestValue, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project)}, &output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestPackProjectRequiresExactSuppliedSourceSet(t *testing.T) {
 		"sources/orders.yaml": []byte("source\n"),
 		"models/orders.yaml":  []byte("model\n"),
 	}
-	if _, _, err := PackProject(projectPath, PackProjectOptions{Project: project, SourceFiles: expected}, &bytes.Buffer{}); err != nil {
+	if _, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project), SourceFiles: expected}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("PackProject() exact source set error = %v", err)
 	}
 	for name, files := range map[string]map[string][]byte{
@@ -176,7 +176,7 @@ func TestPackProjectRequiresExactSuppliedSourceSet(t *testing.T) {
 			"unrelated.yaml":      []byte("extra\n"),
 		},
 	} {
-		if _, _, err := PackProject(projectPath, PackProjectOptions{Project: project, SourceFiles: files}, &bytes.Buffer{}); err == nil {
+		if _, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project), SourceFiles: files}, &bytes.Buffer{}); err == nil {
 			t.Fatalf("PackProject() %s source set error = nil", name)
 		}
 	}
@@ -186,7 +186,7 @@ func TestPackProjectRejectsProjectOutsideSourceRoot(t *testing.T) {
 	project := bundleProject(t)
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), ProjectFile)
-	if _, _, err := PackProject(outside, PackProjectOptions{Project: project, SourceRoot: root, SourceFiles: map[string][]byte{
+	if _, _, err := PackProject(outside, PackProjectOptions{Project: project, Plan: bundlePlan(project), SourceRoot: root, SourceFiles: map[string][]byte{
 		ProjectFile:           []byte("project\n"),
 		"sources/orders.yaml": []byte("source\n"),
 		"models/orders.yaml":  []byte("model\n"),

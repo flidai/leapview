@@ -18,6 +18,7 @@ import (
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/project"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const candidateSourcePlanLifetime = 5 * time.Minute
@@ -164,7 +165,7 @@ func (synchronizer *candidateSourceSynchronizer) Commit(
 	_ = os.Remove(synchronizer.planPath(key))
 	synchronizer.mu.Unlock()
 	return project.CandidateSourceSnapshot{
-		ProjectID: stored.ProjectID, ArtifactDigest: stored.Digest,
+		ProjectID: stored.ProjectID.String(), ArtifactDigest: stored.Digest,
 		ProjectPath: stored.ProjectPath, ProjectDigest: stored.ProjectDigest,
 		ProjectArtifactPath: stored.ProjectArtifactPath,
 		SourceRevision:      cloneCandidateSourceRevision(request.SourceRevision),
@@ -269,7 +270,7 @@ func synchronizationPlanRequest(
 	request project.CandidateSynchronizationRequest,
 ) projectdevloop.SynchronizationPlanRequest {
 	result := projectdevloop.SynchronizationPlanRequest{
-		ProjectID: strings.TrimSpace(scope.ProjectID), ProjectFile: request.ProjectFile,
+		ProjectID: projectgraph.ResourceID(scope.ProjectID), ProjectFile: request.ProjectFile,
 		CandidateKey:           request.CandidateKey,
 		ArtifactDigest:         request.ArtifactDigest,
 		ExpectedCandidateID:    request.ExpectedCandidateID,

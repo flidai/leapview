@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -15,7 +16,7 @@ type ArtifactReference struct {
 }
 
 type SynchronizationPlanRequest struct {
-	ProjectID              string
+	ProjectID              projectgraph.ResourceID
 	ProjectFile            string
 	ArtifactDigest         string
 	CandidateKey           string

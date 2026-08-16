@@ -18,7 +18,7 @@ func TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads(t *testing
 	require.NoError(t, err)
 	synchronizer, err := projectmodule.NewCandidateSourceSynchronizer(t.TempDir())
 	require.NoError(t, err)
-	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
+	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID.String(), OwnerID: "principal_1"}
 	request := synchronizationRequest(snapshot)
 
 	missing, err := synchronizer.Plan(t.Context(), scope, request)
@@ -26,7 +26,7 @@ func TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads(t *testing
 		t.Fatalf("plan missing=%d error=%v", len(missing), err)
 	}
 	if err := synchronizer.Upload(t.Context(), project.CandidateSourceScope{
-		ProjectID: snapshot.ProjectID, OwnerID: "principal_2",
+		ProjectID: snapshot.ProjectID.String(), OwnerID: "principal_2",
 	}, missing[0], bytes.NewReader(snapshot.Artifacts[0].Content)); err == nil {
 		t.Fatal("foreign principal uploaded against another author's plan")
 	}
@@ -51,7 +51,7 @@ func TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart(t *testing.T)
 		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
 	}).Build(t.Context())
 	require.NoError(t, err)
-	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
+	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID.String(), OwnerID: "principal_1"}
 	request := synchronizationRequest(snapshot)
 	first, err := projectmodule.NewCandidateSourceSynchronizer(root)
 	require.NoError(t, err)

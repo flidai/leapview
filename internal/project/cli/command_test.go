@@ -6,25 +6,19 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/platform/cliapi"
-	"github.com/flidai/leapview/internal/workspace"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-type fakeActiveWorkspaceGraphLoader struct {
+type fakeActiveProjectGraphLoader struct {
 	credentials cliapi.Credentials
-	environment string
-	workspaceID string
-	graph       workspace.AssetGraph
+	graph       projectgraph.ProjectGraph
 }
 
-func (loader *fakeActiveWorkspaceGraphLoader) LoadActiveWorkspaceGraph(
+func (loader *fakeActiveProjectGraphLoader) LoadActiveProjectGraph(
 	_ context.Context,
 	credentials cliapi.Credentials,
-	environment string,
-	workspaceID string,
-) (workspace.AssetGraph, error) {
+) (projectgraph.ProjectGraph, error) {
 	loader.credentials = credentials
-	loader.environment = environment
-	loader.workspaceID = workspaceID
 	return loader.graph, nil
 }
 
@@ -46,25 +40,26 @@ func TestSchemaCommandRejectsUnknownFormats(t *testing.T) {
 	}
 }
 
-func TestActiveWorkspaceGraphUsesCompositionSuppliedLoader(t *testing.T) {
-	want := workspace.AssetGraph{Assets: []workspace.Asset{{Key: "orders"}}}
-	loader := &fakeActiveWorkspaceGraphLoader{graph: want}
+func TestActiveProjectGraphUsesCompositionSuppliedLoader(t *testing.T) {
+	want, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{
+		ID: "project:sales", Kind: projectgraph.KindProject, Name: "sales",
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader := &fakeActiveProjectGraphLoader{graph: want}
 	options := &options{
-		remote:      cliapi.RemoteOptions{Target: "https://example.test", Token: "secret"},
-		environment: "production",
+		remote: cliapi.RemoteOptions{Target: "https://example.test", Token: "secret"},
 	}
 
-	got, err := fetchActiveWorkspaceGraphFor(context.Background(), loader, options, "sales")
+	got, err := fetchActiveProjectGraph(context.Background(), loader, options)
 	if err != nil {
 		t.Fatalf("fetch active graph: %v", err)
 	}
-	if len(got.Assets) != 1 || got.Assets[0].Key != "orders" {
+	if got.ProjectID() != want.ProjectID() {
 		t.Fatalf("graph = %#v", got)
 	}
-	if loader.credentials.Target != "https://example.test" ||
-		loader.credentials.Token != "secret" ||
-		loader.environment != "production" ||
-		loader.workspaceID != "sales" {
+	if loader.credentials.Target != "https://example.test" || loader.credentials.Token != "secret" {
 		t.Fatalf("loader request = %#v", loader)
 	}
 }

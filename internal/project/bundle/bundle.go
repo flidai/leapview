@@ -198,7 +198,7 @@ func compiledProject(project projectartifact.Project, plan projectcompiler.Proje
 }
 
 func validatePlan(plan projectcompiler.ProjectPlan, graph projectgraph.ProjectGraph, manifest projectmanifest.Project) error {
-	if strings.TrimSpace(plan.Project) != graph.ProjectID().String() {
+	if plan.Project != graph.ProjectID().String() {
 		return fmt.Errorf("project plan identity = %q, graph = %q", plan.Project, graph.ProjectID())
 	}
 	expected := map[string][]string{
@@ -569,7 +569,7 @@ func ValidateCompiledProjectArtifact(compiled CompiledProjectArtifact) error {
 	if err := compiled.Graph.Validate(); err != nil {
 		return fmt.Errorf("compiled project graph: %w", err)
 	}
-	if compiled.ProjectID != compiled.Graph.ProjectID() || strings.TrimSpace(compiled.Manifest.ID) != compiled.ProjectID.String() {
+	if compiled.ProjectID != compiled.Graph.ProjectID() || compiled.Manifest.ID != compiled.ProjectID.String() {
 		return fmt.Errorf("compiled project identity does not match graph project id %q", compiled.ProjectID)
 	}
 	if err := digest.ValidateSHA256Identity(compiled.ProjectDigest); err != nil {
