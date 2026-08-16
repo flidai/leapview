@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -121,6 +122,14 @@ func (m *Module) ProvenanceForServingState(
 		return release.Provenance{}, release.ErrNotFound
 	}
 	return m.servingProvenance.ProvenanceForServingState(ctx, identity)
+}
+
+// SetAuthorizeConnection installs the active-snapshot connection authorizer
+// once runtime composition has established the serving lease provider.
+func (m *Module) SetAuthorizeConnection(authorizer func(context.Context, string, string, string, access.Capability) (bool, error)) {
+	if m != nil {
+		m.api.AuthorizeConnection = authorizer
+	}
 }
 
 func (m *Module) PrepareCandidateArtifacts(

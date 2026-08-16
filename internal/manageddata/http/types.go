@@ -92,3 +92,12 @@ func NewHandler(options Options) *Handler {
 	}
 	return &Handler{options: options}
 }
+
+// SetAuthorizeConnection updates the active-snapshot authorization port after
+// composition has created the serving runtime. A nil callback is retained and
+// therefore fails closed on the next connection-scoped request.
+func (h *Handler) SetAuthorizeConnection(authorizer ConnectionAuthorizer) {
+	if h != nil {
+		h.options.AuthorizeConnection = authorizer
+	}
+}

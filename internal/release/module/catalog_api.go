@@ -1,6 +1,7 @@
 package module
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -64,14 +65,18 @@ func (m *Module) ListManagedConnections(w http.ResponseWriter, r *http.Request, 
 		apitransport.WriteJSON(w, http.StatusOK, releaseapi.ManagedConnectionListResponse{Items: []releaseapi.ManagedConnectionResponse{}, Page: releaseapi.PageInfo{}})
 		return
 	}
-	rows, err := m.catalog.ListConnections(r.Context(), projectID, m.environment)
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_LIST_FAILED", "Connections could not be loaded", nil)
-		return
-	}
 	principal, ok := m.currentPrincipal(r)
 	if !ok {
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
+	if m.api.AuthorizeConnection == nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
+		return
+	}
+	rows, err := m.catalog.ListConnections(r.Context(), projectID, m.environment)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_LIST_FAILED", "Connections could not be loaded", nil)
 		return
 	}
 	items := make([]releaseapi.ManagedConnectionResponse, 0, len(rows))

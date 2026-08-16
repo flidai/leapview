@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/control"
@@ -111,6 +112,24 @@ func (m *Module) appendEvent(ctx context.Context, uploadID, eventType string, da
 func (m *Module) ListUploadSessionEvents(w http.ResponseWriter, r *http.Request, projectID, connectionID, sessionID string, params apigenapi.GenListManagedDataUploadSessionEventsParams, _ apigenapi.GenListManagedDataUploadSessionEventsHeaders) {
 	if m == nil || m.uploads == nil {
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "UPLOAD_SERVICE_UNAVAILABLE", "Managed-data uploads are unavailable", nil)
+		return
+	}
+	if m.currentPrincipal == nil || m.authorizeConnection == nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "CONNECTION_AUTHORIZATION_UNAVAILABLE", "Connection authorization is unavailable", nil)
+		return
+	}
+	principal, ok := m.currentPrincipal(r)
+	if !ok || principal.ID == "" {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
+	allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, connectionID, access.CapabilityResourceRead)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
+		return
+	}
+	if !allowed {
+		apitransport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Connection access is forbidden", nil)
 		return
 	}
 	if _, err := m.uploads.RecoverUpload(r.Context(), control.UploadRequest{Project: projectID, Connection: connectionID, UploadID: sessionID}); err != nil {

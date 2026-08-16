@@ -14,7 +14,9 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/Yacobolo/toolbelt/pagestream"
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
@@ -215,6 +217,7 @@ type workflowAssemblyInputs struct {
 }
 
 type runtimeAssemblyInputs struct {
+	RuntimeHost             *runtimehostmodule.Module
 	ProjectID               projectgraph.ResourceID
 	ProjectIDResolver       func(context.Context) (projectgraph.ResourceID, error)
 	ServingSnapshotResolver func(context.Context) (string, error)
@@ -339,6 +342,7 @@ func buildApplicationSurfaces(
 	}
 	servingStateRepo := data.ServingStateRepo
 	routes, runtime, platform, policy := newCompositionSurfaces(metrics, runtimeConfig.Assets, telemetry, dashboardTelemetry)
+	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
 	moduleWorkflow := workflowInputs{}
@@ -458,6 +462,44 @@ func buildApplicationSurfaces(
 	}
 	policy.requestLogging = httpConfig.RequestLogging
 	routes.managedDataModule = capabilities.ManagedDataModule
+	if runtime.runtimeHostModule != nil && routes.accessModule != nil {
+		authorizationSnapshot := func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
+			lease, err := runtime.runtimeHostModule.Acquire(ctx)
+			if err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, err
+			}
+			defer lease.Release()
+			authorizedLease, ok := lease.(interface {
+				AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+			})
+			if !ok {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("active runtime lease does not expose authorization snapshot")
+			}
+			snapshot := authorizedLease.AuthorizationSnapshot()
+			if err := snapshot.ValidateBound(); err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, err
+			}
+			return snapshot, nil
+		}
+		authorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
+		routes.accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
+			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
+			if err != nil {
+				return nil, err
+			}
+			snapshot, err := authorizationSnapshot(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return snapshot.EffectiveCapabilities(subjects)
+		})
+		if routes.managedDataModule != nil {
+			routes.managedDataModule.SetAuthorizeConnection(authorizeConnection)
+		}
+		if routes.releaseModule != nil {
+			routes.releaseModule.SetAuthorizeConnection(authorizeConnection)
+		}
+	}
 	moduleWorkflow.deploymentConfig = workflow.DeploymentConfig
 	policy.managedDataTus = httpConfig.ManagedDataTus
 	storage.jobLeaseTimeout = httpConfig.JobLeaseTimeout

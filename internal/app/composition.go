@@ -12,6 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
@@ -174,6 +175,29 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	var runtimeHostModule *runtimehostmodule.Module
+	authorizationSnapshot := func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
+		if runtimeHostModule == nil {
+			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("runtime host is unavailable")
+		}
+		lease, err := runtimeHostModule.Acquire(ctx)
+		if err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, err
+		}
+		defer lease.Release()
+		authorizedLease, ok := lease.(interface {
+			AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+		})
+		if !ok {
+			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("active runtime lease does not expose authorization snapshot")
+		}
+		snapshot := authorizedLease.AuthorizationSnapshot()
+		if err := snapshot.ValidateBound(); err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, err
+		}
+		return snapshot, nil
+	}
+	authorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, accessModule.AuthorizationSubjects)
 	managedDataModule, err := manageddatamodule.Build(ctx, manageddatamodule.Config{
 		Database: store.SQLDB(), Product: managedDataProductConfig(cfg), ServingStates: servingStateRepo,
 		Environment: string(environment),
@@ -185,7 +209,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			principal, ok := auth.Principal(r)
 			return manageddatamodule.Principal{ID: principal.ID}, ok
 		},
-		Jobs: jobModule, Workflow: jobModule,
+		AuthorizeConnection: authorizeConnection,
+		Jobs:                jobModule, Workflow: jobModule,
 		RecordAudit: managedDataCommandAuditRecorder(accessModule),
 		Worker: manageddatamodule.MaintenanceWorkerConfig{
 			Interval: cfg.ManagedDataGCInterval,
@@ -213,7 +238,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				principal, ok := auth.Principal(r)
 				return releasemodule.Principal{ID: principal.ID}, ok
 			},
-			Jobs: jobModule, Workflow: jobModule,
+			AuthorizeConnection: authorizeConnection,
+			Jobs:                jobModule, Workflow: jobModule,
 		},
 	})
 	if err != nil {
@@ -248,7 +274,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
-	runtimeHostModule, err := runtimehostmodule.Build(ctx, runtimehostmodule.Config{
+	runtimeHostModule, err = runtimehostmodule.Build(ctx, runtimehostmodule.Config{
 		States:      servingStateRepo,
 		ProjectID:   projectID,
 		Environment: environment,
@@ -271,6 +297,17 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
+		subjects, err := accessModule.AuthorizationSubjects(ctx, principalID)
+		if err != nil {
+			return nil, err
+		}
+		snapshot, err := authorizationSnapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return snapshot.EffectiveCapabilities(subjects)
+	})
 	projectIDResolver := func(ctx context.Context) (projectgraph.ResourceID, error) {
 		lease, err := runtimeHostModule.Acquire(ctx)
 		if err != nil {
@@ -496,7 +533,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DeploymentConfig:      deploymentConfig,
 		},
 		runtimeAssemblyInputs{
-			ProjectID: projectID, ProjectIDResolver: projectIDResolver, ServingSnapshotResolver: servingSnapshotResolver,
+			RuntimeHost: runtimeHostModule,
+			ProjectID:   projectID, ProjectIDResolver: projectIDResolver, ServingSnapshotResolver: servingSnapshotResolver,
 			DuckLakeCatalogPath: duckLakeCatalogPath, DuckLakeDataPath: cfg.DuckLakeDataDir(),
 			DefaultEnvironment: string(environment), SCIMBearerToken: cfg.SCIMBearerToken,
 			MetricsBearerToken: cfg.MetricsBearerToken, AllowedHosts: allowedHosts, Assets: assets,

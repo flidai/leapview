@@ -53,7 +53,7 @@ func buildManagedDataCommandAuditRecorder(
 		command := generated.Command
 		if command.Privilege == "" || command.AuthzMode != "privilege" || generated.AuthzMode != command.AuthzMode ||
 			!command.Audit.Required || command.Audit.SuccessAction == "" || command.Target == nil ||
-			command.Audit.Guarantee != "best-effort" || command.Target.Type != "project" || command.Target.Parameter != "project" {
+			command.Audit.Guarantee != "best-effort" || command.Target.Type != "connection" || command.Target.Parameter != "connection" {
 			return nil, fmt.Errorf("managed-data operation %q has an invalid generated command audit contract", operationID)
 		}
 		contracts[operationID] = managedDataCommandAuditContract{

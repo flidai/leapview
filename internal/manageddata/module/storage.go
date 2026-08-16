@@ -56,22 +56,24 @@ type managedDataStorage struct {
 // Its exported methods are deliberately named ports instead of exposing the
 // internal storage bundle.
 type Module struct {
-	handler           *manageddatahttp.Handler
-	uploads           *control.Service
-	finalizer         manageddatahttp.UploadCoordinator
-	multipart         s3multipart.Coordinator
-	multipartService  *s3multipart.Service
-	materializer      manageddata.RevisionMaterializer
-	tus               http.Handler
-	maintenance       Maintenance
-	maintenanceWorker *maintenanceWorker
-	jobs              JobStore
-	workflow          jobs.WorkflowRecorder
-	eventMu           sync.Mutex
-	bindings          *binding.Binder
-	runtimeResolver   *manageddataresolver.Resolver
-	metadata          DeploymentMetadata
-	finalizeExecution apigencommand.AsyncExecutionContract
+	handler             *manageddatahttp.Handler
+	uploads             *control.Service
+	finalizer           manageddatahttp.UploadCoordinator
+	multipart           s3multipart.Coordinator
+	multipartService    *s3multipart.Service
+	materializer        manageddata.RevisionMaterializer
+	tus                 http.Handler
+	maintenance         Maintenance
+	maintenanceWorker   *maintenanceWorker
+	jobs                JobStore
+	workflow            jobs.WorkflowRecorder
+	eventMu             sync.Mutex
+	bindings            *binding.Binder
+	runtimeResolver     *manageddataresolver.Resolver
+	metadata            DeploymentMetadata
+	finalizeExecution   apigencommand.AsyncExecutionContract
+	currentPrincipal    func(*http.Request) (Principal, bool)
+	authorizeConnection manageddatahttp.ConnectionAuthorizer
 }
 
 type repository interface {
@@ -151,7 +153,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		return manageddatahttp.Principal{ID: principal.ID}, ok
 	}
 	if cfg.Disabled {
-		module := &Module{jobs: cfg.Jobs, maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker), finalizeExecution: finalizeExecution}
+		module := &Module{jobs: cfg.Jobs, currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: cfg.AuthorizeConnection, maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker), finalizeExecution: finalizeExecution}
 		module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 			CurrentPrincipal: currentPrincipal, MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
 			Environment: cfg.Environment, AuthorizeConnection: cfg.AuthorizeConnection,
@@ -215,6 +217,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 			collector: collector, runtime: runtimeCollector,
 		},
 		jobs: cfg.Jobs, workflow: cfg.Workflow, bindings: bindings, runtimeResolver: runtimeResolver,
+		currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: cfg.AuthorizeConnection,
 		metadata: metadataReader{repository: repository}, finalizeExecution: finalizeExecution,
 	}
 	module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
@@ -342,6 +345,12 @@ func (m *Module) HTTP() *manageddatahttp.Handler {
 		return nil
 	}
 	return m.handler
+}
+
+func (m *Module) SetAuthorizeConnection(authorizer manageddatahttp.ConnectionAuthorizer) {
+	if m != nil && m.handler != nil {
+		m.handler.SetAuthorizeConnection(authorizer)
+	}
 }
 
 func newManagedDataStorage(ctx context.Context, cfg ProductConfig) (managedDataStorage, error) {
