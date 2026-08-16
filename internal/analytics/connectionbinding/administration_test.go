@@ -144,7 +144,7 @@ func TestAdministrationListsOnlyTheRequestedTargetScope(t *testing.T) {
 	}
 }
 
-func TestAdministrationAuthorizesBeforeEnsuringWorkspaceScopeAndCreatingBinding(t *testing.T) {
+func TestAdministrationAuthorizesBeforeEnsuringProjectScopeAndCreatingBinding(t *testing.T) {
 	binding := validTargetBinding(t)
 	repository := &administrationRepository{}
 	order := []string{}
@@ -174,7 +174,7 @@ func TestAdministrationAuthorizesBeforeEnsuringWorkspaceScopeAndCreatingBinding(
 	require.Equal(t, binding.Scope, repository.binding.Scope)
 }
 
-func TestAdministrationDoesNotEnsureWorkspaceScopeWhenCreateIsUnauthorized(t *testing.T) {
+func TestAdministrationDoesNotEnsureProjectScopeWhenCreateIsUnauthorized(t *testing.T) {
 	binding := validTargetBinding(t)
 	repository := &administrationRepository{}
 	ensureCalls := 0
