@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	dashboardpublication "github.com/flidai/leapview/internal/dashboard/publication"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -14,8 +15,8 @@ type PublicationAuthorizationConfig struct {
 	States interface {
 		ByID(context.Context, servingstate.ID) (servingstate.State, error)
 	}
-	AuthorizeObject func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error)
-	Bypass          func(string) bool
+	AuthorizeResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
+	Bypass            func(string) bool
 }
 
 func (m *Module) publicationAuthorizer(config PublicationAuthorizationConfig) func(context.Context, string, string, string) error {
@@ -39,41 +40,46 @@ func authorizePublicationDeployment(ctx context.Context, actor, environment, gen
 	if environmentValue != servingstate.Environment("prod") {
 		return nil
 	}
-	projectID := ""
-	requiresAuthorization := false
 	state, err := config.States.ByID(ctx, servingstate.ID(generationID))
 	if err != nil {
 		return err
 	}
-	stateProjectID := strings.TrimSpace(state.ProjectID)
-	if stateProjectID == "" {
+	if err := state.ProjectID.Validate(); err != nil {
 		return fmt.Errorf("publication serving state %q has no project identity", generationID)
 	}
-	projectID = stateProjectID
-	var configured map[string]json.RawMessage
+	var configured map[string]dashboardpublication.Definition
 	if state.DashboardPublicationsJSON != "" {
 		if err := json.Unmarshal([]byte(state.DashboardPublicationsJSON), &configured); err != nil {
 			return err
 		}
 	}
-	requiresAuthorization = len(configured) > 0
-	if !requiresAuthorization || config.Bypass != nil && config.Bypass(actor) {
+	if len(configured) == 0 || config.Bypass != nil && config.Bypass(actor) {
 		return nil
 	}
-	if config.AuthorizeObject == nil {
+	if config.AuthorizeResource == nil {
 		return ErrPublicationForbidden
 	}
-	allowed, err := config.AuthorizeObject(
-		ctx,
-		actor,
-		access.PrivilegeManagePublications,
-		access.ProjectEnvironmentObject(projectID, string(environmentValue)),
-	)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return ErrPublicationForbidden
+	seen := make(map[projectgraph.ResourceID]struct{}, len(configured))
+	for _, definition := range configured {
+		dashboardID, err := projectgraph.NewResourceID(definition.Dashboard)
+		if err != nil {
+			return fmt.Errorf("publication dashboard identity is invalid: %w", err)
+		}
+		if _, ok := seen[dashboardID]; ok {
+			continue
+		}
+		seen[dashboardID] = struct{}{}
+		resource, err := access.NewResourceRef(dashboardID, projectgraph.KindDashboard)
+		if err != nil {
+			return err
+		}
+		allowed, err := config.AuthorizeResource(ctx, actor, state.ProjectID, resource, access.CapabilityResourcePublish)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return ErrPublicationForbidden
+		}
 	}
 	return nil
 }

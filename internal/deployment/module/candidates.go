@@ -114,7 +114,7 @@ func (m *Module) ReviewProjectCandidate(
 	}
 	candidate, err := m.candidates.Review(
 		r.Context(),
-		project,
+		projectgraph.ResourceID(project),
 		candidateID,
 	)
 	if err != nil {

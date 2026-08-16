@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -306,12 +307,11 @@ func (m *Module) prepareCandidate(
 	}
 	generation := artifacts.Generation
 	identity := generation.Identity
-	baseIdentity := (*projectgraph.ServingIdentity)(nil)
 	if candidate.Scope.BaseGenerationID != "" {
 		if candidate.Scope.ProjectID != identity.ProjectID || candidate.Scope.Environment != identity.Environment {
 			return release.Provenance{}, release.ErrProvenanceInvalid
 		}
-		baseIdentity, err = candidate.Scope.BaseIdentity()
+		_, err = candidate.Scope.BaseIdentity()
 		if err != nil {
 			return release.Provenance{}, err
 		}
@@ -396,7 +396,7 @@ func candidateReleaseProvenance(
 	}
 	bindings := make([]release.BindingEvidence, len(receipt.Bindings))
 	for index, item := range receipt.Bindings {
-		bindings[index] = release.BindingEvidence{BindingID: item.BindingID, ConnectionID: item.ConnectionID, ConnectorKind: item.ConnectorKind, Revision: item.Revision, ValidatedVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash}
+		bindings[index] = release.BindingEvidence{BindingID: item.BindingID, ConnectionID: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ValidatedVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash}
 	}
 	identity := artifacts.Generation.Identity
 	var baseIdentity *projectgraph.ServingIdentity
@@ -414,7 +414,7 @@ func candidateReleaseProvenance(
 		Plan: release.GenerationPlanProvenance{
 			Identity: identity, BaseIdentity: baseIdentity, TargetID: candidate.TargetID,
 			RuntimeVersion: receipt.RuntimeVersion, PolicyDigest: artifacts.AuthorizationFingerprint,
-			DataRevision: artifacts.Generation.DataRevision, DataMode: artifacts.Generation.DataMode,
+			DataRevision: artifacts.Generation.DataRevision, DataMode: release.GenerationDataMode(artifacts.Generation.DataMode),
 			ManagedDataPins: append([]release.ManagedDataPin(nil), artifacts.Generation.ManagedDataPins...),
 			Bindings:        bindings, AuthoredConnections: candidateProvenanceAuthoredConnections(artifacts.Generation.AuthoredConnections),
 		},
