@@ -109,18 +109,17 @@ func IsDeferredPackageEdge(sourcePath, targetCapability string) bool {
 }
 
 var CapabilityDependencies = map[string]map[string]bool{
-	"project":      {"workspace": true, "analytics": true, "dashboard": true, "access": true, "refresh": true, "servingstate": true},
-	"workspace":    {"access": true, "analytics": true, "dashboard": true},
+	"project":      {"analytics": true, "dashboard": true, "access": true, "refresh": true, "servingstate": true},
 	"access":       {},
 	"manageddata":  {"servingstate": true},
 	"analytics":    {"access": true, "manageddata": true, "servingstate": true},
 	"dashboard":    {"access": true, "analytics": true, "runtimehost": true, "workload": true},
-	"agent":        {"access": true, "analytics": true, "dashboard": true, "workspace": true, "project": true},
-	"admin":        {"access": true, "agent": true, "analytics": true, "dashboard": true, "workspace": true},
-	"release":      {"access": true, "project": true, "workspace": true, "servingstate": true},
+	"agent":        {"access": true, "analytics": true, "dashboard": true, "project": true},
+	"admin":        {"access": true, "agent": true, "analytics": true, "dashboard": true},
+	"release":      {"access": true, "project": true, "servingstate": true},
 	"deployment":   {"access": true, "project": true, "release": true, "servingstate": true, "manageddata": true, "runtimehost": true},
 	"servingstate": {"access": true, "workload": true},
-	"refresh":      {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workspace": true, "workload": true},
+	"refresh":      {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workload": true},
 	"runtimehost":  {"manageddata": true, "servingstate": true},
 	"workload":     {},
 	"platform":     {},
