@@ -409,7 +409,7 @@ tasks:
       - internal/app/site/visualdocs/**/*.go
       - internal/dashboard/**/*.go
       - internal/analytics/**/*.go
-	  - internal/project/compiler/**/*.go
+      - internal/project/compiler/**/*.go
     generates:
       - docs/visuals/examples.gen.json
     cmds:

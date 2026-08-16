@@ -16,7 +16,7 @@
     {
       "slug": "projects",
       "title": "Projects",
-      "summary": "Read-only project registry."
+      "summary": "Active project graph assertion."
     },
     {
       "slug": "releases",
@@ -26,12 +26,12 @@
     {
       "slug": "current-user",
       "title": "Current User",
-      "summary": "Current principal, sessions, tokens, and privileges."
+      "summary": "Current principal, sessions, tokens, and capabilities."
     },
     {
       "slug": "search",
       "title": "Search",
-      "summary": "Progressive project-graph discovery across BI assets."
+      "summary": "Progressive project-graph discovery across governed resources."
     },
     {
       "slug": "bi",

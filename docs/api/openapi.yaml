@@ -9,13 +9,13 @@ tags:
   - name: Instance
     description: The immutable serving identity of this LeapView installation.
   - name: Projects
-    description: Read-only project registry.
+    description: Active project graph assertion.
   - name: Releases
     description: Immutable project releases and artifacts.
   - name: Current User
-    description: Current principal, sessions, tokens, and privileges.
+    description: Current principal, sessions, tokens, and capabilities.
   - name: Search
-    description: Progressive project-graph discovery across BI assets.
+    description: Progressive project-graph discovery across governed resources.
   - name: BI
     description: Dashboard and semantic model read APIs.
   - name: Connections
