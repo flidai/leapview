@@ -61,6 +61,27 @@ func TestDashboardAuthoringCatalogAuthorizationAndFixedProject(t *testing.T) {
 	}
 }
 
+func TestDashboardAuthoringResolvesActiveProjectPerOperation(t *testing.T) {
+	app := &projectAuthoringFake{list: catalog.ListResult{Items: []catalog.Dashboard{{ID: "dashboard_sales", Source: catalog.SourceProject}}}}
+	active := projectgraph.ResourceID("project:activated")
+	provider := DashboardAuthoringProvider{
+		Application: app,
+		ProjectID:   projectgraph.ResourceID("project:stale"),
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return active, nil
+		},
+		Resolve: (&projectResolverFake{}).Resolve,
+	}
+	definition := definitionByName(provider.Definitions(Scope{PrincipalID: "principal"}), ListDashboardsToolName)
+	result, err := definition.Handler.Run(context.Background(), agentcore.ToolCall{ID: "list", Arguments: json.RawMessage(`{}`)})
+	if err != nil || result.IsError {
+		t.Fatalf("list result=%#v err=%v", result, err)
+	}
+	if app.listRequest.ProjectID != active {
+		t.Fatalf("list project = %q, want %q", app.listRequest.ProjectID, active)
+	}
+}
+
 func TestDashboardAuthoringResolvesCreateForkAndLifecycleCapabilities(t *testing.T) {
 	app := &projectAuthoringFake{}
 	resolver := &projectResolverFake{}

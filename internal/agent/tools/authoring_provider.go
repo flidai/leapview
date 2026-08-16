@@ -54,10 +54,12 @@ type DashboardAuthoring interface {
 
 type DashboardAuthoringProvider struct {
 	Application DashboardAuthoring
-	// ProjectID is fixed by composition; callers never choose a project
-	// selector in a model-facing tool request.
-	ProjectID projectgraph.ResourceID
-	Resolve   ResourceResolver
+	// ProjectID is retained for compositions that have a statically bound
+	// runtime. ResolveProjectID is authoritative when configured and resolves
+	// the exact active serving project for each operation.
+	ProjectID        projectgraph.ResourceID
+	ResolveProjectID func(context.Context) (projectgraph.ResourceID, error)
+	Resolve          ResourceResolver
 }
 
 type dashboardAuthoringListInput struct {
@@ -383,9 +385,15 @@ func (p DashboardAuthoringProvider) definition(name, description, effect, input,
 }
 
 func (p DashboardAuthoringProvider) prepare(ctx context.Context, scope Scope, action dashboardauthoring.AuthorizationAction) (projectgraph.ResourceID, agentcore.ToolResult, bool) {
-	_ = ctx
 	_ = action
-	project, err := projectgraph.NewResourceID(p.ProjectID.String())
+	project := p.ProjectID
+	var err error
+	if p.ResolveProjectID != nil {
+		project, err = p.ResolveProjectID(ctx)
+	}
+	if err == nil {
+		err = project.Validate()
+	}
 	if err != nil {
 		return "", ToolError("catalog_unavailable", "trusted project identity is not configured"), false
 	}

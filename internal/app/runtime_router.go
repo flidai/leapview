@@ -87,6 +87,40 @@ type runtimeServices struct {
 	candidateMetrics      func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
 	runtimeHostModule     *runtimehostmodule.Module
 	projectID             projectgraph.ResourceID
+	projectIDResolver     func(context.Context) (projectgraph.ResourceID, error)
+}
+
+// resolveProjectID returns the exact project bound to the active serving
+// lease. A fresh installation has no project until its first activation, so
+// every project-dependent surface must resolve this at operation time rather
+// than retaining runtime.projectID from startup composition.
+func (r *runtimeServices) resolveProjectID(ctx context.Context) (projectgraph.ResourceID, error) {
+	if r == nil {
+		return "", errors.New("runtime services are unavailable")
+	}
+	if r.projectIDResolver != nil {
+		projectID, err := r.projectIDResolver(ctx)
+		if err != nil {
+			return "", err
+		}
+		if err := projectID.Validate(); err != nil {
+			return "", fmt.Errorf("active project identity is invalid: %w", err)
+		}
+		return projectID, nil
+	}
+	if r.runtimeHostModule == nil {
+		return "", errors.New("active runtime host is unavailable")
+	}
+	lease, err := r.runtimeHostModule.Acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer lease.Release()
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return "", fmt.Errorf("active runtime serving identity is invalid: %w", err)
+	}
+	return identity.ProjectID, nil
 }
 
 type platformServices struct {
@@ -402,6 +436,7 @@ func buildApplicationSurfaces(
 	}
 	runtime.workloads = controller
 	runtime.projectID = runtimeConfig.ProjectID
+	runtime.projectIDResolver = runtimeConfig.ProjectIDResolver
 	runtime.persistenceConfigured = data.Database != nil
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
@@ -485,7 +520,7 @@ func buildApplicationSurfaces(
 	routes.projectCatalog = capabilities.ProjectCatalog
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, Catalog: capabilities.ProjectCatalog,
-		ResolveProjectID: runtimeConfig.ProjectIDResolver, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
+		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 		},
@@ -527,9 +562,7 @@ func buildApplicationSurfaces(
 			}
 			return snapshot.EffectiveCapabilities(subjects)
 		})
-		if runtimeConfig.ProjectIDResolver != nil {
-			routes.accessModule.SetCurrentProjectID(runtimeConfig.ProjectIDResolver)
-		}
+		routes.accessModule.SetCurrentProjectID(runtime.resolveProjectID)
 		if routes.managedDataModule != nil {
 			routes.managedDataModule.SetAuthorizeConnection(authorizeConnection)
 		}
@@ -588,7 +621,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
-					return validateCanonicalConnectionBindingScope(scope, runtime.projectID, runtimeConfig.DefaultEnvironment)
+					projectID, err := runtime.resolveProjectID(ctx)
+					if err != nil {
+						return err
+					}
+					return validateCanonicalConnectionBindingScope(scope, projectID, runtimeConfig.DefaultEnvironment)
 				},
 				Authorize: func(
 					ctx context.Context,
@@ -661,7 +698,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Database: database, ExistingAuth: platform.auth,
 			InstanceID:       storage.instanceID,
 			PublicURL:        storage.publicURL,
-			CurrentProjectID: runtimeConfig.ProjectIDResolver,
+			CurrentProjectID: runtime.resolveProjectID,
 			Presentation:     webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
 			Assets:           platform.assets,
 		})
@@ -722,7 +759,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics:          runtime.metrics,
 				ProjectID:        runtime.projectID,
-				ResolveProjectID: runtimeConfig.ProjectIDResolver,
+				ResolveProjectID: runtime.resolveProjectID,
 				Admission:        workloadController(&runtime.workloads), Broker: runtime.broker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
 				CurrentPrincipalID: func(r *http.Request) string {
@@ -733,7 +770,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return principal.ID
 				},
 				AuthorizeListResource: func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error) {
-					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, runtime.projectID, []access.ResourceRef{resource}, capability)
+					projectID, err := runtime.resolveProjectID(ctx)
+					if err != nil {
+						return false, err
+					}
+					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 				},
 				CurrentUsagePrincipal: func(r *http.Request) (string, bool) {
 					principal, ok := routes.accessModule.CurrentPrincipal(r)
@@ -794,7 +835,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			Semantic: dashboardmodule.SemanticConfig{
 				Metrics:          runtime.metrics,
-				ResolveProjectID: runtimeConfig.ProjectIDResolver,
+				ResolveProjectID: runtime.resolveProjectID,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
 					if !ok {
@@ -871,9 +912,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return resolved.Ref.ID, nil
 			},
 			RunWorkloadClass: string(workloadmodule.BackgroundClass), ProjectID: runtime.projectID,
+			ResolveProjectID: runtime.resolveProjectID,
 			DashboardMetrics: func(projectID string) (QueryMetrics, bool) {
 				requested, err := projectgraph.NewResourceID(projectID)
-				if err != nil || requested != runtime.projectID || runtime.metrics == nil {
+				active, activeErr := runtime.resolveProjectID(context.Background())
+				if err != nil || activeErr != nil || requested != active || runtime.metrics == nil {
 					return nil, false
 				}
 				return runtime.metrics, true
@@ -921,8 +964,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if !ok {
 					return agentmodule.Scope{}, false
 				}
+				projectID, err := runtime.resolveProjectID(r.Context())
+				if err != nil {
+					return agentmodule.Scope{}, false
+				}
 				scope := agentmodule.Scope{
-					ProjectID: runtime.projectID.String(), PrincipalID: identity.PrincipalID, DevAuthBypass: identity.DevBypass,
+					ProjectID: projectID.String(), PrincipalID: identity.PrincipalID, DevAuthBypass: identity.DevBypass,
 				}
 				if identity.Credential.Authoring != nil {
 					scope.Credential.ProjectID = identity.Credential.Authoring.Scope.ProjectID.String()

@@ -369,7 +369,16 @@ func (h *Handler) chatScope(r *nethttp.Request) agent.Scope {
 			devBypass = principal.DevAuthBypass
 		}
 	}
-	scope := agent.Scope{ProjectID: strings.TrimSpace(h.options.ActiveProjectID), PrincipalID: principalID, DevAuthBypass: devBypass}
+	projectID := strings.TrimSpace(h.options.ActiveProjectID)
+	if h.options.ResolveProjectID != nil {
+		resolved, err := h.options.ResolveProjectID(r.Context())
+		if err != nil || resolved.Validate() != nil {
+			projectID = ""
+		} else {
+			projectID = resolved.String()
+		}
+	}
+	scope := agent.Scope{ProjectID: projectID, PrincipalID: principalID, DevAuthBypass: devBypass}
 	if h.options.CurrentCredential != nil {
 		if credential, ok := h.options.CurrentCredential(r); ok {
 			scope.Credential = agentCredentialScope(credential)

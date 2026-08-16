@@ -26,6 +26,7 @@ import (
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/go-chi/chi/v5"
 )
@@ -42,9 +43,11 @@ type Settings interface {
 
 type Options struct {
 	Service *agent.Service
-	// ActiveProjectID is supplied by composition from the serving lease. It is
-	// never read from request paths or signal payloads.
+	// ActiveProjectID is retained for statically bound compositions. When
+	// ResolveProjectID is configured, it is authoritative and evaluated for
+	// each request; it is never read from request paths or signal payloads.
 	ActiveProjectID        string
+	ResolveProjectID       func(context.Context) (projectgraph.ResourceID, error)
 	Settings               Settings
 	PlatformAdmin          func(context.Context, string) (bool, error)
 	CurrentPrincipal       func(*stdhttp.Request) (Principal, bool)

@@ -48,9 +48,10 @@ func (m *Module) ToolDefinitions(scope agentcap.Scope) []agentcore.ToolDefinitio
 
 func (m *Module) DashboardAuthoringToolProvider() agenttools.DashboardAuthoringProvider {
 	return agenttools.DashboardAuthoringProvider{
-		Application: m.dashboardAuthoring,
-		ProjectID:   m.projectID,
-		Resolve:     m.resolveResource,
+		Application:      m.dashboardAuthoring,
+		ProjectID:        m.projectID,
+		ResolveProjectID: m.projectIDResolver,
+		Resolve:          m.resolveResource,
 	}
 }
 

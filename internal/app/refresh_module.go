@@ -74,7 +74,11 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 				return accessmodule.APICredentialFromContext(r.Context())
 			},
 			AuthorizeObject: func(ctx context.Context, principalID string, capability access.Capability, resource access.ResourceRef) (bool, error) {
-				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, runtime.projectID, []access.ResourceRef{resource}, capability)
+				projectID, err := runtime.resolveProjectID(ctx)
+				if err != nil {
+					return false, err
+				}
+				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 			},
 		},
 		Admission: workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,

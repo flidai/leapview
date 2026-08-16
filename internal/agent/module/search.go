@@ -35,7 +35,7 @@ func (m *Module) SearchReferences(r *http.Request, _ agent.TurnContext, query st
 	if principalID == "" {
 		return nil, errors.New("catalog principal is unavailable")
 	}
-	projectID, err := m.activeProjectID()
+	projectID, err := m.activeProjectID(r.Context())
 	if err != nil {
 		return nil, err
 	}

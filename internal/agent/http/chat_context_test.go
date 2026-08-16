@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/agent/ui"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestChatReferenceSearchUsesGlobalScopeAndEchoesRequestIdentity(t *testing.T) {
@@ -80,5 +82,22 @@ func TestChatSignalPatchKeepsEmbeddedArtifactsSeparateFromDashboardVisuals(t *te
 	standalone := chatSignalPatch(state, false)
 	if _, ok := standalone["visuals"]; !ok {
 		t.Fatalf("standalone patch = %#v, want visuals", standalone)
+	}
+}
+
+func TestChatScopeUsesActiveProjectResolver(t *testing.T) {
+	handler := NewHandler(Options{
+		ActiveProjectID: "project:stale",
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return projectgraph.ResourceID("project:activated"), nil
+		},
+		CurrentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "principal"}, true
+		},
+	})
+
+	scope := handler.Scope(httptest.NewRequest(http.MethodGet, "/", nil))
+	if scope.ProjectID != "project:activated" {
+		t.Fatalf("scope project = %q, want project:activated", scope.ProjectID)
 	}
 }

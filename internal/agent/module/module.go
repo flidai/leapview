@@ -36,6 +36,7 @@ type Module struct {
 	jobs               JobStore
 	runWorkloadClass   string
 	projectID          projectgraph.ResourceID
+	projectIDResolver  func(context.Context) (projectgraph.ResourceID, error)
 	currentPrincipal   func(*http.Request) (Principal, bool)
 	dashboardMetrics   func(string) (queryruntime.Metrics, bool)
 	recordAudit        func(context.Context, access.AuditEventInput) error
@@ -82,12 +83,16 @@ func BuildAPIGenOperations(operationContracts map[string]APIGenOperationContract
 }
 
 type Config struct {
-	Database           *sql.DB
-	Model              ModelConfig
-	Service            *agent.Service
-	Jobs               JobStore
-	RunWorkloadClass   string
-	ProjectID          projectgraph.ResourceID
+	Database         *sql.DB
+	Model            ModelConfig
+	Service          *agent.Service
+	Jobs             JobStore
+	RunWorkloadClass string
+	ProjectID        projectgraph.ResourceID
+	// ResolveProjectID returns the exact project bound to the active serving
+	// lease. It is required for fresh installations where ProjectID is empty at
+	// process startup, and is evaluated for each project-dependent operation.
+	ResolveProjectID   func(context.Context) (projectgraph.ResourceID, error)
 	DashboardMetrics   func(string) (queryruntime.Metrics, bool)
 	RecordAudit        func(context.Context, access.AuditEventInput) error
 	DispatchAPIGen     func(Scope, string, http.ResponseWriter, *http.Request) bool
@@ -159,8 +164,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.RunWorkloadClass == "" {
 		config.RunWorkloadClass = "background"
 	}
-	if err := config.ProjectID.Validate(); err != nil {
-		return nil, fmt.Errorf("agent active project: %w", err)
+	if config.ResolveProjectID == nil {
+		if err := config.ProjectID.Validate(); err != nil {
+			return nil, fmt.Errorf("agent active project: %w", err)
+		}
 	}
 	service := config.Service
 	workflow, durableWorkflow := config.Jobs.(jobs.WorkflowRecorder)
@@ -204,11 +211,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	m := &Module{
 		service: service, jobs: config.Jobs,
-		runWorkloadClass: config.RunWorkloadClass,
-		projectID:        config.ProjectID,
-		currentPrincipal: config.HTTP.CurrentPrincipal,
-		dashboardMetrics: config.DashboardMetrics,
-		recordAudit:      config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
+		runWorkloadClass:  config.RunWorkloadClass,
+		projectID:         config.ProjectID,
+		projectIDResolver: config.ResolveProjectID,
+		currentPrincipal:  config.HTTP.CurrentPrincipal,
+		dashboardMetrics:  config.DashboardMetrics,
+		recordAudit:       config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
 		catalog: config.Catalog, documentation: config.Documentation,
 		queryMetadata: config.QueryMetadata, queryContext: queryContext,
 		enableSystemPrompt: config.EnableSystemPrompt, broker: config.HTTP.Broker, logger: config.Logger,
@@ -242,7 +250,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		return agenthttp.Principal{ID: principal.ID, DevAuthBypass: principal.DevAuthBypass}, ok
 	}
 	m.handler = agenthttp.NewHandler(agenthttp.Options{
-		Service: service, ActiveProjectID: m.projectID.String(), Settings: config.HTTP.Settings,
+		Service: service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,
 		PlatformAdmin:    config.HTTP.PlatformAdmin,
 		CurrentPrincipal: currentPrincipal, CurrentCredential: config.HTTP.CurrentCredential,
 		Broker: config.HTTP.Broker, CSRFToken: config.HTTP.CSRFToken,

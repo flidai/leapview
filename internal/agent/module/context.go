@@ -23,7 +23,7 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 	if len(candidate.References) > agent.MaxTurnReferences {
 		return agent.TurnContext{}, fmt.Errorf("at most %d references can be attached", agent.MaxTurnReferences)
 	}
-	if _, err := m.activeProjectID(); err != nil {
+	if _, err := m.activeProjectID(r.Context()); err != nil {
 		return agent.TurnContext{}, err
 	}
 	switch strings.ToLower(strings.TrimSpace(candidate.Surface)) {
@@ -38,7 +38,7 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 		if strings.TrimSpace(scope.PrincipalID) == "" {
 			return agent.TurnContext{}, errors.New("catalog principal is unavailable")
 		}
-		projectID, _ := m.activeProjectID()
+		projectID, _ := m.activeProjectID(r.Context())
 		scope.ProjectID = projectID
 		references := make([]agent.TurnReference, 0, len(candidate.References))
 		for _, reference := range candidate.References {
@@ -65,7 +65,7 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 }
 
 func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
-	projectID, err := m.activeProjectID()
+	projectID, err := m.activeProjectID(ctx)
 	if err != nil {
 		return agent.TurnContext{}, err
 	}
@@ -163,7 +163,7 @@ func validateDataExploration(model interface {
 }
 
 func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
-	projectID, err := m.activeProjectID()
+	projectID, err := m.activeProjectID(ctx)
 	if err != nil {
 		return agent.TurnContext{}, err
 	}
@@ -230,11 +230,22 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 	}, nil
 }
 
-func (m *Module) activeProjectID() (string, error) {
-	if m == nil || m.projectID == "" {
+func (m *Module) activeProjectID(ctx context.Context) (string, error) {
+	if m == nil {
 		return "", errors.New("active project runtime is required")
 	}
-	return m.projectID.String(), nil
+	projectID := m.projectID
+	if m.projectIDResolver != nil {
+		resolved, err := m.projectIDResolver(ctx)
+		if err != nil {
+			return "", err
+		}
+		projectID = resolved
+	}
+	if err := projectID.Validate(); err != nil {
+		return "", fmt.Errorf("active project runtime is required: %w", err)
+	}
+	return projectID.String(), nil
 }
 
 func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, raw string, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, error) {
@@ -245,7 +256,7 @@ func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, 
 	if m.resolveResource == nil {
 		return "", errors.New("authorized project catalog is not configured")
 	}
-	projectID, err := m.activeProjectID()
+	projectID, err := m.activeProjectID(ctx)
 	if err != nil {
 		return "", err
 	}
