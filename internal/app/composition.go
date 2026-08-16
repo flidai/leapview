@@ -35,7 +35,6 @@ import (
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
-	workspacemodule "github.com/flidai/leapview/internal/workspace/module"
 )
 
 // assemble constructs the complete process exactly once. CLI and other process
@@ -130,7 +129,6 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	}
 	cleanup.Push("analytics", func(context.Context) error { return analyticsModule.Close() })
 	analyticsWorkspaceFactory := analyticsModule.WorkspaceRuntimeFactory()
-	var workspaceDirectory workspacemodule.Directory
 	avatarBlobs, err := profileImageBlobStore(ctx, cfg)
 	if err != nil {
 		return fail(err)
@@ -148,22 +146,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		Assets:      assets,
 		AvatarBlobs: avatarBlobs,
 		PublicURL:   publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL,
-		WorkspaceIDs: func(ctx context.Context) ([]string, error) {
-			if workspaceDirectory == nil {
-				return nil, nil
-			}
-			return workspaceDirectory.WorkspaceIDs(ctx)
-		},
 	})
-	if err != nil {
-		return fail(err)
-	}
-	accessSecurables := accessModule.Securables()
-	workspaceDirectory, err = workspacemodule.BuildDirectory(store.SQLDB(), accessSecurables)
-	if err != nil {
-		return fail(err)
-	}
-	workspaceReadModel, err := workspacemodule.BuildReadModel(store.SQLDB())
 	if err != nil {
 		return fail(err)
 	}
@@ -216,8 +199,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	releaseModule, err := releasemodule.Build(ctx, releasemodule.Config{
-		Database: store.SQLDB(),
-		States:   servingStateRepo, Workspaces: workspaceDirectory,
+		Database:        store.SQLDB(),
+		States:          servingStateRepo,
 		ManagedDataPins: managedDataModule.BindingValidation(), ManagedDataHook: managedDataModule.BindingValidation(),
 		ArtifactDirectory: cfg.ArtifactDir(), Environment: environment,
 		API: releasemodule.APIConfig{
@@ -472,7 +455,6 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		dataAssemblyInputs{
 			Database: store.SQLDB(), PlatformHealth: store, AdminDatabase: store.SQLDB(),
 			ServingStateRepo: servingStateRepo, StorageRetention: retention,
-			WorkspaceReadModel: workspaceReadModel, WorkspaceDirectory: workspaceDirectory,
 		},
 		capabilityAssemblyInputs{
 			AnalyticsModule: analyticsModule, DashboardAssets: dashboardAssets,

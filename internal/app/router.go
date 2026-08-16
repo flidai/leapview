@@ -18,7 +18,6 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	workspacemodule "github.com/flidai/leapview/internal/workspace/module"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -88,10 +87,6 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		r.Post("/candidates/{candidate}/commands/{command}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardCommand(candidates, w, request)
 		}))
-		routes.workspaceModule.MountAuthenticated(r, workspacemodule.RouteGuard{
-			Protect: routes.accessModule.Protect, ProtectAnyWorkspace: routes.accessModule.ProtectAnyWorkspace,
-			ProtectWithObjects: routes.accessModule.ProtectWithObjects, AssetObjectRefs: routes.workspaceModule.AssetObjectRefs,
-		})
 		routes.agentModule.MountAuthenticated(r, agentmodule.RouteGuard{
 			Protect: routes.accessModule.Protect, ProtectGlobal: routes.accessModule.ProtectGlobal,
 			ProtectPlatform: routes.accessModule.ProtectPlatform,
@@ -102,8 +97,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		r.Post("/chat/turns", redirectLegacyChat)
 		routes.adminModule.MountAuthenticated(r, adminmodule.RouteGuard{
 			Protect: routes.accessModule.Protect, ProtectGlobal: routes.accessModule.ProtectGlobal,
-			ProtectPlatform:     routes.accessModule.ProtectPlatform,
-			ProtectAnyWorkspace: routes.accessModule.ProtectAnyWorkspace,
+			ProtectPlatform: routes.accessModule.ProtectPlatform,
 		})
 		routes.dashboardModule.MountAuthenticated(r, dashboardmodule.RouteGuard{
 			Protect: routes.accessModule.Protect, ProtectWithObjects: routes.accessModule.ProtectWithObjects,
@@ -221,10 +215,6 @@ func projectHome(runtime *runtimeServices) http.HandlerFunc {
 
 func protectGlobalAgent(access *accessmodule.Module, privilege accessmodule.Privilege, next http.Handler) http.Handler {
 	return access.ProtectGlobal(privilege, next.ServeHTTP)
-}
-
-func protectAnyWorkspace(access *accessmodule.Module, privilege accessmodule.Privilege, next http.Handler) http.Handler {
-	return access.ProtectAnyWorkspace(privilege, next.ServeHTTP)
 }
 
 func protect(access *accessmodule.Module, privilege accessmodule.Privilege, next http.Handler) http.Handler {

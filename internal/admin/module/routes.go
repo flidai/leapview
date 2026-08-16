@@ -11,10 +11,9 @@ import (
 )
 
 type RouteGuard struct {
-	Protect             func(access.Privilege, http.HandlerFunc) http.HandlerFunc
-	ProtectGlobal       func(access.Privilege, http.HandlerFunc) http.HandlerFunc
-	ProtectPlatform     func(access.Privilege, http.HandlerFunc) http.HandlerFunc
-	ProtectAnyWorkspace func(access.Privilege, http.HandlerFunc) http.HandlerFunc
+	Protect         func(access.Privilege, http.HandlerFunc) http.HandlerFunc
+	ProtectGlobal   func(access.Privilege, http.HandlerFunc) http.HandlerFunc
+	ProtectPlatform func(access.Privilege, http.HandlerFunc) http.HandlerFunc
 }
 
 func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
@@ -69,6 +68,6 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/admin/audit", guard.ProtectGlobal(access.PrivilegeViewAudit, h.Audit))
 	r.Post("/admin/audit/command", guard.ProtectGlobal(access.PrivilegeViewAudit, h.AuditLogCommand))
 	r.Get("/admin/system", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.System))
-	r.Get("/admin/publications", guard.ProtectAnyWorkspace(access.PrivilegeManagePublications, h.Publications))
-	r.Post("/admin/publications/command", guard.ProtectAnyWorkspace(access.PrivilegeManagePublications, h.PublicationCommand))
+	r.Get("/admin/publications", guard.ProtectGlobal(access.PrivilegeManagePublications, h.Publications))
+	r.Post("/admin/publications/command", guard.ProtectGlobal(access.PrivilegeManagePublications, h.PublicationCommand))
 }
