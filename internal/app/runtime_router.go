@@ -483,7 +483,7 @@ func buildApplicationSurfaces(
 	routes.projectCatalog = capabilities.ProjectCatalog
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, Catalog: capabilities.ProjectCatalog,
-		ProjectID: runtime.projectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
+		ResolveProjectID: runtimeConfig.ProjectIDResolver, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 		},
@@ -791,8 +791,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Assets:       platform.assets,
 			},
 			Semantic: dashboardmodule.SemanticConfig{
-				Metrics:   runtime.metrics,
-				ProjectID: runtimeConfig.ProjectID,
+				Metrics:          runtime.metrics,
+				ResolveProjectID: runtimeConfig.ProjectIDResolver,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
 					if !ok {
@@ -870,13 +870,17 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Documentation: documentation,
 			Catalog:       agentmodule.BuildCatalog(agentmodule.CatalogConfig{ProjectCatalog: routes.projectCatalog}),
 			QueryMetadata: func(ctx context.Context, projectID, modelID string) agentmodule.VisualQueryMetadata {
-				metadata := agentmodule.VisualQueryMetadata{ServingSnapshot: "unversioned"}
+				var metadata agentmodule.VisualQueryMetadata
 				if routes.refreshModule == nil {
 					return metadata
 				}
 				version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, policy.defaultEnvironment, modelID)
 				if err != nil || !ok {
 					return metadata
+				}
+				metadata.ServingSnapshot = strings.TrimSpace(version.ServingStateID)
+				if metadata.ServingSnapshot == "" {
+					return agentmodule.VisualQueryMetadata{}
 				}
 				status := "stale"
 				if version.ServingStateID == metadata.ServingSnapshot {
