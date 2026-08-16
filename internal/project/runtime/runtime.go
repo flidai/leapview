@@ -13,7 +13,6 @@ type Runtime interface{ Close() error }
 type Lease interface {
 	Runtime() Runtime
 	Identity() projectgraph.ServingIdentity
-	DuckLakeSnapshotID() int64
 	Release()
 }
 

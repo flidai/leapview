@@ -122,7 +122,11 @@ func publishUsageDashboard(t *testing.T, ctx context.Context, repo *authoringsql
 	}
 	provenance := authoring.Provenance{Origin: authoring.OriginUI, ActorID: "principal-1"}
 	document := dashboarddefinition.Definition{ID: lifecycle.ID.String(), Title: lifecycle.Title, SemanticModel: lifecycle.SemanticModel.String(), Pages: []dashboardmodel.Page{{ID: "overview"}}, Visualizations: map[string]visualizationdefinition.Definition{}}
-	compiled, err := authoring.NewCompiledRevision(lifecycle.ProjectID, lifecycle.ID, lifecycle.Draft.Revision, document, "state-"+lifecycle.ID.String(), time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC))
+	identity, err := graph.NewServingIdentity(lifecycle.ProjectID, "test", "state-"+lifecycle.ID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := authoring.NewCompiledRevision(lifecycle.ProjectID, lifecycle.ID, lifecycle.Draft.Revision, document, identity, time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

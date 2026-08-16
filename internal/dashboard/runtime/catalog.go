@@ -29,8 +29,8 @@ func (s *CatalogService) catalogView(definition *ProjectDefinition) catalog.Cata
 	if definition == nil {
 		return catalog.Catalog{}
 	}
-	// Catalog.Workspace is a legacy transport shape. Keep its descriptive
-	// fields only; never encode a project ResourceID into a workspace ID.
+	// This projection carries project-level descriptive metadata only; resource
+	// identity remains on the canonical project graph.
 	result := catalog.Catalog{Workspace: catalog.Workspace{Title: definition.Title(), Description: definition.Description()}}
 	models := definition.Models()
 	for _, modelID := range definition.ModelIDs() {

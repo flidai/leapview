@@ -440,7 +440,11 @@ func publishedFixture(t *testing.T) (authoring.Revision, authoring.Revision, aut
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := authoring.NewCompiledRevision("project", "sales", published.Token(), dashboarddefinition.Definition{ID: "sales", Title: document.Title, SemanticModel: "sales"}, "serving-state", sourceTestTime)
+	identity, err := projectgraph.NewServingIdentity("project", "production", "serving-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := authoring.NewCompiledRevision("project", "sales", published.Token(), dashboarddefinition.Definition{ID: "sales", Title: document.Title, SemanticModel: "sales"}, identity, sourceTestTime)
 	if err != nil {
 		t.Fatal(err)
 	}

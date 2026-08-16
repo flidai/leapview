@@ -59,7 +59,7 @@ CREATE TABLE dashboard_authoring_drafts (
 );
 
 -- A compiled artifact is immutable and keyed by the complete compilation
--- token (authored revision plus definition hash and semantic serving state).
+-- token (authored revision plus definition hash and semantic serving identity).
 -- Reusing that key with a different payload is a conflict, never an update.
 CREATE TABLE dashboard_authoring_compiled_revisions (
   project_id TEXT NOT NULL,
