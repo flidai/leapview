@@ -958,7 +958,10 @@ func validateVisualExampleContract(id, filename string, node yaml.Node) error {
 	resource := map[string]any{
 		"apiVersion": "leapview.dev/v1",
 		"kind":       "Dashboard",
-		"metadata":   map[string]any{"name": "visual-doc-example"},
+		"metadata": map[string]any{
+			"id":   "dashboard:visual-doc-example",
+			"name": "visual-doc-example",
+		},
 		"spec": map[string]any{
 			"semanticModel": "visual_examples",
 			"visuals":       map[string]any{id: visual},
