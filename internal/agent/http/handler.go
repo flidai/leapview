@@ -64,9 +64,9 @@ type Options struct {
 	APIGenToolContracts    map[string]agenttool.Contract
 }
 
-func (h *Handler) DashboardBootstrap(r *stdhttp.Request, workspaceID string) ui.ChatViewState {
+func (h *Handler) DashboardBootstrap(r *stdhttp.Request, projectID string) ui.ChatViewState {
 	scope := h.chatScope(r)
-	scope.ProjectID = strings.TrimSpace(workspaceID)
+	scope.ProjectID = strings.TrimSpace(projectID)
 	return h.chatSignal(r.Context(), scope, "", "", false)
 }
 
@@ -779,23 +779,8 @@ type adminAgentCommandSignals struct {
 }
 
 func agentCredentialScope(credential access.APICredential) agent.CredentialScope {
-	token := credential.Token
-	return agent.CredentialScope{
-		ProjectID:  token.WorkspaceID,
-		Privileges: privilegeStrings(token.Privileges),
-		Restricted: token.Privileges != nil,
-	}
-}
-
-func privilegeStrings(values []access.Privilege) []string {
-	if values == nil {
-		return nil
-	}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		out = append(out, string(value))
-	}
-	return out
+	_ = credential
+	return agent.CredentialScope{}
 }
 
 func agentConversationDTO(row agent.Conversation) api.AgentConversationResponse {

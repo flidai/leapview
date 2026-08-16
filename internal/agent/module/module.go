@@ -27,41 +27,37 @@ import (
 	"github.com/flidai/leapview/internal/platform/jobs"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	productsearch "github.com/flidai/leapview/internal/workspace/search"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
 type Module struct {
-	handler                  *agenthttp.Handler
-	service                  *agent.Service
-	jobs                     JobStore
-	runWorkloadClass         string
-	globalProjectID          string
-	projectID                projectgraph.ResourceID
-	search                   SearchPort
-	environment              func(*http.Request) string
-	dashboardMetrics         func(string) (queryruntime.Metrics, bool)
-	authorizeAnyObject       func(context.Context, string, access.Privilege, []access.ObjectRef) (bool, error)
-	skipContextAuthorization bool
-	recordAudit              func(context.Context, access.AuditEventInput) error
-	dispatchAPIGen           func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
-	catalog                  agenttools.Catalog
-	documentation            agenttools.Documentation
-	queryMetadata            func(context.Context, string, string) agenttools.VisualQueryMetadata
-	queryContext             func(context.Context, agent.Scope) context.Context
-	enableSystemPrompt       bool
-	broker                   *pagestream.Broker
-	logger                   *slog.Logger
-	chatTitleMu              sync.Mutex
-	pendingChatTitles        map[string]struct{}
-	mcpScope                 func(*http.Request) (agent.Scope, bool)
-	mcpProtect               func(http.Handler) http.Handler
-	productName              string
-	buildVersion             string
-	apiOperations            []agenttools.APIGenOperation
-	dashboardAuthoring       *authoringapplication.Application
-	resolveResource          agenttools.ResourceResolver
-	runExecution             apigencommand.AsyncExecutionContract
+	handler            *agenthttp.Handler
+	service            *agent.Service
+	jobs               JobStore
+	runWorkloadClass   string
+	globalProjectID    string
+	projectID          projectgraph.ResourceID
+	currentPrincipal   func(*http.Request) (Principal, bool)
+	dashboardMetrics   func(string) (queryruntime.Metrics, bool)
+	recordAudit        func(context.Context, access.AuditEventInput) error
+	dispatchAPIGen     func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
+	catalog            agenttools.Catalog
+	documentation      agenttools.Documentation
+	queryMetadata      func(context.Context, string, string) agenttools.VisualQueryMetadata
+	queryContext       func(context.Context, agent.Scope) context.Context
+	enableSystemPrompt bool
+	broker             *pagestream.Broker
+	logger             *slog.Logger
+	chatTitleMu        sync.Mutex
+	pendingChatTitles  map[string]struct{}
+	mcpScope           func(*http.Request) (agent.Scope, bool)
+	mcpProtect         func(http.Handler) http.Handler
+	productName        string
+	buildVersion       string
+	apiOperations      []agenttools.APIGenOperation
+	dashboardAuthoring *authoringapplication.Application
+	resolveResource    agenttools.ResourceResolver
+	runExecution       apigencommand.AsyncExecutionContract
 }
 
 type Service = agent.Service
@@ -87,40 +83,30 @@ func BuildAPIGenOperations(operationContracts map[string]APIGenOperationContract
 }
 
 type Config struct {
-	Database                 *sql.DB
-	Model                    ModelConfig
-	Service                  *agent.Service
-	Jobs                     JobStore
-	RunWorkloadClass         string
-	GlobalProjectID          string
-	ProjectID                projectgraph.ResourceID
-	Search                   SearchPort
-	Environment              func(*http.Request) string
-	DashboardMetrics         func(string) (queryruntime.Metrics, bool)
-	AuthorizeAnyObject       func(context.Context, string, access.Privilege, []access.ObjectRef) (bool, error)
-	SkipContextAuthorization bool
-	RecordAudit              func(context.Context, access.AuditEventInput) error
-	DispatchAPIGen           func(Scope, string, http.ResponseWriter, *http.Request) bool
-	Catalog                  agenttools.Catalog
-	Documentation            agenttools.Documentation
-	QueryMetadata            func(context.Context, string, string) agenttools.VisualQueryMetadata
-	QueryContext             func(context.Context, Scope) context.Context
-	EnableSystemPrompt       bool
-	Logger                   *slog.Logger
-	MCPScope                 func(*http.Request) (Scope, bool)
-	MCPProtect               func(http.Handler) http.Handler
-	ProductName              string
-	BuildVersion             string
-	APIGenOperations         []agenttools.APIGenOperation
-	DashboardAuthoring       *authoringapplication.Application
-	ResolveResource          agenttools.ResourceResolver
-	HTTP                     HTTPConfig
-}
-
-type SearchPort interface {
-	SearchSubject(*http.Request) (productsearch.Subject, bool)
-	Search(context.Context, productsearch.Subject, productsearch.Query) (productsearch.Page, error)
-	ResolveSearchReferences(context.Context, productsearch.Subject, string, []productsearch.Reference) ([]productsearch.Result, error)
+	Database           *sql.DB
+	Model              ModelConfig
+	Service            *agent.Service
+	Jobs               JobStore
+	RunWorkloadClass   string
+	GlobalProjectID    string
+	ProjectID          projectgraph.ResourceID
+	DashboardMetrics   func(string) (queryruntime.Metrics, bool)
+	RecordAudit        func(context.Context, access.AuditEventInput) error
+	DispatchAPIGen     func(Scope, string, http.ResponseWriter, *http.Request) bool
+	Catalog            agenttools.Catalog
+	Documentation      agenttools.Documentation
+	QueryMetadata      func(context.Context, string, string) agenttools.VisualQueryMetadata
+	QueryContext       func(context.Context, Scope) context.Context
+	EnableSystemPrompt bool
+	Logger             *slog.Logger
+	MCPScope           func(*http.Request) (Scope, bool)
+	MCPProtect         func(http.Handler) http.Handler
+	ProductName        string
+	BuildVersion       string
+	APIGenOperations   []agenttools.APIGenOperation
+	DashboardAuthoring *authoringapplication.Application
+	ResolveResource    agenttools.ResourceResolver
+	HTTP               HTTPConfig
 }
 
 type Principal struct {
@@ -221,11 +207,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		service: service, jobs: config.Jobs,
 		runWorkloadClass: config.RunWorkloadClass,
-		globalProjectID:  config.GlobalProjectID, search: config.Search, environment: config.Environment,
+		globalProjectID:  config.GlobalProjectID,
 		projectID:        config.ProjectID,
-		dashboardMetrics: config.DashboardMetrics, authorizeAnyObject: config.AuthorizeAnyObject,
-		skipContextAuthorization: config.SkipContextAuthorization,
-		recordAudit:              config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
+		currentPrincipal: config.HTTP.CurrentPrincipal,
+		dashboardMetrics: config.DashboardMetrics,
+		recordAudit:      config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
 		catalog: config.Catalog, documentation: config.Documentation,
 		queryMetadata: config.QueryMetadata, queryContext: queryContext,
 		enableSystemPrompt: config.EnableSystemPrompt, broker: config.HTTP.Broker, logger: config.Logger,

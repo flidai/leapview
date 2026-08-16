@@ -43,20 +43,20 @@ func TestAPIGenOperationsUseGeneratedReadOnlyToolContracts(t *testing.T) {
 	}
 }
 
-func TestAPIGenQueryWorkspaceBindingsAreExplicitModelArguments(t *testing.T) {
+func TestAPIGenQueryProjectBindingsRemainServerBound(t *testing.T) {
 	for _, operation := range curatedTestAPIGenOperations() {
 		found := false
 		for _, binding := range operation.Tool.Bindings {
-			if binding.Source != "path" || binding.WireName != "workspace" {
+			if binding.Source != "path" || binding.WireName != "project" {
 				continue
 			}
 			found = true
-			if binding.Mode != "model" || binding.Argument != "workspace" || binding.ContextKey != "" || !binding.Required {
-				t.Fatalf("tool %q workspace binding = %#v, want required model argument", operation.Tool.Name, binding)
+			if binding.Mode != "context" || binding.Argument != "" || binding.ContextKey != "project" || !binding.Required {
+				t.Fatalf("tool %q project binding = %#v, want required server context binding", operation.Tool.Name, binding)
 			}
 		}
 		if !found {
-			t.Fatalf("tool %q has no workspace path binding", operation.Tool.Name)
+			t.Fatalf("tool %q has no project path binding", operation.Tool.Name)
 		}
 		var schema struct {
 			Properties map[string]struct {
@@ -67,8 +67,8 @@ func TestAPIGenQueryWorkspaceBindingsAreExplicitModelArguments(t *testing.T) {
 		if err := json.Unmarshal(operation.Tool.InputSchema, &schema); err != nil {
 			t.Fatalf("decode tool %q input schema: %v", operation.Tool.Name, err)
 		}
-		if schema.Properties["workspace"].MinLength != 1 || !slices.Contains(schema.Required, "workspace") {
-			t.Fatalf("tool %q input schema = %s, want required non-empty workspace", operation.Tool.Name, operation.Tool.InputSchema)
+		if _, ok := schema.Properties["project"]; ok || slices.Contains(schema.Required, "project") {
+			t.Fatalf("tool %q input schema = %s, must not expose project selector", operation.Tool.Name, operation.Tool.InputSchema)
 		}
 	}
 }
@@ -176,23 +176,23 @@ func TestReferenceCatalogComesFromCanonicalProviderDefinitions(t *testing.T) {
 	}
 }
 
-func TestCanonicalProviderSchemasDoNotVaryByWorkspaceContext(t *testing.T) {
+func TestCanonicalProviderSchemasDoNotVaryByProjectContext(t *testing.T) {
 	operations := curatedTestAPIGenOperations()
 	providers := ProviderSet{APIGen: APIGenProvider{Operations: operations}}
 	global := providers.Definitions(Scope{})
-	workspace := providers.Definitions(Scope{WorkspaceID: "sales"})
-	if len(global) != len(workspace) {
-		t.Fatalf("global definitions = %d, workspace definitions = %d", len(global), len(workspace))
+	project := providers.Definitions(Scope{ProjectID: "project_demo"})
+	if len(global) != len(project) {
+		t.Fatalf("global definitions = %d, project definitions = %d", len(global), len(project))
 	}
 	for index := range global {
-		if global[index].Name != workspace[index].Name {
-			t.Fatalf("definition[%d] names = %q and %q", index, global[index].Name, workspace[index].Name)
+		if global[index].Name != project[index].Name {
+			t.Fatalf("definition[%d] names = %q and %q", index, global[index].Name, project[index].Name)
 		}
-		if string(global[index].InputSchema) != string(workspace[index].InputSchema) {
-			t.Fatalf("tool %q input schema varies by workspace context", global[index].Name)
+		if string(global[index].InputSchema) != string(project[index].InputSchema) {
+			t.Fatalf("tool %q input schema varies by project context", global[index].Name)
 		}
-		if string(global[index].OutputSchema) != string(workspace[index].OutputSchema) {
-			t.Fatalf("tool %q output schema varies by workspace context:\nglobal=%s\nworkspace=%s", global[index].Name, global[index].OutputSchema, workspace[index].OutputSchema)
+		if string(global[index].OutputSchema) != string(project[index].OutputSchema) {
+			t.Fatalf("tool %q output schema varies by project context:\nglobal=%s\nproject=%s", global[index].Name, global[index].OutputSchema, project[index].OutputSchema)
 		}
 	}
 }
@@ -200,17 +200,17 @@ func TestCanonicalProviderSchemasDoNotVaryByWorkspaceContext(t *testing.T) {
 func curatedTestAPIGenOperations() []APIGenOperation {
 	contracts := map[string]OperationContract{
 		"querySemanticModel": {
-			OperationID: "querySemanticModel", Method: "POST", Path: "/api/v1/workspaces/{workspace}/semantic-models/{model}/query",
+			OperationID: "querySemanticModel", Method: "POST", Path: "/api/v1/projects/{project}/semantic-models/{model}/query",
 			Protected: true, AuthzMode: "privilege",
-			Extensions: map[string]any{"x-authz": map[string]any{"mode": "privilege", "privilege": "QUERY_DATA"}},
+			Extensions: map[string]any{"x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_USE"}},
 		},
 		"queryDashboardVisualData": {
-			OperationID: "queryDashboardVisualData", Method: "POST", Path: "/api/v1/workspaces/{workspace}/dashboards/query-visual",
+			OperationID: "queryDashboardVisualData", Method: "POST", Path: "/api/v1/projects/{project}/dashboards/query-visual",
 			Protected: true, AuthzMode: "privilege",
-			Extensions: map[string]any{"x-authz": map[string]any{"mode": "privilege", "privilege": "QUERY_DATA"}},
+			Extensions: map[string]any{"x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_USE"}},
 		},
 	}
-	input := json.RawMessage(`{"type":"object","properties":{"workspace":{"type":"string","minLength":1},"model":{"type":"string","minLength":1},"limit":{"type":"integer"}},"required":["workspace","model"],"additionalProperties":false}`)
+	input := json.RawMessage(`{"type":"object","properties":{"model":{"type":"string","minLength":1},"limit":{"type":"integer"}},"required":["model"],"additionalProperties":false}`)
 	semanticOutput := json.RawMessage(`{
 		"type":"object",
 		"additionalProperties":false,
@@ -228,20 +228,20 @@ func curatedTestAPIGenOperations() []APIGenOperation {
 	tools := map[string]agenttool.Contract{
 		"query_semantic_model": {
 			Name: "query_semantic_model", OperationID: "querySemanticModel", Method: "POST",
-			Path: "/api/v1/workspaces/{workspace}/semantic-models/{model}/query", Effect: agenttool.EffectRead,
+			Path: "/api/v1/projects/{project}/semantic-models/{model}/query", Effect: agenttool.EffectRead,
 			InputSchema: input, OutputSchema: semanticOutput,
 			Bindings: []agenttool.Binding{
-				{Argument: "workspace", Source: "path", WireName: "workspace", Mode: "model", Required: true, Schema: agenttool.ValueSchema{Type: "string"}},
+				{Source: "path", WireName: "project", Mode: "context", ContextKey: "project", Required: true, Schema: agenttool.ValueSchema{Type: "string"}},
 				{Argument: "model", Source: "path", WireName: "model", Mode: "model", Required: true, Schema: agenttool.ValueSchema{Type: "string"}},
 				{Argument: "limit", Source: "body", WireName: "limit", Mode: "model", Default: 25, Schema: agenttool.ValueSchema{Type: "integer"}},
 			},
 		},
 		"query_dashboard_visual": {
 			Name: "query_dashboard_visual", OperationID: "queryDashboardVisualData", Method: "POST",
-			Path: "/api/v1/workspaces/{workspace}/dashboards/query-visual", Effect: agenttool.EffectRead,
+			Path: "/api/v1/projects/{project}/dashboards/query-visual", Effect: agenttool.EffectRead,
 			InputSchema: input, OutputSchema: output,
 			Bindings: []agenttool.Binding{
-				{Argument: "workspace", Source: "path", WireName: "workspace", Mode: "model", Required: true, Schema: agenttool.ValueSchema{Type: "string"}},
+				{Source: "path", WireName: "project", Mode: "context", ContextKey: "project", Required: true, Schema: agenttool.ValueSchema{Type: "string"}},
 				{Argument: "limit", Source: "body", WireName: "limit", Mode: "model", Default: 50, Schema: agenttool.ValueSchema{Type: "integer"}},
 			},
 		},

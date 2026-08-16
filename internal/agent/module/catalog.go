@@ -135,7 +135,7 @@ func catalogError(err error) error {
 	}
 	code := "catalog_failed"
 	switch {
-	case errors.Is(err, projectcatalog.ErrNotFound), errors.Is(err, projectcatalog.ErrUnauthorized):
+	case errors.Is(err, projectcatalog.ErrNotFound):
 		code = "catalog_not_found"
 	case errors.Is(err, projectcatalog.ErrInvalidRequest), errors.Is(err, projectcatalog.ErrInvalidCursor):
 		code = "invalid_arguments"

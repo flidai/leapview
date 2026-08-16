@@ -63,20 +63,20 @@ func TestTranscriptProjectsResolvedReferencesOntoUserTurn(t *testing.T) {
 		RunID:       "run_1",
 		Role:        MessageRoleUser,
 		ContentText: "Why did revenue fall?",
-		ContentJSON: `{"turn_context":{"surface":"dashboard","references":[{"reference":{"workspaceId":"sales","type":"visual","id":"executive-sales.revenue"},"name":"Revenue by month","workspace":{"id":"sales","name":"Sales"},"hierarchy":["Sales","Executive Sales","Overview"],"href":"/workspaces/sales/dashboards/executive-sales/pages/overview","locations":[],"context":["current_page"],"visualId":"revenue"}]}}`,
+		ContentJSON: `{"turn_context":{"surface":"dashboard","references":[{"reference":{"projectId":"project_demo","type":"dashboard","id":"dashboard_sales"},"name":"Sales dashboard","project":{"id":"project_demo","name":"Demo"},"hierarchy":["Demo","Sales dashboard"],"href":"/dashboards/dashboard_sales","locations":[],"context":["current_page"]}]}}`,
 	}})
 
 	if len(transcript) != 1 || len(transcript[0].References) != 1 {
 		t.Fatalf("user turn references = %#v", transcript)
 	}
 	reference := transcript[0].References[0]
-	if reference.Reference.Type != "visual" || reference.Name != "Revenue by month" {
+	if reference.Reference.Kind != "dashboard" || reference.Name != "Sales dashboard" {
 		t.Fatalf("reference = %#v", reference)
 	}
 	if reference.VisualID != "" {
 		t.Fatalf("transcript reference exposed model-only enrichment: %#v", reference)
 	}
-	if got := reference.Hierarchy; len(got) != 3 || got[2] != "Overview" {
+	if got := reference.Hierarchy; len(got) != 2 || got[1] != "Sales dashboard" {
 		t.Fatalf("hierarchy = %#v", got)
 	}
 }

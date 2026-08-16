@@ -6,163 +6,72 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/agent"
+	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/agent/ui"
-	productsearch "github.com/flidai/leapview/internal/workspace/search"
 )
 
-var referenceTypes = []productsearch.Type{
-	productsearch.TypeVisual,
-	productsearch.TypeDashboard,
-	productsearch.TypePage,
-	productsearch.TypeMeasure,
-	productsearch.TypeSemanticModel,
-}
-
-func (m *Module) IsReferenceType(typ productsearch.Type) bool {
-	switch typ {
-	case productsearch.TypeVisual, productsearch.TypeDashboard, productsearch.TypePage,
-		productsearch.TypeMeasure, productsearch.TypeSemanticModel:
-		return true
-	default:
-		return false
-	}
+// catalogReferenceKinds is the complete model-facing graph taxonomy. Search
+// intentionally does not expose derived UI objects such as pages, visuals, or
+// fields: callers receive stable graph refs and can pass those exact refs to a
+// governed tool on a later turn.
+var catalogReferenceKinds = []agenttools.CatalogType{
+	"project", "connection", "source", "model", "semantic_model", "pipeline", "dashboard",
 }
 
 func (m *Module) SearchReferences(r *http.Request, turnContext agent.TurnContext, query string, limit int) ([]ui.AgentReferenceSignal, error) {
-	if m == nil || m.search == nil {
-		return nil, errors.New("search is not configured")
+	if m == nil || m.catalog == nil {
+		return nil, errors.New("catalog is not configured")
 	}
-	subject, ok := m.search.SearchSubject(r)
-	if !ok {
-		return nil, errors.New("search principal is unavailable")
+	principalID := ""
+	if m.currentPrincipal != nil {
+		if principal, ok := m.currentPrincipal(r); ok {
+			principalID = strings.TrimSpace(principal.ID)
+		}
 	}
-	environment := ""
-	if m.environment != nil {
-		environment = m.environment(r)
+	if principalID == "" {
+		return nil, errors.New("catalog principal is unavailable")
 	}
-	page, err := m.search.Search(r.Context(), subject, productsearch.Query{
-		Text: strings.TrimSpace(query), Environment: environment, Limit: limit,
-		AllowedTypes: referenceTypes,
-		Context: productsearch.SearchContext{
-			WorkspaceID: strings.TrimSpace(turnContext.ProjectID),
-			DashboardID: strings.TrimSpace(turnContext.DashboardID),
-			PageID:      strings.TrimSpace(turnContext.PageID),
-		},
+	projectID := strings.TrimSpace(turnContext.ProjectID)
+	if projectID == "" && m.projectID != "" {
+		projectID = m.projectID.String()
+	}
+	page, err := m.catalog.Search(r.Context(), agenttools.Scope{ProjectID: projectID, PrincipalID: principalID}, agenttools.CatalogSearchRequest{
+		Query: strings.TrimSpace(query), Kinds: catalogReferenceKinds, Limit: limit,
 	})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ui.AgentReferenceSignal, 0, len(page.Items))
-	for _, result := range page.Items {
-		out = append(out, ReferenceSignal(result))
+	for _, item := range page.Items {
+		out = append(out, referenceSignal(item, projectID))
 	}
 	return out, nil
 }
 
-func ReferenceSignal(result productsearch.Result) ui.AgentReferenceSignal {
-	locations := make([]ui.AgentReferenceLocationSignal, 0, len(result.Locations))
-	for _, location := range result.Locations {
-		locations = append(locations, ui.AgentReferenceLocationSignal{
-			DashboardID: ui.Optional(location.DashboardID), DashboardName: ui.Optional(location.DashboardName),
-			PageID: ui.Optional(location.PageID), PageName: ui.Optional(location.PageName), Href: location.Href,
-		})
-	}
-	contextTags := make([]string, 0, len(result.Context))
-	for _, tag := range result.Context {
-		contextTags = append(contextTags, string(tag))
+func referenceSignal(item agenttools.CatalogItem, projectID string) ui.AgentReferenceSignal {
+	resourceID := item.Ref.ID
+	if projectID == "" && item.Ref.Kind == "project" {
+		projectID = resourceID
 	}
 	return ui.AgentReferenceSignal{
-		Reference: ui.AgentReferenceKeySignal{Kind: string(result.Reference.Type), ID: result.Reference.ID},
-		Name:      result.Name, Description: ui.Optional(result.Description),
-		VisualType: ui.Optional(result.VisualType),
-		Workspace:  ui.AgentReferenceWorkspaceSignal{ID: result.Workspace.ID, Name: result.Workspace.Name},
-		Hierarchy:  referenceHierarchy(result),
-		Href:       result.Href, Locations: locations, Context: contextTags,
+		Reference: ui.AgentReferenceKeySignal{ProjectID: projectID, Type: string(item.Ref.Kind), ID: resourceID},
+		Name:      item.Name, Description: ui.Optional(item.Description),
+		Project:   ui.AgentReferenceProjectSignal{ID: projectID, Name: projectID},
+		Hierarchy: []string{projectID}, Locations: []ui.AgentReferenceLocationSignal{}, Context: []string{},
 	}
 }
 
-func (m *Module) TurnReference(result productsearch.Result) agent.TurnReference {
-	locations := make([]agent.TurnReferenceLocation, 0, len(result.Locations))
-	for _, location := range result.Locations {
-		locations = append(locations, agent.TurnReferenceLocation{
-			DashboardID: location.DashboardID, DashboardName: location.DashboardName,
-			PageID: location.PageID, PageName: location.PageName, Href: location.Href,
-		})
+// TurnReferenceFromCatalog creates a server-trusted context item from a
+// catalog result. The catalog item is already authorization-filtered against
+// the active serving snapshot; no browser-supplied metadata is copied.
+func TurnReferenceFromCatalog(item agenttools.CatalogItem, projectID string) agent.TurnReference {
+	if projectID == "" && item.Ref.Kind == "project" {
+		projectID = item.Ref.ID
 	}
-	contextTags := make([]string, 0, len(result.Context))
-	for _, tag := range result.Context {
-		contextTags = append(contextTags, string(tag))
+	return agent.TurnReference{
+		Reference: agent.TurnReferenceKey{Kind: string(item.Ref.Kind), ID: item.Ref.ID},
+		Name:      item.Name, Description: item.Description,
+		Resource:  agent.TurnReferenceResource{ID: projectID, Name: projectID},
+		Hierarchy: []string{projectID}, Context: []string{},
 	}
-	reference := agent.TurnReference{
-		Reference: agent.TurnReferenceKey{Kind: string(result.Reference.Type), ID: result.Reference.ID},
-		Name:      result.Name, Description: result.Description, VisualType: result.VisualType,
-		Resource:  agent.TurnReferenceResource{ID: result.Workspace.ID, Name: result.Workspace.Name},
-		Hierarchy: referenceHierarchy(result), Href: result.Href, Locations: locations, Context: contextTags,
-	}
-	parts := strings.Split(result.Reference.ID, ".")
-	switch result.Reference.Type {
-	case productsearch.TypeVisual:
-		reference.VisualID = lastReferencePart(result.Reference.ID)
-	case productsearch.TypeFilter:
-		reference.FilterID = lastReferencePart(result.Reference.ID)
-	case productsearch.TypeSemanticModel:
-		reference.ModelID = result.Reference.ID
-	case productsearch.TypeSemanticTable:
-		if len(parts) > 0 {
-			reference.ModelID = parts[0]
-		}
-		reference.DatasetID = lastReferencePart(result.Reference.ID)
-	case productsearch.TypeField:
-		if len(parts) > 0 {
-			reference.ModelID = parts[0]
-		}
-		if len(parts) > 1 {
-			reference.DatasetID = parts[len(parts)-2]
-		}
-		reference.FieldID = lastReferencePart(result.Reference.ID)
-	case productsearch.TypeMeasure:
-		if len(parts) > 0 {
-			reference.ModelID = parts[0]
-		}
-		reference.FieldID = lastReferencePart(result.Reference.ID)
-	}
-	return reference
-}
-
-func referenceHierarchy(result productsearch.Result) []string {
-	hierarchy := make([]string, 0, 3)
-	if name := strings.TrimSpace(result.Workspace.Name); name != "" {
-		hierarchy = append(hierarchy, name)
-	}
-	appendName := func(name string) {
-		name = strings.TrimSpace(name)
-		if name != "" && (len(hierarchy) == 0 || hierarchy[len(hierarchy)-1] != name) {
-			hierarchy = append(hierarchy, name)
-		}
-	}
-	switch result.Reference.Type {
-	case productsearch.TypeVisual:
-		if len(result.Locations) > 0 {
-			appendName(result.Locations[0].DashboardName)
-			appendName(result.Locations[0].PageName)
-		}
-	case productsearch.TypePage:
-		if len(result.Locations) > 0 {
-			appendName(result.Locations[0].DashboardName)
-		}
-	case productsearch.TypeMeasure:
-		for _, ancestor := range result.Hierarchy {
-			if ancestor.Type == productsearch.TypeSemanticModel {
-				appendName(ancestor.Name)
-			}
-		}
-	}
-	return hierarchy
-}
-
-func lastReferencePart(value string) string {
-	if index := strings.LastIndex(value, "."); index >= 0 {
-		return value[index+1:]
-	}
-	return value
 }

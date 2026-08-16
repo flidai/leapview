@@ -20,7 +20,7 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 	if !command.Audit.Required || strings.TrimSpace(command.Audit.SuccessAction) == "" || command.Audit.Guarantee != "best-effort" {
 		return fmt.Errorf("generated agent command contract %q does not define a best-effort success audit", input.OperationID)
 	}
-	privilege, ok := access.ParsePrivilege(command.Privilege)
+	capability, ok := agentCommandCapability(command.Privilege)
 	if !ok || command.AuthzMode != "privilege" || contract.AuthzMode != command.AuthzMode {
 		return fmt.Errorf("generated agent command contract %q has invalid authorization", input.OperationID)
 	}
@@ -38,7 +38,7 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 	projectID := strings.TrimSpace(input.Scope.ProjectID)
 	metadata, err := encodeAgentCommandAuditPayload(operationID, agentgen.GenSchemaAgentCommandAuditPayload{
 		OperationId: operationID,
-		WorkspaceId: projectID,
+		ProjectId:   projectID,
 		TargetType:  targetType,
 		TargetId:    strings.TrimSpace(input.TargetID),
 		Surface:     surface,
@@ -47,17 +47,30 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 		return err
 	}
 	return m.recordAudit(ctx, access.AuditEventInput{
-		WorkspaceID:   projectID,
 		PrincipalID:   strings.TrimSpace(input.Scope.PrincipalID),
 		Action:        command.Audit.SuccessAction,
-		TargetType:    targetType,
-		TargetID:      strings.TrimSpace(input.TargetID),
-		Privilege:     privilege,
+		ResourceKind:  targetType,
+		ResourceID:    strings.TrimSpace(input.TargetID),
+		Capability:    capability,
 		Status:        "success",
 		RequestID:     strings.TrimSpace(input.RequestID),
 		CorrelationID: strings.TrimSpace(input.CorrelationID),
 		MetadataJSON:  metadata,
 	})
+}
+
+func agentCommandCapability(value string) (access.Capability, bool) {
+	// Command contracts historically named agent/platform privileges. Their
+	// audit records now use the canonical resource capability vocabulary.
+	switch strings.TrimSpace(value) {
+	case "USE_AGENT", "VIEW_AGENT":
+		return access.CapabilityResourceUse, true
+	case "MANAGE_PLATFORM":
+		return access.CapabilityProjectAdmin, true
+	default:
+		capability, err := access.ParseCapability(strings.TrimSpace(value))
+		return capability, err == nil
+	}
 }
 
 func encodeAgentCommandAuditPayload(operationID string, payload agentgen.GenSchemaAgentCommandAuditPayload) (string, error) {

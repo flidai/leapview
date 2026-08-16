@@ -56,7 +56,7 @@ func newModuleJobFixture(t *testing.T) moduleJobFixture {
 }
 
 func (f moduleJobFixture) scope() agent.Scope {
-	return agent.Scope{WorkspaceID: "test", PrincipalID: f.owner.ID}
+	return agent.Scope{ProjectID: "test", PrincipalID: f.owner.ID}
 }
 
 func (f moduleJobFixture) run(t *testing.T, id, status string) (agent.Conversation, agent.Run) {

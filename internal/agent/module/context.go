@@ -11,11 +11,12 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
+	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
-	productsearch "github.com/flidai/leapview/internal/workspace/search"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
@@ -28,89 +29,66 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 	case "data":
 		return m.resolveDataTurnContext(r.Context(), scope, candidate)
 	case "chat":
-		if m.search == nil {
-			return agent.TurnContext{}, errors.New("search is not configured")
+		if m.catalog == nil {
+			return agent.TurnContext{}, errors.New("catalog is not configured")
 		}
-		references := make([]productsearch.Reference, 0, len(candidate.References))
+		if strings.TrimSpace(scope.PrincipalID) == "" {
+			return agent.TurnContext{}, errors.New("catalog principal is unavailable")
+		}
+		projectID := strings.TrimSpace(candidate.ProjectID)
+		if projectID == "" && m.projectID != "" {
+			projectID = m.projectID.String()
+		}
+		if projectID == "" {
+			return agent.TurnContext{}, errors.New("chat context requires a project")
+		}
+		references := make([]agent.TurnReference, 0, len(candidate.References))
 		for _, reference := range candidate.References {
-			typ := productsearch.Type(strings.ToLower(strings.TrimSpace(reference.Reference.Type)))
-			if !m.IsReferenceType(typ) {
+			kind, err := projectgraph.ParseKind(strings.TrimSpace(reference.Reference.Kind))
+			if err != nil {
 				continue
 			}
-			workspaceID := strings.TrimSpace(reference.Reference.WorkspaceID)
-			if workspaceID == "" {
-				return agent.TurnContext{}, errors.New("chat references require an explicit workspace")
+			id, err := projectgraph.NewResourceID(strings.TrimSpace(reference.Reference.ID))
+			if err != nil {
+				continue
 			}
-			workspaceScope := scope
-			workspaceScope.ProjectID = workspaceID
-			if !contextCredentialAllowsPrivilege(workspaceScope, access.PrivilegeViewItem) {
-				return agent.TurnContext{}, errors.New("credential cannot view referenced context")
-			}
-			references = append(references, productsearch.Reference{
-				WorkspaceID: workspaceID,
-				Type:        typ,
-				ID:          reference.Reference.ID,
+			item, err := m.catalog.Get(r.Context(), agenttools.Scope{ProjectID: projectID, PrincipalID: scope.PrincipalID}, agenttools.CatalogGetRequest{
+				Ref: agenttools.CatalogRef{ID: id.String(), Kind: agenttools.CatalogType(kind)},
 			})
-		}
-		subject, ok := m.search.SearchSubject(r)
-		if !ok {
-			return agent.TurnContext{}, errors.New("search principal is unavailable")
-		}
-		environment := ""
-		if m.environment != nil {
-			environment = m.environment(r)
-		}
-		rows, err := m.search.ResolveSearchReferences(r.Context(), subject, environment, references)
-		if err != nil {
-			return agent.TurnContext{}, err
-		}
-		resolved := make([]agent.TurnReference, 0, len(rows))
-		resolvedWorkspaceID := ""
-		for _, row := range rows {
-			resolved = append(resolved, m.TurnReference(row))
-			if len(resolved) == 1 {
-				resolvedWorkspaceID = row.Reference.WorkspaceID
-			} else if resolvedWorkspaceID != row.Reference.WorkspaceID {
-				resolvedWorkspaceID = ""
+			if err != nil {
+				return agent.TurnContext{}, errors.New("referenced catalog resource is unknown or unauthorized")
 			}
+			references = append(references, TurnReferenceFromCatalog(item.Item, projectID))
 		}
-		return agent.TurnContext{Surface: "chat", ProjectID: resolvedWorkspaceID, References: resolved}, nil
+		return agent.TurnContext{Surface: "chat", ProjectID: projectID, References: references}, nil
 	default:
 		return agent.TurnContext{}, errors.New("unsupported agent context surface")
 	}
 }
 
 func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
-	workspaceID := strings.TrimSpace(candidate.ProjectID)
+	projectID := strings.TrimSpace(candidate.ProjectID)
 	modelID := strings.TrimSpace(candidate.ModelID)
 	datasetID := strings.TrimSpace(candidate.DatasetID)
-	if workspaceID == "" || modelID == "" || datasetID == "" {
-		return agent.TurnContext{}, errors.New("data context requires workspace, semantic model, and dataset")
+	if projectID == "" || modelID == "" || datasetID == "" {
+		return agent.TurnContext{}, errors.New("data context requires project, semantic model, and dataset")
 	}
-	scope.ProjectID = workspaceID
-	if !contextCredentialAllowsPrivilege(scope, access.PrivilegeViewItem) {
+	scope.ProjectID = projectID
+	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceUse) {
 		return agent.TurnContext{}, errors.New("credential cannot view this data")
 	}
-	workspaceObject := access.WorkspaceObject(workspaceID)
-	modelObject := access.ItemObjectWithParent(access.SecurableSemanticModel, workspaceID, modelID, workspaceObject)
-	datasetObject := access.ItemObjectWithParent(access.SecurableDataset, workspaceID, modelID+"/"+datasetID, modelObject)
-	if !scope.DevAuthBypass {
-		allowed, err := m.authorizeDashboardTurnContext(ctx, scope.PrincipalID, datasetObject, modelObject, workspaceObject)
-		if err != nil {
-			return agent.TurnContext{}, fmt.Errorf("authorize data context: %w", err)
-		}
-		if !allowed {
-			return agent.TurnContext{}, errors.New("data context is not accessible")
-		}
+	resolvedModel, err := m.resolveContextResource(ctx, scope, modelID, projectgraph.KindSemanticModel, access.CapabilityResourceUse)
+	if err != nil {
+		return agent.TurnContext{}, errors.New("semantic model is unknown or unauthorized")
 	}
 	if m.dashboardMetrics == nil {
-		return agent.TurnContext{}, fmt.Errorf("unknown workspace %q", workspaceID)
+		return agent.TurnContext{}, fmt.Errorf("unknown project %q", projectID)
 	}
-	metrics, ok := m.dashboardMetrics(workspaceID)
+	metrics, ok := m.dashboardMetrics(projectID)
 	if !ok || metrics == nil {
-		return agent.TurnContext{}, fmt.Errorf("unknown workspace %q", workspaceID)
+		return agent.TurnContext{}, fmt.Errorf("unknown project %q", projectID)
 	}
-	model, ok := metrics.SemanticModel(modelID)
+	model, ok := metrics.SemanticModel(resolvedModel.String())
 	if !ok || model == nil {
 		return agent.TurnContext{}, fmt.Errorf("unknown semantic model %q", modelID)
 	}
@@ -122,7 +100,7 @@ func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, 
 		return agent.TurnContext{}, err
 	}
 	return agent.TurnContext{
-		Surface: "data", ProjectID: workspaceID, ModelID: modelID, DatasetID: datasetID,
+		Surface: "data", ProjectID: projectID, ModelID: resolvedModel.String(), DatasetID: datasetID,
 		Exploration: exploration,
 	}, nil
 }
@@ -184,34 +162,28 @@ func validateDataExploration(model interface {
 }
 
 func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
-	workspaceID := strings.TrimSpace(candidate.ProjectID)
+	projectID := strings.TrimSpace(candidate.ProjectID)
 	dashboardID := strings.TrimSpace(candidate.DashboardID)
 	pageID := strings.TrimSpace(candidate.PageID)
-	if workspaceID == "" || dashboardID == "" || pageID == "" {
-		return agent.TurnContext{}, errors.New("dashboard context requires workspace, dashboard, and page")
+	if projectID == "" || dashboardID == "" || pageID == "" {
+		return agent.TurnContext{}, errors.New("dashboard context requires project, dashboard, and page")
 	}
-	scope.ProjectID = workspaceID
-	if !contextCredentialAllowsPrivilege(scope, access.PrivilegeViewItem) {
+	scope.ProjectID = projectID
+	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceRead) {
 		return agent.TurnContext{}, errors.New("credential cannot view this dashboard")
 	}
-	object := access.ItemObjectWithParent(access.SecurableDashboard, workspaceID, dashboardID, access.WorkspaceObject(workspaceID))
-	if !scope.DevAuthBypass {
-		allowed, err := m.authorizeDashboardTurnContext(ctx, scope.PrincipalID, object, access.WorkspaceObject(workspaceID))
-		if err != nil {
-			return agent.TurnContext{}, fmt.Errorf("authorize dashboard context: %w", err)
-		}
-		if !allowed {
-			return agent.TurnContext{}, errors.New("dashboard context is not accessible")
-		}
+	resolvedDashboard, err := m.resolveContextResource(ctx, scope, dashboardID, projectgraph.KindDashboard, access.CapabilityResourceRead)
+	if err != nil {
+		return agent.TurnContext{}, errors.New("dashboard is unknown or unauthorized")
 	}
 	if m.dashboardMetrics == nil {
-		return agent.TurnContext{}, fmt.Errorf("unknown workspace %q", workspaceID)
+		return agent.TurnContext{}, fmt.Errorf("unknown project %q", projectID)
 	}
-	metrics, ok := m.dashboardMetrics(workspaceID)
+	metrics, ok := m.dashboardMetrics(projectID)
 	if !ok || metrics == nil {
-		return agent.TurnContext{}, fmt.Errorf("unknown workspace %q", workspaceID)
+		return agent.TurnContext{}, fmt.Errorf("unknown project %q", projectID)
 	}
-	resolved, ok := resolveDashboard(metrics, dashboardID)
+	resolved, ok := resolveDashboard(metrics, resolvedDashboard.String())
 	if !ok {
 		return agent.TurnContext{}, fmt.Errorf("unknown dashboard %q", dashboardID)
 	}
@@ -235,14 +207,9 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 	if err != nil {
 		return agent.TurnContext{}, err
 	}
-	catalog := metrics.Catalog()
-	workspaceName := strings.TrimSpace(catalog.Workspace.Title)
-	if workspaceName == "" {
-		workspaceName = workspaceID
-	}
 	return agent.TurnContext{
 		Surface:        "dashboard",
-		ProjectID:      workspaceID,
+		ProjectID:      projectID,
 		DashboardID:    report.ID,
 		DashboardTitle: report.Title,
 		PageID:         page.ID,
@@ -251,23 +218,25 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 		Generation:     candidate.Generation,
 		Filters:        filterMap,
 		References: ResolveDashboardTurnReferences(candidate.References, DashboardTurnReferenceContext{
-			Resource:    agent.TurnReferenceResource{ID: workspaceID, Name: workspaceName},
+			Resource:    agent.TurnReferenceResource{ID: projectID, Name: projectID},
 			DashboardID: report.ID, DashboardTitle: report.Title, Page: page,
 		}, report.Visualizations),
 	}, nil
 }
 
-func (m *Module) authorizeDashboardTurnContext(ctx context.Context, principalID string, objects ...access.ObjectRef) (bool, error) {
-	if m.skipContextAuthorization {
-		return true, nil
+func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, raw string, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, error) {
+	id, err := projectgraph.NewResourceID(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
 	}
-	if strings.TrimSpace(principalID) == "" {
-		return false, nil
+	if m.resolveResource == nil {
+		return "", errors.New("authorized project catalog is not configured")
 	}
-	if m.authorizeAnyObject == nil {
-		return false, nil
-	}
-	return m.authorizeAnyObject(ctx, principalID, access.PrivilegeViewItem, objects)
+	return m.resolveResource(ctx, agenttools.Scope{
+		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+		DevAuthBypass: scope.DevAuthBypass,
+		Credential:    agenttools.CredentialScope{ProjectID: scope.Credential.ProjectID, Privileges: append([]string(nil), scope.Credential.Privileges...), Restricted: scope.Credential.Restricted},
+	}, id, kind, capability)
 }
 
 func dashboardFiltersFromTurnContext(raw map[string]any) (dashboard.Filters, error) {
@@ -330,7 +299,7 @@ func ResolveDashboardTurnReferences(candidates []agent.TurnReference, context Da
 		if strings.ToLower(strings.TrimSpace(candidate.Reference.Kind)) != "visual" {
 			continue
 		}
-		if strings.TrimSpace(candidate.Reference.WorkspaceID) != context.Resource.ID {
+		if strings.TrimSpace(candidate.Resource.ID) != context.Resource.ID {
 			continue
 		}
 		visualID := lastAgentContextReferencePart(candidate.Reference.ID)
@@ -409,16 +378,12 @@ func resolvedVisualMetadata(component dashboard.PageVisual, visualID string, vis
 	return title, strings.TrimSpace(visualType), true
 }
 
-func contextCredentialAllowsPrivilege(scope agent.Scope, privilege access.Privilege) bool {
+func contextCredentialAllowsCapability(scope agent.Scope, capability access.Capability) bool {
 	if !scope.Credential.Restricted {
 		return true
 	}
-	if strings.TrimSpace(scope.Credential.ProjectID) != "" &&
-		!strings.EqualFold(strings.TrimSpace(scope.Credential.ProjectID), strings.TrimSpace(scope.ProjectID)) {
-		return false
-	}
 	for _, allowed := range scope.Credential.Privileges {
-		if strings.EqualFold(strings.TrimSpace(allowed), string(privilege)) {
+		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {
 			return true
 		}
 	}

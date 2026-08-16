@@ -12,8 +12,8 @@ import (
 	g "maragu.dev/gomponents"
 )
 
-func ChatPage(workspaceID, csrfToken, view string, state ChatViewState, providers ...webpage.Provider) g.Node {
-	layout := webpage.Resolve(firstProvider(providers), chatLayoutContext(workspaceID, view, state.Agent.ActiveConversationID))
+func ChatPage(projectID, csrfToken, view string, state ChatViewState, providers ...webpage.Provider) g.Node {
+	layout := webpage.Resolve(firstProvider(providers), chatLayoutContext(projectID, view, state.Agent.ActiveConversationID))
 	createRun := agentgen.GenUIActionCreateAgentRun()
 	turnCommand := uiactions.CommandPost(createRun, "/chats/turns", "agent", "agentContext")
 	if strings.TrimSpace(state.Agent.ActiveConversationID) == "" {
@@ -24,13 +24,13 @@ func ChatPage(workspaceID, csrfToken, view string, state ChatViewState, provider
 	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: "Chat", CSRFToken: csrfToken, Scripts: []string{"/static/chat-page.js"},
-		UpdatesURL: chatUpdatesURL(workspaceID, view, state.Agent.ActiveConversationID),
+		UpdatesURL: chatUpdatesURL(projectID, view, state.Agent.ActiveConversationID),
 		ContentAttrs: []g.Node{
 			g.Attr("data-on:lv-chat-reference-search__debounce.200ms", "$agentReferenceSearch.query = evt.detail.query; $agentReferenceSearch.requestId = evt.detail.requestId; "+uiactions.Get("/chats/references/search", "agentReferenceSearch", "agentContext")),
 		},
 		Content: g.El("lv-chat-page",
 			g.Attr("slot", "page"),
-			g.Attr("workspace-id", workspaceID),
+			g.Attr("project-id", projectID),
 			g.Attr("view", view),
 			g.Attr("data-indicator", "agentTurnPending"),
 			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; "+turnCommand),
@@ -38,9 +38,9 @@ func ChatPage(workspaceID, csrfToken, view string, state ChatViewState, provider
 	})
 }
 
-func ChatBootstrapSignals(workspaceID, view string, state ChatViewState, providers ...webpage.Provider) map[string]any {
-	layout := webpage.Resolve(firstProvider(providers), chatLayoutContext(workspaceID, view, state.Agent.ActiveConversationID))
-	return webpage.WithSignal(layout, chatInitialSignals(workspaceID, view, state))
+func ChatBootstrapSignals(projectID, view string, state ChatViewState, providers ...webpage.Provider) map[string]any {
+	layout := webpage.Resolve(firstProvider(providers), chatLayoutContext(projectID, view, state.Agent.ActiveConversationID))
+	return webpage.WithSignal(layout, chatInitialSignals(projectID, view, state))
 }
 
 func ChatSignalPatch(state ChatViewState) pagestream.SignalPatch {
@@ -59,11 +59,12 @@ func ChatConversationsPatch(conversations []ChatConversationSummary, activeConve
 	}
 }
 
-func chatUpdatesURL(workspaceID, view, conversationID string) string {
+func chatUpdatesURL(projectID, view, conversationID string) string {
+	_ = projectID // Project identity is bound by the server, never selected in the route.
 	values := url.Values{}
 	values.Set("route", string(RouteChat))
 	for key, value := range map[string]string{
-		"workspace": workspaceID, "view": view, "conversation": conversationID,
+		"view": view, "conversation": conversationID,
 	} {
 		if strings.TrimSpace(value) != "" {
 			values.Set(key, value)
@@ -72,14 +73,14 @@ func chatUpdatesURL(workspaceID, view, conversationID string) string {
 	return "/updates?" + values.Encode()
 }
 
-func chatLayoutContext(workspaceID, view, activeConversationID string) webpage.Context {
+func chatLayoutContext(projectID, view, activeConversationID string) webpage.Context {
 	active := ""
 	if strings.TrimSpace(view) == "list" {
 		active = "chat"
 	}
 	return webpage.Context{
-		Active: active, ScopeID: workspaceID, HistoryID: activeConversationID,
-		SectionTitle: "Workspace", PageTitle: "Published assets",
+		Active: active, ScopeID: projectID, HistoryID: activeConversationID,
+		SectionTitle: "Project", PageTitle: "Published assets",
 	}
 }
 

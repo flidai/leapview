@@ -159,50 +159,22 @@ func scopeFromTools(scope agenttools.Scope) agentcap.Scope {
 }
 
 func (m *Module) authorizeAPIGenOperation(ctx context.Context, scope agentcap.Scope, operationID string) (agentcore.ToolResult, bool) {
-	privilege, ok := m.apigenOperationPrivilege(operationID)
+	capability, ok := m.apigenOperationCapability(operationID)
 	if !ok {
-		return agenttools.ToolError("forbidden", "operation has no generated LeapView privilege metadata"), false
+		return agenttools.ToolError("forbidden", "operation has no generated resource capability metadata"), false
 	}
-	if operationID == "search" || (operationID == "listProjects" && strings.TrimSpace(scope.ProjectID) == "") {
-		if strings.TrimSpace(scope.PrincipalID) == "" {
-			return agenttools.ToolError("unauthorized", "agent tool requires an authenticated principal"), false
-		}
-		if !agentCredentialAllowsPrivilege(scope, privilege) {
-			return agenttools.ToolError("forbidden", "credential is not allowed to call this tool"), false
-		}
-		return agentcore.ToolResult{}, true
-	}
-	return m.authorizePrivilege(ctx, scope, privilege, []access.ObjectRef{access.WorkspaceObject(scope.ProjectID)}, "agent_tool", operationID)
-}
-
-func (m *Module) authorizePrivilege(ctx context.Context, scope agentcap.Scope, privilege access.Privilege, objects []access.ObjectRef, targetType, targetID string) (agentcore.ToolResult, bool) {
-	if scope.PrincipalID == "" {
+	if strings.TrimSpace(scope.PrincipalID) == "" {
 		return agenttools.ToolError("unauthorized", "agent tool requires an authenticated principal"), false
 	}
-	if !agentCredentialAllowsPrivilege(scope, privilege) {
-		m.recordToolAudit(ctx, scope, privilege, targetType, targetID, "denied", fmt.Errorf("credential restriction"))
+	if !agentCredentialAllowsCapability(scope, capability) {
+		m.recordToolAudit(ctx, scope, capability, "agent_tool", operationID, "denied", fmt.Errorf("credential restriction"))
 		return agenttools.ToolError("forbidden", "credential is not allowed to call this tool"), false
 	}
-	if scope.DevAuthBypass {
-		return agentcore.ToolResult{}, true
-	}
-	if m.authorizeAnyObject == nil {
-		return agenttools.ToolError("authorization_failed", "authorization is unavailable"), false
-	}
-	allowed, err := m.authorizeAnyObject(ctx, scope.PrincipalID, privilege, objects)
-	if err != nil {
-		m.recordToolAudit(ctx, scope, privilege, targetType, targetID, "error", err)
-		return agenttools.ToolError("authorization_failed", err.Error()), false
-	}
-	if !allowed {
-		m.recordToolAudit(ctx, scope, privilege, targetType, targetID, "denied", nil)
-		return agenttools.ToolError("forbidden", "principal does not have privilege to call this tool"), false
-	}
-	m.recordToolAudit(ctx, scope, privilege, targetType, targetID, "success", nil)
+	m.recordToolAudit(ctx, scope, capability, "agent_tool", operationID, "success", nil)
 	return agentcore.ToolResult{}, true
 }
 
-func (m *Module) recordToolAudit(ctx context.Context, scope agentcap.Scope, privilege access.Privilege, targetType, targetID, status string, cause error) {
+func (m *Module) recordToolAudit(ctx context.Context, scope agentcap.Scope, capability access.Capability, targetType, targetID, status string, cause error) {
 	if m == nil || m.recordAudit == nil {
 		return
 	}
@@ -213,12 +185,11 @@ func (m *Module) recordToolAudit(ctx context.Context, scope agentcap.Scope, priv
 	}
 	bytes, _ := json.Marshal(payload)
 	_ = m.recordAudit(ctx, access.AuditEventInput{
-		WorkspaceID:   scope.ProjectID,
 		PrincipalID:   scope.PrincipalID,
 		Action:        "agent_tool.called",
-		TargetType:    targetType,
-		TargetID:      targetID,
-		Privilege:     privilege,
+		ResourceKind:  targetType,
+		ResourceID:    targetID,
+		Capability:    capability,
 		Status:        status,
 		RequestID:     metadata.RequestID,
 		CorrelationID: metadata.CorrelationID,
@@ -226,23 +197,20 @@ func (m *Module) recordToolAudit(ctx context.Context, scope agentcap.Scope, priv
 	})
 }
 
-func agentCredentialAllowsPrivilege(scope agentcap.Scope, privilege access.Privilege) bool {
+func agentCredentialAllowsCapability(scope agentcap.Scope, capability access.Capability) bool {
 	credential := scope.Credential
-	if credential.WorkspaceID != "" && credential.WorkspaceID != scope.ProjectID {
-		return false
-	}
 	if !credential.Restricted {
 		return true
 	}
 	for _, allowed := range credential.Privileges {
-		if allowed == string(privilege) {
+		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {
 			return true
 		}
 	}
 	return false
 }
 
-func (m *Module) apigenOperationPrivilege(operationID string) (access.Privilege, bool) {
+func (m *Module) apigenOperationCapability(operationID string) (access.Capability, bool) {
 	var contract agenttools.OperationContract
 	found := false
 	for _, operation := range m.apiOperations {
@@ -262,7 +230,7 @@ func (m *Module) apigenOperationPrivilege(operationID string) (access.Privilege,
 	if !ok {
 		return "", false
 	}
-	return access.ParsePrivilege(value)
+	return access.ParseCapability(value)
 }
 
 func apiGenToolContracts(operations []agenttools.APIGenOperation) map[string]agenttool.Contract {

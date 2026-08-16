@@ -9,56 +9,30 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
+	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/dashboard"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
-	productsearch "github.com/flidai/leapview/internal/workspace/search"
 )
 
-type contextSearchPort struct {
-	results []productsearch.Result
+type contextCatalog struct {
+	items map[string]agenttools.CatalogItem
 }
 
-func (s contextSearchPort) SearchSubject(*http.Request) (productsearch.Subject, bool) {
-	return productsearch.Subject{ID: "dev", DevBypass: true}, true
+func (c contextCatalog) Search(context.Context, agenttools.Scope, agenttools.CatalogSearchRequest) (agenttools.CatalogPage, error) {
+	return agenttools.CatalogPage{}, nil
 }
 
-func (s contextSearchPort) Search(context.Context, productsearch.Subject, productsearch.Query) (productsearch.Page, error) {
-	return productsearch.Page{Items: append([]productsearch.Result(nil), s.results...)}, nil
+func (c contextCatalog) List(context.Context, agenttools.Scope, agenttools.CatalogListRequest) (agenttools.CatalogPage, error) {
+	return agenttools.CatalogPage{}, nil
 }
 
-func (s contextSearchPort) ResolveSearchReferences(_ context.Context, _ productsearch.Subject, _ string, references []productsearch.Reference) ([]productsearch.Result, error) {
-	results := make([]productsearch.Result, 0, len(references))
-	for _, reference := range references {
-		for _, result := range s.results {
-			if result.Reference == reference {
-				results = append(results, result)
-				break
-			}
-		}
+func (c contextCatalog) Get(_ context.Context, _ agenttools.Scope, request agenttools.CatalogGetRequest) (agenttools.CatalogGetResult, error) {
+	item, ok := c.items[request.Ref.ID]
+	if !ok {
+		return agenttools.CatalogGetResult{}, agenttools.CatalogError{Code: "catalog_not_found", Message: "not found"}
 	}
-	return results, nil
-}
-
-func trustedDashboardResult() productsearch.Result {
-	return productsearch.Result{
-		Reference: productsearch.Reference{WorkspaceID: "test", Type: productsearch.TypeDashboard, ID: "dev-dashboard"},
-		Name:      "Orders dashboard", Workspace: productsearch.Workspace{ID: "test", Name: "Test"},
-	}
-}
-
-func TestReferenceSignalIncludesSearchVisualSubtype(t *testing.T) {
-	result := ReferenceSignal(productsearch.Result{
-		Reference:  productsearch.Reference{WorkspaceID: "sales", Type: productsearch.TypeVisual, ID: "orders.revenue"},
-		Name:       "Revenue",
-		VisualType: "line",
-		Workspace:  productsearch.Workspace{ID: "sales", Name: "Sales"},
-		Locations:  []productsearch.Location{},
-		Context:    []productsearch.ContextTag{},
-	})
-	if result.VisualType == nil || *result.VisualType != "line" {
-		t.Fatalf("agent reference visual subtype = %#v", result)
-	}
+	return agenttools.CatalogGetResult{Item: item}, nil
 }
 
 func TestResolveDashboardTurnReferencesUsesCompiledMetadata(t *testing.T) {
@@ -67,158 +41,59 @@ func TestResolveDashboardTurnReferencesUsesCompiledMetadata(t *testing.T) {
 		{ID: "orders-table", Kind: "visual", Visual: "orders", Title: "Recent orders"},
 	}}
 	resolved := ResolveDashboardTurnReferences([]agent.TurnReference{
-		{Reference: agent.TurnReferenceKey{WorkspaceID: "test", Type: "visual", ID: "executive-sales.orders_chart"}, Name: "Ignore browser title", VisualType: "script", Href: "javascript:alert(1)", Hierarchy: []string{"Forged"}},
-		{Reference: agent.TurnReferenceKey{WorkspaceID: "test", Type: "visual", ID: "executive-sales.orders"}, Name: "Ignore browser table title"},
-		{Reference: agent.TurnReferenceKey{WorkspaceID: "test", Type: "visual", ID: "executive-sales.secret"}, Name: "Not on page"},
-		{Reference: agent.TurnReferenceKey{WorkspaceID: "test", Type: "visual", ID: "other.orders_chart"}, Name: "Wrong dashboard"},
-		{Reference: agent.TurnReferenceKey{WorkspaceID: "other", Type: "visual", ID: "executive-sales.orders_chart"}, Name: "Wrong workspace"},
+		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.orders_chart"}, Name: "Ignore browser title", VisualType: "script", Href: "javascript:alert(1)"},
+		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.orders"}, Name: "Ignore browser table title"},
+		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.secret"}, Name: "Not on page"},
 	}, DashboardTurnReferenceContext{
-		Workspace:   agent.TurnReferenceWorkspace{ID: "test", Name: "Test workspace"},
+		Resource:    agent.TurnReferenceResource{ID: "project_demo", Name: "Demo"},
 		DashboardID: "executive-sales", DashboardTitle: "Executive Sales", Page: page,
 	}, map[string]visualizationdefinition.Definition{
 		"orders_chart": {ID: "orders_chart", Spec: visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: visualizationir.VisualizationSpecBase{Kind: "cartesian", Title: "Orders by status"}, Mark: visualizationir.VisualizationCartesianMarkBar}}},
 		"secret":       {ID: "secret", Spec: visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: visualizationir.VisualizationSpecBase{Kind: "cartesian", Title: "Secret"}, Mark: visualizationir.VisualizationCartesianMarkLine}}},
 		"orders":       {ID: "orders", Spec: visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{VisualizationSpecBase: visualizationir.VisualizationSpecBase{Kind: "table", Title: "Orders"}, Kind: "table"}}},
 	})
-
-	wantReference := func(id, componentID, visualID, name, visualType string) agent.TurnReference {
-		href := "/workspaces/test/dashboards/executive-sales/pages/overview"
-		return agent.TurnReference{
-			Reference:   agent.TurnReferenceKey{WorkspaceID: "test", Type: "visual", ID: id},
-			ComponentID: componentID, VisualID: visualID, Name: name, VisualType: visualType,
-			Workspace: agent.TurnReferenceWorkspace{ID: "test", Name: "Test workspace"},
-			Hierarchy: []string{"Test workspace", "Executive Sales", "Overview"}, Href: href,
-			Locations: []agent.TurnReferenceLocation{{DashboardID: "executive-sales", DashboardName: "Executive Sales", PageID: "overview", PageName: "Overview", Href: href}},
-			Context:   []string{"current_page", "current_dashboard", "current_workspace"},
-		}
-	}
 	want := []agent.TurnReference{
-		wantReference("executive-sales.orders_chart", "orders-chart", "orders_chart", "Orders by status", "bar"),
-		wantReference("executive-sales.orders", "orders-table", "orders", "Recent orders", "table"),
+		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.orders_chart"}, ComponentID: "orders-chart", VisualID: "orders_chart", Name: "Orders by status", VisualType: "bar", Resource: agent.TurnReferenceResource{ID: "project_demo", Name: "Demo"}, Hierarchy: []string{"Demo", "Executive Sales", "Overview"}, Href: "/dashboards/executive-sales/pages/overview", Locations: []agent.TurnReferenceLocation{{DashboardID: "executive-sales", DashboardName: "Executive Sales", PageID: "overview", PageName: "Overview", Href: "/dashboards/executive-sales/pages/overview"}}, Context: []string{"current_page", "current_dashboard"}},
+		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.orders"}, ComponentID: "orders-table", VisualID: "orders", Name: "Recent orders", VisualType: "table", Resource: agent.TurnReferenceResource{ID: "project_demo", Name: "Demo"}, Hierarchy: []string{"Demo", "Executive Sales", "Overview"}, Href: "/dashboards/executive-sales/pages/overview", Locations: []agent.TurnReferenceLocation{{DashboardID: "executive-sales", DashboardName: "Executive Sales", PageID: "overview", PageName: "Overview", Href: "/dashboards/executive-sales/pages/overview"}}, Context: []string{"current_page", "current_dashboard"}},
 	}
 	if !reflect.DeepEqual(resolved, want) {
 		t.Fatalf("resolved references = %#v, want %#v", resolved, want)
 	}
 }
 
-func TestResolveChatTurnContextUsesTrustedSearchMetadata(t *testing.T) {
-	module, err := Build(t.Context(), Config{
-		Search: contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
+func TestResolveChatTurnContextUsesAuthorizedCatalogMetadata(t *testing.T) {
+	module := &Module{catalog: contextCatalog{items: map[string]agenttools.CatalogItem{
+		"dashboard_sales": {Ref: agenttools.CatalogRef{ID: "dashboard_sales", Kind: "dashboard"}, Name: "Sales dashboard"},
+	}}}
+	resolved, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/chats/new", nil), agent.Scope{PrincipalID: "principal_1"}, agent.TurnContext{
+		Surface: "chat", ProjectID: "project_demo",
+		References: []agent.TurnReference{{Reference: agent.TurnReferenceKey{Kind: "dashboard", ID: "dashboard_sales"}, Name: "untrusted"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/chats/new", nil), agent.Scope{DevAuthBypass: true}, agent.TurnContext{
-		Surface: "chat", WorkspaceID: "test",
-		References: []agent.TurnReference{{
-			Reference: agent.TurnReferenceKey{WorkspaceID: "test", Type: "dashboard", ID: "dev-dashboard"},
-			Name:      "Untrusted browser title", ModelID: "wrong-model",
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(resolved.References) != 1 {
+	if len(resolved.References) != 1 || resolved.References[0].Name != "Sales dashboard" {
 		t.Fatalf("resolved references = %#v", resolved.References)
 	}
-	ref := resolved.References[0]
-	if ref.Reference.Type != "dashboard" || ref.Reference.ID != "dev-dashboard" || ref.Name != "Orders dashboard" {
-		t.Fatalf("resolved reference trusted browser metadata: %#v", ref)
-	}
 }
 
-func TestResolveChatTurnContextRejectsNonAttachableTypes(t *testing.T) {
-	module, err := Build(t.Context(), Config{
-		Search: contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	resolved, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/chats/new", nil), agent.Scope{DevAuthBypass: true}, agent.TurnContext{
-		Surface: "chat",
-		References: []agent.TurnReference{
-			{Reference: agent.TurnReferenceKey{WorkspaceID: "test", Type: "source", ID: "dev.orders"}},
-			{Reference: agent.TurnReferenceKey{WorkspaceID: "test", Type: "dashboard", ID: "dev-dashboard"}},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(resolved.References) != 1 || resolved.References[0].Reference.Type != "dashboard" {
-		t.Fatalf("resolved non-attachable context = %#v", resolved.References)
-	}
-}
-
-func TestResolveChatTurnContextAppliesCredentialToReferenceWorkspace(t *testing.T) {
-	module, err := Build(t.Context(), Config{
-		Search: contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(http.MethodGet, "/chats/new", nil)
-	candidate := agent.TurnContext{
-		Surface: "chat",
-		References: []agent.TurnReference{{
-			Reference: agent.TurnReferenceKey{WorkspaceID: "test", Type: "dashboard", ID: "dev-dashboard"},
-		}},
-	}
-	resolved, err := module.ResolveTurnContext(request, agent.Scope{
-		DevAuthBypass: true,
-		Credential: agent.CredentialScope{
-			WorkspaceID: "test", Privileges: []string{string(access.PrivilegeViewItem)}, Restricted: true,
-		},
-	}, candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(resolved.References) != 1 || resolved.WorkspaceID != "test" {
-		t.Fatalf("resolved context = %#v", resolved)
-	}
-
-	_, err = module.ResolveTurnContext(request, agent.Scope{
-		DevAuthBypass: true,
-		Credential: agent.CredentialScope{
-			WorkspaceID: "other", Privileges: []string{string(access.PrivilegeViewItem)}, Restricted: true,
-		},
-	}, candidate)
-	if err == nil {
-		t.Fatal("foreign workspace credential resolved referenced context")
-	}
-}
-
-func TestResolveChatTurnContextRequiresExplicitReferenceWorkspace(t *testing.T) {
-	module, err := Build(t.Context(), Config{
-		Search: contextSearchPort{results: []productsearch.Result{trustedDashboardResult()}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/chats/new", nil), agent.Scope{DevAuthBypass: true}, agent.TurnContext{
-		Surface:     "chat",
-		WorkspaceID: "test",
-		References:  []agent.TurnReference{{Reference: agent.TurnReferenceKey{Type: "dashboard", ID: "dev-dashboard"}}},
+func TestResolveChatTurnContextRejectsUnknownReference(t *testing.T) {
+	module := &Module{catalog: contextCatalog{items: map[string]agenttools.CatalogItem{}}}
+	_, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/chats/new", nil), agent.Scope{PrincipalID: "principal_1"}, agent.TurnContext{
+		Surface: "chat", ProjectID: "project_demo",
+		References: []agent.TurnReference{{Reference: agent.TurnReferenceKey{Kind: "dashboard", ID: "missing"}}},
 	})
 	if err == nil {
-		t.Fatal("chat reference without workspace was accepted")
+		t.Fatal("unknown catalog reference was accepted")
 	}
 }
 
-func TestResolveTurnContextRejectsExcessReferences(t *testing.T) {
-	module, err := Build(t.Context(), Config{Search: contextSearchPort{}})
-	if err != nil {
-		t.Fatal(err)
+func TestContextCredentialUsesCanonicalCapability(t *testing.T) {
+	scope := agent.Scope{Credential: agent.CredentialScope{Restricted: true, Privileges: []string{string(access.CapabilityResourceUse)}}}
+	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceUse) {
+		t.Fatal("canonical capability was rejected")
 	}
-	references := make([]agent.TurnReference, agent.MaxTurnReferences+1)
-	for index := range references {
-		references[index] = agent.TurnReference{
-			Reference: agent.TurnReferenceKey{WorkspaceID: "test", Type: "measure", ID: "test.order_count"},
-		}
-	}
-	_, err = module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/chats/new", nil), agent.Scope{DevAuthBypass: true}, agent.TurnContext{
-		Surface: "chat", References: references,
-	})
-	if err == nil {
-		t.Fatal("excess references were silently truncated")
+	if contextCredentialAllowsCapability(scope, access.CapabilityResourceEdit) {
+		t.Fatal("ungranted capability was accepted")
 	}
 }

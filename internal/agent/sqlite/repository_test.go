@@ -82,7 +82,7 @@ func TestDurablePromptIdempotencyRepairsCrashPhases(t *testing.T) {
 				payload := []byte(fmt.Sprintf(`{"run":"%s"}`, runID))
 				return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued", ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: payload}}
 			})
-			input := agent.PromptInput{Scope: agent.Scope{WorkspaceID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "same prompt", RequestID: "retry-key"}
+			input := agent.PromptInput{Scope: agent.Scope{ProjectID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "same prompt", RequestID: "retry-key"}
 			func() {
 				defer func() { _ = recover() }()
 				_, _ = service.StartDurablePrompt(ctx, input, agent.PromptDispatch{})
@@ -122,7 +122,7 @@ func TestDurablePromptRetryAfterActivationResponseLossConverges(t *testing.T) {
 	service.SetPromptWorkflow(func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
 		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
 	})
-	input := agent.PromptInput{Scope: agent.Scope{WorkspaceID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "same request", RequestID: "request-1"}
+	input := agent.PromptInput{Scope: agent.Scope{ProjectID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "same request", RequestID: "request-1"}
 	func() {
 		defer func() { _ = recover() }()
 		_, _ = service.StartDurablePrompt(ctx, input, agent.PromptDispatch{})
@@ -168,7 +168,7 @@ func TestDurablePromptRetryMismatchedDigestConflicts(t *testing.T) {
 	service.SetPromptWorkflow(func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
 		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
 	})
-	input := agent.PromptInput{Scope: agent.Scope{WorkspaceID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "one", RequestID: "request-2"}
+	input := agent.PromptInput{Scope: agent.Scope{ProjectID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "one", RequestID: "request-2"}
 	if _, err := service.StartDurablePrompt(ctx, input, agent.PromptDispatch{}); err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +433,7 @@ func TestDurableStartArchivedConversationHasNoSideEffects(t *testing.T) {
 	service.SetPromptWorkflow(func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
 		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
 	})
-	_, err = service.StartDurablePrompt(ctx, agent.PromptInput{Scope: agent.Scope{WorkspaceID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "must not start"}, agent.PromptDispatch{})
+	_, err = service.StartDurablePrompt(ctx, agent.PromptInput{Scope: agent.Scope{ProjectID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "must not start"}, agent.PromptDispatch{})
 	if !errors.Is(err, agent.ErrConversationArchived) {
 		t.Fatalf("StartDurablePrompt error = %v, want archived", err)
 	}

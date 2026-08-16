@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -35,7 +37,7 @@ func TestAgentVisualShapeUsesVisualTypeDefaults(t *testing.T) {
 func TestAgentVisualInputRejectsLegacyAndUnknownProperties(t *testing.T) {
 	for _, property := range []string{"shape", "options", "rendererOptions", "unexpected"} {
 		t.Run(property, func(t *testing.T) {
-			_, err := decodeAgentVisualInput([]byte(`{"type":"histogram","model":"sales","dataset":"orders","` + property + `":{}}`))
+			_, err := decodeAgentVisualInput([]byte(`{"type":"histogram","semanticModelId":"sales","dataset":"orders","` + property + `":{}}`))
 			if err == nil || !strings.Contains(err.Error(), property) {
 				t.Fatalf("decode error = %v, want closed-contract rejection for %q", err, property)
 			}
@@ -51,9 +53,8 @@ func TestAgentVisualInputRejectsLegacyAndUnknownProperties(t *testing.T) {
 
 func TestAgentVisualInputAcceptsAndNormalizesGovernedFilters(t *testing.T) {
 	input, err := decodeAgentVisualInput([]byte(`{
-		"workspace":"sales",
 		"type":"bar",
-		"model":"commerce",
+		"semanticModelId":"commerce",
 		"dataset":"commerce.orders",
 		"dimensions":[{"field":"commerce.orders.country"}],
 		"measures":[{"field":"commerce.revenue"}],
@@ -84,9 +85,8 @@ func TestAgentVisualInputAcceptsAndNormalizesGovernedFilters(t *testing.T) {
 
 func TestAgentVisualInputAcceptsGroupOnlyFilters(t *testing.T) {
 	input, err := decodeAgentVisualInput([]byte(`{
-		"workspace":"sales",
 		"type":"bar",
-		"model":"commerce",
+		"semanticModelId":"commerce",
 		"dataset":"orders",
 		"dimensions":[{"field":"orders.country"}],
 		"measures":[{"field":"revenue"}],
@@ -103,6 +103,9 @@ func TestAgentVisualInputAcceptsGroupOnlyFilters(t *testing.T) {
 func TestAgentVisualQueriesApplyGovernedFilters(t *testing.T) {
 	var captured reportdef.AggregateQuery
 	provider := VisualProvider{
+		Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+			return id, nil
+		},
 		AggregateRows: func(_ context.Context, _, _ string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
 			captured = request
 			return reportdef.QueryRows{{"label": "DK", "value": 3}}, nil
@@ -140,9 +143,9 @@ func TestVisualProviderDecoratesQueryContextWithScope(t *testing.T) {
 		},
 	}
 
-	provider.Run(context.Background(), Scope{PrincipalID: "principal-1"}, agentcore.ToolCall{
+	provider.Run(context.Background(), Scope{ProjectID: "project_demo", PrincipalID: "principal-1"}, agentcore.ToolCall{
 		ID:        "call-visual",
-		Arguments: json.RawMessage(`{"workspace":"sales","type":"bar","model":"orders","dataset":"orders"}`),
+		Arguments: json.RawMessage(`{"type":"bar","semanticModelId":"orders","dataset":"orders"}`),
 	})
 
 	if authorizedValue != "principal-1" {

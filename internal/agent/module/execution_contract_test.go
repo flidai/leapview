@@ -53,7 +53,7 @@ func TestCreateAgentRunGeneratedExecutionContractIsPersistedAtomically(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := agent.Scope{WorkspaceID: "workspace-1", PrincipalID: principal.ID}
+	scope := agent.Scope{ProjectID: "workspace-1", PrincipalID: principal.ID}
 	conversation, err := module.service.CreateConversation(t.Context(), scope, "Contract proof")
 	if err != nil {
 		t.Fatal(err)

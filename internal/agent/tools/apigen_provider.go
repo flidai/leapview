@@ -118,7 +118,6 @@ func (p APIGenProvider) Run(ctx context.Context, scope Scope, operation APIGenOp
 		return errResult
 	}
 	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
-		WorkspaceID: runScope.ProjectID,
 		Surface:     dataquery.SurfaceAgent,
 		Operation:   dataquery.OperationAgentQuery,
 		PrincipalID: runScope.PrincipalID,

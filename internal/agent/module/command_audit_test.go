@@ -12,7 +12,7 @@ import (
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
 )
 
-func TestRecordCommandAuditDerivesGeneratedActionAndPrivilege(t *testing.T) {
+func TestRecordCommandAuditDerivesGeneratedActionAndCapability(t *testing.T) {
 	wantActions := map[string]string{
 		"createAgentConversation":  "agent.conversation.created",
 		"archiveAgentConversation": "agent.conversation.archived",
@@ -28,7 +28,7 @@ func TestRecordCommandAuditDerivesGeneratedActionAndPrivilege(t *testing.T) {
 	for operationID := range wantActions {
 		if err := m.recordCommandAudit(t.Context(), agenthttp.CommandAuditInput{
 			OperationID: operationID,
-			Scope:       agent.Scope{WorkspaceID: "sales", PrincipalID: "principal-1"},
+			Scope:       agent.Scope{ProjectID: "sales", PrincipalID: "principal-1"},
 			TargetType:  "conversation",
 			TargetID:    "conversation-1",
 			RequestID:   "request-1",
@@ -47,7 +47,7 @@ func TestRecordCommandAuditDerivesGeneratedActionAndPrivilege(t *testing.T) {
 				break
 			}
 		}
-		if !operationMatched || event.Privilege != access.PrivilegeUseAgent || event.Status != "success" || event.PrincipalID != "principal-1" || event.RequestID != "request-1" {
+		if !operationMatched || event.Capability != access.CapabilityResourceUse || event.Status != "success" || event.PrincipalID != "principal-1" || event.RequestID != "request-1" {
 			t.Fatalf("derived agent command audit = %#v", event)
 		}
 		var envelope struct {
@@ -60,7 +60,7 @@ func TestRecordCommandAuditDerivesGeneratedActionAndPrivilege(t *testing.T) {
 			t.Fatalf("decode agent audit metadata: %v", err)
 		}
 		if envelope.SchemaVersion != 1 || envelope.Retention != "security" || envelope.PayloadSchema != "AgentCommandAuditPayload" ||
-			envelope.Payload["workspaceId"] != "sales" || envelope.Payload["targetId"] != "conversation-1" ||
+			envelope.Payload["projectId"] != "sales" || envelope.Payload["targetId"] != "conversation-1" ||
 			envelope.Payload["surface"] != "api" {
 			t.Fatalf("agent audit envelope = %#v", envelope)
 		}
@@ -69,7 +69,7 @@ func TestRecordCommandAuditDerivesGeneratedActionAndPrivilege(t *testing.T) {
 
 func TestAgentCommandAuditPayloadRedactsInternalFieldsForLogs(t *testing.T) {
 	encoded, err := agentgen.EncodeGenCreateAgentConversationAuditPayloadForLog(agentgen.GenSchemaAgentCommandAuditPayload{
-		OperationId: "createAgentConversation", WorkspaceId: "sales", TargetType: "conversation",
+		OperationId: "createAgentConversation", ProjectId: "sales", TargetType: "conversation",
 		TargetId: "conversation-1", Surface: "api",
 	})
 	if err != nil {

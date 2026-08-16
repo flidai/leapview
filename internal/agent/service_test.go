@@ -34,7 +34,7 @@ func toolNames(tools []agentcore.ToolDefinition) []string {
 func TestServiceUsesHostProvidedTools(t *testing.T) {
 	service := NewService(nil, Config{APIKey: "key", Model: "model"})
 	service.SetToolProviders(func(scope Scope) []agentcore.ToolDefinition {
-		if scope.WorkspaceID != "test" || scope.PrincipalID != "principal" {
+		if scope.ProjectID != "test" || scope.PrincipalID != "principal" {
 			t.Fatalf("scope = %#v", scope)
 		}
 		return []agentcore.ToolDefinition{{
@@ -47,7 +47,7 @@ func TestServiceUsesHostProvidedTools(t *testing.T) {
 		}}
 	})
 
-	tools := service.toolDefinitions(Scope{WorkspaceID: "test", PrincipalID: "principal"})
+	tools := service.toolDefinitions(Scope{ProjectID: "test", PrincipalID: "principal"})
 	if runTool(t, tools, "list_workspace_assets", `{}`) != `{"ok":true}` {
 		t.Fatalf("host-provided tool did not run")
 	}
@@ -65,7 +65,7 @@ func TestServiceBindsConversationIDToAgentToolProviders(t *testing.T) {
 		seen = append(seen, scope.ConversationID)
 		return nil
 	})
-	scope := Scope{WorkspaceID: "sales", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "sales", PrincipalID: principal.ID}
 	conversation, err := service.CreateConversation(ctx, scope, "Tool provenance")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
@@ -87,7 +87,7 @@ func TestServiceAppendsHostProvidedTools(t *testing.T) {
 	service := NewService(nil, Config{APIKey: "key", Model: "model"})
 	service.SetToolProviders(fakeToolProvider("one"))
 	service.AppendToolProviders(fakeToolProvider("two"))
-	tools := service.toolDefinitions(Scope{WorkspaceID: "test", PrincipalID: "principal"})
+	tools := service.toolDefinitions(Scope{ProjectID: "test", PrincipalID: "principal"})
 	if runTool(t, tools, "one", `{}`) != `{"name":"one"}` {
 		t.Fatalf("first host-provided tool did not run")
 	}
@@ -100,7 +100,7 @@ func TestServiceRejectsGloballyDisabledAgent(t *testing.T) {
 	service := NewService(nil, Config{})
 
 	_, err := service.Prompt(context.Background(), PromptInput{
-		Scope:          Scope{WorkspaceID: "test", PrincipalID: "principal"},
+		Scope:          Scope{ProjectID: "test", PrincipalID: "principal"},
 		ConversationID: "conv_test",
 		Input:          "hello",
 	})
@@ -143,12 +143,12 @@ func TestServicePromptPersistsRunEventsMessagesAndTranscript(t *testing.T) {
 	)
 	service := NewService(store, Config{APIKey: "key", BaseURL: "http://model.test", Model: "fake-model"}, WithModel(model))
 	service.SetToolProviders(fakeToolProvider("list_dashboards"))
-	conversation, err := service.CreateConversation(ctx, Scope{WorkspaceID: "test", PrincipalID: principal.ID}, "Dashboards")
+	conversation, err := service.CreateConversation(ctx, Scope{ProjectID: "test", PrincipalID: principal.ID}, "Dashboards")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
 	}
 	result, err := service.Prompt(ctx, PromptInput{
-		Scope:          Scope{WorkspaceID: "test", PrincipalID: principal.ID},
+		Scope:          Scope{ProjectID: "test", PrincipalID: principal.ID},
 		ConversationID: conversation.ID,
 		Input:          "What dashboards can I use?",
 		CorrelationID:  "corr_1",
@@ -200,7 +200,7 @@ func TestServicePromptPersistsResolvedTurnContextWhileKeepingVisibleTextClean(t 
 	principal := createAgentAppPrincipal(t, ctx, store, "context@example.com")
 	model := newRecordingAgentModel(agentcore.ModelResponse{Content: "The decline is concentrated in Denmark.", FinishReason: agentcore.FinishReasonStop})
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
-	scope := Scope{WorkspaceID: "sales", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "sales", PrincipalID: principal.ID}
 	conversation, err := service.CreateConversation(ctx, scope, "Dashboard context")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
@@ -212,7 +212,7 @@ func TestServicePromptPersistsResolvedTurnContextWhileKeepingVisibleTextClean(t 
 		Input:          "Why did this decline?",
 		Context: &TurnContext{
 			Surface:        "dashboard",
-			WorkspaceID:    "sales",
+			ProjectID:      "sales",
 			DashboardID:    "executive-sales",
 			DashboardTitle: "Executive Sales",
 			PageID:         "overview",
@@ -223,8 +223,8 @@ func TestServicePromptPersistsResolvedTurnContextWhileKeepingVisibleTextClean(t 
 				"controls": map[string]any{"country": map[string]any{"type": "multi_select", "values": []string{"DK"}}},
 			},
 			References: []TurnReference{{
-				Reference: TurnReferenceKey{WorkspaceID: "sales", Type: "visual", ID: "executive.revenue_by_region"},
-				Name:      "Revenue by region", Workspace: TurnReferenceWorkspace{ID: "sales", Name: "Sales"},
+				Reference: TurnReferenceKey{Kind: "visual", ID: "executive.revenue_by_region"},
+				Name:      "Revenue by region", Resource: TurnReferenceResource{ID: "sales", Name: "Sales"},
 				Hierarchy: []string{"Sales", "Executive Sales", "Overview"}, ComponentID: "revenue-card", VisualID: "revenue_by_region", VisualType: "bar",
 			}},
 		},
@@ -275,7 +275,7 @@ func TestServiceStartPromptPersistsUserBeforeRunCompletes(t *testing.T) {
 	store := openAgentAppStore(t, ctx)
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(newRecordingAgentModel(agentcore.ModelResponse{
 		Content:      "Done.",
 		FinishReason: agentcore.FinishReasonStop,
@@ -322,7 +322,7 @@ func TestServiceRejectsArchivedConversationBeforeCreatingRun(t *testing.T) {
 	ctx := context.Background()
 	store := newTestAgentStore()
 	principal := createAgentAppPrincipal(t, ctx, store, "archived@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(newRecordingAgentModel()))
 	conversation, err := service.CreateConversation(ctx, scope, "Archived")
 	if err != nil {
@@ -353,7 +353,7 @@ func TestServiceDispatchesOnlyExplicitDurablePrompts(t *testing.T) {
 	ctx := context.Background()
 	store := &workflowAgentStore{testAgentStore: newTestAgentStore()}
 	principal := createAgentAppPrincipal(t, ctx, store.testAgentStore, "dispatch@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(newRecordingAgentModel()))
 	service.SetPromptWorkflow(func(_ PromptInput, runID string, dispatch PromptDispatch) jobs.WorkflowIntent {
 		payload, _ := json.Marshal(dispatch)
@@ -403,7 +403,7 @@ func TestServiceResumesPersistedPromptAfterProcessRestart(t *testing.T) {
 	store := openAgentAppStore(t, ctx)
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "restart@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	first := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(newRecordingAgentModel()))
 	conversation, err := first.CreateConversation(ctx, scope, "Restart")
 	if err != nil {
@@ -434,7 +434,7 @@ func TestServiceResumedPromptPreservesExecutionContext(t *testing.T) {
 	store := openAgentAppStore(t, ctx)
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "resume-context@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	first := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(newRecordingAgentModel()))
 	conversation, err := first.CreateConversation(ctx, scope, "Resume context")
 	if err != nil {
@@ -483,7 +483,7 @@ func TestServiceCompletePromptFailureLeavesSubmittedUserMessage(t *testing.T) {
 	store := openAgentAppStore(t, ctx)
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(newFailingAgentModel(errors.New("model down"))))
 	conversation, err := service.CreateConversation(ctx, scope, "Draft")
 	if err != nil {
@@ -526,7 +526,7 @@ func TestServicePersistsDistinctProviderAndDeadlineCauses(t *testing.T) {
 			store := openAgentAppStore(t, ctx)
 			defer store.Close()
 			principal := createAgentAppPrincipal(t, ctx, store, tc.name+"@example.com")
-			scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+			scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 			service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(newFailingAgentModel(tc.err)))
 			conversation, err := service.CreateConversation(ctx, scope, tc.name)
 			if err != nil {
@@ -563,7 +563,7 @@ func TestServiceDurableCompletionUsesAtomicBoundaryWithoutFallback(t *testing.T)
 			atomicErr:          atomicErr,
 		}
 		principal := createAgentAppPrincipal(t, ctx, store.testAgentStore, "atomic@example.com")
-		scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+		scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 		service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
 		service.SetPromptWorkflow(func(_ PromptInput, runID string, _ PromptDispatch) jobs.WorkflowIntent {
 			return jobs.WorkflowIntent{Job: jobs.EnqueueInput{ID: "agent:" + runID, ResourceID: runID}}
@@ -632,7 +632,7 @@ func TestServiceStartedPromptAbortReleasesRunningAndFailsRun(t *testing.T) {
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
 
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	service := NewService(store, Config{APIKey: "key", BaseURL: "http://127.0.0.1", Model: "fake-model"}, WithModel(newRecordingAgentModel()))
 	conversation, err := service.CreateConversation(ctx, scope, "Draft")
 	if err != nil {
@@ -675,7 +675,7 @@ func TestServiceCancelsAnActiveRun(t *testing.T) {
 	store := openAgentAppStore(t, ctx)
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	model := newRecordingAgentModel()
 	model.delay = time.Minute
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
@@ -714,7 +714,7 @@ func TestServicePromptPersistsDisplayContentButSendsCompactToolResult(t *testing
 	store := openAgentAppStore(t, ctx)
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	model := newRecordingAgentModel(
 		agentcore.ModelResponse{
 			ToolCalls:    []agentcore.ToolCall{{ID: "call_visual", Name: "query_visual", Arguments: json.RawMessage(`{}`)}},
@@ -791,7 +791,7 @@ func TestServiceGenerateConversationTitleUsesNoToolsAndSavesCleanTitle(t *testin
 	store := openAgentAppStore(t, ctx)
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	model := newRecordingAgentModel(agentcore.ModelResponse{
 		Content:      "<think>private</think>\n\"Available dashboards.\"",
 		FinishReason: agentcore.FinishReasonStop,
@@ -841,7 +841,7 @@ func TestServiceGenerateConversationTitleFallsBackWhenModelReturnsEmptyContent(t
 	store := openAgentAppStore(t, ctx)
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(newRecordingAgentModel(agentcore.ModelResponse{
 		Content:      "",
 		FinishReason: agentcore.FinishReasonTruncated,
@@ -873,7 +873,7 @@ func TestServiceGenerateConversationTitleIsBestEffortAndSkipsUnsafeCases(t *test
 	store := openAgentAppStore(t, ctx)
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	model := newFailingAgentModel(errors.New("provider down"))
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
 
@@ -935,7 +935,7 @@ func TestServiceConversationTranscriptDerivesDisplayItems(t *testing.T) {
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"})
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	conversation, err := service.CreateConversation(ctx, scope, "Transcript")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
@@ -1025,7 +1025,7 @@ func TestServiceConversationTranscriptExtractsVisualArtifact(t *testing.T) {
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"})
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	conversation, err := service.CreateConversation(ctx, scope, "Artifact")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
@@ -1066,7 +1066,7 @@ func TestServiceConversationTranscriptRejectsVerboseArtifactPayload(t *testing.T
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"})
-	scope := Scope{WorkspaceID: "test", PrincipalID: principal.ID}
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
 	conversation, err := service.CreateConversation(ctx, scope, "Invalid artifact")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
@@ -1104,7 +1104,7 @@ func TestServiceRejectsConcurrentConversationTurns(t *testing.T) {
 	model := newRecordingAgentModel(agentcore.ModelResponse{Content: "ok", FinishReason: agentcore.FinishReasonStop})
 	model.delay = 100 * time.Millisecond
 	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
-	conversation, err := service.CreateConversation(ctx, Scope{WorkspaceID: "test", PrincipalID: principal.ID}, "Dashboards")
+	conversation, err := service.CreateConversation(ctx, Scope{ProjectID: "test", PrincipalID: principal.ID}, "Dashboards")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
 	}
@@ -1112,7 +1112,7 @@ func TestServiceRejectsConcurrentConversationTurns(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			_, err := service.Prompt(ctx, PromptInput{
-				Scope:          Scope{WorkspaceID: "test", PrincipalID: principal.ID},
+				Scope:          Scope{ProjectID: "test", PrincipalID: principal.ID},
 				ConversationID: conversation.ID,
 				Input:          "hello",
 			})

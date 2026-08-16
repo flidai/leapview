@@ -155,7 +155,6 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 	}
 	input.Model = resolvedModel.String()
 	metadata := dataquery.Metadata{
-		WorkspaceID: runScope.ProjectID,
 		Surface:     dataquery.SurfaceAgent,
 		Operation:   dataquery.OperationAgentQuery,
 		PrincipalID: scope.PrincipalID,
