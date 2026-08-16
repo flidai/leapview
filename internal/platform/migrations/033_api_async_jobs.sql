@@ -4,7 +4,7 @@ CREATE TABLE api_async_jobs (
   job_kind TEXT NOT NULL,
   workload_class TEXT NOT NULL CHECK(workload_class IN ('background', 'control')),
   principal_id TEXT NOT NULL CHECK(length(principal_id) > 0 AND principal_id = trim(principal_id)),
-  group_ids_json TEXT NOT NULL CHECK(json_valid(group_ids_json)),
+  group_ids_json TEXT NOT NULL CHECK(json_valid(group_ids_json) AND json_type(group_ids_json) = 'array'),
   resource_kind TEXT NOT NULL,
   resource_id TEXT NOT NULL,
   estimated_memory_bytes INTEGER NOT NULL CHECK(estimated_memory_bytes > 0),
