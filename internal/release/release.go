@@ -2,6 +2,10 @@
 package release
 
 import apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+import (
+	"fmt"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+)
 
 var (
 	ErrInvalid    = apigenfailure.New("invalid", "invalid release")
@@ -52,6 +56,10 @@ type Release struct {
 	Error              string
 }
 
+func (r Release) Identity() (projectgraph.ServingIdentity, error) {
+	return projectgraph.NewServingIdentity(projectgraph.ResourceID(r.ProjectID), r.Environment, r.GenerationID)
+}
+
 type Artifact struct {
 	ReleaseID      string
 	ProjectID      string
@@ -61,6 +69,14 @@ type Artifact struct {
 	ActualDigest   string
 	SizeBytes      int64
 	UploadedAt     string
+}
+
+func (a Artifact) Identity() (projectgraph.ServingIdentity, error) {
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(a.ProjectID), a.Environment, a.GenerationID)
+	if err != nil {
+		return projectgraph.ServingIdentity{}, err
+	}
+	return identity, nil
 }
 
 type CreateInput struct {
@@ -75,4 +91,11 @@ type CreateInput struct {
 	CreatedBy      string
 	Connections    []ConnectionPin
 	Provenance     *Provenance
+}
+
+func (input CreateInput) Identity() (projectgraph.ServingIdentity, error) {
+	if input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" {
+		return projectgraph.ServingIdentity{}, fmt.Errorf("project, environment, and generation are required")
+	}
+	return projectgraph.NewServingIdentity(projectgraph.ResourceID(input.ProjectID), input.Environment, input.GenerationID)
 }

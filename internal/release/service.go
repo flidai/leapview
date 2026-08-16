@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/flidai/leapview/internal/platform/digest"
@@ -75,22 +76,38 @@ func NewService(options ServiceOptions) (*Service, error) {
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error) {
 	input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ProjectDigest), strings.TrimSpace(input.ArtifactDigest)
-	input.Environment = string(servingstate.NormalizeEnvironment(servingstate.Environment(input.Environment)))
 	input.IdempotencyKey, input.CreatedBy = strings.TrimSpace(input.IdempotencyKey), strings.TrimSpace(input.CreatedBy)
 	if input.ProjectID == "" || input.GenerationID == "" || input.Environment == "" || input.ProjectDigest == "" || input.ArtifactDigest == "" || input.IdempotencyKey == "" || input.CreatedBy == "" {
 		return Release{}, ErrInvalid
 	}
-	if _, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(input.ProjectID), input.Environment, input.GenerationID); err != nil {
+	identity, err := input.Identity()
+	if err != nil {
 		return Release{}, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	if digest.ValidateSHA256Identity(input.ProjectDigest) != nil || digest.ValidateSHA256Identity(input.ArtifactDigest) != nil {
 		return Release{}, ErrInvalid
 	}
+	input.Connections = append([]ConnectionPin(nil), input.Connections...)
 	for i := range input.Connections {
 		input.Connections[i].ConnectionID, input.Connections[i].RevisionID = strings.TrimSpace(input.Connections[i].ConnectionID), strings.TrimSpace(input.Connections[i].RevisionID)
 		if input.Connections[i].ConnectionID == "" || input.Connections[i].RevisionID == "" {
 			return Release{}, ErrInvalid
 		}
+	}
+	sort.Slice(input.Connections, func(i, j int) bool { return input.Connections[i].ConnectionID < input.Connections[j].ConnectionID })
+	for i := 1; i < len(input.Connections); i++ {
+		if input.Connections[i-1].ConnectionID == input.Connections[i].ConnectionID {
+			return Release{}, ErrInvalid
+		}
+	}
+	if input.Provenance == nil {
+		return Release{}, fmt.Errorf("%w: provenance is required", ErrInvalid)
+	}
+	if err := input.Provenance.Validate(); err != nil {
+		return Release{}, fmt.Errorf("%w: provenance: %v", ErrInvalid, err)
+	}
+	if input.Provenance.Artifact.ProjectDigest != input.ProjectDigest || input.Provenance.Artifact.ArtifactDigest != input.ArtifactDigest || input.Provenance.Plan.Identity != identity {
+		return Release{}, fmt.Errorf("%w: provenance does not match project generation", ErrInvalid)
 	}
 	input.ID = stableID("rel", input.ProjectID, input.IdempotencyKey)
 	encoded, err := json.Marshal(struct {
@@ -100,7 +117,11 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error
 	if err != nil {
 		return Release{}, err
 	}
-	input.RequestDigest = digest.SHA256Identity(encoded)
+	expectedRequestDigest := digest.SHA256Identity(encoded)
+	if input.RequestDigest != "" && (digest.ValidateSHA256Identity(input.RequestDigest) != nil || input.RequestDigest != expectedRequestDigest) {
+		return Release{}, fmt.Errorf("%w: request digest mismatch", ErrInvalid)
+	}
+	input.RequestDigest = expectedRequestDigest
 	return s.releases.Create(ctx, input)
 }
 
@@ -140,7 +161,7 @@ func (s *Service) UploadArtifact(ctx context.Context, projectID, releaseID, cont
 	if !verifier.Verified() {
 		return Artifact{}, ErrDigest
 	}
-	item := Artifact{ReleaseID: current.ID, ProjectID: current.ProjectID, Environment: current.Environment, GenerationID: current.GenerationID, ExpectedDigest: current.ArtifactDigest, SizeBytes: size}
+	item := Artifact{ReleaseID: current.ID, ProjectID: current.ProjectID, Environment: current.Environment, GenerationID: current.GenerationID, ExpectedDigest: current.ArtifactDigest, ActualDigest: current.ArtifactDigest, SizeBytes: size}
 	if err := s.releases.RecordArtifact(ctx, item); err != nil {
 		return Artifact{}, err
 	}
@@ -171,6 +192,9 @@ func (s *Service) ValidateFinalization(ctx context.Context, projectID, releaseID
 	if current.Status != StatusValidating {
 		return Release{}, ErrConflict
 	}
+	if current.ArtifactUploadedAt == "" || current.ActualDigest == "" || current.ActualDigest != current.ArtifactDigest {
+		return s.failFinalization(ctx, current, ErrIncomplete)
+	}
 	state, err := s.validator.Validate(ctx, servingstate.ID(current.GenerationID))
 	if err != nil {
 		return s.failFinalization(ctx, current, err)
@@ -181,6 +205,9 @@ func (s *Service) ValidateFinalization(ctx context.Context, projectID, releaseID
 	}
 	if state.ProjectID != identity.ProjectID || servingstate.NormalizeEnvironment(state.Environment) != servingstate.Environment(identity.Environment) || state.Digest != current.ArtifactDigest {
 		return s.failFinalization(ctx, current, fmt.Errorf("%w: generation identity or artifact digest mismatch", ErrConflict))
+	}
+	if len(current.Manifest.Connections) > 0 && s.pins == nil {
+		return s.failFinalization(ctx, current, fmt.Errorf("%w: managed-data pin validation is unavailable", ErrConflict))
 	}
 	if s.pins != nil {
 		pins := make(map[string]string, len(current.Manifest.Connections))

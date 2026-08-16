@@ -79,9 +79,12 @@ type ActivationInput struct {
 type Verification struct{ Digest string }
 
 func ValidateCreate(input CreateInput) error {
-	input.ProjectID, input.Environment, input.GenerationID, input.ArtifactDigest = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ArtifactDigest)
+	input.ID, input.ProjectID, input.Environment, input.GenerationID, input.ArtifactDigest, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
 	if input.ID == "" || input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" || input.RequestDigest == "" || input.CreatedBy == "" {
 		return fmt.Errorf("deployment id, project, environment, generation, request digest, and actor are required")
+	}
+	if digest.ValidateSHA256Identity(input.RequestDigest) != nil {
+		return fmt.Errorf("request digest must be canonical sha256")
 	}
 	if _, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.GenerationID); err != nil {
 		return err
@@ -98,16 +101,30 @@ func ValidateCreate(input CreateInput) error {
 }
 
 func ValidateActivation(input ActivationInput) error {
-	if strings.TrimSpace(input.DeploymentID) == "" || strings.TrimSpace(input.ActivationPrincipal) == "" || digest.ValidateSHA256Identity(input.VerificationDigest) != nil {
+	input.DeploymentID, input.ProjectID, input.Environment, input.GenerationID, input.ArtifactDigest, input.PriorGenerationID, input.ActivationPrincipal, input.VerificationDigest = strings.TrimSpace(input.DeploymentID), strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.PriorGenerationID), strings.TrimSpace(input.ActivationPrincipal), strings.TrimSpace(input.VerificationDigest)
+	if input.DeploymentID == "" || input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" || input.ArtifactDigest == "" || input.ActivationPrincipal == "" || digest.ValidateSHA256Identity(input.VerificationDigest) != nil {
 		return fmt.Errorf("deployment, activation principal, and verification digest are required")
 	}
-	if input.ProjectID != "" && input.Environment != "" && input.GenerationID != "" {
-		if _, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.GenerationID); err != nil {
+	if _, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.GenerationID); err != nil {
+		return err
+	}
+	if digest.ValidateSHA256Identity(input.ArtifactDigest) != nil {
+		return fmt.Errorf("artifact digest must be canonical sha256")
+	}
+	if input.PriorGenerationID != "" {
+		if _, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.PriorGenerationID); err != nil {
 			return err
 		}
 	}
-	if input.ArtifactDigest != "" && digest.ValidateSHA256Identity(input.ArtifactDigest) != nil {
-		return fmt.Errorf("artifact digest must be canonical sha256")
-	}
 	return nil
+}
+
+func (d Deployment) Identity() (graph.ServingIdentity, error) {
+	return graph.NewServingIdentity(graph.ResourceID(d.ProjectID), d.Environment, d.GenerationID)
+}
+func (input CreateInput) Identity() (graph.ServingIdentity, error) {
+	return graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.GenerationID)
+}
+func (input ActivationInput) Identity() (graph.ServingIdentity, error) {
+	return graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.GenerationID)
 }

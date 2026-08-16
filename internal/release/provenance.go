@@ -51,11 +51,11 @@ type AuthoredConnectionEvidence struct {
 	ConnectorKind     string `json:"connectorKind"`
 }
 
-type TargetDataMode string
+type GenerationDataMode string
 
 const (
-	TargetDataReuseSnapshot  TargetDataMode = "reuse_snapshot"
-	TargetDataRefreshSources TargetDataMode = "refresh_sources"
+	GenerationDataReuseSnapshot  GenerationDataMode = "reuse_snapshot"
+	GenerationDataRefreshSources GenerationDataMode = "refresh_sources"
 )
 
 // ProjectArtifactProvenance identifies one complete project artifact. There
@@ -68,17 +68,15 @@ type ProjectArtifactProvenance struct {
 	SchemaVersion   int    `json:"schemaVersion"`
 }
 
-// TargetPlanProvenance binds candidate evidence to the exact serving identity
+// GenerationPlanProvenance binds candidate evidence to the exact serving identity
 // that will be published. GenerationID is the sole runtime selector.
-type TargetPlanProvenance struct {
-	ProjectID           string                       `json:"projectId"`
-	Environment         string                       `json:"environment"`
-	GenerationID        string                       `json:"generationId"`
-	BaseGeneration      string                       `json:"baseGeneration"`
+type GenerationPlanProvenance struct {
+	Identity            projectgraph.ServingIdentity `json:"identity"`
+	BaseIdentity        projectgraph.ServingIdentity `json:"baseIdentity"`
 	RuntimeVersion      string                       `json:"runtimeVersion"`
 	PolicyDigest        string                       `json:"policyDigest"`
 	DataRevision        string                       `json:"dataRevision"`
-	DataMode            TargetDataMode               `json:"dataMode"`
+	DataMode            GenerationDataMode           `json:"dataMode"`
 	ManagedDataPins     []ManagedDataPin             `json:"managedDataPins"`
 	Bindings            []BindingEvidence            `json:"bindings"`
 	AuthoredConnections []AuthoredConnectionEvidence `json:"authoredConnections"`
@@ -88,7 +86,7 @@ type ProvenanceInput struct {
 	Artifact       ProjectArtifactProvenance
 	Candidate      CandidateProvenance
 	SourceRevision *SourceRevisionProvenance
-	Plan           TargetPlanProvenance
+	Plan           GenerationPlanProvenance
 }
 
 type Provenance struct {
@@ -96,7 +94,7 @@ type Provenance struct {
 	Artifact       ProjectArtifactProvenance `json:"artifact"`
 	Candidate      CandidateProvenance       `json:"candidate"`
 	SourceRevision *SourceRevisionProvenance `json:"sourceRevision,omitempty"`
-	Plan           TargetPlanProvenance      `json:"plan"`
+	Plan           GenerationPlanProvenance  `json:"plan"`
 	ArtifactDigest string                    `json:"artifactDigest"`
 	PlanDigest     string                    `json:"planDigest"`
 	Digest         string                    `json:"digest"`
@@ -115,7 +113,7 @@ func NewProvenance(input ProvenanceInput) (Provenance, error) {
 	if err != nil {
 		return Provenance{}, err
 	}
-	plan, err := normalizeTargetPlanProvenance(input.Plan, artifact)
+	plan, err := normalizeGenerationPlanProvenance(input.Plan, artifact)
 	if err != nil {
 		return Provenance{}, err
 	}
@@ -126,7 +124,7 @@ func NewProvenance(input ProvenanceInput) (Provenance, error) {
 	planDigest, err := canonicalDigest(struct {
 		Candidate      CandidateProvenance       `json:"candidate"`
 		SourceRevision *SourceRevisionProvenance `json:"sourceRevision,omitempty"`
-		Plan           TargetPlanProvenance      `json:"plan"`
+		Plan           GenerationPlanProvenance  `json:"plan"`
 	}{candidate, source, plan})
 	if err != nil {
 		return Provenance{}, provenanceInvalid(err)
@@ -195,35 +193,38 @@ func normalizeCandidateProvenance(c CandidateProvenance) (CandidateProvenance, e
 	return c, nil
 }
 
-func normalizeTargetPlanProvenance(p TargetPlanProvenance, artifact ProjectArtifactProvenance) (TargetPlanProvenance, error) {
-	p.ProjectID, p.Environment, p.GenerationID, p.BaseGeneration, p.RuntimeVersion, p.PolicyDigest, p.DataRevision = strings.TrimSpace(p.ProjectID), strings.TrimSpace(p.Environment), strings.TrimSpace(p.GenerationID), strings.TrimSpace(p.BaseGeneration), strings.TrimSpace(p.RuntimeVersion), strings.TrimSpace(p.PolicyDigest), strings.TrimSpace(p.DataRevision)
-	if p.ProjectID == "" || p.Environment == "" || p.GenerationID == "" || p.BaseGeneration == "" || p.RuntimeVersion == "" || platformdigest.ValidateSHA256Identity(p.PolicyDigest) != nil || p.DataRevision == "" || artifact.ArtifactDigest == "" {
-		return TargetPlanProvenance{}, provenanceInvalid(errors.New("project, environment, generation, base, runtime, policy, and data evidence are required"))
+func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact ProjectArtifactProvenance) (GenerationPlanProvenance, error) {
+	if _, err := projectgraph.NewServingIdentity(p.Identity.ProjectID, p.Identity.Environment, p.Identity.GenerationID); err != nil {
+		return GenerationPlanProvenance{}, provenanceInvalid(err)
 	}
-	if _, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(p.ProjectID), p.Environment, p.GenerationID); err != nil {
-		return TargetPlanProvenance{}, provenanceInvalid(err)
+	if _, err := projectgraph.NewServingIdentity(p.BaseIdentity.ProjectID, p.BaseIdentity.Environment, p.BaseIdentity.GenerationID); err != nil {
+		return GenerationPlanProvenance{}, provenanceInvalid(err)
 	}
-	if p.DataMode != TargetDataReuseSnapshot && p.DataMode != TargetDataRefreshSources {
-		return TargetPlanProvenance{}, provenanceInvalid(errors.New("data mode is invalid"))
+	p.RuntimeVersion, p.PolicyDigest, p.DataRevision = strings.TrimSpace(p.RuntimeVersion), strings.TrimSpace(p.PolicyDigest), strings.TrimSpace(p.DataRevision)
+	if p.RuntimeVersion == "" || platformdigest.ValidateSHA256Identity(p.PolicyDigest) != nil || p.DataRevision == "" || artifact.ArtifactDigest == "" {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("runtime, policy, data, and artifact evidence are required"))
+	}
+	if p.DataMode != GenerationDataReuseSnapshot && p.DataMode != GenerationDataRefreshSources {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("data mode is invalid"))
 	}
 	var err error
 	p.ManagedDataPins, err = normalizeManagedDataPins(p.ManagedDataPins)
 	if err != nil {
-		return TargetPlanProvenance{}, err
+		return GenerationPlanProvenance{}, err
 	}
 	p.Bindings, err = normalizeBindingEvidence(p.Bindings)
 	if err != nil {
-		return TargetPlanProvenance{}, err
+		return GenerationPlanProvenance{}, err
 	}
 	p.AuthoredConnections, err = normalizeAuthoredConnectionEvidence(p.AuthoredConnections)
 	if err != nil {
-		return TargetPlanProvenance{}, err
+		return GenerationPlanProvenance{}, err
 	}
-	if p.DataMode == TargetDataReuseSnapshot && len(p.AuthoredConnections) != 0 {
-		return TargetPlanProvenance{}, provenanceInvalid(errors.New("snapshot reuse cannot retain authored refresh connection evidence"))
+	if p.DataMode == GenerationDataReuseSnapshot && len(p.AuthoredConnections) != 0 {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("snapshot reuse cannot retain authored refresh connection evidence"))
 	}
-	if p.DataMode == TargetDataRefreshSources && len(p.Bindings) == 0 && len(p.ManagedDataPins) == 0 && len(p.AuthoredConnections) == 0 {
-		return TargetPlanProvenance{}, provenanceInvalid(errors.New("source refresh requires connection evidence"))
+	if p.DataMode == GenerationDataRefreshSources && len(p.Bindings) == 0 && len(p.ManagedDataPins) == 0 && len(p.AuthoredConnections) == 0 {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("source refresh requires connection evidence"))
 	}
 	return p, nil
 }
