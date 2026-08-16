@@ -1248,12 +1248,6 @@ func canonicalModelResource(project projectgraph.ProjectGraph, id string, kind p
 		ref, err := access.NewResourceRef(resource.ID, kind)
 		return ref, err == nil
 	}
-	for _, resource := range project.Resources() {
-		if resource.Kind == kind && resource.Name == id {
-			ref, err := access.NewResourceRef(resource.ID, kind)
-			return ref, err == nil
-		}
-	}
 	return access.ResourceRef{}, false
 }
 
