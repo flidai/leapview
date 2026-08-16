@@ -74,6 +74,21 @@ func (r *Registry) ProjectID() projectgraph.ResourceID {
 	return r.manager.ProjectID()
 }
 
+// BindClaimedProject binds the process host to the durable instance claim
+// before any generation is active. It does not create or load a serving state.
+func (r *Registry) BindClaimedProject(projectID projectgraph.ResourceID, environment servingstate.Environment) error {
+	if r == nil || r.manager == nil {
+		return ErrRegistryClosed
+	}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return ErrRegistryClosed
+	}
+	return r.manager.BindClaimedProject(projectID, environment)
+}
+
 // ActiveArtifact resolves activity from the repository for this registry's
 // fixed project/environment scope. Callers should use errors.Is with
 // servingstate.ErrNotFound to distinguish an empty deployment from a store

@@ -12,6 +12,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,6 +57,27 @@ func TestCandidateServiceCreatesResumesAndBuildsCanonicalPreviewURL(t *testing.T
 	})
 	if !errors.Is(err, ErrCandidateConflict) {
 		t.Fatalf("changed start error = %v, want explicit update conflict", err)
+	}
+}
+
+func TestCandidateServiceBindsClaimAfterDurableStart(t *testing.T) {
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	repository := newCandidateMemoryRepository()
+	var boundProject projectgraph.ResourceID
+	var boundEnvironment servingstate.Environment
+	service, err := NewCandidateService(repository, CandidateServiceConfig{
+		TargetID: "lvinst_prod", CanonicalOrigin: "https://prod.leapview.example", Environment: "prod",
+		Now: func() time.Time { return now }, Audit: func(context.Context, CandidateEvent) error { return nil },
+		BindProject: func(_ context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment) error {
+			boundProject, boundEnvironment = projectID, environment
+			return nil
+		},
+	})
+	require.NoError(t, err)
+	_, err = service.Start(t.Context(), StartCandidateRequest{ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: "sha256:" + strings.Repeat("a", 64)})
+	require.NoError(t, err)
+	if boundProject != "finance" || boundEnvironment != "prod" {
+		t.Fatalf("bound claim = %s/%s, want finance/prod", boundProject, boundEnvironment)
 	}
 }
 
@@ -434,6 +456,10 @@ func (repository *candidateMemoryRepository) StartCandidate(_ context.Context, c
 	}
 	repository.candidates[candidate.ID] = candidate
 	return candidate, false, nil
+}
+
+func (repository *candidateMemoryRepository) StartCandidateWithClaim(ctx context.Context, candidate Candidate, maxActivePerOwner int, _ ProjectClaimInput) (Candidate, bool, error) {
+	return repository.StartCandidate(ctx, candidate, maxActivePerOwner)
 }
 
 func (repository *candidateMemoryRepository) ActiveCandidate(

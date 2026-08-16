@@ -15,6 +15,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 const (
@@ -32,6 +33,7 @@ const (
 type CandidateRepository interface {
 	ActiveCandidateBaseScope(context.Context, projectgraph.ResourceID, string) (CandidateScope, error)
 	StartCandidate(context.Context, Candidate, int) (Candidate, bool, error)
+	StartCandidateWithClaim(context.Context, Candidate, int, ProjectClaimInput) (Candidate, bool, error)
 	ActiveCandidate(context.Context, string, projectgraph.ResourceID, string, string) (Candidate, error)
 	CandidateByID(context.Context, string) (Candidate, error)
 	SaveCandidate(context.Context, Candidate, int64) (Candidate, error)
@@ -49,6 +51,9 @@ type CandidateServiceConfig struct {
 	Audit             func(context.Context, CandidateEvent) error
 	Logger            *slog.Logger
 	RuntimeLifecycle  CandidateRuntimeLifecycle
+	// BindProject is called immediately after the durable claim/candidate
+	// transaction commits. A binder must reject any project change.
+	BindProject func(context.Context, projectgraph.ResourceID, servingstate.Environment) error
 }
 
 // CandidateRuntimeLifecycle retires private generations after durable
@@ -70,6 +75,7 @@ type CandidateService struct {
 	audit             func(context.Context, CandidateEvent) error
 	logger            *slog.Logger
 	runtimeLifecycle  CandidateRuntimeLifecycle
+	bindProject       func(context.Context, projectgraph.ResourceID, servingstate.Environment) error
 }
 
 type StartCandidateRequest struct {
@@ -134,6 +140,7 @@ func NewCandidateService(repository CandidateRepository, config CandidateService
 		maxActivePerOwner: config.MaxActivePerOwner, now: config.Now, newID: config.NewID, audit: config.Audit,
 		logger:           config.Logger,
 		runtimeLifecycle: config.RuntimeLifecycle,
+		bindProject:      config.BindProject,
 	}, nil
 }
 
@@ -158,9 +165,16 @@ func (service *CandidateService) Start(ctx context.Context, request StartCandida
 	if err != nil {
 		return CandidateStartResult{}, err
 	}
-	candidate, resumed, err := service.repository.StartCandidate(ctx, candidate, service.maxActivePerOwner)
+	candidate, resumed, err := service.repository.StartCandidateWithClaim(ctx, candidate, service.maxActivePerOwner, ProjectClaimInput{
+		ProjectID: candidate.Scope.ProjectID, Environment: servingstate.Environment(candidate.Scope.Environment), ClaimedBy: request.OwnerID, ClaimedAt: now,
+	})
 	if err != nil {
 		return CandidateStartResult{}, err
+	}
+	if service.bindProject != nil {
+		if err := service.bindProject(ctx, candidate.Scope.ProjectID, servingstate.Environment(candidate.Scope.Environment)); err != nil {
+			return CandidateStartResult{}, fmt.Errorf("bind claimed project: %w", err)
+		}
 	}
 	// StartCandidate is one stable operation regardless of whether storage
 	// creates a candidate or resumes the author's existing candidate. Preserve

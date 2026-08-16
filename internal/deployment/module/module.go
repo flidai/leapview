@@ -15,6 +15,7 @@ import (
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 type Module struct {
@@ -137,11 +138,14 @@ type Config struct {
 	CandidateSources          deployment.CandidateSourceSynchronizer
 	CandidateArtifacts        release.CandidateArtifactPreparer
 	CandidateAdmission        CandidatePreparationAdmitter
-	RuntimeVersion            string
-	CurrentPrincipal          func(*http.Request) (Principal, bool)
-	CurrentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
-	AuthorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
-	AuthorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
+	// BindClaimedProject binds the process runtime to the durable instance
+	// claim after candidate start commits.
+	BindClaimedProject   func(context.Context, projectgraph.ResourceID, servingstate.Environment) error
+	RuntimeVersion       string
+	CurrentPrincipal     func(*http.Request) (Principal, bool)
+	CurrentApprovalActor func(*http.Request) (deployment.ApprovalActor, bool)
+	AuthorizeApproval    func(context.Context, deployment.ApprovalActor, string, string) error
+	AuthorizeActivation  func(context.Context, deployment.ApprovalActor, string, string) error
 	// AfterActivated runs after runtime publication and durable activation.
 	// It is observational and cannot influence activation.
 	AfterActivated           func(context.Context, deployment.Deployment)
@@ -171,6 +175,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.Database != nil {
 		if config.States == nil || config.Runtime == nil || config.ManagedData == nil {
 			return nil, errors.New("deployment states, runtime, and managed data are required")
+		}
+		if config.BindClaimedProject == nil {
+			return nil, errors.New("candidate project claim binder is required")
 		}
 		repository, activation, candidateRepository, approvalRepository := newPersistence(
 			config.Database,
@@ -213,6 +220,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			MaxActivePerOwner: config.MaxCandidatesPerOwner, Audit: config.CandidateAudit,
 			Logger:           config.Logger,
 			RuntimeLifecycle: config.CandidateRuntimeLifecycle,
+			BindProject:      config.BindClaimedProject,
 		})
 		if err != nil {
 			return nil, err

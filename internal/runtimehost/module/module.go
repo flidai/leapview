@@ -18,9 +18,12 @@ type ServingStatePort interface {
 type Lease = runtimehost.Lease
 
 type Config struct {
-	States                ServingStatePort
-	ProjectID             projectgraph.ResourceID
-	Environment           servingstate.Environment
+	States      ServingStatePort
+	ProjectID   projectgraph.ResourceID
+	Environment servingstate.Environment
+	// ReadClaimedProject loads the durable instance project claim. It is
+	// invoked before the first reload so a restart cannot serve another scope.
+	ReadClaimedProject    func(context.Context) (projectgraph.ResourceID, bool, error)
 	Factory               runtimehost.RuntimeFactory
 	ManagedData           runtimehost.ManagedDataResolver
 	Authorization         runtimehost.AuthorizationSnapshotInstaller
@@ -46,6 +49,17 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	var registry *runtimehost.Registry
 	registry = runtimehost.NewRegistryWithFactory(runtimehost.RegistryOptions{Repo: config.States, ProjectID: config.ProjectID, Environment: config.Environment, Factory: config.Factory, ManagedData: config.ManagedData, Authorization: config.Authorization, Logger: config.Logger, OnCleanupFailure: config.OnCleanupFailure, OnLeaseRenewalFailure: config.OnLeaseRenewalFailure, OnDrained: config.OnDrained})
+	if config.ReadClaimedProject != nil {
+		claimedProject, found, err := config.ReadClaimedProject(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			if err := registry.BindClaimedProject(claimedProject, config.Environment); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if err := registry.Reload(ctx); err != nil {
 		_ = registry.Close()
 		return nil, err
@@ -116,6 +130,15 @@ func (m *Module) ProjectID() projectgraph.ResourceID {
 		return ""
 	}
 	return m.registry.ProjectID()
+}
+
+// BindClaimedProject installs the durable instance project claim before any
+// active generation is loaded or published.
+func (m *Module) BindClaimedProject(projectID projectgraph.ResourceID, environment servingstate.Environment) error {
+	if m == nil || m.registry == nil {
+		return runtimehost.ErrRegistryClosed
+	}
+	return m.registry.BindClaimedProject(projectID, environment)
 }
 
 // ActiveArtifact resolves the exact active generation for the module's fixed

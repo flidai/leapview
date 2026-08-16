@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,15 @@ import (
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
+
+// ErrPreparedStale indicates that another cutover won while this prepared
+// runtime was waiting for the publication fence. Reload treats this as a
+// retryable race rather than surfacing a spurious failure to callers.
+var ErrPreparedStale = errors.New("prepared runtime is stale")
+
+var ErrProjectBindConflict = errors.New("runtime host project binding conflict")
+
+var errReloadReadRace = errors.New("runtime host active generation changed during reload read")
 
 type ServingStateRepository interface {
 	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
@@ -272,6 +282,42 @@ func (m *Manager) Environment() servingstate.Environment {
 	}
 	return m.environment
 }
+
+// BindClaimedProject installs the durable instance claim into this process
+// before any active generation is prepared or published. It is serialized
+// with cutover and is permanently immutable for the lifetime of the manager.
+func (m *Manager) BindClaimedProject(projectID projectgraph.ResourceID, environment servingstate.Environment) error {
+	if m == nil {
+		return errors.New("runtime host is nil")
+	}
+	if err := projectID.Validate(); err != nil {
+		return fmt.Errorf("invalid claimed project: %w", err)
+	}
+	if projectID.String() != strings.TrimSpace(projectID.String()) {
+		return errors.New("invalid claimed project: project id must be canonical")
+	}
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return fmt.Errorf("invalid claimed environment: %w", err)
+	}
+	if string(environment) != strings.TrimSpace(string(environment)) {
+		return errors.New("invalid claimed environment: environment must be canonical")
+	}
+	m.cutoverMu.Lock()
+	defer m.cutoverMu.Unlock()
+	if environment != m.environment {
+		return fmt.Errorf("%w: runtime host environment is %q, claimed environment is %q", ErrProjectBindConflict, m.environment, environment)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.projectID == "" {
+		m.projectID = projectID
+		return nil
+	}
+	if m.projectID != projectID {
+		return fmt.Errorf("%w: runtime host project changed from %q to %q", ErrProjectBindConflict, m.projectID, projectID)
+	}
+	return nil
+}
 func (m *Manager) LeaseRenewalError() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -297,7 +343,24 @@ func (m *Manager) setLeaseRenewalError(id string, err error) {
 	}
 }
 
+// Reload retries a bounded number of times when another cutover wins the
+// publication fence. This keeps concurrent activation/reload races benign
+// without unbounded recursive retries.
 func (m *Manager) Reload(ctx context.Context) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		err = m.reloadOnce(ctx)
+		if !errors.Is(err, ErrPreparedStale) && !errors.Is(err, errReloadReadRace) {
+			return err
+		}
+	}
+	return err
+}
+
+func (m *Manager) reloadOnce(ctx context.Context) error {
 	if m.ProjectID() == "" {
 		return m.reloadUnbound(ctx)
 	}
@@ -312,7 +375,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 		_, _, confirmErr := m.repo.ActiveArtifact(ctx, projectID, m.environment)
 		if confirmErr == nil {
 			m.cutoverMu.Unlock()
-			return m.Reload(ctx)
+			return errReloadReadRace
 		}
 		if !errors.Is(confirmErr, servingstate.ErrNotFound) {
 			m.cutoverMu.Unlock()
@@ -548,7 +611,7 @@ func (m *Manager) activatePreparedContext(ctx context.Context, candidate *Prepar
 	}
 	m.mu.RUnlock()
 	if currentID != sealed.baseActiveID {
-		return errors.Join(errors.New("prepared runtime is stale"), sealed.abort())
+		return errors.Join(ErrPreparedStale, sealed.abort())
 	}
 	if boundProjectID != "" && sealed.authorization.Identity().ProjectID != boundProjectID {
 		return errors.Join(fmt.Errorf("prepared runtime project = %q, want %q", sealed.authorization.Identity().ProjectID, boundProjectID), sealed.abort())

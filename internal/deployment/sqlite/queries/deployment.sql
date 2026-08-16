@@ -105,6 +105,16 @@ WHERE id = ? AND status = 'pending';
 
 -- Durable private project candidate sessions.
 
+-- name: InsertInstanceProjectClaim :execresult
+INSERT INTO instance_project_claim (singleton_id, project_id, environment, claimed_by, claimed_at)
+VALUES (1, ?, ?, ?, ?)
+ON CONFLICT(singleton_id) DO NOTHING;
+
+-- name: GetInstanceProjectClaim :one
+SELECT project_id, environment, claimed_by, claimed_at
+FROM instance_project_claim
+WHERE singleton_id = 1;
+
 -- name: CreateProjectCandidate :exec
 INSERT INTO project_candidates (
   id, project_id, target_id, environment, owner_principal_id, candidate_key,

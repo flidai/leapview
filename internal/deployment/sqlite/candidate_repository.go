@@ -14,8 +14,24 @@ import (
 )
 
 func (r *Repository) StartCandidate(ctx context.Context, candidate deployment.Candidate, maxActivePerOwner int) (deployment.Candidate, bool, error) {
+	return r.startCandidate(ctx, candidate, maxActivePerOwner, nil)
+}
+
+// StartCandidateWithClaim atomically establishes the instance project claim
+// and creates/resumes the candidate. A claim conflict rolls the whole
+// transaction back, so no candidate row can survive a failed binding.
+func (r *Repository) StartCandidateWithClaim(ctx context.Context, candidate deployment.Candidate, maxActivePerOwner int, claim deployment.ProjectClaimInput) (deployment.Candidate, bool, error) {
+	return r.startCandidate(ctx, candidate, maxActivePerOwner, &claim)
+}
+
+func (r *Repository) startCandidate(ctx context.Context, candidate deployment.Candidate, maxActivePerOwner int, claim *deployment.ProjectClaimInput) (deployment.Candidate, bool, error) {
 	if r == nil || r.db == nil || maxActivePerOwner <= 0 {
 		return deployment.Candidate{}, false, fmt.Errorf("candidate repository and positive quota are required")
+	}
+	if claim != nil {
+		if err := claim.Validate(); err != nil {
+			return deployment.Candidate{}, false, err
+		}
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -23,6 +39,11 @@ func (r *Repository) StartCandidate(ctx context.Context, candidate deployment.Ca
 	}
 	defer tx.Rollback()
 	queries := r.queries.WithTx(tx)
+	if claim != nil {
+		if _, err := r.claimProjectTx(ctx, tx, *claim); err != nil {
+			return deployment.Candidate{}, false, err
+		}
+	}
 	now := formatCandidateTime(candidate.CreatedAt)
 	if _, err := queries.ExpireProjectCandidates(ctx, platformdb.ExpireProjectCandidatesParams{
 		ExpiredAt: nullableCandidateTime(candidate.CreatedAt), UpdatedAt: now,
