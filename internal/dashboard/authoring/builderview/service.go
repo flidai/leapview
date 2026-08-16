@@ -590,8 +590,8 @@ func sourceEvidenceSignalChecked(provenance authoring.Provenance) (*uisignals.Da
 			return nil, nil
 		}
 		item := &uisignals.DashboardBuilderProjectSourceEvidence{
-			Kind: "project", ProjectID: provenance.ForkedFrom.Project.SourceProjectID,
-			DashboardID: provenance.ForkedFrom.Project.SourceDashboardID.String(), ServingStateID: provenance.ForkedFrom.Project.Identity.GenerationID,
+			Kind: "project", ProjectID: provenance.ForkedFrom.Project.SourceProjectID.String(),
+			DashboardID: provenance.ForkedFrom.Project.SourceDashboardID.String(), GenerationID: provenance.ForkedFrom.Project.Identity.GenerationID,
 		}
 		if path := strings.TrimSpace(provenance.ForkedFrom.Project.Path); path != "" {
 			item.Path = &path

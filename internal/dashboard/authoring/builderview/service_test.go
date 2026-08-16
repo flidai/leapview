@@ -531,7 +531,7 @@ type builderLease struct {
 
 func (l *builderLease) Runtime() runtimehost.Runtime { return l.runtime }
 func (l *builderLease) Identity() projectgraph.ServingIdentity {
-	return projectgraph.ServingIdentity{ProjectID: "test", Environment: "dev", GenerationID: string(l.servingState)}
+	return projectgraph.ServingIdentity{ProjectID: "project", Environment: "dev", GenerationID: string(l.servingState)}
 }
 func (l *builderLease) ServingStateID() servingstate.ID { return l.servingState }
 func (l *builderLease) DuckLakeSnapshotID() int64       { return 0 }
