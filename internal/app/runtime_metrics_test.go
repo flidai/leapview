@@ -16,7 +16,7 @@ import (
 
 func TestRuntimeMetricsQueryDashboardUsesRuntimeLease(t *testing.T) {
 	provider := &leaseRecordingProvider{}
-	metrics := NewRuntimeMetrics(provider, "test")
+	metrics := NewRuntimeMetrics(provider, testProjectID.String())
 
 	if _, err := metrics.QueryDashboardPage(context.Background(), "executive-sales", "overview", dashboard.Filters{}); err != nil {
 		t.Fatalf("query dashboard: %v", err)
@@ -38,7 +38,7 @@ func TestRuntimeMetricsQueryDashboardUsesRuntimeLease(t *testing.T) {
 func TestRuntimeMetricsReleasesRuntimeLeaseWhenQueryFails(t *testing.T) {
 	wantErr := errors.New("query failed")
 	provider := &leaseRecordingProvider{runtime: leaseRecordingRuntime{queryErr: wantErr}}
-	metrics := NewRuntimeMetrics(provider, "test")
+	metrics := NewRuntimeMetrics(provider, testProjectID.String())
 
 	if _, err := metrics.QueryDashboardPage(context.Background(), "executive-sales", "overview", dashboard.Filters{}); !errors.Is(err, wantErr) {
 		t.Fatalf("query dashboard error = %v, want %v", err, wantErr)
@@ -52,7 +52,7 @@ func TestRuntimeMetricsDashboardRefreshLeasePinsOneRuntimeAcrossTargets(t *testi
 	first := &targetLeaseRuntime{id: "first"}
 	second := &targetLeaseRuntime{id: "second"}
 	provider := &switchingLeaseProvider{current: first}
-	metrics := NewRuntimeMetrics(provider, "test")
+	metrics := NewRuntimeMetrics(provider, testProjectID.String())
 	refreshMetrics := metrics.(interface {
 		WithDashboardRefreshLease(context.Context, func(context.Context) error) error
 		ExecuteConsumersPage(context.Context, consumer.Request, consumer.Publisher) error
@@ -181,11 +181,11 @@ func (l *recordingLease) Runtime() runtimehost.Runtime {
 }
 
 func (l *recordingLease) Identity() projectgraph.ServingIdentity {
-	return projectgraph.ServingIdentity{ProjectID: "test", Environment: "dev", GenerationID: "dep_test"}
+	return testServingIdentity
 }
 
 func (l *recordingLease) ServingStateID() servingstate.ID {
-	return "dep_test"
+	return servingstate.ID(testServingIdentity.GenerationID)
 }
 
 func (l *recordingLease) DuckLakeSnapshotID() int64 {
