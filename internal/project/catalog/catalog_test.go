@@ -76,6 +76,24 @@ func grant(t *testing.T, project projectgraph.ProjectGraph, id string, subject a
 	return accesssnapshot.Grant{ID: id, Canonical: canonical}
 }
 
+func TestDevelopmentBypassReturnsExactActiveGraphWithEmptyGrants(t *testing.T) {
+	service, _, _, _ := catalogFixture(t, nil)
+	ctx := context.Background()
+
+	search, err := service.Search(ctx, SearchRequest{PrincipalID: "dev", DevAuthBypass: true, Query: "orders", Limit: 20})
+	if err != nil || len(search.Items) != 1 || search.Items[0].Ref.ID != "model_orders" {
+		t.Fatalf("development search = %#v, %v", search, err)
+	}
+	listed, err := service.List(ctx, ListRequest{PrincipalID: "dev", DevAuthBypass: true, Limit: 20})
+	if err != nil || len(listed.Items) != 4 {
+		t.Fatalf("development list = %#v, %v", listed, err)
+	}
+	resolved, err := service.Resolve(ctx, "dev", Ref{ID: "model_orders", Kind: projectgraph.KindModel}, access.CapabilityResourceRead, true)
+	if err != nil || resolved.Ref.ID != "model_orders" {
+		t.Fatalf("development resolve = %#v, %v", resolved, err)
+	}
+}
+
 func TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources(t *testing.T) {
 	// Build the graph first so grants can be bound to its exact IDs.
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
@@ -101,7 +119,7 @@ func TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources(t *tes
 	if len(page.Items) != 1 || page.Items[0].Ref.ID != "model_orders" {
 		t.Fatalf("authorized search = %#v, want only group-granted model", page.Items)
 	}
-	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: "model_secret", Kind: projectgraph.KindModel}, access.CapabilityResourceRead); !errors.Is(err, ErrNotFound) {
+	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: "model_secret", Kind: projectgraph.KindModel}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unauthorized resolve error = %v, want non-enumerating not found", err)
 	}
 }
@@ -122,7 +140,7 @@ func TestResolveRejectsUnknownAndWrongKindIDs(t *testing.T) {
 	}
 	service, _ := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
 	for _, ref := range []Ref{{ID: "missing", Kind: projectgraph.KindModel}, {ID: "model_orders", Kind: projectgraph.KindSource}} {
-		if _, err := service.Resolve(context.Background(), principal.ID, ref, access.CapabilityResourceRead); !errors.Is(err, ErrNotFound) {
+		if _, err := service.Resolve(context.Background(), principal.ID, ref, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
 			t.Errorf("Resolve(%#v) error = %v, want not found", ref, err)
 		}
 	}
@@ -150,10 +168,10 @@ func TestResolveProjectRequiresProjectAdminCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, _ := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
-	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityProjectAdmin); err != nil {
+	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityProjectAdmin, false); err != nil {
 		t.Fatalf("project admin resolve = %v", err)
 	}
-	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityResourceRead); !errors.Is(err, ErrNotFound) {
+	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("project read resolve = %v, want not found", err)
 	}
 }

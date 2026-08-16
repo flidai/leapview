@@ -15,9 +15,14 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/manageddata"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Connection struct {
+	// ID is the stable authored resource identity. The map key remains the
+	// human-facing name so callers may select by name, while synchronization
+	// always returns the canonical ID to the target API.
+	ID    string
 	Kind  string
 	Root  string
 	Scope string
@@ -45,11 +50,14 @@ type Request struct {
 }
 
 type Result struct {
+	// Connection is the canonical authored resource ID used by target APIs.
 	Connection string
-	Root       string
-	Sources    []string
-	Manifest   manageddata.Manifest
-	Diff       manageddata.Diff
+	// ConnectionName retains the symbolic selector for human-facing output.
+	ConnectionName string
+	Root           string
+	Sources        []string
+	Manifest       manageddata.Manifest
+	Diff           manageddata.Diff
 }
 
 type Service struct {
@@ -82,9 +90,9 @@ func (s *Service) Plan(ctx context.Context, request Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("load project: %w", err)
 	}
-	connection, ok := project.Connections[request.Connection]
-	if !ok {
-		return Result{}, fmt.Errorf("project has unknown connection %q", request.Connection)
+	connectionName, connection, connectionID, err := resolveConnection(project, request.Connection)
+	if err != nil {
+		return Result{}, err
 	}
 	if request.Previous != nil {
 		if err := request.Previous.Validate(manageddata.Limits{}); err != nil {
@@ -100,7 +108,7 @@ func (s *Service) Plan(ctx context.Context, request Request) (Result, error) {
 		return Result{}, fmt.Errorf("connection %q root: %w", request.Connection, err)
 	}
 
-	sourceNames := selectedSourceNames(project, request.Connection)
+	sourceNames := selectedSourceNames(project, connectionName)
 	files, err := discoverFiles(s.files, root, sourceNames, project)
 	if err != nil {
 		return Result{}, err
@@ -138,12 +146,44 @@ func (s *Service) Plan(ctx context.Context, request Request) (Result, error) {
 		previous = *request.Previous
 	}
 	return Result{
-		Connection: request.Connection,
-		Root:       root,
-		Sources:    sourceNames,
-		Manifest:   manifest,
-		Diff:       manageddata.DiffManifests(previous, manifest),
+		Connection:     connectionID,
+		ConnectionName: connectionName,
+		Root:           root,
+		Sources:        sourceNames,
+		Manifest:       manifest,
+		Diff:           manageddata.DiffManifests(previous, manifest),
 	}, nil
+}
+
+// resolveConnection accepts either the authored display name or its explicit
+// stable resource ID. It never derives an ID from the name or from a target
+// lookup; the project projection must carry the authored ID.
+func resolveConnection(project Project, selector string) (string, Connection, string, error) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return "", Connection{}, "", fmt.Errorf("connection is required")
+	}
+	connectionName := selector
+	connection, ok := project.Connections[selector]
+	if !ok {
+		for name, candidate := range project.Connections {
+			if strings.TrimSpace(candidate.ID) == selector {
+				connectionName, connection, ok = name, candidate, true
+				break
+			}
+		}
+	}
+	if !ok {
+		return "", Connection{}, "", fmt.Errorf("project has unknown connection %q", selector)
+	}
+	if connection.ID == "" || connection.ID != strings.TrimSpace(connection.ID) {
+		return "", Connection{}, "", fmt.Errorf("connection %q has no canonical stable ID", connectionName)
+	}
+	connectionID, err := projectgraph.NewResourceID(connection.ID)
+	if err != nil {
+		return "", Connection{}, "", fmt.Errorf("connection %q has invalid stable ID %q: %w", connectionName, connection.ID, err)
+	}
+	return connectionName, connection, connectionID.String(), nil
 }
 
 func planningRoot(from string, connection Connection) (string, error) {

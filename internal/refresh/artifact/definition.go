@@ -8,6 +8,7 @@ import (
 )
 
 type Definition struct {
-	Models    map[string]*semanticmodel.Model
-	Pipelines map[string]refreshschedule.Definition
+	Models        map[string]*semanticmodel.Model
+	Pipelines     map[string]refreshschedule.Definition
+	ConnectionIDs map[string]string
 }

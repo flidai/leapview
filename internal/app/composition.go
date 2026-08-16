@@ -229,6 +229,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	authorizationInstaller, err := authorizationSnapshotInstaller(accessRepo)
+	if err != nil {
+		return fail(err)
+	}
 	if !production {
 		if err := accessModule.SeedLocalDeveloperPlatformAdmin(ctx); err != nil {
 			return fail(err)
@@ -283,7 +287,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				return manageddatamodule.Principal{}, false
 			}
 			principal, ok := auth.Principal(r)
-			return manageddatamodule.Principal{ID: principal.ID}, ok
+			return manageddatamodule.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
 		},
 		AuthorizeConnection: manageddatamodule.ConnectionAuthorizer(authorizeConnection),
 		Jobs:                jobModule, Workflow: jobModule,
@@ -348,6 +352,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		Environment:        environment,
 		ReadClaimedProject: readClaim,
 		ManagedData:        managedDataResolver,
+		Authorization:      authorizationInstaller,
 		OnDrained: func(_ servingstatemodule.ID, _ int64) {
 			go func() {
 				if err := retention.Run(context.Background(), false); err != nil {

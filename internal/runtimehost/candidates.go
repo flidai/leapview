@@ -366,9 +366,12 @@ func fingerprintCandidateBindings(bindings []CandidateBindingVersion) string {
 }
 
 func validateCandidateDataMode(state servingstate.State, compatibility CandidateCompatibility, data ManagedDataResolution) error {
-	if data.RevisionID != "" && data.RevisionID != compatibility.DataRevision {
-		return fmt.Errorf("%w: managed-data revision changed during preparation", ErrCandidateRuntimeIncompatible)
-	}
+	// ManagedDataResolution.RevisionID is an aggregate content binding digest
+	// owned by the managed-data resolver. CandidateCompatibility.DataRevision
+	// is release provenance (for example, sources:<digest> or snapshot:<id>).
+	// These identifiers intentionally live in different namespaces; immutable
+	// serving-state bindings and the exact managed connection set below are the
+	// runtime guarantees, so the two revisions must not be compared.
 	switch compatibility.DataMode {
 	case CandidateDataReuseSnapshot:
 		if state.DuckLakeSnapshotID <= 0 || len(compatibility.AuthoredConnections) != 0 {

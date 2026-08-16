@@ -107,6 +107,37 @@ func TestServiceRunsHookAfterArtifactValidationBeforePromotion(t *testing.T) {
 	}
 }
 
+func TestServiceSuppliesManagedDataRevisionsToValidationHooks(t *testing.T) {
+	repo := &fakeRepo{
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Environment: "prod", Status: servingstate.StatusPending},
+	}
+	validator := &fakeValidator{
+		validation: servingstate.Validation{Digest: "digest", ManifestJSON: `{}`, RootDir: "/tmp/extracted"},
+	}
+	hook := &fakeHook{}
+	service := NewService(repo, &fakeArtifacts{}, validator, hook)
+	revisions := map[string]string{"connection:orders": "sha256:revision"}
+
+	if _, err := service.ValidateWithManagedDataRevisions(t.Context(), "dep_1", revisions); err != nil {
+		t.Fatalf("ValidateWithManagedDataRevisions() error = %v", err)
+	}
+	if !reflect.DeepEqual(hook.validation.ManagedDataRevisions, revisions) {
+		t.Fatalf("managed data revisions = %#v, want %#v", hook.validation.ManagedDataRevisions, revisions)
+	}
+	revisions["connection:orders"] = "sha256:mutated"
+	if got := hook.validation.ManagedDataRevisions["connection:orders"]; got != "sha256:revision" {
+		t.Fatalf("hook revision changed with caller map: got %q", got)
+	}
+}
+
+func TestServiceRejectsMissingManagedDataRevisions(t *testing.T) {
+	service := NewService(&fakeRepo{}, &fakeArtifacts{}, &fakeValidator{})
+
+	if _, err := service.ValidateWithManagedDataRevisions(t.Context(), "dep_1", nil); err == nil {
+		t.Fatal("ValidateWithManagedDataRevisions() error = nil, want missing revisions error")
+	}
+}
+
 func TestServiceMarksFailedAndDoesNotPromoteWhenHookFails(t *testing.T) {
 	hookErr := errors.New("managed data current revision is unavailable")
 	repo := &fakeRepo{

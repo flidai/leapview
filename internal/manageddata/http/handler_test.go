@@ -139,6 +139,32 @@ func TestUploadSessionOperationsUseControlServiceAndPrincipal(t *testing.T) {
 	}
 }
 
+func TestDevelopmentBypassOnlySkipsConnectionSnapshotAuthorization(t *testing.T) {
+	deny := func(context.Context, string, string, string, access.Capability) (bool, error) { return false, nil }
+	for _, test := range []struct {
+		name       string
+		principal  managedhttp.Principal
+		wantStatus int
+	}{
+		{name: "development bypass", principal: managedhttp.Principal{ID: "dev", DevBypass: true}, wantStatus: http.StatusOK},
+		{name: "ordinary principal denied", principal: managedhttp.Principal{ID: "principal-a"}, wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler := managedhttp.NewHandler(managedhttp.Options{
+				Uploads: &fakeUploads{result: uploadFixture()}, Environment: "prod",
+				CurrentPrincipal:    func(*http.Request) (managedhttp.Principal, bool) { return test.principal, true },
+				AuthorizeConnection: deny,
+			})
+			recorder := call(t, "", func(w http.ResponseWriter, r *http.Request) {
+				handler.GetManagedDataUploadSession(w, r, "project-a", "orders", "upload-a")
+			})
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, test.wantStatus, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestUploadSessionsAreListedFromCollectionMetadata(t *testing.T) {
 	repo := metadataFixture()
 	repo.uploadSessions = []manageddata.UploadSession{{ID: "upload-a", CollectionID: "collection-a", CreatedAt: "2026-01-01T00:00:00Z"}}

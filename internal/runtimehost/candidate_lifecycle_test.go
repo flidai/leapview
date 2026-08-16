@@ -31,7 +31,7 @@ type candidateResolver struct {
 
 func (r *candidateResolver) ResolveManagedDataForIdentity(_ context.Context, identity projectgraph.ServingIdentity) (ManagedDataResolution, error) {
 	r.identity = identity
-	return ManagedDataResolution{RevisionID: "rev1", Roots: map[string]string{"warehouse": "/tmp/warehouse"}, Lifetime: r.lifetime}, nil
+	return ManagedDataResolution{RevisionID: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Roots: map[string]string{"warehouse": "/tmp/warehouse"}, Lifetime: r.lifetime}, nil
 }
 
 func candidateRegistration(expires time.Time) CandidateRegistration {
@@ -39,7 +39,7 @@ func candidateRegistration(expires time.Time) CandidateRegistration {
 		CandidateID: "candidate_1", OwnerID: "owner_1", ProjectID: "project_demo", ExpiresAt: expires,
 		Compatibility: CandidateCompatibility{
 			ArtifactDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			DataRevision:   "rev1", DataMode: CandidateDataReuseSnapshot, RuntimeVersion: "runtime-v1",
+			DataRevision:   "snapshot:42", DataMode: CandidateDataReuseSnapshot, RuntimeVersion: "runtime-v1",
 			AuthorizationFingerprint: "auth-v1", ManagedDataConnections: []string{"warehouse"},
 		},
 	}

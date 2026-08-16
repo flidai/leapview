@@ -80,11 +80,15 @@ type Result struct {
 
 type SearchRequest struct {
 	PrincipalID string
-	Query       string
-	Kinds       []projectgraph.Kind
-	Domain      string
-	Limit       int
-	Cursor      string
+	// DevAuthBypass admits the local development principal to the exact
+	// active-generation graph without consulting grants. The lease, graph,
+	// snapshot identity, and cursor checks still apply.
+	DevAuthBypass bool
+	Query         string
+	Kinds         []projectgraph.Kind
+	Domain        string
+	Limit         int
+	Cursor        string
 }
 
 type Page struct {
@@ -94,11 +98,15 @@ type Page struct {
 
 type ListRequest struct {
 	PrincipalID string
-	Parent      *Ref
-	Kinds       []projectgraph.Kind
-	Domain      string
-	Limit       int
-	Cursor      string
+	// DevAuthBypass admits the local development principal to the exact
+	// active-generation graph without consulting grants. The lease, graph,
+	// snapshot identity, and cursor checks still apply.
+	DevAuthBypass bool
+	Parent        *Ref
+	Kinds         []projectgraph.Kind
+	Domain        string
+	Limit         int
+	Cursor        string
 }
 
 // Service is an authorization-filtered catalog/search port. It does not keep
@@ -127,7 +135,7 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 	if len(request.Query) > MaxQueryLength {
 		return Page{}, fmt.Errorf("%w: query must not exceed %d characters", ErrInvalidRequest, MaxQueryLength)
 	}
-	lease, snapshot, graph, subjects, err := s.authorized(ctx, request.PrincipalID)
+	lease, snapshot, graph, subjects, err := s.authorized(ctx, request.PrincipalID, request.DevAuthBypass)
 	if err != nil {
 		return Page{}, err
 	}
@@ -152,9 +160,12 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 		if !matches(resource, request.Query) {
 			continue
 		}
-		allowed, err := allowsAny(snapshot, subjects, resource)
-		if err != nil {
-			return Page{}, err
+		allowed := request.DevAuthBypass
+		if !request.DevAuthBypass {
+			allowed, err = allowsAny(snapshot, subjects, resource)
+			if err != nil {
+				return Page{}, err
+			}
 		}
 		if allowed {
 			items = append(items, resultFor(resource))
@@ -172,7 +183,7 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 	if s == nil || s.leases == nil || s.subjects == nil {
 		return Page{}, ErrUnavailable
 	}
-	lease, snapshot, graph, subjects, err := s.authorized(ctx, request.PrincipalID)
+	lease, snapshot, graph, subjects, err := s.authorized(ctx, request.PrincipalID, request.DevAuthBypass)
 	if err != nil {
 		return Page{}, err
 	}
@@ -195,9 +206,12 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 		if !ok || resource.Kind != request.Parent.Kind {
 			return Page{}, ErrNotFound
 		}
-		allowed, err := allowsAny(snapshot, subjects, resource)
-		if err != nil {
-			return Page{}, err
+		allowed := request.DevAuthBypass
+		if !request.DevAuthBypass {
+			allowed, err = allowsAny(snapshot, subjects, resource)
+			if err != nil {
+				return Page{}, err
+			}
 		}
 		if !allowed {
 			return Page{}, ErrNotFound
@@ -217,9 +231,12 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 			if domain != "" && strings.ToLower(resource.Metadata.Domain) != domain {
 				continue
 			}
-			allowed, err := allowsAny(snapshot, subjects, resource)
-			if err != nil {
-				return Page{}, err
+			allowed := request.DevAuthBypass
+			if !request.DevAuthBypass {
+				allowed, err = allowsAny(snapshot, subjects, resource)
+				if err != nil {
+					return Page{}, err
+				}
 			}
 			if allowed {
 				seen[resource.ID] = struct{}{}
@@ -243,9 +260,12 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 			if _, ok := seen[resource.ID]; ok {
 				continue
 			}
-			allowed, err := allowsAny(snapshot, subjects, resource)
-			if err != nil {
-				return Page{}, err
+			allowed := request.DevAuthBypass
+			if !request.DevAuthBypass {
+				allowed, err = allowsAny(snapshot, subjects, resource)
+				if err != nil {
+					return Page{}, err
+				}
 			}
 			if allowed {
 				seen[resource.ID] = struct{}{}
@@ -268,14 +288,14 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 // Resolve validates the exact ID/kind against the leased graph and then checks
 // the required capability. Every failure is deliberately ErrNotFound so an
 // unauthorized ID cannot be distinguished from an unknown ID by callers.
-func (s *Service) Resolve(ctx context.Context, principalID string, ref Ref, capability access.Capability) (Result, error) {
+func (s *Service) Resolve(ctx context.Context, principalID string, ref Ref, capability access.Capability, devAuthBypass bool) (Result, error) {
 	if s == nil || s.leases == nil || s.subjects == nil {
 		return Result{}, ErrUnavailable
 	}
 	if !ref.valid() {
 		return Result{}, ErrNotFound
 	}
-	lease, snapshot, graph, subjects, err := s.authorized(ctx, principalID)
+	lease, snapshot, graph, subjects, err := s.authorized(ctx, principalID, devAuthBypass)
 	if err != nil {
 		return Result{}, err
 	}
@@ -286,6 +306,9 @@ func (s *Service) Resolve(ctx context.Context, principalID string, ref Ref, capa
 	}
 	if err := access.ValidateCapabilityForKind(resource.Kind, capability); err != nil {
 		return Result{}, ErrNotFound
+	}
+	if devAuthBypass {
+		return resultFor(resource), nil
 	}
 	for _, subject := range subjects {
 		allowed, err := snapshot.Allows(subject, mustResourceRef(ref), capability)
@@ -299,7 +322,7 @@ func (s *Service) Resolve(ctx context.Context, principalID string, ref Ref, capa
 	return Result{}, ErrNotFound
 }
 
-func (s *Service) authorized(ctx context.Context, principalID string) (Lease, accesssnapshot.AuthorizationSnapshot, projectgraph.ProjectGraph, []access.SubjectRef, error) {
+func (s *Service) authorized(ctx context.Context, principalID string, devAuthBypass bool) (Lease, accesssnapshot.AuthorizationSnapshot, projectgraph.ProjectGraph, []access.SubjectRef, error) {
 	principalID = strings.TrimSpace(principalID)
 	if principalID == "" {
 		return nil, accesssnapshot.AuthorizationSnapshot{}, projectgraph.ProjectGraph{}, nil, ErrNotFound
@@ -319,6 +342,9 @@ func (s *Service) authorized(ctx context.Context, principalID string) (Lease, ac
 	if lease.Identity() != snapshot.Identity() {
 		lease.Release()
 		return nil, accesssnapshot.AuthorizationSnapshot{}, projectgraph.ProjectGraph{}, nil, ErrSnapshotChanged
+	}
+	if devAuthBypass {
+		return lease, snapshot, snapshot.Project(), nil, nil
 	}
 	subjects, err := s.subjects.AuthorizationSubjects(ctx, principalID)
 	if err != nil {

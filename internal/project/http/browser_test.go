@@ -66,7 +66,7 @@ func (browserCatalogStub) List(context.Context, projectcatalog.ListRequest) (pro
 	return projectcatalog.Page{Items: []projectcatalog.Result{{Ref: projectcatalog.Ref{ID: "model:allowed", Kind: projectgraph.KindModel}}}}, nil
 }
 
-func (browserCatalogStub) Resolve(context.Context, string, projectcatalog.Ref, access.Capability) (projectcatalog.Result, error) {
+func (browserCatalogStub) Resolve(context.Context, string, projectcatalog.Ref, access.Capability, bool) (projectcatalog.Result, error) {
 	return projectcatalog.Result{}, projectcatalog.ErrNotFound
 }
 
@@ -79,7 +79,7 @@ func (pagedBrowserCatalogStub) List(_ context.Context, request projectcatalog.Li
 	return projectcatalog.Page{Items: []projectcatalog.Result{{Ref: projectcatalog.Ref{ID: "model:second", Kind: projectgraph.KindModel}}}}, nil
 }
 
-func (pagedBrowserCatalogStub) Resolve(context.Context, string, projectcatalog.Ref, access.Capability) (projectcatalog.Result, error) {
+func (pagedBrowserCatalogStub) Resolve(context.Context, string, projectcatalog.Ref, access.Capability, bool) (projectcatalog.Result, error) {
 	return projectcatalog.Result{}, projectcatalog.ErrNotFound
 }
 
@@ -94,7 +94,7 @@ func (s kindAwareBrowserCatalogStub) List(_ context.Context, request projectcata
 	return projectcatalog.Page{}, nil
 }
 
-func (kindAwareBrowserCatalogStub) Resolve(context.Context, string, projectcatalog.Ref, access.Capability) (projectcatalog.Result, error) {
+func (kindAwareBrowserCatalogStub) Resolve(context.Context, string, projectcatalog.Ref, access.Capability, bool) (projectcatalog.Result, error) {
 	return projectcatalog.Result{}, projectcatalog.ErrNotFound
 }
 

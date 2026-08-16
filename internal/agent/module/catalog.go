@@ -36,7 +36,7 @@ func (c CatalogService) Search(ctx context.Context, scope agenttools.Scope, requ
 	if err != nil {
 		return agenttools.CatalogPage{}, err
 	}
-	page, err := c.project.Search(ctx, projectcatalog.SearchRequest{PrincipalID: scope.PrincipalID, Query: request.Query, Kinds: kinds, Domain: request.Domain, Cursor: request.Cursor, Limit: request.Limit})
+	page, err := c.project.Search(ctx, projectcatalog.SearchRequest{PrincipalID: scope.PrincipalID, DevAuthBypass: scope.DevAuthBypass, Query: request.Query, Kinds: kinds, Domain: request.Domain, Cursor: request.Cursor, Limit: request.Limit})
 	if err != nil {
 		return agenttools.CatalogPage{}, catalogError(err)
 	}
@@ -59,7 +59,7 @@ func (c CatalogService) List(ctx context.Context, scope agenttools.Scope, reques
 		}
 		parent = &ref
 	}
-	page, err := c.project.List(ctx, projectcatalog.ListRequest{PrincipalID: scope.PrincipalID, Parent: parent, Kinds: kinds, Domain: request.Domain, Cursor: request.Cursor, Limit: request.Limit})
+	page, err := c.project.List(ctx, projectcatalog.ListRequest{PrincipalID: scope.PrincipalID, DevAuthBypass: scope.DevAuthBypass, Parent: parent, Kinds: kinds, Domain: request.Domain, Cursor: request.Cursor, Limit: request.Limit})
 	if err != nil {
 		return agenttools.CatalogPage{}, catalogError(err)
 	}
@@ -78,7 +78,7 @@ func (c CatalogService) Get(ctx context.Context, scope agenttools.Scope, request
 	if ref.Kind == projectgraph.KindProject {
 		capability = access.CapabilityProjectAdmin
 	}
-	result, err := c.project.Resolve(ctx, scope.PrincipalID, ref, capability)
+	result, err := c.project.Resolve(ctx, scope.PrincipalID, ref, capability, scope.DevAuthBypass)
 	if err != nil {
 		return agenttools.CatalogGetResult{}, catalogError(err)
 	}

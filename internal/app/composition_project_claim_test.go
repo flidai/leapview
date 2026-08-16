@@ -26,6 +26,23 @@ func TestReadClaimedProjectUsesTypedNotFoundForFreshInstall(t *testing.T) {
 	}
 }
 
+func TestAuthorizationSnapshotInstallerUsesAccessPersistence(t *testing.T) {
+	store := testStore(t)
+	installer, err := authorizationSnapshotInstaller(testAccessRepository(store))
+	if err != nil {
+		t.Fatalf("authorizationSnapshotInstaller() error = %v", err)
+	}
+	if installer == nil {
+		t.Fatal("authorizationSnapshotInstaller() returned nil installer")
+	}
+}
+
+func TestAuthorizationSnapshotInstallerRequiresAccessPersistence(t *testing.T) {
+	if _, err := authorizationSnapshotInstaller(nil); err == nil {
+		t.Fatal("authorizationSnapshotInstaller() accepted a nil repository")
+	}
+}
+
 func TestReadClaimedProjectFailsClosedAndChecksEnvironment(t *testing.T) {
 	claim := deployment.ProjectClaim{ProjectID: "finance", Environment: "prod", ClaimedBy: "principal", ClaimedAt: time.Now().UTC()}
 	for _, test := range []struct {

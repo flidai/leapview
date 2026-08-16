@@ -31,7 +31,7 @@ type GraphReader interface {
 
 type CatalogAuthorizer interface {
 	List(context.Context, projectcatalog.ListRequest) (projectcatalog.Page, error)
-	Resolve(context.Context, string, projectcatalog.Ref, access.Capability) (projectcatalog.Result, error)
+	Resolve(context.Context, string, projectcatalog.Ref, access.Capability, bool) (projectcatalog.Result, error)
 }
 
 type Principal struct {
@@ -379,7 +379,7 @@ func (h *BrowserHandler) assets(w stdhttp.ResponseWriter, r *stdhttp.Request) (p
 			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 			return "", nil, nil, false
 		}
-		allowedPage, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline})
+		allowedPage, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline})
 		if err != nil {
 			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 			return "", nil, nil, false
@@ -465,14 +465,14 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	}
 	if selector != "" {
 		for _, kind := range kinds {
-			if _, err := h.Catalog.Resolve(r.Context(), principal.ID, projectcatalog.Ref{ID: projectgraph.ResourceID(selector), Kind: kind}, access.CapabilityResourceRead); err == nil {
+			if _, err := h.Catalog.Resolve(r.Context(), principal.ID, projectcatalog.Ref{ID: projectgraph.ResourceID(selector), Kind: kind}, access.CapabilityResourceRead, principal.DevBypass); err == nil {
 				return true
 			}
 		}
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
 		return false
 	}
-	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, kinds)
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, kinds)
 	if err != nil {
 		if errors.Is(err, projectcatalog.ErrNotFound) {
 			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
@@ -510,7 +510,7 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	if !ok {
 		return projectnavigation.Catalog{}
 	}
-	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard})
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard})
 	if err != nil {
 		return projectnavigation.Catalog{}
 	}
@@ -534,7 +534,7 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	return out
 }
 
-func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID string, kinds []projectgraph.Kind) (projectcatalog.Page, error) {
+func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID string, devAuthBypass bool, kinds []projectgraph.Kind) (projectcatalog.Page, error) {
 	if catalog == nil {
 		return projectcatalog.Page{}, projectcatalog.ErrUnavailable
 	}
@@ -545,7 +545,7 @@ func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID 
 		if pages >= 10000 {
 			return projectcatalog.Page{}, fmt.Errorf("catalog pagination exceeded safety bound")
 		}
-		page, err := catalog.List(ctx, projectcatalog.ListRequest{PrincipalID: principalID, Kinds: kinds, Limit: projectcatalog.MaxLimit, Cursor: cursor})
+		page, err := catalog.List(ctx, projectcatalog.ListRequest{PrincipalID: principalID, DevAuthBypass: devAuthBypass, Kinds: kinds, Limit: projectcatalog.MaxLimit, Cursor: cursor})
 		if err != nil {
 			return projectcatalog.Page{}, err
 		}

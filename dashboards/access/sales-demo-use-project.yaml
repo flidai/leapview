@@ -5,10 +5,10 @@ metadata:
   name: sales-demo-use-project
 spec:
   object:
-    kind: project
-    id: project:leapview-showcase
+    kind: semantic_model
+    id: semantic-model:sales
   subject:
     kind: principal
-    email: demo@leapview.dev
+    principalId: email_2a7d2952c0d423cf3ea7b39428fb9420
     displayName: LeapView Demo
   capability: RESOURCE_USE

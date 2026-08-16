@@ -25,7 +25,8 @@ var (
 )
 
 type Principal struct {
-	ID string
+	ID        string
+	DevBypass bool
 }
 
 // CommandAuditInput is the transport-neutral fact set needed to persist the

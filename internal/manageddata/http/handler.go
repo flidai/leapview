@@ -619,12 +619,21 @@ func (h *Handler) authorizeConnection(w stdhttp.ResponseWriter, r *stdhttp.Reque
 }
 
 func (h *Handler) authorizeConnectionContext(r *stdhttp.Request, project, connection string, capability access.Capability) error {
+	// Route parameters are still validated for development principals. The
+	// bypass skips only the mutable authorization snapshot; it never admits an
+	// arbitrary project/connection selector or malformed resource identity.
+	if !validScope(project, connection) {
+		return ErrInvalid
+	}
 	if h.options.CurrentPrincipal == nil {
 		return ErrUnavailable
 	}
 	principal, ok := h.options.CurrentPrincipal(r)
 	if !ok || strings.TrimSpace(principal.ID) == "" {
 		return ErrUnauthorized
+	}
+	if principal.DevBypass {
+		return nil
 	}
 	if h.options.AuthorizeConnection == nil {
 		return ErrUnavailable

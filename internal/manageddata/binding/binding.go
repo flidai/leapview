@@ -150,16 +150,21 @@ func (b *Binder) ResolveCandidatePins(
 	if b == nil || b.repository == nil {
 		return nil, ErrRepository
 	}
-	if err != nil || !projectID.Valid() {
-		return nil, ErrArtifactMetadata
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid candidate environment %q", ErrArtifactMetadata, environment)
+	}
+	if !projectID.Valid() {
+		return nil, fmt.Errorf("%w: invalid candidate project %q", ErrArtifactMetadata, projectID)
 	}
 	connections = append([]projectgraph.ResourceID(nil), connections...)
 	sort.Slice(connections, func(i, j int) bool { return connections[i] < connections[j] })
 	pins := make(map[projectgraph.ResourceID]string, len(connections))
 	for index, connection := range connections {
-		if !connection.Valid() ||
-			index > 0 && connections[index-1] == connection {
-			return nil, ErrArtifactMetadata
+		if !connection.Valid() {
+			return nil, fmt.Errorf("%w: invalid candidate connection %q", ErrArtifactMetadata, connection)
+		}
+		if index > 0 && connections[index-1] == connection {
+			return nil, fmt.Errorf("%w: duplicate candidate connection %q", ErrArtifactMetadata, connection)
 		}
 		collection, err := b.repository.CollectionByProjectConnection(
 			ctx,
@@ -205,7 +210,7 @@ func (b *Binder) candidateRevision(
 		if pointer.CollectionID != collection.ID ||
 			pointer.Environment != environment ||
 			pointer.RevisionID.String() == "" {
-			return manageddata.Revision{}, ErrArtifactMetadata
+			return manageddata.Revision{}, fmt.Errorf("%w: environment pointer does not match collection %q and environment %q", ErrArtifactMetadata, collection.ID, environment)
 		}
 		revision, revisionErr := b.repository.RevisionByID(
 			ctx,
@@ -226,7 +231,7 @@ func (b *Binder) candidateRevision(
 	var selected manageddata.Revision
 	for _, revision := range revisions {
 		if revision.CollectionID != collection.ID {
-			return manageddata.Revision{}, ErrArtifactMetadata
+			return manageddata.Revision{}, fmt.Errorf("%w: revision %q belongs to collection %q, want %q", ErrArtifactMetadata, revision.ID, revision.CollectionID, collection.ID)
 		}
 		if revision.Status != manageddata.RevisionStatusReady {
 			continue
@@ -236,7 +241,7 @@ func (b *Binder) candidateRevision(
 			continue
 		}
 		if revision.Sequence == selected.Sequence && revision.ID != selected.ID {
-			return manageddata.Revision{}, ErrArtifactMetadata
+			return manageddata.Revision{}, fmt.Errorf("%w: revisions %q and %q share sequence %d", ErrArtifactMetadata, selected.ID, revision.ID, revision.Sequence)
 		}
 	}
 	if selected.ID == "" {

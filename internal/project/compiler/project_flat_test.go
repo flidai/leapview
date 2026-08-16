@@ -246,6 +246,10 @@ func TestFlatAccessRejectsWrongKindAndCapability(t *testing.T) {
 	if err := validateFlatAccess(project, resolver); err == nil || !strings.Contains(err.Error(), "unsupported capability") {
 		t.Fatalf("validateFlatAccess() accepted RESOURCE_SHARE on source")
 	}
+	project.Access.Grants["bad"] = manifest.Grant{ID: "grant:bad", Name: "bad", Object: manifest.SecurableRef{Kind: "project", ID: "project:test"}, Subject: manifest.Subject{Kind: "principal", PrincipalID: "principal:test"}, Capability: "RESOURCE_READ"}
+	if err := validateFlatAccess(project, resolver); err == nil || !strings.Contains(err.Error(), "unsupported capability") {
+		t.Fatalf("validateFlatAccess() accepted RESOURCE_READ as a direct project grant")
+	}
 }
 
 func TestCompileProjectGraphResolvesStableIDsAndProvenance(t *testing.T) {

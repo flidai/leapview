@@ -2,6 +2,7 @@ package validate
 
 import (
 	"context"
+	"fmt"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -40,6 +41,21 @@ func NewService(repo Repository, artifacts ArtifactStore, validator Validator, h
 }
 
 func (s Service) Validate(ctx context.Context, servingStateID servingstate.ID) (servingstate.State, error) {
+	return s.validate(ctx, servingStateID, nil)
+}
+
+// ValidateWithManagedDataRevisions supplies target-resolved revision pins to
+// validation hooks without embedding environment-specific state in the
+// portable project artifact. Candidate preparation is the authority that
+// resolves these immutable pins before the serving generation is validated.
+func (s Service) ValidateWithManagedDataRevisions(ctx context.Context, servingStateID servingstate.ID, revisions map[string]string) (servingstate.State, error) {
+	if revisions == nil {
+		return servingstate.State{}, fmt.Errorf("managed data revisions are required")
+	}
+	return s.validate(ctx, servingStateID, revisions)
+}
+
+func (s Service) validate(ctx context.Context, servingStateID servingstate.ID, revisions map[string]string) (servingstate.State, error) {
 	current, err := s.repo.ByID(ctx, servingStateID)
 	if err != nil {
 		return servingstate.State{}, err
@@ -57,6 +73,12 @@ func (s Service) Validate(ctx context.Context, servingStateID servingstate.ID) (
 	if err != nil {
 		_ = s.repo.MarkFailed(ctx, current.ID, err)
 		return servingstate.State{}, err
+	}
+	if revisions != nil {
+		validation.ManagedDataRevisions = make(map[string]string, len(revisions))
+		for connection, revision := range revisions {
+			validation.ManagedDataRevisions[connection] = revision
+		}
 	}
 	defer func() { _ = s.validator.Cleanup(validation) }()
 	for _, hook := range s.hooks {

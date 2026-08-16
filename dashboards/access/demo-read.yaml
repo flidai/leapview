@@ -9,5 +9,5 @@ spec:
     id: dashboard:visual-showcase
   subject:
     kind: principal
-    email: demo@leapview.dev
+    principalId: email_2a7d2952c0d423cf3ea7b39428fb9420
   capability: RESOURCE_READ

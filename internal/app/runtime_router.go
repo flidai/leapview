@@ -908,7 +908,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if routes.projectCatalog == nil {
 					return "", projectcatalog.ErrUnavailable
 				}
-				resolved, err := routes.projectCatalog.Resolve(ctx, scope.PrincipalID, projectcatalog.Ref{ID: id, Kind: kind}, capability)
+				resolved, err := routes.projectCatalog.Resolve(ctx, scope.PrincipalID, projectcatalog.Ref{ID: id, Kind: kind}, capability, scope.DevAuthBypass)
 				if err != nil {
 					return "", err
 				}
@@ -1156,7 +1156,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return manageddatamodule.Principal{}, false
 				}
 				principal, ok := platform.auth.Principal(r)
-				return manageddatamodule.Principal{ID: principal.ID}, ok
+				return manageddatamodule.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
 			},
 		})
 		if err != nil {

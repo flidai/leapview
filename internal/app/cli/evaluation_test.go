@@ -184,6 +184,9 @@ func TestBundledEvaluationProjectCompilesAndPlansOneSmallManagedFile(t *testing.
 		From:        filepath.Join(root, evaluationDataRelativePath),
 	})
 	require.NoError(t, err)
+	if plan.Connection != "connection:sample" || plan.ConnectionName != evaluationConnection {
+		t.Fatalf("evaluation connection identity = %q/%q, want connection:sample/%s", plan.Connection, plan.ConnectionName, evaluationConnection)
+	}
 	if len(plan.Manifest.Files) != 1 || plan.Manifest.Files[0].Path != "orders.csv" || plan.Manifest.Files[0].Size > 16<<10 {
 		t.Fatalf("evaluation manifest = %#v", plan.Manifest)
 	}

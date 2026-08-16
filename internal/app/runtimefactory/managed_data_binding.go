@@ -27,7 +27,7 @@ func (t projectBindingTarget) ManagedConnections() []manageddataruntimebinding.C
 		}
 		for name, connection := range model.Connections {
 			if connection.Kind == "managed" {
-				connections = append(connections, manageddataruntimebinding.Connection{ModelID: modelID, Name: name})
+				connections = append(connections, manageddataruntimebinding.Connection{ModelID: modelID, Name: name, ID: t.definition.NameIndex.Connections[name]})
 			}
 		}
 	}

@@ -95,7 +95,8 @@ type JobStore interface {
 }
 
 type Principal struct {
-	ID string
+	ID        string
+	DevBypass bool
 }
 
 // ConnectionAuthorizer is the module-owned authorization port. The HTTP
@@ -158,7 +159,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 			return manageddatahttp.Principal{}, false
 		}
 		principal, ok := cfg.CurrentPrincipal(r)
-		return manageddatahttp.Principal{ID: principal.ID}, ok
+		return manageddatahttp.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
 	}
 	if cfg.Disabled {
 		module := &Module{jobs: cfg.Jobs, currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection), maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker), finalizeExecution: finalizeExecution}

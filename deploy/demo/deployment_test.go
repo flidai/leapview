@@ -47,21 +47,29 @@ func TestDemoSharedLoginIsDashboardOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	var capabilities []string
+	var objects []string
+	const demoPrincipalID = "email_2a7d2952c0d423cf3ea7b39428fb9420"
 	for _, grant := range compiled.Manifest().Access.Grants {
-		if grant.Subject.Email != "demo@leapview.dev" {
+		if grant.Subject.PrincipalID != demoPrincipalID {
 			continue
 		}
 		require.Equal(t, "principal", grant.Subject.Kind)
-		require.Contains(t, []string{"project", "dashboard"}, grant.Object.Kind)
+		require.Contains(t, []string{"semantic_model", "dashboard"}, grant.Object.Kind)
 		require.NotEmpty(t, grant.Object.ID)
 		capabilities = append(capabilities, grant.Capability)
+		objects = append(objects, grant.Object.ID)
 	}
 	require.ElementsMatch(t, []string{
 		"RESOURCE_USE", "RESOURCE_USE",
 		"RESOURCE_READ", "RESOURCE_READ", "RESOURCE_READ", "RESOURCE_READ", "RESOURCE_READ",
 	}, capabilities)
+	require.ElementsMatch(t, []string{
+		"semantic-model:sales", "semantic-model:sales",
+		"semantic-model:operations", "semantic-model:operations",
+		"dashboard:executive-sales", "dashboard:fulfillment-operations", "dashboard:visual-showcase",
+	}, objects)
 	for _, binding := range compiled.Manifest().Access.RoleBindings {
-		require.NotEqual(t, "demo@leapview.dev", binding.Subject.Email,
+		require.NotEqual(t, demoPrincipalID, binding.Subject.PrincipalID,
 			"shared demo login must not inherit a role that enables chat or mutations")
 	}
 }

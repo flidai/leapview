@@ -98,6 +98,11 @@ func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Re
 			m.writeCommandFailure(w, r, operationID, apigenfailure.New("approval_credential_required", "A bounded publication credential is required"))
 			return
 		}
+	} else {
+		// Ungated development deployments still need the authenticated actor on
+		// their durable activation job. Approval credential evidence is only
+		// required and inspected for protected targets.
+		approvalActor.PrincipalID = principal.ID
 	}
 	if m.jobs.Coordinator == nil || m.api.Releases == nil {
 		m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Deployment service is unavailable"))

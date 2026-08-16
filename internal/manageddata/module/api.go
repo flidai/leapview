@@ -13,6 +13,7 @@ import (
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type PageParams = apigenapi.PageParams
@@ -114,7 +115,7 @@ func (m *Module) ListUploadSessionEvents(w http.ResponseWriter, r *http.Request,
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "UPLOAD_SERVICE_UNAVAILABLE", "Managed-data uploads are unavailable", nil)
 		return
 	}
-	if m.currentPrincipal == nil || m.authorizeConnection == nil {
+	if m.currentPrincipal == nil {
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "CONNECTION_AUTHORIZATION_UNAVAILABLE", "Connection authorization is unavailable", nil)
 		return
 	}
@@ -123,14 +124,28 @@ func (m *Module) ListUploadSessionEvents(w http.ResponseWriter, r *http.Request,
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
 		return
 	}
-	allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, connectionID, access.CapabilityResourceRead)
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
+	if _, err := projectgraph.NewResourceID(projectID); err != nil {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_REQUEST", "Project is invalid", nil)
 		return
 	}
-	if !allowed {
-		apitransport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Connection access is forbidden", nil)
+	if _, err := projectgraph.NewResourceID(connectionID); err != nil {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_REQUEST", "Connection is invalid", nil)
 		return
+	}
+	if !principal.DevBypass {
+		if m.authorizeConnection == nil {
+			apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "CONNECTION_AUTHORIZATION_UNAVAILABLE", "Connection authorization is unavailable", nil)
+			return
+		}
+		allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, connectionID, access.CapabilityResourceRead)
+		if err != nil {
+			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
+			return
+		}
+		if !allowed {
+			apitransport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Connection access is forbidden", nil)
+			return
+		}
 	}
 	if _, err := m.uploads.RecoverUpload(r.Context(), control.UploadRequest{Project: projectID, Connection: connectionID, UploadID: sessionID}); err != nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "UPLOAD_SESSION_NOT_FOUND", "Upload session not found", nil)

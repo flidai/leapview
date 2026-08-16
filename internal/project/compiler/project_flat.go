@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	accesspolicy "github.com/flidai/leapview/internal/access/policy"
 	"github.com/flidai/leapview/internal/analytics/connectors"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -585,13 +586,15 @@ func validateFlatAccessSubject(project Project, name, kind string, subject manif
 }
 
 func validCapabilityForKind(capability, kind string) bool {
-	if capability == "PROJECT_ADMIN" {
-		return kind == "project"
+	resourceKind, err := projectgraph.ParseKind(kind)
+	if err != nil {
+		return false
 	}
-	if kind == "dashboard" {
-		return capability == "RESOURCE_USE" || capability == "RESOURCE_READ" || capability == "RESOURCE_EDIT" || capability == "RESOURCE_MANAGE" || capability == "RESOURCE_SHARE" || capability == "RESOURCE_PUBLISH"
+	canonicalCapability, err := access.ParseCapability(capability)
+	if err != nil {
+		return false
 	}
-	return capability == "RESOURCE_USE" || capability == "RESOURCE_READ" || capability == "RESOURCE_EDIT" || capability == "RESOURCE_MANAGE"
+	return access.SupportsCapability(resourceKind, canonicalCapability)
 }
 
 func accessIDsByName(project Project, kind string) map[string]string {

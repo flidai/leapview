@@ -80,6 +80,60 @@ func TestServicePlanDiscoversExactAndRecursiveSourcesDeterministically(t *testin
 	}
 }
 
+func TestServicePlanResolvesNameAndCanonicalConnectionID(t *testing.T) {
+	root := t.TempDir()
+	from := filepath.Join(root, "upload")
+	writeFile(t, filepath.Join(from, "orders.csv"), "orders")
+	project := testProject(root, Connection{ID: "connection:orders", Kind: "managed"}, map[string]Source{
+		"orders.file": {Connection: "warehouse", Path: "orders.csv", Format: "csv"},
+	})
+
+	byName, err := testService(project).Plan(context.Background(), Request{
+		ProjectPath: "project.yaml", Connection: "warehouse", From: from,
+	})
+	if err != nil {
+		t.Fatalf("Plan(name) error = %v", err)
+	}
+	if byName.Connection != "connection:orders" || byName.ConnectionName != "warehouse" {
+		t.Fatalf("Plan(name) identity = %#v", byName)
+	}
+
+	byID, err := testService(project).Plan(context.Background(), Request{
+		ProjectPath: "project.yaml", Connection: "connection:orders", From: from,
+	})
+	if err != nil {
+		t.Fatalf("Plan(ID) error = %v", err)
+	}
+	if byID.Connection != byName.Connection || byID.ConnectionName != byName.ConnectionName || byID.Manifest.RevisionID() != byName.Manifest.RevisionID() {
+		t.Fatalf("Plan(ID) identity = %#v, by name = %#v", byID, byName)
+	}
+}
+
+func TestServicePlanRejectsMissingOrInvalidConnectionID(t *testing.T) {
+	root := t.TempDir()
+	from := filepath.Join(root, "upload")
+	writeFile(t, filepath.Join(from, "orders.csv"), "orders")
+	for _, test := range []struct {
+		name string
+		id   string
+		want string
+	}{
+		{name: "missing", want: "no canonical stable ID"},
+		{name: "invalid", id: "not a valid resource id", want: "invalid stable ID"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := testProject(root, Connection{Kind: "managed"}, map[string]Source{
+				"orders.file": {Connection: "warehouse", Path: "orders.csv", Format: "csv"},
+			})
+			project.Connections["warehouse"] = Connection{ID: test.id, Kind: "managed"}
+			_, err := testService(project).Plan(context.Background(), Request{
+				ProjectPath: "project.yaml", Connection: "warehouse", From: from,
+			})
+			assertErrorContains(t, err, test.want)
+		})
+	}
+}
+
 func TestServicePlanRejectsPathsOutsideConnectionRoot(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "outside.csv"), "outside")
@@ -256,10 +310,13 @@ func TestServicePlanPropagatesProjectLoadErrors(t *testing.T) {
 }
 
 func testProject(_ string, connection Connection, sources map[string]Source) Project {
+	if connection.ID == "" {
+		connection.ID = "connection:warehouse"
+	}
 	return Project{
 		Connections: map[string]Connection{
 			"warehouse": connection,
-			"other":     {Kind: "managed"},
+			"other":     {ID: "connection:other", Kind: "managed"},
 		},
 		Sources: sources,
 	}

@@ -2,6 +2,7 @@ package module
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
@@ -33,6 +34,31 @@ func TestCandidateManagedPinsSortAndFindMissingConnections(t *testing.T) {
 	pins := map[string]string{"z_connection": "revision_z", "a_connection": "revision_a"}
 	require.Equal(t, []release.ManagedDataPin{{ConnectionID: "a_connection", RevisionID: "revision_a"}, {ConnectionID: "z_connection", RevisionID: "revision_z"}}, candidateManagedDataPins(pins))
 	require.Equal(t, []string{"missing"}, missingCandidateManagedConnections([]string{"a_connection", "missing"}, pins))
+}
+
+func TestCandidateSourcesDataRevisionIsPinOrderIndependent(t *testing.T) {
+	first := candidateSourcesDataRevision("sha256:artifact", map[string]string{
+		"z_connection": "revision_z",
+		"a_connection": "revision_a",
+	})
+	second := candidateSourcesDataRevision("sha256:artifact", map[string]string{
+		"a_connection": "revision_a",
+		"z_connection": "revision_z",
+	})
+	if first != second {
+		t.Fatalf("source data revision changed with pin order: %q != %q", first, second)
+	}
+	if !strings.HasPrefix(first, "sources:") {
+		t.Fatalf("source data revision = %q, want sources: prefix", first)
+	}
+}
+
+func TestCandidateSourcesDataRevisionChangesWhenManagedDataPinChanges(t *testing.T) {
+	base := map[string]string{"orders": "revision_a"}
+	changed := map[string]string{"orders": "revision_b"}
+	if candidateSourcesDataRevision("sha256:artifact", base) == candidateSourcesDataRevision("sha256:artifact", changed) {
+		t.Fatal("source data revision did not change when managed-data pin changed")
+	}
 }
 
 func TestCandidateArtifactSetCarriesOneGenerationIdentity(t *testing.T) {

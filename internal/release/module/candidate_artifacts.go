@@ -3,6 +3,8 @@ package module
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -111,7 +113,7 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 		}
 	}
 	dataMode := release.GenerationDataRefreshSources
-	dataRevision := "sources:" + request.ArtifactDigest
+	dataRevision := candidateSourcesDataRevision(request.ArtifactDigest, base.pins)
 	if base.active && base.snapshotID > 0 && !plan.Summary.MaterializationImpact && base.graph.Validate() == nil {
 		dataMode = release.GenerationDataReuseSnapshot
 		dataRevision = fmt.Sprintf("snapshot:%d", base.snapshotID)
@@ -134,7 +136,7 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 		_ = service.states.MarkFailed(ctx, state.ID, err)
 		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
 	}
-	validated, err := service.validator.Validate(ctx, state.ID)
+	validated, err := service.validator.ValidateWithManagedDataRevisions(ctx, state.ID, base.pins)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -272,6 +274,24 @@ func candidateManagedDataPins(values map[string]string) []release.ManagedDataPin
 		result = append(result, release.ManagedDataPin{ConnectionID: connection, RevisionID: values[connection]})
 	}
 	return result
+}
+
+// candidateSourcesDataRevision is release provenance for a source-refresh
+// candidate. It includes the source artifact and the complete, sorted set of
+// managed-data pins so the same candidate cannot silently race a pin change.
+func candidateSourcesDataRevision(artifactDigest string, pins map[string]string) string {
+	payload := struct {
+		ArtifactDigest  string                   `json:"artifactDigest"`
+		ManagedDataPins []release.ManagedDataPin `json:"managedDataPins"`
+	}{ArtifactDigest: artifactDigest, ManagedDataPins: candidateManagedDataPins(pins)}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		// The payload contains only strings and a concrete slice, so marshal
+		// failure is impossible unless this shape changes incompatibly.
+		panic("marshal candidate source data revision: " + err.Error())
+	}
+	digest := sha256.Sum256(encoded)
+	return "sources:sha256:" + fmt.Sprintf("%x", digest[:])
 }
 
 func missingCandidateManagedConnections(connections []string, pins map[string]string) []string {

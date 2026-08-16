@@ -427,7 +427,7 @@ func (p Project) RefreshDefinition() *refreshartifact.Definition {
 
 // RefreshProjection narrows a project manifest to refresh-owned resources.
 func RefreshProjection(value manifest.Project) *refreshartifact.Definition {
-	return &refreshartifact.Definition{Models: cloneValue(value.SemanticModels), Pipelines: cloneValue(value.RefreshPipelines)}
+	return &refreshartifact.Definition{Models: cloneValue(value.SemanticModels), Pipelines: cloneValue(value.RefreshPipelines), ConnectionIDs: cloneValue(value.NameIndex.Connections)}
 }
 
 func cloneManifest(value manifest.Project) manifest.Project { return cloneValue(value) }

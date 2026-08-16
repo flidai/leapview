@@ -260,6 +260,11 @@ func TestPublishProjectCandidatePromotesAndRequestsTheExactReadyCandidate(t *tes
 		coordinator.created.Evidence.CandidateRevision != ready.Revision {
 		t.Fatalf("deployment request = %#v", coordinator.created)
 	}
+	workflow, err := coordinator.created.Workflow("deployment_1")
+	require.NoError(t, err)
+	if workflow.Job.PrincipalID != "principal_1" {
+		t.Fatalf("activation job principal = %q, want principal_1", workflow.Job.PrincipalID)
+	}
 	if len(lifecycle.retired) != 1 || lifecycle.retired[0] != ready.ID {
 		t.Fatalf("retired candidate runtimes = %#v, want %q", lifecycle.retired, ready.ID)
 	}

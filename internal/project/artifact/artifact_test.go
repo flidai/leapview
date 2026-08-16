@@ -107,6 +107,9 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	if got := decoded.Manifest().NameIndex.SemanticModels["sales"]; got != "semantic:sales" {
 		t.Fatalf("name index semantic model = %q, want semantic:sales", got)
 	}
+	if got := decoded.RefreshDefinition().ConnectionIDs["warehouse"]; got != "connection:warehouse" {
+		t.Fatalf("refresh connection ID = %q, want connection:warehouse", got)
+	}
 	var wire map[string]any
 	if err := json.Unmarshal(first.Canonical(), &wire); err != nil {
 		t.Fatal(err)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 )
 
 // accessRepository resolves the repository port exposed by the access module's
@@ -27,6 +28,22 @@ func accessRepository(module *accessmodule.Module) (access.Repository, error) {
 		return nil, fmt.Errorf("access repository is unavailable")
 	}
 	return repository, nil
+}
+
+// authorizationSnapshotInstaller resolves the access persistence port needed
+// by runtimehost during generation publication. The public access.Repository
+// contract intentionally does not expose generation snapshot installation, so
+// composition must verify that the concrete persistence adapter supports the
+// runtime-owned installer contract before serving starts.
+func authorizationSnapshotInstaller(repository access.Repository) (runtimehostmodule.AuthorizationSnapshotInstaller, error) {
+	if repository == nil {
+		return nil, fmt.Errorf("access repository is unavailable")
+	}
+	installer, ok := repository.(runtimehostmodule.AuthorizationSnapshotInstaller)
+	if !ok {
+		return nil, fmt.Errorf("access repository does not support authorization snapshot installation")
+	}
+	return installer, nil
 }
 
 func recordAccessAudit(ctx context.Context, module *accessmodule.Module, input access.AuditEventInput) error {

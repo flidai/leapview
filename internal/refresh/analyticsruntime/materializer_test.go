@@ -56,6 +56,21 @@ func TestRefreshMaterializerUsesActiveReleaseConnectionEvidence(t *testing.T) {
 	}
 }
 
+func TestBindManagedDataRootsUsesStableConnectionID(t *testing.T) {
+	definition := &artifact.Definition{
+		ConnectionIDs: map[string]string{"olist": "connection:olist"},
+		Models: map[string]*semanticmodel.Model{
+			"semantic-model:sales": {Connections: map[string]semanticmodel.Connection{"olist": {Kind: "managed"}}},
+		},
+	}
+	if err := bindManagedDataRoots(definition, map[string]string{"connection:olist": "/managed/olist/revision"}); err != nil {
+		t.Fatalf("bindManagedDataRoots() error = %v", err)
+	}
+	if got := definition.Models["semantic-model:sales"].Connections["olist"].Root; got != "/managed/olist/revision" {
+		t.Fatalf("managed root = %q, want stable-ID resolution", got)
+	}
+}
+
 type recordingExecutor struct {
 	request analyticsmaterialization.Request
 }
