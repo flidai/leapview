@@ -82,12 +82,16 @@ func canonicalSnapshot(t testing.TB, grants []struct {
 	id         string
 	resource   access.ResourceRef
 	capability access.Capability
-}, policies []accesssnapshot.DataPolicy) accesssnapshot.AuthorizationSnapshot {
+}, policies []accesssnapshot.DataPolicy, principal ...string) accesssnapshot.AuthorizationSnapshot {
 	t.Helper()
 	graph, identity, _, _, _ := canonicalGraph(t)
+	principalID := "alice"
+	if len(principal) > 0 {
+		principalID = principal[0]
+	}
 	canonicalGrants := make([]accesssnapshot.Grant, 0, len(grants))
 	for _, item := range grants {
-		subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "alice")
+		subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, principalID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,21 +108,38 @@ func canonicalSnapshot(t testing.TB, grants []struct {
 	return snapshot
 }
 
-func canonicalMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.AuthorizationSnapshot, recorder access.CanonicalAuditRecorder, arrowError ...error) Metrics {
+func canonicalMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.AuthorizationSnapshot, recorder access.CanonicalAuditRecorder, options ...any) Metrics {
 	t.Helper()
 	underlying := canonicalMetrics{model: &semanticmodel.Model{Name: "sales", Sources: map[string]semanticmodel.Source{"ratings": {}}, Tables: map[string]semanticmodel.Table{"ratings": {Source: "ratings", Dimensions: map[string]semanticmodel.MetricDimension{"region": {Field: "ratings.region", Table: "ratings", Name: "region"}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"region": {Name: "region", Bindings: map[string]semanticmodel.DimensionBinding{"ratings": {Field: "ratings.region"}}}}}}
-	if len(arrowError) > 0 {
-		underlying.arrowError = arrowError[0]
+	principalID, credentialID := "alice", ""
+	stringIndex := 0
+	for _, option := range options {
+		switch value := option.(type) {
+		case error:
+			underlying.arrowError = value
+		case string:
+			if stringIndex == 0 {
+				principalID = value
+			} else {
+				credentialID = value
+			}
+			stringIndex++
+		}
 	}
 	return New(underlying, Options{
 		SnapshotFromContext: func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) { return snapshot, nil },
 		SubjectsFromContext: func(context.Context, string) ([]access.SubjectRef, error) {
-			subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "alice")
+			subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, principalID)
 			return []access.SubjectRef{subject}, err
 		},
-		PrincipalFromContext:  func(context.Context) (Principal, bool) { return Principal{ID: "alice"}, true },
-		CredentialFromContext: func(context.Context) (access.APICredential, bool) { return access.APICredential{}, false },
-		AuditRecorder:         recorder,
+		PrincipalFromContext: func(context.Context) (Principal, bool) { return Principal{ID: principalID}, true },
+		CredentialFromContext: func(context.Context) (access.APICredential, bool) {
+			if credentialID == "" {
+				return access.APICredential{}, false
+			}
+			return access.APICredential{Token: access.APIToken{ID: credentialID}}, true
+		},
+		AuditRecorder: recorder,
 	})
 }
 
@@ -197,6 +218,28 @@ func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
 	}
 	if governed.EffectivePolicyFingerprint == usGoverned.EffectivePolicyFingerprint {
 		t.Fatal("policy fingerprint did not isolate changed RLS policy")
+	}
+	bobSnapshot := canonicalSnapshot(t, []struct {
+		id         string
+		resource   access.ResourceRef
+		capability access.Capability
+	}{{"physical", physical, access.CapabilityResourceUse}}, policies, "bob")
+	bobMetrics := canonicalMetricsWithSnapshot(t, bobSnapshot, nil, "bob", "token-b")
+	bobRequest := request
+	bobRequest.PrincipalID = "bob"
+	bobGoverned, _, err := bobMetrics.GovernDataQuery(context.Background(), bobRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceMetrics := canonicalMetricsWithSnapshot(t, snapshot, nil, "alice", "token-a")
+	aliceRequest := request
+	aliceRequest.PrincipalID = "alice"
+	aliceGoverned, _, err := aliceMetrics.GovernDataQuery(context.Background(), aliceRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bobGoverned.EffectivePolicyFingerprint == aliceGoverned.EffectivePolicyFingerprint {
+		t.Fatal("policy fingerprint did not isolate subject/credential identity")
 	}
 }
 
