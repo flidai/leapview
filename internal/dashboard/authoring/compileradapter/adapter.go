@@ -128,7 +128,7 @@ func (a *Adapter) Compile(ctx context.Context, projectID, semanticModelID graph.
 		return authoringservice.Compilation{}, fmt.Errorf("dashboard authoring compiler serving identity project %q does not match %q", identity.ProjectID, projectID)
 	}
 	return authoringservice.Compilation{
-		Definition:             compiled.Definition,
-		SemanticServingStateID: strings.TrimSpace(identity.GenerationID),
+		Definition:       compiled.Definition,
+		SemanticIdentity: identity,
 	}, nil
 }

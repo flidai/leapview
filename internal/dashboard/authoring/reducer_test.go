@@ -9,6 +9,7 @@ import (
 
 	dashboardmodel "github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func reducerFixture(t *testing.T) (DashboardLifecycle, Revision) {
@@ -260,7 +261,8 @@ func TestApplyEditStaleHashAndPublishedLifecycle(t *testing.T) {
 	}
 	next, revision := applyReducer(t, lifecycle, current, reducerCommand(current, &MetadataPatch{Description: stringPtr("next")}))
 	next.Status = LifecycleStatusPublished
-	next.Published = &Published{Revision: current.Token(), Compilation: CompiledRevisionToken{AuthoredRevision: current.Token(), DefinitionHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", SemanticServingStateID: "state-1"}, PublishedAt: time.Date(2026, 8, 15, 12, 30, 0, 0, time.UTC), Provenance: contractProvenance()}
+	identity, _ := projectgraph.NewServingIdentity("project-1", "production", "state-1")
+	next.Published = &Published{Revision: current.Token(), Compilation: CompiledRevisionToken{AuthoredRevision: current.Token(), DefinitionHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", SemanticIdentity: identity}, PublishedAt: time.Date(2026, 8, 15, 12, 30, 0, 0, time.UTC), Provenance: contractProvenance()}
 	next, revision = applyReducer(t, next, revision, reducerCommand(revision, &MetadataPatch{Description: stringPtr("published draft")}))
 	if next.Status != LifecycleStatusPublished || next.Published == nil || next.Draft.Revision != revision.Token() {
 		t.Fatalf("published lifecycle was not retained with new draft: %#v", next)

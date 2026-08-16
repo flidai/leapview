@@ -39,7 +39,7 @@ type fakeCompiler struct {
 	invalidDefinition bool
 }
 
-func (c *fakeCompiler) Compile(_ context.Context, _ graph.ResourceID, _ graph.ResourceID, document authoring.Dashboard) (service.Compilation, error) {
+func (c *fakeCompiler) Compile(_ context.Context, projectID graph.ResourceID, _ graph.ResourceID, document authoring.Dashboard) (service.Compilation, error) {
 	c.calls++
 	if c.err != nil {
 		return service.Compilation{}, c.err
@@ -52,7 +52,8 @@ func (c *fakeCompiler) Compile(_ context.Context, _ graph.ResourceID, _ graph.Re
 	if state == "" {
 		state = "state-1"
 	}
-	return service.Compilation{Definition: dashboarddefinition.Definition{ID: id.String(), SemanticModel: semantic.String(), Title: document.Title, Pages: document.Pages, Visualizations: map[string]visualizationdefinition.Definition{}}, SemanticServingStateID: state}, nil
+	identity, _ := graph.NewServingIdentity(projectID, "production", state)
+	return service.Compilation{Definition: dashboarddefinition.Definition{ID: id.String(), SemanticModel: semantic.String(), Title: document.Title, Pages: document.Pages, Visualizations: map[string]visualizationdefinition.Definition{}}, SemanticIdentity: identity}, nil
 }
 
 type fakeRepository struct {
@@ -247,7 +248,7 @@ func TestCreateEditReplayPublishArchiveAndFailures(t *testing.T) {
 	if err != nil || published.Lifecycle.Status != authoring.LifecycleStatusPublished || repository.publishCalls != 1 {
 		t.Fatalf("published = %#v, err = %v", published, err)
 	}
-	if repository.lastPublish.Compilation.Definition.ID != string(later.Lifecycle.ID) || repository.lastPublish.Compilation.SemanticServingStateID != "state-1" || repository.lastPublish.Published.Compilation != repository.lastPublish.Compilation.Token() {
+	if repository.lastPublish.Compilation.Definition.ID != string(later.Lifecycle.ID) || repository.lastPublish.Compilation.SemanticIdentity.GenerationID != "state-1" || repository.lastPublish.Published.Compilation != repository.lastPublish.Compilation.Token() {
 		t.Fatalf("compiled publication input = %#v", repository.lastPublish)
 	}
 	archive := authoring.Command{ID: "archive-1", DashboardID: later.Lifecycle.ID, ExpectedRevision: published.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Archive: &authoring.ArchivePayload{}}

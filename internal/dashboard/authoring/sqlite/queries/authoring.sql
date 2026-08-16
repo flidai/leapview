@@ -60,7 +60,7 @@ WHERE project_id = sqlc.arg(project_id)
   AND revision_number = sqlc.arg(revision_number)
   AND content_hash = sqlc.arg(content_hash)
   AND definition_hash = sqlc.arg(definition_hash)
-  AND semantic_serving_state_id = sqlc.arg(semantic_serving_state_id);
+  AND semantic_identity_json = sqlc.arg(semantic_identity_json);
 
 -- name: InsertAuthoringDashboard :exec
 INSERT INTO dashboard_authoring_dashboards
@@ -100,34 +100,34 @@ WHERE project_id = sqlc.arg(project_id)
 INSERT INTO dashboard_authoring_published
   (project_id, dashboard_id, revision_id, revision_number, content_hash,
    compiled_revision_id, compiled_revision_number, compiled_content_hash,
-   compiled_definition_hash, compiled_semantic_serving_state_id, provenance_json, published_at)
+   compiled_definition_hash, compiled_semantic_identity_json, provenance_json, published_at)
 VALUES (sqlc.arg(project_id), sqlc.arg(dashboard_id), sqlc.arg(revision_id), sqlc.arg(revision_number),
         sqlc.arg(content_hash), sqlc.arg(compiled_revision_id), sqlc.arg(compiled_revision_number), sqlc.arg(compiled_content_hash),
-        sqlc.arg(compiled_definition_hash), sqlc.arg(compiled_semantic_serving_state_id), sqlc.arg(provenance_json), sqlc.arg(published_at));
+        sqlc.arg(compiled_definition_hash), sqlc.arg(compiled_semantic_identity_json), sqlc.arg(provenance_json), sqlc.arg(published_at));
 
 -- name: UpsertAuthoringPublished :exec
 INSERT INTO dashboard_authoring_published
   (project_id, dashboard_id, revision_id, revision_number, content_hash,
    compiled_revision_id, compiled_revision_number, compiled_content_hash,
-   compiled_definition_hash, compiled_semantic_serving_state_id, provenance_json, published_at)
+   compiled_definition_hash, compiled_semantic_identity_json, provenance_json, published_at)
 VALUES (sqlc.arg(project_id), sqlc.arg(dashboard_id), sqlc.arg(revision_id), sqlc.arg(revision_number),
         sqlc.arg(content_hash), sqlc.arg(compiled_revision_id), sqlc.arg(compiled_revision_number), sqlc.arg(compiled_content_hash),
-        sqlc.arg(compiled_definition_hash), sqlc.arg(compiled_semantic_serving_state_id), sqlc.arg(provenance_json), sqlc.arg(published_at))
+        sqlc.arg(compiled_definition_hash), sqlc.arg(compiled_semantic_identity_json), sqlc.arg(provenance_json), sqlc.arg(published_at))
 ON CONFLICT(project_id, dashboard_id) DO UPDATE SET
   revision_id = excluded.revision_id, revision_number = excluded.revision_number,
   content_hash = excluded.content_hash, compiled_revision_id = excluded.compiled_revision_id,
   compiled_revision_number = excluded.compiled_revision_number, compiled_content_hash = excluded.compiled_content_hash,
   compiled_definition_hash = excluded.compiled_definition_hash,
-  compiled_semantic_serving_state_id = excluded.compiled_semantic_serving_state_id,
+  compiled_semantic_identity_json = excluded.compiled_semantic_identity_json,
   provenance_json = excluded.provenance_json,
   published_at = excluded.published_at;
 
 -- name: InsertAuthoringCompiledRevision :exec
 INSERT INTO dashboard_authoring_compiled_revisions
   (project_id, dashboard_id, revision_id, revision_number, content_hash,
-   definition_json, definition_hash, semantic_serving_state_id, compiled_at)
+   definition_json, definition_hash, semantic_identity_json, compiled_at)
 VALUES (sqlc.arg(project_id), sqlc.arg(dashboard_id), sqlc.arg(revision_id), sqlc.arg(revision_number), sqlc.arg(content_hash),
-        sqlc.arg(definition_json), sqlc.arg(definition_hash), sqlc.arg(semantic_serving_state_id), sqlc.arg(compiled_at));
+        sqlc.arg(definition_json), sqlc.arg(definition_hash), sqlc.arg(semantic_identity_json), sqlc.arg(compiled_at));
 
 -- name: GetAuthoringCommand :one
 SELECT *

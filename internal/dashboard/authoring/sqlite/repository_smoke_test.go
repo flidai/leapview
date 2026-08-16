@@ -13,6 +13,7 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	"github.com/flidai/leapview/internal/platform"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestAuthoringLifecyclePersistence(t *testing.T) {
@@ -125,7 +126,7 @@ func TestAuthoringLifecyclePersistence(t *testing.T) {
 	if _, err := r.AppendDraft(ctx, appendInput); !errors.Is(err, authoring.ErrCommandReuse) {
 		t.Fatalf("changed command fingerprint error = %v", err)
 	}
-	compiled2, err := authoring.NewCompiledRevision("w", "dash", rev2.Token(), dashboarddefinition.Definition{ID: "dash", Title: "Dash v2", SemanticModel: "model", Pages: doc.Pages, Visualizations: map[string]visualizationdefinition.Definition{}}, "state-1", time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC))
+	compiled2, err := authoring.NewCompiledRevision("w", "dash", rev2.Token(), dashboarddefinition.Definition{ID: "dash", Title: "Dash v2", SemanticModel: "model", Pages: doc.Pages, Visualizations: map[string]visualizationdefinition.Definition{}}, mustIdentity("w", "production", "state-1"), time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestAuthoringLifecyclePersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotCompiled, err := r.GetPublishedCompilation(ctx, "w", "dash")
-	if err != nil || gotCompiled.DefinitionHash != compiled2.DefinitionHash || gotCompiled.SemanticServingStateID != compiled2.SemanticServingStateID || gotCompiled.Definition.ID != "dash" {
+	if err != nil || gotCompiled.DefinitionHash != compiled2.DefinitionHash || gotCompiled.SemanticIdentity != compiled2.SemanticIdentity || gotCompiled.Definition.ID != "dash" {
 		t.Fatalf("published compilation = %#v, err = %v", gotCompiled, err)
 	}
 	beforeInvalid, err := r.Get(ctx, "w", "dash")
@@ -155,7 +156,7 @@ func TestAuthoringLifecyclePersistence(t *testing.T) {
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboard_authoring_commands WHERE project_id = ? AND dashboard_id = ? AND command_id = ?`, "w", "dash", "cmd-invalid").Scan(&invalidCommandCount); err != nil || invalidCommandCount != 0 {
 		t.Fatalf("invalid compiled publish command rows = %d, err=%v", invalidCommandCount, err)
 	}
-	compiled2Revalidated, err := authoring.NewCompiledRevision("w", "dash", rev2.Token(), compiled2.Definition, "state-2", time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC))
+	compiled2Revalidated, err := authoring.NewCompiledRevision("w", "dash", rev2.Token(), compiled2.Definition, mustIdentity("w", "production", "state-2"), time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,13 +164,13 @@ func TestAuthoringLifecyclePersistence(t *testing.T) {
 	if _, err := r.Publish(ctx, authoring.PublishInput{ProjectID: "w", DashboardID: "dash", ExpectedDraftRevision: rev2.Token(), Published: revalidatedPublished, Compilation: compiled2Revalidated, Evidence: authoring.CommandEvidence{ID: "cmd-revalidate", Fingerprint: "fp-revalidate", Action: authoring.AuthorizationActionPublish, Provenance: prov, OccurredAt: revalidatedPublished.PublishedAt}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := r.GetPublishedCompilation(ctx, "w", "dash"); err != nil || got.SemanticServingStateID != "state-2" {
+	if got, err := r.GetPublishedCompilation(ctx, "w", "dash"); err != nil || got.SemanticIdentity.GenerationID != "state-2" {
 		t.Fatalf("revalidated compilation = %#v, err = %v", got, err)
 	}
 	if _, err := store.SQLDB().ExecContext(ctx, `CREATE TRIGGER fail_authoring_command BEFORE INSERT ON dashboard_authoring_commands WHEN NEW.command_id = 'cmd-db-fail' BEGIN SELECT RAISE(ABORT, 'forced command ledger failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	compiledFailure, err := authoring.NewCompiledRevision("w", "dash", rev2.Token(), compiled2.Definition, "state-db-fail", time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC))
+	compiledFailure, err := authoring.NewCompiledRevision("w", "dash", rev2.Token(), compiled2.Definition, mustIdentity("w", "production", "state-db-fail"), time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,11 +182,11 @@ func TestAuthoringLifecyclePersistence(t *testing.T) {
 	if failureErr == nil {
 		t.Fatal("forced command ledger failure unexpectedly succeeded")
 	}
-	if got, err := r.GetPublishedCompilation(ctx, "w", "dash"); err != nil || got.SemanticServingStateID != "state-2" {
+	if got, err := r.GetPublishedCompilation(ctx, "w", "dash"); err != nil || got.SemanticIdentity.GenerationID != "state-2" {
 		t.Fatalf("late DB failure changed published compilation = %#v, err = %v", got, err)
 	}
 	var failedCompiledCount, failedCommandCount int
-	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboard_authoring_compiled_revisions WHERE project_id = ? AND dashboard_id = ? AND semantic_serving_state_id = ?`, "w", "dash", "state-db-fail").Scan(&failedCompiledCount); err != nil {
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboard_authoring_compiled_revisions WHERE project_id = ? AND dashboard_id = ? AND semantic_identity_json LIKE ?`, "w", "dash", `%state-db-fail%`).Scan(&failedCompiledCount); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboard_authoring_commands WHERE project_id = ? AND dashboard_id = ? AND command_id = ?`, "w", "dash", "cmd-db-fail").Scan(&failedCommandCount); err != nil {
@@ -221,7 +222,7 @@ func TestAuthoringLifecyclePersistence(t *testing.T) {
 	if _, err := r.AppendDraft(ctx, authoring.AppendDraftInput{ProjectID: "w", DashboardID: "dash", ExpectedDraftRevision: rev2.Token(), Revision: rev3, Next: next2, Evidence: edit3Evidence}); err != nil {
 		t.Fatal(err)
 	}
-	compiled3, err := authoring.NewCompiledRevision("w", "dash", rev3.Token(), dashboarddefinition.Definition{ID: "dash", Title: "Dash v3", SemanticModel: "model", Pages: doc.Pages, Visualizations: map[string]visualizationdefinition.Definition{}}, "state-2", time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC))
+	compiled3, err := authoring.NewCompiledRevision("w", "dash", rev3.Token(), dashboarddefinition.Definition{ID: "dash", Title: "Dash v3", SemanticModel: "model", Pages: doc.Pages, Visualizations: map[string]visualizationdefinition.Definition{}}, mustIdentity("w", "production", "state-2"), time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,4 +255,12 @@ func TestAuthoringLifecyclePersistence(t *testing.T) {
 			t.Fatalf("command %s evidence = action %q provenance %q occurred %q", command.id, action, provenanceJSON, occurredAt)
 		}
 	}
+}
+
+func mustIdentity(project, environment, generation string) projectgraph.ServingIdentity {
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(project), environment, generation)
+	if err != nil {
+		panic(err)
+	}
+	return identity
 }

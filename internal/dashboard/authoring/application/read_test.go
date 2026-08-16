@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -93,9 +94,12 @@ func TestRevisionRequiresExactPublishedPointerForView(t *testing.T) {
 	published.Published = &authoring.Published{
 		Revision: revision.Token(),
 		Compilation: authoring.CompiledRevisionToken{
-			AuthoredRevision:       revision.Token(),
-			DefinitionHash:         "sha256:" + strings.Repeat("a", 64),
-			SemanticServingStateID: "state-1",
+			AuthoredRevision: revision.Token(),
+			DefinitionHash:   "sha256:" + strings.Repeat("a", 64),
+			SemanticIdentity: func() projectgraph.ServingIdentity {
+				identity, _ := projectgraph.NewServingIdentity("project", "production", "state-1")
+				return identity
+			}(),
 		},
 		PublishedAt: time.Date(2026, 8, 15, 13, 0, 0, 0, time.UTC),
 		Provenance:  revision.Provenance,

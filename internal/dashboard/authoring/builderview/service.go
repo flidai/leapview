@@ -583,25 +583,12 @@ func sourceEvidenceSignalChecked(provenance authoring.Provenance) (*uisignals.Da
 	}
 	switch provenance.ForkedFrom.Kind {
 	case authoring.ForkSourceProject:
-		if provenance.ForkedFrom.Project == nil {
-			return nil, nil
-		}
-		revision, err := revisionSignalChecked(provenance.ForkedFrom.Project.SourceRevision)
-		if err != nil {
-			return nil, fmt.Errorf("dashboard builder source project revision: %w", err)
-		}
-		item := &uisignals.DashboardBuilderProjectSourceEvidence{
-			Kind: "project", ProjectID: provenance.ForkedFrom.Project.SourceProjectID,
-			DashboardID: provenance.ForkedFrom.Project.SourceDashboardID.String(), Revision: revision,
-		}
-		return &uisignals.DashboardBuilderSourceEvidenceSignal{Value: item}, nil
-	case authoring.ForkSourceProject:
-		if provenance.ForkedFrom.Project == nil || strings.TrimSpace(provenance.ForkedFrom.Project.ServingStateID) == "" {
+		if provenance.ForkedFrom.Project == nil || provenance.ForkedFrom.Project.Identity == (graph.ServingIdentity{}) {
 			return nil, nil
 		}
 		item := &uisignals.DashboardBuilderProjectSourceEvidence{
 			Kind: "project", ProjectID: provenance.ForkedFrom.Project.SourceProjectID,
-			DashboardID: provenance.ForkedFrom.Project.SourceDashboardID.String(), ServingStateID: provenance.ForkedFrom.Project.ServingStateID,
+			DashboardID: provenance.ForkedFrom.Project.SourceDashboardID.String(), ServingStateID: provenance.ForkedFrom.Project.Identity.GenerationID,
 		}
 		if path := strings.TrimSpace(provenance.ForkedFrom.Project.Path); path != "" {
 			item.Path = &path

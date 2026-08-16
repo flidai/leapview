@@ -98,7 +98,7 @@ func testCompiledRevision(t *testing.T, projectID, dashboardID, modelID, stateID
 	}
 	compiled, err := authoring.NewCompiledRevision(projectgraph.ResourceID(projectID), authoring.DashboardID(dashboardID), authoring.RevisionToken{
 		RevisionID: "revision-1", Number: 1, ContentHash: "sha256:" + strings.Repeat("b", 64),
-	}, definition, stateID, time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC))
+	}, definition, mustIdentity(t, projectID, "production", stateID), time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

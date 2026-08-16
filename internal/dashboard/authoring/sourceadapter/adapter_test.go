@@ -14,8 +14,8 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
-	"github.com/flidai/leapview/internal/runtimehost"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 var sourceTestTime = time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
@@ -129,15 +129,14 @@ func (r *fakeRuntime) AuthoredDashboardSource(id string) (projectartifact.Author
 }
 
 type fakeLease struct {
-	runtime  runtimehost.Runtime
-	state    servingstate.ID
+	runtime  projectruntime.Runtime
+	identity projectgraph.ServingIdentity
 	released *int
 }
 
-func (l *fakeLease) Runtime() runtimehost.Runtime    { return l.runtime }
-func (l *fakeLease) ServingStateID() servingstate.ID { return l.state }
-func (l *fakeLease) DuckLakeSnapshotID() int64       { return 42 }
-func (l *fakeLease) Release()                        { *l.released++ }
+func (l *fakeLease) Runtime() projectruntime.Runtime        { return l.runtime }
+func (l *fakeLease) Identity() projectgraph.ServingIdentity { return l.identity }
+func (l *fakeLease) Release()                               { *l.released++ }
 
 func TestLoadProjectUsesExactPublishedRevisionAndAuthorizesBeforeContent(t *testing.T) {
 	published, newer, lifecycle := publishedFixture(t)
@@ -254,12 +253,13 @@ func TestLoadProjectUsesOneActiveLeaseAndHasNoFakeRevision(t *testing.T) {
 	released := 0
 	acquires := 0
 	authorizer := &fakeAuthorizer{}
-	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(_ context.Context, project string) (runtimehost.Lease, error) {
+	identity, _ := projectgraph.NewServingIdentity("project", "production", "serving-project-1")
+	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(_ context.Context, project projectgraph.ResourceID) (projectruntime.Lease, error) {
 		acquires++
 		if project != "project" {
 			t.Fatalf("runtime project = %q", project)
 		}
-		return &fakeLease{runtime: runtime, state: "serving-project-1", released: &released}, nil
+		return &fakeLease{runtime: runtime, identity: identity, released: &released}, nil
 	})
 
 	source, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, "actor")
@@ -272,14 +272,11 @@ func TestLoadProjectUsesOneActiveLeaseAndHasNoFakeRevision(t *testing.T) {
 	if source.Provenance.Kind != sourceadapter.SourceProject || source.Provenance.Project == nil {
 		t.Fatalf("project provenance = %#v", source.Provenance)
 	}
-	if source.Provenance.Project.ServingStateID != "serving-project-1" || source.Provenance.Project.Path != runtime.source.Path {
+	if source.Provenance.Project.Identity != identity || source.Provenance.Project.Path != runtime.source.Path {
 		t.Fatalf("project evidence = %#v", source.Provenance.Project)
 	}
-	if source.Provenance.Project.ServingStateID == "" {
+	if source.Provenance.Project.Identity.GenerationID == "" {
 		t.Fatal("project provenance omitted serving state")
-	}
-	if source.Provenance.Project != nil {
-		t.Fatal("project provenance populated project revision branch")
 	}
 }
 
@@ -287,8 +284,9 @@ func TestMissingProjectSourceIsTypedUnavailableAndAuthPrecedesDisclosure(t *test
 	runtime := &fakeRuntime{source: projectartifact.AuthoredDashboardSource{Document: authoredDocument("other", "Other")}}
 	released := 0
 	authorizer := &fakeAuthorizer{}
-	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
-		return &fakeLease{runtime: runtime, released: &released}, nil
+	identity, _ := projectgraph.NewServingIdentity("project", "production", "missing-state")
+	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(context.Context, projectgraph.ResourceID) (projectruntime.Lease, error) {
+		return &fakeLease{runtime: runtime, identity: identity, released: &released}, nil
 	})
 	_, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "missing"}, "actor")
 	if !errors.Is(err, sourceadapter.ErrSourceUnavailable) || !errors.As(err, new(*sourceadapter.SourceUnavailableError)) {
@@ -313,8 +311,9 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 	authorizer := &fakeAuthorizer{}
 	authoringService := newAuthoringService(t, repository, authorizer)
 	released := 0
-	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context, string) (runtimehost.Lease, error) {
-		return &fakeLease{runtime: runtime, state: "project-state", released: &released}, nil
+	identity, _ := projectgraph.NewServingIdentity("project", "production", "project-state")
+	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context, projectgraph.ResourceID) (projectruntime.Lease, error) {
+		return &fakeLease{runtime: runtime, identity: identity, released: &released}, nil
 	})
 
 	exported, err := adapter.Export(t.Context(), sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, ActorID: "actor"})
@@ -335,7 +334,7 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 	if created.Document.Title != "Forked project" || created.Document.ID == document.ID || created.ID == "" || result.Lifecycle.Draft.ID == "" {
 		t.Fatalf("fork identities/document = %#v", created)
 	}
-	if created.Provenance.ForkedFrom == nil || created.Provenance.ForkedFrom.Kind != authoring.ForkSourceProject || created.Provenance.ForkedFrom.Project == nil || created.Provenance.ForkedFrom.Project.SourceDashboardID != "project-sales" || created.Provenance.ForkedFrom.Project.ServingStateID != "project-state" || created.Provenance.Source == nil || created.Provenance.Source.Path != runtime.source.Path || created.Provenance.BaseSemanticServingStateID != "project-state" {
+	if created.Provenance.ForkedFrom == nil || created.Provenance.ForkedFrom.Kind != authoring.ForkSourceProject || created.Provenance.ForkedFrom.Project == nil || created.Provenance.ForkedFrom.Project.SourceDashboardID != "project-sales" || created.Provenance.ForkedFrom.Project.Identity != identity || created.Provenance.Source == nil || created.Provenance.Source.Path != runtime.source.Path || created.Provenance.BaseSemanticIdentity != identity {
 		t.Fatalf("project fork provenance = %#v", created.Provenance)
 	}
 	if released != 2 { // export + fork load; each lease is released exactly once.
@@ -353,8 +352,9 @@ func TestProjectForkReplaySkipsUnavailableSourceLoad(t *testing.T) {
 	authorizer := &fakeAuthorizer{}
 	authoringService := newAuthoringService(t, repository, authorizer)
 	released := 0
-	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context, string) (runtimehost.Lease, error) {
-		return &fakeLease{runtime: runtime, state: "project-state", released: &released}, nil
+	identity, _ := projectgraph.NewServingIdentity("project", "production", "project-state")
+	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context, projectgraph.ResourceID) (projectruntime.Lease, error) {
+		return &fakeLease{runtime: runtime, identity: identity, released: &released}, nil
 	})
 	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-project"}
 	first, err := adapter.Fork(t.Context(), request)
@@ -409,7 +409,8 @@ func newAuthoringService(t *testing.T, repository *fakeRepository, authorizer *f
 type fakeCompiler struct{}
 
 func (fakeCompiler) Compile(context.Context, string, string, authoring.Dashboard) (service.Compilation, error) {
-	return service.Compilation{Definition: dashboarddefinition.Definition{ID: "unused", SemanticModel: "sales"}, SemanticServingStateID: "unused"}, nil
+	identity, _ := projectgraph.NewServingIdentity("project", "production", "unused")
+	return service.Compilation{Definition: dashboarddefinition.Definition{ID: "unused", SemanticModel: "sales"}, SemanticIdentity: identity}, nil
 }
 
 func authoredDocument(id, title string) authoring.Dashboard {

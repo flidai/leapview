@@ -51,10 +51,10 @@ type RevisionEvidence struct {
 // PublicationEvidence records the lifecycle publication pointer and compiler
 // evidence. It is present only for published project dashboards.
 type PublicationEvidence struct {
-	Revision               RevisionEvidence `json:"revision"`
-	DefinitionHash         string           `json:"definitionHash,omitempty"`
-	SemanticServingStateID string           `json:"semanticServingStateId,omitempty"`
-	PublishedAt            time.Time        `json:"publishedAt,omitempty"`
+	Revision         RevisionEvidence      `json:"revision"`
+	DefinitionHash   string                `json:"definitionHash,omitempty"`
+	SemanticIdentity graph.ServingIdentity `json:"semanticIdentity"`
+	PublishedAt      time.Time             `json:"publishedAt,omitempty"`
 }
 
 // Dashboard is the governed, source-neutral dashboard identity projection.
@@ -62,22 +62,22 @@ type PublicationEvidence struct {
 // source kind so consumers can safely cache project and project identities
 // independently even though a collision is rejected by this service.
 type Dashboard struct {
-	ID             graph.ResourceID          `json:"id"`
-	StableID       string                    `json:"stableId"`
-	ProjectID      graph.ResourceID          `json:"projectId"`
-	Title          string                    `json:"title"`
-	Description    string                    `json:"description,omitempty"`
-	SemanticModel  graph.ResourceID          `json:"semanticModel"`
-	Source         SourceKind                `json:"source"`
-	Origin         authoring.Origin          `json:"origin"`
-	Status         authoring.LifecycleStatus `json:"status"`
-	Visibility     authoring.Visibility      `json:"visibility"`
-	Owner          string                    `json:"owner,omitempty"`
-	Tags           []string                  `json:"tags,omitempty"`
-	ServingStateID string                    `json:"servingStateId,omitempty"`
-	Revision       *RevisionEvidence         `json:"revision,omitempty"`
-	Publication    *PublicationEvidence      `json:"publication,omitempty"`
-	SourcePath     string                    `json:"sourcePath,omitempty"`
+	ID              graph.ResourceID          `json:"id"`
+	StableID        string                    `json:"stableId"`
+	ProjectID       graph.ResourceID          `json:"projectId"`
+	Title           string                    `json:"title"`
+	Description     string                    `json:"description,omitempty"`
+	SemanticModel   graph.ResourceID          `json:"semanticModel"`
+	Source          SourceKind                `json:"source"`
+	Origin          authoring.Origin          `json:"origin"`
+	Status          authoring.LifecycleStatus `json:"status"`
+	Visibility      authoring.Visibility      `json:"visibility"`
+	Owner           string                    `json:"owner,omitempty"`
+	Tags            []string                  `json:"tags,omitempty"`
+	ServingIdentity graph.ServingIdentity     `json:"servingIdentity,omitempty"`
+	Revision        *RevisionEvidence         `json:"revision,omitempty"`
+	Publication     *PublicationEvidence      `json:"publication,omitempty"`
+	SourcePath      string                    `json:"sourcePath,omitempty"`
 }
 
 // ListResult is deterministic and contains counts after authorization
@@ -160,7 +160,7 @@ func (s *Service) List(ctx context.Context, request ListRequest) (ListResult, er
 	if identity.ProjectID != projectID {
 		return ListResult{}, fmt.Errorf("dashboard catalog serving identity project %q does not match %q", identity.ProjectID, projectID)
 	}
-	project, err := projectCandidates(runtime, projectID, strings.TrimSpace(identity.GenerationID))
+	project, err := projectCandidates(runtime, identity)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -220,7 +220,7 @@ func (s *Service) Get(ctx context.Context, request GetRequest) (Dashboard, error
 	if identity.ProjectID != projectID {
 		return Dashboard{}, fmt.Errorf("dashboard catalog serving identity project %q does not match %q", identity.ProjectID, projectID)
 	}
-	project, err := projectCandidate(runtime, projectID, id, strings.TrimSpace(identity.GenerationID))
+	project, err := projectCandidate(runtime, identity, id)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return Dashboard{}, err
 	}
@@ -285,7 +285,10 @@ func normalizeRequest(projectID graph.ResourceID, actorID string) (graph.Resourc
 	return projectID, actorID, nil
 }
 
-func projectCandidates(runtime projectruntime.Runtime, projectID graph.ResourceID, servingStateID string) ([]Dashboard, error) {
+func projectCandidates(runtime projectruntime.Runtime, identity graph.ServingIdentity) ([]Dashboard, error) {
+	if err := identity.Validate(); err != nil {
+		return nil, fmt.Errorf("active runtime serving identity is invalid: %w", err)
+	}
 	port, ok := runtime.(RuntimeCatalog)
 	if !ok {
 		return nil, fmt.Errorf("active runtime does not provide dashboard catalog")
@@ -298,20 +301,20 @@ func projectCandidates(runtime projectruntime.Runtime, projectID graph.ResourceI
 			return nil, fmt.Errorf("active runtime contains invalid dashboard id: %w", err)
 		}
 		item := Dashboard{
-			ID: id, ProjectID: projectID, Title: dashboard.Title, Description: dashboard.Description,
+			ID: id, ProjectID: identity.ProjectID, Title: dashboard.Title, Description: dashboard.Description,
 			SemanticModel: graph.ResourceID(dashboard.SemanticModel), Source: SourceProject, Origin: authoring.OriginFile,
 			Status: authoring.LifecycleStatusPublished, Visibility: authoring.VisibilityOrganization,
-			Tags:           append([]string(nil), dashboard.Tags...),
-			ServingStateID: servingStateID,
-			StableID:       stableID(SourceProject, projectID, id.String()),
+			Tags:            append([]string(nil), dashboard.Tags...),
+			ServingIdentity: identity,
+			StableID:        stableID(SourceProject, identity.ProjectID, id.String()),
 		}
 		items = append(items, item)
 	}
 	return items, nil
 }
 
-func projectCandidate(runtime projectruntime.Runtime, projectID graph.ResourceID, id string, servingStateID string) (*Dashboard, error) {
-	items, err := projectCandidates(runtime, projectID, servingStateID)
+func projectCandidate(runtime projectruntime.Runtime, identity graph.ServingIdentity, id string) (*Dashboard, error) {
+	items, err := projectCandidates(runtime, identity)
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +438,7 @@ func instanceItemBase(projectID graph.ResourceID, lifecycle authoring.DashboardL
 		publishedToken := lifecycle.Published.Revision
 		item.Publication = &PublicationEvidence{
 			Revision: RevisionEvidence{ID: publishedToken.RevisionID.String(), Number: publishedToken.Number, ContentHash: publishedToken.ContentHash}, DefinitionHash: compiled.DefinitionHash,
-			SemanticServingStateID: compiled.SemanticServingStateID, PublishedAt: lifecycle.Published.PublishedAt,
+			SemanticIdentity: compiled.SemanticIdentity, PublishedAt: lifecycle.Published.PublishedAt,
 		}
 	}
 	return item, true, nil
@@ -525,6 +528,14 @@ func validateDashboard(item Dashboard) error {
 	}
 	if item.Source != SourceProject && item.Source != SourceInstance {
 		return fmt.Errorf("dashboard %q has invalid source %q", item.ID, item.Source)
+	}
+	if item.Source == SourceProject {
+		if err := item.ServingIdentity.Validate(); err != nil {
+			return fmt.Errorf("dashboard %q has invalid serving identity: %w", item.ID, err)
+		}
+		if item.ServingIdentity.ProjectID != item.ProjectID {
+			return fmt.Errorf("dashboard %q serving identity project %q does not match project %q", item.ID, item.ServingIdentity.ProjectID, item.ProjectID)
+		}
 	}
 	if !item.Origin.Valid() {
 		return fmt.Errorf("dashboard %q has invalid provenance origin %q", item.ID, item.Origin)

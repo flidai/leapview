@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -113,7 +114,7 @@ func TestBuildSeparatesOriginAndForkEvidence(t *testing.T) {
 		Origin: authoring.OriginFile, ActorID: "actor",
 		Source: &authoring.SourceMetadata{Path: "dashboards/sales.yaml"},
 		ForkedFrom: &authoring.ForkEvidence{Kind: authoring.ForkSourceProject, Project: &authoring.ProjectForkEvidence{
-			SourceProjectID: "source", SourceDashboardID: "upstream", SourceRevision: fixture.revision.Token(),
+			SourceProjectID: "source", SourceDashboardID: "upstream", Identity: mustServingIdentity(t, "source", "production", "state-1"),
 		}},
 	}
 	// The revision hash/provenance are immutable fields, so rebuild it with the
@@ -148,7 +149,7 @@ func TestBuildSeparatesOriginAndForkEvidence(t *testing.T) {
 func TestSourceEvidenceProjectsBothForkVariants(t *testing.T) {
 	project := sourceEvidenceSignal(authoring.Provenance{ForkedFrom: &authoring.ForkEvidence{
 		Kind:    authoring.ForkSourceProject,
-		Project: &authoring.ProjectForkEvidence{SourceProjectID: "source", SourceDashboardID: "upstream", SourceRevision: authoring.RevisionToken{RevisionID: "revision-1", Number: 2, ContentHash: "sha256:" + strings.Repeat("a", 64)}},
+		Project: &authoring.ProjectForkEvidence{SourceProjectID: "source", SourceDashboardID: "upstream", Identity: mustServingIdentity(t, "source", "production", "state-1")},
 	}})
 	if project == nil || project.Value == nil {
 		t.Fatalf("project evidence = %#v", project)
@@ -158,20 +159,26 @@ func TestSourceEvidenceProjectsBothForkVariants(t *testing.T) {
 		t.Fatalf("project evidence kind = %q, err=%v", projectKind, err)
 	}
 
-	project := sourceEvidenceSignal(authoring.Provenance{ForkedFrom: &authoring.ForkEvidence{
+	second := sourceEvidenceSignal(authoring.Provenance{ForkedFrom: &authoring.ForkEvidence{
 		Kind:    authoring.ForkSourceProject,
-		Project: &authoring.ProjectForkEvidence{SourceProjectID: "source", SourceDashboardID: "upstream", ServingStateID: "serving-1", Path: "dashboards/upstream.yaml"},
+		Project: &authoring.ProjectForkEvidence{SourceProjectID: "source", SourceDashboardID: "upstream", Identity: mustServingIdentity(t, "source", "production", "serving-1"), Path: "dashboards/upstream.yaml"},
 	}})
-	if project == nil || project.Value == nil {
-		t.Fatalf("project evidence = %#v", project)
+	if second == nil || second.Value == nil {
+		t.Fatalf("project evidence = %#v", second)
 	}
-	projectKind, err := project.Kind()
-	if err != nil || projectKind != "project" {
-		t.Fatalf("project evidence kind = %q, err=%v", projectKind, err)
+	secondKind, err := second.Kind()
+	if err != nil || secondKind != "project" {
+		t.Fatalf("project evidence kind = %q, err=%v", secondKind, err)
 	}
-	if projectKind == projectKind {
-		t.Fatal("project and project fork evidence kinds collapsed")
+}
+
+func mustServingIdentity(t *testing.T, project, environment, generation string) projectgraph.ServingIdentity {
+	t.Helper()
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(project), environment, generation)
+	if err != nil {
+		t.Fatal(err)
 	}
+	return identity
 }
 
 func TestBuildDeterministicProjectionAndComponentIdentity(t *testing.T) {

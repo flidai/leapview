@@ -13,8 +13,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/runtimehost"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 type previewFixture struct {
@@ -45,7 +44,8 @@ func newPreviewFixture(t *testing.T) previewFixture {
 	}
 	model := previewModel()
 	runtime := &fakeRuntime{model: model}
-	provider := &fakeProvider{lease: &fakeLease{runtime: runtime, servingState: "serving-1", snapshot: 42}}
+	identity, _ := graph.NewServingIdentity("project", "production", "serving-1")
+	provider := &fakeProvider{lease: &fakeLease{runtime: runtime, identity: identity, snapshot: 42}}
 	repository := &fakeRepository{lifecycle: lifecycle, revision: revision}
 	authorizer := &fakeAuthorizer{}
 	service, err := NewService(Options{Repository: repository, Authorizer: authorizer, Provider: provider})
@@ -149,7 +149,7 @@ func TestPreviewUsesOneLeaseForModelAndQueryAndReturnsEvidence(t *testing.T) {
 	if result.Revision != fixture.revision.Token() || result.Definition.ID != "sales" || result.PagePatch.Status.Error != "" {
 		t.Fatalf("unexpected preview result: %#v", result)
 	}
-	if result.SemanticEvidence.ServingStateID != "serving-1" || result.SemanticEvidence.DuckLakeSnapshotID != 42 {
+	if result.SemanticEvidence.Identity.GenerationID != "serving-1" || result.SemanticEvidence.Identity.ProjectID != "project" || result.SemanticEvidence.DuckLakeSnapshotID != 42 {
 		t.Fatalf("semantic evidence = %#v", result.SemanticEvidence)
 	}
 }
@@ -216,21 +216,20 @@ type fakeProvider struct {
 	acquireCalls int
 }
 
-func (p *fakeProvider) Acquire(context.Context) (runtimehost.Lease, error) {
+func (p *fakeProvider) Acquire(context.Context) (projectruntime.Lease, error) {
 	p.acquireCalls++
 	return p.lease, nil
 }
 
 type fakeLease struct {
 	runtime      *fakeRuntime
-	servingState servingstate.ID
+	identity     graph.ServingIdentity
 	snapshot     int64
 	releaseCalls int
 }
 
-func (l *fakeLease) Runtime() runtimehost.Runtime    { return l.runtime }
-func (l *fakeLease) ServingStateID() servingstate.ID { return l.servingState }
-func (l *fakeLease) DuckLakeSnapshotID() int64       { return l.snapshot }
+func (l *fakeLease) Runtime() projectruntime.Runtime { return l.runtime }
+func (l *fakeLease) Identity() graph.ServingIdentity { return l.identity }
 func (l *fakeLease) Release()                        { l.releaseCalls++ }
 
 type fakeRuntime struct {
@@ -240,10 +239,11 @@ type fakeRuntime struct {
 	queryRuntime    *fakeRuntime
 }
 
-func (r *fakeRuntime) Close() error { return nil }
-func (r *fakeRuntime) SemanticModelProjection(id string) (*semanticmodel.Model, bool) {
+func (r *fakeRuntime) Close() error              { return nil }
+func (r *fakeRuntime) DuckLakeSnapshotID() int64 { return 42 }
+func (r *fakeRuntime) SemanticModelProjection(id graph.ResourceID) (*semanticmodel.Model, bool) {
 	r.projectionCalls++
-	if r.model == nil || r.model.Name != id {
+	if r.model == nil || r.model.Name != id.String() {
 		return nil, false
 	}
 	encoded := *r.model

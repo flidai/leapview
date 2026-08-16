@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var forkTestTime = time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
@@ -40,7 +41,8 @@ func publishedSource(t *testing.T, repository *fakeRepository, withNewerDraft bo
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := authoring.NewCompiledRevision("project", "source", revision.Token(), dashboarddefinition.Definition{ID: "source", SemanticModel: "sales", Title: document.Title}, "serving-state", forkTestTime)
+	identity, _ := projectgraph.NewServingIdentity("project", "production", "serving-state")
+	compiled, err := authoring.NewCompiledRevision("project", "source", revision.Token(), dashboarddefinition.Definition{ID: "source", SemanticModel: "sales", Title: document.Title}, identity, forkTestTime)
 	if err != nil {
 		t.Fatal(err)
 	}

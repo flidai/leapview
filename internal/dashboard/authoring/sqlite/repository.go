@@ -306,7 +306,7 @@ func (r *Repository) GetPublishedCompilation(ctx context.Context, projectID grap
 	if err != nil {
 		return authoring.CompiledRevision{}, err
 	}
-	row, err := q.GetAuthoringPublishedCompilation(ctx, dashboarddb.GetAuthoringPublishedCompilationParams{ProjectID: projectKey, DashboardID: string(dashboardID), RevisionID: published.CompiledRevisionID, RevisionNumber: published.CompiledRevisionNumber, ContentHash: published.CompiledContentHash, DefinitionHash: published.CompiledDefinitionHash, SemanticServingStateID: published.CompiledSemanticServingStateID})
+	row, err := q.GetAuthoringPublishedCompilation(ctx, dashboarddb.GetAuthoringPublishedCompilationParams{ProjectID: projectKey, DashboardID: string(dashboardID), RevisionID: published.CompiledRevisionID, RevisionNumber: published.CompiledRevisionNumber, ContentHash: published.CompiledContentHash, DefinitionHash: published.CompiledDefinitionHash, SemanticIdentityJson: published.CompiledSemanticIdentityJson})
 	if errors.Is(err, sql.ErrNoRows) {
 		return authoring.CompiledRevision{}, authoring.ErrNotFound
 	}
@@ -325,11 +325,19 @@ func (r *Repository) GetPublishedCompilation(ctx context.Context, projectID grap
 	if err != nil {
 		return authoring.CompiledRevision{}, err
 	}
-	compiled := authoring.CompiledRevision{ProjectID: graph.ResourceID(row.ProjectID), DashboardID: authoring.DashboardID(row.DashboardID), AuthoredRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, Definition: definition, DefinitionHash: row.DefinitionHash, SemanticServingStateID: row.SemanticServingStateID, CompiledAt: compiledAt}
+	semanticIdentity, err := decodeServingIdentity(row.SemanticIdentityJson)
+	if err != nil {
+		return authoring.CompiledRevision{}, err
+	}
+	compiled := authoring.CompiledRevision{ProjectID: graph.ResourceID(row.ProjectID), DashboardID: authoring.DashboardID(row.DashboardID), AuthoredRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, Definition: definition, DefinitionHash: row.DefinitionHash, SemanticIdentity: semanticIdentity, CompiledAt: compiledAt}
 	if err := compiled.Validate(); err != nil {
 		return authoring.CompiledRevision{}, fmt.Errorf("validate stored compiled dashboard: %w", err)
 	}
-	if published.CompiledDefinitionHash != compiled.DefinitionHash || published.CompiledSemanticServingStateID != compiled.SemanticServingStateID || published.RevisionID != string(compiled.AuthoredRevision.RevisionID) || published.RevisionNumber != int64(compiled.AuthoredRevision.Number) || published.ContentHash != compiled.AuthoredRevision.ContentHash {
+	semanticJSON, err := encodeServingIdentity(compiled.SemanticIdentity)
+	if err != nil {
+		return authoring.CompiledRevision{}, err
+	}
+	if published.CompiledDefinitionHash != compiled.DefinitionHash || published.CompiledSemanticIdentityJson != semanticJSON || published.RevisionID != string(compiled.AuthoredRevision.RevisionID) || published.RevisionNumber != int64(compiled.AuthoredRevision.Number) || published.ContentHash != compiled.AuthoredRevision.ContentHash {
 		return authoring.CompiledRevision{}, fmt.Errorf("%w: published compilation pointer does not match immutable compiled artifact", authoring.ErrInvalidAuthoring)
 	}
 	return compiled, nil
@@ -459,6 +467,10 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 	if err := insertCompiledRevision(ctx, q, compilation, string(definitionJSON)); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
+	semanticIdentityJSON, err := encodeServingIdentity(compilation.SemanticIdentity)
+	if err != nil {
+		return authoring.DashboardLifecycle{}, err
+	}
 	provenanceJSON, err := json.Marshal(provenance)
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -472,7 +484,7 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 	err = q.UpsertAuthoringPublished(ctx, dashboarddb.UpsertAuthoringPublishedParams{ProjectID: projectID,
 		DashboardID: string(input.DashboardID), RevisionID: string(target.RevisionID), RevisionNumber: int64(target.Number),
 		ContentHash: target.ContentHash, CompiledRevisionID: string(compilation.AuthoredRevision.RevisionID), CompiledRevisionNumber: int64(compilation.AuthoredRevision.Number), CompiledContentHash: compilation.AuthoredRevision.ContentHash,
-		CompiledDefinitionHash: compilation.DefinitionHash, CompiledSemanticServingStateID: compilation.SemanticServingStateID,
+		CompiledDefinitionHash: compilation.DefinitionHash, CompiledSemanticIdentityJson: semanticIdentityJSON,
 		ProvenanceJson: string(provenanceJSON), PublishedAt: formatTime(publishedAt)})
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -556,9 +568,13 @@ func insertCompiledRevision(ctx context.Context, q *dashboarddb.Queries, compile
 	if err := compiled.Validate(); err != nil {
 		return err
 	}
-	row, err := q.GetAuthoringPublishedCompilation(ctx, dashboarddb.GetAuthoringPublishedCompilationParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: string(compiled.AuthoredRevision.RevisionID), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionHash: compiled.DefinitionHash, SemanticServingStateID: compiled.SemanticServingStateID})
+	semanticIdentityJSON, err := encodeServingIdentity(compiled.SemanticIdentity)
+	if err != nil {
+		return err
+	}
+	row, err := q.GetAuthoringPublishedCompilation(ctx, dashboarddb.GetAuthoringPublishedCompilationParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: string(compiled.AuthoredRevision.RevisionID), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionHash: compiled.DefinitionHash, SemanticIdentityJson: semanticIdentityJSON})
 	if err == nil {
-		if row.DefinitionJson != definitionJSON || row.DefinitionHash != compiled.DefinitionHash || row.SemanticServingStateID != compiled.SemanticServingStateID {
+		if row.DefinitionJson != definitionJSON || row.DefinitionHash != compiled.DefinitionHash || row.SemanticIdentityJson != semanticIdentityJSON {
 			return conflict("compiled revision identity is immutable")
 		}
 		return nil
@@ -566,7 +582,7 @@ func insertCompiledRevision(ctx context.Context, q *dashboarddb.Queries, compile
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	err = q.InsertAuthoringCompiledRevision(ctx, dashboarddb.InsertAuthoringCompiledRevisionParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: string(compiled.AuthoredRevision.RevisionID), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionJson: definitionJSON, DefinitionHash: compiled.DefinitionHash, SemanticServingStateID: compiled.SemanticServingStateID, CompiledAt: formatTime(compiled.CompiledAt)})
+	err = q.InsertAuthoringCompiledRevision(ctx, dashboarddb.InsertAuthoringCompiledRevisionParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: string(compiled.AuthoredRevision.RevisionID), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionJson: definitionJSON, DefinitionHash: compiled.DefinitionHash, SemanticIdentityJson: semanticIdentityJSON, CompiledAt: formatTime(compiled.CompiledAt)})
 	if isConstraint(err) {
 		return conflict("compiled revision identity is immutable")
 	}
@@ -746,7 +762,11 @@ func (r *Repository) getLifecycle(ctx context.Context, q *dashboarddb.Queries, p
 		if err != nil {
 			return authoring.DashboardLifecycle{}, err
 		}
-		lifecycle.Published = &authoring.Published{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(published.RevisionID), Number: uint64(published.RevisionNumber), ContentHash: published.ContentHash}, Compilation: authoring.CompiledRevisionToken{AuthoredRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(published.CompiledRevisionID), Number: uint64(published.CompiledRevisionNumber), ContentHash: published.CompiledContentHash}, DefinitionHash: published.CompiledDefinitionHash, SemanticServingStateID: published.CompiledSemanticServingStateID}, PublishedAt: at, Provenance: provenance}
+		semanticIdentity, err := decodeServingIdentity(published.CompiledSemanticIdentityJson)
+		if err != nil {
+			return authoring.DashboardLifecycle{}, err
+		}
+		lifecycle.Published = &authoring.Published{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(published.RevisionID), Number: uint64(published.RevisionNumber), ContentHash: published.ContentHash}, Compilation: authoring.CompiledRevisionToken{AuthoredRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(published.CompiledRevisionID), Number: uint64(published.CompiledRevisionNumber), ContentHash: published.CompiledContentHash}, DefinitionHash: published.CompiledDefinitionHash, SemanticIdentity: semanticIdentity}, PublishedAt: at, Provenance: provenance}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return authoring.DashboardLifecycle{}, err
 	}
@@ -766,6 +786,32 @@ func encodeRevision(revision authoring.Revision) (string, string, error) {
 		return "", "", err
 	}
 	return string(document), string(provenance), nil
+}
+
+func encodeServingIdentity(identity graph.ServingIdentity) (string, error) {
+	if err := identity.Validate(); err != nil {
+		return "", fmt.Errorf("%w: serving identity: %v", authoring.ErrInvalidAuthoring, err)
+	}
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		return "", fmt.Errorf("encode serving identity: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func decodeServingIdentity(value string) (graph.ServingIdentity, error) {
+	var identity graph.ServingIdentity
+	if err := json.Unmarshal([]byte(value), &identity); err != nil {
+		return graph.ServingIdentity{}, fmt.Errorf("decode serving identity: %w", err)
+	}
+	canonical, err := encodeServingIdentity(identity)
+	if err != nil {
+		return graph.ServingIdentity{}, err
+	}
+	if canonical != value {
+		return graph.ServingIdentity{}, fmt.Errorf("%w: serving identity is not canonical", authoring.ErrInvalidAuthoring)
+	}
+	return identity, nil
 }
 
 func lifecycleReferencesRevision(lifecycle authoring.DashboardLifecycle, token authoring.RevisionToken) bool {

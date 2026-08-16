@@ -12,8 +12,8 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/compileradapter"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
-	"github.com/flidai/leapview/internal/runtimehost"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 type fixture struct {
@@ -30,11 +30,12 @@ func newFixture(t *testing.T) fixture {
 	doc := testDocument()
 	model := testModel()
 	runtime := &fakeRuntime{model: model}
-	lease := &fakeLease{runtime: runtime, servingState: "serving-sales"}
+	identity, _ := projectgraph.NewServingIdentity("project", "production", "serving-sales")
+	lease := &fakeLease{runtime: runtime, identity: identity}
 	var gotProject string
 	adapter, err := compileradapter.New(compileradapter.Options{
-		AcquireRuntime: func(_ context.Context, projectID string) (runtimehost.Lease, error) {
-			gotProject = projectID
+		AcquireRuntime: func(_ context.Context, projectID projectgraph.ResourceID) (projectruntime.Lease, error) {
+			gotProject = projectID.String()
 			return lease, nil
 		},
 	})
@@ -67,8 +68,8 @@ func testModel() *semanticmodel.Model {
 func TestCompileUsesOneProjectLeaseAndReturnsExactState(t *testing.T) {
 	fixture := newFixture(t)
 	var gotProject string
-	fixture.adapter, _ = compileradapter.New(compileradapter.Options{AcquireRuntime: func(_ context.Context, projectID string) (runtimehost.Lease, error) {
-		gotProject = projectID
+	fixture.adapter, _ = compileradapter.New(compileradapter.Options{AcquireRuntime: func(_ context.Context, projectID projectgraph.ResourceID) (projectruntime.Lease, error) {
+		gotProject = projectID.String()
 		return fixture.lease, nil
 	}})
 	result, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", fixture.doc)
@@ -81,7 +82,7 @@ func TestCompileUsesOneProjectLeaseAndReturnsExactState(t *testing.T) {
 	if fixture.runtime.projectionCalls != 1 || fixture.lease.releaseCalls != 1 {
 		t.Fatalf("runtime/lease calls = %d/%d, want 1/1", fixture.runtime.projectionCalls, fixture.lease.releaseCalls)
 	}
-	if result.Definition.ID != fixture.doc.ID.String() || result.Definition.SemanticModel != fixture.doc.SemanticModel.String() || result.SemanticServingStateID != "serving-sales" {
+	if result.Definition.ID != fixture.doc.ID.String() || result.Definition.SemanticModel != fixture.doc.SemanticModel.String() || result.SemanticIdentity.GenerationID != "serving-sales" || result.SemanticIdentity.ProjectID != "project" {
 		t.Fatalf("unexpected compilation = %#v", result)
 	}
 }
@@ -163,7 +164,7 @@ func TestCompileStrictDraftErrorReleasesAndDoesNotMutateInputOrModel(t *testing.
 
 func TestCompileRejectsMissingServingStateAndReleases(t *testing.T) {
 	fixture := newFixture(t)
-	fixture.lease.servingState = "  "
+	fixture.lease.identity = projectgraph.ServingIdentity{}
 	if _, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", fixture.doc); err == nil {
 		t.Fatal("missing serving state unexpectedly compiled")
 	}
@@ -189,15 +190,14 @@ func TestCompileImmutabilityAndCompilerContract(t *testing.T) {
 }
 
 type fakeLease struct {
-	runtime      runtimehost.Runtime
-	servingState servingstate.ID
+	runtime      projectruntime.Runtime
+	identity     projectgraph.ServingIdentity
 	releaseCalls int
 }
 
-func (l *fakeLease) Runtime() runtimehost.Runtime    { return l.runtime }
-func (l *fakeLease) ServingStateID() servingstate.ID { return l.servingState }
-func (l *fakeLease) DuckLakeSnapshotID() int64       { return 42 }
-func (l *fakeLease) Release()                        { l.releaseCalls++ }
+func (l *fakeLease) Runtime() projectruntime.Runtime        { return l.runtime }
+func (l *fakeLease) Identity() projectgraph.ServingIdentity { return l.identity }
+func (l *fakeLease) Release()                               { l.releaseCalls++ }
 
 type fakeRuntime struct {
 	model           *semanticmodel.Model
@@ -205,9 +205,9 @@ type fakeRuntime struct {
 }
 
 func (r *fakeRuntime) Close() error { return nil }
-func (r *fakeRuntime) SemanticModelProjection(id string) (*semanticmodel.Model, bool) {
+func (r *fakeRuntime) SemanticModelProjection(id projectgraph.ResourceID) (*semanticmodel.Model, bool) {
 	r.projectionCalls++
-	if r.model == nil || r.model.Name != id {
+	if r.model == nil || r.model.Name != id.String() {
 		return nil, false
 	}
 	// Return a detached top-level projection to model the production runtime

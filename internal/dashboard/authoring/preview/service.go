@@ -105,10 +105,10 @@ type PreviewRequest struct {
 // SemanticServingStateEvidence binds the returned draft output to the exact
 // active runtime generation and semantic model used for compilation/query.
 type SemanticServingStateEvidence struct {
-	SemanticModel      string `json:"semanticModel"`
-	RuntimeModel       string `json:"runtimeModel"`
-	ServingStateID     string `json:"servingStateId"`
-	DuckLakeSnapshotID int64  `json:"duckLakeSnapshotId"`
+	SemanticModel      string                    `json:"semanticModel"`
+	RuntimeModel       string                    `json:"runtimeModel"`
+	Identity           graph.ServingIdentity     `json:"identity"`
+	DuckLakeSnapshotID int64                     `json:"duckLakeSnapshotId"`
 }
 
 // Preview is the successful read-only preview result. Revision is the exact
@@ -250,10 +250,6 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if compiled.Definition.SemanticModel != lifecycle.SemanticModel.String() || compiled.Definition.SemanticModel != revision.Document.SemanticModel.String() {
 		return Preview{}, fmt.Errorf("%w: compiled semantic model does not match lifecycle", ErrSemanticMismatch)
 	}
-	servingStateID := strings.TrimSpace(identity.GenerationID)
-	if servingStateID == "" {
-		return Preview{}, fmt.Errorf("dashboard preview serving-state identity is unavailable")
-	}
 	snapshotID := int64(0)
 	if snapshotRuntime, ok := lease.Runtime().(interface{ DuckLakeSnapshotID() int64 }); ok {
 		snapshotID = snapshotRuntime.DuckLakeSnapshotID()
@@ -261,7 +257,7 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 
 	evidence := SemanticServingStateEvidence{
 		SemanticModel: lifecycle.SemanticModel.String(), RuntimeModel: model.Name,
-		ServingStateID:     servingStateID,
+		Identity:           identity,
 		DuckLakeSnapshotID: snapshotID,
 	}
 	patch, err := active.QueryDashboardPageForDefinition(ctx, compiled.Definition, pageID, request.Filters)

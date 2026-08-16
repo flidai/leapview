@@ -47,6 +47,27 @@ func TestNewProjectDefinitionRejectsResourceIdentityMismatches(t *testing.T) {
 	}
 }
 
+func TestProjectDefinitionResourceIDsAreCanonicalOrder(t *testing.T) {
+	models := map[projectgraph.ResourceID]*semanticmodel.Model{
+		"model_z": {Name: "z"},
+		"model_a": {Name: "a"},
+	}
+	dashboards := map[projectgraph.ResourceID]dashboarddefinition.Definition{
+		"dashboard_z": {ID: "dashboard_z", SemanticModel: "model_a"},
+		"dashboard_a": {ID: "dashboard_a", SemanticModel: "model_z"},
+	}
+	definition, err := NewProjectDefinition("project_1", "", "", models, dashboards)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := definition.ModelIDs(); len(got) != 2 || got[0] != "model_a" || got[1] != "model_z" {
+		t.Fatalf("model IDs = %v, want canonical order", got)
+	}
+	if got := definition.DashboardIDs(); len(got) != 2 || got[0] != "dashboard_a" || got[1] != "dashboard_z" {
+		t.Fatalf("dashboard IDs = %v, want canonical order", got)
+	}
+}
+
 func TestNewFromGenerationRejectsWrongProjectIdentity(t *testing.T) {
 	definition, err := NewProjectDefinition("project_1", "", "", nil, nil)
 	if err != nil {

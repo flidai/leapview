@@ -39,8 +39,8 @@ type Authorizer interface {
 // Compilation is the exact compiler-facing result persisted with a published
 // authored revision. The service does not activate a serving generation.
 type Compilation struct {
-	Definition             dashboarddefinition.Definition
-	SemanticServingStateID string
+	Definition       dashboarddefinition.Definition
+	SemanticIdentity graph.ServingIdentity
 }
 
 type Compiler interface {
@@ -109,8 +109,8 @@ type CreateRequest struct {
 	ToolCallID       string
 	// IdempotencyKey is a caller-supplied retry identity. It is deliberately
 	// separate from ToolCallID, which is retained solely as provenance.
-	IdempotencyKey             string
-	BaseSemanticServingStateID string
+	IdempotencyKey       string
+	BaseSemanticIdentity graph.ServingIdentity
 }
 
 // ForkRequest copies the exact published authored revision of a dashboard into
@@ -128,8 +128,8 @@ type ForkRequest struct {
 	ToolCallID        string
 	// IdempotencyKey is a caller-supplied retry identity, separate from the
 	// provenance ToolCallID.
-	IdempotencyKey             string
-	BaseSemanticServingStateID string
+	IdempotencyKey       string
+	BaseSemanticIdentity graph.ServingIdentity
 }
 
 // CreateFromDocumentRequest creates a new private draft from a complete
@@ -142,20 +142,20 @@ type ForkRequest struct {
 // Source is descriptive provenance only. In particular, an adapter must not
 // manufacture a RevisionToken for a project artifact that does not have one.
 type CreateFromDocumentRequest struct {
-	ProjectID                  graph.ResourceID
-	ActorID                    string
-	OwnerPrincipalID           string
-	Document                   authoring.Dashboard
-	Title                      string
-	Slug                       string
-	Origin                     authoring.Origin
-	Source                     *authoring.SourceMetadata
-	ForkedFrom                 *authoring.ForkEvidence
-	ConversationID             string
-	ToolCallID                 string
-	IdempotencyKey             string
-	OperationSeed              *ForkOperationSeed
-	BaseSemanticServingStateID string
+	ProjectID            graph.ResourceID
+	ActorID              string
+	OwnerPrincipalID     string
+	Document             authoring.Dashboard
+	Title                string
+	Slug                 string
+	Origin               authoring.Origin
+	Source               *authoring.SourceMetadata
+	ForkedFrom           *authoring.ForkEvidence
+	ConversationID       string
+	ToolCallID           string
+	IdempotencyKey       string
+	OperationSeed        *ForkOperationSeed
+	BaseSemanticIdentity graph.ServingIdentity
 }
 
 // ForkOperationSeed binds a complete-document project fork to its immutable
@@ -200,7 +200,7 @@ func (s *Service) CreateFromDocument(ctx context.Context, input CreateFromDocume
 		Document: input.Document, Title: input.Title, Slug: input.Slug, Visibility: authoring.VisibilityPrivate,
 		Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom,
 		ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, IdempotencyKey: input.IdempotencyKey,
-		OperationSeed: input.OperationSeed, BaseSemanticServingStateID: input.BaseSemanticServingStateID, OperationKind: "fork",
+		OperationSeed: input.OperationSeed, BaseSemanticIdentity: input.BaseSemanticIdentity, OperationKind: "fork",
 	})
 }
 
@@ -289,7 +289,7 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 		origin = authoring.OriginUI
 	}
 	forkedFrom := &authoring.ForkEvidence{Kind: authoring.ForkSourceInstance, Instance: &authoring.InstanceForkEvidence{SourceProjectID: sourceProjectID, SourceDashboardID: source.ID, SourceRevision: publishedToken}}
-	provenance := authoring.Provenance{Origin: origin, ActorID: actorID, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Source: input.Source, ForkedFrom: forkedFrom}
+	provenance := authoring.Provenance{Origin: origin, ActorID: actorID, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticIdentity: input.BaseSemanticIdentity, Source: input.Source, ForkedFrom: forkedFrom}
 	if err := provenance.Validate(); err != nil {
 		return Result{}, err
 	}
@@ -391,30 +391,30 @@ func (s *Service) Create(ctx context.Context, input CreateRequest) (Result, erro
 		RequestedDashboardID: input.DashboardID,
 		Document:             authoring.Dashboard{ID: input.DashboardID, Title: title, SemanticModel: semanticModel, Visuals: map[string]authoring.AuthoringVisualization{}, Pages: []dashboardmodel.Page{defaultPage}},
 		Title:                title, Slug: input.Slug, Visibility: visibility, Origin: input.Origin, Source: input.Source,
-		ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, BaseSemanticServingStateID: input.BaseSemanticServingStateID,
+		ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, BaseSemanticIdentity: input.BaseSemanticIdentity,
 		IdempotencyKey: input.IdempotencyKey, OperationKind: "create",
 	})
 }
 
 type createDraftInput struct {
-	ProjectID                  graph.ResourceID
-	ActorID                    string
-	OwnerPrincipalID           string
-	DashboardID                authoring.DashboardID
-	RequestedDashboardID       authoring.DashboardID
-	Document                   authoring.Dashboard
-	Title                      string
-	Slug                       string
-	Visibility                 authoring.Visibility
-	Origin                     authoring.Origin
-	Source                     *authoring.SourceMetadata
-	ForkedFrom                 *authoring.ForkEvidence
-	ConversationID             string
-	ToolCallID                 string
-	IdempotencyKey             string
-	OperationSeed              *ForkOperationSeed
-	OperationKind              string
-	BaseSemanticServingStateID string
+	ProjectID            graph.ResourceID
+	ActorID              string
+	OwnerPrincipalID     string
+	DashboardID          authoring.DashboardID
+	RequestedDashboardID authoring.DashboardID
+	Document             authoring.Dashboard
+	Title                string
+	Slug                 string
+	Visibility           authoring.Visibility
+	Origin               authoring.Origin
+	Source               *authoring.SourceMetadata
+	ForkedFrom           *authoring.ForkEvidence
+	ConversationID       string
+	ToolCallID           string
+	IdempotencyKey       string
+	OperationSeed        *ForkOperationSeed
+	OperationKind        string
+	BaseSemanticIdentity graph.ServingIdentity
 }
 
 // createDraft is the single transactional private-draft construction path
@@ -463,7 +463,7 @@ func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Resu
 	provenance := authoring.Provenance{
 		Origin: origin, ActorID: actorID,
 		ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID),
-		BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Source: input.Source, ForkedFrom: input.ForkedFrom,
+		BaseSemanticIdentity: input.BaseSemanticIdentity, Source: input.Source, ForkedFrom: input.ForkedFrom,
 	}
 	if err := provenance.Validate(); err != nil {
 		return Result{}, err
@@ -635,21 +635,21 @@ func (s *Service) createOperation(input createDraftInput) (authoring.CreateOpera
 	// binds the exact source identity where applicable.
 	document.ID = ""
 	payload := struct {
-		Kind                       string                    `json:"kind"`
-		DashboardID                string                    `json:"dashboardId,omitempty"`
-		OwnerPrincipalID           string                    `json:"ownerPrincipalId"`
-		Title                      string                    `json:"title"`
-		Slug                       string                    `json:"slug"`
-		SemanticModel              graph.ResourceID          `json:"semanticModel"`
-		Visibility                 authoring.Visibility      `json:"visibility"`
-		Origin                     authoring.Origin          `json:"origin"`
-		Source                     *authoring.SourceMetadata `json:"source,omitempty"`
-		ForkedFrom                 *authoring.ForkEvidence   `json:"forkedFrom,omitempty"`
-		ConversationID             string                    `json:"conversationId,omitempty"`
-		ToolCallID                 string                    `json:"toolCallId,omitempty"`
-		BaseSemanticServingStateID string                    `json:"baseSemanticServingStateId,omitempty"`
-		Document                   authoring.Dashboard       `json:"document"`
-	}{Kind: kind, DashboardID: requestedID, OwnerPrincipalID: strings.TrimSpace(input.OwnerPrincipalID), Title: strings.TrimSpace(input.Title), Slug: strings.TrimSpace(input.Slug), SemanticModel: input.Document.SemanticModel, Visibility: input.Visibility, Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticServingStateID: strings.TrimSpace(input.BaseSemanticServingStateID), Document: document}
+		Kind                 string                    `json:"kind"`
+		DashboardID          string                    `json:"dashboardId,omitempty"`
+		OwnerPrincipalID     string                    `json:"ownerPrincipalId"`
+		Title                string                    `json:"title"`
+		Slug                 string                    `json:"slug"`
+		SemanticModel        graph.ResourceID          `json:"semanticModel"`
+		Visibility           authoring.Visibility      `json:"visibility"`
+		Origin               authoring.Origin          `json:"origin"`
+		Source               *authoring.SourceMetadata `json:"source,omitempty"`
+		ForkedFrom           *authoring.ForkEvidence   `json:"forkedFrom,omitempty"`
+		ConversationID       string                    `json:"conversationId,omitempty"`
+		ToolCallID           string                    `json:"toolCallId,omitempty"`
+		BaseSemanticIdentity graph.ServingIdentity     `json:"baseSemanticIdentity,omitempty"`
+		Document             authoring.Dashboard       `json:"document"`
+	}{Kind: kind, DashboardID: requestedID, OwnerPrincipalID: strings.TrimSpace(input.OwnerPrincipalID), Title: strings.TrimSpace(input.Title), Slug: strings.TrimSpace(input.Slug), SemanticModel: input.Document.SemanticModel, Visibility: input.Visibility, Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticIdentity: input.BaseSemanticIdentity, Document: document}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return authoring.CreateOperation{}, fmt.Errorf("encode create operation payload: %w", err)
@@ -832,10 +832,10 @@ func (s *Service) publish(ctx context.Context, projectID graph.ResourceID, comma
 	if compilation.Definition.SemanticModel != lifecycle.SemanticModel.String() || compilation.Definition.SemanticModel != current.Document.SemanticModel.String() {
 		return Result{}, fmt.Errorf("%w: compiler semantic model does not match authored lifecycle", authoring.ErrInvalidAuthoring)
 	}
-	if strings.TrimSpace(compilation.SemanticServingStateID) == "" {
-		return Result{}, fmt.Errorf("%w: compiler semantic serving state id is required", authoring.ErrInvalidAuthoring)
+	if err := compilation.SemanticIdentity.Validate(); err != nil {
+		return Result{}, fmt.Errorf("%w: compiler semantic serving identity is required: %v", authoring.ErrInvalidAuthoring, err)
 	}
-	compiled, err := authoring.NewCompiledRevision(projectID, command.DashboardID, current.Token(), compilation.Definition, compilation.SemanticServingStateID, evidence.OccurredAt)
+	compiled, err := authoring.NewCompiledRevision(projectID, command.DashboardID, current.Token(), compilation.Definition, compilation.SemanticIdentity, evidence.OccurredAt)
 	if err != nil {
 		return Result{}, err
 	}

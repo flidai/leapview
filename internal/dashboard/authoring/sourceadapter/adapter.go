@@ -67,10 +67,10 @@ type InstanceProvenance struct {
 // retained source is identified by its immutable serving state and authored
 // path, not by a fabricated authoring revision.
 type ProjectProvenance struct {
-	ProjectID      graph.ResourceID
-	DashboardID    authoring.DashboardID
-	ServingStateID string
-	Path           string
+	ProjectID   graph.ResourceID
+	DashboardID authoring.DashboardID
+	Identity    graph.ServingIdentity
+	Path        string
 }
 
 // Provenance is a discriminated union. Exactly one branch is populated for a
@@ -338,7 +338,7 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 		Ref: ref, Document: document, Metadata: metadata,
 		Provenance: Provenance{Kind: SourceProject, Project: &ProjectProvenance{
 			ProjectID: ref.ProjectID, DashboardID: ref.DashboardID,
-			ServingStateID: strings.TrimSpace(identity.GenerationID), Path: retained.Path,
+			Identity: identity, Path: retained.Path,
 		}},
 	}, nil
 }
@@ -459,7 +459,7 @@ func (a *Adapter) Fork(ctx context.Context, request ForkRequest) (service.Result
 			ProjectID: targetProjectID, ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID,
 			Document: source.Document, Title: request.Title, Slug: request.Slug, Origin: request.Origin,
 			Source: sourceEvidence, ForkedFrom: forkEvidence, ConversationID: request.ConversationID,
-			ToolCallID: request.ToolCallID, BaseSemanticServingStateID: source.Provenance.Project.ServingStateID,
+			ToolCallID: request.ToolCallID, BaseSemanticIdentity: source.Provenance.Project.Identity,
 			IdempotencyKey: request.IdempotencyKey,
 			OperationSeed:  &service.ForkOperationSeed{SourceKind: string(request.Source.Kind), SourceProjectID: request.Source.ProjectID, SourceDashboardID: request.Source.DashboardID, TargetProjectID: targetProjectID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug},
 		})
@@ -476,7 +476,7 @@ func projectSourceEvidence(source Source) (*authoring.SourceMetadata, *authoring
 	evidence := &authoring.SourceMetadata{Path: project.Path}
 	fork := &authoring.ForkEvidence{Kind: authoring.ForkSourceProject, Project: &authoring.ProjectForkEvidence{
 		SourceProjectID: project.ProjectID, SourceDashboardID: project.DashboardID,
-		ServingStateID: project.ServingStateID, Path: project.Path,
+		Identity: project.Identity, Path: project.Path,
 	}}
 	return evidence, fork
 }

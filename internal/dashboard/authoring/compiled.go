@@ -17,13 +17,13 @@ import (
 // deliberately part of the token: a definition hash by itself is not enough
 // to prove which authored revision or model boundary produced it.
 type CompiledRevisionToken struct {
-	AuthoredRevision       RevisionToken `json:"authoredRevision"`
-	DefinitionHash         string        `json:"definitionHash"`
-	SemanticServingStateID string        `json:"semanticServingStateId"`
+	AuthoredRevision RevisionToken         `json:"authoredRevision"`
+	DefinitionHash   string                `json:"definitionHash"`
+	SemanticIdentity graph.ServingIdentity `json:"semanticIdentity"`
 }
 
 func (t CompiledRevisionToken) IsZero() bool {
-	return t.AuthoredRevision.IsZero() && t.DefinitionHash == "" && t.SemanticServingStateID == ""
+	return t.AuthoredRevision.IsZero() && t.DefinitionHash == "" && t.SemanticIdentity == (graph.ServingIdentity{})
 }
 
 func (t CompiledRevisionToken) Validate() error {
@@ -33,11 +33,8 @@ func (t CompiledRevisionToken) Validate() error {
 	if !validSHA256(t.DefinitionHash) || t.DefinitionHash != strings.ToLower(t.DefinitionHash) {
 		return fmt.Errorf("%w: compiled definition hash is required and must be lowercase sha256", ErrInvalidAuthoring)
 	}
-	if strings.TrimSpace(t.SemanticServingStateID) == "" {
-		return fmt.Errorf("%w: semantic serving state id is required", ErrInvalidAuthoring)
-	}
-	if t.SemanticServingStateID != strings.TrimSpace(t.SemanticServingStateID) {
-		return fmt.Errorf("%w: semantic serving state id cannot have surrounding whitespace", ErrInvalidAuthoring)
+	if err := t.SemanticIdentity.Validate(); err != nil {
+		return fmt.Errorf("%w: semantic serving identity is required: %v", ErrInvalidAuthoring, err)
 	}
 	return nil
 }
@@ -46,18 +43,18 @@ func (t CompiledRevisionToken) Validate() error {
 // Scope is carried in the value so repository implementations cannot
 // accidentally return an artifact from another project or dashboard.
 type CompiledRevision struct {
-	ProjectID              graph.ResourceID               `json:"projectId"`
-	DashboardID            DashboardID                    `json:"dashboardId"`
-	AuthoredRevision       RevisionToken                  `json:"authoredRevision"`
-	Definition             dashboarddefinition.Definition `json:"definition"`
-	DefinitionHash         string                         `json:"definitionHash"`
-	SemanticServingStateID string                         `json:"semanticServingStateId"`
-	CompiledAt             time.Time                      `json:"compiledAt"`
+	ProjectID        graph.ResourceID               `json:"projectId"`
+	DashboardID      DashboardID                    `json:"dashboardId"`
+	AuthoredRevision RevisionToken                  `json:"authoredRevision"`
+	Definition       dashboarddefinition.Definition `json:"definition"`
+	DefinitionHash   string                         `json:"definitionHash"`
+	SemanticIdentity graph.ServingIdentity          `json:"semanticIdentity"`
+	CompiledAt       time.Time                      `json:"compiledAt"`
 }
 
 // NewCompiledRevision computes the canonical definition hash and deep-copies
 // compiler output before it crosses the persistence boundary.
-func NewCompiledRevision(projectID graph.ResourceID, dashboardID DashboardID, authored RevisionToken, definition dashboarddefinition.Definition, semanticServingStateID string, compiledAt time.Time) (CompiledRevision, error) {
+func NewCompiledRevision(projectID graph.ResourceID, dashboardID DashboardID, authored RevisionToken, definition dashboarddefinition.Definition, semanticIdentity graph.ServingIdentity, compiledAt time.Time) (CompiledRevision, error) {
 	if err := validateResourceID("compiled project id", projectID); err != nil {
 		return CompiledRevision{}, err
 	}
@@ -70,11 +67,11 @@ func NewCompiledRevision(projectID graph.ResourceID, dashboardID DashboardID, au
 	if err := validateCompiledDefinition(dashboardID, definition); err != nil {
 		return CompiledRevision{}, err
 	}
-	if strings.TrimSpace(semanticServingStateID) == "" {
-		return CompiledRevision{}, fmt.Errorf("%w: semantic serving state id is required", ErrInvalidAuthoring)
+	if err := semanticIdentity.Validate(); err != nil {
+		return CompiledRevision{}, fmt.Errorf("%w: semantic serving identity is required: %v", ErrInvalidAuthoring, err)
 	}
-	if semanticServingStateID != strings.TrimSpace(semanticServingStateID) {
-		return CompiledRevision{}, fmt.Errorf("%w: semantic serving state id cannot have surrounding whitespace", ErrInvalidAuthoring)
+	if semanticIdentity.ProjectID != projectID {
+		return CompiledRevision{}, fmt.Errorf("%w: semantic serving identity project %q does not match compiled project %q", ErrInvalidAuthoring, semanticIdentity.ProjectID, projectID)
 	}
 	if compiledAt.IsZero() || compiledAt.Location() != time.UTC {
 		return CompiledRevision{}, fmt.Errorf("%w: compiled_at must be a non-zero UTC timestamp", ErrInvalidAuthoring)
@@ -87,11 +84,11 @@ func NewCompiledRevision(projectID graph.ResourceID, dashboardID DashboardID, au
 	if err != nil {
 		return CompiledRevision{}, err
 	}
-	return CompiledRevision{ProjectID: projectID, DashboardID: dashboardID, AuthoredRevision: authored, Definition: cloned, DefinitionHash: hash, SemanticServingStateID: semanticServingStateID, CompiledAt: compiledAt}, nil
+	return CompiledRevision{ProjectID: projectID, DashboardID: dashboardID, AuthoredRevision: authored, Definition: cloned, DefinitionHash: hash, SemanticIdentity: semanticIdentity, CompiledAt: compiledAt}, nil
 }
 
 func (c CompiledRevision) Token() CompiledRevisionToken {
-	return CompiledRevisionToken{AuthoredRevision: c.AuthoredRevision, DefinitionHash: c.DefinitionHash, SemanticServingStateID: c.SemanticServingStateID}
+	return CompiledRevisionToken{AuthoredRevision: c.AuthoredRevision, DefinitionHash: c.DefinitionHash, SemanticIdentity: c.SemanticIdentity}
 }
 
 func (c CompiledRevision) Validate() error {
@@ -116,6 +113,9 @@ func (c CompiledRevision) Validate() error {
 	}
 	if err := c.Token().Validate(); err != nil {
 		return err
+	}
+	if c.SemanticIdentity.ProjectID != c.ProjectID {
+		return fmt.Errorf("%w: semantic serving identity project %q does not match compiled project %q", ErrInvalidAuthoring, c.SemanticIdentity.ProjectID, c.ProjectID)
 	}
 	if c.CompiledAt.IsZero() || c.CompiledAt.Location() != time.UTC {
 		return fmt.Errorf("%w: compiled_at must be a non-zero UTC timestamp", ErrInvalidAuthoring)

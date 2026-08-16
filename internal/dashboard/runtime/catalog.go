@@ -32,13 +32,17 @@ func (s *CatalogService) catalogView(definition *ProjectDefinition) catalog.Cata
 	// Catalog.Workspace is a legacy transport shape. Keep its descriptive
 	// fields only; never encode a project ResourceID into a workspace ID.
 	result := catalog.Catalog{Workspace: catalog.Workspace{Title: definition.Title(), Description: definition.Description()}}
-	for modelID, model := range definition.Models() {
+	models := definition.Models()
+	for _, modelID := range definition.ModelIDs() {
+		model := models[modelID]
 		if model == nil {
 			continue
 		}
 		result.Models = append(result.Models, catalog.Model{ID: modelID.String(), Title: model.Title, Description: model.Description})
 	}
-	for dashboardID, dashboard := range definition.Dashboards() {
+	dashboards := definition.Dashboards()
+	for _, dashboardID := range definition.DashboardIDs() {
+		dashboard := dashboards[dashboardID]
 		result.Dashboards = append(result.Dashboards, catalog.Dashboard{ID: dashboardID.String(), Title: dashboard.Title, Description: dashboard.Description, SemanticModel: dashboard.SemanticModel, PageCount: len(dashboard.Pages)})
 	}
 	return result

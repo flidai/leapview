@@ -8,6 +8,7 @@ import (
 
 	dashboardmodel "github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func contractProvenance() Provenance {
@@ -23,7 +24,13 @@ func contractRevisionToken() RevisionToken {
 }
 
 func contractCompilationToken() CompiledRevisionToken {
-	return CompiledRevisionToken{AuthoredRevision: contractRevisionToken(), DefinitionHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", SemanticServingStateID: "state-1"}
+	identity, _ := projectgraph.NewServingIdentity("project-1", "production", "state-1")
+	return CompiledRevisionToken{AuthoredRevision: contractRevisionToken(), DefinitionHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", SemanticIdentity: identity}
+}
+
+func contractServingIdentity() projectgraph.ServingIdentity {
+	identity, _ := projectgraph.NewServingIdentity("project-1", "production", "state-1")
+	return identity
 }
 
 func TestLifecycleStatusesAndPointers(t *testing.T) {
@@ -80,12 +87,12 @@ func TestIdentifiersAndEnumsAreClosed(t *testing.T) {
 
 func TestProvenanceMetadataRoundTripAndValidation(t *testing.T) {
 	value := Provenance{
-		Origin:                     OriginAgent,
-		ActorID:                    "principal-1",
-		ConversationID:             "conversation-1",
-		ToolCallID:                 "call-1",
-		BaseSemanticServingStateID: "state-1",
-		Source:                     &SourceMetadata{Repository: "org/repo", Path: "dashboards/sales.yaml", Ref: "main", Revision: "abc123"},
+		Origin:               OriginAgent,
+		ActorID:              "principal-1",
+		ConversationID:       "conversation-1",
+		ToolCallID:           "call-1",
+		BaseSemanticIdentity: contractServingIdentity(),
+		Source:               &SourceMetadata{Repository: "org/repo", Path: "dashboards/sales.yaml", Ref: "main", Revision: "abc123"},
 	}
 	if err := value.Validate(); err != nil {
 		t.Fatalf("metadata provenance validation error = %v", err)
@@ -101,13 +108,13 @@ func TestProvenanceMetadataRoundTripAndValidation(t *testing.T) {
 	if decoded.Source == nil {
 		t.Fatalf("provenance metadata did not round-trip: %#v", decoded)
 	}
-	if decoded.ConversationID != value.ConversationID || decoded.ToolCallID != value.ToolCallID || decoded.BaseSemanticServingStateID != value.BaseSemanticServingStateID || decoded.Source.Repository != value.Source.Repository {
+	if decoded.ConversationID != value.ConversationID || decoded.ToolCallID != value.ToolCallID || decoded.BaseSemanticIdentity != value.BaseSemanticIdentity || decoded.Source.Repository != value.Source.Repository {
 		t.Fatalf("provenance metadata did not round-trip: %#v", decoded)
 	}
 	for _, invalid := range []Provenance{
 		{Origin: OriginAgent, ActorID: "principal-1", ConversationID: "bad id"},
 		{Origin: OriginAgent, ActorID: "principal-1", ToolCallID: "" + " bad"},
-		{Origin: OriginAgent, ActorID: "principal-1", BaseSemanticServingStateID: "state/1"},
+		{Origin: OriginAgent, ActorID: "principal-1", BaseSemanticIdentity: projectgraph.ServingIdentity{ProjectID: "project-1", Environment: "production", GenerationID: "state/1"}},
 	} {
 		if err := invalid.Validate(); err == nil {
 			t.Fatalf("invalid provenance metadata unexpectedly validated: %#v", invalid)
@@ -159,7 +166,7 @@ func TestProvenanceCloneDetachesForkEvidence(t *testing.T) {
 	t.Run("project", func(t *testing.T) {
 		original := Provenance{Origin: OriginAgent, ActorID: "actor", ForkedFrom: &ForkEvidence{
 			Kind:    ForkSourceProject,
-			Project: &ProjectForkEvidence{SourceProjectID: "source-project", SourceDashboardID: "source-dashboard", ServingStateID: "state-1", Path: "dashboards/source.yaml"},
+			Project: &ProjectForkEvidence{SourceProjectID: "project-1", SourceDashboardID: "source-dashboard", Identity: contractServingIdentity(), Path: "dashboards/source.yaml"},
 		}}
 		cloned := original.Clone()
 		if cloned.ForkedFrom == original.ForkedFrom || cloned.ForkedFrom.Project == original.ForkedFrom.Project {
@@ -167,7 +174,7 @@ func TestProvenanceCloneDetachesForkEvidence(t *testing.T) {
 		}
 		cloned.ForkedFrom.Project.SourceProjectID = "mutated-project"
 		cloned.ForkedFrom.Project.Path = "mutated.yaml"
-		if original.ForkedFrom.Project.SourceProjectID != "source-project" || original.ForkedFrom.Project.Path != "dashboards/source.yaml" {
+		if original.ForkedFrom.Project.SourceProjectID != "project-1" || original.ForkedFrom.Project.Path != "dashboards/source.yaml" {
 			t.Fatalf("original project evidence mutated through clone: %#v", original.ForkedFrom.Project)
 		}
 	})

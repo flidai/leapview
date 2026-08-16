@@ -69,9 +69,9 @@ CREATE TABLE dashboard_authoring_compiled_revisions (
   content_hash TEXT NOT NULL CHECK (length(content_hash) = 71 AND substr(content_hash, 1, 7) = 'sha256:' AND substr(content_hash, 8) NOT GLOB '*[^0-9a-f]*'),
   definition_json TEXT NOT NULL CHECK (length(trim(definition_json)) > 0),
   definition_hash TEXT NOT NULL CHECK (length(definition_hash) = 71 AND substr(definition_hash, 1, 7) = 'sha256:' AND substr(definition_hash, 8) NOT GLOB '*[^0-9a-f]*'),
-  semantic_serving_state_id TEXT NOT NULL CHECK (length(trim(semantic_serving_state_id)) > 0),
+  semantic_identity_json TEXT NOT NULL CHECK (length(trim(semantic_identity_json)) > 0),
   compiled_at TEXT NOT NULL,
-  PRIMARY KEY (project_id, dashboard_id, revision_id, revision_number, content_hash, definition_hash, semantic_serving_state_id),
+  PRIMARY KEY (project_id, dashboard_id, revision_id, revision_number, content_hash, definition_hash, semantic_identity_json),
   FOREIGN KEY (project_id, dashboard_id, revision_id, revision_number, content_hash)
     REFERENCES dashboard_authoring_revisions(project_id, dashboard_id, revision_id, revision_number, content_hash)
     ON DELETE RESTRICT,
@@ -90,15 +90,15 @@ CREATE TABLE dashboard_authoring_published (
   compiled_revision_number INTEGER NOT NULL CHECK (compiled_revision_number > 0),
   compiled_content_hash TEXT NOT NULL,
   compiled_definition_hash TEXT NOT NULL CHECK (length(compiled_definition_hash) = 71 AND substr(compiled_definition_hash, 1, 7) = 'sha256:' AND substr(compiled_definition_hash, 8) NOT GLOB '*[^0-9a-f]*'),
-  compiled_semantic_serving_state_id TEXT NOT NULL CHECK (length(trim(compiled_semantic_serving_state_id)) > 0),
+  compiled_semantic_identity_json TEXT NOT NULL CHECK (length(trim(compiled_semantic_identity_json)) > 0),
   provenance_json TEXT NOT NULL CHECK (length(trim(provenance_json)) > 0),
   published_at TEXT NOT NULL,
   PRIMARY KEY (project_id, dashboard_id),
   FOREIGN KEY (project_id, dashboard_id, revision_id, revision_number, content_hash)
     REFERENCES dashboard_authoring_revisions(project_id, dashboard_id, revision_id, revision_number, content_hash)
     ON DELETE RESTRICT,
-  FOREIGN KEY (project_id, dashboard_id, compiled_revision_id, compiled_revision_number, compiled_content_hash, compiled_definition_hash, compiled_semantic_serving_state_id)
-    REFERENCES dashboard_authoring_compiled_revisions(project_id, dashboard_id, revision_id, revision_number, content_hash, definition_hash, semantic_serving_state_id)
+  FOREIGN KEY (project_id, dashboard_id, compiled_revision_id, compiled_revision_number, compiled_content_hash, compiled_definition_hash, compiled_semantic_identity_json)
+    REFERENCES dashboard_authoring_compiled_revisions(project_id, dashboard_id, revision_id, revision_number, content_hash, definition_hash, semantic_identity_json)
     ON DELETE RESTRICT,
   FOREIGN KEY (project_id, dashboard_id)
     REFERENCES dashboard_authoring_dashboards(project_id, dashboard_id)

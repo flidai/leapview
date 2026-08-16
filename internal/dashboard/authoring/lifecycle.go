@@ -152,10 +152,10 @@ func (k ForkSourceKind) Valid() bool { return k == ForkSourceInstance || k == Fo
 // ProjectForkEvidence identifies a retained project-artifact source without
 // pretending it was authored in the authoring repository.
 type ProjectForkEvidence struct {
-	SourceProjectID   graph.ResourceID `json:"sourceProjectId"`
-	SourceDashboardID DashboardID      `json:"sourceDashboardId"`
-	ServingStateID    string           `json:"servingStateId"`
-	Path              string           `json:"path,omitempty"`
+	SourceProjectID   graph.ResourceID      `json:"sourceProjectId"`
+	SourceDashboardID DashboardID           `json:"sourceDashboardId"`
+	Identity          graph.ServingIdentity `json:"identity"`
+	Path              string                `json:"path,omitempty"`
 }
 
 // InstanceForkEvidence identifies an exact retained published authoring
@@ -206,11 +206,11 @@ func (e ForkEvidence) Validate() error {
 		if err := validateDashboardID(e.Project.SourceDashboardID); err != nil {
 			return fmt.Errorf("%w: project fork source dashboard: %v", ErrInvalidAuthoring, err)
 		}
-		if strings.TrimSpace(e.Project.ServingStateID) == "" {
-			return fmt.Errorf("%w: project fork serving state id is required", ErrInvalidAuthoring)
+		if err := e.Project.Identity.Validate(); err != nil {
+			return fmt.Errorf("%w: project fork serving identity: %v", ErrInvalidAuthoring, err)
 		}
-		if e.Project.ServingStateID != strings.TrimSpace(e.Project.ServingStateID) || !identifierPattern.MatchString(e.Project.ServingStateID) {
-			return fmt.Errorf("%w: invalid project fork serving state id %q", ErrInvalidAuthoring, e.Project.ServingStateID)
+		if e.Project.Identity.ProjectID != e.Project.SourceProjectID {
+			return fmt.Errorf("%w: project fork serving identity project %q does not match source project %q", ErrInvalidAuthoring, e.Project.Identity.ProjectID, e.Project.SourceProjectID)
 		}
 		return nil
 	default:
@@ -219,13 +219,13 @@ func (e ForkEvidence) Validate() error {
 }
 
 type Provenance struct {
-	Origin                     Origin          `json:"origin"`
-	ActorID                    string          `json:"actorId"`
-	ConversationID             string          `json:"conversationId,omitempty"`
-	ToolCallID                 string          `json:"toolCallId,omitempty"`
-	BaseSemanticServingStateID string          `json:"baseSemanticServingStateId,omitempty"`
-	Source                     *SourceMetadata `json:"source,omitempty"`
-	ForkedFrom                 *ForkEvidence   `json:"forkedFrom,omitempty"`
+	Origin               Origin                `json:"origin"`
+	ActorID              string                `json:"actorId"`
+	ConversationID       string                `json:"conversationId,omitempty"`
+	ToolCallID           string                `json:"toolCallId,omitempty"`
+	BaseSemanticIdentity graph.ServingIdentity `json:"baseSemanticIdentity,omitempty"`
+	Source               *SourceMetadata       `json:"source,omitempty"`
+	ForkedFrom           *ForkEvidence         `json:"forkedFrom,omitempty"`
 }
 
 // Clone returns a provenance value detached from caller-owned evidence maps.
@@ -276,7 +276,6 @@ func (p Provenance) Validate() error {
 	}{
 		{kind: "provenance conversation id", value: p.ConversationID},
 		{kind: "provenance tool call id", value: p.ToolCallID},
-		{kind: "provenance base semantic serving state id", value: p.BaseSemanticServingStateID},
 	} {
 		value := item.value
 		if strings.TrimSpace(value) == "" {
@@ -284,6 +283,11 @@ func (p Provenance) Validate() error {
 		}
 		if err := validateProvenanceIdentifier(item.kind, value); err != nil {
 			return err
+		}
+	}
+	if p.BaseSemanticIdentity != (graph.ServingIdentity{}) {
+		if err := p.BaseSemanticIdentity.Validate(); err != nil {
+			return fmt.Errorf("%w: provenance base semantic serving identity: %v", ErrInvalidAuthoring, err)
 		}
 	}
 	return nil
@@ -303,14 +307,14 @@ func validateProvenanceIdentifier(kind, value string) error {
 // evidence changes even if the authored bytes stay the same.
 func (p Provenance) Digest() string {
 	return digestValue(struct {
-		Origin                     Origin          `json:"origin"`
-		ActorID                    string          `json:"actorId"`
-		ConversationID             string          `json:"conversationId,omitempty"`
-		ToolCallID                 string          `json:"toolCallId,omitempty"`
-		BaseSemanticServingStateID string          `json:"baseSemanticServingStateId,omitempty"`
-		Source                     *SourceMetadata `json:"source,omitempty"`
-		ForkedFrom                 *ForkEvidence   `json:"forkedFrom,omitempty"`
-	}{Origin: p.Origin, ActorID: strings.TrimSpace(p.ActorID), ConversationID: strings.TrimSpace(p.ConversationID), ToolCallID: strings.TrimSpace(p.ToolCallID), BaseSemanticServingStateID: strings.TrimSpace(p.BaseSemanticServingStateID), Source: p.Source, ForkedFrom: p.ForkedFrom})
+		Origin               Origin                `json:"origin"`
+		ActorID              string                `json:"actorId"`
+		ConversationID       string                `json:"conversationId,omitempty"`
+		ToolCallID           string                `json:"toolCallId,omitempty"`
+		BaseSemanticIdentity graph.ServingIdentity `json:"baseSemanticIdentity,omitempty"`
+		Source               *SourceMetadata       `json:"source,omitempty"`
+		ForkedFrom           *ForkEvidence         `json:"forkedFrom,omitempty"`
+	}{Origin: p.Origin, ActorID: strings.TrimSpace(p.ActorID), ConversationID: strings.TrimSpace(p.ConversationID), ToolCallID: strings.TrimSpace(p.ToolCallID), BaseSemanticIdentity: p.BaseSemanticIdentity, Source: p.Source, ForkedFrom: p.ForkedFrom})
 }
 
 type RevisionToken struct {

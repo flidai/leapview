@@ -12,8 +12,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/runtimehost"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 func TestListFiltersBeforeReadingUnauthorizedRevisionAndExcludesArchived(t *testing.T) {
@@ -47,7 +46,7 @@ func TestListMergesSourcesOrdersAndReturnsMetadata(t *testing.T) {
 	instance.Draft = &authoring.Draft{DashboardID: "a-project", Revision: token("rev-draft", 2), Provenance: provenance(authoring.OriginAgent)}
 	instance.Published = &authoring.Published{
 		Revision: token("rev-published", 1), PublishedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
-		Compilation: authoring.CompiledRevisionToken{AuthoredRevision: token("rev-published", 1), DefinitionHash: "sha256:" + strings.Repeat("a", 64), SemanticServingStateID: "semantic-1"},
+		Compilation: authoring.CompiledRevisionToken{AuthoredRevision: token("rev-published", 1), DefinitionHash: "sha256:" + strings.Repeat("a", 64), SemanticIdentity: mustServingIdentity(t, "sales", "production", "semantic-1")},
 		Provenance:  provenance(authoring.OriginFile),
 	}
 	repo := &fakeRepository{lifecycles: []authoring.DashboardLifecycle{instance}, revisions: map[string]authoring.Revision{
@@ -62,7 +61,7 @@ func TestListMergesSourcesOrdersAndReturnsMetadata(t *testing.T) {
 		t.Fatalf("ordering = %#v", got)
 	}
 	item := result.Items[0]
-	if item.Source != SourceInstance || item.Origin != authoring.OriginAgent || item.Status != authoring.LifecycleStatusPublished || item.Description != "Draft description" || item.Revision == nil || item.Revision.ID != "rev-draft" || item.Publication == nil || item.Publication.Revision.ID != "rev-published" || item.Publication.SemanticServingStateID != "semantic-1" {
+	if item.Source != SourceInstance || item.Origin != authoring.OriginAgent || item.Status != authoring.LifecycleStatusPublished || item.Description != "Draft description" || item.Revision == nil || item.Revision.ID != "rev-draft" || item.Publication == nil || item.Publication.Revision.ID != "rev-published" || item.Publication.SemanticIdentity.GenerationID != "semantic-1" {
 		t.Fatalf("project metadata = %#v rev=%#v pub=%#v", item, item.Revision, item.Publication)
 	}
 	if result.ProjectCount != 1 || result.InstanceCount != 1 || result.Count != 2 {
@@ -71,6 +70,15 @@ func TestListMergesSourcesOrdersAndReturnsMetadata(t *testing.T) {
 	if result.Items[1].Source != SourceProject || result.Items[1].Origin != authoring.OriginFile || result.Items[1].Status != authoring.LifecycleStatusPublished || result.Items[1].Visibility != authoring.VisibilityOrganization {
 		t.Fatalf("project metadata = %#v", result.Items[1])
 	}
+}
+
+func mustServingIdentity(t *testing.T, project, environment, generation string) graph.ServingIdentity {
+	t.Helper()
+	identity, err := graph.NewServingIdentity(graph.ResourceID(project), environment, generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
 }
 
 func TestListCollisionOnlyAfterBothSourcesAreAuthorized(t *testing.T) {
@@ -140,25 +148,26 @@ func (fakeRuntime) Close() error                        { return nil }
 func (r fakeRuntime) Catalog() dashboardcatalog.Catalog { return r.catalog }
 
 type fakeProvider struct {
-	runtime  runtimehost.Runtime
+	runtime  projectruntime.Runtime
 	acquires int
 	lease    *fakeLease
 }
 
-func (p *fakeProvider) Acquire(context.Context) (runtimehost.Lease, error) {
+func (p *fakeProvider) Acquire(context.Context) (projectruntime.Lease, error) {
 	p.acquires++
-	p.lease = &fakeLease{runtime: p.runtime}
+	identity, _ := graph.NewServingIdentity("sales", "production", "state-1")
+	p.lease = &fakeLease{runtime: p.runtime, identity: identity}
 	return p.lease, nil
 }
 
 type fakeLease struct {
-	runtime  runtimehost.Runtime
+	runtime  projectruntime.Runtime
+	identity graph.ServingIdentity
 	releases int
 }
 
-func (l *fakeLease) Runtime() runtimehost.Runtime    { return l.runtime }
-func (l *fakeLease) ServingStateID() servingstate.ID { return "state-1" }
-func (l *fakeLease) DuckLakeSnapshotID() int64       { return 0 }
+func (l *fakeLease) Runtime() projectruntime.Runtime { return l.runtime }
+func (l *fakeLease) Identity() graph.ServingIdentity { return l.identity }
 func (l *fakeLease) Release()                        { l.releases++ }
 
 type fakeAuthorizer struct {

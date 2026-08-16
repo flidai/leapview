@@ -70,9 +70,8 @@ func (r PublishedCompilationResolver) Resolve(dashboardID projectgraph.ResourceI
 	if compiled.ProjectID != projectID || compiled.DashboardID != parsedID || compiled.Definition.ID != dashboardID.String() {
 		return Resolved{}, fmt.Errorf("%w: published dashboard %q is outside resolver scope", ErrScopeMismatch, dashboardID)
 	}
-	compiledStateID := compiled.SemanticServingStateID
-	if compiledStateID == "" || compiledStateID != r.identity.GenerationID {
-		return Resolved{}, fmt.Errorf("%w: dashboard %q compiled for %q, active %q", ErrStaleSemanticState, dashboardID, compiledStateID, r.identity.GenerationID)
+	if compiled.SemanticIdentity != r.identity {
+		return Resolved{}, fmt.Errorf("%w: dashboard %q compiled for serving identity %#v, active %#v", ErrStaleSemanticState, dashboardID, compiled.SemanticIdentity, r.identity)
 	}
 	modelID := compiled.Definition.SemanticModel
 	if modelID == "" {

@@ -146,8 +146,26 @@ func (d *ProjectDefinition) Dashboards() map[projectgraph.ResourceID]dashboardde
 }
 
 func (d *ProjectDefinition) ModelIDs() []projectgraph.ResourceID {
+	if d == nil {
+		return nil
+	}
 	ids := make([]projectgraph.ResourceID, 0, len(d.models))
 	for id := range d.models {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+// DashboardIDs returns dashboard resource IDs in canonical order. Keeping
+// ordering here gives all projections a deterministic traversal without
+// exposing the mutable backing map.
+func (d *ProjectDefinition) DashboardIDs() []projectgraph.ResourceID {
+	if d == nil {
+		return nil
+	}
+	ids := make([]projectgraph.ResourceID, 0, len(d.dashboards))
+	for id := range d.dashboards {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
