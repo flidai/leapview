@@ -101,7 +101,7 @@ func (h *BrowserHandler) CatalogSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 }
 
 func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindModel, projectgraph.KindSemanticModel}) {
+	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindSemanticModel}) {
 		return
 	}
 	catalog := h.navigationCatalog(r)
@@ -164,7 +164,7 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 }
 
 func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Request, area, activeType string) {
-	kinds := []projectgraph.Kind{projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline}
+	kinds := []projectgraph.Kind{projectgraph.KindSource}
 	if area == "models" {
 		kinds = []projectgraph.Kind{projectgraph.KindModel}
 	}
@@ -388,7 +388,7 @@ func (h *BrowserHandler) assets(w stdhttp.ResponseWriter, r *stdhttp.Request) (p
 		for _, item := range allowedPage.Items {
 			allowed[item.Ref.ID] = struct{}{}
 		}
-		filteredAssets := graph.Assets[:0]
+		filteredAssets := make([]servingstate.Asset, 0, len(graph.Assets))
 		for _, asset := range graph.Assets {
 			_, mapped := catalogKindForAssetType(asset.Type)
 			if !mapped {
@@ -404,7 +404,7 @@ func (h *BrowserHandler) assets(w stdhttp.ResponseWriter, r *stdhttp.Request) (p
 		for _, asset := range graph.Assets {
 			visibleIDs[asset.ID] = struct{}{}
 		}
-		filteredEdges := graph.Edges[:0]
+		filteredEdges := make([]servingstate.AssetEdge, 0, len(graph.Edges))
 		for _, edge := range graph.Edges {
 			if _, from := visibleIDs[edge.FromAssetID]; !from {
 				continue
@@ -481,7 +481,11 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return false
 	}
-	return len(page.Items) > 0
+	if len(page.Items) == 0 {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 func (h *BrowserHandler) boundProject() (projectgraph.ResourceID, error) {

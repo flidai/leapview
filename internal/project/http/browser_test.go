@@ -71,6 +71,21 @@ func (pagedBrowserCatalogStub) Resolve(context.Context, string, projectcatalog.R
 	return projectcatalog.Result{}, projectcatalog.ErrNotFound
 }
 
+type kindAwareBrowserCatalogStub struct{ available projectgraph.Kind }
+
+func (s kindAwareBrowserCatalogStub) List(_ context.Context, request projectcatalog.ListRequest) (projectcatalog.Page, error) {
+	for _, kind := range request.Kinds {
+		if kind == s.available {
+			return projectcatalog.Page{Items: []projectcatalog.Result{{Ref: projectcatalog.Ref{ID: "visible", Kind: kind}}}}, nil
+		}
+	}
+	return projectcatalog.Page{}, nil
+}
+
+func (kindAwareBrowserCatalogStub) Resolve(context.Context, string, projectcatalog.Ref, access.Capability) (projectcatalog.Result, error) {
+	return projectcatalog.Result{}, projectcatalog.ErrNotFound
+}
+
 func TestAssetsFilterUnauthorizedSiblingAndEdges(t *testing.T) {
 	allowed := projectgraph.ResourceID("model:allowed")
 	denied := projectgraph.ResourceID("model:denied")
@@ -103,5 +118,50 @@ func TestAssetsConsumeCatalogPages(t *testing.T) {
 	_, assets, _, ok := h.assets(httptest.NewRecorder(), httptest.NewRequest(stdhttp.MethodGet, "/models", nil))
 	if !ok || len(assets) != 2 {
 		t.Fatalf("assets = %#v, ok=%v; want both catalog pages", assets, ok)
+	}
+}
+
+func TestAssetsDoesNotMutateSharedServingGraph(t *testing.T) {
+	denied := projectgraph.ResourceID("model:denied")
+	allowed := projectgraph.ResourceID("model:allowed")
+	graph := servingstate.AssetGraph{Assets: []servingstate.Asset{
+		{ID: denied, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "denied", PayloadJSON: "{}"},
+		{ID: allowed, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "allowed", PayloadJSON: "{}"},
+	}}
+	h := &BrowserHandler{
+		ProjectID: "project:test", Environment: "dev", Graph: browserGraphStub{graph: graph},
+		Catalog: browserCatalogStub{}, CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
+	}
+	if _, _, _, ok := h.assets(httptest.NewRecorder(), httptest.NewRequest(stdhttp.MethodGet, "/models", nil)); !ok {
+		t.Fatal("assets returned not ok")
+	}
+	if graph.Assets[0].ID != denied || graph.Assets[1].ID != allowed {
+		t.Fatalf("shared graph mutated: %#v", graph.Assets)
+	}
+}
+
+func TestDataRequiresVisibleSourceRatherThanUnrelatedResource(t *testing.T) {
+	h := &BrowserHandler{
+		ProjectID: "project:test", Environment: "dev",
+		Catalog:     kindAwareBrowserCatalogStub{available: projectgraph.KindModel},
+		CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
+	}
+	recorder := httptest.NewRecorder()
+	h.Data(recorder, httptest.NewRequest(stdhttp.MethodGet, "/data", nil))
+	if recorder.Code != stdhttp.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
+	}
+}
+
+func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
+	h := &BrowserHandler{
+		ProjectID: "project:test", Environment: "dev",
+		Catalog:     kindAwareBrowserCatalogStub{available: projectgraph.KindModel},
+		CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
+	}
+	recorder := httptest.NewRecorder()
+	h.Explore(recorder, httptest.NewRequest(stdhttp.MethodGet, "/explore", nil))
+	if recorder.Code != stdhttp.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
 	}
 }
