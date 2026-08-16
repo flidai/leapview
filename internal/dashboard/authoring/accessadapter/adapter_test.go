@@ -40,7 +40,7 @@ func TestAuthorizeMapsEveryActionToScopedDashboardPrivilege(t *testing.T) {
 				t.Fatal(err)
 			}
 			err = adapter.Authorize(t.Context(), service.AuthorizationRequest{
-				ActorID: " actor-1 ", ProjectID: " project-1 ", DashboardID: "dashboard-1",
+				ActorID: " actor-1 ", ProjectID: "project-1", DashboardID: "dashboard-1",
 				OwnerPrincipalID: "owner-not-an-authorization-input", SemanticModel: "semantic-not-an-authorization-input", Action: test.action,
 			})
 			if err != nil {

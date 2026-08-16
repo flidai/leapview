@@ -29,7 +29,7 @@ func TestPopularityExposesRankedUsageThroughModuleContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := levels["finance.executive"]; got != PopularityHigh {
+	if got := levels["executive"]; got != PopularityHigh {
 		t.Fatalf("popularity = %q, want %q", got, PopularityHigh)
 	}
 	if want := now.Add(-usage.PopularityWindow); !reader.since.Equal(want) {

@@ -326,7 +326,7 @@ func TestPrivateRouteScopeKeepsDashboardTrafficInsideCandidate(t *testing.T) {
 		Visualizations: map[string]visualizationdefinition.Definition{},
 	}
 	model := &semanticmodel.Model{Name: "model"}
-	base := "/candidates/cand_1/workspaces/sales"
+	base := "/candidates/cand_1"
 	var out strings.Builder
 	if err := PageWithRouteScope(
 		Presentation{ProductName: "LeapView", FaviconPath: "/static/favicon.svg"},
@@ -339,8 +339,8 @@ func TestPrivateRouteScopeKeepsDashboardTrafficInsideCandidate(t *testing.T) {
 	rendered := html.UnescapeString(out.String())
 	for _, want := range []string{
 		base + "/updates?",
-		base + "/commands/filter",
-		base + "/commands/navigate",
+		base + "/dashboards/report/commands/filter",
+		base + "/dashboards/report/commands/navigate",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("candidate page missing %q:\n%s", want, rendered)
