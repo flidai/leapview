@@ -14,17 +14,18 @@ import (
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobssqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
 
 func TestCollectionIdentityUsesProjectAndConnection(t *testing.T) {
 	ctx, _, repo := testRepository(t)
-	first, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: "orders-a", ProjectID: "project-a", ConnectionName: "warehouse", Name: "Orders A"})
+	first, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: "orders-a", ProjectID: "project-a", ConnectionID: "warehouse", Name: "Orders A"})
 	if err != nil {
 		t.Fatalf("create first collection: %v", err)
 	}
-	second, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: "orders-b", ProjectID: "project-b", ConnectionName: "warehouse", Name: "Orders B"})
+	second, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: "orders-b", ProjectID: "project-b", ConnectionID: "warehouse", Name: "Orders B"})
 	if err != nil {
 		t.Fatalf("same connection name in another project: %v", err)
 	}
@@ -36,18 +37,18 @@ func TestCollectionIdentityUsesProjectAndConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup collection: %v", err)
 	}
-	if got.ID != first.ID || got.ProjectID != "project-a" || got.ConnectionName != "warehouse" {
+	if got.ID != first.ID || got.ProjectID != "project-a" || got.ConnectionID != "warehouse" {
 		t.Fatalf("lookup = %#v", got)
 	}
 
-	retry, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: first.ID, ProjectID: "project-a", ConnectionName: "warehouse", Name: "Orders A"})
+	retry, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: first.ID, ProjectID: "project-a", ConnectionID: "warehouse", Name: "Orders A"})
 	if err != nil {
 		t.Fatalf("idempotent create retry: %v", err)
 	}
 	if retry.ID != first.ID {
 		t.Fatalf("retry ID = %q, want %q", retry.ID, first.ID)
 	}
-	_, err = repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: "different", ProjectID: "project-a", ConnectionName: "warehouse", Name: "Conflicting"})
+	_, err = repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: "different", ProjectID: "project-a", ConnectionID: "warehouse", Name: "Conflicting"})
 	if !errors.Is(err, manageddata.ErrConflict) {
 		t.Fatalf("conflicting project+connection error = %v, want conflict", err)
 	}
@@ -112,7 +113,7 @@ func TestBeginUploadFinalizationRollsBackWhenWorkflowCannotBeRecorded(t *testing
 		return injected
 	}))
 	_, err = repo.BeginUploadFinalization(ctx, session.ID, jobs.WorkflowIntent{
-		Job: jobs.EnqueueInput{ID: "upload:" + session.ID + ":finalize"},
+		Job: jobs.EnqueueInput{ID: "upload:" + session.ID.String() + ":finalize"},
 	})
 	if !errors.Is(err, injected) {
 		t.Fatalf("BeginUploadFinalization() error = %v, want injected failure", err)
@@ -135,7 +136,7 @@ func TestAbortUploadSessionWithWorkflowRollsBackStateOnEventFailure(t *testing.T
 	}
 	injected := errors.New("injected workflow failure")
 	repo := NewRepositoryWithWorkflow(db, jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return injected }))
-	err = repo.AbortUploadSessionWithWorkflow(ctx, session.ID, jobs.WorkflowIntent{Event: jobs.EventInput{EventType: "upload_session.cancelled"}})
+	err = repo.AbortUploadSessionWithWorkflow(ctx, session.ID.String(), jobs.WorkflowIntent{Event: jobs.EventInput{EventType: "upload_session.cancelled"}})
 	if !errors.Is(err, injected) {
 		t.Fatalf("abort error=%v", err)
 	}
@@ -154,7 +155,7 @@ func TestAbortUploadSessionWithWorkflowConcurrentReplayEmitsOneEvent(t *testing.
 	}
 	workflow := jobssqlite.NewRepository(db)
 	repo := NewRepositoryWithWorkflow(db, workflow)
-	intent := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "upload:" + session.ID + ":cancelled", ResourceKind: "upload", ResourceID: session.ID, EventType: "upload_session.cancelled", Data: []byte(`{"status":"cancelled"}`)}}
+	intent := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "upload:" + session.ID.String() + ":cancelled", ResourceKind: "upload", ResourceID: session.ID.String(), EventType: "upload_session.cancelled", Data: []byte(`{"status":"cancelled"}`)}}
 	var group sync.WaitGroup
 	var successes int
 	var mu sync.Mutex
@@ -162,7 +163,7 @@ func TestAbortUploadSessionWithWorkflowConcurrentReplayEmitsOneEvent(t *testing.
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if callErr := repo.AbortUploadSessionWithWorkflow(ctx, session.ID, intent); callErr == nil {
+			if callErr := repo.AbortUploadSessionWithWorkflow(ctx, session.ID.String(), intent); callErr == nil {
 				mu.Lock()
 				successes++
 				mu.Unlock()
@@ -173,7 +174,7 @@ func TestAbortUploadSessionWithWorkflowConcurrentReplayEmitsOneEvent(t *testing.
 	if successes != 1 {
 		t.Fatalf("successful cancellations=%d, want one", successes)
 	}
-	events, err := workflow.ListEvents(ctx, "upload", session.ID, 0, 10)
+	events, err := workflow.ListEvents(ctx, "upload", session.ID.String(), 0, 10)
 	if err != nil || len(events) != 1 || events[0].EventType != "upload_session.cancelled" {
 		t.Fatalf("events=%#v err=%v", events, err)
 	}
@@ -278,15 +279,15 @@ func TestServingStateBindingsAllowMultipleCollections(t *testing.T) {
 	ctx, store, repo := testRepository(t)
 	firstCollection, firstRevision := readyRevision(t, ctx, repo, "inventory", "project-a", "inventory", "inventory.csv", "c")
 	secondCollection, secondRevision := readyRevision(t, ctx, repo, "prices", "project-a", "prices", "prices.csv", "d")
-	insertWorkspaceState(t, ctx, store, "workspace-1", "state-1", "prod", "validated")
+	insertProjectState(t, ctx, store, "project-a", "state-1", "prod", "validated")
 	bindings := []manageddata.ServingStateBinding{
-		{CollectionID: firstCollection.ID, RevisionID: firstRevision.ID, Environment: "prod"},
-		{CollectionID: secondCollection.ID, RevisionID: secondRevision.ID, Environment: "prod"},
+		{Identity: servingIdentity("project-a", "prod", "state-1"), CollectionID: firstCollection.ID, RevisionID: firstRevision.ID},
+		{Identity: servingIdentity("project-a", "prod", "state-1"), CollectionID: secondCollection.ID, RevisionID: secondRevision.ID},
 	}
-	if err := repo.ReplaceServingStateBindings(ctx, "state-1", bindings); err != nil {
+	if err := repo.InstallServingStateBindings(ctx, servingIdentity("project-a", "prod", "state-1"), bindings); err != nil {
 		t.Fatalf("replace bindings: %v", err)
 	}
-	got, err := repo.ListServingStateBindings(ctx, "state-1")
+	got, err := repo.ListServingStateBindings(ctx, servingIdentity("project-a", "prod", "state-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +317,7 @@ func testRepository(t *testing.T) (context.Context, *sql.DB, *Repository) {
 
 func createCollection(t *testing.T, ctx context.Context, repo *Repository, id, projectID, connectionName string) manageddata.Collection {
 	t.Helper()
-	collection, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: id, ProjectID: projectID, ConnectionName: connectionName, Name: connectionName})
+	collection, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: id, ProjectID: projectID, ConnectionID: connectionName, Name: connectionName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,37 +339,42 @@ func readyRevision(t *testing.T, ctx context.Context, repo *Repository, id, proj
 	return collection, revision
 }
 
-func insertWorkspaceState(t *testing.T, ctx context.Context, db *sql.DB, workspaceID, stateID, environment, status string) {
+func insertProjectState(t *testing.T, ctx context.Context, db *sql.DB, projectID, stateID, environment, status string) {
 	t.Helper()
-	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO workspaces (id, title) VALUES (?, ?)`, workspaceID, workspaceID); err != nil {
-		t.Fatal(err)
-	}
-	insertServingState(t, ctx, db, workspaceID, stateID, environment, status)
+	insertServingState(t, ctx, db, projectID, stateID, environment, status)
 }
 
-func insertServingState(t *testing.T, ctx context.Context, db *sql.DB, workspaceID, stateID, environment, status string) {
+func insertServingState(t *testing.T, ctx context.Context, db *sql.DB, projectID, stateID, environment, status string) {
 	t.Helper()
-	if _, err := db.ExecContext(ctx, `INSERT INTO serving_states (id, workspace_id, environment, status, source) VALUES (?, ?, ?, ?, 'publish')`, stateID, workspaceID, environment, status); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO serving_states (id, project_id, environment, status, source) VALUES (?, ?, ?, ?, 'publish')`, stateID, projectID, environment, status); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func setActiveState(t *testing.T, ctx context.Context, db *sql.DB, workspaceID, environment, stateID string) {
+func setActiveState(t *testing.T, ctx context.Context, db *sql.DB, projectID, environment, stateID string) {
 	t.Helper()
-	if _, err := db.ExecContext(ctx, `INSERT INTO workspace_active_serving_states (workspace_id, environment, serving_state_id) VALUES (?, ?, ?) ON CONFLICT(workspace_id, environment) DO UPDATE SET serving_state_id = excluded.serving_state_id`, workspaceID, environment, stateID); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO project_active_serving_states (project_id, environment, serving_state_id) VALUES (?, ?, ?) ON CONFLICT(project_id, environment) DO UPDATE SET serving_state_id = excluded.serving_state_id`, projectID, environment, stateID); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func assertActiveState(t *testing.T, ctx context.Context, db *sql.DB, workspaceID, environment, want string) {
+func assertActiveState(t *testing.T, ctx context.Context, db *sql.DB, projectID, environment, want string) {
 	t.Helper()
 	var got string
-	if err := db.QueryRowContext(ctx, `SELECT serving_state_id FROM workspace_active_serving_states WHERE workspace_id = ? AND environment = ?`, workspaceID, environment).Scan(&got); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT serving_state_id FROM project_active_serving_states WHERE project_id = ? AND environment = ?`, projectID, environment).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
-		t.Fatalf("active serving state for %s = %q, want %q", workspaceID, got, want)
+		t.Fatalf("active serving state for %s = %q, want %q", projectID, got, want)
 	}
+}
+
+func servingIdentity(projectID, environment, generationID string) projectgraph.ServingIdentity {
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(projectID), environment, generationID)
+	if err != nil {
+		panic(err)
+	}
+	return identity
 }
 
 func assertServingStateStatus(t *testing.T, ctx context.Context, db *sql.DB, stateID, want string) {
