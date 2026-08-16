@@ -81,7 +81,7 @@ type runtimeServices struct {
 	platformHealth        platformHealth
 	storageRetention      *servingstatemodule.Retention
 	queryAuditProvider    adminmodule.QueryAuditReaderProvider
-	candidateMetrics      func(runtimehostmodule.Provider, string) QueryMetrics
+	candidateMetrics      func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
 	runtimeHostModule     *runtimehostmodule.Module
 	projectID             projectgraph.ResourceID
 }
@@ -298,20 +298,38 @@ func buildApplicationSurfaces(
 	if metrics != nil {
 		metrics = dashboardmodule.WithAdmission(metrics, controller)
 	}
-	dataAccessRepo := data.AccessRepo
-	var dataAuthorization accessmodule.DataAuthorizationService = dataAccessRepo
-	if capabilities.AccessModule != nil {
-		dataAuthorization = capabilities.AccessModule.DataAuthorizationService()
+	var authorizationSnapshot func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	if runtimeConfig.RuntimeHost != nil {
+		authorizationSnapshot = func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
+			lease, err := runtimeConfig.RuntimeHost.Acquire(ctx)
+			if err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, err
+			}
+			defer lease.Release()
+			authorizedLease, ok := lease.(interface {
+				AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+			})
+			if !ok {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("active runtime lease does not expose authorization snapshot")
+			}
+			snapshot := authorizedLease.AuthorizationSnapshot()
+			if err := snapshot.ValidateBound(); err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, err
+			}
+			return snapshot, nil
+		}
 	}
-	if metrics != nil && dataAuthorization != nil && (data.AccessRepo != nil || workflow.Auth != nil || capabilities.AccessModule != nil) {
+	canonicalAuditRecorder, _ := data.AccessRepo.(access.CanonicalAuditRecorder)
+	if metrics != nil && authorizationSnapshot != nil && capabilities.AccessModule != nil {
 		metrics = dashboardmodule.WithQueryAuthorization(metrics, dashboardmodule.QueryAuthorizationConfig{
-			Repository: dataAuthorization,
+			SnapshotFromContext: authorizationSnapshot,
+			SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
 			PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 				principal, ok := accessmodule.PrincipalFromContext(ctx)
 				return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: principal.DevBypass || workflow.Auth == nil}, ok
 			},
 			CredentialFromContext: accessmodule.APICredentialFromContext,
-			TokenAllows:           accessmodule.TokenAllows,
+			AuditRecorder:         canonicalAuditRecorder,
 		})
 	}
 	var queryAuditProvider adminmodule.QueryAuditReaderProvider
@@ -343,21 +361,22 @@ func buildApplicationSurfaces(
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
 	runtime.queryAuditProvider = queryAuditProvider
-	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, workspaceID string) QueryMetrics {
-		if provider == nil || strings.TrimSpace(workspaceID) == "" {
+	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, projectID projectgraph.ResourceID) QueryMetrics {
+		if provider == nil || projectID == "" {
 			return nil
 		}
-		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: workspaceID})
+		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: projectID})
 		candidate = dashboardmodule.WithAdmission(candidate, controller)
-		if dataAuthorization != nil && (data.AccessRepo != nil || workflow.Auth != nil || capabilities.AccessModule != nil) {
+		if authorizationSnapshot != nil && capabilities.AccessModule != nil {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
-				Repository: dataAuthorization,
+				SnapshotFromContext: authorizationSnapshot,
+				SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
 				PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 					principal, ok := accessmodule.PrincipalFromContext(ctx)
 					return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: principal.DevBypass || workflow.Auth == nil}, ok
 				},
 				CredentialFromContext: accessmodule.APICredentialFromContext,
-				TokenAllows:           accessmodule.TokenAllows,
+				AuditRecorder:         canonicalAuditRecorder,
 			})
 		}
 		if queryAuditRecorder != nil {

@@ -7,13 +7,14 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-// DashboardPublicationCapability is installed in a server-created context.
-// Its private context key makes it impossible for an HTTP client, cookie, API
-// token, or authored query payload to manufacture this execution authority.
+// DashboardPublicationCapability is installed by trusted publication handlers.
+// ProjectID and every dependency ID are canonical graph identities; no
+// workspace/path metadata is accepted as an authorization boundary.
 type DashboardPublicationCapability struct {
-	WorkspaceID        string
+	ProjectID          projectgraph.ResourceID
 	Publication        string
 	Dashboard          string
 	ModelID            string
@@ -31,12 +32,15 @@ func dashboardPublicationCapabilityFromContext(ctx context.Context) (DashboardPu
 	return capability, ok
 }
 
-func validateDashboardPublicationQuery(capability DashboardPublicationCapability, request dataquery.Query, objects []access.ObjectRef) error {
-	if strings.TrimSpace(capability.WorkspaceID) == "" || strings.TrimSpace(capability.Publication) == "" || strings.TrimSpace(capability.Dashboard) == "" || strings.TrimSpace(capability.ModelID) == "" {
+func validateDashboardPublicationQuery(capability DashboardPublicationCapability, request dataquery.Query, objects []access.ResourceRef) error {
+	if err := capability.ProjectID.Validate(); err != nil || strings.TrimSpace(capability.ProjectID.String()) != capability.ProjectID.String() {
+		return fmt.Errorf("dashboard publication project identity is invalid")
+	}
+	if strings.TrimSpace(capability.Publication) == "" || strings.TrimSpace(capability.Dashboard) == "" || strings.TrimSpace(capability.ModelID) == "" {
 		return fmt.Errorf("dashboard publication capability is incomplete")
 	}
-	if request.WorkspaceID != capability.WorkspaceID {
-		return fmt.Errorf("public query workspace %q is outside publication workspace %q", request.WorkspaceID, capability.WorkspaceID)
+	if request.ProjectID != capability.ProjectID {
+		return fmt.Errorf("public query project %q is outside publication project %q", request.ProjectID, capability.ProjectID)
 	}
 	if request.Surface != dataquery.SurfacePublicDashboard {
 		return fmt.Errorf("public query surface %q is not allowed", request.Surface)
@@ -45,59 +49,41 @@ func validateDashboardPublicationQuery(capability DashboardPublicationCapability
 		return fmt.Errorf("public query model %q is outside publication model %q", request.ModelID, capability.ModelID)
 	}
 	switch request.Operation {
-	case dataquery.OperationDashboardAggregate,
-		dataquery.OperationDashboardRows,
-		dataquery.OperationDashboardCount,
-		dataquery.OperationDashboardHistogram,
-		dataquery.OperationDashboardDistribution,
-		dataquery.OperationDashboardFilterOptions,
-		dataquery.OperationDashboardSpatialTile,
-		dataquery.OperationDashboardSpatialTileBudget,
-		dataquery.OperationDashboardSpatialMetadata:
+	case dataquery.OperationDashboardAggregate, dataquery.OperationDashboardRows, dataquery.OperationDashboardCount,
+		dataquery.OperationDashboardHistogram, dataquery.OperationDashboardDistribution, dataquery.OperationDashboardFilterOptions,
+		dataquery.OperationDashboardSpatialTile, dataquery.OperationDashboardSpatialTileBudget, dataquery.OperationDashboardSpatialMetadata:
 	default:
 		return fmt.Errorf("public query operation %q is not allowed", request.Operation)
 	}
 	switch request.Kind {
-	case dataquery.KindSemanticAggregate, dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget, dataquery.KindSemanticSpatialMetadata:
+	case dataquery.KindSemanticAggregate, dataquery.KindSemanticRows, dataquery.KindSemanticHistogram,
+		dataquery.KindSemanticDistribution, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget,
+		dataquery.KindSemanticSpatialMetadata:
 	default:
 		return fmt.Errorf("public query kind %q is not allowed", request.Kind)
 	}
 	closure := make(map[string]struct{}, len(capability.DependencyAssetIDs))
 	for _, id := range capability.DependencyAssetIDs {
+		if strings.TrimSpace(id) == "" || id != strings.TrimSpace(id) {
+			return fmt.Errorf("publication dependency identity is invalid")
+		}
 		closure[id] = struct{}{}
 	}
-	wantDashboard := "dashboard:" + capability.WorkspaceID + "." + capability.Dashboard
-	if _, ok := closure[wantDashboard]; !ok {
+	// Dashboard graph IDs are canonical resource IDs. Publications may store
+	// either the complete ID or the authored dashboard name; normalize only the
+	// latter at this trusted boundary.
+	dashboardID := capability.Dashboard
+	if !strings.Contains(dashboardID, ":") {
+		dashboardID = "dashboard:" + dashboardID
+	}
+	if _, ok := closure[dashboardID]; !ok {
 		return fmt.Errorf("publication closure omits dashboard %q", capability.Dashboard)
 	}
 	for _, object := range objects {
-		if object.WorkspaceID != "" && object.WorkspaceID != capability.WorkspaceID {
-			return fmt.Errorf("public query object %q is outside publication workspace", object.CanonicalID())
+		if err := object.Validate(); err != nil {
+			return fmt.Errorf("public query object is invalid: %w", err)
 		}
-		var assetID string
-		switch object.Type {
-		case access.SecurableWorkspace:
-			continue
-		case access.SecurableSemanticModel:
-			assetID = "semantic_model:" + capability.WorkspaceID + "." + object.ObjectID
-		case access.SecurableDataset:
-			assetID = "semantic_table:" + capability.WorkspaceID + "." + strings.ReplaceAll(object.ObjectID, "/", ".")
-		case access.SecurableColumn:
-			assetID = "field:" + capability.WorkspaceID + "." + strings.ReplaceAll(object.ObjectID, "/", ".")
-		case access.SecurableSemanticField:
-			path := strings.ReplaceAll(object.ObjectID, "/", ".")
-			for _, prefix := range []string{"field:", "measure:"} {
-				if _, ok := closure[prefix+capability.WorkspaceID+"."+path]; ok {
-					assetID = prefix + capability.WorkspaceID + "." + path
-					break
-				}
-			}
-			if assetID == "" {
-				return fmt.Errorf("public query semantic field %q is outside publication closure", object.ObjectID)
-			}
-		default:
-			return fmt.Errorf("public query object type %q is not allowed", object.Type)
-		}
+		assetID := object.CanonicalID()
 		if _, ok := closure[assetID]; !ok {
 			return fmt.Errorf("public query dependency %q is outside publication closure", assetID)
 		}

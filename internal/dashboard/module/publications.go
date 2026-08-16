@@ -56,7 +56,7 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, projectID,
 	if err != nil {
 		return publication.Publication{}, err
 	}
-	ctx, err := beginGeneratedPublicationInvocation(ctx, action, parsedProjectID, invocation)
+	ctx, err = beginGeneratedPublicationInvocation(ctx, action, parsedProjectID, invocation)
 	if err != nil {
 		return publication.Publication{}, err
 	}
@@ -154,7 +154,7 @@ func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Reques
 	}
 	items := make([]dashboardapi.PublicationResponse, 0, len(rows))
 	for _, row := range rows {
-		allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID, row.Dashboard, access.CapabilityResourceRead)
+		allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID.String(), row.Dashboard, access.CapabilityResourceRead)
 		if authErr != nil {
 			apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "AUTHORIZATION_UNAVAILABLE", "Dashboard authorization could not be evaluated", nil)
 			return
@@ -172,7 +172,7 @@ func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	allowed, err := m.authorizeDashboardPublication(r, row.ProjectID, row.Dashboard, access.CapabilityResourceRead)
+	allowed, err := m.authorizeDashboardPublication(r, row.ProjectID.String(), row.Dashboard, access.CapabilityResourceRead)
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "AUTHORIZATION_UNAVAILABLE", "Dashboard authorization could not be evaluated", nil)
 		return
@@ -217,7 +217,7 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 	if lookupErr {
 		return
 	}
-	allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID, row.Dashboard, access.CapabilityResourcePublish)
+	allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID.String(), row.Dashboard, access.CapabilityResourcePublish)
 	if authErr != nil {
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, apigenfailure.Wrap("authorization_unavailable", authErr))
 		return
@@ -271,7 +271,7 @@ func (m *Module) authorizeDashboardPublication(r *http.Request, projectID, dashb
 	if principalID == "" {
 		return false, nil
 	}
-	project, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
+	_, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
 	if err != nil {
 		return false, err
 	}
@@ -327,7 +327,7 @@ func (m *Module) dashboardPublicationDTO(row publication.Publication) dashboarda
 	embedURL := m.absolutePublicURL(embedPath)
 	iframe := `<iframe src="` + html.EscapeString(embedURL) + `" title="` + html.EscapeString(row.Name) + `" loading="lazy" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>`
 	dto := dashboardapi.PublicationResponse{
-		Name: row.Name, ProjectID: row.ProjectID, Dashboard: row.Dashboard,
+		Name: row.Name, ProjectID: row.ProjectID.String(), Dashboard: row.Dashboard,
 		DefaultPage: row.DefaultPage, Status: dashboardapi.PublicationStatus(row.Status()), Configured: row.Configured,
 		AllowedOrigins: append([]string(nil), row.AllowedOrigins...), PublicURL: publicURL, EmbedURL: embedURL, IFrameSnippet: iframe,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,

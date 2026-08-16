@@ -484,7 +484,7 @@ func (h Handler) semanticDatasetForRequest(w nethttp.ResponseWriter, r *nethttp.
 }
 
 func semanticModelSummaryDTO(row dashboard.CatalogModel) api.SemanticModelSummary {
-	return api.SemanticModelSummary{ID: row.ID, Title: row.Title, Description: row.Description}
+	return api.SemanticModelSummary{ID: row.ID.String(), Title: row.Title, Description: row.Description}
 }
 
 func SemanticTableProjection(model *semanticmodel.Model, datasetID string, table semanticmodel.Table) api.SemanticDatasetResponse {
@@ -618,7 +618,7 @@ func SemanticModelProjection(metrics Metrics, id string) (api.SemanticModelDescr
 	catalog := metrics.Catalog()
 	var catalogModel dashboard.CatalogModel
 	for _, model := range catalog.Models {
-		if model.ID == id {
+		if model.ID.String() == id {
 			catalogModel = model
 			break
 		}
@@ -627,7 +627,7 @@ func SemanticModelProjection(metrics Metrics, id string) (api.SemanticModelDescr
 		return api.SemanticModelDescriptionResponse{}, false
 	}
 	out := api.SemanticModelDescriptionResponse{
-		ID:          catalogModel.ID,
+		ID:          catalogModel.ID.String(),
 		Title:       catalogModel.Title,
 		Description: catalogModel.Description,
 		Dashboards:  dashboardsForModel(metrics, id),
@@ -1150,7 +1150,9 @@ func semanticQueryWarnings(sorts []api.SemanticSort) []string {
 }
 
 func executeAggregateRows(ctx context.Context, metrics Metrics, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
-	result, err := metrics.ExecuteDataQuery(ctx, aggregateDataQuery(modelID, request))
+	query := aggregateDataQuery(modelID, request)
+	query.ProjectID = metrics.Catalog().Project.ID
+	result, err := metrics.ExecuteDataQuery(ctx, query)
 	return queryRowsFromDataResult(result.Rows), err
 }
 
@@ -1170,7 +1172,9 @@ func aggregateDataQuery(modelID string, request reportdef.AggregateQuery) dataqu
 }
 
 func executePreviewRows(ctx context.Context, metrics Metrics, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error) {
-	result, err := metrics.ExecuteDataQuery(ctx, previewDataQuery(modelID, request))
+	query := previewDataQuery(modelID, request)
+	query.ProjectID = metrics.Catalog().Project.ID
+	result, err := metrics.ExecuteDataQuery(ctx, query)
 	return queryRowsFromDataResult(result.Rows), err
 }
 

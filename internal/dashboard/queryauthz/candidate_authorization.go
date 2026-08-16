@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -20,7 +20,7 @@ type CandidateQueryCapability struct {
 	OwnerPrincipalID string
 	ProjectID        projectgraph.ResourceID
 	PolicyDigest     string
-	Restrictions     []access.DataPolicy
+	Restrictions     []accesssnapshot.DataPolicy
 }
 
 type candidateQueryCapabilityKey struct{}
@@ -62,6 +62,9 @@ func validateCandidateQueryCapability(
 	}
 	if request.CandidateID != "" && request.CandidateID != candidateID {
 		return request, fmt.Errorf("candidate query identity %q does not match capability %q", request.CandidateID, candidateID)
+	}
+	if request.ProjectID != projectID {
+		return request, fmt.Errorf("candidate query project %q does not match capability project %q", request.ProjectID, projectID)
 	}
 	for _, policy := range capability.Restrictions {
 		if strings.TrimSpace(policy.ID) == "" {

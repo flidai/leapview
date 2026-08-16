@@ -9,6 +9,7 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accesspolicy "github.com/flidai/leapview/internal/access/policy"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
@@ -61,7 +62,7 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 	if err := digest.ValidateSHA256Identity(config.AuthorizationFingerprint); err != nil {
 		return HTTP{}, fmt.Errorf("candidate authorization fingerprint is invalid: %w", err)
 	}
-	compiledRestrictions := make([]access.DataPolicy, len(config.Restrictions))
+	compiledRestrictions := make([]accesssnapshot.DataPolicy, len(config.Restrictions))
 	for index, restriction := range config.Restrictions {
 		if err := restriction.Resource.Validate(); err != nil {
 			return HTTP{}, fmt.Errorf("candidate restriction %q resource is invalid: %w", restriction.ID, err)
@@ -75,7 +76,7 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 		if err != nil {
 			return HTTP{}, fmt.Errorf("compile candidate restriction: %w", err)
 		}
-		compiledRestrictions[index] = access.DataPolicy{
+		compiledRestrictions[index] = accesssnapshot.DataPolicy{
 			ID: restriction.ID, Resource: restriction.Resource, Subject: restriction.Subject,
 			PolicyType:     restriction.PolicyType,
 			ExpressionJSON: restriction.ExpressionJSON, Compiled: compiled,
@@ -95,7 +96,7 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 		return queryauthz.WithCandidateQueryCapability(ctx, queryauthz.CandidateQueryCapability{
 			CandidateID: config.CandidateID, OwnerPrincipalID: config.OwnerPrincipalID,
 			ProjectID: config.ProjectID, PolicyDigest: config.AuthorizationFingerprint,
-			Restrictions: append([]access.DataPolicy(nil), compiledRestrictions...),
+			Restrictions: append([]accesssnapshot.DataPolicy(nil), compiledRestrictions...),
 		})
 	}
 	currentPrincipalID := handler.CurrentPrincipalID

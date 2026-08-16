@@ -55,13 +55,13 @@ func (h dashboardAPIGenHandler) ListDashboardPublications(w http.ResponseWriter,
 func (h dashboardAPIGenHandler) GetDashboardPublication(w http.ResponseWriter, r *http.Request, project, publication string) {
 	h.module.GetDashboardPublication(w, r, project, publication)
 }
-func (h dashboardAPIGenHandler) ResumeDashboardPublication(w http.ResponseWriter, r *http.Request, project, publication string) {
+func (h dashboardAPIGenHandler) ResumeDashboardPublication(w http.ResponseWriter, r *http.Request, project, publication string, _ dashboardgen.GenResumeDashboardPublicationHeaders) {
 	h.module.ResumeDashboardPublication(w, r, project, publication)
 }
-func (h dashboardAPIGenHandler) RotateDashboardPublication(w http.ResponseWriter, r *http.Request, project, publication string) {
+func (h dashboardAPIGenHandler) RotateDashboardPublication(w http.ResponseWriter, r *http.Request, project, publication string, _ dashboardgen.GenRotateDashboardPublicationHeaders) {
 	h.module.RotateDashboardPublication(w, r, project, publication)
 }
-func (h dashboardAPIGenHandler) SuspendDashboardPublication(w http.ResponseWriter, r *http.Request, project, publication string) {
+func (h dashboardAPIGenHandler) SuspendDashboardPublication(w http.ResponseWriter, r *http.Request, project, publication string, _ dashboardgen.GenSuspendDashboardPublicationHeaders) {
 	h.module.SuspendDashboardPublication(w, r, project, publication)
 }
 func (h dashboardAPIGenHandler) ListDashboards(w http.ResponseWriter, r *http.Request, _ dashboardgen.GenListDashboardsParams) {

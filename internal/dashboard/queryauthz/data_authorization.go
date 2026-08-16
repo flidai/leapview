@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -21,6 +22,7 @@ import (
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Principal struct {
@@ -29,31 +31,33 @@ type Principal struct {
 }
 
 type Options struct {
-	Repo                  access.DataAuthorizationService
+	SnapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	SubjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
 	PrincipalFromContext  func(context.Context) (Principal, bool)
 	CredentialFromContext func(context.Context) (access.APICredential, bool)
-	TokenAllows           func(access.APIToken, string, access.Privilege) bool
+	AuditRecorder         access.CanonicalAuditRecorder
 }
 
 type Metrics struct {
 	queryruntime.Metrics
-	repo                  access.DataAuthorizationService
+	snapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	subjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
 	principalFromContext  func(context.Context) (Principal, bool)
 	credentialFromContext func(context.Context) (access.APICredential, bool)
-	tokenAllows           func(access.APIToken, string, access.Privilege) bool
+	auditRecorder         access.CanonicalAuditRecorder
 }
 
 type DeniedError struct {
 	PrincipalID string
-	Privilege   access.Privilege
+	Capability  access.Capability
 	Credential  bool
 }
 
 func (e DeniedError) Error() string {
 	if e.Credential {
-		return fmt.Sprintf("data query credential lacks %s", e.Privilege)
+		return fmt.Sprintf("data query credential lacks %s", e.Capability)
 	}
-	return fmt.Sprintf("principal %q lacks %s on data object", e.PrincipalID, e.Privilege)
+	return fmt.Sprintf("principal %q lacks %s on data object", e.PrincipalID, e.Capability)
 }
 
 func IsDenied(err error) bool {
@@ -64,20 +68,21 @@ func IsDenied(err error) bool {
 func New(metrics queryruntime.Metrics, options Options) Metrics {
 	return Metrics{
 		Metrics:               metrics,
-		repo:                  options.Repo,
+		snapshotFromContext:   options.SnapshotFromContext,
+		subjectsFromContext:   options.SubjectsFromContext,
 		principalFromContext:  options.PrincipalFromContext,
 		credentialFromContext: options.CredentialFromContext,
-		tokenAllows:           options.TokenAllows,
+		auditRecorder:         options.AuditRecorder,
 	}
 }
 
-func (m Metrics) MetricsForWorkspace(workspaceID string) (queryruntime.Metrics, bool) {
-	if strings.TrimSpace(workspaceID) == "" {
+func (m Metrics) MetricsForProject(projectID projectgraph.ResourceID) (queryruntime.Metrics, bool) {
+	if projectID == "" {
 		return nil, false
 	}
-	provider, ok := m.Metrics.(queryruntime.WorkspaceMetrics)
+	provider, ok := m.Metrics.(queryruntime.ProjectMetrics)
 	if ok {
-		metrics, ok := provider.MetricsForWorkspace(workspaceID)
+		metrics, ok := provider.MetricsForProject(projectID)
 		if !ok || metrics == nil {
 			return nil, ok
 		}
@@ -88,7 +93,7 @@ func (m Metrics) MetricsForWorkspace(workspaceID string) (queryruntime.Metrics, 
 		return nil, false
 	}
 	catalog := m.Metrics.Catalog()
-	if catalog.Workspace.ID == workspaceID {
+	if catalog.Project.ID == projectID {
 		return m, true
 	}
 	return nil, false
@@ -98,7 +103,7 @@ func (m Metrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query) 
 	if m.Metrics == nil {
 		return dataquery.Result{}, errors.New("query metrics are not configured")
 	}
-	if m.repo == nil {
+	if m.snapshotFromContext == nil {
 		return m.Metrics.ExecuteDataQuery(ctx, request)
 	}
 	governed, transform, err := m.GovernDataQuery(ctx, request)
@@ -126,7 +131,7 @@ func (m Metrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Qu
 	if !ok {
 		return dataquery.Result{}, errors.New("query metrics do not support native Arrow execution")
 	}
-	if m.repo == nil {
+	if m.snapshotFromContext == nil {
 		return executor.ExecuteDataQueryArrow(ctx, request, sink)
 	}
 	governed, transform, err := m.GovernDataQuery(ctx, request)
@@ -143,11 +148,11 @@ func (m Metrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Qu
 		// completion event below enriches the audit trail with the final outcome; a
 		// sustained completion-write failure is logged by PersistAuditEvent, but
 		// cannot retroactively turn an already delivered stream into a rejection.
-		privilege := dataQueryPrivilege(governed)
+		capability := dataQueryCapability(governed)
 		if candidateQuery {
-			privilege = access.PrivilegePreviewData
+			capability = access.CapabilityResourceRead
 		}
-		if err := m.recordDataAccessAudit(ctx, governed, privilege, dataQueryObjects(governed), "started", nil); err != nil {
+		if err := m.recordDataAccessAudit(ctx, governed, capability, "started", nil); err != nil {
 			return rejectedDataQueryResult(err)
 		}
 	}
@@ -166,20 +171,24 @@ func (m Metrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Qu
 
 func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return request, nil, errors.New("workspace ID is required")
+	if err := request.ProjectID.Validate(); err != nil || strings.TrimSpace(request.ProjectID.String()) != request.ProjectID.String() {
+		return request, nil, errors.New("project ID is required")
+	}
+	snapshot, err := m.authorizationSnapshot(ctx, request.ProjectID)
+	if err != nil {
+		return request, nil, err
 	}
 	candidateCapability, candidateQuery := candidateQueryCapabilityFromContext(ctx)
-	privilege := dataQueryPrivilege(request)
+	capabilityAction := dataQueryCapability(request)
 	if candidateQuery {
 		// Candidate execution is always preview, even when it renders a normal
 		// dashboard interaction whose production equivalent uses QUERY_DATA.
-		privilege = access.PrivilegePreviewData
+		capabilityAction = access.CapabilityResourceRead
 	}
-	objects := dataQueryObjects(request)
+	objects := m.dataQueryObjects(snapshot.Project(), request)
 	capability, publicationQuery := dashboardPublicationCapabilityFromContext(ctx)
 	viewAs, viewAsQuery := viewAsCapabilityFromContext(ctx)
-	semanticObjects, physicalObjects, err := m.resolvedDependencyObjects(request, publicationQuery)
+	semanticObjects, physicalObjects, err := m.resolvedDependencyObjects(snapshot.Project(), request, publicationQuery)
 	if err != nil {
 		return request, nil, err
 	}
@@ -187,31 +196,31 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	objects = append(objects, physicalObjects...)
 	if publicationQuery {
 		if candidateQuery || viewAsQuery || request.CandidateID != "" {
-			request.PrincipalID = access.DashboardPublicationSubjectID(capability.WorkspaceID, capability.Publication)
+			request.PrincipalID = dashboardPublicationSubjectID(capability.ProjectID, capability.Publication)
 			err := errors.New("public query cannot use candidate or view-as authority")
-			if auditErr := m.recordDataAccessAudit(ctx, request, access.PrivilegeQueryData, objects, "denied", err); auditErr != nil {
+			if auditErr := m.recordDataAccessAudit(ctx, request, access.CapabilityResourceRead, "denied", err); auditErr != nil {
 				return request, nil, errors.Join(err, auditErr)
 			}
 			return request, nil, err
 		}
-		objects = append(objects, dataQueryColumnObjects(request)...)
-		request.PrincipalID = access.DashboardPublicationSubjectID(capability.WorkspaceID, capability.Publication)
+		objects = append(objects, m.dataQueryColumnObjects(snapshot.Project(), request)...)
+		request.PrincipalID = dashboardPublicationSubjectID(capability.ProjectID, capability.Publication)
 		if err := validateDashboardPublicationQuery(capability, request, objects); err != nil {
-			if auditErr := m.recordDataAccessAudit(ctx, request, access.PrivilegeQueryData, objects, "denied", err); auditErr != nil {
+			if auditErr := m.recordDataAccessAudit(ctx, request, access.CapabilityResourceRead, "denied", err); auditErr != nil {
 				return request, nil, errors.Join(err, auditErr)
 			}
 			return request, nil, err
 		}
 		governed, policies, err := m.applyDataPolicies(ctx, request, objects)
 		if err != nil {
-			if auditErr := m.recordDataAccessAudit(ctx, request, access.PrivilegeQueryData, objects, "error", err); auditErr != nil {
+			if auditErr := m.recordDataAccessAudit(ctx, request, access.CapabilityResourceRead, "error", err); auditErr != nil {
 				return request, nil, errors.Join(err, auditErr)
 			}
 			return request, nil, err
 		}
 		governed.EffectivePolicyFingerprint = effectivePolicyFingerprint(
 			governed,
-			access.PrivilegeQueryData,
+			access.CapabilityResourceRead,
 			objects,
 			policies,
 			effectivePolicyContext{},
@@ -221,7 +230,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 			if executeErr != nil || (result != nil && result.Status == dataquery.StatusError) {
 				status = "error"
 			}
-			return m.recordDataAccessAudit(ctx, governed, access.PrivilegeQueryData, objects, status, executeErr)
+			return m.recordDataAccessAudit(ctx, governed, access.CapabilityResourceRead, status, executeErr)
 		}, nil
 	}
 	principalID := strings.TrimSpace(request.PrincipalID)
@@ -229,22 +238,22 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	if authenticated {
 		if principalID != "" && principalID != principal.ID {
 			request.PrincipalID = principal.ID
-			err := DeniedError{PrincipalID: principal.ID, Privilege: privilege}
-			_ = m.recordDataAccessAudit(ctx, request, privilege, objects, "denied", err)
+			err := DeniedError{PrincipalID: principal.ID, Capability: capabilityAction}
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 			return request, nil, err
 		}
 		if !candidateQuery && request.CandidateID != "" {
 			request.PrincipalID = principal.ID
-			err := DeniedError{PrincipalID: principal.ID, Privilege: privilege}
-			_ = m.recordDataAccessAudit(ctx, request, privilege, objects, "denied", err)
+			err := DeniedError{PrincipalID: principal.ID, Capability: capabilityAction}
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 			return request, nil, err
 		}
 		if candidateQuery {
 			var err error
 			request, err = validateCandidateQueryCapability(candidateCapability, principal, request)
 			if err != nil {
-				denied := DeniedError{PrincipalID: principal.ID, Privilege: privilege}
-				_ = m.recordDataAccessAudit(ctx, request, privilege, objects, "denied", err)
+				denied := DeniedError{PrincipalID: principal.ID, Capability: capabilityAction}
+				_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 				return request, nil, denied
 			}
 			principalID = request.PrincipalID
@@ -261,7 +270,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 			request.PrincipalID = principal.ID
 			request.EffectivePolicyFingerprint = effectivePolicyFingerprint(
 				request,
-				privilege,
+				capabilityAction,
 				objects,
 				nil,
 				effectivePolicyContext{
@@ -279,35 +288,35 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	}
 	if candidateQuery && !authenticated {
 		err := dataquery.ErrMissingPrincipal
-		_ = m.recordDataAccessAudit(ctx, request, privilege, objects, "denied", err)
+		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
 	if viewAsQuery && !authenticated {
 		err := dataquery.ErrMissingPrincipal
-		_ = m.recordDataAccessAudit(ctx, request, privilege, objects, "denied", err)
+		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
 	if principalID == "" {
 		err := dataquery.ErrMissingPrincipal
-		_ = m.recordDataAccessAudit(ctx, request, "", objects, "denied", err)
+		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if credential, ok := m.currentCredential(ctx); ok && !m.allowsToken(credential.Token, request.WorkspaceID, privilege) {
-		err := DeniedError{PrincipalID: principalID, Privilege: privilege, Credential: true}
-		_ = m.recordDataAccessAudit(ctx, request, privilege, objects, "denied", err)
+	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsCapability(ctx, snapshot, principalID, credential.Token, objects, capabilityAction) {
+		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction, Credential: true}
+		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if ok, err := m.authorizeDataQuery(ctx, principalID, privilege, request, objects); err != nil {
-		_ = m.recordDataAccessAudit(ctx, request, privilege, objects, "error", err)
+	if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
+		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
 		return request, nil, err
 	} else if !ok {
-		err := DeniedError{PrincipalID: principalID, Privilege: privilege}
-		_ = m.recordDataAccessAudit(ctx, request, privilege, objects, "denied", err)
+		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
+		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
 	governed, policies, err := m.applyDataPolicies(ctx, request, objects)
 	if err != nil {
-		_ = m.recordDataAccessAudit(ctx, request, privilege, objects, "error", err)
+		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
 		return request, nil, err
 	}
 	candidateDigest := ""
@@ -316,7 +325,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	}
 	governed.EffectivePolicyFingerprint = effectivePolicyFingerprint(
 		governed,
-		privilege,
+		capabilityAction,
 		objects,
 		policies,
 		effectivePolicyContext{
@@ -328,7 +337,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	strictAudit := candidateQuery || viewAsQuery
 	return governed, func(result *dataquery.Result, executeErr error) error {
 		if executeErr != nil {
-			auditErr := m.recordDataAccessAudit(ctx, governed, privilege, objects, "error", executeErr)
+			auditErr := m.recordDataAccessAudit(ctx, governed, capabilityAction, "error", executeErr)
 			if strictAudit && auditErr != nil {
 				return errors.Join(executeErr, auditErr)
 			}
@@ -338,7 +347,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		if result != nil && result.Status == dataquery.StatusError {
 			status = "error"
 		}
-		auditErr := m.recordDataAccessAudit(ctx, governed, privilege, objects, status, nil)
+		auditErr := m.recordDataAccessAudit(ctx, governed, capabilityAction, status, nil)
 		if strictAudit {
 			return auditErr
 		}
@@ -346,45 +355,72 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	}, nil
 }
 
-func (m Metrics) authorizeDataQuery(ctx context.Context, principalID string, privilege access.Privilege, request dataquery.Query, objects []access.ObjectRef) (bool, error) {
-	if request.Kind == dataquery.KindSemanticAggregate && request.Target == "" {
-		modelObject := access.ItemObject(access.SecurableSemanticModel, request.WorkspaceID, request.ModelID)
-		decision, err := m.repo.Authorize(ctx, principalID, privilege, modelObject)
-		if err != nil || !decision.Allowed {
-			return decision.Allowed, err
+func (m Metrics) authorizeDataQuery(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, capability access.Capability, request dataquery.Query, objects []access.ResourceRef) (bool, error) {
+	if err := capability.Validate(); err != nil {
+		return false, err
+	}
+	subjects, err := m.subjects(ctx, principalID)
+	if err != nil {
+		return false, err
+	}
+	allows := func(resource access.ResourceRef) (bool, error) {
+		for _, subject := range subjects {
+			ok, err := snapshot.Allows(subject, resource, capability)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				return true, nil
+			}
 		}
+		return false, nil
+	}
+	if request.Kind == dataquery.KindSemanticAggregate && request.Target == "" {
 		for _, object := range objects {
-			if object.Type != access.SecurableSemanticField {
+			if object.Kind() != projectgraph.KindSemanticModel {
 				continue
 			}
-			decision, err := m.repo.Authorize(ctx, principalID, privilege, object)
-			if err != nil || !decision.Allowed {
-				return decision.Allowed, err
+			ok, err := allows(object)
+			if err != nil || !ok {
+				return ok, err
 			}
 		}
 		return true, nil
 	}
-	decision, err := m.repo.AuthorizeAny(ctx, principalID, privilege, objects)
-	if err != nil || decision.Allowed {
-		return decision.Allowed, err
+	// A direct semantic/physical grant is sufficient for governed execution;
+	// when a query has only physical dependencies, every dependency must be
+	// authorized. This preserves the old semantic-or-physical closure without
+	// reducing authorization to a project-wide read check.
+	for _, object := range objects {
+		if object.Kind() == projectgraph.KindSemanticModel || object.Kind() == projectgraph.KindModel {
+			ok, err := allows(object)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				return true, nil
+			}
+		}
 	}
-	columnObjects := dataQueryColumnObjects(request)
-	if len(columnObjects) == 0 {
+	physical := make([]access.ResourceRef, 0, len(objects))
+	for _, object := range objects {
+		if object.Kind() == projectgraph.KindSource || object.Kind() == projectgraph.KindModel {
+			physical = append(physical, object)
+		}
+	}
+	if len(physical) == 0 {
 		return false, nil
 	}
-	for _, column := range columnObjects {
-		columnDecision, err := m.repo.Authorize(ctx, principalID, privilege, column)
-		if err != nil {
-			return false, err
-		}
-		if !columnDecision.Allowed {
-			return false, nil
+	for _, object := range physical {
+		ok, err := allows(object)
+		if err != nil || !ok {
+			return ok, err
 		}
 	}
 	return true, nil
 }
 
-func (m Metrics) resolvedDependencyObjects(request dataquery.Query, includePublicInteractions bool) ([]access.ObjectRef, []access.ObjectRef, error) {
+func (m Metrics) resolvedDependencyObjects(project projectgraph.ProjectGraph, request dataquery.Query, includePublicInteractions bool) ([]access.ResourceRef, []access.ResourceRef, error) {
 	switch request.Kind {
 	case dataquery.KindSemanticAggregate, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget, dataquery.KindSemanticSpatialMetadata:
 	case dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution:
@@ -427,18 +463,24 @@ func (m Metrics) resolvedDependencyObjects(request dataquery.Query, includePubli
 	if err != nil {
 		return nil, nil, err
 	}
-	modelObject := access.ItemObject(access.SecurableSemanticModel, request.WorkspaceID, request.ModelID)
-	semanticObjects := make([]access.ObjectRef, 0, len(dependencies.LogicalFields))
+	modelObject, ok := canonicalModelResource(project, request.ModelID, projectgraph.KindSemanticModel)
+	if !ok {
+		return nil, nil, fmt.Errorf("unknown semantic model resource %q", request.ModelID)
+	}
+	semanticObjects := make([]access.ResourceRef, 0, len(dependencies.LogicalFields))
 	for _, field := range dependencies.LogicalFields {
 		if !isSemanticField(model, field) {
 			continue
 		}
-		semanticObjects = append(semanticObjects, access.ItemObjectWithParent(access.SecurableSemanticField, request.WorkspaceID, request.ModelID+"/"+field, modelObject))
+		semanticObjects = append(semanticObjects, modelObject)
 	}
-	physicalObjects := make([]access.ObjectRef, 0, len(dependencies.Facts)+len(dependencies.PhysicalFields))
-	datasets := map[string]access.ObjectRef{}
+	physicalObjects := make([]access.ResourceRef, 0, len(dependencies.Facts)+len(dependencies.PhysicalFields))
+	datasets := map[string]access.ResourceRef{}
 	for _, fact := range dependencies.Facts {
-		dataset := access.ItemObjectWithParent(access.SecurableDataset, request.WorkspaceID, request.ModelID+"/"+fact, modelObject)
+		dataset, ok := canonicalModelResource(project, fact, projectgraph.KindModel)
+		if !ok {
+			continue
+		}
 		datasets[fact] = dataset
 		physicalObjects = append(physicalObjects, dataset)
 	}
@@ -449,11 +491,16 @@ func (m Metrics) resolvedDependencyObjects(request dataquery.Query, includePubli
 		}
 		tableObject, ok := datasets[table]
 		if !ok {
-			tableObject = access.ItemObjectWithParent(access.SecurableDataset, request.WorkspaceID, request.ModelID+"/"+table, modelObject)
+			tableObject, ok = canonicalModelResource(project, table, projectgraph.KindModel)
+			if !ok {
+				continue
+			}
 			datasets[table] = tableObject
 			physicalObjects = append(physicalObjects, tableObject)
 		}
-		physicalObjects = append(physicalObjects, access.ItemObjectWithParent(access.SecurableColumn, request.WorkspaceID, request.ModelID+"/"+table+"/"+column, tableObject))
+		// Graph resources intentionally stop at model/source granularity. A
+		// physical column is authorized through its canonical model resource.
+		_ = column
 	}
 	return semanticObjects, physicalObjects, nil
 }
@@ -523,29 +570,13 @@ func dataSortToSemanticSort(sort []dataquery.Sort) []semanticquery.Sort {
 	return out
 }
 
-func (m Metrics) recordDataAccessAudit(ctx context.Context, request dataquery.Query, privilege access.Privilege, objects []access.ObjectRef, status string, cause error) error {
-	if m.repo == nil {
+func (m Metrics) recordDataAccessAudit(ctx context.Context, request dataquery.Query, capability access.Capability, status string, cause error) error {
+	if m.auditRecorder == nil {
 		return nil
 	}
 	action := "data_query.executed"
-	if privilege == access.PrivilegePreviewData {
+	if capability == access.CapabilityResourceRead {
 		action = "data_preview.executed"
-	}
-	targetType := strings.TrimSpace(request.ObjectType)
-	targetID := strings.TrimSpace(request.ObjectID)
-	if targetType == "" || targetID == "" {
-		for _, object := range objects {
-			if object.Type == "" {
-				continue
-			}
-			if targetType == "" {
-				targetType = string(object.Type)
-			}
-			if targetID == "" {
-				targetID = object.CanonicalID()
-			}
-			break
-		}
 	}
 	metadata := map[string]any{
 		"candidateId":                request.CandidateID,
@@ -560,56 +591,61 @@ func (m Metrics) recordDataAccessAudit(ctx context.Context, request dataquery.Qu
 		metadata["error"] = cause.Error()
 	}
 	bytes, _ := json.Marshal(metadata)
-	return access.PersistAuditEvent(ctx, m.repo, access.AuditEventInput{
-		WorkspaceID:   request.WorkspaceID,
-		PrincipalID:   request.PrincipalID,
-		Action:        action,
-		TargetType:    targetType,
-		TargetID:      targetID,
-		Privilege:     privilege,
-		Status:        status,
-		RequestID:     request.RequestID,
-		CorrelationID: request.CorrelationID,
-		MetadataJSON:  string(bytes),
-	})
+	snapshot, err := m.authorizationSnapshot(ctx, request.ProjectID)
+	if err != nil {
+		return err
+	}
+	resource, ok := canonicalModelResource(snapshot.Project(), request.ModelID, projectgraph.KindSemanticModel)
+	if !ok {
+		resource, err = access.NewResourceRef(request.ProjectID, projectgraph.KindProject)
+		if err != nil {
+			return err
+		}
+	}
+	return m.persistCanonicalAudit(ctx, snapshot, access.CanonicalAuditEvent{Identity: snapshot.Identity(), PrincipalID: request.PrincipalID, Action: action,
+		Resource: resource, Capability: capability, Status: status, RequestID: request.RequestID, CorrelationID: request.CorrelationID, MetadataJSON: string(bytes)})
 }
 
 func (m Metrics) QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
-	result, err := m.ExecuteDataQuery(ctx, semanticAggregateDataQuery(modelID, request))
+	query := semanticAggregateDataQuery(modelID, request)
+	query.ProjectID = m.Metrics.Catalog().Project.ID
+	result, err := m.ExecuteDataQuery(ctx, query)
 	return queryRowsFromDataResult(result.Rows), err
 }
 
 func (m Metrics) PreviewSemantic(ctx context.Context, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error) {
-	result, err := m.ExecuteDataQuery(ctx, semanticRowsDataQuery(modelID, request))
+	query := semanticRowsDataQuery(modelID, request)
+	query.ProjectID = m.Metrics.Catalog().Project.ID
+	result, err := m.ExecuteDataQuery(ctx, query)
 	return queryRowsFromDataResult(result.Rows), err
 }
 
 func semanticAggregateDataQuery(modelID string, request reportdef.AggregateQuery) dataquery.Query {
 	return dataquery.Query{
-		ModelID:  modelID,
-		Kind:     dataquery.KindSemanticAggregate,
-		Target:   request.Table,
-		Fields:   queryFieldsToDataFields(request.Dimensions),
-		Measures: queryFieldsToDataFields(request.Measures),
-		Time:     dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
-		Filters:  queryFiltersToDataFilters(request.Filters),
-		Sort:     querySortToDataSort(request.Sort),
-		Limit:    request.Limit,
-		Offset:   request.Offset,
+		ModelID:   modelID,
+		Kind:      dataquery.KindSemanticAggregate,
+		Target:    request.Table,
+		Fields:    queryFieldsToDataFields(request.Dimensions),
+		Measures:  queryFieldsToDataFields(request.Measures),
+		Time:      dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+		Filters:   queryFiltersToDataFilters(request.Filters),
+		Sort:      querySortToDataSort(request.Sort),
+		Limit:     request.Limit,
+		Offset:    request.Offset,
 	}
 }
 
 func semanticRowsDataQuery(modelID string, request reportdef.RowQuery) dataquery.Query {
 	return dataquery.Query{
-		ModelID:  modelID,
-		Kind:     dataquery.KindSemanticRows,
-		Target:   request.Table,
-		Fields:   queryFieldsToDataFields(request.Dimensions),
-		Measures: queryFieldsToDataFields(request.Measures),
-		Filters:  queryFiltersToDataFilters(request.Filters),
-		Sort:     querySortToDataSort(request.Sort),
-		Limit:    request.Limit,
-		Offset:   request.Offset,
+		ModelID:   modelID,
+		Kind:      dataquery.KindSemanticRows,
+		Target:    request.Table,
+		Fields:    queryFieldsToDataFields(request.Dimensions),
+		Measures:  queryFieldsToDataFields(request.Measures),
+		Filters:   queryFiltersToDataFilters(request.Filters),
+		Sort:      querySortToDataSort(request.Sort),
+		Limit:     request.Limit,
+		Offset:    request.Offset,
 	}
 }
 
@@ -712,7 +748,7 @@ func (m Metrics) QueryPublicVisualizationTile(ctx context.Context, publicID, das
 	return port.QueryPublicVisualizationTile(dataquery.WithGovernor(ctx, m), publicID, dashboardID, visualID, revision, zoom, x, y)
 }
 
-func (m Metrics) applyDataPolicies(ctx context.Context, request dataquery.Query, objects []access.ObjectRef) (dataquery.Query, []access.DataPolicy, error) {
+func (m Metrics) applyDataPolicies(ctx context.Context, request dataquery.Query, objects []access.ResourceRef) (dataquery.Query, []accesssnapshot.DataPolicy, error) {
 	policies, err := m.effectiveDataPolicies(ctx, request, objects)
 	if err != nil {
 		return request, nil, err
@@ -844,32 +880,48 @@ func uniqueStrings(values []string) []string {
 }
 
 type effectiveDataPolicySet struct {
-	active    []access.DataPolicy
-	mandatory []access.DataPolicy
+	active    []accesssnapshot.DataPolicy
+	mandatory []accesssnapshot.DataPolicy
 }
 
-func (set effectiveDataPolicySet) all() []access.DataPolicy {
-	return append(append([]access.DataPolicy(nil), set.active...), set.mandatory...)
+func (set effectiveDataPolicySet) all() []accesssnapshot.DataPolicy {
+	return append(append([]accesssnapshot.DataPolicy(nil), set.active...), set.mandatory...)
 }
 
-func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Query, objects []access.ObjectRef) (effectiveDataPolicySet, error) {
+func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Query, objects []access.ResourceRef) (effectiveDataPolicySet, error) {
+	snapshot, err := m.authorizationSnapshot(ctx, request.ProjectID)
+	if err != nil {
+		return effectiveDataPolicySet{}, err
+	}
+	subjects, err := m.subjects(ctx, request.PrincipalID)
+	if err != nil {
+		return effectiveDataPolicySet{}, err
+	}
 	seenObjects := map[string]struct{}{}
 	seenPolicies := map[string]struct{}{}
 	out := effectiveDataPolicySet{}
-	addObject := func(object access.ObjectRef) error {
-		if object.Type == "" {
-			return nil
-		}
+	addObject := func(object access.ResourceRef) error {
 		key := object.CanonicalID()
 		if _, ok := seenObjects[key]; ok {
 			return nil
 		}
 		seenObjects[key] = struct{}{}
-		policies, err := m.repo.ListEffectiveDataPolicies(ctx, request.PrincipalID, object, true)
-		if err != nil {
-			return err
-		}
-		for _, policy := range policies {
+		for _, policy := range snapshot.DataPolicies() {
+			if policy.Resource.ID() != object.ID() || policy.Resource.Kind() != object.Kind() {
+				continue
+			}
+			if policy.Subject != nil {
+				applicable := false
+				for _, subject := range subjects {
+					if *policy.Subject == subject {
+						applicable = true
+						break
+					}
+				}
+				if !applicable {
+					continue
+				}
+			}
 			if _, ok := seenPolicies[policy.ID]; ok {
 				continue
 			}
@@ -883,7 +935,7 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 			return effectiveDataPolicySet{}, err
 		}
 	}
-	for _, object := range dataQueryColumnObjects(request) {
+	for _, object := range m.dataQueryColumnObjects(snapshot.Project(), request) {
 		if err := addObject(object); err != nil {
 			return effectiveDataPolicySet{}, err
 		}
@@ -892,18 +944,16 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 		// Candidate restrictions are appended without deduplicating against the
 		// active policy IDs. An authored policy can therefore never shadow or
 		// replace a currently effective restriction.
-		relevant := map[string]struct{}{
-			"workspace:" + request.WorkspaceID: {},
-		}
-		for _, object := range append(append([]access.ObjectRef(nil), objects...), dataQueryColumnObjects(request)...) {
+		relevant := map[string]struct{}{}
+		for _, object := range append(append([]access.ResourceRef(nil), objects...), m.dataQueryColumnObjects(snapshot.Project(), request)...) {
 			relevant[object.CanonicalID()] = struct{}{}
 		}
 		for _, restriction := range candidate.Restrictions {
-			if restriction.ObjectID == "" {
+			if restriction.Resource.CanonicalID() == "" {
 				out.mandatory = append(out.mandatory, restriction)
 				continue
 			}
-			if _, ok := relevant[restriction.ObjectID]; ok {
+			if _, ok := relevant[restriction.Resource.CanonicalID()]; ok {
 				out.mandatory = append(out.mandatory, restriction)
 			}
 		}
@@ -912,16 +962,16 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 }
 
 type effectivePolicyIdentity struct {
-	PrincipalID      string              `json:"principalId"`
-	ActorPrincipalID string              `json:"actorPrincipalId,omitempty"`
-	WorkspaceID      string              `json:"workspaceId"`
-	Privilege        access.Privilege    `json:"privilege"`
-	CandidateID      string              `json:"candidateId,omitempty"`
-	CandidateDigest  string              `json:"candidateDigest,omitempty"`
-	CredentialID     string              `json:"credentialId,omitempty"`
-	Mode             string              `json:"mode,omitempty"`
-	Objects          []string            `json:"objects"`
-	Policies         []access.DataPolicy `json:"policies"`
+	PrincipalID      string                      `json:"principalId"`
+	ActorPrincipalID string                      `json:"actorPrincipalId,omitempty"`
+	ProjectID        projectgraph.ResourceID     `json:"projectId"`
+	Capability       access.Capability           `json:"capability"`
+	CandidateID      string                      `json:"candidateId,omitempty"`
+	CandidateDigest  string                      `json:"candidateDigest,omitempty"`
+	CredentialID     string                      `json:"credentialId,omitempty"`
+	Mode             string                      `json:"mode,omitempty"`
+	Objects          []string                    `json:"objects"`
+	Policies         []accesssnapshot.DataPolicy `json:"policies"`
 }
 
 type effectivePolicyContext struct {
@@ -933,9 +983,9 @@ type effectivePolicyContext struct {
 
 func effectivePolicyFingerprint(
 	request dataquery.Query,
-	privilege access.Privilege,
-	objects []access.ObjectRef,
-	policies []access.DataPolicy,
+	capability access.Capability,
+	objects []access.ResourceRef,
+	policies []accesssnapshot.DataPolicy,
 	policyContext effectivePolicyContext,
 ) string {
 	objectIDs := make([]string, 0, len(objects))
@@ -943,7 +993,7 @@ func effectivePolicyFingerprint(
 		objectIDs = append(objectIDs, object.CanonicalID())
 	}
 	sort.Strings(objectIDs)
-	policyCopy := append([]access.DataPolicy(nil), policies...)
+	policyCopy := append([]accesssnapshot.DataPolicy(nil), policies...)
 	sort.Slice(policyCopy, func(i, j int) bool {
 		left, _ := json.Marshal(policyCopy[i])
 		right, _ := json.Marshal(policyCopy[j])
@@ -952,8 +1002,8 @@ func effectivePolicyFingerprint(
 	identity := effectivePolicyIdentity{
 		PrincipalID:      request.PrincipalID,
 		ActorPrincipalID: policyContext.ActorPrincipalID,
-		WorkspaceID:      request.WorkspaceID,
-		Privilege:        privilege,
+		ProjectID:        request.ProjectID,
+		Capability:       capability,
 		CandidateID:      request.CandidateID,
 		CandidateDigest:  policyContext.CandidateDigest,
 		CredentialID:     policyContext.CredentialID,
@@ -973,54 +1023,55 @@ func currentCredentialID(ctx context.Context, metrics Metrics) string {
 	return ""
 }
 
-func dataQueryPrivilege(request dataquery.Query) access.Privilege {
+func dataQueryCapability(request dataquery.Query) access.Capability {
 	switch request.Operation {
 	case dataquery.OperationAPIPreview, dataquery.OperationPreviewWindow:
-		return access.PrivilegePreviewData
+		return access.CapabilityResourceRead
 	}
 	switch request.Kind {
 	case dataquery.KindModelTableRows:
-		return access.PrivilegePreviewData
+		return access.CapabilityResourceRead
 	case dataquery.KindSemanticRows:
-		if request.Surface == dataquery.SurfaceDashboard || request.Surface == dataquery.SurfacePublicDashboard {
-			return access.PrivilegeQueryData
-		}
-		return access.PrivilegePreviewData
+		return access.CapabilityResourceUse
 	default:
-		return access.PrivilegeQueryData
+		return access.CapabilityResourceUse
 	}
 }
 
-func dataQueryObjects(request dataquery.Query) []access.ObjectRef {
-	workspaceID := request.WorkspaceID
+func (m Metrics) dataQueryObjects(project projectgraph.ProjectGraph, request dataquery.Query) []access.ResourceRef {
 	modelID := request.ModelID
-	objects := []access.ObjectRef{}
+	objects := []access.ResourceRef{}
 	switch request.Kind {
 	case dataquery.KindModelTableRows:
-		objects = append(objects, access.ItemObjectWithParent(access.SecurableModelTable, workspaceID, modelID+"/"+request.Target, access.ItemObject(access.SecurableSemanticModel, workspaceID, modelID)))
+		if object, ok := canonicalModelResource(project, request.Target, projectgraph.KindModel); ok {
+			objects = append(objects, object)
+		}
 	default:
 		if request.Target != "" {
-			objects = append(objects, access.ItemObjectWithParent(access.SecurableDataset, workspaceID, modelID+"/"+request.Target, access.ItemObject(access.SecurableSemanticModel, workspaceID, modelID)))
+			if object, ok := canonicalModelResource(project, request.Target, projectgraph.KindModel); ok {
+				objects = append(objects, object)
+			}
 		}
 	}
 	if modelID != "" {
-		objects = append(objects, access.ItemObject(access.SecurableSemanticModel, workspaceID, modelID))
-	}
-	if workspaceID != "" {
-		objects = append(objects, access.WorkspaceObject(workspaceID))
+		if object, ok := canonicalModelResource(project, modelID, projectgraph.KindSemanticModel); ok {
+			objects = append(objects, object)
+		}
 	}
 	return objects
 }
 
-func dataQueryColumnObjects(request dataquery.Query) []access.ObjectRef {
-	objects := []access.ObjectRef{}
+func (m Metrics) dataQueryColumnObjects(project projectgraph.ProjectGraph, request dataquery.Query) []access.ResourceRef {
+	objects := []access.ResourceRef{}
 	for _, field := range dataQuerySelectedFields(request) {
 		table, column, ok := splitFieldRef(field)
 		if !ok {
 			continue
 		}
-		parent := access.ItemObjectWithParent(access.SecurableDataset, request.WorkspaceID, request.ModelID+"/"+table, access.ItemObject(access.SecurableSemanticModel, request.WorkspaceID, request.ModelID))
-		objects = append(objects, access.ItemObjectWithParent(access.SecurableColumn, request.WorkspaceID, request.ModelID+"/"+table+"/"+column, parent))
+		_ = column
+		if parent, ok := canonicalModelResource(project, table, projectgraph.KindModel); ok {
+			objects = append(objects, parent)
+		}
 	}
 	return objects
 }
@@ -1118,9 +1169,86 @@ func (m Metrics) currentCredential(ctx context.Context) (access.APICredential, b
 	return m.credentialFromContext(ctx)
 }
 
-func (m Metrics) allowsToken(token access.APIToken, workspaceID string, privilege access.Privilege) bool {
-	if m.tokenAllows == nil {
+func (m Metrics) authorizationSnapshot(ctx context.Context, projectID projectgraph.ResourceID) (accesssnapshot.AuthorizationSnapshot, error) {
+	if m.snapshotFromContext == nil {
+		return accesssnapshot.AuthorizationSnapshot{}, errors.New("authorization snapshot is not configured")
+	}
+	snapshot, err := m.snapshotFromContext(ctx)
+	if err != nil {
+		return accesssnapshot.AuthorizationSnapshot{}, err
+	}
+	if err := snapshot.ValidateBound(); err != nil {
+		return accesssnapshot.AuthorizationSnapshot{}, err
+	}
+	if snapshot.Identity().ProjectID != projectID || snapshot.Project().ProjectID() != projectID || m.Metrics.Catalog().Project.ID != projectID {
+		return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot project identity does not match active project %q", projectID)
+	}
+	return snapshot, nil
+}
+
+func (m Metrics) subjects(ctx context.Context, principalID string) ([]access.SubjectRef, error) {
+	if m.subjectsFromContext == nil {
+		return nil, errors.New("authorization subjects are not configured")
+	}
+	return m.subjectsFromContext(ctx, principalID)
+}
+
+func (m Metrics) capabilityAllowed(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, resource access.ResourceRef, capability access.Capability) (bool, error) {
+	subjects, err := m.subjects(ctx, principalID)
+	if err != nil {
+		return false, err
+	}
+	effective, err := snapshot.EffectiveCapabilities(subjects)
+	if err != nil {
+		return false, err
+	}
+	for _, value := range access.IntersectTokenCapabilities(token.Capabilities, effective) {
+		if value == capability {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m Metrics) tokenAllowsCapability(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, objects []access.ResourceRef, capability access.Capability) bool {
+	if token.Capabilities == nil {
 		return true
 	}
-	return m.tokenAllows(token, workspaceID, privilege)
+	for _, object := range objects {
+		allowed, err := m.capabilityAllowed(ctx, snapshot, principalID, token, object, capability)
+		if err == nil && allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Metrics) persistCanonicalAudit(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, event access.CanonicalAuditEvent) error {
+	if m.auditRecorder == nil {
+		return nil
+	}
+	return access.PersistCanonicalAuditEvent(ctx, m.auditRecorder, event)
+}
+
+func canonicalModelResource(project projectgraph.ProjectGraph, id string, kind projectgraph.Kind) (access.ResourceRef, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return access.ResourceRef{}, false
+	}
+	resourceID := projectgraph.ResourceID(id)
+	if resource, ok := project.Resource(resourceID); ok && resource.Kind == kind {
+		ref, err := access.NewResourceRef(resource.ID, kind)
+		return ref, err == nil
+	}
+	for _, resource := range project.Resources() {
+		if resource.Kind == kind && resource.Name == id {
+			ref, err := access.NewResourceRef(resource.ID, kind)
+			return ref, err == nil
+		}
+	}
+	return access.ResourceRef{}, false
+}
+
+func dashboardPublicationSubjectID(projectID projectgraph.ResourceID, publication string) string {
+	return "dashboard_publication:" + projectID.String() + "." + strings.TrimSpace(publication)
 }

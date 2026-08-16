@@ -16,9 +16,9 @@ import (
 var errPublicationCommandAuditUnavailable = apigenfailure.New("audit_unavailable", "dashboard publication command audit is unavailable")
 
 type publicationCommandAuditContract struct {
-	owner     string
-	action    string
-	privilege access.Privilege
+	owner      string
+	action     string
+	capability access.Capability
 }
 
 type publicationCommandAuditInput struct {
@@ -46,14 +46,14 @@ func buildPublicationCommandAuditRecorder(
 			return nil, fmt.Errorf("dashboard publication operation %q is missing its generated command contract", operationID)
 		}
 		command := generated.Command
-		privilege, ok := access.ParsePrivilege(command.Privilege)
-		if !ok || command.AuthzMode != "privilege" || generated.AuthzMode != command.AuthzMode ||
+		capability := access.CapabilityResourcePublish
+		if command.AuthzMode != "authenticated" || generated.AuthzMode != command.AuthzMode ||
 			!command.Audit.Required || command.Audit.SuccessAction == "" || command.Target == nil ||
 			command.Audit.Guarantee != "best-effort" || command.Target.Type != "project" || command.Target.Parameter != "project" {
 			return nil, fmt.Errorf("dashboard publication operation %q has an invalid generated command audit contract", operationID)
 		}
 		contracts[operationID] = publicationCommandAuditContract{
-			owner: command.Owner, action: command.Audit.SuccessAction, privilege: privilege,
+			owner: command.Owner, action: command.Audit.SuccessAction, capability: capability,
 		}
 	}
 	if record == nil {
@@ -86,9 +86,8 @@ func buildPublicationCommandAuditRecorder(
 		// this cross-domain Access audit. The caller observes recorder failures but
 		// preserves the already-successful publication result.
 		return record(ctx, access.AuditEventInput{
-			ResourceKind: "dashboard_publication", ResourceID: input.targetID, PrincipalID: input.principalID,
-			Action: contract.action, TargetType: "dashboard_publication", TargetID: input.targetID,
-			Privilege: contract.privilege, Status: "success",
+			ResourceKind: "project", ResourceID: input.projectID.String(), PrincipalID: input.principalID,
+			Action: contract.action, Capability: contract.capability, Status: "success",
 			RequestID: input.requestID, CorrelationID: input.correlationID,
 			MetadataJSON: metadata,
 		})

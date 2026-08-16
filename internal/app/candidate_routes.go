@@ -14,6 +14,7 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	"github.com/go-chi/chi/v5"
 )
@@ -30,7 +31,7 @@ type candidateRouteDependencies struct {
 	dashboards       *dashboardmodule.Module
 	deployments      *deploymentmodule.Module
 	runtimeHost      *runtimehostmodule.Module
-	candidateMetrics func(runtimehostmodule.Provider, string) QueryMetrics
+	candidateMetrics func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
 }
 
 func candidatePreview(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
@@ -55,7 +56,7 @@ func candidatePreview(deps candidateRouteDependencies, w http.ResponseWriter, r 
 		return
 	}
 	projectID := view.ProjectID
-	metrics := deps.candidateMetrics(view.Provider, projectID.String())
+	metrics := deps.candidateMetrics(view.Provider, projectID)
 	if metrics == nil {
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return
@@ -150,7 +151,7 @@ func resolveCandidateDashboardHTTP(
 	}
 	projectID := view.ProjectID
 	{
-		metrics := deps.candidateMetrics(view.Provider, projectID.String())
+		metrics := deps.candidateMetrics(view.Provider, projectID)
 		restrictions := make([]dashboardmodule.CandidateRestriction, len(view.Restrictions))
 		for index, restriction := range view.Restrictions {
 			resource, err := access.NewResourceRef(restriction.ObjectID, restriction.ObjectKind)

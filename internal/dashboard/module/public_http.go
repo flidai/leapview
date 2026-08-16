@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/command"
@@ -261,13 +260,13 @@ func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboard
 }
 
 func PublicationExecutionContext(ctx context.Context, row publication.Publication, modelID string) context.Context {
-	principalID := access.DashboardPublicationSubjectID(row.ProjectID, row.Name)
+	principalID := "dashboard_publication:" + row.ProjectID.String() + "." + strings.TrimSpace(row.Name)
 	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
 		ProjectID: row.ProjectID, Surface: dataquery.SurfacePublicDashboard,
 		PrincipalID: principalID, ObjectType: "dashboard_publication", ObjectID: row.Name,
 	})
 	return queryauthz.WithDashboardPublicationCapability(ctx, queryauthz.DashboardPublicationCapability{
-		WorkspaceID: row.ProjectID.String(), Publication: row.Name,
+		ProjectID: row.ProjectID, Publication: row.Name,
 		Dashboard: row.Dashboard, ModelID: modelID,
 		DependencyAssetIDs: append([]string(nil), row.DependencyAssetIDs...),
 	})
