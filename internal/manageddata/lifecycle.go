@@ -267,7 +267,7 @@ type ServingStateBinding struct {
 }
 
 // Repository owns project-global managed-data metadata. Implementations must
-// make CompleteUpload and ReplaceServingStateBindings atomic.
+// make CompleteUpload and InstallServingStateBindings atomic.
 type Repository interface {
 	CreateCollection(context.Context, CreateCollectionInput) (Collection, error)
 	CollectionByID(context.Context, projectgraph.ResourceID) (Collection, error)
@@ -297,7 +297,7 @@ type Repository interface {
 	ListRevisions(context.Context, projectgraph.ResourceID) ([]Revision, error)
 	ListRevisionFiles(context.Context, RevisionID) ([]RevisionFile, error)
 	EnvironmentPointer(context.Context, projectgraph.ResourceID, Environment) (EnvironmentPointer, error)
-	ReplaceServingStateBindings(context.Context, projectgraph.ServingIdentity, []ServingStateBinding) error
+	InstallServingStateBindings(context.Context, projectgraph.ServingIdentity, []ServingStateBinding) error
 	ListServingStateBindings(context.Context, projectgraph.ServingIdentity) ([]ServingStateBinding, error)
 }
 
