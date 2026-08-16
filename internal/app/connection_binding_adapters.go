@@ -30,6 +30,9 @@ func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 	ctx context.Context,
 	event analyticsmodule.ConnectionRotationAuditEvent,
 ) error {
+	if err := event.ConnectionID.Validate(); err != nil {
+		return err
+	}
 	metadata, err := connectionRotationAuditMetadata(event)
 	if err != nil {
 		return err
@@ -60,6 +63,9 @@ func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministra
 	ctx context.Context,
 	event analyticsmodule.ConnectionAdministrationAuditEvent,
 ) error {
+	if err := event.ConnectionID.Validate(); err != nil {
+		return err
+	}
 	metadata, err := connectionAdministrationAuditMetadata(event)
 	if err != nil {
 		return err
