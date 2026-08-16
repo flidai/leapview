@@ -138,7 +138,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .metrics {
       display: grid;
-          max-width: var(--lv-project-detail-max-width);
+          max-width: var(--lv-page-content-max-width);
       grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
       gap: var(--base-size-12);
     }
@@ -191,7 +191,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .warnings {
       display: grid;
-          max-width: var(--lv-project-detail-max-width);
+          max-width: var(--lv-page-content-max-width);
       gap: var(--base-size-8);
     }
 
@@ -320,7 +320,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .local-user-panel {
       display: grid;
-          max-width: var(--lv-project-detail-max-width);
+          max-width: var(--lv-page-content-max-width);
       gap: var(--base-size-12);
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
