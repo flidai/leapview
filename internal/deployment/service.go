@@ -93,15 +93,18 @@ func New(repository Repository, activation ActivationUnitOfWork, states ServingS
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Deployment, error) {
+	rawID, rawDigest, rawCreatedBy := input.ID, input.RequestDigest, input.CreatedBy
 	input.ID, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
+	if rawID != input.ID || rawDigest != input.RequestDigest || rawCreatedBy != input.CreatedBy {
+		return Deployment{}, fmt.Errorf("deployment identity fields must be canonical")
+	}
 	if err := ValidateCreate(input); err != nil {
 		return Deployment{}, err
 	}
 	return s.repository.CreateDeployment(ctx, input)
 }
 func (s *Service) Get(ctx context.Context, scope Scope) (Deployment, error) {
-	scope.ProjectID, scope.DeploymentID = strings.TrimSpace(scope.ProjectID), strings.TrimSpace(scope.DeploymentID)
-	if scope.ProjectID == "" || scope.DeploymentID == "" {
+	if scope.ProjectID == "" || scope.DeploymentID == "" || scope.ProjectID != strings.TrimSpace(scope.ProjectID) || scope.DeploymentID != strings.TrimSpace(scope.DeploymentID) {
 		return Deployment{}, fmt.Errorf("project and deployment id are required")
 	}
 	d, err := s.repository.DeploymentByID(ctx, scope.DeploymentID)
@@ -128,8 +131,7 @@ func (s *Service) Cancel(ctx context.Context, scope Scope) (Deployment, error) {
 }
 
 func (s *Service) Activate(ctx context.Context, request ActivationRequest) (Deployment, error) {
-	request.ActorID = strings.TrimSpace(request.ActorID)
-	if request.ActorID == "" {
+	if request.ActorID == "" || request.ActorID != strings.TrimSpace(request.ActorID) {
 		return Deployment{}, fmt.Errorf("activation principal is required")
 	}
 	row, err := s.Get(ctx, request.Scope)

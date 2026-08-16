@@ -28,13 +28,6 @@ const (
 	StatusSuperseded Status = "superseded"
 )
 
-// TargetRequest is retained for candidate-publication authorization. It is a
-// target instance identity, never a workspace selector.
-type TargetRequest struct {
-	TargetID    string `json:"targetId"`
-	CandidateID string `json:"candidateId"`
-}
-
 type CreateRequest struct {
 	Project           string
 	Environment       string
@@ -104,12 +97,7 @@ type Service interface {
 
 type Adapter struct{ service Service }
 
-// Metadata is no longer consulted during deployment mapping. It remains a
-// narrow constructor parameter only while callers migrate to LEA-378's exact
-// managed-data identity handoff.
-type Metadata interface{}
-
-func New(service Service, _ Metadata) (*Adapter, error) {
+func New(service Service) (*Adapter, error) {
 	if service == nil {
 		return nil, fmt.Errorf("deployment service is required")
 	}
@@ -117,7 +105,10 @@ func New(service Service, _ Metadata) (*Adapter, error) {
 }
 
 func (a *Adapter) Cancel(ctx context.Context, scope Scope) (Deployment, error) {
-	row, err := a.service.Cancel(ctx, deployment.Scope{ProjectID: strings.TrimSpace(scope.Project), DeploymentID: strings.TrimSpace(scope.DeploymentID)})
+	if err := validateScope(scope); err != nil {
+		return Deployment{}, err
+	}
+	row, err := a.service.Cancel(ctx, deployment.Scope{ProjectID: scope.Project, DeploymentID: scope.DeploymentID})
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -125,7 +116,7 @@ func (a *Adapter) Cancel(ctx context.Context, scope Scope) (Deployment, error) {
 }
 
 func (a *Adapter) Create(ctx context.Context, request CreateRequest) (Deployment, error) {
-	if request.Project != strings.TrimSpace(request.Project) || request.Environment != strings.TrimSpace(request.Environment) || request.GenerationID != strings.TrimSpace(request.GenerationID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) {
+	if request.Project != strings.TrimSpace(request.Project) || request.Environment != strings.TrimSpace(request.Environment) || request.GenerationID != strings.TrimSpace(request.GenerationID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.PriorGenerationID != strings.TrimSpace(request.PriorGenerationID) || request.Actor != strings.TrimSpace(request.Actor) || request.IdempotencyKey != strings.TrimSpace(request.IdempotencyKey) || request.ReleaseID != strings.TrimSpace(request.ReleaseID) || request.RollbackOf != strings.TrimSpace(request.RollbackOf) {
 		return Deployment{}, fmt.Errorf("%w: identity fields must be canonical", ErrInvalid)
 	}
 	if request.Project == "" || request.Environment == "" || request.GenerationID == "" || request.ArtifactDigest == "" || request.Actor == "" || request.IdempotencyKey == "" {
@@ -158,7 +149,10 @@ func (a *Adapter) Create(ctx context.Context, request CreateRequest) (Deployment
 }
 
 func (a *Adapter) Get(ctx context.Context, scope Scope) (Deployment, error) {
-	row, err := a.service.Get(ctx, deployment.Scope{ProjectID: strings.TrimSpace(scope.Project), DeploymentID: strings.TrimSpace(scope.DeploymentID)})
+	if err := validateScope(scope); err != nil {
+		return Deployment{}, err
+	}
+	row, err := a.service.Get(ctx, deployment.Scope{ProjectID: scope.Project, DeploymentID: scope.DeploymentID})
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -166,14 +160,24 @@ func (a *Adapter) Get(ctx context.Context, scope Scope) (Deployment, error) {
 }
 
 func (a *Adapter) Activate(ctx context.Context, request ActivateRequest) (Deployment, error) {
-	if request.Actor == "" || request.IdempotencyKey == "" {
+	if request.Actor == "" || request.IdempotencyKey == "" || request.Actor != strings.TrimSpace(request.Actor) || request.IdempotencyKey != strings.TrimSpace(request.IdempotencyKey) {
 		return Deployment{}, fmt.Errorf("%w: actor and idempotency key are required", ErrInvalid)
 	}
-	row, err := a.service.Activate(ctx, deployment.ActivationRequest{Scope: deployment.Scope{ProjectID: strings.TrimSpace(request.Project), DeploymentID: strings.TrimSpace(request.DeploymentID)}, ActorID: request.Actor})
+	if err := validateScope(Scope{Project: request.Project, DeploymentID: request.DeploymentID}); err != nil {
+		return Deployment{}, err
+	}
+	row, err := a.service.Activate(ctx, deployment.ActivationRequest{Scope: deployment.Scope{ProjectID: request.Project, DeploymentID: request.DeploymentID}, ActorID: request.Actor})
 	if err != nil {
 		return Deployment{}, err
 	}
 	return mapDeployment(row), nil
+}
+
+func validateScope(scope Scope) error {
+	if scope.Project == "" || scope.DeploymentID == "" || scope.Project != strings.TrimSpace(scope.Project) || scope.DeploymentID != strings.TrimSpace(scope.DeploymentID) {
+		return fmt.Errorf("%w: scope identity must be canonical", ErrInvalid)
+	}
+	return nil
 }
 
 func mapDeployment(row deployment.Deployment) Deployment {

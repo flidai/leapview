@@ -21,6 +21,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -107,16 +108,8 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	targets := make([]apiadapter.TargetRequest, 0, len(targetRelease.Artifacts))
-	for _, artifact := range targetRelease.Artifacts {
-		if artifact.ServingStateID == "" {
-			m.writeCommandFailure(w, r, operationID, apigenfailure.New("release_incomplete", "Release is missing a workspace artifact"))
-			return
-		}
-		targets = append(targets, apiadapter.TargetRequest{Workspace: artifact.WorkspaceID, CandidateID: artifact.ServingStateID})
-	}
 	if !m.protected && m.jobs.Authorize != nil {
-		if err := m.jobs.Authorize(r.Context(), principal.ID, m.handlerEnvironment(), targets); err != nil {
+		if err := m.jobs.Authorize(r.Context(), principal.ID, m.handlerEnvironment(), targetRelease.GenerationID); err != nil {
 			if errors.Is(err, ErrPublicationForbidden) {
 				m.writeCommandFailure(w, r, operationID, err)
 				return
@@ -126,7 +119,7 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		}
 	}
 	createRequest := apiadapter.CreateRequest{
-		Project: project, Environment: m.handlerEnvironment(), Targets: targets, Actor: principal.ID, IdempotencyKey: idempotencyKey,
+		Project: project, Environment: m.handlerEnvironment(), GenerationID: targetRelease.GenerationID, ArtifactDigest: targetRelease.ArtifactDigest, PriorGenerationID: evidence.BaseGenerationID, Actor: principal.ID, IdempotencyKey: idempotencyKey,
 		ReleaseID: releaseID, Evidence: evidence, RollbackOf: rollbackOf,
 	}
 	createRequest.Workflow = func(deploymentID string) (jobs.WorkflowIntent, error) {
@@ -172,12 +165,7 @@ func publishEvidence(
 ) (apiadapter.PublishEvidence, error) {
 	instanceID = strings.TrimSpace(instanceID)
 	environment = strings.TrimSpace(environment)
-	if targetRelease.Provenance == nil ||
-		targetRelease.ProjectID == "" ||
-		targetRelease.ProjectDigest == "" ||
-		targetRelease.ProjectDigest != targetRelease.Provenance.Artifact.SourceDigest ||
-		targetRelease.Provenance.Plan.TargetID != instanceID ||
-		targetRelease.Provenance.Plan.Environment != environment {
+	if targetRelease.Provenance == nil || targetRelease.ProjectID == "" || targetRelease.ProjectDigest == "" || targetRelease.ProjectDigest != targetRelease.Provenance.Artifact.ProjectDigest || targetRelease.Provenance.Plan.Identity.ProjectID.String() != targetRelease.ProjectID || targetRelease.Provenance.Plan.Identity.Environment != environment {
 		return apiadapter.PublishEvidence{}, fmt.Errorf(
 			"%w: release provenance does not belong to this target",
 			deployment.ErrConflict,
@@ -190,47 +178,25 @@ func publishEvidence(
 			err,
 		)
 	}
-	planned := make(map[string]release.TargetWorkspacePlan, len(targetRelease.Provenance.Plan.Workspaces))
-	for _, workspace := range targetRelease.Provenance.Plan.Workspaces {
-		planned[workspace.WorkspaceID] = workspace
-	}
-	if len(planned) != len(targetRelease.Artifacts) {
-		return apiadapter.PublishEvidence{}, fmt.Errorf(
-			"%w: release target plan is incomplete",
-			deployment.ErrConflict,
-		)
-	}
-	for _, artifact := range targetRelease.Artifacts {
-		workspace, ok := planned[artifact.WorkspaceID]
-		if !ok || workspace.ServingStateID != artifact.ServingStateID ||
-			workspace.ArtifactDigest != publishArtifactDigest(artifact.ActualDigest) ||
-			artifact.ActualDigest != artifact.ExpectedDigest {
-			return apiadapter.PublishEvidence{}, fmt.Errorf(
-				"%w: release target plan drifted for workspace %q",
-				deployment.ErrConflict,
-				artifact.WorkspaceID,
-			)
-		}
-	}
+	if targetRelease.ActualDigest != targetRelease.ArtifactDigest || targetRelease.GenerationID != targetRelease.Provenance.Plan.Identity.GenerationID { return apiadapter.PublishEvidence{}, fmt.Errorf("%w: release generation artifact drifted", deployment.ErrConflict) }
 	return apiadapter.PublishEvidence{
 		ReleaseDigest:     targetRelease.Provenance.Digest,
 		ArtifactDigest:    targetRelease.Provenance.ArtifactDigest,
 		PlanDigest:        targetRelease.Provenance.PlanDigest,
 		CandidateID:       targetRelease.Provenance.Candidate.ID,
 		CandidateRevision: targetRelease.Provenance.Candidate.Revision,
-		TargetID:          targetRelease.Provenance.Plan.TargetID,
-		BaseGeneration:    targetRelease.Provenance.Plan.BaseGeneration,
+		TargetID:          instanceID,
+		Environment:       targetRelease.Provenance.Plan.Identity.Environment,
+		GenerationID:      targetRelease.Provenance.Plan.Identity.GenerationID,
+		BaseGenerationID:  baseGenerationID(targetRelease.Provenance.Plan.BaseIdentity),
 		RuntimeVersion:    targetRelease.Provenance.Plan.RuntimeVersion,
 		PolicyDigest:      targetRelease.Provenance.Plan.PolicyDigest,
 	}, nil
 }
 
-func publishArtifactDigest(value string) string {
-	value = strings.TrimSpace(value)
-	if strings.HasPrefix(value, "sha256:") {
-		return value
-	}
-	return "sha256:" + value
+func baseGenerationID(identity *projectgraph.ServingIdentity) string {
+	if identity == nil { return "" }
+	return identity.GenerationID
 }
 
 func (m *Module) GetDeployment(w http.ResponseWriter, r *http.Request, project, deploymentID string) {
@@ -962,28 +928,11 @@ func deploymentResponse(
 	result := deploymentapi.Response{
 		ID: row.ID, ProjectID: row.Project, ReleaseID: targetRelease.ID,
 		Environment: row.Environment, RequestDigest: row.RequestDigest,
+		GenerationID: row.GenerationID, ArtifactDigest: row.ArtifactDigest,
 		Evidence: publishEvidenceResponse(targetRelease), Status: status,
-		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, Targets: make([]deploymentapi.TargetResponse, 0, len(row.Targets)),
-		Connections: make([]deploymentapi.ConnectionResponse, 0, len(row.Connections)),
+		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt,
 	}
-	for _, target := range row.Targets {
-		stateID := target.CandidateID
-		mapped := deploymentapi.TargetResponse{WorkspaceID: target.Workspace, ServingStateID: &stateID, Status: string(target.Status)}
-		if target.PriorCandidateID != "" {
-			mapped.PriorServingStateID = &target.PriorCandidateID
-		}
-		if target.Error != "" {
-			mapped.Error = &target.Error
-		}
-		result.Targets = append(result.Targets, mapped)
-	}
-	for _, connection := range row.Connections {
-		mapped := deploymentapi.ConnectionResponse{ConnectionID: connection.Connection, RevisionID: connection.RevisionID}
-		if connection.PriorRevisionID != "" {
-			mapped.PriorRevisionID = &connection.PriorRevisionID
-		}
-		result.Connections = append(result.Connections, mapped)
-	}
+	if row.PriorGenerationID != "" { result.PriorGenerationID = &row.PriorGenerationID }
 	if row.ActivatedAt != "" {
 		result.StartedAt = &row.ActivatedAt
 		result.FinishedAt = &row.ActivatedAt
@@ -1006,9 +955,7 @@ func publishEvidenceResponse(
 	targetRelease release.Release,
 ) deploymentapi.PublishEvidenceResponse {
 	if targetRelease.Provenance == nil {
-		return deploymentapi.PublishEvidenceResponse{
-			Workspaces: []deploymentapi.WorkspacePublishEvidence{},
-		}
+		return deploymentapi.PublishEvidenceResponse{}
 	}
 	response := deploymentapi.PublishEvidenceResponse{
 		ReleaseDigest:     targetRelease.Provenance.Digest,
@@ -1016,15 +963,11 @@ func publishEvidenceResponse(
 		PlanDigest:        targetRelease.Provenance.PlanDigest,
 		CandidateID:       targetRelease.Provenance.Candidate.ID,
 		CandidateRevision: targetRelease.Provenance.Candidate.Revision,
-		TargetID:          targetRelease.Provenance.Plan.TargetID,
-		BaseGeneration:    targetRelease.Provenance.Plan.BaseGeneration,
+		TargetID:          "",
+		Environment:       targetRelease.Provenance.Plan.Identity.Environment,
+		GenerationID:      targetRelease.Provenance.Plan.Identity.GenerationID,
 		RuntimeVersion:    targetRelease.Provenance.Plan.RuntimeVersion,
 		PolicyDigest:      targetRelease.Provenance.Plan.PolicyDigest,
-		Workspaces: make(
-			[]deploymentapi.WorkspacePublishEvidence,
-			0,
-			len(targetRelease.Provenance.Plan.Workspaces),
-		),
 	}
 	if source := targetRelease.Provenance.SourceRevision; source != nil {
 		response.SourceRevision = &deploymentapi.CandidateSourceRevision{
@@ -1042,34 +985,6 @@ func publishEvidenceResponse(
 			value := source.ChangeID
 			response.SourceRevision.ChangeID = &value
 		}
-	}
-	for _, workspace := range targetRelease.Provenance.Plan.Workspaces {
-		mapped := deploymentapi.WorkspacePublishEvidence{
-			WorkspaceID: workspace.WorkspaceID, ServingStateID: workspace.ServingStateID,
-			ArtifactDigest: workspace.ArtifactDigest,
-			DataRevision:   workspace.DataRevision, DataMode: string(workspace.DataMode),
-			ManagedDataPins: make(
-				[]deploymentapi.ManagedDataPinEvidence,
-				len(workspace.ManagedDataPins),
-			),
-			Bindings: make(
-				[]deploymentapi.BindingEvidence,
-				len(workspace.Bindings),
-			),
-		}
-		for index, pin := range workspace.ManagedDataPins {
-			mapped.ManagedDataPins[index] = deploymentapi.ManagedDataPinEvidence{
-				ConnectionID: pin.ConnectionID, RevisionID: pin.RevisionID,
-			}
-		}
-		for index, binding := range workspace.Bindings {
-			mapped.Bindings[index] = deploymentapi.BindingEvidence{
-				BindingID: binding.BindingID, LogicalConnection: binding.LogicalConnection,
-				ConnectorKind: binding.ConnectorKind, Revision: binding.Revision,
-				ValidatedVersion: binding.ValidatedVersion, EndpointConfigHash: binding.EndpointConfigHash,
-			}
-		}
-		response.Workspaces = append(response.Workspaces, mapped)
 	}
 	return response
 }

@@ -104,7 +104,7 @@ func (m *Module) GetRelease(w http.ResponseWriter, r *http.Request, project, rel
 	apitransport.WriteJSON(w, http.StatusOK, response(row))
 }
 
-func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, project, releaseID, generationID, contentType, contentDigest string) {
+func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, project, releaseID, contentType, contentDigest string) {
 	if contentType != "application/octet-stream" {
 		apitransport.WriteProblem(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Release artifacts require application/octet-stream", nil)
 		return
@@ -114,14 +114,12 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), err)
 		return
 	}
-	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, GenerationID: generationID, Digest: artifact.ExpectedDigest, ActualDigest: artifact.ActualDigest, SizeBytes: artifact.SizeBytes}
-	m.recordBestEffortEvent(
-		r.Context(), string(releasegen.GenOperationUploadReleaseArtifact), releaseID,
-		releaseArtifactUploadedAuditAction, releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{
-			OperationId: string(releasegen.GenOperationUploadReleaseArtifact), ReleaseId: releaseID,
-			WorkspaceId: "", Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes,
-		},
-	)
+	identity, identityErr := artifact.Identity()
+	if identityErr != nil {
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), identityErr)
+		return
+	}
+	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, GenerationID: identity.GenerationID, Digest: artifact.ExpectedDigest, ActualDigest: artifact.ActualDigest, SizeBytes: artifact.SizeBytes}
 	w.Header().Set("Location", location(project, releaseID)+"/artifact")
 	apitransport.WriteJSON(w, http.StatusCreated, result)
 }
@@ -260,23 +258,11 @@ func (m *Module) recordBestEffortEvent(
 func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 	if values, ok := data.(map[string]any); ok {
 		str := func(key string) string { value, _ := values[key].(string); return value }
-		int64Value := func(key string) int64 {
-			switch value := values[key].(type) {
-			case int64:
-				return value
-			case int:
-				return int64(value)
-			case float64:
-				return int64(value)
-			default:
-				return 0
-			}
-		}
 		switch operationID {
 		case string(releasegen.GenOperationCreateRelease):
 			return releasegen.EncodeGenCreateReleaseAuditPayload(releasegen.GenSchemaReleaseCreatedAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), ProjectDigest: str("projectDigest"), Status: str("status"), CreatedBy: str("createdBy")})
 		case string(releasegen.GenOperationUploadReleaseArtifact):
-			return releasegen.EncodeGenUploadReleaseArtifactAuditPayload(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), WorkspaceId: str("workspaceId"), Digest: str("digest"), SizeBytes: int64Value("sizeBytes")})
+			return "", fmt.Errorf("release artifact audit contract is not generation-scoped")
 		case string(releasegen.GenOperationFinalizeRelease):
 			return releasegen.EncodeGenFinalizeReleaseAuditPayload(releasegen.GenSchemaReleaseValidatingAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), Status: str("status")})
 		}
@@ -289,11 +275,7 @@ func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 		}
 		return releasegen.EncodeGenCreateReleaseAuditPayload(payload)
 	case string(releasegen.GenOperationUploadReleaseArtifact):
-		payload, ok := data.(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload)
-		if !ok {
-			return "", fmt.Errorf("release artifact audit payload has type %T", data)
-		}
-		return releasegen.EncodeGenUploadReleaseArtifactAuditPayload(payload)
+		return "", fmt.Errorf("release artifact audit contract is not generation-scoped")
 	case string(releasegen.GenOperationFinalizeRelease):
 		payload, ok := data.(releasegen.GenSchemaReleaseValidatingAuditPayload)
 		if !ok {

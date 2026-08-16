@@ -35,7 +35,7 @@ type DeploymentCoordinator interface {
 // notification rather than repository reach-through.
 type JobConfig struct {
 	Coordinator DeploymentCoordinator
-	Authorize   func(context.Context, string, string, []apiadapter.TargetRequest) error
+	Authorize   func(context.Context, string, string, string) error
 	Reconcile   func(context.Context) error
 	Events      jobs.EventAppender
 	Logger      *slog.Logger
@@ -114,7 +114,7 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 		}
 	}
 	if m.jobs.Authorize != nil {
-		if err := m.jobs.Authorize(ctx, payload.Actor, pending.Environment, nil); err != nil {
+		if err := m.jobs.Authorize(ctx, payload.Actor, pending.Environment, pending.GenerationID); err != nil {
 			m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
 			return err
 		}

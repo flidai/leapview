@@ -204,6 +204,10 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 		return GenerationPlanProvenance{}, provenanceInvalid(err)
 	}
 	if p.BaseIdentity != nil {
+		base := *p.BaseIdentity
+		p.BaseIdentity = &base
+	}
+	if p.BaseIdentity != nil {
 		if err := p.BaseIdentity.Validate(); err != nil {
 			return GenerationPlanProvenance{}, provenanceInvalid(err)
 		}

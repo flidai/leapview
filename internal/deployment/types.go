@@ -79,10 +79,10 @@ type ActivationInput struct {
 type Verification struct{ Digest string }
 
 func ValidateCreate(input CreateInput) error {
-	rawProject, rawEnvironment, rawGeneration, rawPrior := input.ProjectID, input.Environment, input.GenerationID, input.PriorGenerationID
+	rawProject, rawEnvironment, rawGeneration, rawPrior, rawArtifact := input.ProjectID, input.Environment, input.GenerationID, input.PriorGenerationID, input.ArtifactDigest
 	input.ID, input.ProjectID, input.Environment, input.GenerationID, input.ArtifactDigest, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
 	input.PriorGenerationID = strings.TrimSpace(input.PriorGenerationID)
-	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawPrior != input.PriorGenerationID {
+	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawPrior != input.PriorGenerationID || rawArtifact != input.ArtifactDigest {
 		return fmt.Errorf("serving identity fields must be canonical")
 	}
 	if input.ID == "" || input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" || input.RequestDigest == "" || input.CreatedBy == "" {
@@ -111,9 +111,9 @@ func ValidateCreate(input CreateInput) error {
 }
 
 func ValidateActivation(input ActivationInput) error {
-	rawProject, rawEnvironment, rawGeneration, rawPrior := input.ProjectID, input.Environment, input.GenerationID, input.PriorGenerationID
+	rawProject, rawEnvironment, rawGeneration, rawPrior, rawArtifact, rawDeployment, rawPrincipal, rawVerification := input.ProjectID, input.Environment, input.GenerationID, input.PriorGenerationID, input.ArtifactDigest, input.DeploymentID, input.ActivationPrincipal, input.VerificationDigest
 	input.DeploymentID, input.ProjectID, input.Environment, input.GenerationID, input.ArtifactDigest, input.PriorGenerationID, input.ActivationPrincipal, input.VerificationDigest = strings.TrimSpace(input.DeploymentID), strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.PriorGenerationID), strings.TrimSpace(input.ActivationPrincipal), strings.TrimSpace(input.VerificationDigest)
-	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawPrior != input.PriorGenerationID {
+	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawPrior != input.PriorGenerationID || rawArtifact != input.ArtifactDigest || rawDeployment != input.DeploymentID || rawPrincipal != input.ActivationPrincipal || rawVerification != input.VerificationDigest {
 		return fmt.Errorf("serving identity fields must be canonical")
 	}
 	if input.DeploymentID == "" || input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" || input.ArtifactDigest == "" || input.ActivationPrincipal == "" || digest.ValidateSHA256Identity(input.VerificationDigest) != nil {

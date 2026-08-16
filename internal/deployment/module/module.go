@@ -118,7 +118,6 @@ type Config struct {
 	States                    ServingStatePort
 	Runtime                   deployment.Runtime
 	ManagedData               deployment.ManagedDataResolver
-	DeploymentMetadata        apiadapter.Metadata
 	ActivationHooks           ActivationHooks
 	MaxJSONBodyBytes          int64
 	Logger                    *slog.Logger
@@ -165,8 +164,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var approvals *deployment.ApprovalService
 	var candidateRuntimes *deployment.CandidateRuntimeService
 	if config.Database != nil {
-		if config.States == nil || config.Runtime == nil || config.ManagedData == nil || config.DeploymentMetadata == nil {
-			return nil, errors.New("deployment states, runtime, managed data, and metadata are required")
+		if config.States == nil || config.Runtime == nil || config.ManagedData == nil {
+			return nil, errors.New("deployment states, runtime, and managed data are required")
 		}
 		repository, activation, candidateRepository, approvalRepository := newPersistence(
 			config.Database,
@@ -195,7 +194,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				return nil, err
 			}
 		}
-		coordinator, err = apiadapter.New(service, config.DeploymentMetadata)
+		coordinator, err = apiadapter.New(service)
 		if err != nil {
 			return nil, err
 		}
