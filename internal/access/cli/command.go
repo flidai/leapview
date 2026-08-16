@@ -66,12 +66,11 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 			result, err := authentication.Login(ctx, LoginRequest{
 				Name: profileName, Origin: metadata.Origin, InstanceID: metadata.InstanceID,
 				Environment: metadata.Environment, ProjectID: projectID,
-				Privileges: []string{
-					"USE_WORKSPACE",
-					"VIEW_ITEM",
-					"AUTHOR_PROJECT",
-					"PUBLISH_RELEASE",
-					"REQUEST_DEPLOYMENT",
+				Capabilities: []string{
+					"RESOURCE_USE",
+					"RESOURCE_READ",
+					"RESOURCE_EDIT",
+					"RESOURCE_PUBLISH",
 				},
 				Headless: headless,
 			}, func(challenge DeviceChallenge) {

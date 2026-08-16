@@ -29,13 +29,13 @@ type DeviceChallenge struct {
 }
 
 type LoginRequest struct {
-	Name        string
-	Origin      string
-	InstanceID  string
-	Environment string
-	ProjectID   string
-	Privileges  []string
-	Headless    bool
+	Name         string
+	Origin       string
+	InstanceID   string
+	Environment  string
+	ProjectID    string
+	Capabilities []string
+	Headless     bool
 }
 
 type LoginResult struct {
@@ -55,7 +55,7 @@ type WorkloadIdentityRequest struct {
 	ProjectID    string
 	ClientID     string
 	ClientSecret string
-	Privileges   []string
+	Capabilities []string
 	Lifetime     time.Duration
 }
 
@@ -94,8 +94,8 @@ func (auth Authenticator) Login(ctx context.Context, request LoginRequest, notif
 	if request.Name == "" || request.Origin == "" || request.InstanceID == "" || request.ProjectID == "" {
 		return LoginResult{}, fmt.Errorf("login target name, origin, instance identity, and project are required")
 	}
-	if len(request.Privileges) == 0 {
-		return LoginResult{}, fmt.Errorf("login requires at least one authoring privilege")
+	if len(request.Capabilities) == 0 {
+		return LoginResult{}, fmt.Errorf("login requires at least one authoring capability")
 	}
 	if existing, err := auth.Profiles.Get(request.Name); err == nil {
 		if existing.InstanceID != request.InstanceID || existing.Origin != request.Origin || existing.ProjectID != request.ProjectID {
@@ -106,7 +106,7 @@ func (auth Authenticator) Login(ctx context.Context, request LoginRequest, notif
 	}
 	authorization, err := auth.OAuth.Begin(ctx, DeviceAuthorizationRequest{
 		Origin: request.Origin, ProjectID: request.ProjectID,
-		Privileges: append([]string(nil), request.Privileges...),
+		Capabilities: append([]string(nil), request.Capabilities...),
 	})
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("begin device authorization: %w", err)
@@ -257,9 +257,9 @@ func ExchangeWorkloadIdentity(
 	}
 	if strings.TrimSpace(request.Origin) == "" || strings.TrimSpace(request.InstanceID) == "" ||
 		strings.TrimSpace(request.ProjectID) == "" || strings.TrimSpace(request.ClientID) == "" ||
-		strings.TrimSpace(request.ClientSecret) == "" || len(request.Privileges) == 0 ||
+		strings.TrimSpace(request.ClientSecret) == "" || len(request.Capabilities) == 0 ||
 		request.Lifetime <= 0 {
-		return WorkloadIdentityResult{}, fmt.Errorf("workload target, instance, project, client credentials, privileges, and lifetime are required")
+		return WorkloadIdentityResult{}, fmt.Errorf("workload target, instance, project, client credentials, capabilities, and lifetime are required")
 	}
 	token, err := client.Workload(ctx, request)
 	if err != nil {
