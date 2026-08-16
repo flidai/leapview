@@ -46,20 +46,15 @@ func (r *Repository) InitializeInstance(
 			PrincipalID: created.Principal.ID,
 			Email:       input.Email,
 			DisplayName: input.Email,
-			Role:        access.RolePlatformAdmin,
+			Role:        access.PlatformRoleAdmin,
 		})
 		if err != nil {
 			return nil, err
 		}
 		expires := input.Now.UTC().Add(24 * time.Hour).Truncate(time.Second)
-		privileges := access.InitialPublisherPrivileges()
-		if input.EvaluationDataIngest {
-			privileges = access.LocalEvaluationPublisherPrivileges()
-		}
 		token, _, err := txRepo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
 			PrincipalID: principal.ID,
 			Name:        access.APITokenNameInitialPublisher,
-			Privileges:  privileges,
 			ExpiresAt:   expires,
 		})
 		if err != nil {
@@ -81,7 +76,6 @@ func (r *Repository) InitializeInstance(
 			Action:      "instance.initialized",
 			TargetType:  "instance",
 			TargetID:    input.Environment,
-			Privilege:   access.PrivilegeManagePlatform,
 			Status:      "success",
 		}}, nil
 	})

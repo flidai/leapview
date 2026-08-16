@@ -95,7 +95,6 @@ func (r *Repository) principalDisabled(ctx context.Context, principalID string) 
 }
 
 func (r *Repository) UpsertPrincipal(ctx context.Context, input access.PrincipalInput) (access.Principal, error) {
-	access.ClearAuthorizationCache(ctx)
 	if strings.TrimSpace(input.ID) == "" {
 		id, err := newID("principal")
 		if err != nil {
@@ -122,7 +121,6 @@ func (r *Repository) UpsertPrincipal(ctx context.Context, input access.Principal
 }
 
 func (r *Repository) CreateLocalUser(ctx context.Context, input access.LocalUserInput) (access.LocalPasswordReset, error) {
-	access.ClearAuthorizationCache(ctx)
 	if _, inTransaction := r.db.(*sql.Tx); inTransaction {
 		return r.createLocalUser(ctx, input)
 	}
@@ -313,62 +311,13 @@ func localCredentialValues(id, kind, email, displayName string, disabledAt, bloc
 	return principal, credential, verifier, nil
 }
 
-func (r *Repository) SetPrincipalRole(ctx context.Context, input access.PrincipalRoleInput) (access.Principal, error) {
-	access.ClearAuthorizationCache(ctx)
-	email := access.NormalizeEmail(input.Email)
-	if email == "" {
-		return access.Principal{}, fmt.Errorf("email is required")
-	}
-	if strings.TrimSpace(input.Role) == "" {
-		return access.Principal{}, fmt.Errorf("role is required")
-	}
-	role, err := r.q.GetRoleByName(ctx, input.Role)
-	if err != nil {
-		return access.Principal{}, err
-	}
-	principal, err := r.UpsertPrincipal(ctx, access.PrincipalInput{
-		ID:          access.PrincipalIDForEmail(email),
-		Email:       email,
-		DisplayName: firstNonEmpty(strings.TrimSpace(input.DisplayName), email),
-	})
-	if err != nil {
-		return access.Principal{}, err
-	}
-	if err := r.q.DeletePrincipalRoleBindings(ctx, platformdb.DeletePrincipalRoleBindingsParams{
-		WorkspaceID: input.WorkspaceID,
-		PrincipalID: sql.NullString{String: principal.ID, Valid: true},
-	}); err != nil {
-		return access.Principal{}, err
-	}
-	bindingID := stableAccessID("rolebinding", input.WorkspaceID, principal.ID+"|"+input.Role)
-	if err := r.deleteRoleBindingGrants(ctx, bindingID); err != nil {
-		return access.Principal{}, err
-	}
-	if err := r.q.InsertRoleBinding(ctx, platformdb.InsertRoleBindingParams{
-		ID:          bindingID,
-		WorkspaceID: input.WorkspaceID,
-		RoleID:      role.ID,
-		PrincipalID: sql.NullString{String: principal.ID, Valid: true},
-	}); err != nil {
-		return access.Principal{}, err
-	}
-	if err := r.syncRoleBindingGrants(ctx, bindingID, input.WorkspaceID, input.Role, access.SubjectPrincipal, principal.ID); err != nil {
-		return access.Principal{}, err
-	}
-	return principal, nil
-}
-
 func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformRoleInput) (access.Principal, error) {
-	access.ClearAuthorizationCache(ctx)
 	principalID := strings.TrimSpace(input.PrincipalID)
 	email := access.NormalizeEmail(input.Email)
 	if principalID == "" && email == "" {
 		return access.Principal{}, fmt.Errorf("principal id or email is required")
 	}
-	if strings.TrimSpace(input.Role) == "" {
-		return access.Principal{}, fmt.Errorf("role is required")
-	}
-	role, err := r.q.GetRoleByName(ctx, input.Role)
+	roleName, err := access.ParsePlatformRole(string(input.Role))
 	if err != nil {
 		return access.Principal{}, err
 	}
@@ -389,35 +338,10 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 	}
 	if err := r.q.InsertPlatformRoleBinding(ctx, platformdb.InsertPlatformRoleBindingParams{
 		ID:          bindingID,
-		RoleID:      role.ID,
+		Role:        string(roleName),
 		PrincipalID: principal.ID,
 	}); err != nil {
 		return access.Principal{}, err
 	}
-	privileges, err := r.rolePrivileges(ctx, firstNonEmpty(input.Role, access.RolePlatformAdmin))
-	if err != nil {
-		return access.Principal{}, err
-	}
-	for _, privilege := range privileges {
-		if err := r.upsertGrantWithID(ctx, "grant_platform_"+stableID(principal.ID+"|"+string(privilege)), access.GrantInput{
-			Object:      access.PlatformObject(),
-			SubjectType: access.SubjectPrincipal,
-			SubjectID:   principal.ID,
-			Privilege:   privilege,
-		}); err != nil {
-			return access.Principal{}, err
-		}
-	}
 	return principal, nil
-}
-
-func (r *Repository) RemovePrincipalRoles(ctx context.Context, workspaceID, principalID string) error {
-	access.ClearAuthorizationCache(ctx)
-	if strings.TrimSpace(principalID) == "" {
-		return fmt.Errorf("principal id is required")
-	}
-	return r.q.DeletePrincipalRoleBindings(ctx, platformdb.DeletePrincipalRoleBindingsParams{
-		WorkspaceID: workspaceID,
-		PrincipalID: sql.NullString{String: principalID, Valid: true},
-	})
 }

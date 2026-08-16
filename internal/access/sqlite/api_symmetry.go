@@ -10,37 +10,8 @@ import (
 	platformdb "github.com/flidai/leapview/internal/access/internal/db"
 )
 
-func (r *Repository) UpdateGrant(ctx context.Context, workspaceID, id string, input access.GrantInput) (access.Grant, error) {
-	access.ClearAuthorizationCache(ctx)
-	if _, err := r.GetGrant(ctx, workspaceID, id); err != nil {
-		return access.Grant{}, err
-	}
-	objectID, err := r.ensureSecurableObject(ctx, input.Object)
-	if err != nil {
-		return access.Grant{}, err
-	}
-	result, err := r.q.UpdateGrantByID(ctx, platformdb.UpdateGrantByIDParams{
-		ObjectID: objectID, SubjectType: string(input.SubjectType), SubjectID: input.SubjectID,
-		Privilege: string(input.Privilege), ID: id,
-	})
-	if err != nil {
-		return access.Grant{}, err
-	}
-	if count, err := result.RowsAffected(); err != nil || count != 1 {
-		if err != nil {
-			return access.Grant{}, err
-		}
-		return access.Grant{}, sql.ErrNoRows
-	}
-	return r.GetGrant(ctx, workspaceID, id)
-}
-
 func (r *Repository) DeletePrincipal(ctx context.Context, id string) error {
-	access.ClearAuthorizationCache(ctx)
 	if _, err := r.PrincipalByID(ctx, id); err != nil {
-		return err
-	}
-	if err := r.preparePrincipalDeletion(ctx, id); err != nil {
 		return err
 	}
 	result, err := r.q.DeletePrincipalByID(ctx, id)
@@ -57,17 +28,6 @@ func (r *Repository) DeletePrincipal(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *Repository) preparePrincipalDeletion(ctx context.Context, id string) error {
-	owned, err := r.q.PrincipalOwnsSecurableObject(ctx, id)
-	if err != nil {
-		return err
-	}
-	if owned != 0 {
-		return access.ErrPrincipalOwnsSecurableObject
-	}
-	return r.q.DeleteDirectPrincipalGrants(ctx, id)
-}
-
 func (r *Repository) DisablePrincipal(ctx context.Context, id string) (access.Principal, error) {
 	return r.setPrincipalDisabled(ctx, id, false)
 }
@@ -80,7 +40,6 @@ func (r *Repository) DisableProvisionedPrincipal(ctx context.Context, id string)
 }
 
 func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provisioned bool) (access.Principal, error) {
-	access.ClearAuthorizationCache(ctx)
 	if r == nil {
 		return access.Principal{}, fmt.Errorf("access repository database is required")
 	}
@@ -95,7 +54,7 @@ func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provis
 		return access.Principal{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	txRepo := &Repository{root: r.root, db: tx, q: r.q.WithTx(tx), policyCache: r.policyCache}
+	txRepo := &Repository{root: r.root, db: tx, q: r.q.WithTx(tx)}
 	principal, err := txRepo.disablePrincipal(ctx, id, provisioned)
 	if err != nil {
 		return access.Principal{}, err
@@ -143,7 +102,6 @@ func (r *Repository) disablePrincipal(ctx context.Context, id string, provisione
 }
 
 func (r *Repository) EnablePrincipal(ctx context.Context, id string) (access.Principal, error) {
-	access.ClearAuthorizationCache(ctx)
 	if _, err := r.PrincipalByID(ctx, id); err != nil {
 		return access.Principal{}, err
 	}

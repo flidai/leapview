@@ -6,33 +6,19 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	platformdb "github.com/flidai/leapview/internal/access/internal/db"
-	accesspolicy "github.com/flidai/leapview/internal/access/policy"
 )
 
 type Repository struct {
-	root        *sql.DB
-	db          sqlExecutor
-	q           *platformdb.Queries
-	policyCache *compiledPolicyCache
-}
-
-type compiledPolicyCache struct {
-	mu     sync.RWMutex
-	values map[string]compiledPolicyCacheEntry
-}
-
-type compiledPolicyCacheEntry struct {
-	key      string
-	compiled accesspolicy.Compiled
+	root *sql.DB
+	db   sqlExecutor
+	q    *platformdb.Queries
 }
 
 type sqlExecutor interface {
@@ -51,7 +37,6 @@ var secretRandomReader io.Reader = rand.Reader
 func NewRepository(sqlDB *sql.DB) *Repository {
 	return &Repository{
 		root: sqlDB, db: sqlDB, q: platformdb.New(sqlDB),
-		policyCache: &compiledPolicyCache{values: map[string]compiledPolicyCacheEntry{}},
 	}
 }
 
@@ -59,32 +44,10 @@ func NewRepository(sqlDB *sql.DB) *Repository {
 // It is intentionally capability-owned rather than part of opening the shared
 // SQLite connection.
 func Initialize(ctx context.Context, sqlDB *sql.DB) error {
-	repository := NewRepository(sqlDB)
-	for _, role := range access.DefaultRoles() {
-		privileges, err := json.Marshal(role.Privileges)
-		if err != nil {
-			return err
-		}
-		roleID := "role_" + role.Name
-		if err := repository.q.UpsertRole(ctx, platformdb.UpsertRoleParams{
-			ID: roleID, Name: role.Name, PrivilegesJson: string(privileges),
-		}); err != nil {
-			return err
-		}
-		if err := repository.q.DeleteRoleGrantTemplates(ctx, role.Name); err != nil {
-			return err
-		}
-		for _, privilege := range role.Privileges {
-			if err := repository.q.InsertRoleGrantTemplate(ctx, platformdb.InsertRoleGrantTemplateParams{
-				RoleName: role.Name, Privilege: string(privilege),
-			}); err != nil {
-				return err
-			}
-		}
-	}
-	return repository.q.UpsertSecurableObject(ctx, platformdb.UpsertSecurableObjectParams{
-		ID: "platform", ObjectType: "platform", DisplayName: "Platform",
-	})
+	// Canonical project-role bundles and platform role templates are seeded by
+	// immutable migrations. No runtime role expansion or securable bootstrap is
+	// permitted here.
+	return nil
 }
 
 // InsertPlatformSettingIfMissing participates in the repository's current
@@ -118,7 +81,7 @@ func (r *Repository) RunAuditedMutationBatch(ctx context.Context, mutation func(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	txRepo := &Repository{root: r.root, db: tx, q: r.q.WithTx(tx), policyCache: r.policyCache}
+	txRepo := &Repository{root: r.root, db: tx, q: r.q.WithTx(tx)}
 	inputs, err := mutation(txRepo)
 	if err != nil {
 		return err
@@ -137,37 +100,6 @@ func (r *Repository) RunAuditedMutationBatch(ctx context.Context, mutation func(
 	return nil
 }
 
-func (r *Repository) roleBindingParts(ctx context.Context, input access.RoleBindingInput) (platformdb.Role, sql.NullString, sql.NullString, error) {
-	if strings.TrimSpace(input.Role) == "" {
-		return platformdb.Role{}, sql.NullString{}, sql.NullString{}, fmt.Errorf("role is required")
-	}
-	role, err := r.q.GetRoleByName(ctx, input.Role)
-	if err != nil {
-		return platformdb.Role{}, sql.NullString{}, sql.NullString{}, err
-	}
-	subjectID := strings.TrimSpace(input.SubjectID)
-	if subjectID == "" {
-		return platformdb.Role{}, sql.NullString{}, sql.NullString{}, fmt.Errorf("subject id is required")
-	}
-	switch input.SubjectType {
-	case access.SubjectPrincipal:
-		return role, sql.NullString{String: subjectID, Valid: true}, sql.NullString{}, nil
-	case access.SubjectServicePrincipal:
-		principal, err := r.q.GetPrincipal(ctx, subjectID)
-		if err != nil {
-			return platformdb.Role{}, sql.NullString{}, sql.NullString{}, err
-		}
-		if access.PrincipalKind(principal.Kind) != access.PrincipalKindServicePrincipal {
-			return platformdb.Role{}, sql.NullString{}, sql.NullString{}, fmt.Errorf("principal %q is not a service principal", subjectID)
-		}
-		return role, sql.NullString{String: subjectID, Valid: true}, sql.NullString{}, nil
-	case access.SubjectGroup:
-		return role, sql.NullString{}, sql.NullString{String: subjectID, Valid: true}, nil
-	default:
-		return platformdb.Role{}, sql.NullString{}, sql.NullString{}, fmt.Errorf("unsupported subject type %q", input.SubjectType)
-	}
-}
-
 func mapPrincipal(row platformdb.Principal) access.Principal {
 	return access.Principal{
 		ID:          row.ID,
@@ -183,44 +115,11 @@ func mapPrincipal(row platformdb.Principal) access.Principal {
 
 func mapGroup(row platformdb.Group) access.Group {
 	return access.Group{
-		ID:          row.ID,
-		WorkspaceID: row.WorkspaceID,
-		Provider:    row.Provider,
-		ExternalID:  row.ExternalID,
-		Name:        row.Name,
-		CreatedAt:   row.CreatedAt,
-	}
-}
-
-func mapRoleBinding(row platformdb.GetRoleBindingByIDRow) access.RoleBinding {
-	return access.RoleBinding{
-		ID:          row.ID,
-		WorkspaceID: row.WorkspaceID,
-		SubjectType: access.SubjectType(row.SubjectType),
-		SubjectID:   row.SubjectID,
-		PrincipalID: nullString(row.PrincipalID),
-		GroupID:     nullString(row.GroupID),
-		Email:       nullString(row.Email),
-		DisplayName: nullString(row.DisplayName),
-		GroupName:   nullString(row.GroupName),
-		Role:        row.RoleName,
-		CreatedAt:   row.CreatedAt,
-	}
-}
-
-func mapListedRoleBinding(row platformdb.ListRoleBindingsByWorkspaceRow) access.RoleBinding {
-	return access.RoleBinding{
-		ID:          row.ID,
-		WorkspaceID: row.WorkspaceID,
-		SubjectType: access.SubjectType(row.SubjectType),
-		SubjectID:   row.SubjectID,
-		PrincipalID: nullString(row.PrincipalID),
-		GroupID:     nullString(row.GroupID),
-		Email:       nullString(row.Email),
-		DisplayName: nullString(row.DisplayName),
-		GroupName:   nullString(row.GroupName),
-		Role:        row.RoleName,
-		CreatedAt:   row.CreatedAt,
+		ID:         row.ID,
+		Provider:   row.Provider,
+		ExternalID: row.ExternalID,
+		Name:       row.Name,
+		CreatedAt:  row.CreatedAt,
 	}
 }
 
@@ -257,14 +156,10 @@ func mapListedSession(row platformdb.ListSessionsByPrincipalRow) access.Session 
 }
 
 func mapAPIToken(row platformdb.ApiToken) access.APIToken {
-	var privileges []access.Privilege
-	_ = json.Unmarshal([]byte(row.PrivilegesJson), &privileges)
 	return access.APIToken{
 		ID:          row.ID,
 		PrincipalID: row.PrincipalID,
-		WorkspaceID: nullString(row.WorkspaceID),
 		Name:        row.Name,
-		Privileges:  privileges,
 		ExpiresAt:   nullString(row.ExpiresAt),
 		CreatedAt:   row.CreatedAt,
 		LastUsedAt:  nullString(row.LastUsedAt),
@@ -286,10 +181,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func stableAccessID(prefix, workspaceID, name string) string {
-	return "cac_" + prefix + "_" + stableID(workspaceID+"|"+name)
 }
 
 func newID(prefix string) (string, error) {

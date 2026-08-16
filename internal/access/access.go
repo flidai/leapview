@@ -95,7 +95,7 @@ type PlatformRoleInput struct {
 	PrincipalID string
 	Email       string
 	DisplayName string
-	Role        string
+	Role        PlatformRole
 }
 
 type PrincipalInput struct {
@@ -368,20 +368,21 @@ type Repository interface {
 	CreateServicePrincipalSecret(ctx context.Context, servicePrincipalID string, input ServicePrincipalSecretInput) (string, ServicePrincipalSecret, error)
 	RevokeServicePrincipalSecret(ctx context.Context, servicePrincipalID, secretID string) error
 	PrincipalForServicePrincipalSecret(ctx context.Context, servicePrincipalID, secret string) (Principal, error)
-	BootstrapAdmin(ctx context.Context, workspaceID, email string) error
+	BootstrapAdmin(ctx context.Context, email string) error
+	SetPlatformRole(ctx context.Context, input PlatformRoleInput) (Principal, error)
 	ResolveExternalPrincipal(ctx context.Context, input ExternalIdentityInput) (Principal, error)
 	UpsertSCIMUser(ctx context.Context, input SCIMUserInput) (SCIMUser, error)
 	ListSCIMUsers(ctx context.Context, filter SCIMUserFilter) ([]SCIMUser, error)
 	DisableSCIMUser(ctx context.Context, principalID string) (SCIMUser, error)
 	UpsertGroup(ctx context.Context, input GroupInput) (Group, error)
-	ListGroups(ctx context.Context, workspaceID string) ([]Group, error)
-	SearchGroups(ctx context.Context, workspaceID, query string, limit int) ([]Group, error)
+	ListGroups(ctx context.Context) ([]Group, error)
+	SearchGroups(ctx context.Context, query string, limit int) ([]Group, error)
 	ListAllGroups(ctx context.Context) ([]Group, error)
-	DeleteGroup(ctx context.Context, workspaceID, groupID string) error
-	AddGroupMember(ctx context.Context, workspaceID, groupID, principalID string) error
-	RemoveGroupMember(ctx context.Context, workspaceID, groupID, principalID string) error
+	DeleteGroup(ctx context.Context, groupID string) error
+	AddGroupMember(ctx context.Context, groupID, principalID string) error
+	RemoveGroupMember(ctx context.Context, groupID, principalID string) error
 	ListGroupMembersByGroup(ctx context.Context, groupID string) ([]GroupMember, error)
-	ListGroupMembers(ctx context.Context, workspaceID, groupID string) ([]GroupMember, error)
+	ListGroupMembers(ctx context.Context, groupID string) ([]GroupMember, error)
 	UpsertSCIMGroup(ctx context.Context, input SCIMGroupInput) (Group, error)
 	ListSCIMGroups(ctx context.Context, filter SCIMGroupFilter) ([]Group, error)
 	DeleteSCIMGroup(ctx context.Context, groupID string) error
@@ -414,10 +415,6 @@ type AuditedMutationRepository interface {
 
 type AuditedMutationBatchRepository interface {
 	RunAuditedMutationBatch(context.Context, func(Repository) ([]AuditEventInput, error)) error
-}
-
-func DashboardPublicationSubjectID(workspaceID, publication string) string {
-	return "dashboard_publication:" + strings.TrimSpace(workspaceID) + "." + strings.TrimSpace(publication)
 }
 
 func PrincipalIDForEmail(email string) string {

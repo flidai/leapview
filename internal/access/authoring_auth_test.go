@@ -7,10 +7,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestAuthoringScopeAllowsOnlyExactTargetProjectAndAction(t *testing.T) {
-	scope, err := NewAuthoringScope("instance-prod", "finance", []Capability{
+	scope, err := NewAuthoringScope("instance-prod", graph.ResourceID("finance"), []Capability{
 		CapabilityResourcePublish,
 		CapabilityResourceManage,
 	})
@@ -52,7 +54,7 @@ func TestAuthoringScopeRejectsMissingOrUnknownBindings(t *testing.T) {
 		"duplicates": {target: "instance-prod", project: "finance", privileges: []Capability{CapabilityResourcePublish, CapabilityResourcePublish}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewAuthoringScope(input.target, input.project, input.privileges); err == nil {
+			if _, err := NewAuthoringScope(input.target, graph.ResourceID(input.project), input.privileges); err == nil {
 				t.Fatal("NewAuthoringScope() succeeded")
 			}
 		})
@@ -250,7 +252,11 @@ func newAuthoringAuthTestService(t *testing.T, repository *authoringAuthMemoryRe
 
 func mustAuthoringScope(t *testing.T, target, project string, privileges ...Capability) AuthoringScope {
 	t.Helper()
-	scope, err := NewAuthoringScope(target, project, privileges)
+	projectID, err := graph.NewResourceID(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := NewAuthoringScope(target, projectID, privileges)
 	if err != nil {
 		t.Fatalf("NewAuthoringScope() error = %v", err)
 	}

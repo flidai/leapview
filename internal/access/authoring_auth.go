@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 import apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
@@ -53,18 +55,17 @@ const (
 // instance, project, or action.
 type AuthoringScope struct {
 	TargetID     string
-	ProjectID    string
+	ProjectID    graph.ResourceID
 	Capabilities []Capability
 }
 
-func NewAuthoringScope(targetID, projectID string, capabilities []Capability) (AuthoringScope, error) {
+func NewAuthoringScope(targetID string, projectID graph.ResourceID, capabilities []Capability) (AuthoringScope, error) {
 	targetID = strings.TrimSpace(targetID)
-	projectID = strings.TrimSpace(projectID)
 	if targetID == "" {
 		return AuthoringScope{}, fmt.Errorf("authoring target ID is required")
 	}
-	if projectID == "" {
-		return AuthoringScope{}, fmt.Errorf("authoring project ID is required")
+	if err := projectID.Validate(); err != nil {
+		return AuthoringScope{}, fmt.Errorf("authoring project ID: %w", err)
 	}
 	if len(capabilities) == 0 {
 		return AuthoringScope{}, fmt.Errorf("at least one authoring action is required")
@@ -87,7 +88,7 @@ func NewAuthoringScope(targetID, projectID string, capabilities []Capability) (A
 
 func (scope AuthoringScope) Authorize(targetID, projectID string, capability Capability) error {
 	if strings.TrimSpace(targetID) != scope.TargetID ||
-		strings.TrimSpace(projectID) != scope.ProjectID ||
+		strings.TrimSpace(projectID) != scope.ProjectID.String() ||
 		!slices.Contains(scope.Capabilities, capability) {
 		return ErrAuthoringScopeDenied
 	}

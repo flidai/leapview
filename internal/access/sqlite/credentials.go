@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"github.com/flidai/leapview/internal/access"
 	platformdb "github.com/flidai/leapview/internal/access/internal/db"
@@ -161,10 +160,6 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
-	privilegesJSON, err := json.Marshal(input.Privileges)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
 	if input.ExpiresAt.IsZero() {
 		input.ExpiresAt = time.Now().Add(defaultAPITokenTTL)
 	}
@@ -183,11 +178,9 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 	if err := r.q.CreateAPIToken(ctx, platformdb.CreateAPITokenParams{
 		ID:               id,
 		PrincipalID:      input.PrincipalID,
-		WorkspaceID:      sql.NullString{String: input.WorkspaceID, Valid: strings.TrimSpace(input.WorkspaceID) != ""},
 		Name:             input.Name,
 		TokenFingerprint: fingerprint,
 		TokenVerifier:    verifier,
-		PrivilegesJson:   string(privilegesJSON),
 		ExpiresAt:        expiresAt,
 	}); err != nil {
 		return "", access.APIToken{}, err
@@ -201,7 +194,7 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 			return token, mapAPIToken(row), nil
 		}
 	}
-	return token, access.APIToken{ID: id, PrincipalID: input.PrincipalID, WorkspaceID: input.WorkspaceID, Name: input.Name, Privileges: input.Privileges, ExpiresAt: nullString(expiresAt)}, nil
+	return token, access.APIToken{ID: id, PrincipalID: input.PrincipalID, Name: input.Name, ExpiresAt: nullString(expiresAt)}, nil
 }
 
 func (r *Repository) PrincipalForAPIToken(ctx context.Context, token string) (access.Principal, error) {
@@ -303,7 +296,6 @@ func (r *Repository) RevokeAPITokenForPrincipal(ctx context.Context, principalID
 }
 
 func (r *Repository) CreateServicePrincipal(ctx context.Context, input access.ServicePrincipalInput) (access.Principal, error) {
-	access.ClearAuthorizationCache(ctx)
 	id := strings.TrimSpace(input.ID)
 	if id == "" {
 		generatedID, err := newID("sp")
@@ -336,7 +328,6 @@ func (r *Repository) ListServicePrincipals(ctx context.Context) ([]access.Princi
 }
 
 func (r *Repository) UpdateServicePrincipal(ctx context.Context, id string, input access.ServicePrincipalInput) (access.Principal, error) {
-	access.ClearAuthorizationCache(ctx)
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return access.Principal{}, fmt.Errorf("service principal id is required")
@@ -357,7 +348,6 @@ func (r *Repository) UpdateServicePrincipal(ctx context.Context, id string, inpu
 }
 
 func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) error {
-	access.ClearAuthorizationCache(ctx)
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("service principal id is required")
@@ -368,9 +358,6 @@ func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) erro
 	}
 	if principal.Kind != access.PrincipalKindServicePrincipal {
 		return sql.ErrNoRows
-	}
-	if err := r.preparePrincipalDeletion(ctx, id); err != nil {
-		return err
 	}
 	return r.q.DeleteServicePrincipal(ctx, id)
 }

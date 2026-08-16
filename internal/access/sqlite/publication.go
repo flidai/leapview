@@ -19,8 +19,12 @@ func ActivateDashboardPublicationPrincipalTx(ctx context.Context, tx transaction
 		return fmt.Errorf("dashboard publication principal requires workspace and name")
 	}
 	return accessdb.New(tx).UpsertPrincipal(ctx, accessdb.UpsertPrincipalParams{
-		ID:          access.DashboardPublicationSubjectID(workspaceID, name),
+		ID:          dashboardPublicationSubjectID(workspaceID, name),
 		Kind:        string(access.PrincipalKindDashboardPublication),
 		DisplayName: name,
 	})
+}
+
+func dashboardPublicationSubjectID(workspaceID, publication string) string {
+	return "dashboard_publication:" + strings.TrimSpace(workspaceID) + "." + strings.TrimSpace(publication)
 }
