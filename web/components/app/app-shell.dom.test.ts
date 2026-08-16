@@ -993,7 +993,7 @@ test('app shell routes retargeted sidebar clicks to the visual link', async () =
 async function shellGeometry(page: any) {
   return await page.evaluate(() => {
     const shell = document.querySelector('lv-app-shell') as HTMLElement
-    const route = document.querySelector('lv-workspace-page') as HTMLElement
+    const route = document.querySelector('lv-route-page') as HTMLElement
     const sidebar = shell.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
     const shellMain = shell.shadowRoot?.querySelector('main') as HTMLElement
     const box = (element?: HTMLElement | null) => {
@@ -1011,7 +1011,7 @@ async function shellGeometry(page: any) {
       }
     }
     return {
-      routeDefined: Boolean(customElements.get('lv-workspace-page')),
+      routeDefined: Boolean(customElements.get('lv-route-page')),
       shell: box(shell),
       sidebar: box(sidebar),
       shellMain: box(shellMain),
@@ -1057,7 +1057,7 @@ function signalShellDocument(): string {
       <body>
         <main class="min-h-svh bg-app text-fg-default" data-signals="${escapeHTML(JSON.stringify(signals))}">
           <lv-app-shell>
-            <lv-workspace-page slot="page"></lv-workspace-page>
+            <lv-route-page slot="page"></lv-route-page>
           </lv-app-shell>
         </main>
         <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
@@ -1179,7 +1179,7 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
       <body>
         <main class="min-h-svh bg-app text-fg-default"${signals}>
           <lv-app-shell>
-            <lv-workspace-page slot="page"></lv-workspace-page>
+            <lv-route-page slot="page"></lv-route-page>
           </lv-app-shell>
         </main>
         ${includeShellScript ? '<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/tmp/app-shell-under-test.js"></script>' : ''}

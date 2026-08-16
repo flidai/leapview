@@ -8,15 +8,14 @@ type RouteExpectation = {
 }
 
 const baseURL = Bun.env.LEAPVIEW_BASE_URL ?? 'http://localhost:8195'
-const dashboardPath = '/workspaces/visuals/dashboards/visual-showcase/pages/overview'
+const dashboardPath = '/dashboards/visual-showcase/pages/overview'
 const routes: RouteExpectation[] = [
   { path: '/', root: 'lv-catalog-page', shell: true },
   { path: dashboardPath, root: 'lv-dashboard-page', shell: true },
-  { path: '/data', root: 'lv-data-explorer', shell: true },
-  { path: '/workspaces', root: 'lv-workspace-page', shell: true },
+  { path: '/explore', root: 'lv-data-explorer', shell: true },
   { path: '/connections', root: 'lv-connections-page', shell: true },
   { path: '/admin', root: 'lv-admin-page', shell: true },
-  { path: '/chat', root: 'lv-chat-page', shell: true },
+  { path: '/chats', root: 'lv-chat-page', shell: true },
   { path: '/login', root: 'lv-login-page', shell: false },
 ]
 
@@ -78,16 +77,16 @@ async function verifyRoute(route: RouteExpectation): Promise<void> {
 }
 
 async function verifyEChartsFirstNavigation(): Promise<void> {
-  const workspacePath = '/workspaces/sales'
-  const dashboardHref = '/workspaces/sales/dashboards/executive-sales'
+  const catalogPath = '/'
+  const dashboardHref = '/dashboards/visual-showcase'
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   const messages = collectBlockingConsoleMessages(page)
 
   try {
-    const response = await page.goto(new URL(workspacePath, baseURL).toString(), { waitUntil: 'domcontentloaded' })
-    if (!response?.ok()) throw new Error(`${workspacePath}: status ${response?.status() ?? 'unknown'}`)
+    const response = await page.goto(new URL(catalogPath, baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!response?.ok()) throw new Error(`${catalogPath}: status ${response?.status() ?? 'unknown'}`)
     await page.locator(`a[href="${dashboardHref}"]`).click()
-    await page.waitForURL(`**${dashboardHref}/pages/overview`)
+    await page.waitForURL(`**${dashboardPath}`)
     try {
       await page.waitForFunction(() => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
@@ -207,7 +206,7 @@ async function verifyDashboardCommandDoesNotReopenUpdates(): Promise<void> {
 
     if (beforeUpdates !== 1) throw new Error(`dashboard command: initial /updates count=${beforeUpdates}, want 1`)
     if (updates.length !== 1) throw new Error(`dashboard command reopened /updates: count=${updates.length}`)
-    if (!commands.includes('POST /workspaces/visuals/commands/filter')) {
+    if (!commands.includes('POST /dashboards/visual-showcase/commands/filter')) {
       throw new Error(`dashboard command requests=${JSON.stringify(commands)}, want filter POST`)
     }
     if (failedResponses.length > 0) {
@@ -220,7 +219,7 @@ async function verifyDashboardCommandDoesNotReopenUpdates(): Promise<void> {
 }
 
 async function verifyFilterShowcase(): Promise<void> {
-  const path = '/workspaces/visuals/dashboards/visual-showcase/pages/filters'
+  const path = '/dashboards/visual-showcase/pages/filters'
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
   const messages = collectBlockingConsoleMessages(page)
 
@@ -450,7 +449,7 @@ type SpatialTileSnapshot = {
 }
 
 async function verifySpatialShowcaseMaps(): Promise<void> {
-  const path = '/workspaces/visuals/dashboards/visual-showcase/pages/chart-map'
+  const path = '/dashboards/visual-showcase/pages/chart-map'
   const visualIDs = ['customer_point_map', 'customer_revenue_heat_map', 'customer_density_map']
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
   const messages = collectBlockingConsoleMessages(page)
@@ -515,7 +514,7 @@ async function verifySpatialShowcaseMaps(): Promise<void> {
 }
 
 async function verifySpatialMapWindowing(): Promise<void> {
-  const path = '/workspaces/visuals/dashboards/visual-showcase/pages/chart-map-scale'
+  const path = '/dashboards/visual-showcase/pages/chart-map-scale'
   const origin = new URL(baseURL).origin
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   const messages = collectBlockingConsoleMessages(page)

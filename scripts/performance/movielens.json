@@ -1,6 +1,6 @@
 {
   "name": "movielens",
-  "dashboardPath": "/workspaces/movielens/dashboards/ratings-overview/pages/overview",
+  "dashboardPath": "/dashboards/ratings-overview/pages/overview",
   "rapidToggleScenario": "rating_bucket",
   "scenarios": [
     { "name": "release_decade", "visualId": "tags_per_rating_by_decade" },

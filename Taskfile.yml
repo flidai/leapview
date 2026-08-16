@@ -229,10 +229,9 @@ tasks:
       - bun run test:code-block
       - bun run test:markdown-view
 
-  ci:test:frontend:workspace:
-    desc: Run workspace, administration, and data browser tests
+  ci:test:frontend:data:
+    desc: Run administration and data browser tests
     cmds:
-      - bun run test:workspace-page
       - bun run test:data-explorer
       - bun run test:admin-page
       - bun run test:code-editor
@@ -851,7 +850,7 @@ tasks:
       - task: ci:test:frontend:core
       - task: ci:test:frontend:reports
       - task: ci:test:frontend:chat
-      - task: ci:test:frontend:workspace
+      - task: ci:test:frontend:data
       - task: ci:test:frontend:site
 
   ci:prepare:

@@ -1096,7 +1096,7 @@ function badgeIcon(type: EntityListBadge['icon']): IconNode {
 function entityIcon(type = ''): IconNode {
   switch (type) {
     case 'dashboard': return LayoutDashboard
-    case 'workspace': return Boxes
+    case 'project': return Boxes
     case 'group': return UsersRound
     case 'user': return UserRound
     case 'application': return Bot

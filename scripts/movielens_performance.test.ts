@@ -169,7 +169,7 @@ test('interaction trace accepts explicit exact mode and rejects malformed delive
 })
 
 test('rapid supersession permits at most the first select abort after server cancellation is proven', () => {
-  const abort = 'net::ERR_ABORTED POST http://localhost:8185/workspaces/movielens/commands/select'
+  const abort = 'net::ERR_ABORTED POST http://localhost:8185/dashboards/ratings-overview/commands/select'
   expect(classifyRapidSupersessionNetworkFailures([abort], true)).toEqual({
     expectedAborts: [abort],
     unexpectedFailures: [],
@@ -183,10 +183,10 @@ test('rapid supersession permits at most the first select abort after server can
     unexpectedFailures: [abort],
   })
   expect(classifyRapidSupersessionNetworkFailures([
-    'net::ERR_FAILED POST http://localhost:8185/workspaces/movielens/commands/select',
+    'net::ERR_FAILED POST http://localhost:8185/dashboards/ratings-overview/commands/select',
   ], true)).toEqual({
     expectedAborts: [],
-    unexpectedFailures: ['net::ERR_FAILED POST http://localhost:8185/workspaces/movielens/commands/select'],
+    unexpectedFailures: ['net::ERR_FAILED POST http://localhost:8185/dashboards/ratings-overview/commands/select'],
   })
 })
 

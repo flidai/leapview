@@ -238,7 +238,7 @@ export function classifyRapidSupersessionNetworkFailures(
 ): { expectedAborts: string[]; unexpectedFailures: string[] } {
   const expectedAborts: string[] = []
   const unexpectedFailures: string[] = []
-  const selectAbort = /^net::ERR_ABORTED POST https?:\/\/[^/]+\/workspaces\/[^/]+\/commands\/select$/
+  const selectAbort = /^net::ERR_ABORTED POST https?:\/\/[^/]+\/dashboards\/[^/]+\/commands\/select$/
   for (const failure of failures) {
     if (supersessionProven && expectedAborts.length === 0 && selectAbort.test(failure)) {
       expectedAborts.push(failure)
