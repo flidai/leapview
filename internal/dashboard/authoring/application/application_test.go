@@ -101,7 +101,7 @@ func TestCatalogOperationsUseRequestedProjectAndOneLeaseEach(t *testing.T) {
 		projects = projects[1:]
 		acquired = append(acquired, project)
 		lease := newFakeLease(t, projectgraph.ResourceID(project), &catalogRuntime{catalog: dashboardcatalog.Catalog{
-			Dashboards: []dashboardcatalog.Dashboard{{ID: project + "-sales", Title: project + " sales", SemanticModel: "sales"}},
+			Dashboards: []dashboardcatalog.Dashboard{{ID: projectgraph.ResourceID(project + "-sales"), Title: project + " sales", SemanticModel: "sales"}},
 		}})
 		leases = append(leases, lease)
 		return lease, nil
