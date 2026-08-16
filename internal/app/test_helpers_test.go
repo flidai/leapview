@@ -146,6 +146,18 @@ func apiGenDispatcherForTest(server *appTestHarness) apiGenDispatcher {
 
 func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options assemblyConfig) (*appTestHarness, error) {
 	instanceID := "lvinst_test"
+	// The production composition receives its project identity from the active
+	// serving scope. Test fixtures do not open a serving lease, so derive the
+	// canonical identity from the metrics catalog (or use the shared fixture
+	// project when metrics are intentionally absent).
+	if options.ProjectID == "" {
+		if metrics != nil {
+			options.ProjectID = metrics.Catalog().Project.ID
+		}
+		if options.ProjectID == "" {
+			options.ProjectID = testProjectID
+		}
+	}
 	publicURL := options.PublicURL
 	if publicURL == "" {
 		publicURL = "http://localhost:8080"
