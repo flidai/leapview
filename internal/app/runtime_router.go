@@ -39,6 +39,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -80,6 +81,7 @@ type runtimeServices struct {
 	queryAuditProvider    adminmodule.QueryAuditReaderProvider
 	candidateMetrics      func(runtimehostmodule.Provider, string) QueryMetrics
 	runtimeHostModule     *runtimehostmodule.Module
+	projectID             projectgraph.ResourceID
 }
 
 type platformServices struct {
@@ -213,6 +215,7 @@ type workflowAssemblyInputs struct {
 }
 
 type runtimeAssemblyInputs struct {
+	ProjectID               projectgraph.ResourceID
 	InstanceID              string
 	DuckDBDir               string
 	DuckLakeCatalogPath     string
@@ -369,6 +372,7 @@ func buildApplicationSurfaces(
 		moduleWorkflow.refreshPipelineClock = refreshmodule.NewRealClock()
 	}
 	runtime.workloads = controller
+	runtime.projectID = runtimeConfig.ProjectID
 	runtime.persistenceConfigured = data.Database != nil
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
@@ -789,6 +793,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			RecordAudit: routes.accessModule.RecordAudit,
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics: runtime.metrics,
+				ProjectID: runtime.projectID.String(),
 				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
 					return metricsForWorkspace(runtime.metrics, workspaceID)
 				},

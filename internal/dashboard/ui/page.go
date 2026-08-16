@@ -21,19 +21,17 @@ import (
 	h "maragu.dev/gomponents/html"
 )
 
-func updatesURL(workspaceID, dashboardID, pageID string) string {
+func updatesURL(_ string, dashboardID, pageID string) string {
 	values := url.Values{}
 	values.Set("route", string(uisignals.RouteDashboard))
-	values.Set("workspace", workspaceID)
 	values.Set("dashboard", dashboardID)
 	values.Set("page", pageID)
 	return "/updates?" + values.Encode()
 }
 
-func updatesURLWithParams(workspaceID, dashboardID, pageID string, params map[string]any) string {
+func updatesURLWithParams(_ string, dashboardID, pageID string, params map[string]any) string {
 	values := url.Values{}
 	values.Set("route", string(uisignals.RouteDashboard))
-	values.Set("workspace", workspaceID)
 	values.Set("dashboard", dashboardID)
 	values.Set("page", pageID)
 	for key, raw := range params {
@@ -110,7 +108,7 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 	initialURLParams := report.URLParamsFromFiltersForPage(activePage.ID, initialFilters)
 	initialURLParams["streamInstance"] = newStreamInstanceID()
 	dashboardUpdatesURL := updatesURLWithParams(catalog.Workspace.ID, report.ID, activePage.ID, initialURLParams)
-	commandBase := "/workspaces/" + catalog.Workspace.ID + "/commands/"
+	commandBase := "/commands/"
 	if routes.BasePath != "" {
 		values := url.Values{}
 		values.Set("route", string(uisignals.RouteDashboard))

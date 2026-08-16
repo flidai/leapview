@@ -118,6 +118,9 @@ type SessionKeyFactory func(
 
 type Handler struct {
 	Metrics                 Metrics
+	// ProjectID is the stable graph project resource selected by app
+	// composition. It is deliberately not taken from a route segment.
+	ProjectID              string
 	MetricsForWorkspace     func(workspaceID string) (Metrics, bool)
 	AnalyticalContext       func(context.Context) context.Context
 	Broker                  SignalBroker
@@ -171,22 +174,12 @@ func (h Handler) dashboardSessionKey(r *nethttp.Request, definition dashboarddef
 		}
 	}
 	return dashboardsession.Key{
-		WorkspaceOrPublication: requestWorkspaceID(h, r),
+		WorkspaceOrPublication: h.ProjectID,
 		PrincipalOrClient:      principalOrClient,
 		DashboardID:            definition.ID,
 		ServingStateID:         definition.DefaultFilterState().DefaultsRevision,
 		StreamInstanceID:       streamInstanceID,
 	}
-}
-
-func requestWorkspaceID(h Handler, r *nethttp.Request) string {
-	if workspaceID := chi.URLParam(r, "workspace"); workspaceID != "" {
-		return workspaceID
-	}
-	if workspaceID := r.URL.Query().Get("workspace"); workspaceID != "" {
-		return workspaceID
-	}
-	return ""
 }
 
 func (h Handler) analyticalContext(ctx context.Context) context.Context {
@@ -203,13 +196,13 @@ func (h Handler) analyticalStreamContext(ctx context.Context, streamID string) c
 	return dataquery.WithMetadata(ctx, metadata)
 }
 
-func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID, workspaceID string, rows []api.DashboardSummary) ([]api.DashboardSummary, error) {
+func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID, projectID string, rows []api.DashboardSummary) ([]api.DashboardSummary, error) {
 	if h.AuthorizeListObject == nil {
 		return rows, nil
 	}
 	out := make([]api.DashboardSummary, 0, len(rows))
 	for _, row := range rows {
-		object := access.ItemObjectWithParent(access.SecurableDashboard, workspaceID, row.ID, access.WorkspaceObject(workspaceID))
+		object := access.ItemObject(access.SecurableDashboard, projectID, row.ID)
 		allowed, err := h.AuthorizeListObject(ctx, principalID, object)
 		if err != nil {
 			return nil, err
@@ -221,23 +214,15 @@ func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID, wo
 	return out, nil
 }
 
-func DashboardObjectRefs(r *nethttp.Request, workspaceID string) []access.ObjectRef {
+func DashboardObjectRefs(r *nethttp.Request, projectID string) []access.ObjectRef {
 	objects := []access.ObjectRef{}
 	if dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard")); dashboardID != "" {
-		objects = append(objects, access.ItemObjectWithParent(access.SecurableDashboard, workspaceID, dashboardID, access.WorkspaceObject(workspaceID)))
-	}
-	if strings.TrimSpace(workspaceID) != "" {
-		objects = append(objects, access.WorkspaceObject(workspaceID))
+		objects = append(objects, access.ItemObject(access.SecurableDashboard, projectID, dashboardID))
 	}
 	return objects
 }
 
 func (h Handler) Dashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
-	workspaceID := chi.URLParam(r, "workspace")
-	if strings.TrimSpace(workspaceID) == "" {
-		nethttp.NotFound(w, r)
-		return
-	}
 	metrics, ok := h.metricsForRequest(r)
 	if !ok {
 		nethttp.NotFound(w, r)
@@ -249,7 +234,7 @@ func (h Handler) Dashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.NotFound(w, r)
 		return
 	}
-	base := "/workspaces/" + workspaceID
+	base := ""
 	if h.RouteScope.BasePath != "" {
 		base = strings.TrimSuffix(h.RouteScope.BasePath, "/")
 	}
@@ -302,18 +287,14 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 }
 
 func (h Handler) metricsForRequest(r *nethttp.Request) (Metrics, bool) {
-	workspaceID := chi.URLParam(r, "workspace")
-	if strings.TrimSpace(workspaceID) == "" {
-		workspaceID = r.URL.Query().Get("workspace")
-	}
-	if strings.TrimSpace(workspaceID) == "" {
-		return nil, false
-	}
-	if h.MetricsForWorkspace != nil {
-		return h.MetricsForWorkspace(workspaceID)
-	}
 	if h.Metrics == nil {
 		return nil, false
 	}
-	return h.Metrics, h.Metrics.Catalog().Workspace.ID == workspaceID
+	// Canonical project routes resolve against the one composed runtime. A
+	// workspace query/route is intentionally not accepted as an alternate
+	// selector; callers that need a candidate use the candidate route scope.
+	if chi.URLParam(r, "workspace") != "" || strings.TrimSpace(r.URL.Query().Get("workspace")) != "" {
+		return nil, false
+	}
+	return h.Metrics, true
 }

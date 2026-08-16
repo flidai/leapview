@@ -89,7 +89,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		filterState = record.State.Filters.State
 	}
 	if newSession {
-		h.recordDashboardView(r, metrics.Catalog().Workspace.ID, dashboardID, activePage.ID)
+		h.recordDashboardView(r, h.ProjectID, dashboardID, activePage.ID)
 	}
 	initialFilters.CompiledState = &filterState
 	initialFilters.ServingStateID = sessionKey.ServingStateID
@@ -124,7 +124,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		delete(bootstrap, "agent")
 		delete(bootstrap, "agentVisuals")
 	} else if h.AgentBootstrap != nil {
-		agentState := h.AgentBootstrap(r, metrics.Catalog().Workspace.ID)
+		agentState := h.AgentBootstrap(r, h.ProjectID)
 		bootstrap["agent"] = agentState.Agent
 		bootstrap["agentVisuals"] = agentState.Visuals
 	}
@@ -134,7 +134,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		environment = h.Environment(r)
 	}
 	if h.DataRefreshedAt != nil {
-		status["lastUpdated"] = h.DataRefreshedAt(r.Context(), metrics.Catalog().Workspace.ID, environment, request.ModelID)
+	status["lastUpdated"] = h.DataRefreshedAt(r.Context(), h.ProjectID, environment, request.ModelID)
 	}
 	bootstrap["status"] = status
 	if err := updates.Patch(bootstrap); err != nil {
@@ -152,7 +152,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	defer closeCoordinator()
 	h.observeRefreshes(coordinator, dashboardID, activePage.ID)
 	service := command.Service{Metrics: metrics}
-	registry.Bind(streamID, metrics.Catalog().Workspace.ID, environment, request.ModelID, func() {
+	registry.Bind(streamID, h.ProjectID, environment, request.ModelID, func() {
 		_, _ = coordinator.BeginPrepared(func(current dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 			prepared, err := service.PrepareInitial(request, current)
 			return streamPreparation(prepared), err

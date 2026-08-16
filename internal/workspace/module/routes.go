@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/flidai/leapview/internal/access"
-	workspacehttp "github.com/flidai/leapview/internal/workspace/http"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -20,10 +19,6 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 		return
 	}
 	h := m.handler
-	assetObjectRefs := guard.AssetObjectRefs
-	if assetObjectRefs == nil {
-		assetObjectRefs = workspacehttp.AssetObjectRefs
-	}
 	protectAnyWorkspace := guard.ProtectAnyWorkspace
 	if protectAnyWorkspace == nil {
 		protectAnyWorkspace = guard.Protect
@@ -33,26 +28,11 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/data", protectAnyWorkspace(access.PrivilegeViewItem, h.DataExplorer))
 	r.Post("/data/command", protectAnyWorkspace(access.PrivilegeViewItem, h.DataExplorerCommand))
 	r.Post("/catalog/search", protectAnyWorkspace(access.PrivilegeViewItem, m.CatalogSearch))
-	r.Get("/workspaces", protectAnyWorkspace(access.PrivilegeViewItem, h.WorkspaceCatalog))
-	r.Post("/workspaces/search", protectAnyWorkspace(access.PrivilegeViewItem, h.WorkspaceListSearch))
-	r.Get("/workspaces/{workspace}", guard.Protect(access.PrivilegeViewItem, h.WorkspaceAssets))
-	r.Post("/workspaces/{workspace}/search", guard.Protect(access.PrivilegeViewItem, h.WorkspaceAssetSearch))
-	r.Post("/workspaces/{workspace}/catalog/appearance", guard.Protect(access.PrivilegeManageWorkspace, func(w http.ResponseWriter, request *http.Request) {
-		m.UpdateDashboardAppearanceFromUI(w, request)
-	}))
-	r.Get("/workspaces/{workspace}/assets/{asset}", guard.ProtectWithObjects(access.PrivilegeViewItem, assetObjectRefs, h.WorkspaceAsset))
-	r.Get("/workspaces/{workspace}/assets/{asset}/{section}", guard.ProtectWithObjects(access.PrivilegeViewItem, assetObjectRefs, h.WorkspaceAssetSection))
-	r.Post("/workspaces/{workspace}/assets/{asset}/refresh", guard.ProtectWithObjects(access.PrivilegeRefreshData, assetObjectRefs, h.RefreshAsset))
-	r.Get("/workspaces/{workspace}/data", guard.Protect(access.PrivilegeViewItem, h.WorkspaceDataExplorerRedirect))
-	if h.RoleBindingCommands != nil {
-		r.Post("/workspaces/{workspace}/access/upsert", guard.Protect(m.roleBindingUpsert, h.AccessUpsert))
-		r.Post("/workspaces/{workspace}/access/remove", guard.Protect(m.roleBindingDelete, h.AccessRemove))
-	}
-	r.Get("/workspaces/{workspace}/access/search", guard.Protect(access.PrivilegeManageGrants, h.AccessSearch))
-	if h.GrantCommands != nil {
-		r.Post("/workspaces/{workspace}/assets/{asset}/access/upsert", guard.ProtectWithObjects(m.grantUpsert, workspacehttp.AssetObjectRefs, h.AccessUpsert))
-		r.Post("/workspaces/{workspace}/assets/{asset}/access/remove", guard.ProtectWithObjects(m.grantDelete, workspacehttp.AssetObjectRefs, h.AccessRemove))
-	}
+	// The project graph is the sole browser resource namespace. Workspace
+	// collection/object routes are intentionally gone; Develop entry points
+	// resolve the singleton runtime and address stable resource IDs directly.
+	r.Get("/models", protectAnyWorkspace(access.PrivilegeViewItem, h.WorkspaceCatalog))
+	r.Get("/semantic-models", protectAnyWorkspace(access.PrivilegeViewItem, h.WorkspaceCatalog))
 	r.Get("/connections", protectAnyWorkspace(access.PrivilegeViewItem, h.Connections))
 	r.Post("/connections/search", protectAnyWorkspace(access.PrivilegeViewItem, h.ConnectionsSearch))
 	if h.ConnectionAdministration != nil {

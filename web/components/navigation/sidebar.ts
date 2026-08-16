@@ -136,7 +136,7 @@ const defaultConfig: SidebarConfig = {
   area: 'insights',
   areas: [
     { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
-    { id: 'develop', label: 'Develop', href: '/workspaces', icon: 'code' },
+    { id: 'develop', label: 'Develop', href: '/data', icon: 'code' },
   ],
   userSettingsHref: '/admin/profile',
   workspaceTitle: 'LeapView Workspace',

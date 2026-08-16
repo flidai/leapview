@@ -157,13 +157,13 @@ func Provider(config Config) webpage.Provider {
 func productAreas() []Area {
 	return []Area{
 		{ID: "insights", Label: "Insights", Href: "/", Icon: "insights"},
-		{ID: "develop", Label: "Develop", Href: "/workspaces", Icon: "code"},
+		{ID: "develop", Label: "Develop", Href: "/data", Icon: "code"},
 	}
 }
 
 func areaForActive(active string) string {
 	switch strings.TrimSpace(active) {
-	case "workspaces", "connections", "pipelines", "develop":
+	case "data", "models", "semantic-models", "connections", "pipelines", "develop":
 		return "develop"
 	default:
 		return "insights"
@@ -190,7 +190,9 @@ func insightsNavigation() []Item {
 
 func developNavigation() []Item {
 	return []Item{
-		{ID: "workspaces", Label: "Workspaces", Href: "/workspaces", Icon: "catalog", Meta: optional("Published assets")},
+		{ID: "data", Label: "Data", Href: "/data", Icon: "database", Meta: optional("Sources and physical data")},
+		{ID: "models", Label: "Models", Href: "/models", Icon: "cache", Meta: optional("Reusable transformations")},
+		{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "cache", Meta: optional("Governed query surfaces")},
 		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow", Meta: optional("Refresh monitoring")},
 		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data", Meta: optional("Data sources")},
 	}

@@ -49,21 +49,24 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 		return
 	}
 	h := m.handler
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.Dashboard))
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.Page))
+	// Dashboard delivery is project-wide.  The dashboard resource ID is the
+	// only route identity; project/environment/generation are selected by the
+	// composed serving runtime rather than a workspace path segment.
+	r.Get("/dashboards/{dashboard}", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.Dashboard))
+	r.Get("/dashboards/{dashboard}/pages/{page}", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.Page))
 	// Builder documents and mutations are edit-scoped. The application
 	// boundary performs the exact authoring decision again before exposing a
 	// draft revision or executing a command.
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/edit", guard.ProtectWithObjects(access.PrivilegeEditItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilder))
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/preview", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderPreview))
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/export.yaml", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderExportYAML))
-	r.Post("/workspaces/{workspace}/dashboards/{dashboard}/draft/command", guard.ProtectWithObjects(access.PrivilegeEditItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderCommand))
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, m.VisualizationTile))
-	r.Post("/workspaces/{workspace}/commands/visual-window", guard.Protect(access.PrivilegeViewItem, h.VisualWindow))
-	r.Post("/workspaces/{workspace}/commands/select", guard.Protect(access.PrivilegeViewItem, h.Select))
-	r.Post("/workspaces/{workspace}/commands/spatial-select", guard.Protect(access.PrivilegeViewItem, h.SpatialSelect))
-	r.Post("/workspaces/{workspace}/commands/clear-selection", guard.Protect(access.PrivilegeViewItem, h.ClearSelection))
-	r.Post("/workspaces/{workspace}/commands/filter", guard.Protect(access.PrivilegeViewItem, h.FilterCommand))
-	r.Post("/workspaces/{workspace}/commands/filter-options", guard.Protect(access.PrivilegeViewItem, h.FilterOptions))
-	r.Post("/workspaces/{workspace}/commands/navigate", guard.Protect(access.PrivilegeViewItem, h.Navigate))
+	r.Get("/dashboards/{dashboard}/edit", guard.ProtectWithObjects(access.PrivilegeEditItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilder))
+	r.Get("/dashboards/{dashboard}/preview", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderPreview))
+	r.Get("/dashboards/{dashboard}/export.yaml", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderExportYAML))
+	r.Post("/dashboards/{dashboard}/draft/command", guard.ProtectWithObjects(access.PrivilegeEditItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderCommand))
+	r.Get("/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, m.VisualizationTile))
+	r.Post("/commands/visual-window", guard.Protect(access.PrivilegeViewItem, h.VisualWindow))
+	r.Post("/commands/select", guard.Protect(access.PrivilegeViewItem, h.Select))
+	r.Post("/commands/spatial-select", guard.Protect(access.PrivilegeViewItem, h.SpatialSelect))
+	r.Post("/commands/clear-selection", guard.Protect(access.PrivilegeViewItem, h.ClearSelection))
+	r.Post("/commands/filter", guard.Protect(access.PrivilegeViewItem, h.FilterCommand))
+	r.Post("/commands/filter-options", guard.Protect(access.PrivilegeViewItem, h.FilterOptions))
+	r.Post("/commands/navigate", guard.Protect(access.PrivilegeViewItem, h.Navigate))
 }

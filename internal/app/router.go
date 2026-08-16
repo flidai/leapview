@@ -70,20 +70,20 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	mux.Group(func(r chi.Router) {
 		r.Use(csrf)
 		r.With(policy.rateLimits.Updates()).Get("/updates", runtime.pageStreams.ServeHTTP)
-		r.Get("/", routes.accessModule.ProtectAnyWorkspace(accessmodule.PrivilegeViewItem, routes.workspaceModule.Home))
+		r.Get("/", routes.accessModule.ProtectAnyWorkspace(accessmodule.PrivilegeViewItem, projectHome(runtime)))
 		r.Get("/candidates/{candidate}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
 			candidatePreview(candidates, w, request)
 		}))
-		r.Get("/candidates/{candidate}/workspaces/{workspace}/dashboards/{dashboard}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
+		r.Get("/candidates/{candidate}/dashboards/{dashboard}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardDocument(candidates, w, request)
 		}))
-		r.Get("/candidates/{candidate}/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
+		r.Get("/candidates/{candidate}/dashboards/{dashboard}/pages/{page}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardDocument(candidates, w, request)
 		}))
-		r.With(policy.rateLimits.Updates()).Get("/candidates/{candidate}/workspaces/{workspace}/updates", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
+		r.With(policy.rateLimits.Updates()).Get("/candidates/{candidate}/updates", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardUpdates(candidates, w, request)
 		}))
-		r.Post("/candidates/{candidate}/workspaces/{workspace}/commands/{command}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
+		r.Post("/candidates/{candidate}/commands/{command}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardCommand(candidates, w, request)
 		}))
 		routes.workspaceModule.MountAuthenticated(r, workspacemodule.RouteGuard{
@@ -193,6 +193,25 @@ func redirectLegacyChat(w http.ResponseWriter, r *http.Request) {
 		target += "?" + r.URL.RawQuery
 	}
 	http.Redirect(w, r, target, http.StatusPermanentRedirect)
+}
+
+// projectHome keeps the Insights entry point independent of workspace
+// selection. The composed dashboard runtime owns the single project graph;
+// redirecting to its default dashboard preserves the existing shell and
+// Datastar bootstrap flow without inventing a workspace identifier.
+func projectHome(runtime *runtimeServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if runtime == nil || runtime.metrics == nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		dashboardID := strings.TrimSpace(runtime.metrics.DefaultDashboardID())
+		if dashboardID == "" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/dashboards/"+dashboardID, http.StatusFound)
+	}
 }
 
 func protectGlobalAgent(access *accessmodule.Module, privilege accessmodule.Privilege, next http.Handler) http.Handler {
