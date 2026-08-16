@@ -122,19 +122,29 @@ func (h Handler) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		writeJSONError(w, fmt.Errorf("display name is managed by the identity provider"), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	currentResponse, err := h.currentPrincipalResponseFor(r.Context(), existing, management, repo, true)
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	if !requireIfMatch(w, r, resourceETag(currentResponse)) {
-		return
-	}
 	var updated access.Principal
 	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		current, currentErr := tx.PrincipalByID(r.Context(), principal.ID)
+		if currentErr != nil {
+			return access.AuditEventInput{}, currentErr
+		}
+		currentManagement, managementErr := principalIdentityManagement(r.Context(), tx, current.ID)
+		if managementErr != nil {
+			return access.AuditEventInput{}, managementErr
+		}
+		if currentManagement.Source != access.IdentityManagementLocal {
+			return access.AuditEventInput{}, fmt.Errorf("display name is managed by the identity provider")
+		}
+		currentResponse, responseErr := h.currentPrincipalResponseFor(r.Context(), current, currentManagement, tx, true)
+		if responseErr != nil {
+			return access.AuditEventInput{}, responseErr
+		}
+		if matchErr := checkIfMatch(r.Header.Get("If-Match"), resourceETag(currentResponse)); matchErr != nil {
+			return access.AuditEventInput{}, matchErr
+		}
 		var mutationErr error
-		updated, mutationErr = tx.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: existing.ID, Kind: existing.Kind, Email: existing.Email, DisplayName: displayName})
-		return auditInput(r, "principal.profile.updated", principal.ID, "principal", existing.ID, "", "success", map[string]any{"email": existing.Email, "displayName": displayName}), mutationErr
+		updated, mutationErr = tx.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: current.ID, Kind: current.Kind, Email: current.Email, DisplayName: displayName})
+		return auditInput(r, "principal.profile.updated", principal.ID, "principal", current.ID, "", "success", map[string]any{"email": current.Email, "displayName": displayName}), mutationErr
 	})
 	if err != nil {
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateCurrentPrincipal(), err, stdhttp.StatusBadRequest)
@@ -355,7 +365,15 @@ func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 }
 
 func (h Handler) ListCurrentSessions(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.listSessions(w, r, h.currentPrincipalID(r))
+	principal, ok := h.currentPrincipal(r)
+	if !ok {
+		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
+		return
+	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	h.listSessions(w, r, principal.ID)
 }
 func (h Handler) ListPrincipalSessions(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	target := chi.URLParam(r, "principal")
@@ -382,7 +400,7 @@ func (h Handler) listSessions(w stdhttp.ResponseWriter, r *stdhttp.Request, prin
 		return
 	}
 	current := ""
-	if h.CurrentSession != nil {
+	if currentPrincipal, ok := h.currentPrincipal(r); ok && currentPrincipal.ID == principalID && h.CurrentSession != nil {
 		current, _ = h.CurrentSession(r)
 	}
 	items := make([]map[string]any, 0, len(rows))
@@ -392,7 +410,15 @@ func (h Handler) listSessions(w stdhttp.ResponseWriter, r *stdhttp.Request, prin
 	_ = writePagedJSON(w, r, items)
 }
 func (h Handler) RevokeCurrentSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.revokeSession(w, r, h.currentPrincipalID(r), h.currentPrincipalID(r))
+	principal, ok := h.currentPrincipal(r)
+	if !ok {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentSession(), errUnauthorized)
+		return
+	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	h.revokeSession(w, r, principal.ID, principal.ID)
 }
 func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	target := chi.URLParam(r, "principal")
@@ -441,7 +467,12 @@ func (h Handler) ListPrincipals(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, principalDTO(row))
+		dto, dtoErr := h.principalAdministrationDTO(r.Context(), repo, row, h.currentPrincipalID(r))
+		if dtoErr != nil {
+			writeJSONError(w, dtoErr, stdhttp.StatusInternalServerError)
+			return
+		}
+		items = append(items, dto)
 	}
 	_ = writePagedJSON(w, r, items)
 }
@@ -449,19 +480,41 @@ func (h Handler) CreatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
-	var input struct{ Email, DisplayName string }
-	if err := decodeStrictJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+	var input struct {
+		Email       string `json:"email"`
+		DisplayName string `json:"displayName"`
+	}
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		if err := decodeStrictJSON(r, &input); err != nil {
+			writeCommandFailure(w, r, accessgen.GenCommandOperationCreatePrincipal(), err)
+			return
+		}
+	} else if err := r.ParseForm(); err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreatePrincipal(), err)
 		return
+	} else {
+		input.Email = r.Form.Get("email")
+		input.DisplayName = r.Form.Get("displayName")
 	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	created, err := repo.CreateLocalUser(r.Context(), access.LocalUserInput{Email: input.Email, DisplayName: input.DisplayName, MustChange: true})
+	var created access.LocalPasswordReset
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		var mutationErr error
+		created, mutationErr = tx.CreateLocalUser(r.Context(), access.LocalUserInput{Email: input.Email, DisplayName: input.DisplayName, MustChange: true})
+		return auditInput(r, "principal.local_user.created", h.currentPrincipalID(r), "principal", created.Principal.ID, "", "success", map[string]any{"email": created.Principal.Email}), mutationErr
+	})
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		if errors.Is(err, access.ErrPrincipalAlreadyExists) {
+			// Duplicate creation is rejected, but retain the security audit trail.
+			_ = repo.RecordAuditEvent(r.Context(), auditInput(r, "principal.local_user.create_rejected", h.currentPrincipalID(r), "principal", access.PrincipalIDForEmail(access.NormalizeEmail(input.Email)), "", "conflict", map[string]any{"email": access.NormalizeEmail(input.Email), "reason": "duplicate"}))
+			writeCommandFailure(w, r, accessgen.GenCommandOperationCreatePrincipal(), err)
+			return
+		}
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreatePrincipal(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, localPasswordResetDTO(created))
@@ -506,7 +559,7 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	if !principalKindAllowsGenericMutation(existing.Kind) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), fmt.Errorf("principal kind %q is managed by its owning subsystem", existing.Kind))
+		writeJSONError(w, fmt.Errorf("principal kind %q is managed by its owning subsystem", existing.Kind), stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	management, err := principalIdentityManagement(r.Context(), repo, id)
@@ -515,11 +568,11 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	if management.Source != access.IdentityManagementLocal {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), principalManagedExternallyError(management))
+		writeJSONError(w, principalManagedExternallyError(management), stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	if id == h.currentPrincipalID(r) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), fmt.Errorf("the current principal cannot delete itself"))
+		writeJSONError(w, fmt.Errorf("the current principal cannot delete itself"), stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	_, ok := repo.(interface {
@@ -631,6 +684,15 @@ func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return
 	}
 	principalID := chi.URLParam(r, "principal")
+	principal, err := repo.PrincipalByID(r.Context(), principalID)
+	if err != nil {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), err)
+		return
+	}
+	if !principalKindAllowsGenericMutation(principal.Kind) {
+		writeJSONError(w, fmt.Errorf("principal kind %q is managed by its owning subsystem", principal.Kind), stdhttp.StatusUnprocessableEntity)
+		return
+	}
 	management, err := principalIdentityManagement(r.Context(), repo, principalID)
 	if err != nil {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), err)
@@ -642,6 +704,20 @@ func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Req
 	}
 	var reset access.LocalPasswordReset
 	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		current, currentErr := tx.PrincipalByID(r.Context(), principalID)
+		if currentErr != nil {
+			return access.AuditEventInput{}, currentErr
+		}
+		if !principalKindAllowsGenericMutation(current.Kind) {
+			return access.AuditEventInput{}, fmt.Errorf("principal kind %q is managed by its owning subsystem", current.Kind)
+		}
+		currentManagement, managementErr := principalIdentityManagement(r.Context(), tx, principalID)
+		if managementErr != nil {
+			return access.AuditEventInput{}, managementErr
+		}
+		if !currentManagement.HasLocalPassword {
+			return access.AuditEventInput{}, fmt.Errorf("this principal does not have a local password")
+		}
 		var mutationErr error
 		reset, mutationErr = tx.ResetLocalPassword(r.Context(), principalID)
 		return auditInput(r, "principal.local_password.reset", h.currentPrincipalID(r), "principal", principalID, "", "success", map[string]any{"email": reset.Principal.Email}), mutationErr
@@ -675,7 +751,7 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	if !principalKindAllowsGenericMutation(row.Kind) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), fmt.Errorf("principal kind %q is managed by its owning subsystem", row.Kind))
+		writeJSONError(w, fmt.Errorf("principal kind %q is managed by its owning subsystem", row.Kind), stdhttp.StatusUnprocessableEntity)
 		return
 	}
 	management, err := principalIdentityManagement(r.Context(), repo, id)
@@ -684,19 +760,34 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	if management.Source != access.IdentityManagementLocal {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), principalManagedExternallyError(management))
+		writeJSONError(w, principalManagedExternallyError(management), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
+	revision, revisionErr := access.PrincipalRevision(row)
+	if revisionErr == nil {
 		w.Header().Set("ETag", revision)
-		if !requireIfMatch(w, r, revision) {
-			return
-		}
 	}
 	var updated access.Principal
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = runAuditedMutationWithRevision(r, repo, func(tx access.Repository) (string, error) {
+		current, err := tx.PrincipalByID(r.Context(), id)
+		if err != nil {
+			return "", err
+		}
+		return access.PrincipalRevision(current)
+	}, func(tx access.Repository) (access.AuditEventInput, error) {
+		current, currentErr := tx.PrincipalByID(r.Context(), id)
+		if currentErr != nil {
+			return access.AuditEventInput{}, currentErr
+		}
+		currentManagement, managementErr := principalIdentityManagement(r.Context(), tx, id)
+		if managementErr != nil {
+			return access.AuditEventInput{}, managementErr
+		}
+		if currentManagement.Source != access.IdentityManagementLocal {
+			return access.AuditEventInput{}, principalManagedExternallyError(currentManagement)
+		}
 		var mutationErr error
-		updated, mutationErr = tx.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: id, Kind: row.Kind, Email: row.Email, DisplayName: strings.TrimSpace(input.DisplayName)})
+		updated, mutationErr = tx.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: id, Kind: current.Kind, Email: current.Email, DisplayName: strings.TrimSpace(input.DisplayName)})
 		return auditInput(r, "principal.updated", h.currentPrincipalID(r), "principal", id, "", "success", map[string]any{"email": row.Email, "displayName": strings.TrimSpace(input.DisplayName)}), mutationErr
 	})
 	if err != nil {
@@ -809,6 +900,9 @@ func (h Handler) GetServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
 		return
 	}
+	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
 }
 func (h Handler) CreateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -825,10 +919,18 @@ func (h Handler) CreateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	row, err := repo.CreateServicePrincipal(r.Context(), input)
+	var row access.Principal
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		var mutationErr error
+		row, mutationErr = tx.CreateServicePrincipal(r.Context(), input)
+		return auditInput(r, "service_principal.created", h.currentPrincipalID(r), "service_principal", row.ID, "", "success", nil), mutationErr
+	})
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateServicePrincipal(), err, stdhttp.StatusBadRequest)
 		return
+	}
+	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusCreated, principalDTO(row))
 }
@@ -846,10 +948,36 @@ func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	row, err := repo.UpdateServicePrincipal(r.Context(), chi.URLParam(r, "servicePrincipal"), input)
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+	id := chi.URLParam(r, "servicePrincipal")
+	existing, err := repo.PrincipalByID(r.Context(), id)
+	if err != nil || existing.Kind != access.PrincipalKindServicePrincipal {
+		writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
 		return
+	}
+	if revision, revisionErr := access.PrincipalRevision(existing); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
+	var row access.Principal
+	err = runAuditedMutationWithRevision(r, repo, func(tx access.Repository) (string, error) {
+		current, err := tx.PrincipalByID(r.Context(), id)
+		if err != nil {
+			return "", err
+		}
+		if current.Kind != access.PrincipalKindServicePrincipal {
+			return "", sql.ErrNoRows
+		}
+		return access.PrincipalRevision(current)
+	}, func(tx access.Repository) (access.AuditEventInput, error) {
+		var mutationErr error
+		row, mutationErr = tx.UpdateServicePrincipal(r.Context(), id, input)
+		return auditInput(r, "service_principal.updated", h.currentPrincipalID(r), "service_principal", id, "", "success", nil), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err, statusForNotFound(err))
+		return
+	}
+	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
 }
@@ -862,8 +990,13 @@ func (h Handler) DeleteServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	if err := repo.DeleteServicePrincipal(r.Context(), chi.URLParam(r, "servicePrincipal")); err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+	id := chi.URLParam(r, "servicePrincipal")
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		mutationErr := tx.DeleteServicePrincipal(r.Context(), id)
+		return auditInput(r, "service_principal.deleted", h.currentPrincipalID(r), "service_principal", id, "", "success", nil), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteServicePrincipal(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -872,19 +1005,37 @@ func (h Handler) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
-	var input access.ServicePrincipalSecretInput
-	if err := decodeStrictJSON(r, &input); err != nil {
+	var request struct {
+		Name      string `json:"name"`
+		ExpiresAt string `json:"expiresAt"`
+	}
+	if err := decodeStrictJSON(r, &request); err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
+	}
+	var expiresAt time.Time
+	if strings.TrimSpace(request.ExpiresAt) != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, request.ExpiresAt)
+		if parseErr != nil {
+			writeJSONError(w, parseErr, stdhttp.StatusBadRequest)
+			return
+		}
+		expiresAt = parsed
 	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	secret, row, err := repo.CreateServicePrincipalSecret(r.Context(), chi.URLParam(r, "servicePrincipal"), input)
+	var secret string
+	var row access.ServicePrincipalSecret
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		var mutationErr error
+		secret, row, mutationErr = tx.CreateServicePrincipalSecret(r.Context(), chi.URLParam(r, "servicePrincipal"), access.ServicePrincipalSecretInput{Name: request.Name, ExpiresAt: expiresAt})
+		return auditInput(r, "service_principal_secret.created", h.currentPrincipalID(r), "service_principal", row.ServicePrincipalID, "", "success", map[string]any{"secretId": row.ID}), mutationErr
+	})
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateServicePrincipalSecret(), err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"secret": secret, "clientSecret": servicePrincipalSecretDTO(row, "")})
@@ -948,8 +1099,14 @@ func (h Handler) RevokeServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	if err := repo.RevokeServicePrincipalSecret(r.Context(), chi.URLParam(r, "servicePrincipal"), chi.URLParam(r, "secret")); err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+	servicePrincipalID := chi.URLParam(r, "servicePrincipal")
+	secretID := chi.URLParam(r, "secret")
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		mutationErr := tx.RevokeServicePrincipalSecret(r.Context(), servicePrincipalID, secretID)
+		return auditInput(r, "service_principal_secret.revoked", h.currentPrincipalID(r), "service_principal", servicePrincipalID, "", "success", map[string]any{"secretId": secretID}), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRevokeServicePrincipalSecret(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -989,10 +1146,18 @@ func (h Handler) CreateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	row, err := repo.UpsertGroup(r.Context(), access.GroupInput{Provider: "local", ExternalID: input.Name, Name: firstNonEmpty(input.DisplayName, input.Name)})
+	var row access.Group
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		var mutationErr error
+		row, mutationErr = tx.UpsertGroup(r.Context(), access.GroupInput{Provider: "local", ExternalID: input.Name, Name: firstNonEmpty(input.DisplayName, input.Name)})
+		return auditInput(r, "group.created", h.currentPrincipalID(r), "group", row.ID, "", "success", groupAuditMetadata(row)), mutationErr
+	})
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateGroup(), err, stdhttp.StatusBadRequest)
 		return
+	}
+	if revision, revisionErr := access.GroupRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusCreated, groupDTO(row))
 }
@@ -1009,6 +1174,9 @@ func (h Handler) GetGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
+	}
+	if revision, revisionErr := access.GroupRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusOK, groupDTO(row))
 }
@@ -1037,10 +1205,37 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, groupManagedExternallyError(row), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	row, err = repo.UpsertGroup(r.Context(), access.GroupInput{ID: row.ID, Provider: row.Provider, ExternalID: row.ExternalID, Name: input.DisplayName})
+	if revision, revisionErr := access.GroupRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
+	original := row
+	var currentGroup access.Group
+	err = runAuditedMutationWithRevision(r, repo, func(tx access.Repository) (string, error) {
+		rows, err := tx.ListGroups(r.Context())
+		if err != nil {
+			return "", err
+		}
+		for _, current := range rows {
+			if current.ID == original.ID {
+				currentGroup = current
+				return access.GroupRevision(current)
+			}
+		}
+		return "", sql.ErrNoRows
+	}, func(tx access.Repository) (access.AuditEventInput, error) {
+		if !groupIsLocallyManaged(currentGroup) {
+			return access.AuditEventInput{}, groupManagedExternallyError(currentGroup)
+		}
+		var mutationErr error
+		row, mutationErr = tx.UpsertGroup(r.Context(), access.GroupInput{ID: currentGroup.ID, Provider: currentGroup.Provider, ExternalID: currentGroup.ExternalID, Name: firstNonEmpty(input.DisplayName, currentGroup.Name)})
+		return auditInput(r, "group.updated", h.currentPrincipalID(r), "group", row.ID, "", "success", groupAuditMetadata(row)), mutationErr
+	})
 	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateGroup(), err, stdhttp.StatusBadRequest)
 		return
+	}
+	if revision, revisionErr := access.GroupRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusOK, groupDTO(row))
 }
@@ -1062,8 +1257,12 @@ func (h Handler) DeleteGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, groupManagedExternallyError(group), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	if err := repo.DeleteGroup(r.Context(), group.ID); err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		mutationErr := tx.DeleteGroup(r.Context(), group.ID)
+		return auditInput(r, "group.deleted", h.currentPrincipalID(r), "group", group.ID, "", "success", groupAuditMetadata(group)), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteGroup(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1106,8 +1305,13 @@ func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, groupManagedExternallyError(group), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	if err := repo.AddGroupMember(r.Context(), group.ID, chi.URLParam(r, "principal")); err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+	principalID := chi.URLParam(r, "principal")
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		mutationErr := tx.AddGroupMember(r.Context(), group.ID, principalID)
+		return auditInput(r, "group.member_added", h.currentPrincipalID(r), "group_member", group.ID+":"+principalID, "", "success", map[string]any{"groupId": group.ID, "memberPrincipalId": principalID}), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationAddGroupMember(), err, statusForNotFound(err))
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]string{"status": "added"})
@@ -1130,8 +1334,13 @@ func (h Handler) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		writeJSONError(w, groupManagedExternallyError(group), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	if err := repo.RemoveGroupMember(r.Context(), group.ID, chi.URLParam(r, "principal")); err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
+	principalID := chi.URLParam(r, "principal")
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		mutationErr := tx.RemoveGroupMember(r.Context(), group.ID, principalID)
+		return auditInput(r, "group.member_removed", h.currentPrincipalID(r), "group_member", group.ID+":"+principalID, "", "success", map[string]any{"groupId": group.ID, "memberPrincipalId": principalID}), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRemoveGroupMember(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
@@ -1146,16 +1355,42 @@ func (h Handler) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	rows, err := repo.ListAuditEvents(r.Context(), access.AuditEventFilter{PrincipalID: r.URL.Query().Get("principalId"), Action: r.URL.Query().Get("action"), ResourceKind: r.URL.Query().Get("resourceKind"), ResourceID: r.URL.Query().Get("resourceId"), Limit: 100})
+	limit, err := parseAPILimitQuery(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	pageToken := strings.TrimSpace(r.URL.Query().Get("pageToken"))
+	if pageToken != "" && !validAuditPageToken(pageToken) {
+		writeJSONError(w, errors.New("pageToken is invalid"), stdhttp.StatusBadRequest)
+		return
+	}
+	rows, err := repo.ListAuditEvents(r.Context(), access.AuditEventFilter{
+		PrincipalID:  r.URL.Query().Get("principalId"),
+		Action:       r.URL.Query().Get("action"),
+		ResourceKind: r.URL.Query().Get("resourceKind"),
+		ResourceID:   r.URL.Query().Get("resourceId"),
+		Capability:   access.Capability(r.URL.Query().Get("capability")),
+		From:         r.URL.Query().Get("from"),
+		To:           r.URL.Query().Get("to"),
+		PageToken:    pageToken,
+		Limit:        limit + 1,
+	})
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
+	}
+	next := ""
+	if len(rows) > limit {
+		last := rows[limit-1]
+		next = encodeAuditPageToken(last.CreatedAt, last.ID)
+		rows = rows[:limit]
 	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, auditEventDTO(row))
 	}
-	_ = writePagedJSON(w, r, items)
+	writeJSON(w, stdhttp.StatusOK, map[string]any{"items": items, "page": map[string]any{"nextCursor": next}})
 }
 func (h Handler) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	h.ListAuditEvents(w, r)
@@ -1348,6 +1583,9 @@ func groupDTO(row access.Group) map[string]any {
 func groupMemberPrincipalDTO(row access.GroupMember) map[string]any {
 	return map[string]any{"groupId": row.GroupID, "principalId": row.PrincipalID, "kind": row.Kind, "email": row.Email, "displayName": row.DisplayName, "createdAt": row.CreatedAt}
 }
+func groupAuditMetadata(row access.Group) map[string]any {
+	return map[string]any{"provider": row.Provider, "externalId": row.ExternalID, "displayName": row.Name}
+}
 func apiTokenDTO(row access.APIToken) map[string]any {
 	return map[string]any{"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "expiresAt": emptyToNil(row.ExpiresAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt)}
 }
@@ -1379,6 +1617,51 @@ func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation fun
 		return errors.New("transactional access repository is required")
 	}
 	return transactional.RunAuditedMutation(r.Context(), mutation)
+}
+
+// runAuditedMutationWithRevision keeps the optimistic-concurrency read and
+// comparison in the same transaction as the mutation and its audit event.
+// The global identity APIs use this for mutable principals, service
+// principals, and groups; callers map the two precondition errors to 412.
+func runAuditedMutationWithRevision(
+	r *stdhttp.Request,
+	repo access.Repository,
+	currentRevision func(access.Repository) (string, error),
+	mutation func(access.Repository) (access.AuditEventInput, error),
+) error {
+	transactional, ok := repo.(access.AuditedMutationRepository)
+	if !ok {
+		return errors.New("transactional access repository is required")
+	}
+	return transactional.RunAuditedMutation(r.Context(), func(tx access.Repository) (access.AuditEventInput, error) {
+		current, err := currentRevision(tx)
+		if err != nil {
+			return access.AuditEventInput{}, err
+		}
+		if err := checkIfMatch(r.Header.Get("If-Match"), current); err != nil {
+			return access.AuditEventInput{}, err
+		}
+		return mutation(tx)
+	})
+}
+
+var (
+	errIfMatchRequired = errors.New("If-Match header is required")
+	errIfMatchFailed   = errors.New("resource changed")
+)
+
+func checkIfMatch(presented, current string) error {
+	presented = strings.TrimSpace(presented)
+	if presented == "" {
+		return errIfMatchRequired
+	}
+	if presented == "*" {
+		return nil
+	}
+	if presented != current {
+		return errIfMatchFailed
+	}
+	return nil
 }
 
 func decodeStrictJSON(r *stdhttp.Request, target any) error {
@@ -1452,6 +1735,10 @@ func writeCommandFailure(w stdhttp.ResponseWriter, _ *stdhttp.Request, _ accessg
 	writeJSONError(w, err, stdhttp.StatusBadRequest)
 }
 func writeAuditedMutationError(w stdhttp.ResponseWriter, _ *stdhttp.Request, _ accessgen.GenCommandOperationID, err error, status int) {
+	if errors.Is(err, errIfMatchRequired) || errors.Is(err, errIfMatchFailed) {
+		writeJSONError(w, err, stdhttp.StatusPreconditionFailed)
+		return
+	}
 	writeJSONError(w, err, status)
 }
 func statusForNotFound(err error) int {
@@ -1490,7 +1777,7 @@ func resourceETag(value any) string {
 	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
 func requireIfMatch(w stdhttp.ResponseWriter, r *stdhttp.Request, current string) bool {
-	if value := strings.TrimSpace(r.Header.Get("If-Match")); value != "" && value != current {
+	if value := strings.TrimSpace(r.Header.Get("If-Match")); value == "" || (value != "*" && value != current) {
 		writeJSONError(w, errors.New("resource changed"), stdhttp.StatusPreconditionFailed)
 		return false
 	}
@@ -1500,6 +1787,20 @@ func writeAPIProblem(w stdhttp.ResponseWriter, _ *stdhttp.Request, status int, c
 	writeJSON(w, status, map[string]any{"code": code, "detail": detail})
 }
 func apiTokenID(value string) string { return base64.RawURLEncoding.EncodeToString([]byte(value)) }
+func encodeAuditPageToken(createdAt, id string) string {
+	if strings.TrimSpace(createdAt) == "" || strings.TrimSpace(id) == "" {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(createdAt + "\x00" + id))
+}
+func validAuditPageToken(token string) bool {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return false
+	}
+	createdAt, id, ok := strings.Cut(string(raw), "\x00")
+	return ok && strings.TrimSpace(createdAt) != "" && strings.TrimSpace(id) != ""
+}
 func parseAPILimitQuery(value string) (int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
