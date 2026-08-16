@@ -195,7 +195,7 @@ func loadFlatPipelines(project *Project, includes []string) error {
 		if err != nil {
 			return err
 		}
-		pipeline := refreshschedule.Definition{ID: id, Name: name, SemanticModel: strings.TrimSpace(spec.SemanticModel)}
+		pipeline := refreshschedule.Definition{ID: projectgraph.ResourceID(id), Name: name, SemanticModelID: projectgraph.ResourceID(strings.TrimSpace(spec.SemanticModel))}
 		for _, authored := range spec.On.Schedule {
 			schedule, err := refreshschedule.ParseSchedule(authored.Cron, authored.Timezone)
 			if err != nil {
@@ -445,7 +445,7 @@ func validateFlatProject(project Project) error {
 		}
 	}
 	for name, pipeline := range project.RefreshPipelines {
-		if _, err := resolver.resolve(pipeline.SemanticModel, projectgraph.KindSemanticModel); err != nil {
+		if _, err := resolver.resolve(pipeline.SemanticModelID.String(), projectgraph.KindSemanticModel); err != nil {
 			return resourceError(project.PipelinePaths[name], project.PipelineIDs[name], "spec.semanticModel", "Pipeline %q: %v", name, err)
 		}
 	}
@@ -725,7 +725,7 @@ func compileProjectGraph(project Project) (projectgraph.ProjectGraph, error) {
 	}
 	for name, pipeline := range project.RefreshPipelines {
 		from, _ := resolver.resolve(project.PipelineIDs[name], projectgraph.KindPipeline)
-		to, err := resolver.resolve(pipeline.SemanticModel, projectgraph.KindSemanticModel)
+		to, err := resolver.resolve(pipeline.SemanticModelID.String(), projectgraph.KindSemanticModel)
 		if err != nil {
 			return projectgraph.ProjectGraph{}, err
 		}

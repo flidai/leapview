@@ -256,9 +256,9 @@ func projectManifest(project Project) (manifest.Project, error) {
 		if id == "" {
 			return manifest.Project{}, fmt.Errorf("pipeline %q has no stable id", name)
 		}
-		value.ID = id
+		value.ID = projectgraph.ResourceID(id)
 		value.Name = name
-		value.SemanticModel = canonicalRef(project, "semantic_model", value.SemanticModel)
+		value.SemanticModelID = projectgraph.ResourceID(canonicalRef(project, "semantic_model", value.SemanticModelID.String()))
 		result.RefreshPipelines[id] = value
 		result.NameIndex.Pipelines[name] = id
 	}

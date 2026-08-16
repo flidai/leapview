@@ -617,7 +617,7 @@ spec:
 		t.Fatalf("LoadProject(valid pipeline) error = %v", err)
 	}
 	pipeline := project.RefreshPipelines["sales_refresh"]
-	if pipeline.ID != "pipeline:sales-refresh" || pipeline.SemanticModel != "sales" || len(pipeline.Schedules) != 1 || pipeline.Schedules[0].Timezone != "Europe/Copenhagen" {
+	if pipeline.ID != "pipeline:sales-refresh" || pipeline.SemanticModelID != "sales" || len(pipeline.Schedules) != 1 || pipeline.Schedules[0].Timezone != "Europe/Copenhagen" {
 		t.Fatalf("pipeline = %#v, want normalized schedule", pipeline)
 	}
 	manualFiles := cloneFixtureFiles(base)
