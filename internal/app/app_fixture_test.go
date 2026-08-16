@@ -29,7 +29,10 @@ func testStore(t *testing.T) *platform.Store {
 	if _, err := store.SQLDB().ExecContext(context.Background(), `INSERT INTO projects (id, title) VALUES ('project:test', 'Test Project')`); err != nil {
 		t.Fatalf("seed test project: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() {
+		closeTestRuntimeHost(store.SQLDB())
+		_ = store.Close()
+	})
 	return store
 }
 

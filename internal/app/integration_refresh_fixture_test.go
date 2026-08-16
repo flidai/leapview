@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
@@ -102,6 +103,7 @@ func newCanonicalRefreshHarness(t *testing.T) *canonicalRefreshHarness {
 	}
 	t.Cleanup(func() { _ = runtimeHost.Close() })
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+		Auth:        testAuth(store, accessmodule.AuthConfig{DevBypass: true}),
 		RuntimeHost: runtimeHost, ProjectID: project.ProjectID(), DefaultEnvironment: string(environment), Reloader: runtimeHost,
 		RefreshMaterializer: canonicalRefreshMaterializer{}, EnableRefreshDispatcher: true,
 	}))

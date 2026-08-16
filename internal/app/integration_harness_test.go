@@ -58,8 +58,10 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	if config.wrapMetrics != nil {
 		metrics = config.wrapMetrics(metrics)
 	}
-	h := &harness{metrics: metrics}
-	h.handler = newAppTestHarness(metrics).Routes()
+	store := testStore(t)
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{}))
+	h := &harness{metrics: metrics, store: store}
+	h.handler = server.Routes()
 	h.server = httptest.NewServer(h.handler)
 	t.Cleanup(h.server.Close)
 	return h

@@ -9,6 +9,7 @@ import (
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
 
@@ -41,6 +42,16 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 			panic(err)
 		}
 		options.ServingStateRepo = states
+	}
+	if options.RuntimeHost == nil {
+		environment := servingstate.NormalizeEnvironment(servingstate.Environment(options.DefaultEnvironment))
+		host, err := ensureTestRuntimeHost(context.Background(), store, options.ServingStateRepo.(*servingstatemodule.Module), testProjectID, environment)
+		if err != nil {
+			panic(err)
+		}
+		options.RuntimeHost = host
+		options.ProjectID = testProjectID
+		options.DefaultEnvironment = string(environment)
 	}
 	if options.QueryAudit == nil && (options.AnalyticsModule == nil || options.AnalyticsModule.QueryAuditReader() == nil) {
 		options.QueryAudit = analyticsmodule.BuildQueryAuditSurface(store.SQLDB())
