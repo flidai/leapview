@@ -420,7 +420,7 @@ func ExportDashboard(document dashboardauthoring.Dashboard, metadata dashboardau
 
 // ExportDashboardDefinition is a typed source-unavailable seam for callers
 // that only have compiler output. No decompiler exists by design.
-func ExportDashboardDefinition(_ dashboarddefinition.Definition, _ DashboardExportMetadata) ([]byte, error) {
+func ExportDashboardDefinition(_ dashboarddefinition.Definition, _ dashboardauthoring.DashboardExportMetadata) ([]byte, error) {
 	return nil, ErrDashboardSourceUnavailable
 }
 
