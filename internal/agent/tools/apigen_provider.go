@@ -18,7 +18,7 @@ import (
 )
 
 type Scope struct {
-	WorkspaceID    string
+	ProjectID      string
 	PrincipalID    string
 	ConversationID string
 	DevAuthBypass  bool
@@ -26,9 +26,9 @@ type Scope struct {
 }
 
 type CredentialScope struct {
-	WorkspaceID string
-	Restricted  bool
-	Privileges  []string
+	ProjectID  string
+	Restricted bool
+	Privileges []string
 }
 
 type APIGenAuthorizeFunc func(ctx context.Context, scope Scope, operationID string) (agentcore.ToolResult, bool)
@@ -108,18 +108,18 @@ func (p APIGenProvider) Run(ctx context.Context, scope Scope, operation APIGenOp
 		return apigenAgentToolError("authorization_failed", "agent tool authorizer is not configured")
 	}
 	arguments := normalizeCuratedQueryArguments(operation.Tool.Name, call.Arguments)
-	request, err := agenttool.BuildRequest(operation.Tool, arguments, agenttool.Context{"workspace": scope.WorkspaceID})
+	request, err := agenttool.BuildRequest(operation.Tool, arguments, agenttool.Context{"project": scope.ProjectID})
 	if err != nil {
 		return agentToolRuntimeError(err)
 	}
 	request = withAPIGenRouteContext(request, operation.Tool.Path)
 	runScope := scope
-	runScope.WorkspaceID = strings.TrimSpace(chi.URLParam(request, "workspace"))
+	runScope.ProjectID = strings.TrimSpace(chi.URLParam(request, "project"))
 	if errResult, ok := p.Authorize(ctx, runScope, operation.Contract.OperationID); !ok {
 		return errResult
 	}
 	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
-		WorkspaceID: runScope.WorkspaceID,
+		WorkspaceID: runScope.ProjectID,
 		Surface:     dataquery.SurfaceAgent,
 		Operation:   dataquery.OperationAgentQuery,
 		PrincipalID: runScope.PrincipalID,
@@ -292,7 +292,7 @@ func (r *responseCapture) Response() *http.Response {
 }
 
 func operationForScope(operation APIGenOperation, scope Scope) APIGenOperation {
-	if strings.TrimSpace(scope.WorkspaceID) != "" {
+	if strings.TrimSpace(scope.ProjectID) != "" {
 		return operation
 	}
 	hasWorkspaceContext := false

@@ -37,7 +37,7 @@ type Module struct {
 	service                  *agent.Service
 	jobs                     JobStore
 	runWorkloadClass         string
-	globalWorkspaceID        string
+	globalProjectID          string
 	projectID                projectgraph.ResourceID
 	search                   SearchPort
 	environment              func(*http.Request) string
@@ -93,7 +93,7 @@ type Config struct {
 	Service                  *agent.Service
 	Jobs                     JobStore
 	RunWorkloadClass         string
-	GlobalWorkspaceID        string
+	GlobalProjectID          string
 	ProjectID                projectgraph.ResourceID
 	Search                   SearchPort
 	Environment              func(*http.Request) string
@@ -136,7 +136,7 @@ type ModelConfig struct {
 }
 
 type Scope struct {
-	WorkspaceID    string
+	ProjectID      string
 	PrincipalID    string
 	GroupIDs       []string
 	ConversationID string
@@ -145,9 +145,9 @@ type Scope struct {
 }
 
 type CredentialScope struct {
-	WorkspaceID string
-	Privileges  []string
-	Restricted  bool
+	ProjectID  string
+	Privileges []string
+	Restricted bool
 }
 
 type Settings interface {
@@ -176,8 +176,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.RunWorkloadClass == "" {
 		config.RunWorkloadClass = "background"
 	}
-	if config.GlobalWorkspaceID == "" {
-		config.GlobalWorkspaceID = "_global"
+	if config.GlobalProjectID == "" {
+		config.GlobalProjectID = "_global"
 	}
 	service := config.Service
 	workflow, durableWorkflow := config.Jobs.(jobs.WorkflowRecorder)
@@ -229,8 +229,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	m := &Module{
 		service: service, jobs: config.Jobs,
-		runWorkloadClass:  config.RunWorkloadClass,
-		globalWorkspaceID: config.GlobalWorkspaceID, search: config.Search, environment: config.Environment,
+		runWorkloadClass: config.RunWorkloadClass,
+		globalProjectID:  config.GlobalProjectID, search: config.Search, environment: config.Environment,
 		projectID:        config.ProjectID,
 		dashboardMetrics: config.DashboardMetrics, authorizeAnyObject: config.AuthorizeAnyObject,
 		skipContextAuthorization: config.SkipContextAuthorization,
@@ -286,24 +286,24 @@ func Build(_ context.Context, config Config) (*Module, error) {
 
 func scopeFromAgent(scope agent.Scope) Scope {
 	return Scope{
-		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
+		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
-			WorkspaceID: scope.Credential.WorkspaceID,
-			Privileges:  append([]string(nil), scope.Credential.Privileges...),
-			Restricted:  scope.Credential.Restricted,
+			ProjectID:  scope.Credential.ProjectID,
+			Privileges: append([]string(nil), scope.Credential.Privileges...),
+			Restricted: scope.Credential.Restricted,
 		},
 	}
 }
 
 func scopeToAgent(scope Scope) agent.Scope {
 	return agent.Scope{
-		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
+		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: agent.CredentialScope{
-			WorkspaceID: scope.Credential.WorkspaceID,
-			Privileges:  append([]string(nil), scope.Credential.Privileges...),
-			Restricted:  scope.Credential.Restricted,
+			ProjectID:  scope.Credential.ProjectID,
+			Privileges: append([]string(nil), scope.Credential.Privileges...),
+			Restricted: scope.Credential.Restricted,
 		},
 	}
 }

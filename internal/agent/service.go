@@ -31,7 +31,7 @@ func IsBusy(err error) bool {
 }
 
 type Scope struct {
-	WorkspaceID    string
+	ProjectID      string
 	PrincipalID    string
 	GroupIDs       []string
 	ConversationID string
@@ -40,9 +40,9 @@ type Scope struct {
 }
 
 type CredentialScope struct {
-	WorkspaceID string
-	Privileges  []string
-	Restricted  bool
+	ProjectID  string
+	Privileges []string
+	Restricted bool
 }
 
 type ToolProvider func(scope Scope) []agentcore.ToolDefinition

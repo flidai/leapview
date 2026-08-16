@@ -32,22 +32,22 @@ type VisualAuthorizeFunc func(ctx context.Context, scope Scope, request VisualAu
 
 type VisualQueryContextFunc func(ctx context.Context, scope Scope) context.Context
 
-type VisualModelFunc func(workspaceID, modelID string) (*semanticmodel.Model, bool)
+type VisualModelFunc func(projectID, modelID string) (*semanticmodel.Model, bool)
 
-type VisualAggregateRowsFunc func(ctx context.Context, workspaceID, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error)
+type VisualAggregateRowsFunc func(ctx context.Context, projectID, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error)
 
-type VisualPreviewRowsFunc func(ctx context.Context, workspaceID, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error)
+type VisualPreviewRowsFunc func(ctx context.Context, projectID, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error)
 
-type VisualHistogramFunc func(ctx context.Context, workspaceID, modelID string, request reportdef.RawValueQuery, binCount int) ([]reportdef.HistogramBin, error)
+type VisualHistogramFunc func(ctx context.Context, projectID, modelID string, request reportdef.RawValueQuery, binCount int) ([]reportdef.HistogramBin, error)
 
-type VisualDistributionFunc func(ctx context.Context, workspaceID, modelID string, request reportdef.RawValueQuery, sort []reportdef.QuerySort, limit int) (reportdef.QueryRows, error)
+type VisualDistributionFunc func(ctx context.Context, projectID, modelID string, request reportdef.RawValueQuery, sort []reportdef.QuerySort, limit int) (reportdef.QueryRows, error)
 
 type VisualQueryMetadata struct {
 	ServingSnapshot string
 	Freshness       *agentcontracts.QueryFreshness
 }
 
-type VisualQueryMetadataFunc func(ctx context.Context, workspaceID, modelID string) VisualQueryMetadata
+type VisualQueryMetadataFunc func(ctx context.Context, projectID, modelID string) VisualQueryMetadata
 
 type VisualProvider struct {
 	Authorize     VisualAuthorizeFunc
@@ -142,7 +142,7 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 		return apigenAgentToolError("invalid_arguments", err.Error())
 	}
 	runScope := scope
-	if strings.TrimSpace(runScope.WorkspaceID) == "" {
+	if strings.TrimSpace(runScope.ProjectID) == "" {
 		return apigenAgentToolError("authorization_failed", "active project runtime is required")
 	}
 	modelID, err := projectgraph.NewResourceID(input.SemanticModelID)
@@ -158,7 +158,7 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 	}
 	input.Model = resolvedModel.String()
 	metadata := dataquery.Metadata{
-		WorkspaceID: runScope.WorkspaceID,
+		WorkspaceID: runScope.ProjectID,
 		Surface:     dataquery.SurfaceAgent,
 		Operation:   dataquery.OperationAgentQuery,
 		PrincipalID: scope.PrincipalID,
@@ -181,16 +181,16 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 	}
 	queryMetadata := VisualQueryMetadata{ServingSnapshot: "unversioned"}
 	if p.QueryMetadata != nil {
-		queryMetadata = p.QueryMetadata(ctx, runScope.WorkspaceID, input.Model)
+		queryMetadata = p.QueryMetadata(ctx, runScope.ProjectID, input.Model)
 		if strings.TrimSpace(queryMetadata.ServingSnapshot) == "" {
 			queryMetadata.ServingSnapshot = "unversioned"
 		}
 	}
-	result, model, err := p.queryAgentVisual(ctx, runScope.WorkspaceID, input, agentVisualID(call.ID))
+	result, model, err := p.queryAgentVisual(ctx, runScope.ProjectID, input, agentVisualID(call.ID))
 	if err != nil {
 		return apigenAgentToolError("query_visual_failed", err.Error())
 	}
-	compact, err := compactAgentVisualResult(runScope.WorkspaceID, call.ID, queryMetadata, model, input, result)
+	compact, err := compactAgentVisualResult(runScope.ProjectID, call.ID, queryMetadata, model, input, result)
 	if err != nil {
 		return apigenAgentToolError("query_visual_failed", err.Error())
 	}
@@ -338,11 +338,11 @@ func isAgentVisualType(value string) bool {
 	}
 }
 
-func (p VisualProvider) queryAgentVisual(ctx context.Context, workspaceID string, input agentVisualInput, id string) (agentVisualResult, *semanticmodel.Model, error) {
+func (p VisualProvider) queryAgentVisual(ctx context.Context, projectID string, input agentVisualInput, id string) (agentVisualResult, *semanticmodel.Model, error) {
 	if p.SemanticModel == nil {
 		return agentVisualResult{}, nil, fmt.Errorf("semantic model provider is not configured")
 	}
-	model, ok := p.SemanticModel(workspaceID, input.Model)
+	model, ok := p.SemanticModel(projectID, input.Model)
 	if !ok || model == nil {
 		return agentVisualResult{}, nil, fmt.Errorf("unknown semantic model %q", input.Model)
 	}
@@ -353,15 +353,15 @@ func (p VisualProvider) queryAgentVisual(ctx context.Context, workspaceID string
 	var err error
 	switch input.Type {
 	case "table", "matrix", "pivot":
-		result, err = p.queryAgentTable(ctx, workspaceID, model, input, id)
+		result, err = p.queryAgentTable(ctx, projectID, model, input, id)
 	default:
-		result, err = p.queryAgentChart(ctx, workspaceID, model, input, id)
+		result, err = p.queryAgentChart(ctx, projectID, model, input, id)
 	}
 	return result, model, err
 }
 
 func compactAgentVisualResult(
-	workspaceID string,
+	projectID string,
 	queryID string,
 	metadata VisualQueryMetadata,
 	model *semanticmodel.Model,
@@ -391,10 +391,10 @@ func compactAgentVisualResult(
 		Type:             result.Type,
 		ID:               result.ID,
 		Title:            base.Title,
-		SemanticModelRef: agentVisualCatalogRef(workspaceID, "semantic_model", input.Model),
+		SemanticModelRef: agentVisualCatalogRef(projectID, "semantic_model", input.Model),
 		DatasetID:        input.Dataset,
-		Fields:           agentVisualFieldUsages(workspaceID, input.Model, model, input),
-		Filters:          agentVisualFilterUsages(workspaceID, input.Model, input.Filters, nil),
+		Fields:           agentVisualFieldUsages(projectID, input.Model, model, input),
+		Filters:          agentVisualFilterUsages(projectID, input.Model, input.Filters, nil),
 		Completeness: agentcontracts.QueryVisualCompleteness{
 			ReturnedRows: int32(returnedRows),
 			Limit:        int32(input.Limit),
@@ -407,8 +407,8 @@ func compactAgentVisualResult(
 	}, nil
 }
 
-func agentVisualCatalogRef(workspaceID, typ, id string) agentcontracts.CatalogRef {
-	_ = workspaceID // project-wide resource IDs have no workspace selector
+func agentVisualCatalogRef(projectID, typ, id string) agentcontracts.CatalogRef {
+	_ = projectID // project-wide resource IDs have no project selector
 	return agentcontracts.CatalogRef{Kind: agentcontracts.CatalogType(typ), ID: id}
 }
 
@@ -444,7 +444,7 @@ func agentVisualDiagnostics(values []visualizationir.VisualizationDiagnostic) []
 	return out
 }
 
-func agentVisualFieldUsages(workspaceID, modelID string, model *semanticmodel.Model, input agentVisualInput) []agentcontracts.QueryVisualFieldUsage {
+func agentVisualFieldUsages(projectID, modelID string, model *semanticmodel.Model, input agentVisualInput) []agentcontracts.QueryVisualFieldUsage {
 	type fieldRole struct {
 		ref  agentVisualFieldRef
 		role string
@@ -467,13 +467,13 @@ func agentVisualFieldUsages(workspaceID, modelID string, model *semanticmodel.Mo
 	}
 	out := make([]agentcontracts.QueryVisualFieldUsage, 0, len(values))
 	for _, value := range values {
-		usage := agentVisualFieldUsage(workspaceID, modelID, model, value.ref, value.role)
+		usage := agentVisualFieldUsage(projectID, modelID, model, value.ref, value.role)
 		out = append(out, usage)
 	}
 	return out
 }
 
-func agentVisualFieldUsage(workspaceID, modelID string, model *semanticmodel.Model, ref agentVisualFieldRef, role string) agentcontracts.QueryVisualFieldUsage {
+func agentVisualFieldUsage(projectID, modelID string, model *semanticmodel.Model, ref agentVisualFieldRef, role string) agentcontracts.QueryVisualFieldUsage {
 	usage := agentcontracts.QueryVisualFieldUsage{
 		FieldID: ref.Field,
 		Role:    role,
@@ -513,7 +513,7 @@ func optionalString(value string) *string {
 }
 
 func agentVisualFilterUsages(
-	workspaceID string,
+	projectID string,
 	modelID string,
 	filters []agentVisualFilter,
 	groupPath []int32,
@@ -541,18 +541,18 @@ func agentVisualFilterUsages(
 		}
 		for index, group := range filter.Groups {
 			path := append(append([]int32{}, groupPath...), int32(index))
-			out = append(out, agentVisualFilterUsages(workspaceID, modelID, group.Filters, path)...)
+			out = append(out, agentVisualFilterUsages(projectID, modelID, group.Filters, path)...)
 		}
 	}
 	return out
 }
 
-func (p VisualProvider) queryAgentChart(ctx context.Context, workspaceID string, model *semanticmodel.Model, input agentVisualInput, id string) (agentVisualResult, error) {
+func (p VisualProvider) queryAgentChart(ctx context.Context, projectID string, model *semanticmodel.Model, input agentVisualInput, id string) (agentVisualResult, error) {
 	shape := agentVisualShape(input)
 	if err := validateAgentChartContract(input); err != nil {
 		return agentVisualResult{}, err
 	}
-	data, err := p.agentChartData(ctx, workspaceID, input, shape, model)
+	data, err := p.agentChartData(ctx, projectID, input, shape, model)
 	if err != nil {
 		return agentVisualResult{}, err
 	}
@@ -635,7 +635,7 @@ func validateAgentChartContract(input agentVisualInput) error {
 	return nil
 }
 
-func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, input agentVisualInput, shape string, model *semanticmodel.Model) ([]dashboard.Datum, error) {
+func (p VisualProvider) agentChartData(ctx context.Context, projectID string, input agentVisualInput, shape string, model *semanticmodel.Model) ([]dashboard.Datum, error) {
 	filters := agentVisualFilters(input.Filters)
 	if shape == "binned_measure" {
 		if p.Histogram == nil {
@@ -646,7 +646,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, 
 			binCount = 20
 		}
 		binCount = max(5, min(60, binCount))
-		bins, err := p.Histogram(ctx, workspaceID, input.Model, reportdef.RawValueQuery{
+		bins, err := p.Histogram(ctx, projectID, input.Model, reportdef.RawValueQuery{
 			Table: input.Dataset, Measure: reportdef.QueryField{Field: input.Measures[0].Field, Alias: "value"},
 			Filters: filters,
 		}, binCount)
@@ -663,7 +663,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, 
 		if p.Distribution == nil {
 			return nil, fmt.Errorf("distribution query provider is not configured")
 		}
-		rows, err := p.Distribution(ctx, workspaceID, input.Model, reportdef.RawValueQuery{
+		rows, err := p.Distribution(ctx, projectID, input.Model, reportdef.RawValueQuery{
 			Table:      input.Dataset,
 			Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
 			Measure:    reportdef.QueryField{Field: input.Measures[0].Field, Alias: "value"},
@@ -675,7 +675,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, 
 		return nil, fmt.Errorf("aggregate query provider is not configured")
 	}
 	if shape == "single_value" {
-		rows, err := p.AggregateRows(ctx, workspaceID, input.Model, reportdef.AggregateQuery{
+		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
 			Table:    input.Dataset,
 			Measures: []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
 			Filters:  filters,
@@ -697,7 +697,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, 
 			for index, measure := range input.Measures {
 				measures[index] = reportdef.QueryField{Field: measure.Field, Alias: aliases[index]}
 			}
-			rows, err := p.AggregateRows(ctx, workspaceID, input.Model, reportdef.AggregateQuery{
+			rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
 				Table: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
 				Measures: measures, Filters: filters,
 				Sort: agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Measures), Limit: input.Limit,
@@ -706,7 +706,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, 
 		}
 		out := []dashboard.Datum{}
 		for _, measureRef := range input.Measures {
-			rows, err := p.AggregateRows(ctx, workspaceID, input.Model, reportdef.AggregateQuery{
+			rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
 				Table:      input.Dataset,
 				Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
 				Measures:   []reportdef.QueryField{{Field: measureRef.Field, Alias: "value"}},
@@ -733,7 +733,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, 
 		for index, dimension := range input.Dimensions {
 			dimensions[index] = reportdef.QueryField{Field: dimension.Field, Alias: fmt.Sprintf("level_%d", index)}
 		}
-		rows, err := p.AggregateRows(ctx, workspaceID, input.Model, reportdef.AggregateQuery{
+		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
 			Table: input.Dataset, Dimensions: dimensions, Measures: []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
 			Filters: filters, Limit: input.Limit,
 		})
@@ -757,7 +757,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, 
 		if shape == "graph" {
 			left, right = "source", "target"
 		}
-		rows, err := p.AggregateRows(ctx, workspaceID, input.Model, reportdef.AggregateQuery{
+		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
 			Table:      input.Dataset,
 			Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: left}, {Field: input.Dimensions[1].Field, Alias: right}},
 			Measures:   []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
@@ -766,7 +766,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, 
 		return agentDatums(rows), err
 	}
 	if shape == "geo" {
-		rows, err := p.AggregateRows(ctx, workspaceID, input.Model, reportdef.AggregateQuery{
+		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
 			Table: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "name"}},
 			Measures: []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
 			Filters:  filters, Limit: input.Limit,
@@ -777,7 +777,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, workspaceID string, 
 	if input.Series != nil && input.Series.Field != "" {
 		dimensions = append(dimensions, reportdef.QueryField{Field: input.Series.Field, Alias: "series"})
 	}
-	rows, err := p.AggregateRows(ctx, workspaceID, input.Model, reportdef.AggregateQuery{
+	rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
 		Table:      input.Dataset,
 		Dimensions: dimensions,
 		Measures:   []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
@@ -836,7 +836,7 @@ func agentFloat(value any) float64 {
 	}
 }
 
-func (p VisualProvider) queryAgentTable(ctx context.Context, workspaceID string, model *semanticmodel.Model, input agentVisualInput, id string) (agentVisualResult, error) {
+func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, model *semanticmodel.Model, input agentVisualInput, id string) (agentVisualResult, error) {
 	fields := input.Fields
 	aggregate := len(fields) == 0 && (len(input.Rows) > 0 || len(input.Measures) > 0)
 	if len(fields) == 0 {
@@ -855,7 +855,7 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, workspaceID string,
 		if p.AggregateRows == nil {
 			return agentVisualResult{}, fmt.Errorf("aggregate query provider is not configured")
 		}
-		rows, err = p.AggregateRows(ctx, workspaceID, input.Model, reportdef.AggregateQuery{
+		rows, err = p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
 			Table:      input.Dataset,
 			Dimensions: dimensions,
 			Measures:   measures,
@@ -867,7 +867,7 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, workspaceID string,
 		if p.PreviewRows == nil {
 			return agentVisualResult{}, fmt.Errorf("preview query provider is not configured")
 		}
-		rows, err = p.PreviewRows(ctx, workspaceID, input.Model, reportdef.RowQuery{
+		rows, err = p.PreviewRows(ctx, projectID, input.Model, reportdef.RowQuery{
 			Table:      input.Dataset,
 			Dimensions: dimensions,
 			Measures:   measures,

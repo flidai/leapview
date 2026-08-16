@@ -98,20 +98,20 @@ func referenceSignalFromTurn(reference agent.TurnReference) AgentReferenceSignal
 				hierarchy = append(hierarchy, value)
 			}
 		}
-		appendUnique(reference.Workspace.Name)
+		appendUnique(reference.Resource.Name)
 		if len(reference.Locations) > 0 {
-			if reference.Reference.Type == "page" || reference.Reference.Type == "visual" {
+			if reference.Reference.Kind == "page" || reference.Reference.Kind == "visual" {
 				appendUnique(reference.Locations[0].DashboardName)
 			}
-			if reference.Reference.Type == "visual" {
+			if reference.Reference.Kind == "visual" {
 				appendUnique(reference.Locations[0].PageName)
 			}
 		}
 	}
 	return AgentReferenceSignal{
-		Reference: AgentReferenceKeySignal{WorkspaceID: reference.Reference.WorkspaceID, Type: reference.Reference.Type, ID: reference.Reference.ID},
+		Reference: AgentReferenceKeySignal{Type: reference.Reference.Kind, ID: reference.Reference.ID},
 		Name:      reference.Name, Description: Optional(reference.Description), VisualType: Optional(reference.VisualType),
-		Workspace: AgentReferenceWorkspaceSignal{ID: reference.Workspace.ID, Name: reference.Workspace.Name},
+		Workspace: AgentReferenceWorkspaceSignal{ID: reference.Resource.ID, Name: reference.Resource.Name},
 		Hierarchy: hierarchy, Href: reference.Href, Locations: locations, Context: append([]string(nil), reference.Context...),
 	}
 }

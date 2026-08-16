@@ -42,7 +42,7 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 				return agent.TurnContext{}, errors.New("chat references require an explicit workspace")
 			}
 			workspaceScope := scope
-			workspaceScope.WorkspaceID = workspaceID
+			workspaceScope.ProjectID = workspaceID
 			if !contextCredentialAllowsPrivilege(workspaceScope, access.PrivilegeViewItem) {
 				return agent.TurnContext{}, errors.New("credential cannot view referenced context")
 			}
@@ -74,20 +74,20 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 				resolvedWorkspaceID = ""
 			}
 		}
-		return agent.TurnContext{Surface: "chat", WorkspaceID: resolvedWorkspaceID, References: resolved}, nil
+		return agent.TurnContext{Surface: "chat", ProjectID: resolvedWorkspaceID, References: resolved}, nil
 	default:
 		return agent.TurnContext{}, errors.New("unsupported agent context surface")
 	}
 }
 
 func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
-	workspaceID := strings.TrimSpace(candidate.WorkspaceID)
+	workspaceID := strings.TrimSpace(candidate.ProjectID)
 	modelID := strings.TrimSpace(candidate.ModelID)
 	datasetID := strings.TrimSpace(candidate.DatasetID)
 	if workspaceID == "" || modelID == "" || datasetID == "" {
 		return agent.TurnContext{}, errors.New("data context requires workspace, semantic model, and dataset")
 	}
-	scope.WorkspaceID = workspaceID
+	scope.ProjectID = workspaceID
 	if !contextCredentialAllowsPrivilege(scope, access.PrivilegeViewItem) {
 		return agent.TurnContext{}, errors.New("credential cannot view this data")
 	}
@@ -122,7 +122,7 @@ func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, 
 		return agent.TurnContext{}, err
 	}
 	return agent.TurnContext{
-		Surface: "data", WorkspaceID: workspaceID, ModelID: modelID, DatasetID: datasetID,
+		Surface: "data", ProjectID: workspaceID, ModelID: modelID, DatasetID: datasetID,
 		Exploration: exploration,
 	}, nil
 }
@@ -184,13 +184,13 @@ func validateDataExploration(model interface {
 }
 
 func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
-	workspaceID := strings.TrimSpace(candidate.WorkspaceID)
+	workspaceID := strings.TrimSpace(candidate.ProjectID)
 	dashboardID := strings.TrimSpace(candidate.DashboardID)
 	pageID := strings.TrimSpace(candidate.PageID)
 	if workspaceID == "" || dashboardID == "" || pageID == "" {
 		return agent.TurnContext{}, errors.New("dashboard context requires workspace, dashboard, and page")
 	}
-	scope.WorkspaceID = workspaceID
+	scope.ProjectID = workspaceID
 	if !contextCredentialAllowsPrivilege(scope, access.PrivilegeViewItem) {
 		return agent.TurnContext{}, errors.New("credential cannot view this dashboard")
 	}
@@ -242,7 +242,7 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 	}
 	return agent.TurnContext{
 		Surface:        "dashboard",
-		WorkspaceID:    workspaceID,
+		ProjectID:      workspaceID,
 		DashboardID:    report.ID,
 		DashboardTitle: report.Title,
 		PageID:         page.ID,
@@ -251,7 +251,7 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 		Generation:     candidate.Generation,
 		Filters:        filterMap,
 		References: ResolveDashboardTurnReferences(candidate.References, DashboardTurnReferenceContext{
-			Workspace:   agent.TurnReferenceWorkspace{ID: workspaceID, Name: workspaceName},
+			Resource:    agent.TurnReferenceResource{ID: workspaceID, Name: workspaceName},
 			DashboardID: report.ID, DashboardTitle: report.Title, Page: page,
 		}, report.Visualizations),
 	}, nil
@@ -309,7 +309,7 @@ func turnContextFilters(filters dashboard.Filters) (map[string]any, error) {
 }
 
 type DashboardTurnReferenceContext struct {
-	Workspace      agent.TurnReferenceWorkspace
+	Resource       agent.TurnReferenceResource
 	DashboardID    string
 	DashboardTitle string
 	Page           dashboard.Page
@@ -318,7 +318,7 @@ type DashboardTurnReferenceContext struct {
 func ResolveDashboardTurnReferences(candidates []agent.TurnReference, context DashboardTurnReferenceContext, visualizations map[string]visualizationdefinition.Definition) []agent.TurnReference {
 	resolved := make([]agent.TurnReference, 0, min(len(candidates), agent.MaxTurnReferences))
 	seen := map[string]struct{}{}
-	href := "/workspaces/" + url.PathEscape(context.Workspace.ID) + "/dashboards/" + url.PathEscape(context.DashboardID) + "/pages/" + url.PathEscape(context.Page.ID)
+	href := "/dashboards/" + url.PathEscape(context.DashboardID) + "/pages/" + url.PathEscape(context.Page.ID)
 	location := agent.TurnReferenceLocation{
 		DashboardID: context.DashboardID, DashboardName: context.DashboardTitle,
 		PageID: context.Page.ID, PageName: context.Page.Title, Href: href,
@@ -327,10 +327,10 @@ func ResolveDashboardTurnReferences(candidates []agent.TurnReference, context Da
 		if len(resolved) == agent.MaxTurnReferences {
 			break
 		}
-		if strings.ToLower(strings.TrimSpace(candidate.Reference.Type)) != "visual" {
+		if strings.ToLower(strings.TrimSpace(candidate.Reference.Kind)) != "visual" {
 			continue
 		}
-		if strings.TrimSpace(candidate.Reference.WorkspaceID) != context.Workspace.ID {
+		if strings.TrimSpace(candidate.Reference.WorkspaceID) != context.Resource.ID {
 			continue
 		}
 		visualID := lastAgentContextReferencePart(candidate.Reference.ID)
@@ -352,11 +352,11 @@ func ResolveDashboardTurnReferences(candidates []agent.TurnReference, context Da
 			resolved = append(resolved, agent.TurnReference{
 				Reference:   candidate.Reference,
 				Name:        title,
-				Workspace:   context.Workspace,
-				Hierarchy:   []string{context.Workspace.Name, context.DashboardTitle, context.Page.Title},
+				Resource:    context.Resource,
+				Hierarchy:   []string{context.Resource.Name, context.DashboardTitle, context.Page.Title},
 				Href:        href,
 				Locations:   []agent.TurnReferenceLocation{location},
-				Context:     []string{"current_page", "current_dashboard", "current_workspace"},
+				Context:     []string{"current_page", "current_dashboard"},
 				ComponentID: component.ID,
 				VisualID:    visualID,
 				VisualType:  visualType,
@@ -413,8 +413,8 @@ func contextCredentialAllowsPrivilege(scope agent.Scope, privilege access.Privil
 	if !scope.Credential.Restricted {
 		return true
 	}
-	if strings.TrimSpace(scope.Credential.WorkspaceID) != "" &&
-		!strings.EqualFold(strings.TrimSpace(scope.Credential.WorkspaceID), strings.TrimSpace(scope.WorkspaceID)) {
+	if strings.TrimSpace(scope.Credential.ProjectID) != "" &&
+		!strings.EqualFold(strings.TrimSpace(scope.Credential.ProjectID), strings.TrimSpace(scope.ProjectID)) {
 		return false
 	}
 	for _, allowed := range scope.Credential.Privileges {

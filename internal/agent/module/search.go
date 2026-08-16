@@ -44,7 +44,7 @@ func (m *Module) SearchReferences(r *http.Request, turnContext agent.TurnContext
 		Text: strings.TrimSpace(query), Environment: environment, Limit: limit,
 		AllowedTypes: referenceTypes,
 		Context: productsearch.SearchContext{
-			WorkspaceID: strings.TrimSpace(turnContext.WorkspaceID),
+			WorkspaceID: strings.TrimSpace(turnContext.ProjectID),
 			DashboardID: strings.TrimSpace(turnContext.DashboardID),
 			PageID:      strings.TrimSpace(turnContext.PageID),
 		},
@@ -72,7 +72,7 @@ func ReferenceSignal(result productsearch.Result) ui.AgentReferenceSignal {
 		contextTags = append(contextTags, string(tag))
 	}
 	return ui.AgentReferenceSignal{
-		Reference: ui.AgentReferenceKeySignal{WorkspaceID: result.Reference.WorkspaceID, Type: string(result.Reference.Type), ID: result.Reference.ID},
+		Reference: ui.AgentReferenceKeySignal{Kind: string(result.Reference.Type), ID: result.Reference.ID},
 		Name:      result.Name, Description: ui.Optional(result.Description),
 		VisualType: ui.Optional(result.VisualType),
 		Workspace:  ui.AgentReferenceWorkspaceSignal{ID: result.Workspace.ID, Name: result.Workspace.Name},
@@ -94,9 +94,9 @@ func (m *Module) TurnReference(result productsearch.Result) agent.TurnReference 
 		contextTags = append(contextTags, string(tag))
 	}
 	reference := agent.TurnReference{
-		Reference: agent.TurnReferenceKey{WorkspaceID: result.Reference.WorkspaceID, Type: string(result.Reference.Type), ID: result.Reference.ID},
+		Reference: agent.TurnReferenceKey{Kind: string(result.Reference.Type), ID: result.Reference.ID},
 		Name:      result.Name, Description: result.Description, VisualType: result.VisualType,
-		Workspace: agent.TurnReferenceWorkspace{ID: result.Workspace.ID, Name: result.Workspace.Name},
+		Resource:  agent.TurnReferenceResource{ID: result.Workspace.ID, Name: result.Workspace.Name},
 		Hierarchy: referenceHierarchy(result), Href: result.Href, Locations: locations, Context: contextTags,
 	}
 	parts := strings.Split(result.Reference.ID, ".")

@@ -66,7 +66,7 @@ type Options struct {
 
 func (h *Handler) DashboardBootstrap(r *stdhttp.Request, workspaceID string) ui.ChatViewState {
 	scope := h.chatScope(r)
-	scope.WorkspaceID = strings.TrimSpace(workspaceID)
+	scope.ProjectID = strings.TrimSpace(workspaceID)
 	return h.chatSignal(r.Context(), scope, "", "", false)
 }
 
@@ -781,9 +781,9 @@ type adminAgentCommandSignals struct {
 func agentCredentialScope(credential access.APICredential) agent.CredentialScope {
 	token := credential.Token
 	return agent.CredentialScope{
-		WorkspaceID: token.WorkspaceID,
-		Privileges:  privilegeStrings(token.Privileges),
-		Restricted:  token.Privileges != nil,
+		ProjectID:  token.WorkspaceID,
+		Privileges: privilegeStrings(token.Privileges),
+		Restricted: token.Privileges != nil,
 	}
 }
 

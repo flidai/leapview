@@ -143,7 +143,7 @@ func (h *Handler) ChatTurn(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	if turnContext != nil {
-		scope.WorkspaceID = turnContext.WorkspaceID
+		scope.ProjectID = turnContext.ProjectID
 	}
 	activeConversationID := strings.TrimSpace(signals.Agent.ActiveConversationID)
 	if activeConversationID == "" {
