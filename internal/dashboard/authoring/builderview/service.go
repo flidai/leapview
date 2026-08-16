@@ -32,7 +32,7 @@ const (
 // Request identifies one project-scoped draft builder projection. Empty
 // selections use the first deterministic page/visual fallback.
 type Request struct {
-	ProjectID        string
+	ProjectID        graph.ResourceID
 	ActorID          string
 	DashboardID      authoring.DashboardID
 	SelectedPageID   string
@@ -80,9 +80,12 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	if s == nil || s.provider == nil || s.repository == nil || s.authorizer == nil {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder service is not configured")
 	}
-	projectID := strings.TrimSpace(request.ProjectID)
+	projectID := request.ProjectID
 	actorID := strings.TrimSpace(request.ActorID)
-	if projectID == "" || actorID == "" {
+	if err := projectID.Validate(); err != nil {
+		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("project ID is invalid: %w", err)
+	}
+	if actorID == "" {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("project and actor are required")
 	}
 	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
@@ -147,7 +150,7 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	if revision.Document.ID != request.DashboardID {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder document identity does not match request")
 	}
-	if strings.TrimSpace(revision.Document.SemanticModel) != strings.TrimSpace(lifecycle.SemanticModel) {
+	if revision.Document.SemanticModel != lifecycle.SemanticModel {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder semantic model does not match lifecycle")
 	}
 
@@ -163,7 +166,7 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	if err := identity.Validate(); err != nil {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder serving identity does not match project: %w", err)
 	}
-	if identity.ProjectID.String() != projectID {
+	if identity.ProjectID != projectID {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder serving identity project %q does not match %q", identity.ProjectID, projectID)
 	}
 	if lease.Runtime() == nil {
@@ -177,14 +180,14 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	if !ok || model == nil {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("semantic model %q is unavailable in active runtime", lifecycle.SemanticModel)
 	}
-	if strings.TrimSpace(model.Name) != strings.TrimSpace(lifecycle.SemanticModel) {
+	if model.Name != lifecycle.SemanticModel.String() {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("semantic model projection identity does not match lifecycle")
 	}
 
 	return project(request, lifecycle, revision, model, capabilities)
 }
 
-func (s *Service) authorize(ctx context.Context, actorID, projectID string, lifecycle authoring.DashboardLifecycle, action authoring.AuthorizationAction) (bool, error) {
+func (s *Service) authorize(ctx context.Context, actorID string, projectID graph.ResourceID, lifecycle authoring.DashboardLifecycle, action authoring.AuthorizationAction) (bool, error) {
 	err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 		ActorID: actorID, ProjectID: projectID, DashboardID: lifecycle.ID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: action,
@@ -198,7 +201,7 @@ func (s *Service) authorize(ctx context.Context, actorID, projectID string, life
 	return false, err
 }
 
-func (s *Service) capabilities(ctx context.Context, actorID, projectID string, lifecycle authoring.DashboardLifecycle, canEdit bool) (uisignals.DashboardBuilderCapabilitiesSignal, error) {
+func (s *Service) capabilities(ctx context.Context, actorID string, projectID graph.ResourceID, lifecycle authoring.DashboardLifecycle, canEdit bool) (uisignals.DashboardBuilderCapabilitiesSignal, error) {
 	publish, err := s.authorize(ctx, actorID, projectID, lifecycle, authoring.AuthorizationActionPublish)
 	if err != nil {
 		return uisignals.DashboardBuilderCapabilitiesSignal{}, err
@@ -241,7 +244,7 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 		return uisignals.DashboardBuilderSignal{}, err
 	}
 	signal := uisignals.DashboardBuilderSignal{
-		ProjectID: lifecycle.ProjectID, DashboardID: lifecycle.ID.String(), DraftID: draftID,
+		DashboardID: lifecycle.ID.String(), DraftID: draftID,
 		Revision: revisionValue, Title: lifecycle.Title, Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
 		HasUnpublishedChanges: dirty, Origin: originSignal(revision.Provenance), SourceEvidence: sourceEvidence,
 		SemanticModel: semantic, Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,

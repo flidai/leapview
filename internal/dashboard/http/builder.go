@@ -46,7 +46,7 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 	builder, err := h.Authoring.Builder(r.Context(), builderview.Request{
-		ProjectID: projectID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+		ProjectID: project, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		SelectedPageID: strings.TrimSpace(r.URL.Query().Get("page")), SelectedVisualID: strings.TrimSpace(r.URL.Query().Get("visual")),
 	})
 	if err != nil {
@@ -95,7 +95,7 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	builder, err := h.Authoring.Builder(r.Context(), builderview.Request{
-		ProjectID: projectID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+		ProjectID: project, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		SelectedPageID: strings.TrimSpace(r.URL.Query().Get("page")), SelectedVisualID: strings.TrimSpace(r.URL.Query().Get("visual")),
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	projectID := project.String()
 	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
-	if projectID == "" || dashboardID == "" || (input.WorkspaceID != "" && input.WorkspaceID != projectID) || (input.DashboardID != "" && input.DashboardID != dashboardID) {
+	if projectID == "" || dashboardID == "" || (input.DashboardID != "" && input.DashboardID != dashboardID) {
 		nethttp.Error(w, "dashboard builder command scope is invalid", nethttp.StatusBadRequest)
 		return
 	}
@@ -170,7 +170,7 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	// repository-authoritative revision and save state, including idempotent
 	// replays.
 	builder, err := h.Authoring.Builder(r.Context(), builderview.Request{
-		ProjectID: projectID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+		ProjectID: project, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		SelectedPageID: input.PageID, SelectedVisualID: input.VisualID,
 	})
 	if err != nil {
@@ -257,7 +257,6 @@ func (h Handler) DashboardBuilderExportYAML(w nethttp.ResponseWriter, r *nethttp
 }
 
 type dashboardBuilderCommandSignal struct {
-	WorkspaceID         string          `json:"workspaceId"`
 	DashboardID         string          `json:"dashboardId"`
 	DraftID             string          `json:"draftId"`
 	RevisionID          string          `json:"revisionId"`
@@ -358,7 +357,7 @@ func dashboardBuilderEnvelope(builder uisignals.DashboardBuilderSignal) uisignal
 	return uisignals.DashboardBuilderEnvelope{
 		Builder:        builder,
 		BuilderVisuals: map[string]uisignals.DashboardVisualizationSignal{},
-		Runtime:        uisignals.RouteRuntimeSignal{Kind: uisignals.RouteKindDashboardBuilder, WorkspaceID: uisignals.Optional(builder.WorkspaceID), DashboardID: uisignals.Optional(builder.DashboardID)},
+		Runtime:        uisignals.RouteRuntimeSignal{Kind: uisignals.RouteKindDashboardBuilder, DashboardID: uisignals.Optional(builder.DashboardID)},
 		Status:         uisignals.DashboardStatus{Loading: false},
 	}
 }

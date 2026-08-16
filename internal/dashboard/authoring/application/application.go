@@ -247,19 +247,17 @@ func (a *Application) Builder(ctx context.Context, request builderview.Request) 
 	if err := a.validate(); err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
 	}
-	projectID, err := projectID(request.ProjectID)
-	if err != nil {
-		return uisignals.DashboardBuilderSignal{}, err
+	if err := request.ProjectID.Validate(); err != nil {
+		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("project id is invalid: %w", err)
 	}
 	service, err := builderview.NewService(builderview.Options{
-		Provider:   projectProvider{projectID: projectID, acquire: a.acquireRuntime},
+		Provider:   projectProvider{projectID: request.ProjectID, acquire: a.acquireRuntime},
 		Repository: a.repository,
 		Authorizer: a.authorizer,
 	})
 	if err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
 	}
-	request.ProjectID = projectID
 	return service.Build(ctx, request)
 }
 

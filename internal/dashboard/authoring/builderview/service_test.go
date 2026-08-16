@@ -26,7 +26,7 @@ func TestBuildAuthorizesEditBeforeDraftRevisionDisclosure(t *testing.T) {
 	fixture := newBuilderFixture(t)
 	fixture.authorizer.errByAction[authoring.AuthorizationActionEdit] = errors.Join(errors.New("policy"), access.ErrForbidden)
 
-	_, err := fixture.service.Build(context.Background(), Request{ProjectID: " project ", ActorID: "actor", DashboardID: "sales"})
+	_, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 	if !errors.Is(err, access.ErrForbidden) {
 		t.Fatalf("Build error = %v, want forbidden", err)
 	}
@@ -35,6 +35,17 @@ func TestBuildAuthorizesEditBeforeDraftRevisionDisclosure(t *testing.T) {
 	}
 	if fixture.provider.acquireCalls != 0 {
 		t.Fatalf("runtime acquisitions = %d, want zero before edit authorization", fixture.provider.acquireCalls)
+	}
+}
+
+func TestBuildRejectsUnvalidatedProjectIdentity(t *testing.T) {
+	fixture := newBuilderFixture(t)
+	_, err := fixture.service.Build(context.Background(), Request{ProjectID: " project ", ActorID: "actor", DashboardID: "sales"})
+	if err == nil || !strings.Contains(err.Error(), "project ID is invalid") {
+		t.Fatalf("Build error = %v, want invalid typed project identity", err)
+	}
+	if fixture.repository.revisionCalls != 0 || fixture.provider.acquireCalls != 0 {
+		t.Fatalf("invalid project disclosed/acquired revisionCalls=%d acquireCalls=%d", fixture.repository.revisionCalls, fixture.provider.acquireCalls)
 	}
 }
 
@@ -460,16 +471,16 @@ type builderRepository struct {
 func (r *builderRepository) Create(context.Context, authoring.CreateInput) (authoring.DashboardLifecycle, error) {
 	return authoring.DashboardLifecycle{}, errors.New("unexpected create")
 }
-func (r *builderRepository) Get(context.Context, string, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+func (r *builderRepository) Get(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
 	return r.lifecycle, nil
 }
-func (r *builderRepository) List(context.Context, string) ([]authoring.DashboardLifecycle, error) {
+func (r *builderRepository) List(context.Context, projectgraph.ResourceID) ([]authoring.DashboardLifecycle, error) {
 	return nil, errors.New("unexpected list")
 }
-func (r *builderRepository) CountBySemanticModel(context.Context, string) ([]authoring.SemanticModelUsage, error) {
+func (r *builderRepository) CountBySemanticModel(context.Context, projectgraph.ResourceID) ([]authoring.SemanticModelUsage, error) {
 	return nil, errors.New("unexpected count")
 }
-func (r *builderRepository) GetRevision(_ context.Context, _ string, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
+func (r *builderRepository) GetRevision(_ context.Context, _ projectgraph.ResourceID, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
 	r.revisionCalls++
 	r.revisionID = id
 	revision, ok := r.revisions[id]
@@ -478,7 +489,7 @@ func (r *builderRepository) GetRevision(_ context.Context, _ string, _ authoring
 	}
 	return revision, nil
 }
-func (r *builderRepository) LookupCommandResult(context.Context, string, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
+func (r *builderRepository) LookupCommandResult(context.Context, projectgraph.ResourceID, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
 	return authoring.CommandResult{}, false, errors.New("unexpected command lookup")
 }
 func (r *builderRepository) AppendDraft(context.Context, authoring.AppendDraftInput) (authoring.Revision, error) {
@@ -490,7 +501,7 @@ func (r *builderRepository) Publish(context.Context, authoring.PublishInput) (au
 func (r *builderRepository) Archive(context.Context, authoring.ArchiveInput) (authoring.DashboardLifecycle, error) {
 	return authoring.DashboardLifecycle{}, errors.New("unexpected archive")
 }
-func (r *builderRepository) GetPublishedCompilation(context.Context, string, authoring.DashboardID) (authoring.CompiledRevision, error) {
+func (r *builderRepository) GetPublishedCompilation(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	return authoring.CompiledRevision{}, errors.New("unexpected compilation")
 }
 
@@ -518,7 +529,7 @@ type builderLease struct {
 	releaseCalls int
 }
 
-func (l *builderLease) Runtime() runtimehost.Runtime    { return l.runtime }
+func (l *builderLease) Runtime() runtimehost.Runtime { return l.runtime }
 func (l *builderLease) Identity() projectgraph.ServingIdentity {
 	return projectgraph.ServingIdentity{ProjectID: "test", Environment: "dev", GenerationID: string(l.servingState)}
 }
@@ -531,8 +542,8 @@ type builderRuntime struct {
 }
 
 func (r *builderRuntime) Close() error { return nil }
-func (r *builderRuntime) SemanticModelProjection(id string) (*semanticmodel.Model, bool) {
-	if r.model == nil || r.model.Name != id {
+func (r *builderRuntime) SemanticModelProjection(id projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	if r.model == nil || r.model.Name != id.String() {
 		return nil, false
 	}
 	return r.model, true
