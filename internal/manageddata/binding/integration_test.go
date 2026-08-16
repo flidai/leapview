@@ -39,7 +39,7 @@ func TestBinderPinsRevisionAfterEnvironmentPointerChanges(t *testing.T) {
 	firstTarget := createValidatedState(t, ctx, store, servingStates, "project-a", "prod")
 	activateRevision(t, ctx, servingStates, repository, collection.ID, firstRevision.ID, firstTarget.ID)
 
-	validation := servingstate.Validation{ProjectID: "project-a", ManagedDataRevisions: map[projectgraph.ResourceID]string{"orders": firstRevision.Digest}}
+	validation := servingstate.Validation{ProjectID: "project-a", ManagedDataRevisions: map[string]string{"orders": firstRevision.Digest}}
 	secondRevision := createReadyRevision(t, ctx, repository, collection.ID, "orders-v2.csv", "b")
 	secondTarget := createValidatedState(t, ctx, store, servingStates, "project-a", "prod")
 	activateRevision(t, ctx, servingStates, repository, collection.ID, secondRevision.ID, secondTarget.ID)

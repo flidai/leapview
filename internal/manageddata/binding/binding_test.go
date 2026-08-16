@@ -242,11 +242,7 @@ func binderForRepository(repo Repository) *Binder {
 }
 
 func validatedMetadata(projectID string, pins map[string]string) servingstate.Validation {
-	converted := make(map[projectgraph.ResourceID]string, len(pins))
-	for connectionID, digest := range pins {
-		converted[projectgraph.ResourceID(connectionID)] = digest
-	}
-	return servingstate.Validation{ProjectID: projectgraph.ResourceID(projectID), ManagedDataRevisions: converted}
+	return servingstate.Validation{ProjectID: projectgraph.ResourceID(projectID), ManagedDataRevisions: pins}
 }
 
 type fakeRepository struct {
