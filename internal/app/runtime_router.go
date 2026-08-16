@@ -715,6 +715,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}
 					return principal.ID
 				},
+				AuthorizeListResource: func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error) {
+					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, runtime.projectID, []access.ResourceRef{resource}, capability)
+				},
 				CurrentUsagePrincipal: func(r *http.Request) (string, bool) {
 					principal, ok := routes.accessModule.CurrentPrincipal(r)
 					if !ok || !principal.IsHuman() {
