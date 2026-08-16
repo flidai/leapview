@@ -28890,53 +28890,62 @@ paths:
                 $ref: '#/components/schemas/ReleaseListResponse'
               example:
                 items:
-                  - connections:
+                  - actualDigest: example
+                    artifactDigest: example
+                    artifactSizeBytes: 1
+                    connections:
                       - connection: example
                         revisionId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     createdBy: example
+                    environment: example
                     error: example
                     finalizedAt: "2026-01-02T15:04:05Z"
+                    generationId: example
                     id: example
                     projectDigest: example
                     projectId: example
                     provenance:
                       artifact:
                         compilerVersion: example
+                        contentDigest: example
                         projectDigest: example
                         schemaVersion: 1
                         sourceDigest: example
-                        workspaces:
-                          - artifactDigest: example
-                            workspaceId: example
-                      artifactDigest: example
+                      artifactProvenanceDigest: example
                       candidate:
                         id: example
                         ownerId: example
                         revision: 1
                       digest: example
                       plan:
-                        baseGeneration: example
-                        environment: example
+                        authoredConnections:
+                          - connectionId: example
+                            connectorKind: example
+                            displayName: example
+                        baseIdentity:
+                          environment: example
+                          generationId: example
+                          projectId: example
+                        bindings:
+                          - bindingId: example
+                            connectionId: example
+                            connectorKind: example
+                            endpointConfigHash: example
+                            revision: 1
+                            validatedVersion: example
+                        dataMode: reuse_snapshot
+                        dataRevision: example
+                        identity:
+                          environment: example
+                          generationId: example
+                          projectId: example
+                        managedDataPins:
+                          - connectionId: example
+                            revisionId: example
                         policyDigest: example
                         runtimeVersion: example
                         targetId: example
-                        workspaces:
-                          - artifactDigest: example
-                            bindings:
-                              - bindingId: example
-                                connectorKind: example
-                                endpointConfigHash: example
-                                logicalConnection: example
-                                revision: 1
-                                validatedVersion: example
-                            dataMode: reuse_snapshot
-                            dataRevision: example
-                            managedDataPins:
-                              - connectionId: example
-                                revisionId: example
-                            servingStateId: example
-                            workspaceId: example
                       planDigest: example
                       sourceRevision:
                         changeId: example
@@ -28945,10 +28954,6 @@ paths:
                         revision: example
                       version: 1
                     status: draft
-                    workspaces:
-                      - artifactDigest: example
-                        servingStateId: example
-                        workspace: example
                 page:
                   nextCursor: example
         '400':
@@ -29223,53 +29228,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ReleaseResponse'
               example:
+                actualDigest: example
+                artifactDigest: example
+                artifactSizeBytes: 1
                 connections:
                   - connection: example
                     revisionId: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
+                environment: example
                 error: example
                 finalizedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
                 projectDigest: example
                 projectId: example
                 provenance:
                   artifact:
                     compilerVersion: example
+                    contentDigest: example
                     projectDigest: example
                     schemaVersion: 1
                     sourceDigest: example
-                    workspaces:
-                      - artifactDigest: example
-                        workspaceId: example
-                  artifactDigest: example
+                  artifactProvenanceDigest: example
                   candidate:
                     id: example
                     ownerId: example
                     revision: 1
                   digest: example
                   plan:
-                    baseGeneration: example
-                    environment: example
+                    authoredConnections:
+                      - connectionId: example
+                        connectorKind: example
+                        displayName: example
+                    baseIdentity:
+                      environment: example
+                      generationId: example
+                      projectId: example
+                    bindings:
+                      - bindingId: example
+                        connectionId: example
+                        connectorKind: example
+                        endpointConfigHash: example
+                        revision: 1
+                        validatedVersion: example
+                    dataMode: reuse_snapshot
+                    dataRevision: example
+                    identity:
+                      environment: example
+                      generationId: example
+                      projectId: example
+                    managedDataPins:
+                      - connectionId: example
+                        revisionId: example
                     policyDigest: example
                     runtimeVersion: example
                     targetId: example
-                    workspaces:
-                      - artifactDigest: example
-                        bindings:
-                          - bindingId: example
-                            connectorKind: example
-                            endpointConfigHash: example
-                            logicalConnection: example
-                            revision: 1
-                            validatedVersion: example
-                        dataMode: reuse_snapshot
-                        dataRevision: example
-                        managedDataPins:
-                          - connectionId: example
-                            revisionId: example
-                        servingStateId: example
-                        workspaceId: example
                   planDigest: example
                   sourceRevision:
                     changeId: example
@@ -29278,10 +29292,6 @@ paths:
                     revision: example
                   version: 1
                 status: draft
-                workspaces:
-                  - artifactDigest: example
-                    servingStateId: example
-                    workspace: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -29525,47 +29535,54 @@ paths:
             schema:
               $ref: '#/components/schemas/ReleaseCreateRequest'
             example:
+              artifactDigest: example
               connections:
                 - connection: example
                   revisionId: example
+              environment: example
+              generationId: example
               projectDigest: example
               provenance:
                 artifact:
                   compilerVersion: example
+                  contentDigest: example
                   projectDigest: example
                   schemaVersion: 1
                   sourceDigest: example
-                  workspaces:
-                    - artifactDigest: example
-                      workspaceId: example
-                artifactDigest: example
+                artifactProvenanceDigest: example
                 candidate:
                   id: example
                   ownerId: example
                   revision: 1
                 digest: example
                 plan:
-                  baseGeneration: example
-                  environment: example
+                  authoredConnections:
+                    - connectionId: example
+                      connectorKind: example
+                      displayName: example
+                  baseIdentity:
+                    environment: example
+                    generationId: example
+                    projectId: example
+                  bindings:
+                    - bindingId: example
+                      connectionId: example
+                      connectorKind: example
+                      endpointConfigHash: example
+                      revision: 1
+                      validatedVersion: example
+                  dataMode: reuse_snapshot
+                  dataRevision: example
+                  identity:
+                    environment: example
+                    generationId: example
+                    projectId: example
+                  managedDataPins:
+                    - connectionId: example
+                      revisionId: example
                   policyDigest: example
                   runtimeVersion: example
                   targetId: example
-                  workspaces:
-                    - artifactDigest: example
-                      bindings:
-                        - bindingId: example
-                          connectorKind: example
-                          endpointConfigHash: example
-                          logicalConnection: example
-                          revision: 1
-                          validatedVersion: example
-                      dataMode: reuse_snapshot
-                      dataRevision: example
-                      managedDataPins:
-                        - connectionId: example
-                          revisionId: example
-                      servingStateId: example
-                      workspaceId: example
                 planDigest: example
                 sourceRevision:
                   changeId: example
@@ -29573,10 +29590,7 @@ paths:
                   repository: example
                   revision: example
                 version: 1
-              workspaces:
-                - artifactDigest: example
-                  servingStateId: example
-                  workspace: example
+              requestDigest: example
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
@@ -29646,53 +29660,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ReleaseResponse'
               example:
+                actualDigest: example
+                artifactDigest: example
+                artifactSizeBytes: 1
                 connections:
                   - connection: example
                     revisionId: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
+                environment: example
                 error: example
                 finalizedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
                 projectDigest: example
                 projectId: example
                 provenance:
                   artifact:
                     compilerVersion: example
+                    contentDigest: example
                     projectDigest: example
                     schemaVersion: 1
                     sourceDigest: example
-                    workspaces:
-                      - artifactDigest: example
-                        workspaceId: example
-                  artifactDigest: example
+                  artifactProvenanceDigest: example
                   candidate:
                     id: example
                     ownerId: example
                     revision: 1
                   digest: example
                   plan:
-                    baseGeneration: example
-                    environment: example
+                    authoredConnections:
+                      - connectionId: example
+                        connectorKind: example
+                        displayName: example
+                    baseIdentity:
+                      environment: example
+                      generationId: example
+                      projectId: example
+                    bindings:
+                      - bindingId: example
+                        connectionId: example
+                        connectorKind: example
+                        endpointConfigHash: example
+                        revision: 1
+                        validatedVersion: example
+                    dataMode: reuse_snapshot
+                    dataRevision: example
+                    identity:
+                      environment: example
+                      generationId: example
+                      projectId: example
+                    managedDataPins:
+                      - connectionId: example
+                        revisionId: example
                     policyDigest: example
                     runtimeVersion: example
                     targetId: example
-                    workspaces:
-                      - artifactDigest: example
-                        bindings:
-                          - bindingId: example
-                            connectorKind: example
-                            endpointConfigHash: example
-                            logicalConnection: example
-                            revision: 1
-                            validatedVersion: example
-                        dataMode: reuse_snapshot
-                        dataRevision: example
-                        managedDataPins:
-                          - connectionId: example
-                            revisionId: example
-                        servingStateId: example
-                        workspaceId: example
                   planDigest: example
                   sourceRevision:
                     changeId: example
@@ -29701,10 +29724,6 @@ paths:
                     revision: example
                   version: 1
                 status: draft
-                workspaces:
-                  - artifactDigest: example
-                    servingStateId: example
-                    workspace: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -29946,6 +29965,353 @@ paths:
         mode: privilege
         privilege: PUBLISH_RELEASE
       x-leapview-object-scope: project-environment
+  /api/v1/projects/{project}/releases/{release}/artifact:
+    put:
+      operationId: uploadReleaseArtifact
+      summary: Upload an immutable project-generation artifact
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: release
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            type: string
+            enum:
+              - application/octet-stream
+          example: example
+        - name: Content-Digest
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          headers:
+            location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseArtifactResponse'
+              example:
+                actualDigest: example
+                digest: example
+                generationId: example
+                releaseId: example
+                sizeBytes: 1
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Releases
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+            example: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          payload:
+            fields:
+              - name: digest
+                sensitivity: internal
+              - name: generationId
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: releaseId
+                sensitivity: internal
+              - name: sizeBytes
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ReleaseArtifactUploadedAuditPayload
+            schema_version: !!float 1
+          required: true
+          success_action: release.artifact_uploaded
+        authz_mode: privilege
+        failures:
+          - code: RELEASE_CONFLICT
+            kind: conflict
+            public_detail: The release conflicts with its current state.
+            status_code: !!float 409
+          - code: CONTENT_DIGEST_MISMATCH
+            kind: digest_mismatch
+            public_detail: The release artifact digest does not match the expected content.
+            status_code: !!float 422
+          - code: RELEASE_IMMUTABLE
+            kind: immutable
+            public_detail: The release is immutable.
+            status_code: !!float 409
+          - code: INVALID_RELEASE
+            kind: invalid
+            public_detail: The release artifact request is invalid.
+            status_code: !!float 422
+          - code: RELEASE_NOT_FOUND
+            kind: not_found
+            public_detail: Release artifact not found.
+            status_code: !!float 404
+        owner: LeapViewAPI.Release
+        target:
+          parameter: project
+          type: project
+        privilege: PUBLISH_RELEASE
+      x-authz:
+        mode: privilege
+        privilege: PUBLISH_RELEASE
+      x-leapview-object-scope: project-environment
+      x-apigen-manual: true
   /api/v1/projects/{project}/releases/{release}/events:
     get:
       operationId: listReleaseEvents
@@ -30303,53 +30669,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ReleaseResponse'
               example:
+                actualDigest: example
+                artifactDigest: example
+                artifactSizeBytes: 1
                 connections:
                   - connection: example
                     revisionId: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
+                environment: example
                 error: example
                 finalizedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
                 projectDigest: example
                 projectId: example
                 provenance:
                   artifact:
                     compilerVersion: example
+                    contentDigest: example
                     projectDigest: example
                     schemaVersion: 1
                     sourceDigest: example
-                    workspaces:
-                      - artifactDigest: example
-                        workspaceId: example
-                  artifactDigest: example
+                  artifactProvenanceDigest: example
                   candidate:
                     id: example
                     ownerId: example
                     revision: 1
                   digest: example
                   plan:
-                    baseGeneration: example
-                    environment: example
+                    authoredConnections:
+                      - connectionId: example
+                        connectorKind: example
+                        displayName: example
+                    baseIdentity:
+                      environment: example
+                      generationId: example
+                      projectId: example
+                    bindings:
+                      - bindingId: example
+                        connectionId: example
+                        connectorKind: example
+                        endpointConfigHash: example
+                        revision: 1
+                        validatedVersion: example
+                    dataMode: reuse_snapshot
+                    dataRevision: example
+                    identity:
+                      environment: example
+                      generationId: example
+                      projectId: example
+                    managedDataPins:
+                      - connectionId: example
+                        revisionId: example
                     policyDigest: example
                     runtimeVersion: example
                     targetId: example
-                    workspaces:
-                      - artifactDigest: example
-                        bindings:
-                          - bindingId: example
-                            connectorKind: example
-                            endpointConfigHash: example
-                            logicalConnection: example
-                            revision: 1
-                            validatedVersion: example
-                        dataMode: reuse_snapshot
-                        dataRevision: example
-                        managedDataPins:
-                          - connectionId: example
-                            revisionId: example
-                        servingStateId: example
-                        workspaceId: example
                   planDigest: example
                   sourceRevision:
                     changeId: example
@@ -30358,10 +30733,6 @@ paths:
                     revision: example
                   version: 1
                 status: draft
-                workspaces:
-                  - artifactDigest: example
-                    servingStateId: example
-                    workspace: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -30660,358 +31031,6 @@ paths:
         mode: privilege
         privilege: PUBLISH_RELEASE
       x-leapview-object-scope: project-environment
-  /api/v1/projects/{project}/releases/{release}/workspaces/{workspace}/artifact:
-    put:
-      operationId: uploadReleaseArtifact
-      summary: Upload an immutable workspace artifact
-      parameters:
-        - name: project
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-        - name: release
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-        - name: workspace
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-        - name: Content-Type
-          in: header
-          required: true
-          schema:
-            type: string
-            enum:
-              - application/octet-stream
-          example: example
-        - name: Content-Digest
-          in: header
-          required: true
-          schema:
-            type: string
-          example: example
-      responses:
-        '201':
-          description: The request has succeeded and a new resource has been created as a result.
-          headers:
-            location:
-              required: true
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReleaseArtifactResponse'
-              example:
-                digest: example
-                releaseId: example
-                sizeBytes: 1
-                workspaceId: example
-        '400':
-          description: The server could not understand the request due to invalid syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Releases
-      requestBody:
-        required: true
-        content:
-          application/octet-stream:
-            schema:
-              type: string
-              format: binary
-            example: example
-      x-apigen-operation-kind: command
-      x-apigen-command:
-        audit:
-          guarantee: best-effort
-          payload:
-            fields:
-              - name: digest
-                sensitivity: internal
-              - name: operationId
-                sensitivity: internal
-              - name: releaseId
-                sensitivity: internal
-              - name: sizeBytes
-                sensitivity: internal
-              - name: workspaceId
-                sensitivity: internal
-            retention: security
-            schema:
-              ref: ReleaseArtifactUploadedAuditPayload
-            schema_version: !!float 1
-          required: true
-          success_action: release.artifact_uploaded
-        authz_mode: privilege
-        failures:
-          - code: RELEASE_CONFLICT
-            kind: conflict
-            public_detail: The release conflicts with its current state.
-            status_code: !!float 409
-          - code: CONTENT_DIGEST_MISMATCH
-            kind: digest_mismatch
-            public_detail: The release artifact digest does not match the expected content.
-            status_code: !!float 422
-          - code: RELEASE_IMMUTABLE
-            kind: immutable
-            public_detail: The release is immutable.
-            status_code: !!float 409
-          - code: INVALID_RELEASE
-            kind: invalid
-            public_detail: The release artifact request is invalid.
-            status_code: !!float 422
-          - code: RELEASE_NOT_FOUND
-            kind: not_found
-            public_detail: Release or workspace artifact not found.
-            status_code: !!float 404
-        owner: LeapViewAPI.Release
-        target:
-          parameter: project
-          type: project
-        privilege: PUBLISH_RELEASE
-      x-authz:
-        mode: privilege
-        privilege: PUBLISH_RELEASE
-      x-leapview-object-scope: project-environment
-      x-apigen-manual: true
   /api/v1/projects/{project}/workspaces:
     get:
       operationId: listProjectWorkspaces
@@ -71688,17 +71707,21 @@ components:
       type: object
       required:
         - releaseId
-        - workspaceId
+        - generationId
         - digest
+        - actualDigest
         - sizeBytes
       properties:
         releaseId:
           type: string
           example: example
-        workspaceId:
+        generationId:
           type: string
           example: example
         digest:
+          type: string
+          example: example
+        actualDigest:
           type: string
           example: example
         sizeBytes:
@@ -71706,16 +71729,17 @@ components:
           format: int64
           example: 1
       example:
+        actualDigest: example
         digest: example
+        generationId: example
         releaseId: example
         sizeBytes: 1
-        workspaceId: example
     ReleaseArtifactUploadedAuditPayload:
       type: object
       required:
         - operationId
         - releaseId
-        - workspaceId
+        - generationId
         - digest
         - sizeBytes
       properties:
@@ -71725,7 +71749,7 @@ components:
         releaseId:
           type: string
           example: example
-        workspaceId:
+        generationId:
           type: string
           example: example
         digest:
@@ -71737,15 +71761,34 @@ components:
           example: 1
       example:
         digest: example
+        generationId: example
         operationId: example
         releaseId: example
         sizeBytes: 1
-        workspaceId: example
+    ReleaseAuthoredConnectionEvidence:
+      type: object
+      required:
+        - connectionId
+        - connectorKind
+      properties:
+        connectionId:
+          type: string
+          example: example
+        connectorKind:
+          type: string
+          example: example
+        displayName:
+          type: string
+          example: example
+      example:
+        connectionId: example
+        connectorKind: example
+        displayName: example
     ReleaseBindingEvidence:
       type: object
       required:
         - bindingId
-        - logicalConnection
+        - connectionId
         - connectorKind
         - revision
         - validatedVersion
@@ -71754,7 +71797,7 @@ components:
         bindingId:
           type: string
           example: example
-        logicalConnection:
+        connectionId:
           type: string
           example: example
         connectorKind:
@@ -71772,9 +71815,9 @@ components:
           example: example
       example:
         bindingId: example
+        connectionId: example
         connectorKind: example
         endpointConfigHash: example
-        logicalConnection: example
         revision: 1
         validatedVersion: example
     ReleaseCandidateProvenance:
@@ -71816,21 +71859,21 @@ components:
     ReleaseCreateRequest:
       type: object
       required:
-        - projectDigest
-        - workspaces
+        - environment
+        - generationId
+        - artifactDigest
         - connections
+        - projectDigest
       properties:
-        projectDigest:
+        environment:
           type: string
           example: example
-        workspaces:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReleaseWorkspaceManifest'
-          example:
-            - artifactDigest: example
-              servingStateId: example
-              workspace: example
+        generationId:
+          type: string
+          example: example
+        artifactDigest:
+          type: string
+          example: example
         connections:
           type: array
           items:
@@ -71838,50 +71881,63 @@ components:
           example:
             - connection: example
               revisionId: example
+        projectDigest:
+          type: string
+          example: example
+        requestDigest:
+          type: string
+          example: example
         provenance:
           $ref: '#/components/schemas/ReleaseProvenance'
       example:
+        artifactDigest: example
         connections:
           - connection: example
             revisionId: example
+        environment: example
+        generationId: example
         projectDigest: example
         provenance:
           artifact:
             compilerVersion: example
+            contentDigest: example
             projectDigest: example
             schemaVersion: 1
             sourceDigest: example
-            workspaces:
-              - artifactDigest: example
-                workspaceId: example
-          artifactDigest: example
+          artifactProvenanceDigest: example
           candidate:
             id: example
             ownerId: example
             revision: 1
           digest: example
           plan:
-            baseGeneration: example
-            environment: example
+            authoredConnections:
+              - connectionId: example
+                connectorKind: example
+                displayName: example
+            baseIdentity:
+              environment: example
+              generationId: example
+              projectId: example
+            bindings:
+              - bindingId: example
+                connectionId: example
+                connectorKind: example
+                endpointConfigHash: example
+                revision: 1
+                validatedVersion: example
+            dataMode: reuse_snapshot
+            dataRevision: example
+            identity:
+              environment: example
+              generationId: example
+              projectId: example
+            managedDataPins:
+              - connectionId: example
+                revisionId: example
             policyDigest: example
             runtimeVersion: example
             targetId: example
-            workspaces:
-              - artifactDigest: example
-                bindings:
-                  - bindingId: example
-                    connectorKind: example
-                    endpointConfigHash: example
-                    logicalConnection: example
-                    revision: 1
-                    validatedVersion: example
-                dataMode: reuse_snapshot
-                dataRevision: example
-                managedDataPins:
-                  - connectionId: example
-                    revisionId: example
-                servingStateId: example
-                workspaceId: example
           planDigest: example
           sourceRevision:
             changeId: example
@@ -71889,10 +71945,7 @@ components:
             repository: example
             revision: example
           version: 1
-        workspaces:
-          - artifactDigest: example
-            servingStateId: example
-            workspace: example
+        requestDigest: example
     ReleaseCreatedAuditPayload:
       type: object
       required:
@@ -71928,6 +71981,97 @@ components:
         projectId: example
         releaseId: example
         status: example
+    ReleaseGenerationDataMode:
+      type: string
+      enum:
+        - reuse_snapshot
+        - refresh_sources
+      example: reuse_snapshot
+    ReleaseGenerationPlanProvenance:
+      type: object
+      required:
+        - identity
+        - targetId
+        - runtimeVersion
+        - policyDigest
+        - dataRevision
+        - dataMode
+        - managedDataPins
+        - bindings
+        - authoredConnections
+      properties:
+        identity:
+          $ref: '#/components/schemas/ReleaseServingIdentity'
+        baseIdentity:
+          $ref: '#/components/schemas/ReleaseServingIdentity'
+        targetId:
+          type: string
+          example: example
+        runtimeVersion:
+          type: string
+          example: example
+        policyDigest:
+          type: string
+          example: example
+        dataRevision:
+          type: string
+          example: example
+        dataMode:
+          $ref: '#/components/schemas/ReleaseGenerationDataMode'
+        managedDataPins:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseManagedDataPin'
+          example:
+            - connectionId: example
+              revisionId: example
+        bindings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseBindingEvidence'
+          example:
+            - bindingId: example
+              connectionId: example
+              connectorKind: example
+              endpointConfigHash: example
+              revision: 1
+              validatedVersion: example
+        authoredConnections:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseAuthoredConnectionEvidence'
+          example:
+            - connectionId: example
+              connectorKind: example
+              displayName: example
+      example:
+        authoredConnections:
+          - connectionId: example
+            connectorKind: example
+            displayName: example
+        baseIdentity:
+          environment: example
+          generationId: example
+          projectId: example
+        bindings:
+          - bindingId: example
+            connectionId: example
+            connectorKind: example
+            endpointConfigHash: example
+            revision: 1
+            validatedVersion: example
+        dataMode: reuse_snapshot
+        dataRevision: example
+        identity:
+          environment: example
+          generationId: example
+          projectId: example
+        managedDataPins:
+          - connectionId: example
+            revisionId: example
+        policyDigest: example
+        runtimeVersion: example
+        targetId: example
     ReleaseListResponse:
       type: object
       required:
@@ -71939,53 +72083,62 @@ components:
           items:
             $ref: '#/components/schemas/ReleaseResponse'
           example:
-            - connections:
+            - actualDigest: example
+              artifactDigest: example
+              artifactSizeBytes: 1
+              connections:
                 - connection: example
                   revisionId: example
               createdAt: "2026-01-02T15:04:05Z"
               createdBy: example
+              environment: example
               error: example
               finalizedAt: "2026-01-02T15:04:05Z"
+              generationId: example
               id: example
               projectDigest: example
               projectId: example
               provenance:
                 artifact:
                   compilerVersion: example
+                  contentDigest: example
                   projectDigest: example
                   schemaVersion: 1
                   sourceDigest: example
-                  workspaces:
-                    - artifactDigest: example
-                      workspaceId: example
-                artifactDigest: example
+                artifactProvenanceDigest: example
                 candidate:
                   id: example
                   ownerId: example
                   revision: 1
                 digest: example
                 plan:
-                  baseGeneration: example
-                  environment: example
+                  authoredConnections:
+                    - connectionId: example
+                      connectorKind: example
+                      displayName: example
+                  baseIdentity:
+                    environment: example
+                    generationId: example
+                    projectId: example
+                  bindings:
+                    - bindingId: example
+                      connectionId: example
+                      connectorKind: example
+                      endpointConfigHash: example
+                      revision: 1
+                      validatedVersion: example
+                  dataMode: reuse_snapshot
+                  dataRevision: example
+                  identity:
+                    environment: example
+                    generationId: example
+                    projectId: example
+                  managedDataPins:
+                    - connectionId: example
+                      revisionId: example
                   policyDigest: example
                   runtimeVersion: example
                   targetId: example
-                  workspaces:
-                    - artifactDigest: example
-                      bindings:
-                        - bindingId: example
-                          connectorKind: example
-                          endpointConfigHash: example
-                          logicalConnection: example
-                          revision: 1
-                          validatedVersion: example
-                      dataMode: reuse_snapshot
-                      dataRevision: example
-                      managedDataPins:
-                        - connectionId: example
-                          revisionId: example
-                      servingStateId: example
-                      workspaceId: example
                 planDigest: example
                 sourceRevision:
                   changeId: example
@@ -71994,61 +72147,66 @@ components:
                   revision: example
                 version: 1
               status: draft
-              workspaces:
-                - artifactDigest: example
-                  servingStateId: example
-                  workspace: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - connections:
+          - actualDigest: example
+            artifactDigest: example
+            artifactSizeBytes: 1
+            connections:
               - connection: example
                 revisionId: example
             createdAt: "2026-01-02T15:04:05Z"
             createdBy: example
+            environment: example
             error: example
             finalizedAt: "2026-01-02T15:04:05Z"
+            generationId: example
             id: example
             projectDigest: example
             projectId: example
             provenance:
               artifact:
                 compilerVersion: example
+                contentDigest: example
                 projectDigest: example
                 schemaVersion: 1
                 sourceDigest: example
-                workspaces:
-                  - artifactDigest: example
-                    workspaceId: example
-              artifactDigest: example
+              artifactProvenanceDigest: example
               candidate:
                 id: example
                 ownerId: example
                 revision: 1
               digest: example
               plan:
-                baseGeneration: example
-                environment: example
+                authoredConnections:
+                  - connectionId: example
+                    connectorKind: example
+                    displayName: example
+                baseIdentity:
+                  environment: example
+                  generationId: example
+                  projectId: example
+                bindings:
+                  - bindingId: example
+                    connectionId: example
+                    connectorKind: example
+                    endpointConfigHash: example
+                    revision: 1
+                    validatedVersion: example
+                dataMode: reuse_snapshot
+                dataRevision: example
+                identity:
+                  environment: example
+                  generationId: example
+                  projectId: example
+                managedDataPins:
+                  - connectionId: example
+                    revisionId: example
                 policyDigest: example
                 runtimeVersion: example
                 targetId: example
-                workspaces:
-                  - artifactDigest: example
-                    bindings:
-                      - bindingId: example
-                        connectorKind: example
-                        endpointConfigHash: example
-                        logicalConnection: example
-                        revision: 1
-                        validatedVersion: example
-                    dataMode: reuse_snapshot
-                    dataRevision: example
-                    managedDataPins:
-                      - connectionId: example
-                        revisionId: example
-                    servingStateId: example
-                    workspaceId: example
               planDigest: example
               sourceRevision:
                 changeId: example
@@ -72057,10 +72215,6 @@ components:
                 revision: example
               version: 1
             status: draft
-            workspaces:
-              - artifactDigest: example
-                servingStateId: example
-                workspace: example
         page:
           nextCursor: example
     ReleaseManagedDataPin:
@@ -72083,14 +72237,17 @@ components:
       required:
         - sourceDigest
         - projectDigest
+        - contentDigest
         - compilerVersion
         - schemaVersion
-        - workspaces
       properties:
         sourceDigest:
           type: string
           example: example
         projectDigest:
+          type: string
+          example: example
+        contentDigest:
           type: string
           example: example
         compilerVersion:
@@ -72100,36 +72257,12 @@ components:
           type: integer
           format: int32
           example: 1
-        workspaces:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReleaseProjectArtifactWorkspace'
-          example:
-            - artifactDigest: example
-              workspaceId: example
       example:
         compilerVersion: example
+        contentDigest: example
         projectDigest: example
         schemaVersion: 1
         sourceDigest: example
-        workspaces:
-          - artifactDigest: example
-            workspaceId: example
-    ReleaseProjectArtifactWorkspace:
-      type: object
-      required:
-        - workspaceId
-        - artifactDigest
-      properties:
-        workspaceId:
-          type: string
-          example: example
-        artifactDigest:
-          type: string
-          example: example
-      example:
-        artifactDigest: example
-        workspaceId: example
     ReleaseProvenance:
       type: object
       required:
@@ -72137,7 +72270,7 @@ components:
         - artifact
         - candidate
         - plan
-        - artifactDigest
+        - artifactProvenanceDigest
         - planDigest
         - digest
       properties:
@@ -72152,8 +72285,8 @@ components:
         sourceRevision:
           $ref: '#/components/schemas/ReleaseSourceRevisionProvenance'
         plan:
-          $ref: '#/components/schemas/ReleaseTargetPlanProvenance'
-        artifactDigest:
+          $ref: '#/components/schemas/ReleaseGenerationPlanProvenance'
+        artifactProvenanceDigest:
           type: string
           example: example
         planDigest:
@@ -72165,40 +72298,44 @@ components:
       example:
         artifact:
           compilerVersion: example
+          contentDigest: example
           projectDigest: example
           schemaVersion: 1
           sourceDigest: example
-          workspaces:
-            - artifactDigest: example
-              workspaceId: example
-        artifactDigest: example
+        artifactProvenanceDigest: example
         candidate:
           id: example
           ownerId: example
           revision: 1
         digest: example
         plan:
-          baseGeneration: example
-          environment: example
+          authoredConnections:
+            - connectionId: example
+              connectorKind: example
+              displayName: example
+          baseIdentity:
+            environment: example
+            generationId: example
+            projectId: example
+          bindings:
+            - bindingId: example
+              connectionId: example
+              connectorKind: example
+              endpointConfigHash: example
+              revision: 1
+              validatedVersion: example
+          dataMode: reuse_snapshot
+          dataRevision: example
+          identity:
+            environment: example
+            generationId: example
+            projectId: example
+          managedDataPins:
+            - connectionId: example
+              revisionId: example
           policyDigest: example
           runtimeVersion: example
           targetId: example
-          workspaces:
-            - artifactDigest: example
-              bindings:
-                - bindingId: example
-                  connectorKind: example
-                  endpointConfigHash: example
-                  logicalConnection: example
-                  revision: 1
-                  validatedVersion: example
-              dataMode: reuse_snapshot
-              dataRevision: example
-              managedDataPins:
-                - connectionId: example
-                  revisionId: example
-              servingStateId: example
-              workspaceId: example
         planDigest: example
         sourceRevision:
           changeId: example
@@ -72211,9 +72348,12 @@ components:
       required:
         - id
         - projectId
+        - environment
+        - generationId
         - projectDigest
+        - artifactDigest
+        - artifactSizeBytes
         - status
-        - workspaces
         - connections
         - createdBy
         - createdAt
@@ -72224,19 +72364,27 @@ components:
         projectId:
           type: string
           example: example
+        environment:
+          type: string
+          example: example
+        generationId:
+          type: string
+          example: example
         projectDigest:
           type: string
           example: example
+        artifactDigest:
+          type: string
+          example: example
+        actualDigest:
+          type: string
+          example: example
+        artifactSizeBytes:
+          type: integer
+          format: int64
+          example: 1
         status:
           $ref: '#/components/schemas/ReleaseStatus'
-        workspaces:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReleaseWorkspaceManifest'
-          example:
-            - artifactDigest: example
-              servingStateId: example
-              workspace: example
         connections:
           type: array
           items:
@@ -72261,53 +72409,62 @@ components:
           type: string
           example: example
       example:
+        actualDigest: example
+        artifactDigest: example
+        artifactSizeBytes: 1
         connections:
           - connection: example
             revisionId: example
         createdAt: "2026-01-02T15:04:05Z"
         createdBy: example
+        environment: example
         error: example
         finalizedAt: "2026-01-02T15:04:05Z"
+        generationId: example
         id: example
         projectDigest: example
         projectId: example
         provenance:
           artifact:
             compilerVersion: example
+            contentDigest: example
             projectDigest: example
             schemaVersion: 1
             sourceDigest: example
-            workspaces:
-              - artifactDigest: example
-                workspaceId: example
-          artifactDigest: example
+          artifactProvenanceDigest: example
           candidate:
             id: example
             ownerId: example
             revision: 1
           digest: example
           plan:
-            baseGeneration: example
-            environment: example
+            authoredConnections:
+              - connectionId: example
+                connectorKind: example
+                displayName: example
+            baseIdentity:
+              environment: example
+              generationId: example
+              projectId: example
+            bindings:
+              - bindingId: example
+                connectionId: example
+                connectorKind: example
+                endpointConfigHash: example
+                revision: 1
+                validatedVersion: example
+            dataMode: reuse_snapshot
+            dataRevision: example
+            identity:
+              environment: example
+              generationId: example
+              projectId: example
+            managedDataPins:
+              - connectionId: example
+                revisionId: example
             policyDigest: example
             runtimeVersion: example
             targetId: example
-            workspaces:
-              - artifactDigest: example
-                bindings:
-                  - bindingId: example
-                    connectorKind: example
-                    endpointConfigHash: example
-                    logicalConnection: example
-                    revision: 1
-                    validatedVersion: example
-                dataMode: reuse_snapshot
-                dataRevision: example
-                managedDataPins:
-                  - connectionId: example
-                    revisionId: example
-                servingStateId: example
-                workspaceId: example
           planDigest: example
           sourceRevision:
             changeId: example
@@ -72316,10 +72473,26 @@ components:
             revision: example
           version: 1
         status: draft
-        workspaces:
-          - artifactDigest: example
-            servingStateId: example
-            workspace: example
+    ReleaseServingIdentity:
+      type: object
+      required:
+        - projectId
+        - environment
+        - generationId
+      properties:
+        projectId:
+          type: string
+          example: example
+        environment:
+          type: string
+          example: example
+        generationId:
+          type: string
+          example: example
+      example:
+        environment: example
+        generationId: example
+        projectId: example
     ReleaseSourceRevisionProvenance:
       type: object
       required:
@@ -72350,138 +72523,6 @@ components:
         - ready
         - failed
       example: draft
-    ReleaseTargetDataMode:
-      type: string
-      enum:
-        - reuse_snapshot
-        - refresh_sources
-      example: reuse_snapshot
-    ReleaseTargetPlanProvenance:
-      type: object
-      required:
-        - targetId
-        - environment
-        - baseGeneration
-        - runtimeVersion
-        - policyDigest
-        - workspaces
-      properties:
-        targetId:
-          type: string
-          example: example
-        environment:
-          type: string
-          example: example
-        baseGeneration:
-          type: string
-          example: example
-        runtimeVersion:
-          type: string
-          example: example
-        policyDigest:
-          type: string
-          example: example
-        workspaces:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReleaseTargetWorkspacePlan'
-          example:
-            - artifactDigest: example
-              bindings:
-                - bindingId: example
-                  connectorKind: example
-                  endpointConfigHash: example
-                  logicalConnection: example
-                  revision: 1
-                  validatedVersion: example
-              dataMode: reuse_snapshot
-              dataRevision: example
-              managedDataPins:
-                - connectionId: example
-                  revisionId: example
-              servingStateId: example
-              workspaceId: example
-      example:
-        baseGeneration: example
-        environment: example
-        policyDigest: example
-        runtimeVersion: example
-        targetId: example
-        workspaces:
-          - artifactDigest: example
-            bindings:
-              - bindingId: example
-                connectorKind: example
-                endpointConfigHash: example
-                logicalConnection: example
-                revision: 1
-                validatedVersion: example
-            dataMode: reuse_snapshot
-            dataRevision: example
-            managedDataPins:
-              - connectionId: example
-                revisionId: example
-            servingStateId: example
-            workspaceId: example
-    ReleaseTargetWorkspacePlan:
-      type: object
-      required:
-        - workspaceId
-        - servingStateId
-        - artifactDigest
-        - dataRevision
-        - dataMode
-        - managedDataPins
-        - bindings
-      properties:
-        workspaceId:
-          type: string
-          example: example
-        servingStateId:
-          type: string
-          example: example
-        artifactDigest:
-          type: string
-          example: example
-        dataRevision:
-          type: string
-          example: example
-        dataMode:
-          $ref: '#/components/schemas/ReleaseTargetDataMode'
-        managedDataPins:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReleaseManagedDataPin'
-          example:
-            - connectionId: example
-              revisionId: example
-        bindings:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReleaseBindingEvidence'
-          example:
-            - bindingId: example
-              connectorKind: example
-              endpointConfigHash: example
-              logicalConnection: example
-              revision: 1
-              validatedVersion: example
-      example:
-        artifactDigest: example
-        bindings:
-          - bindingId: example
-            connectorKind: example
-            endpointConfigHash: example
-            logicalConnection: example
-            revision: 1
-            validatedVersion: example
-        dataMode: reuse_snapshot
-        dataRevision: example
-        managedDataPins:
-          - connectionId: example
-            revisionId: example
-        servingStateId: example
-        workspaceId: example
     ReleaseValidatingAuditPayload:
       type: object
       required:
@@ -72507,25 +72548,6 @@ components:
         projectId: example
         releaseId: example
         status: example
-    ReleaseWorkspaceManifest:
-      type: object
-      required:
-        - workspace
-        - artifactDigest
-      properties:
-        workspace:
-          type: string
-          example: example
-        artifactDigest:
-          type: string
-          example: example
-        servingStateId:
-          type: string
-          example: example
-      example:
-        artifactDigest: example
-        servingStateId: example
-        workspace: example
     RoleBindingAuditPayload:
       type: object
       required:
