@@ -11,6 +11,7 @@ import (
 
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	ocidigest "github.com/opencontainers/go-digest"
 )
 
 // ProvenanceVersion is bumped whenever the canonical project-generation
@@ -286,7 +287,7 @@ func canonicalDigest(value any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return platformdigest.SHA256Identity(b), nil
+	return ocidigest.FromBytes(b).String(), nil
 }
 
 func provenanceInvalid(err error) error { return fmt.Errorf("%w: %v", ErrProvenanceInvalid, err) }

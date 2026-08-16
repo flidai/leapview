@@ -75,10 +75,14 @@ func NewService(options ServiceOptions) (*Service, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error) {
+	rawProject, rawEnvironment, rawGeneration, rawProjectDigest, rawArtifactDigest := input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest
 	input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ProjectDigest), strings.TrimSpace(input.ArtifactDigest)
 	input.IdempotencyKey, input.CreatedBy = strings.TrimSpace(input.IdempotencyKey), strings.TrimSpace(input.CreatedBy)
 	if input.ProjectID == "" || input.GenerationID == "" || input.Environment == "" || input.ProjectDigest == "" || input.ArtifactDigest == "" || input.IdempotencyKey == "" || input.CreatedBy == "" {
 		return Release{}, ErrInvalid
+	}
+	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawProjectDigest != input.ProjectDigest || rawArtifactDigest != input.ArtifactDigest {
+		return Release{}, fmt.Errorf("%w: canonical identity and digest fields are required", ErrInvalid)
 	}
 	identity, err := input.Identity()
 	if err != nil {
@@ -122,7 +126,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error
 	if err != nil {
 		return Release{}, err
 	}
-	expectedRequestDigest := digest.SHA256Identity(encoded)
+	expectedRequestDigest := ocidigest.FromBytes(encoded).String()
 	if input.RequestDigest != "" && (digest.ValidateSHA256Identity(input.RequestDigest) != nil || input.RequestDigest != expectedRequestDigest) {
 		return Release{}, fmt.Errorf("%w: request digest mismatch", ErrInvalid)
 	}
@@ -251,7 +255,7 @@ func (s *Service) CandidateProvenance(ctx context.Context, projectID, candidateI
 }
 
 func stableID(prefix string, values ...string) string {
-	h := digest.SHA256Identity([]byte(strings.Join(values, "\x00")))
+	h := ocidigest.FromBytes([]byte(strings.Join(values, "\x00"))).String()
 	return prefix + "_" + strings.TrimPrefix(h, "sha256:")[:24]
 }
 

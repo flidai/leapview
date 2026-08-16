@@ -93,7 +93,7 @@ func New(repository Repository, activation ActivationUnitOfWork, states ServingS
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Deployment, error) {
-	input.ID, input.ProjectID, input.Environment, input.GenerationID, input.ArtifactDigest, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
+	input.ID, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
 	if err := ValidateCreate(input); err != nil {
 		return Deployment{}, err
 	}

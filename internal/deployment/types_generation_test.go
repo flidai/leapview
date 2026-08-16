@@ -18,7 +18,7 @@ func TestValidateCreateRequiresExactGenerationIdentity(t *testing.T) {
 		"invalid artifact":         func(v *CreateInput) { v.ArtifactDigest = "sha256:bad" },
 		"invalid request":          func(v *CreateInput) { v.RequestDigest = "request" },
 		"noncanonical environment": func(v *CreateInput) { v.Environment = " Prod" },
-		"noncanonical generation":  func(v *CreateInput) { v.GenerationID = "Generation_1" },
+		"noncanonical generation":  func(v *CreateInput) { v.GenerationID = " Generation_1" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			value := base
