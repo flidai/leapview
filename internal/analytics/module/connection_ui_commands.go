@@ -6,7 +6,7 @@ import (
 )
 
 // ConnectionUICommandBindings is the analytics-owned identity surface used by
-// the workspace UI adapter. The generated bindings keep browser mutations
+// the project UI adapter. The generated bindings keep browser mutations
 // tied to their audited API operation contracts.
 type ConnectionUICommandBindings struct {
 	Create  uicommand.Binding

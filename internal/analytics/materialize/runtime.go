@@ -36,7 +36,7 @@ type RuntimeConfig struct {
 	Sources  SourcePreparer
 	Resolver SourcePathResolver
 	// OwnDatabase and OwnQueryCache transfer close ownership to the runtime.
-	// Supplied resources are borrowed by default because workspace runtimes
+	// Supplied resources are borrowed by default because project runtimes
 	// commonly share a process database and cache scope.
 	OwnDatabase   bool
 	OwnQueryCache bool
