@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+var errNoActiveDeployment = errors.New("no active deployment")
 
 type healthConfig struct {
 	Platform          func(context.Context) error
@@ -104,6 +107,10 @@ func (h *health) runtimeReady(ctx context.Context, checks map[string]string) boo
 		return !h.config.RequireActiveDeployment
 	}
 	if err := h.config.RuntimeReady(ctx); err != nil {
+		if errors.Is(err, errNoActiveDeployment) {
+			checks["runtime"] = "no_active_deployments"
+			return !h.config.RequireActiveDeployment
+		}
 		checks["projectRuntime:"+projectID.String()] = err.Error()
 		return false
 	}

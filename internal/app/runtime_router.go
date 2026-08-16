@@ -1264,8 +1264,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			// serving generation. Check the repository-backed scope first and
 			// only acquire a lease once one exists.
 			if _, _, err := runtime.runtimeHostModule.ActiveArtifact(ctx); err != nil {
-				if errors.Is(err, servingstate.ErrNotFound) && !platform.requireActiveDeployment {
-					return nil
+				if errors.Is(err, servingstate.ErrNotFound) {
+					return errNoActiveDeployment
 				}
 				return err
 			}
