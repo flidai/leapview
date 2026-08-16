@@ -102,7 +102,7 @@ func renderSearchResults(out io.Writer, response projectgen.GenSchemaSearchRespo
 		if item.Description != nil {
 			description = *item.Description
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", item.Reference.Kind, item.Name, description, item.Reference.Id)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", strings.ToUpper(string(item.Reference.Kind)), item.Name, description, item.Reference.Id)
 	}
 	if response.Page.NextCursor != nil && *response.Page.NextCursor != "" {
 		fmt.Fprintf(writer, "PAGE\tNEXT\t%s\t\t\n", *response.Page.NextCursor)

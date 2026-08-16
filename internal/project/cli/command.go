@@ -163,8 +163,8 @@ func renderProjectPlan(out io.Writer, plan projectcompiler.ProjectPlan) error {
 		}
 		for _, change := range plan.DependencyChanges {
 			fmt.Fprintf(out, "    %s dependency %s -> %s (%s)", change.Action, change.From, change.To, change.Type)
-			if change.Breaking {
-				fmt.Fprint(out, " [breaking]")
+			if change.MaterializationImpact {
+				fmt.Fprint(out, " [refresh]")
 			}
 			fmt.Fprintln(out)
 		}
@@ -179,9 +179,6 @@ func planChangeAnnotations(change projectcompiler.ProjectPlanChange) string {
 	}
 	if change.MaterializationImpact {
 		parts = append(parts, "refresh")
-	}
-	if change.AccessImpact {
-		parts = append(parts, "access")
 	}
 	return strings.Join(parts, ",")
 }
