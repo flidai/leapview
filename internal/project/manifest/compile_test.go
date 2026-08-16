@@ -42,12 +42,20 @@ func TestCompileAuthorizationSnapshotBindsExactIdentityAndGraph(t *testing.T) {
 	}
 	for _, bad := range []graph.ServingIdentity{
 		{ProjectID: "other", Environment: "production", GenerationID: "generation_7"},
-		{ProjectID: "project_demo", Environment: "staging", GenerationID: "generation_7"},
-		{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_8"},
+		{ProjectID: "project_demo", Environment: "", GenerationID: "generation_7"},
+		{ProjectID: "project_demo", Environment: "production", GenerationID: ""},
 	} {
 		if _, err := CompileAuthorizationSnapshot(bad, project, policy); err == nil {
-			t.Fatalf("accepted mismatched identity %#v", bad)
+			t.Fatalf("accepted invalid or mismatched identity %#v", bad)
 		}
+	}
+	staging := graph.ServingIdentity{ProjectID: "project_demo", Environment: "staging", GenerationID: "generation_8"}
+	stagingSnapshot, err := CompileAuthorizationSnapshot(staging, project, policy)
+	if err != nil {
+		t.Fatalf("compile same graph for a second exact serving identity: %v", err)
+	}
+	if got := stagingSnapshot.Identity(); got != staging {
+		t.Fatalf("second snapshot identity = %#v, want %#v", got, staging)
 	}
 }
 
@@ -83,7 +91,7 @@ func TestCompileAuthorizationSnapshotRejectsKindCapabilityAndImplicitRoles(t *te
 		t.Fatal(err)
 	}
 	allowed, err = snapshot.Allows(bindings[0].Subject, model, access.CapabilityResourcePublish)
-	if err != nil || allowed {
+	if !errors.Is(err, access.ErrCapabilityNotAllowed) || allowed {
 		t.Fatalf("captured role authorized unsupported model capability: allowed=%v err=%v", allowed, err)
 	}
 }
