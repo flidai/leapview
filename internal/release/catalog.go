@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type ProjectRecord struct {
@@ -22,7 +23,7 @@ type CatalogRepository interface {
 }
 
 type DeploymentLinkage interface {
-	Get(context.Context, string, string) (Release, error)
+	Get(context.Context, projectgraph.ResourceID, string) (Release, error)
 	LinkDeployment(context.Context, string, string, string, string) error
 	LinkDeploymentTx(context.Context, transaction.Transaction, string, string, string, string) error
 	DeploymentRelease(context.Context, string, string) (string, string, error)

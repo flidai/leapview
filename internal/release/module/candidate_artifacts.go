@@ -27,7 +27,7 @@ type candidateArtifactService struct {
 	artifacts   release.ArtifactStore
 	validator   servingstatevalidate.Service
 	environment servingstate.Environment
-	pins        release.CandidatePinResolver
+	pins        ManagedDataPins
 	provenance  release.ServingStateProvenanceRepository
 }
 
@@ -41,10 +41,10 @@ type candidateGenerationBase struct {
 // Prepare creates exactly one project-generation serving artifact for one
 // candidate target.
 func (service *candidateArtifactService) Prepare(ctx context.Context, request release.CandidateArtifactRequest) (release.CandidateArtifactSet, error) {
-	if request.CandidateID != strings.TrimSpace(request.CandidateID) || request.OwnerID != strings.TrimSpace(request.OwnerID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.Source.ProjectID != strings.TrimSpace(request.Source.ProjectID) || request.Source.ArtifactDigest != strings.TrimSpace(request.Source.ArtifactDigest) || request.Source.ProjectPath != strings.TrimSpace(request.Source.ProjectPath) || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || request.Source.ProjectArtifactPath != strings.TrimSpace(request.Source.ProjectArtifactPath) {
+	if request.CandidateID != strings.TrimSpace(request.CandidateID) || request.OwnerID != strings.TrimSpace(request.OwnerID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.Source.ArtifactDigest != strings.TrimSpace(request.Source.ArtifactDigest) || request.Source.ProjectPath != strings.TrimSpace(request.Source.ProjectPath) || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || request.Source.ProjectArtifactPath != strings.TrimSpace(request.Source.ProjectArtifactPath) {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactInvalid
 	}
-	if service == nil || service.states == nil || service.artifacts == nil || request.CandidateID == "" || request.Scope.Validate() != nil || request.OwnerID == "" || request.Source.ProjectArtifactPath == "" || request.Source.ProjectID != request.Scope.ProjectID.String() || request.Source.ArtifactDigest != request.ArtifactDigest || platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil || platformdigest.ValidateSHA256Identity(request.Source.ProjectDigest) != nil {
+	if service == nil || service.states == nil || service.artifacts == nil || request.CandidateID == "" || request.Scope.Validate() != nil || request.OwnerID == "" || request.Source.ProjectArtifactPath == "" || request.Source.ProjectID.Validate() != nil || request.Source.ProjectID != request.Scope.ProjectID || request.Source.ArtifactDigest != request.ArtifactDigest || platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil || platformdigest.ValidateSHA256Identity(request.Source.ProjectDigest) != nil {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactInvalid
 	}
 	if request.Scope.Environment != string(service.environment) {
@@ -94,12 +94,20 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 		if service.pins == nil {
 			return release.CandidateArtifactSet{}, candidateArtifactUnavailable(errors.New("managed-data candidate pin resolution is unavailable"))
 		}
-		resolved, resolveErr := service.pins.ResolveCandidatePins(ctx, projectID.String(), missing, string(environment))
+		missingIDs := make([]projectgraph.ResourceID, len(missing))
+		for index, connection := range missing {
+			connectionID, parseErr := projectgraph.NewResourceID(connection)
+			if parseErr != nil {
+				return release.CandidateArtifactSet{}, candidateArtifactInvalid(parseErr)
+			}
+			missingIDs[index] = connectionID
+		}
+		resolved, resolveErr := service.pins.ResolveCandidatePins(ctx, projectID, missingIDs, string(environment))
 		if resolveErr != nil {
 			return release.CandidateArtifactSet{}, candidateArtifactUnavailable(resolveErr)
 		}
 		for connection, revision := range resolved {
-			base.pins[connection] = revision
+			base.pins[connection.String()] = revision
 		}
 	}
 	dataMode := release.GenerationDataRefreshSources

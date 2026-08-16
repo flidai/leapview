@@ -36,7 +36,7 @@ type Module struct {
 type Config struct {
 	Database          *sql.DB
 	States            ServingStateRepository
-	ManagedDataPins   release.ManagedDataPins
+	ManagedDataPins   ManagedDataPins
 	ManagedDataHook   validate.Hook
 	ArtifactDirectory string
 	Environment       servingstate.Environment
@@ -45,8 +45,8 @@ type Config struct {
 }
 
 type ServingStateRepository interface {
-	release.ServingStateRepository
 	validate.Repository
+	Create(context.Context, servingstate.CreateInput) (servingstate.State, error)
 	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
 	ActiveArtifact(
 		context.Context,
@@ -54,6 +54,11 @@ type ServingStateRepository interface {
 		servingstate.Environment,
 	) (servingstate.State, servingstate.Artifact, error)
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
+}
+
+type ManagedDataPins interface {
+	release.PinValidator
+	ResolveCandidatePins(context.Context, projectgraph.ResourceID, []projectgraph.ResourceID, string) (map[projectgraph.ResourceID]string, error)
 }
 
 type projectcatalogSearcher interface {

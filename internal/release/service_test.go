@@ -71,7 +71,8 @@ func TestValidateFinalizationRequiresEveryArtifactToMatchReleaseConnectionPins(t
 	require.ErrorIs(t, err, pinErr)
 	require.Equal(t, StatusFailed, got.Status)
 	require.False(t, repo.completed)
-	require.Equal(t, map[string]string{"orders": "sha256:" + strings.Repeat("c", 64)}, pins.expected)
+	require.Equal(t, identity, pins.identity)
+	require.Equal(t, map[projectgraph.ResourceID]string{"orders": "sha256:" + strings.Repeat("c", 64)}, pins.expected)
 }
 
 func TestValidateFinalizationReplaysReadyRelease(t *testing.T) {
@@ -170,14 +171,14 @@ func (v serviceTestArtifactValidator) Validate(context.Context, servingstate.ID)
 }
 
 type serviceTestPinValidator struct {
-	stateID, projectID string
-	expected           map[string]string
-	err                error
+	identity projectgraph.ServingIdentity
+	expected map[projectgraph.ResourceID]string
+	err      error
 }
 
-func (v *serviceTestPinValidator) ValidateServingStatePins(_ context.Context, stateID servingstate.ID, projectID string, expected map[string]string) error {
-	v.stateID, v.projectID = string(stateID), projectID
-	v.expected = make(map[string]string, len(expected))
+func (v *serviceTestPinValidator) ValidateServingStatePins(_ context.Context, identity projectgraph.ServingIdentity, expected map[projectgraph.ResourceID]string) error {
+	v.identity = identity
+	v.expected = make(map[projectgraph.ResourceID]string, len(expected))
 	for key, value := range expected {
 		v.expected[key] = value
 	}

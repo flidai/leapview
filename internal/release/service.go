@@ -39,7 +39,7 @@ type ArtifactValidator interface {
 	Validate(context.Context, servingstate.ID) (servingstate.State, error)
 }
 type PinValidator interface {
-	ValidateServingStatePins(context.Context, servingstate.ID, string, map[string]string) error
+	ValidateServingStatePins(context.Context, projectgraph.ServingIdentity, map[projectgraph.ResourceID]string) error
 }
 type CandidateProvenanceRepository interface {
 	RetainCandidateProvenance(context.Context, projectgraph.ResourceID, Provenance) (Provenance, error)
@@ -233,11 +233,15 @@ func (s *Service) ValidateFinalization(ctx context.Context, projectID, releaseID
 		return s.failFinalization(ctx, current, fmt.Errorf("%w: managed-data pin validation is unavailable", ErrConflict))
 	}
 	if s.pins != nil {
-		pins := make(map[string]string, len(current.Manifest.Connections))
+		pins := make(map[projectgraph.ResourceID]string, len(current.Manifest.Connections))
 		for _, pin := range current.Manifest.Connections {
-			pins[pin.ConnectionID] = pin.RevisionID
+			connectionID, parseErr := projectgraph.NewResourceID(pin.ConnectionID)
+			if parseErr != nil {
+				return s.failFinalization(ctx, current, fmt.Errorf("%w: invalid managed-data connection identity", ErrConflict))
+			}
+			pins[connectionID] = pin.RevisionID
 		}
-		if err := s.pins.ValidateServingStatePins(ctx, servingstate.ID(current.ServingIdentity.GenerationID), identity.ProjectID.String(), pins); err != nil {
+		if err := s.pins.ValidateServingStatePins(ctx, identity, pins); err != nil {
 			return s.failFinalization(ctx, current, err)
 		}
 	}
