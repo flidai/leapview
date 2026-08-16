@@ -11,7 +11,7 @@ import (
 	admincli "github.com/flidai/leapview/internal/admin/cli"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/platform/locking"
+	locking "github.com/flidai/leapview/internal/platform/locking"
 )
 
 func TestAdminBackupWritesInstanceArchive(t *testing.T) {
