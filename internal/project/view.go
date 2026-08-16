@@ -145,8 +145,9 @@ func FilterProjectAssets(assets []DevelopAssetView, typ, query string) []Develop
 }
 
 // FilterProjectLandingAssets limits the project landing surface to assets
-// owned by the project. Connections and sources remain available in the full
-// project asset graph as project-scoped dependencies.
+// owned by the project. Sources are first-class assets on the data area;
+// connections remain available in the full project asset graph as a
+// project-scoped dependency.
 func FilterProjectLandingAssets(assets []DevelopAssetView, typ, query string) []DevelopAssetView {
 	typ = strings.TrimSpace(typ)
 	query = strings.ToLower(strings.TrimSpace(query))
@@ -196,7 +197,7 @@ func AssetByID(assets []DevelopAssetView, id string) (DevelopAssetView, bool) {
 
 func IsProjectLandingAsset(typ string) bool {
 	switch typ {
-	case string(AssetTypeModelTable), string(AssetTypeSemanticModel), string(AssetTypeDashboard), string(AssetTypeRefreshPipeline):
+	case string(AssetTypeSource), string(AssetTypeModelTable), string(AssetTypeSemanticModel), string(AssetTypeDashboard), string(AssetTypeRefreshPipeline):
 		return true
 	default:
 		return false

@@ -36,6 +36,23 @@ func TestCandidateManagedPinsSortAndFindMissingConnections(t *testing.T) {
 	require.Equal(t, []string{"missing"}, missingCandidateManagedConnections([]string{"a_connection", "missing"}, pins))
 }
 
+func TestCandidateManagedDataPinMapDropsRemovedBaseConnections(t *testing.T) {
+	base := map[string]string{"orders": "revision_orders", "legacy": "revision_legacy"}
+
+	pins := candidateManagedDataPinMap([]string{"orders"}, base)
+
+	require.Equal(t, map[string]string{"orders": "revision_orders"}, pins)
+}
+
+func TestCandidateManagedDataPinMapDoesNotRetainSwitchedManagedConnection(t *testing.T) {
+	base := map[string]string{"legacy": "revision_legacy"}
+
+	pins := candidateManagedDataPinMap([]string{"orders"}, base)
+
+	require.Empty(t, pins)
+	require.Equal(t, []string{"orders"}, missingCandidateManagedConnections([]string{"orders"}, pins))
+}
+
 func TestCandidateSourcesDataRevisionIsPinOrderIndependent(t *testing.T) {
 	first := candidateSourcesDataRevision("sha256:artifact", map[string]string{
 		"z_connection": "revision_z",

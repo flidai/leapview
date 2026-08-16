@@ -60,16 +60,22 @@ func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
 				t.Fatalf("develop navigation = %#v", chrome.Sidebar.Groups)
 			}
 			got := []string{}
+			gotIcons := []string{}
 			for _, item := range chrome.Sidebar.Groups[0].Items {
 				got = append(got, item.ID)
+				gotIcons = append(gotIcons, item.Icon)
 			}
 			want := []string{"data", "models", "semantic-models", "pipelines", "connections"}
+			wantIcons := []string{"database", "boxes", "waypoints", "workflow", "data"}
 			if len(got) != len(want) {
 				t.Fatalf("develop navigation = %v, want %v", got, want)
 			}
 			for index := range want {
 				if got[index] != want[index] {
 					t.Fatalf("develop navigation = %v, want %v", got, want)
+				}
+				if gotIcons[index] != wantIcons[index] {
+					t.Fatalf("develop navigation icons = %v, want %v", gotIcons, wantIcons)
 				}
 			}
 			if chrome.Sidebar.History != nil || chrome.Sidebar.PrimaryAction != nil {

@@ -28,7 +28,7 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 		t.Fatalf("walk routes: %v", err)
 	}
 	sort.Strings(got)
-	want := []string{"GET /", "GET /connections", "GET /connections/{asset}/{section}", "GET /data", "GET /data/{asset}/{section}", "POST /data/search", "GET /explore", "GET /models", "GET /models/{asset}/{section}", "GET /pipelines", "GET /pipelines/{asset}/{section}", "GET /semantic-models", "GET /semantic-models/{asset}/{section}", "POST /catalog/search", "POST /connections/search"}
+	want := []string{"GET /", "GET /connections", "GET /connections/{asset}/{section}", "GET /data", "GET /data/{asset}/{section}", "POST /data/search", "GET /explore", "GET /models", "GET /models/{asset}/{section}", "POST /models/search", "GET /pipelines", "GET /pipelines/{asset}/{section}", "GET /semantic-models", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/search", "POST /catalog/search", "POST /connections/search"}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)

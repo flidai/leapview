@@ -91,7 +91,8 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	missing := missingCandidateManagedConnections(managed, base.pins)
+	managedPins := candidateManagedDataPinMap(managed, base.pins)
+	missing := missingCandidateManagedConnections(managed, managedPins)
 	if len(missing) > 0 {
 		if service.pins == nil {
 			return release.CandidateArtifactSet{}, candidateArtifactUnavailable(errors.New("managed-data candidate pin resolution is unavailable"))
@@ -104,22 +105,37 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 			}
 			missingIDs[index] = connectionID
 		}
+		missingSet := make(map[string]struct{}, len(missing))
+		for _, connection := range missing {
+			missingSet[connection] = struct{}{}
+		}
 		resolved, resolveErr := service.pins.ResolveCandidatePins(ctx, projectID, missingIDs, string(environment))
 		if resolveErr != nil {
 			return release.CandidateArtifactSet{}, candidateArtifactUnavailable(resolveErr)
 		}
 		for connection, revision := range resolved {
-			base.pins[connection.String()] = revision
+			if _, requested := missingSet[connection.String()]; !requested {
+				// A resolver must return only requested IDs. Ignore any
+				// unexpected result so stale base pins cannot leak into the
+				// candidate generation.
+				continue
+			}
+			managedPins[connection.String()] = revision
+		}
+		for _, connection := range missing {
+			if _, resolved := managedPins[connection]; !resolved {
+				return release.CandidateArtifactSet{}, candidateArtifactUnavailable(errors.New("managed-data candidate pin resolution returned incomplete result"))
+			}
 		}
 	}
 	dataMode := release.GenerationDataRefreshSources
-	dataRevision := candidateSourcesDataRevision(request.ArtifactDigest, base.pins)
+	dataRevision := candidateSourcesDataRevision(request.ArtifactDigest, managedPins)
 	if base.active && base.snapshotID > 0 && !plan.Summary.MaterializationImpact && base.graph.Validate() == nil {
 		dataMode = release.GenerationDataReuseSnapshot
 		dataRevision = fmt.Sprintf("snapshot:%d", base.snapshotID)
 		authored = nil
 	}
-	if dataMode == release.GenerationDataRefreshSources && len(requirements) == 0 && len(base.pins) == 0 && len(authored) == 0 {
+	if dataMode == release.GenerationDataRefreshSources && len(requirements) == 0 && len(managedPins) == 0 && len(authored) == 0 {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("project requires data preparation but has no refresh-capable connections"))
 	}
 	state, err := service.states.Create(ctx, servingstate.CreateInput{ProjectID: projectID, Environment: environment, CreatedBy: request.OwnerID, Source: servingstate.SourceCandidate})
@@ -136,7 +152,7 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 		_ = service.states.MarkFailed(ctx, state.ID, err)
 		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
 	}
-	validated, err := service.validator.ValidateWithManagedDataRevisions(ctx, state.ID, base.pins)
+	validated, err := service.validator.ValidateWithManagedDataRevisions(ctx, state.ID, managedPins)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -159,7 +175,7 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 	return release.CandidateArtifactSet{
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), ContentDigest: validated.Digest, CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()},
 		AuthorizationFingerprint: authorizationFingerprint,
-		Generation:               release.CandidateGenerationArtifact{Identity: identity, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, ManagedDataPins: candidateManagedDataPins(base.pins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions},
+		Generation:               release.CandidateGenerationArtifact{Identity: identity, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions},
 	}, nil
 }
 
@@ -274,6 +290,16 @@ func candidateManagedDataPins(values map[string]string) []release.ManagedDataPin
 		result = append(result, release.ManagedDataPin{ConnectionID: connection, RevisionID: values[connection]})
 	}
 	return result
+}
+
+func candidateManagedDataPinMap(managed []string, base map[string]string) map[string]string {
+	pins := make(map[string]string, len(managed))
+	for _, connection := range managed {
+		if revision, ok := base[connection]; ok {
+			pins[connection] = revision
+		}
+	}
+	return pins
 }
 
 // candidateSourcesDataRevision is release provenance for a source-refresh

@@ -4,6 +4,7 @@ import {
 	Activity,
 	ArrowLeft,
 	Bot,
+	Boxes,
 	ChartNoAxesCombined,
 	Code2,
 	Database,
@@ -24,6 +25,7 @@ import {
 	Users,
 	UsersRound,
 	User,
+	Waypoints,
   Workflow,
   X,
   type IconNode,
@@ -113,6 +115,8 @@ type IconName =
   | 'history'
   | 'insights'
   | 'model'
+  | 'boxes'
+  | 'waypoints'
   | 'data'
   | 'cache'
   | 'settings'
@@ -1152,7 +1156,8 @@ class LeapViewSidebar extends LitElement {
     if (changedProperties.has('config')) this.syncSidebarWidth()
   }
 
-  protected updated(): void {
+  protected updated(changedProperties: PropertyValues<this>): void {
+    if (changedProperties.has('config')) this.rememberCurrentArea()
     this.toggleAttribute('data-admin', Boolean(this.config.admin))
     if (this.config.area) this.setAttribute('data-area', this.config.area)
     else this.removeAttribute('data-area')
@@ -1625,6 +1630,7 @@ class LeapViewSidebar extends LitElement {
 function icon(name: string) {
   const icons: Record<IconName, IconNode> = {
     catalog: Layers,
+    boxes: Boxes,
     dashboard: LayoutDashboard,
     chat: MessagesSquare,
     bot: Bot,
@@ -1636,6 +1642,7 @@ function icon(name: string) {
     data: Plug,
     cache: TableProperties,
     code: Code2,
+    waypoints: Waypoints,
     settings: Settings,
     system: Monitor,
     activity: Activity,

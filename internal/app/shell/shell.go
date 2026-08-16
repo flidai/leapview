@@ -189,8 +189,8 @@ func insightsNavigation() []Item {
 func developNavigation() []Item {
 	return []Item{
 		{ID: "data", Label: "Data", Href: "/data", Icon: "database"},
-		{ID: "models", Label: "Models", Href: "/models", Icon: "model"},
-		{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "model"},
+		{ID: "models", Label: "Models", Href: "/models", Icon: "boxes"},
+		{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "waypoints"},
 		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"},
 		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"},
 	}

@@ -78,6 +78,8 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Post("/catalog/search", wrap(h.CatalogSearch))
 	r.Post("/data/search", wrap(h.DataSearch))
 	r.Post("/connections/search", wrap(h.ConnectionsSearch))
+	r.Post("/models/search", wrap(h.ModelsSearch))
+	r.Post("/semantic-models/search", wrap(h.SemanticModelsSearch))
 }
 
 func (h *BrowserHandler) Insights(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -205,10 +207,18 @@ func (h *BrowserHandler) Connections(w stdhttp.ResponseWriter, r *stdhttp.Reques
 }
 
 func (h *BrowserHandler) DataSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	typ := strings.TrimSpace(r.URL.Query().Get("projectAssetType"))
-	if typ == "" {
-		typ = string(projectview.AssetTypeSource)
-	}
+	h.projectAreaSearch(w, r, string(projectview.AssetTypeSource))
+}
+
+func (h *BrowserHandler) ModelsSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.projectAreaSearch(w, r, string(projectview.AssetTypeModelTable))
+}
+
+func (h *BrowserHandler) SemanticModelsSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.projectAreaSearch(w, r, string(projectview.AssetTypeSemanticModel))
+}
+
+func (h *BrowserHandler) projectAreaSearch(w stdhttp.ResponseWriter, r *stdhttp.Request, typ string) {
 	kind, ok := catalogKindForAssetType(typ)
 	if !ok {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
@@ -222,6 +232,9 @@ func (h *BrowserHandler) DataSearch(w stdhttp.ResponseWriter, r *stdhttp.Request
 		return
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("projectAssetQuery"))
+	if query == "" {
+		query = strings.TrimSpace(r.FormValue("projectAssetQuery"))
+	}
 	patch := projectui.ProjectAssetListResultsPatch(projectID.String(), projectview.FilterProjectLandingAssets(assets, typ, query), edges)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
@@ -283,10 +296,15 @@ func (h *BrowserHandler) projectBootstrap(w stdhttp.ResponseWriter, r *stdhttp.R
 	if !ok {
 		return nil, false
 	}
-	assets = projectview.FilterProjectLandingAssets(assets, r.URL.Query().Get("type"), r.URL.Query().Get("q"))
+	area := strings.TrimSpace(r.URL.Query().Get("area"))
+	if area == "" {
+		area = "data"
+	}
+	activeType := projectAreaType(area)
+	assets = projectview.FilterProjectLandingAssets(assets, activeType, r.URL.Query().Get("q"))
 	catalog := h.navigationCatalog(r)
 	project := projectview.DevelopView{ID: projectID.String(), Title: catalog.Project.Title, Description: catalog.Project.Description}
-	return projectui.ProjectBootstrapSignalsForEnvironment(catalog, project, assets, r.URL.Query().Get("type"), r.URL.Query().Get("q"), h.Environment, "", h.layout(r)), true
+	return projectui.ProjectBootstrapSignalsForArea(catalog, project, assets, area, activeType, r.URL.Query().Get("q"), h.Environment, "", h.layout(r)), true
 }
 
 func (h *BrowserHandler) connectionsBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Request) (map[string]any, bool) {
@@ -586,6 +604,17 @@ func catalogKindForAssetType(typ string) (projectgraph.Kind, bool) {
 		return projectgraph.KindPipeline, true
 	default:
 		return "", false
+	}
+}
+
+func projectAreaType(area string) string {
+	switch strings.TrimSpace(area) {
+	case "models":
+		return string(projectview.AssetTypeModelTable)
+	case "semantic-models":
+		return string(projectview.AssetTypeSemanticModel)
+	default:
+		return string(projectview.AssetTypeSource)
 	}
 }
 

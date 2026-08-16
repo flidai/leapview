@@ -26,14 +26,14 @@ func ProjectPage(catalog catalog.Catalog, project projectview.DevelopView, asset
 }
 
 func ProjectPageForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, activeType, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
-	page := projectPageSignal(project, assets, nil, activeType, query, environment)
+	page := projectPageSignal(project, assets, nil, "data", activeType, query, environment)
 	attrs := []g.Node{
 		g.Attr("slot", "page"),
 	}
 	// Access/group/role-binding administration is owned by the access/admin
 	// surfaces. The Develop catalog only renders the active project's assets.
-	extras := projectDocumentExtras{CSRFToken: csrfToken}
-	attrs = append(attrs, projectAssetFilterRouteBridge(project.ID, environment)...)
+	extras := projectDocumentExtras{CSRFToken: csrfToken, Area: "data"}
+	attrs = append(attrs, projectAssetFilterRouteBridge("data")...)
 	return projectRouteDocument(project.Title, catalog, "data", roleLabel, page, uisignals.RouteKindData,
 		g.El("lv-project-page", attrs...),
 		extras,
@@ -45,13 +45,11 @@ func ProjectPageForEnvironment(catalog catalog.Catalog, project projectview.Deve
 // canonical Develop resource areas. The project identity remains server-bound
 // in the page signal; area only controls navigation and filtering.
 func ProjectAreaPage(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, area, activeType, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
-	area = strings.TrimSpace(area)
-	if area == "" {
-		area = "data"
-	}
-	page := projectPageSignal(project, assets, nil, activeType, query, environment)
-	attrs := []g.Node{g.Attr("slot", "page"), g.Attr("data-on:lv-project-asset-filter__debounce.200ms", "$projectAssetType = evt.detail.type; $projectAssetQuery = evt.detail.query")}
-	return projectRouteDocument(project.Title, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-page", attrs...), projectDocumentExtras{CSRFToken: csrfToken}, chromeOptions)
+	area = canonicalProjectArea(area)
+	page := projectPageSignal(project, assets, nil, area, activeType, query, environment)
+	attrs := []g.Node{g.Attr("slot", "page")}
+	attrs = append(attrs, projectAssetFilterRouteBridge(area)...)
+	return projectRouteDocument(project.Title, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-page", attrs...), projectDocumentExtras{CSRFToken: csrfToken, Area: area}, chromeOptions)
 }
 
 func ProjectBootstrapSignals(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, activeType, query, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
@@ -59,8 +57,13 @@ func ProjectBootstrapSignals(catalog catalog.Catalog, project projectview.Develo
 }
 
 func ProjectBootstrapSignalsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, activeType, query, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
-	page := projectPageSignal(project, assets, nil, activeType, query, environment)
-	return projectRouteBootstrapSignals(catalog, "data", roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
+	return ProjectBootstrapSignalsForArea(catalog, project, assets, "data", activeType, query, environment, roleLabel, chromeOptions...)
+}
+
+func ProjectBootstrapSignalsForArea(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, area, activeType, query, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
+	area = canonicalProjectArea(area)
+	page := projectPageSignal(project, assets, nil, area, activeType, query, environment)
+	return projectRouteBootstrapSignals(catalog, area, roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
 }
 
 func ProjectAssetListResultsPatch(projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) map[string]any {
@@ -130,6 +133,7 @@ func catalogWithoutProjectContext(value catalog.Catalog) catalog.Catalog {
 
 type projectDocumentExtras struct {
 	CSRFToken        string
+	Area             string
 	BootstrapSignals map[string]any
 }
 
@@ -157,12 +161,18 @@ func connectionAdministrationRouteBridge(commands ConnectionCommandBindings) []g
 	}
 }
 
-func projectAssetFilterRouteBridge(projectID, environment string) []g.Node {
-	filter := "$projectAssetType = evt.detail.type; $projectAssetQuery = evt.detail.query; " + uiactions.QueryPost("/data/search", "projectAssetType", "projectAssetQuery")
+func projectAssetFilterRouteBridge(area string) []g.Node {
+	endpoint := projectAssetSearchHref(area)
+	filter := "$projectAssetType = evt.detail.type; $projectAssetQuery = evt.detail.query; " + uiactions.QueryPost(endpoint, "projectAssetType", "projectAssetQuery")
 	return []g.Node{g.Attr("data-on:lv-project-asset-filter__debounce.200ms", filter)}
 }
 
-func projectPageSignal(project projectview.DevelopView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeType, query, environment string) uisignals.ResourcePageSignal {
+func projectPageSignal(project projectview.DevelopView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, area, activeType, query, environment string) uisignals.ResourcePageSignal {
+	area = canonicalProjectArea(area)
+	assetType := projectAssetTypeForArea(area)
+	// Each route owns one resource type. Keep the signal scoped even when a
+	// stale query or client event supplies a different type.
+	activeType = assetType
 	return uisignals.ResourcePageSignal{
 		Kind:        uisignals.RouteKindData,
 		Title:       project.Title,
@@ -174,9 +184,9 @@ func projectPageSignal(project projectview.DevelopView, assets []projectview.Dev
 			edges,
 			activeType,
 			query,
-			projectAssetListTabs(project.ID, activeType, query),
+			nil,
 			"No assets match this view.",
-			"/data",
+			projectAssetBaseHref(area),
 		)),
 	}
 }
@@ -284,19 +294,6 @@ func projectAssetTypePriority(typ string) int {
 	default:
 		return 10
 	}
-}
-
-func projectAssetListTabs(projectID, activeType, query string) []uisignals.ResourceTabSignal {
-	types := []string{"", "model_table", "semantic_model", "dashboard"}
-	tabs := make([]uisignals.ResourceTabSignal, 0, len(types))
-	for _, typ := range types {
-		label := "All"
-		if typ != "" {
-			label = assetTypeLabel(typ)
-		}
-		tabs = append(tabs, uisignals.ResourceTabSignal{ID: typ, Label: label, Href: projectAssetHref(projectID, typ, query), Active: typ == activeType})
-	}
-	return tabs
 }
 
 func projectAssetSummarySignal(projectID string, asset projectview.DevelopAssetView, assetIndex map[string]projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) uisignals.ResourceAssetSummarySignal {
@@ -643,7 +640,7 @@ func projectRouteUpdatesURL(routeKind uisignals.RouteKind, catalog catalog.Catal
 	switch typed := page.(type) {
 	case uisignals.ResourcePageSignal:
 		assetList := uisignals.ValueOrZero(typed.AssetList)
-		return updatesURL(routeKind, "surface", "project", "environment", uisignals.ValueOrZero(typed.Environment), "type", firstNonEmpty(uisignals.ValueOrZero(assetList.ActiveType), uisignals.ValueOrZero(typed.ListFilter)), "q", firstNonEmpty(uisignals.ValueOrZero(assetList.Query), uisignals.ValueOrZero(typed.ListQuery)))
+		return updatesURL(routeKind, "surface", "project", "area", canonicalProjectArea(extras.Area), "environment", uisignals.ValueOrZero(typed.Environment), "type", firstNonEmpty(uisignals.ValueOrZero(assetList.ActiveType), uisignals.ValueOrZero(typed.ListFilter)), "q", firstNonEmpty(uisignals.ValueOrZero(assetList.Query), uisignals.ValueOrZero(typed.ListQuery)))
 	case uisignals.ConnectionsPageSignal:
 		return updatesURL(routeKind, "surface", "connections", "environment", uisignals.ValueOrZero(typed.Environment), "q", uisignals.ValueOrZero(typed.Query))
 	case uisignals.ResourceAssetPageSignal:
@@ -659,19 +656,34 @@ func projectRouteUpdatesURL(routeKind uisignals.RouteKind, catalog catalog.Catal
 	}
 }
 
-func projectAssetHref(projectID, typ, query string) string {
-	href := "/data"
-	values := url.Values{}
-	if typ != "" {
-		values.Set("type", typ)
+func projectAssetBaseHref(area string) string {
+	return "/" + canonicalProjectArea(area)
+}
+
+func projectAssetSearchHref(area string) string {
+	return projectAssetBaseHref(area) + "/search"
+}
+
+func canonicalProjectArea(area string) string {
+	switch strings.TrimSpace(area) {
+	case "models":
+		return "models"
+	case "semantic-models":
+		return "semantic-models"
+	default:
+		return "data"
 	}
-	if strings.TrimSpace(query) != "" {
-		values.Set("q", query)
+}
+
+func projectAssetTypeForArea(area string) string {
+	switch canonicalProjectArea(area) {
+	case "models":
+		return string(projectview.AssetTypeModelTable)
+	case "semantic-models":
+		return string(projectview.AssetTypeSemanticModel)
+	default:
+		return string(projectview.AssetTypeSource)
 	}
-	if encoded := values.Encode(); encoded != "" {
-		href += "?" + encoded
-	}
-	return href
 }
 
 func ValidProjectAssetSection(section string) bool {

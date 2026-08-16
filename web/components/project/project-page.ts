@@ -3,7 +3,6 @@ import { state } from 'lit/decorators.js'
 import {
   ArrowLeft,
   BookOpen,
-  Box,
   Cable,
   ChartColumn,
   Component,
@@ -19,6 +18,7 @@ import {
   SquareDashedMousePointer,
   Table2,
   TableProperties,
+  Waypoints,
   Workflow,
   type IconNode,
 } from 'lucide'
@@ -559,7 +559,7 @@ function assetIconNode(type: string): IconNode {
     case 'relationship':
       return Workflow
     case 'semantic_model':
-      return Box
+      return Waypoints
     case 'source':
       return Cable
     case 'table':

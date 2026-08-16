@@ -804,6 +804,27 @@ test('sidebar switches between Insights and Develop and remembers the last area 
   }
 })
 
+test('sidebar remembers the active area route on direct shell loads', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-active-nav`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    await page.evaluate(() => {
+      localStorage.removeItem('leapview-area-last-insights')
+      localStorage.removeItem('leapview-area-last-develop')
+    })
+    await page.reload()
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    expect(await page.evaluate(() => localStorage.getItem('leapview-area-last-develop'))).toBe('/sidebar-active-nav')
+
+    await page.goto(`${baseURL}/`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    expect(await page.evaluate(() => localStorage.getItem('leapview-area-last-insights'))).toBe('/')
+  } finally {
+    await page.close()
+  }
+})
+
 test('insights and develop navigation expose the stable route contract without subtitles', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
@@ -814,6 +835,7 @@ test('insights and develop navigation expose the stable route contract without s
       const root = sidebar.shadowRoot!
       const links = (group: string) => Array.from(root.querySelectorAll(`#mobile-navigation .nav-group[aria-label="${group}"] a`)).map((link: Element) => ({
         label: link.textContent?.trim(), href: link.getAttribute('href'),
+        icon: link.querySelector('svg')?.innerHTML ?? '',
       }))
       return {
         insights: links('Insights'),
@@ -827,20 +849,24 @@ test('insights and develop navigation expose the stable route contract without s
     const developState = await navigationState()
     expect(developState.insights).toEqual([])
     expect(developState.develop).toEqual([
-      { label: 'Data', href: '/data' },
-      { label: 'Models', href: '/models' },
-      { label: 'Semantic models', href: '/semantic-models' },
-      { label: 'Pipelines', href: '/pipelines' },
-      { label: 'Connections', href: '/connections' },
+      { label: 'Data', href: '/data', icon: expect.any(String) },
+      { label: 'Models', href: '/models', icon: expect.any(String) },
+      { label: 'Semantic models', href: '/semantic-models', icon: expect.any(String) },
+      { label: 'Pipelines', href: '/pipelines', icon: expect.any(String) },
+      { label: 'Connections', href: '/connections', icon: expect.any(String) },
     ])
+    expect(developState.develop[0].icon).not.toBe(developState.develop[1].icon)
+    expect(developState.develop[1].icon).toContain('M2.97 12.92')
+    expect(developState.develop[2].icon).toContain('M6 12h12')
+    expect(developState.develop[1].icon).not.toBe(developState.develop[2].icon)
     expect(developState.subtitles).toEqual([])
 
     await page.goto(`${baseURL}/`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     const insightsState = await navigationState()
     expect(insightsState.insights).toEqual([
-      { label: 'Dashboards', href: '/' },
-      { label: 'Data Explorer', href: '/explore' },
+      { label: 'Dashboards', href: '/', icon: expect.any(String) },
+      { label: 'Data Explorer', href: '/explore', icon: expect.any(String) },
     ])
     expect(insightsState.develop).toEqual([])
     expect(insightsState.subtitles).toEqual([])
@@ -1170,8 +1196,8 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
         label: 'Develop',
         items: [
           { id: 'data', label: 'Data', href: '/data', icon: 'database' },
-          { id: 'models', label: 'Models', href: '/models', icon: 'model' },
-          { id: 'semantic-models', label: 'Semantic models', href: '/semantic-models', icon: 'model' },
+          { id: 'models', label: 'Models', href: '/models', icon: 'boxes' },
+          { id: 'semantic-models', label: 'Semantic models', href: '/semantic-models', icon: 'waypoints' },
           { id: 'pipelines', label: 'Pipelines', href: '/pipelines', icon: 'workflow' },
           { id: 'connections', label: 'Connections', href: '/connections', icon: 'data' },
         ],
