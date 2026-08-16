@@ -256,6 +256,9 @@ func normalizeLeaseRequest(input CandidateLeaseRequest, now time.Time) (Candidat
 }
 
 func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibility, error) {
+	if value.ArtifactDigest != strings.TrimSpace(value.ArtifactDigest) || value.DataRevision != strings.TrimSpace(value.DataRevision) || value.RuntimeVersion != strings.TrimSpace(value.RuntimeVersion) || value.AuthorizationFingerprint != strings.TrimSpace(value.AuthorizationFingerprint) {
+		return CandidateCompatibility{}, fmt.Errorf("%w: compatibility fingerprints must be canonical", ErrCandidateRuntimeInvalid)
+	}
 	value.ArtifactDigest = strings.TrimSpace(value.ArtifactDigest)
 	value.DataRevision = strings.TrimSpace(value.DataRevision)
 	value.RuntimeVersion = strings.TrimSpace(value.RuntimeVersion)

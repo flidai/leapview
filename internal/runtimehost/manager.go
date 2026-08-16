@@ -345,6 +345,12 @@ func (m *Manager) validateGeneration(state servingstate.State, artifact servings
 	if !state.CanActivate() {
 		return fmt.Errorf("serving state %s has status %q and cannot be prepared", state.ID, state.Status)
 	}
+	if err := platformdigest.ValidateSHA256Identity(state.Digest); err != nil {
+		return fmt.Errorf("serving state digest is invalid: %w", err)
+	}
+	if state.Digest != artifact.Digest {
+		return fmt.Errorf("serving state digest = %q, artifact digest = %q", state.Digest, artifact.Digest)
+	}
 	if _, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID)); err != nil {
 		return err
 	}
