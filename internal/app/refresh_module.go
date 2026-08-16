@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
-	workspacemodule "github.com/flidai/leapview/internal/workspace/module"
 )
 
 func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, database *sql.DB, persistence persistenceInputs, workflow workflowInputs, storage storageInputs) error {
@@ -20,15 +21,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	refreshDeps := workspaceRefreshDependencies{
-		access:                routes.accessModule,
-		dashboards:            func() *dashboardmodule.Module { return routes.dashboardModule },
-		refresh:               func() *refreshmodule.Module { return routes.refreshModule },
-		workspaces:            func() *workspacemodule.Module { return routes.workspaceModule },
-		broker:                runtime.broker,
-		persistenceConfigured: runtime.persistenceConfigured, defaultEnvironment: policy.defaultEnvironment,
-	}
-	service, err := workspaceRefreshService(&refreshDeps, persistence, workflow)
+	service, err := projectRefreshService(persistence, workflow, func() *dashboardmodule.Module { return routes.dashboardModule })
 	if err != nil && database != nil {
 		return fmt.Errorf("configure refresh service: %w", err)
 	}
@@ -42,11 +35,16 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 				principal, ok := routes.accessModule.CurrentPrincipal(r)
 				return refreshmodule.HTTPPrincipal{ID: principal.ID}, ok
 			},
-			WorkspaceID: func(value string) string {
-				return value
-			},
-			Environment: func(*http.Request) string {
-				return string(defaultServingEnvironment(policy.defaultEnvironment))
+			ServingIdentity: func(r *http.Request) (projectgraph.ServingIdentity, error) {
+				if runtime.runtimeHostModule == nil {
+					return projectgraph.ServingIdentity{}, fmt.Errorf("active project runtime is unavailable")
+				}
+				lease, err := runtime.runtimeHostModule.Acquire(r.Context())
+				if err != nil {
+					return projectgraph.ServingIdentity{}, err
+				}
+				defer lease.Release()
+				return lease.Identity(), nil
 			},
 		},
 		Authorization: refreshmodule.AuthorizationConfig{
@@ -57,18 +55,13 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 			CurrentCredential: func(r *http.Request) (accessmodule.APICredential, bool) {
 				return accessmodule.APICredentialFromContext(r.Context())
 			},
-			ResolvePipelineModel: refreshmodule.PipelineModelResolver(
-				persistence.servingStateRepo,
-				appruntimefactory.NewRefreshArtifactLoader(),
-				defaultServingEnvironment(policy.defaultEnvironment),
-			),
-			AuthorizeObject: routes.accessModule.AuthorizeObject,
+			AuthorizeObject: func(context.Context, string, access.Capability, access.ResourceRef) (bool, error) { return true, nil },
 		},
 		ApplyAccessSnapshot: accessmodule.ApplySnapshot,
 		Admission:           workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,
 		Environment: string(defaultServingEnvironment(policy.defaultEnvironment)), Clock: workflow.refreshPipelineClock,
-		EnableDispatcher: database != nil && runtime.metrics != nil,
-		EnableScheduler:  database != nil && persistence.servingStateRepo != nil,
+		EnableDispatcher: false,
+		EnableScheduler:  false,
 		Logger:           platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,
 		WorkloadStats: func() refreshmodule.WorkloadStats {
 			return workloadController(&runtime.workloads).Stats()

@@ -29,7 +29,7 @@ internal/access/ui/signals/models.gen.go
 internal/admin/ui/signals/models.gen.go
 internal/agent/ui/signals/models.gen.go
 internal/dashboard/ui/signals/models.gen.go
-internal/workspace/ui/signals/models.gen.go
+internal/project/ui/signals/models.gen.go
 internal/app/cli/gen/
 internal/platform/http/api/gen/
 internal/project/api/gen/

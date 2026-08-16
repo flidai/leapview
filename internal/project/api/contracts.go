@@ -17,15 +17,3 @@ type ProjectListResponse struct {
 	Items []ProjectResponse `json:"items"`
 	Page  PageInfo          `json:"page"`
 }
-
-type ProjectWorkspaceResponse struct {
-	ActiveServingStateID *string `json:"activeServingStateId,omitempty"`
-	Description          *string `json:"description,omitempty"`
-	ID                   string  `json:"id"`
-	Title                string  `json:"title"`
-}
-
-type ProjectWorkspaceListResponse struct {
-	Items []ProjectWorkspaceResponse `json:"items"`
-	Page  PageInfo                   `json:"page"`
-}

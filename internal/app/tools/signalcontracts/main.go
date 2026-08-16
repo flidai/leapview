@@ -45,9 +45,9 @@ var generationTargets = []generationTarget{
 		tags:       []string{"dashboard"},
 	},
 	{
-		name:       "workspace",
-		outputPath: "internal/workspace/ui/signals/models.gen.go",
-		tags:       []string{"workspace", "catalog", "connections", "data"},
+		name:       "project",
+		outputPath: "internal/project/ui/signals/models.gen.go",
+		tags:       []string{"project", "resource", "catalog", "connections", "data"},
 	},
 }
 

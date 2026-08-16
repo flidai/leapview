@@ -7,7 +7,6 @@ import (
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/workspace"
 )
 
 func (r dashboardRuntimeWithGraph) Verify(ctx context.Context) error {
@@ -37,14 +36,4 @@ func (r dashboardRuntimeWithGraph) AuthoredDashboardSource(dashboardID string) (
 		return projectartifact.AuthoredDashboardSource{}, false
 	}
 	return projectartifact.CloneAuthoredDashboardSource(source)
-}
-
-func (r dashboardRuntimeWithGraph) WorkspaceAssets(workspaceID, servingStateID string) ([]workspace.Asset, []workspace.AssetEdge, bool) {
-	if r.projectID.String() != workspaceID || r.servingStateID != servingStateID {
-		return nil, nil, false
-	}
-	// Project graphs no longer carry workspace-scoped asset payloads. The
-	// legacy asset adapter therefore fails closed until its project catalog
-	// consumer is composed.
-	return nil, nil, false
 }

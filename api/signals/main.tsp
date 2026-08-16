@@ -1897,73 +1897,6 @@ model SubSidebarSignal {
   `storageKey`: string;
 }
 
-model ProjectAccessCommand {
-  `bindingId`: string;
-  `email`: string;
-  `principalId`: string;
-  `privilege`: string;
-  `role`: string;
-  `subjectId`: string;
-  `subjectType`: string;
-  `subjects`: ProjectAccessSubject[];
-}
-
-model ProjectAccessSubject {
-  `subjectId`: string;
-  `subjectType`: string;
-}
-
-model ProjectAccessCandidate {
-  `detail`: string;
-  `label`: string;
-  `subjectId`: string;
-  `subjectType`: string;
-}
-
-model ProjectAccessSearchStatus {
-  `error`: string;
-  `loading`: boolean;
-}
-
-model ProjectAccessResponse {
-  `bindings`: unknown[];
-  `candidates`: ProjectAccessCandidate[];
-  `canManage`: boolean;
-  `mode`?: string;
-  `objectId`?: string;
-  `objectTitle`?: string;
-  `objectType`?: string;
-  `roles`: unknown[];
-  `search`: string;
-  `searchStatus`: ProjectAccessSearchStatus;
-  `status`: ProjectAccessStatus;
-  `project`: unknown;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["project", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "project" })
-model ProjectAccessSignal {
-  `bindings`: unknown[];
-  `candidates`: ProjectAccessCandidate[];
-  `canManage`: boolean;
-  `command`: ProjectAccessCommand;
-  `mode`?: string;
-  `objectId`?: string;
-  `objectTitle`?: string;
-  `objectType`?: string;
-  `roles`: unknown[];
-  `search`: string;
-  `searchStatus`: ProjectAccessSearchStatus;
-  `status`: ProjectAccessStatus;
-  `project`: unknown;
-}
-
-model ProjectAccessStatus {
-  `error`: string;
-  `loading`: boolean;
-  `message`: string;
-}
-
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model ResourceActionSignal {
@@ -1998,7 +1931,6 @@ model ResourceAssetListSignal {
   `query`?: string;
   `searchHref`: string;
   `tabs`: ResourceTabSignal[];
-  `projectId`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-envelope", tags: #["resource", "envelope"] })
@@ -2034,7 +1966,6 @@ model ResourceAssetPageSignal {
   `tabs`: ResourceTabSignal[];
   `title`: string;
   `versions`?: ResourceAssetVersionsSignal;
-  `projectId`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
@@ -2104,8 +2035,6 @@ model ResourcePageEnvelope {
   `runtime`: RouteRuntimeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
-  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "projectAccess" })
-  `projectAccess`?: ProjectAccessSignal;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
@@ -2118,8 +2047,6 @@ model ResourcePageSignal {
 	`listFilter`?: string;
 	`listQuery`?: string;
 	`title`: string;
-  `projectId`?: string;
-  `projects`?: ResourceCatalogItemSignal[];
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
