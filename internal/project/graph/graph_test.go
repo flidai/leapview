@@ -3,6 +3,7 @@ package graph
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -164,6 +165,35 @@ func TestGraphDefensivelyCopiesInputsAndOutputs(t *testing.T) {
 	}
 	if got, _ := g.Resource("model_orders"); got.Metadata.Tags[0] != "orders" {
 		t.Fatalf("resources escaped immutable graph: %#v", got)
+	}
+}
+
+func TestAffectedDashboardsUsesTransitiveResourceIDs(t *testing.T) {
+	project, err := NewProjectGraph([]Resource{
+		{ID: "project_demo", Kind: KindProject, Name: "demo"},
+		{ID: "dashboard_sales", Kind: KindDashboard, Name: "sales_dashboard"},
+		{ID: "dashboard_ops", Kind: KindDashboard, Name: "ops_dashboard"},
+		{ID: "semantic_sales", Kind: KindSemanticModel, Name: "sales"},
+		{ID: "semantic_ops", Kind: KindSemanticModel, Name: "ops"},
+		{ID: "model_orders", Kind: KindModel, Name: "orders"},
+		{ID: "model_inventory", Kind: KindModel, Name: "inventory"},
+	}, []Edge{
+		{From: "dashboard_sales", To: "semantic_sales"},
+		{From: "semantic_sales", To: "model_orders"},
+		{From: "dashboard_ops", To: "semantic_ops"},
+		{From: "semantic_ops", To: "model_inventory"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := project.Dependencies("dashboard_sales"), []ResourceID{"dashboard_sales", "model_orders", "semantic_sales"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("dependencies = %v, want %v", got, want)
+	}
+	if got, want := project.AffectedDashboards([]ResourceID{"model_orders", "model_inventory", "model_orders"}), []ResourceID{"dashboard_ops", "dashboard_sales"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("affected dashboards = %v, want %v", got, want)
+	}
+	if got := project.AffectedDashboards([]ResourceID{"connection_unrelated"}); len(got) != 0 {
+		t.Fatalf("unrelated changed IDs affected dashboards: %v", got)
 	}
 }
 

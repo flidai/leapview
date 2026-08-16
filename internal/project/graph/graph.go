@@ -271,6 +271,70 @@ func (g ProjectGraph) Resource(id ResourceID) (Resource, bool) {
 	return Resource{}, false
 }
 
+// Dependencies returns the transitive dependency closure of root. The root is
+// included in the result so callers can use the returned set to compare an
+// authored resource's complete evidence boundary. Edges are directed from a
+// resource to the resource it depends on.
+func (g ProjectGraph) Dependencies(root ResourceID) []ResourceID {
+	if root == "" {
+		return nil
+	}
+	seen := map[ResourceID]struct{}{root: {}}
+	queue := []ResourceID{root}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, edge := range g.edges {
+			if edge.From != current {
+				continue
+			}
+			if _, ok := seen[edge.To]; ok {
+				continue
+			}
+			seen[edge.To] = struct{}{}
+			queue = append(queue, edge.To)
+		}
+	}
+	out := make([]ResourceID, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// AffectedDashboards returns dashboard resource IDs whose dependency closure
+// intersects changed. Selection is graph-identity based: names, paths, and
+// metadata never participate. The result is deterministic and deduplicated.
+func (g ProjectGraph) AffectedDashboards(changed []ResourceID) []ResourceID {
+	if len(changed) == 0 {
+		return nil
+	}
+	changedSet := make(map[ResourceID]struct{}, len(changed))
+	for _, id := range changed {
+		if id != "" {
+			changedSet[id] = struct{}{}
+		}
+	}
+	if len(changedSet) == 0 {
+		return nil
+	}
+	ids := make([]ResourceID, 0)
+	for _, resource := range g.resources {
+		if resource.Kind != KindDashboard {
+			continue
+		}
+		for _, dependency := range g.Dependencies(resource.ID) {
+			if _, ok := changedSet[dependency]; ok {
+				ids = append(ids, resource.ID)
+				break
+			}
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
 // CanonicalBytes returns the deterministic portable graph artifact.
 func (g ProjectGraph) CanonicalBytes() []byte { return append([]byte(nil), g.canonical...) }
 

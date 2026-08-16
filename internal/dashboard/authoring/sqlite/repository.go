@@ -134,7 +134,21 @@ func (r *Repository) Get(ctx context.Context, projectID graph.ResourceID, dashbo
 	if err := dashboardID.Validate(); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
-	return r.getLifecycle(ctx, dashboarddb.New(r.db), projectID.String(), dashboardID)
+	lifecycle, err := r.getLifecycle(ctx, dashboarddb.New(r.db), projectID.String(), dashboardID)
+	if err != nil {
+		return authoring.DashboardLifecycle{}, err
+	}
+	failure, ok, err := r.latestRevalidationFailure(ctx, projectID.String(), dashboardID)
+	if err != nil {
+		return authoring.DashboardLifecycle{}, err
+	}
+	if ok {
+		lifecycle.Revalidation = &failure
+	}
+	if err := lifecycle.Validate(); err != nil {
+		return authoring.DashboardLifecycle{}, fmt.Errorf("validate stored dashboard lifecycle: %w", err)
+	}
+	return lifecycle, nil
 }
 
 func (r *Repository) List(ctx context.Context, projectID graph.ResourceID) ([]authoring.DashboardLifecycle, error) {
@@ -155,6 +169,165 @@ func (r *Repository) List(ctx context.Context, projectID graph.ResourceID) ([]au
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// CommitRevalidation atomically records immutable generation evidence and
+// advances only the published compilation pointer whose authored revision and
+// prior compiled identity still match. The active-generation check is inside
+// the same transaction, so a concurrent activation cannot publish stale
+// evidence.
+func (r *Repository) CommitRevalidation(ctx context.Context, input authoring.RevalidationCommit) error {
+	if err := validateRevalidationCommit(input); err != nil {
+		return err
+	}
+	depsJSON, err := json.Marshal(input.DependencyIDs)
+	if err != nil {
+		return err
+	}
+	identityJSON, err := encodeServingIdentity(input.Generation.Identity)
+	if err != nil {
+		return err
+	}
+	priorIdentityJSON, err := encodeServingIdentity(input.PriorCompilation.SemanticIdentity)
+	if err != nil {
+		return err
+	}
+	compiledIdentityJSON, err := encodeServingIdentity(input.Compilation.SemanticIdentity)
+	if err != nil {
+		return err
+	}
+	definitionJSON, err := json.Marshal(input.Compilation.Definition)
+	if err != nil {
+		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var activeGeneration string
+	err = tx.QueryRowContext(ctx, `SELECT generation_id FROM project_active_serving_states WHERE project_id = ? AND environment = ?`, input.Generation.Identity.ProjectID.String(), input.Generation.Identity.Environment).Scan(&activeGeneration)
+	if errors.Is(err, sql.ErrNoRows) || activeGeneration != input.Generation.Identity.GenerationID {
+		return authoring.ErrGenerationSuperseded
+	}
+	if err != nil {
+		return err
+	}
+	var current struct {
+		revisionID, contentHash, compiledID, compiledHash, compiledDefinition, compiledModel, compiledIdentity string
+		revisionNumber, compiledNumber                                                                         int64
+	}
+	err = tx.QueryRowContext(ctx, `SELECT revision_id, revision_number, content_hash, compiled_revision_id, compiled_revision_number, compiled_content_hash, compiled_definition_hash, compiled_semantic_model_id, compiled_semantic_identity_json FROM dashboard_authoring_published WHERE project_id = ? AND dashboard_id = ?`, input.Dashboard.ProjectID.String(), input.Dashboard.ID.String()).Scan(&current.revisionID, &current.revisionNumber, &current.contentHash, &current.compiledID, &current.compiledNumber, &current.compiledHash, &current.compiledDefinition, &current.compiledModel, &current.compiledIdentity)
+	if errors.Is(err, sql.ErrNoRows) {
+		return authoring.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if current.revisionID != string(input.Dashboard.Published.Revision.RevisionID) || current.revisionNumber != int64(input.Dashboard.Published.Revision.Number) || current.contentHash != input.Dashboard.Published.Revision.ContentHash || current.compiledID != string(input.PriorCompilation.AuthoredRevision.RevisionID) || current.compiledNumber != int64(input.PriorCompilation.AuthoredRevision.Number) || current.compiledHash != input.PriorCompilation.AuthoredRevision.ContentHash || current.compiledDefinition != input.PriorCompilation.DefinitionHash || current.compiledIdentity != priorIdentityJSON || current.compiledModel != input.PriorCompilation.SemanticModelID.String() {
+		return authoring.ErrRevalidationConflict
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO dashboard_authoring_compiled_revisions (project_id, dashboard_id, revision_id, revision_number, content_hash, definition_json, definition_hash, semantic_model_id, semantic_identity_json, compiled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, dashboard_id, revision_id, revision_number, content_hash, definition_hash, semantic_model_id, semantic_identity_json) DO NOTHING`, input.Compilation.ProjectID.String(), input.Compilation.DashboardID.String(), input.Compilation.AuthoredRevision.RevisionID.String(), input.Compilation.AuthoredRevision.Number, input.Compilation.AuthoredRevision.ContentHash, string(definitionJSON), input.Compilation.DefinitionHash, input.Compilation.SemanticModelID.String(), compiledIdentityJSON, formatTime(input.Compilation.CompiledAt))
+	if err != nil {
+		return err
+	}
+	var storedDefinition string
+	err = tx.QueryRowContext(ctx, `SELECT definition_json FROM dashboard_authoring_compiled_revisions WHERE project_id = ? AND dashboard_id = ? AND revision_id = ? AND revision_number = ? AND content_hash = ? AND definition_hash = ? AND semantic_model_id = ? AND semantic_identity_json = ?`, input.Compilation.ProjectID.String(), input.Compilation.DashboardID.String(), input.Compilation.AuthoredRevision.RevisionID.String(), input.Compilation.AuthoredRevision.Number, input.Compilation.AuthoredRevision.ContentHash, input.Compilation.DefinitionHash, input.Compilation.SemanticModelID.String(), compiledIdentityJSON).Scan(&storedDefinition)
+	if err != nil {
+		return err
+	}
+	if storedDefinition != string(definitionJSON) {
+		return authoring.ErrRevalidationConflict
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO dashboard_authoring_revalidation_attempts (project_id, dashboard_id, generation_id, generation_identity_json, graph_digest, dependency_ids_json, authored_revision_id, authored_revision_number, authored_content_hash, prior_compiled_identity_json, status, compiled_definition_hash, compiled_semantic_model_id, compiled_semantic_identity_json, attempted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?)`, input.Dashboard.ProjectID.String(), input.Dashboard.ID.String(), input.Generation.Identity.GenerationID, identityJSON, input.Generation.Graph.Digest(), string(depsJSON), input.AuthoredRevision.ID.String(), input.AuthoredRevision.Number, input.AuthoredRevision.ContentHash, priorIdentityJSON, input.Compilation.DefinitionHash, input.Compilation.SemanticModelID.String(), compiledIdentityJSON, formatTime(input.AttemptedAt))
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE dashboard_authoring_published SET compiled_revision_id = ?, compiled_revision_number = ?, compiled_content_hash = ?, compiled_definition_hash = ?, compiled_semantic_model_id = ?, compiled_semantic_identity_json = ? WHERE project_id = ? AND dashboard_id = ? AND revision_id = ? AND revision_number = ? AND content_hash = ? AND compiled_revision_id = ? AND compiled_revision_number = ? AND compiled_content_hash = ? AND compiled_definition_hash = ? AND compiled_semantic_model_id = ? AND compiled_semantic_identity_json = ?`, input.Compilation.AuthoredRevision.RevisionID.String(), input.Compilation.AuthoredRevision.Number, input.Compilation.AuthoredRevision.ContentHash, input.Compilation.DefinitionHash, input.Compilation.SemanticModelID.String(), compiledIdentityJSON, input.Dashboard.ProjectID.String(), input.Dashboard.ID.String(), input.Dashboard.Published.Revision.RevisionID.String(), input.Dashboard.Published.Revision.Number, input.Dashboard.Published.Revision.ContentHash, input.PriorCompilation.AuthoredRevision.RevisionID.String(), input.PriorCompilation.AuthoredRevision.Number, input.PriorCompilation.AuthoredRevision.ContentHash, input.PriorCompilation.DefinitionHash, input.PriorCompilation.SemanticModelID.String(), priorIdentityJSON)
+	if err != nil {
+		return err
+	}
+	if rows, _ := result.RowsAffected(); rows != 1 {
+		return authoring.ErrRevalidationConflict
+	}
+	return tx.Commit()
+}
+
+// RecordRevalidationFailure appends immutable failure evidence without
+// changing published rows. Repeated writes for one generation are conflicts,
+// preserving the first actionable diagnostic for forensic inspection.
+func (r *Repository) RecordRevalidationFailure(ctx context.Context, input authoring.RevalidationFailureInput) error {
+	if err := validateRevalidationFailureInput(input); err != nil {
+		return err
+	}
+	depsJSON, err := json.Marshal(input.DependencyIDs)
+	if err != nil {
+		return err
+	}
+	identityJSON, err := encodeServingIdentity(input.Generation.Identity)
+	if err != nil {
+		return err
+	}
+	priorIdentityJSON, err := encodeServingIdentity(input.PriorCompilation.SemanticIdentity)
+	if err != nil {
+		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var activeGeneration string
+	err = tx.QueryRowContext(ctx, `SELECT generation_id FROM project_active_serving_states WHERE project_id = ? AND environment = ?`, input.Generation.Identity.ProjectID.String(), input.Generation.Identity.Environment).Scan(&activeGeneration)
+	if errors.Is(err, sql.ErrNoRows) || activeGeneration != input.Generation.Identity.GenerationID {
+		return authoring.ErrGenerationSuperseded
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO dashboard_authoring_revalidation_attempts (project_id, dashboard_id, generation_id, generation_identity_json, graph_digest, dependency_ids_json, authored_revision_id, authored_revision_number, authored_content_hash, prior_compiled_identity_json, status, error_code, error_message, attempted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, ?)`, input.Dashboard.ProjectID.String(), input.Dashboard.ID.String(), input.Generation.Identity.GenerationID, identityJSON, input.Generation.Graph.Digest(), string(depsJSON), input.AuthoredRevision.ID.String(), input.AuthoredRevision.Number, input.AuthoredRevision.ContentHash, priorIdentityJSON, input.Failure.Code, input.Failure.Message, formatTime(input.Failure.FailedAt))
+	if isConstraint(err) {
+		return authoring.ErrRevalidationConflict
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func validateRevalidationCommit(input authoring.RevalidationCommit) error {
+	if err := input.Generation.Validate(); err != nil {
+		return err
+	}
+	if input.Dashboard.Published == nil || input.Dashboard.Status != authoring.LifecycleStatusPublished {
+		return fmt.Errorf("%w: revalidation requires a published dashboard", authoring.ErrInvalidAuthoring)
+	}
+	if err := input.AuthoredRevision.Validate(); err != nil {
+		return err
+	}
+	if err := input.Compilation.Validate(); err != nil {
+		return err
+	}
+	if err := input.PriorCompilation.Validate(); err != nil {
+		return err
+	}
+	if input.AttemptedAt.IsZero() || input.AttemptedAt.Location() != time.UTC {
+		return fmt.Errorf("%w: revalidation attempt timestamp must be UTC", authoring.ErrInvalidAuthoring)
+	}
+	return nil
+}
+
+func validateRevalidationFailureInput(input authoring.RevalidationFailureInput) error {
+	if err := input.Generation.Validate(); err != nil {
+		return err
+	}
+	if input.Dashboard.Published == nil || input.Dashboard.Status != authoring.LifecycleStatusPublished {
+		return fmt.Errorf("%w: revalidation requires a published dashboard", authoring.ErrInvalidAuthoring)
+	}
+	if err := input.Failure.Validate(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // CountBySemanticModel returns the non-archived authoring dashboard counts for
@@ -306,7 +479,7 @@ func (r *Repository) GetPublishedCompilation(ctx context.Context, projectID grap
 	if err != nil {
 		return authoring.CompiledRevision{}, err
 	}
-	row, err := q.GetAuthoringPublishedCompilation(ctx, dashboarddb.GetAuthoringPublishedCompilationParams{ProjectID: projectKey, DashboardID: string(dashboardID), RevisionID: published.CompiledRevisionID, RevisionNumber: published.CompiledRevisionNumber, ContentHash: published.CompiledContentHash, DefinitionHash: published.CompiledDefinitionHash, SemanticIdentityJson: published.CompiledSemanticIdentityJson})
+	row, err := q.GetAuthoringPublishedCompilation(ctx, dashboarddb.GetAuthoringPublishedCompilationParams{ProjectID: projectKey, DashboardID: string(dashboardID), RevisionID: published.CompiledRevisionID, RevisionNumber: published.CompiledRevisionNumber, ContentHash: published.CompiledContentHash, DefinitionHash: published.CompiledDefinitionHash, SemanticModelID: published.CompiledSemanticModelID, SemanticIdentityJson: published.CompiledSemanticIdentityJson})
 	if errors.Is(err, sql.ErrNoRows) {
 		return authoring.CompiledRevision{}, authoring.ErrNotFound
 	}
@@ -329,7 +502,7 @@ func (r *Repository) GetPublishedCompilation(ctx context.Context, projectID grap
 	if err != nil {
 		return authoring.CompiledRevision{}, err
 	}
-	compiled := authoring.CompiledRevision{ProjectID: graph.ResourceID(row.ProjectID), DashboardID: authoring.DashboardID(row.DashboardID), AuthoredRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, Definition: definition, DefinitionHash: row.DefinitionHash, SemanticIdentity: semanticIdentity, CompiledAt: compiledAt}
+	compiled := authoring.CompiledRevision{ProjectID: graph.ResourceID(row.ProjectID), DashboardID: authoring.DashboardID(row.DashboardID), AuthoredRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, Definition: definition, DefinitionHash: row.DefinitionHash, SemanticModelID: graph.ResourceID(row.SemanticModelID), SemanticIdentity: semanticIdentity, CompiledAt: compiledAt}
 	if err := compiled.Validate(); err != nil {
 		return authoring.CompiledRevision{}, fmt.Errorf("validate stored compiled dashboard: %w", err)
 	}
@@ -337,7 +510,7 @@ func (r *Repository) GetPublishedCompilation(ctx context.Context, projectID grap
 	if err != nil {
 		return authoring.CompiledRevision{}, err
 	}
-	if published.CompiledDefinitionHash != compiled.DefinitionHash || published.CompiledSemanticIdentityJson != semanticJSON || published.RevisionID != string(compiled.AuthoredRevision.RevisionID) || published.RevisionNumber != int64(compiled.AuthoredRevision.Number) || published.ContentHash != compiled.AuthoredRevision.ContentHash {
+	if published.CompiledDefinitionHash != compiled.DefinitionHash || published.CompiledSemanticModelID != compiled.SemanticModelID.String() || published.CompiledSemanticIdentityJson != semanticJSON || published.RevisionID != string(compiled.AuthoredRevision.RevisionID) || published.RevisionNumber != int64(compiled.AuthoredRevision.Number) || published.ContentHash != compiled.AuthoredRevision.ContentHash {
 		return authoring.CompiledRevision{}, fmt.Errorf("%w: published compilation pointer does not match immutable compiled artifact", authoring.ErrInvalidAuthoring)
 	}
 	return compiled, nil
@@ -484,7 +657,7 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 	err = q.UpsertAuthoringPublished(ctx, dashboarddb.UpsertAuthoringPublishedParams{ProjectID: projectID,
 		DashboardID: string(input.DashboardID), RevisionID: string(target.RevisionID), RevisionNumber: int64(target.Number),
 		ContentHash: target.ContentHash, CompiledRevisionID: string(compilation.AuthoredRevision.RevisionID), CompiledRevisionNumber: int64(compilation.AuthoredRevision.Number), CompiledContentHash: compilation.AuthoredRevision.ContentHash,
-		CompiledDefinitionHash: compilation.DefinitionHash, CompiledSemanticIdentityJson: semanticIdentityJSON,
+		CompiledDefinitionHash: compilation.DefinitionHash, CompiledSemanticModelID: compilation.SemanticModelID.String(), CompiledSemanticIdentityJson: semanticIdentityJSON,
 		ProvenanceJson: string(provenanceJSON), PublishedAt: formatTime(publishedAt)})
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -572,9 +745,9 @@ func insertCompiledRevision(ctx context.Context, q *dashboarddb.Queries, compile
 	if err != nil {
 		return err
 	}
-	row, err := q.GetAuthoringPublishedCompilation(ctx, dashboarddb.GetAuthoringPublishedCompilationParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: string(compiled.AuthoredRevision.RevisionID), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionHash: compiled.DefinitionHash, SemanticIdentityJson: semanticIdentityJSON})
+	row, err := q.GetAuthoringPublishedCompilation(ctx, dashboarddb.GetAuthoringPublishedCompilationParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: string(compiled.AuthoredRevision.RevisionID), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionHash: compiled.DefinitionHash, SemanticModelID: compiled.SemanticModelID.String(), SemanticIdentityJson: semanticIdentityJSON})
 	if err == nil {
-		if row.DefinitionJson != definitionJSON || row.DefinitionHash != compiled.DefinitionHash || row.SemanticIdentityJson != semanticIdentityJSON {
+		if row.DefinitionJson != definitionJSON || row.DefinitionHash != compiled.DefinitionHash || row.SemanticModelID != compiled.SemanticModelID.String() || row.SemanticIdentityJson != semanticIdentityJSON {
 			return conflict("compiled revision identity is immutable")
 		}
 		return nil
@@ -582,7 +755,7 @@ func insertCompiledRevision(ctx context.Context, q *dashboarddb.Queries, compile
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	err = q.InsertAuthoringCompiledRevision(ctx, dashboarddb.InsertAuthoringCompiledRevisionParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: string(compiled.AuthoredRevision.RevisionID), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionJson: definitionJSON, DefinitionHash: compiled.DefinitionHash, SemanticIdentityJson: semanticIdentityJSON, CompiledAt: formatTime(compiled.CompiledAt)})
+	err = q.InsertAuthoringCompiledRevision(ctx, dashboarddb.InsertAuthoringCompiledRevisionParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: string(compiled.AuthoredRevision.RevisionID), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionJson: definitionJSON, DefinitionHash: compiled.DefinitionHash, SemanticModelID: compiled.SemanticModelID.String(), SemanticIdentityJson: semanticIdentityJSON, CompiledAt: formatTime(compiled.CompiledAt)})
 	if isConstraint(err) {
 		return conflict("compiled revision identity is immutable")
 	}
@@ -766,7 +939,7 @@ func (r *Repository) getLifecycle(ctx context.Context, q *dashboarddb.Queries, p
 		if err != nil {
 			return authoring.DashboardLifecycle{}, err
 		}
-		lifecycle.Published = &authoring.Published{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(published.RevisionID), Number: uint64(published.RevisionNumber), ContentHash: published.ContentHash}, Compilation: authoring.CompiledRevisionToken{AuthoredRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(published.CompiledRevisionID), Number: uint64(published.CompiledRevisionNumber), ContentHash: published.CompiledContentHash}, DefinitionHash: published.CompiledDefinitionHash, SemanticIdentity: semanticIdentity}, PublishedAt: at, Provenance: provenance}
+		lifecycle.Published = &authoring.Published{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(published.RevisionID), Number: uint64(published.RevisionNumber), ContentHash: published.ContentHash}, Compilation: authoring.CompiledRevisionToken{AuthoredRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(published.CompiledRevisionID), Number: uint64(published.CompiledRevisionNumber), ContentHash: published.CompiledContentHash}, DefinitionHash: published.CompiledDefinitionHash, SemanticModelID: graph.ResourceID(published.CompiledSemanticModelID), SemanticIdentity: semanticIdentity}, PublishedAt: at, Provenance: provenance}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return authoring.DashboardLifecycle{}, err
 	}
@@ -774,6 +947,40 @@ func (r *Repository) getLifecycle(ctx context.Context, q *dashboarddb.Queries, p
 		return authoring.DashboardLifecycle{}, fmt.Errorf("validate stored dashboard lifecycle: %w", err)
 	}
 	return lifecycle, nil
+}
+
+func (r *Repository) latestRevalidationFailure(ctx context.Context, projectID string, dashboardID authoring.DashboardID) (authoring.RevalidationFailure, bool, error) {
+	var status, identityJSON, dependencyJSON, attemptedAt string
+	var code, message sql.NullString
+	var generationID string
+	err := r.db.QueryRowContext(ctx, `SELECT status, generation_id, generation_identity_json, dependency_ids_json, error_code, error_message, attempted_at FROM dashboard_authoring_revalidation_attempts WHERE project_id = ? AND dashboard_id = ? ORDER BY attempted_at DESC, generation_id DESC LIMIT 1`, projectID, dashboardID.String()).Scan(&status, &generationID, &identityJSON, &dependencyJSON, &code, &message, &attemptedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return authoring.RevalidationFailure{}, false, nil
+	}
+	if err != nil {
+		return authoring.RevalidationFailure{}, false, err
+	}
+	if status != "failed" {
+		return authoring.RevalidationFailure{}, false, nil
+	}
+	identity, err := decodeServingIdentity(identityJSON)
+	if err != nil {
+		return authoring.RevalidationFailure{}, false, err
+	}
+	var dependencyIDs []graph.ResourceID
+	if err := json.Unmarshal([]byte(dependencyJSON), &dependencyIDs); err != nil {
+		return authoring.RevalidationFailure{}, false, err
+	}
+	at, err := parseTime(attemptedAt)
+	if err != nil {
+		return authoring.RevalidationFailure{}, false, err
+	}
+	failure := authoring.RevalidationFailure{Identity: identity, DependencyIDs: dependencyIDs, Code: code.String, Message: message.String, FailedAt: at}
+	if err := failure.Validate(); err != nil {
+		return authoring.RevalidationFailure{}, false, err
+	}
+	_ = generationID // generation ID is carried by identity and validated above.
+	return failure, true, nil
 }
 
 func encodeRevision(revision authoring.Revision) (string, string, error) {

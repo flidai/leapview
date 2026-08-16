@@ -69,9 +69,10 @@ CREATE TABLE dashboard_authoring_compiled_revisions (
   content_hash TEXT NOT NULL CHECK (length(content_hash) = 71 AND substr(content_hash, 1, 7) = 'sha256:' AND substr(content_hash, 8) NOT GLOB '*[^0-9a-f]*'),
   definition_json TEXT NOT NULL CHECK (length(trim(definition_json)) > 0),
   definition_hash TEXT NOT NULL CHECK (length(definition_hash) = 71 AND substr(definition_hash, 1, 7) = 'sha256:' AND substr(definition_hash, 8) NOT GLOB '*[^0-9a-f]*'),
+  semantic_model_id TEXT NOT NULL CHECK (length(trim(semantic_model_id)) > 0),
   semantic_identity_json TEXT NOT NULL CHECK (length(trim(semantic_identity_json)) > 0),
   compiled_at TEXT NOT NULL,
-  PRIMARY KEY (project_id, dashboard_id, revision_id, revision_number, content_hash, definition_hash, semantic_identity_json),
+  PRIMARY KEY (project_id, dashboard_id, revision_id, revision_number, content_hash, definition_hash, semantic_model_id, semantic_identity_json),
   FOREIGN KEY (project_id, dashboard_id, revision_id, revision_number, content_hash)
     REFERENCES dashboard_authoring_revisions(project_id, dashboard_id, revision_id, revision_number, content_hash)
     ON DELETE RESTRICT,
@@ -90,6 +91,7 @@ CREATE TABLE dashboard_authoring_published (
   compiled_revision_number INTEGER NOT NULL CHECK (compiled_revision_number > 0),
   compiled_content_hash TEXT NOT NULL,
   compiled_definition_hash TEXT NOT NULL CHECK (length(compiled_definition_hash) = 71 AND substr(compiled_definition_hash, 1, 7) = 'sha256:' AND substr(compiled_definition_hash, 8) NOT GLOB '*[^0-9a-f]*'),
+  compiled_semantic_model_id TEXT NOT NULL CHECK (length(trim(compiled_semantic_model_id)) > 0),
   compiled_semantic_identity_json TEXT NOT NULL CHECK (length(trim(compiled_semantic_identity_json)) > 0),
   provenance_json TEXT NOT NULL CHECK (length(trim(provenance_json)) > 0),
   published_at TEXT NOT NULL,
@@ -97,8 +99,8 @@ CREATE TABLE dashboard_authoring_published (
   FOREIGN KEY (project_id, dashboard_id, revision_id, revision_number, content_hash)
     REFERENCES dashboard_authoring_revisions(project_id, dashboard_id, revision_id, revision_number, content_hash)
     ON DELETE RESTRICT,
-  FOREIGN KEY (project_id, dashboard_id, compiled_revision_id, compiled_revision_number, compiled_content_hash, compiled_definition_hash, compiled_semantic_identity_json)
-    REFERENCES dashboard_authoring_compiled_revisions(project_id, dashboard_id, revision_id, revision_number, content_hash, definition_hash, semantic_identity_json)
+  FOREIGN KEY (project_id, dashboard_id, compiled_revision_id, compiled_revision_number, compiled_content_hash, compiled_definition_hash, compiled_semantic_model_id, compiled_semantic_identity_json)
+    REFERENCES dashboard_authoring_compiled_revisions(project_id, dashboard_id, revision_id, revision_number, content_hash, definition_hash, semantic_model_id, semantic_identity_json)
     ON DELETE RESTRICT,
   FOREIGN KEY (project_id, dashboard_id)
     REFERENCES dashboard_authoring_dashboards(project_id, dashboard_id)
@@ -129,6 +131,38 @@ CREATE TABLE dashboard_authoring_commands (
       OR (result_revision_id IS NOT NULL AND result_revision_number > 0 AND length(trim(result_content_hash)) > 0))
 );
 
+-- Every generation revalidation is retained as immutable evidence. A failed
+-- attempt never mutates the published pointer; its actionable state is read
+-- from this table alongside the last valid compiled artifact.
+CREATE TABLE dashboard_authoring_revalidation_attempts (
+  project_id TEXT NOT NULL,
+  dashboard_id TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  generation_identity_json TEXT NOT NULL CHECK (length(trim(generation_identity_json)) > 0),
+  graph_digest TEXT NOT NULL CHECK (length(graph_digest) = 71 AND substr(graph_digest, 1, 7) = 'sha256:' AND substr(graph_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  dependency_ids_json TEXT NOT NULL CHECK (length(trim(dependency_ids_json)) > 0),
+  authored_revision_id TEXT NOT NULL,
+  authored_revision_number INTEGER NOT NULL CHECK (authored_revision_number > 0),
+  authored_content_hash TEXT NOT NULL,
+  prior_compiled_identity_json TEXT NOT NULL CHECK (length(trim(prior_compiled_identity_json)) > 0),
+  status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+  error_code TEXT,
+  error_message TEXT,
+  compiled_definition_hash TEXT,
+  compiled_semantic_model_id TEXT,
+  compiled_semantic_identity_json TEXT,
+  attempted_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, dashboard_id, generation_id),
+  FOREIGN KEY (project_id, dashboard_id)
+    REFERENCES dashboard_authoring_dashboards(project_id, dashboard_id)
+    ON DELETE CASCADE,
+  CHECK ((status = 'failed' AND length(trim(error_code)) > 0 AND length(trim(error_message)) > 0)
+      OR (status = 'succeeded' AND error_code IS NULL AND error_message IS NULL
+          AND length(trim(compiled_definition_hash)) > 0
+          AND length(trim(compiled_semantic_model_id)) > 0
+          AND length(trim(compiled_semantic_identity_json)) > 0))
+);
+
 CREATE INDEX dashboard_authoring_dashboards_project_idx
   ON dashboard_authoring_dashboards(project_id, semantic_model, status, visibility, slug, dashboard_id);
 
@@ -138,13 +172,18 @@ CREATE INDEX dashboard_authoring_revisions_project_idx
 CREATE INDEX dashboard_authoring_compiled_project_idx
   ON dashboard_authoring_compiled_revisions(project_id, dashboard_id, revision_number);
 
+CREATE INDEX dashboard_authoring_revalidation_project_idx
+  ON dashboard_authoring_revalidation_attempts(project_id, dashboard_id, attempted_at DESC);
+
 -- +goose Down
 
 DROP INDEX dashboard_authoring_compiled_project_idx;
+DROP INDEX dashboard_authoring_revalidation_project_idx;
 DROP INDEX dashboard_authoring_revisions_project_idx;
 DROP INDEX dashboard_authoring_dashboards_project_idx;
 DROP TABLE dashboard_authoring_commands;
 DROP TABLE dashboard_authoring_published;
+DROP TABLE dashboard_authoring_revalidation_attempts;
 DROP TABLE dashboard_authoring_compiled_revisions;
 DROP TABLE dashboard_authoring_drafts;
 DROP TABLE dashboard_authoring_revisions;

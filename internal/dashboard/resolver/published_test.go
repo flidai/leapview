@@ -49,6 +49,19 @@ func TestPublishedCompilationResolverRejectsStaleAndMissing(t *testing.T) {
 	}
 }
 
+func TestPublishedCompilationResolverRejectsSemanticModelEvidenceMismatch(t *testing.T) {
+	identity := mustIdentity(t, "project_1", "production", "generation_1")
+	compiled := testCompiledRevision(t, "project_1", "dashboard_1", "model_1", identity.GenerationID)
+	compiled.SemanticModelID = "model_other"
+	resolver, err := NewPublishedCompilationResolver(identity, fakeCompilationReader{compiled: compiled}, fakeSemanticModels{models: map[projectgraph.ResourceID]*semanticmodel.Model{"model_1": {}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.Resolve("dashboard_1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("error = %v, want rejected stale semantic model evidence", err)
+	}
+}
+
 func TestPublishedCompilationResolverRequiresCanonicalResourceID(t *testing.T) {
 	identity := mustIdentity(t, "project_1", "production", "generation_1")
 	resolver, err := NewPublishedCompilationResolver(identity, fakeCompilationReader{}, fakeSemanticModels{})

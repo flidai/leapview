@@ -449,6 +449,39 @@ type Published struct {
 	Provenance  Provenance            `json:"provenance"`
 }
 
+// RevalidationFailure is durable dashboard-scoped evidence that a published
+// authored revision could not be recompiled for a newer project generation.
+// It is separate from Published so the last valid compiled artifact remains
+// immutable while operators fix the dependency.
+type RevalidationFailure struct {
+	Identity      graph.ServingIdentity `json:"identity"`
+	DependencyIDs []graph.ResourceID    `json:"dependencyIds,omitempty"`
+	Code          string                `json:"code"`
+	Message       string                `json:"message"`
+	FailedAt      time.Time             `json:"failedAt"`
+}
+
+func (f RevalidationFailure) Validate() error {
+	if err := f.Identity.Validate(); err != nil {
+		return fmt.Errorf("%w: revalidation failure identity: %v", ErrInvalidAuthoring, err)
+	}
+	if strings.TrimSpace(f.Code) == "" || f.Code != strings.TrimSpace(f.Code) {
+		return fmt.Errorf("%w: revalidation failure code is required", ErrInvalidAuthoring)
+	}
+	if strings.TrimSpace(f.Message) == "" || f.Message != strings.TrimSpace(f.Message) {
+		return fmt.Errorf("%w: revalidation failure message is required", ErrInvalidAuthoring)
+	}
+	for _, id := range f.DependencyIDs {
+		if err := id.Validate(); err != nil {
+			return fmt.Errorf("%w: revalidation dependency id: %v", ErrInvalidAuthoring, err)
+		}
+	}
+	if f.FailedAt.IsZero() || f.FailedAt.Location() != time.UTC {
+		return fmt.Errorf("%w: revalidation failure timestamp must be UTC", ErrInvalidAuthoring)
+	}
+	return nil
+}
+
 func (d Draft) Validate() error {
 	if err := d.ID.Validate(); err != nil {
 		return err
@@ -481,16 +514,17 @@ func (p Published) Validate() error {
 // DashboardLifecycle is the mutable identity record around immutable
 // revisions. Slug and title may change without changing ID.
 type DashboardLifecycle struct {
-	ProjectID        graph.ResourceID `json:"projectId"`
-	ID               DashboardID      `json:"id"`
-	OwnerPrincipalID string           `json:"ownerPrincipalId"`
-	Slug             string           `json:"slug"`
-	Title            string           `json:"title"`
-	SemanticModel    graph.ResourceID `json:"semanticModel"`
-	Visibility       Visibility       `json:"visibility"`
-	Status           LifecycleStatus  `json:"status"`
-	Draft            *Draft           `json:"draft,omitempty"`
-	Published        *Published       `json:"published,omitempty"`
+	ProjectID        graph.ResourceID     `json:"projectId"`
+	ID               DashboardID          `json:"id"`
+	OwnerPrincipalID string               `json:"ownerPrincipalId"`
+	Slug             string               `json:"slug"`
+	Title            string               `json:"title"`
+	SemanticModel    graph.ResourceID     `json:"semanticModel"`
+	Visibility       Visibility           `json:"visibility"`
+	Status           LifecycleStatus      `json:"status"`
+	Draft            *Draft               `json:"draft,omitempty"`
+	Published        *Published           `json:"published,omitempty"`
+	Revalidation     *RevalidationFailure `json:"revalidation,omitempty"`
 }
 
 type NewDashboardLifecycleInput struct {
@@ -566,6 +600,11 @@ func (d DashboardLifecycle) Validate() error {
 	}
 	if d.Published != nil {
 		if err := d.Published.Validate(); err != nil {
+			return err
+		}
+	}
+	if d.Revalidation != nil {
+		if err := d.Revalidation.Validate(); err != nil {
 			return err
 		}
 	}

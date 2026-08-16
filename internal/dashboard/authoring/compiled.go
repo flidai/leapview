@@ -17,13 +17,17 @@ import (
 // deliberately part of the token: a definition hash by itself is not enough
 // to prove which authored revision or model boundary produced it.
 type CompiledRevisionToken struct {
-	AuthoredRevision RevisionToken         `json:"authoredRevision"`
-	DefinitionHash   string                `json:"definitionHash"`
+	AuthoredRevision RevisionToken `json:"authoredRevision"`
+	DefinitionHash   string        `json:"definitionHash"`
+	// SemanticModelID is the exact graph ResourceID used by compilation. It is
+	// evidence, not a symbolic name, and is compared during generation
+	// revalidation before a published pointer can advance.
+	SemanticModelID  graph.ResourceID      `json:"semanticModelId"`
 	SemanticIdentity graph.ServingIdentity `json:"semanticIdentity"`
 }
 
 func (t CompiledRevisionToken) IsZero() bool {
-	return t.AuthoredRevision.IsZero() && t.DefinitionHash == "" && t.SemanticIdentity == (graph.ServingIdentity{})
+	return t.AuthoredRevision.IsZero() && t.DefinitionHash == "" && t.SemanticModelID == "" && t.SemanticIdentity == (graph.ServingIdentity{})
 }
 
 func (t CompiledRevisionToken) Validate() error {
@@ -32,6 +36,11 @@ func (t CompiledRevisionToken) Validate() error {
 	}
 	if !validSHA256(t.DefinitionHash) || t.DefinitionHash != strings.ToLower(t.DefinitionHash) {
 		return fmt.Errorf("%w: compiled definition hash is required and must be lowercase sha256", ErrInvalidAuthoring)
+	}
+	if t.SemanticModelID != "" {
+		if err := t.SemanticModelID.Validate(); err != nil {
+			return fmt.Errorf("%w: compiled semantic model id: %v", ErrInvalidAuthoring, err)
+		}
 	}
 	if err := t.SemanticIdentity.Validate(); err != nil {
 		return fmt.Errorf("%w: semantic serving identity is required: %v", ErrInvalidAuthoring, err)
@@ -48,6 +57,7 @@ type CompiledRevision struct {
 	AuthoredRevision RevisionToken                  `json:"authoredRevision"`
 	Definition       dashboarddefinition.Definition `json:"definition"`
 	DefinitionHash   string                         `json:"definitionHash"`
+	SemanticModelID  graph.ResourceID               `json:"semanticModelId"`
 	SemanticIdentity graph.ServingIdentity          `json:"semanticIdentity"`
 	CompiledAt       time.Time                      `json:"compiledAt"`
 }
@@ -67,6 +77,10 @@ func NewCompiledRevision(projectID graph.ResourceID, dashboardID DashboardID, au
 	if err := validateCompiledDefinition(dashboardID, definition); err != nil {
 		return CompiledRevision{}, err
 	}
+	semanticModelID, err := graph.NewResourceID(definition.SemanticModel)
+	if err != nil {
+		return CompiledRevision{}, fmt.Errorf("%w: compiled semantic model id: %v", ErrInvalidAuthoring, err)
+	}
 	if err := semanticIdentity.Validate(); err != nil {
 		return CompiledRevision{}, fmt.Errorf("%w: semantic serving identity is required: %v", ErrInvalidAuthoring, err)
 	}
@@ -84,11 +98,11 @@ func NewCompiledRevision(projectID graph.ResourceID, dashboardID DashboardID, au
 	if err != nil {
 		return CompiledRevision{}, err
 	}
-	return CompiledRevision{ProjectID: projectID, DashboardID: dashboardID, AuthoredRevision: authored, Definition: cloned, DefinitionHash: hash, SemanticIdentity: semanticIdentity, CompiledAt: compiledAt}, nil
+	return CompiledRevision{ProjectID: projectID, DashboardID: dashboardID, AuthoredRevision: authored, Definition: cloned, DefinitionHash: hash, SemanticModelID: semanticModelID, SemanticIdentity: semanticIdentity, CompiledAt: compiledAt}, nil
 }
 
 func (c CompiledRevision) Token() CompiledRevisionToken {
-	return CompiledRevisionToken{AuthoredRevision: c.AuthoredRevision, DefinitionHash: c.DefinitionHash, SemanticIdentity: c.SemanticIdentity}
+	return CompiledRevisionToken{AuthoredRevision: c.AuthoredRevision, DefinitionHash: c.DefinitionHash, SemanticModelID: c.SemanticModelID, SemanticIdentity: c.SemanticIdentity}
 }
 
 func (c CompiledRevision) Validate() error {
@@ -110,6 +124,12 @@ func (c CompiledRevision) Validate() error {
 	}
 	if c.DefinitionHash != hash {
 		return fmt.Errorf("%w: compiled definition hash does not match definition", ErrInvalidAuthoring)
+	}
+	if err := c.SemanticModelID.Validate(); err != nil {
+		return fmt.Errorf("%w: compiled semantic model id: %v", ErrInvalidAuthoring, err)
+	}
+	if c.SemanticModelID.String() != c.Definition.SemanticModel {
+		return fmt.Errorf("%w: compiled semantic model id %q does not match definition %q", ErrInvalidAuthoring, c.SemanticModelID, c.Definition.SemanticModel)
 	}
 	if err := c.Token().Validate(); err != nil {
 		return err

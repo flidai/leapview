@@ -81,6 +81,9 @@ func (r PublishedCompilationResolver) Resolve(dashboardID projectgraph.ResourceI
 	if err != nil {
 		return Resolved{}, fmt.Errorf("%w: published dashboard %q references invalid semantic model %q", ErrNotFound, dashboardID, modelID)
 	}
+	if compiled.SemanticModelID != modelIDValue {
+		return Resolved{}, fmt.Errorf("%w: published dashboard %q semantic model evidence %q does not match definition %q", ErrStaleSemanticState, dashboardID, compiled.SemanticModelID, modelIDValue)
+	}
 	model, ok := r.semanticModels.SemanticModelByID(modelIDValue)
 	if !ok || model == nil {
 		return Resolved{}, fmt.Errorf("%w: published dashboard %q references semantic model %q", ErrNotFound, dashboardID, modelID)
