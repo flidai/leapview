@@ -22,7 +22,7 @@ func TestWriteJSONNormalizesTimestampsAndRequiredCollections(t *testing.T) {
 		"activeServingStateSince": "2026-01-02T05:04:05+02:00",
 		"items":                   nil,
 		"bindings":                nil,
-		"workspaces":              nil,
+		"visuals":                 nil,
 		"optional":                nil,
 	})
 	var body map[string]any
@@ -38,7 +38,7 @@ func TestWriteJSONNormalizesTimestampsAndRequiredCollections(t *testing.T) {
 	if items, ok := body["items"].([]any); !ok || items == nil {
 		t.Fatalf("items = %#v, want empty array", body["items"])
 	}
-	for _, field := range []string{"bindings", "workspaces"} {
+	for _, field := range []string{"bindings", "visuals"} {
 		if value, ok := body[field].([]any); !ok || value == nil {
 			t.Fatalf("%s = %#v, want empty array", field, body[field])
 		}

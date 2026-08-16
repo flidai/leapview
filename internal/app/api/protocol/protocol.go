@@ -201,9 +201,6 @@ func apiCursorSnapshotForRequest(r *http.Request) string {
 		}
 		segments := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 		for index, segment := range segments {
-			if segment == "workspaces" && index+1 < len(segments) {
-				return "workspace:" + segments[index+1] + ":unversioned"
-			}
 			if segment == "projects" && index+1 < len(segments) {
 				return "project:" + segments[index+1] + ":unversioned"
 			}

@@ -95,7 +95,7 @@ func FullJobs() Jobs {
 		Prepare:             true,
 		Docs:                true,
 		GoMatrix:            allGoShards(),
-		Frontend:            []string{"core", "reports", "chat", "workspace", "site"},
+		Frontend:            []string{"core", "reports", "chat", "data", "site"},
 		GoAnalysis:          true,
 		UIRouteQA:           true,
 		NodeAudit:           true,
@@ -337,12 +337,11 @@ func classifyFrontend(changedPath string, jobs *Jobs) {
 		jobs.Frontend = unionStrings(jobs.Frontend, []string{"reports"})
 	case strings.HasPrefix(changedPath, "web/components/chat/"):
 		jobs.Frontend = unionStrings(jobs.Frontend, []string{"chat"})
-	case strings.HasPrefix(changedPath, "web/components/workspace/"),
-		strings.HasPrefix(changedPath, "web/components/data/"),
+	case strings.HasPrefix(changedPath, "web/components/data/"),
 		strings.HasPrefix(changedPath, "web/components/admin/"),
 		strings.HasPrefix(changedPath, "web/components/login/"),
 		strings.HasPrefix(changedPath, "web/components/inspector/"):
-		jobs.Frontend = unionStrings(jobs.Frontend, []string{"workspace"})
+		jobs.Frontend = unionStrings(jobs.Frontend, []string{"data"})
 	default:
 		classifySharedFrontend(jobs)
 	}
@@ -351,7 +350,7 @@ func classifyFrontend(changedPath string, jobs *Jobs) {
 func classifySharedFrontend(jobs *Jobs) {
 	jobs.Prepare = true
 	jobs.FrontendPrepare = true
-	jobs.Frontend = unionStrings(jobs.Frontend, []string{"core", "reports", "chat", "workspace"})
+	jobs.Frontend = unionStrings(jobs.Frontend, []string{"core", "reports", "chat", "data"})
 	jobs.UIRouteQA = true
 	jobs.Docs = true
 	jobs.SiteImage = true
@@ -376,7 +375,7 @@ func normalizeJobs(jobs *Jobs) {
 	if jobs.Prepare {
 		jobs.FrontendPrepare = false
 	}
-	jobs.Frontend = orderedStrings(jobs.Frontend, []string{"core", "reports", "chat", "workspace", "site"})
+	jobs.Frontend = orderedStrings(jobs.Frontend, []string{"core", "reports", "chat", "data", "site"})
 	jobs.GoMatrix = orderedGoShards(jobs.GoMatrix)
 }
 

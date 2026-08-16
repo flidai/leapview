@@ -28,22 +28,6 @@ func CommandPost(binding uicommand.Binding, path string, signalPaths ...string) 
 	return request("post", path, signalPaths, jsString(binding.OperationID()))
 }
 
-// CommandPostWorkspace posts a generated UI command to a workspace-scoped
-// route. The workspace expression is evaluated by Datastar at dispatch time,
-// allowing a page that lists multiple workspaces to keep authorization tied to
-// the command's actual workspace rather than a process-wide default.
-func CommandPostWorkspace(binding uicommand.Binding, suffix, workspaceExpression string, signalPaths ...string) string {
-	workspaceExpression = strings.TrimSpace(workspaceExpression)
-	if workspaceExpression == "" {
-		// Keep the route workspace-scoped even when a caller supplied an empty
-		// expression; the resulting path cannot accidentally hit an unscoped
-		// mutation endpoint.
-		workspaceExpression = "''"
-	}
-	pathExpression := "'/workspaces/' + encodeURIComponent(" + workspaceExpression + ") + " + jsString(suffix)
-	return requestWithPathExpression("post", pathExpression, signalPaths, jsString(binding.OperationID()))
-}
-
 func CommandPatch(binding uicommand.Binding, path, revision string, signalPaths ...string) string {
 	return requestWithHeaders("patch", path, signalPaths, "window.LeapViewCommand.headers("+jsString(binding.OperationID())+", "+jsString(revision)+")")
 }

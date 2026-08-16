@@ -97,7 +97,7 @@ func normalizeTimestampFields(value any) {
 
 func requiredCollectionField(key string) bool {
 	switch key {
-	case "allowedOrigins", "args", "artifacts", "assets", "authentication", "badges", "bindings", "checks", "columns", "components", "connections", "context", "dashboards", "decisions", "dependencies", "downstream", "edges", "effectiveGrants", "effectiveOrdering", "errors", "facts", "files", "filters", "headers", "items", "kinds", "locations", "managedDataPins", "missingDigests", "operators", "optionDependencies", "pages", "parts", "physicalDependencies", "predicates", "privileges", "queryFormats", "relationshipPaths", "renderers", "roles", "rows", "sources", "stitchDimensions", "tags", "targets", "uploadProtocols", "upstream", "values", "visuals", "warnings", "workspaces":
+	case "allowedOrigins", "args", "artifacts", "assets", "authentication", "badges", "bindings", "checks", "columns", "components", "connections", "context", "dashboards", "decisions", "dependencies", "downstream", "edges", "effectiveGrants", "effectiveOrdering", "errors", "facts", "files", "filters", "headers", "items", "kinds", "locations", "managedDataPins", "missingDigests", "operators", "optionDependencies", "pages", "parts", "physicalDependencies", "predicates", "queryFormats", "relationshipPaths", "renderers", "roles", "rows", "sources", "stitchDimensions", "tags", "targets", "uploadProtocols", "upstream", "values", "visuals", "warnings":
 		return true
 	default:
 		return false
