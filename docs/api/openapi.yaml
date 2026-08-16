@@ -24137,7 +24137,6 @@ paths:
                   resourceId: example
                   resourceKind: project
       x-apigen-operation-kind: query
-      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidate-reviews/{candidate}:
     get:
       operationId: reviewProjectCandidate
@@ -33794,6 +33793,10 @@ paths:
             kind: audit_unavailable
             public_detail: Dashboard publication audit could not be persisted.
             status_code: !!float 503
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Dashboard authorization could not be evaluated.
+            status_code: !!float 503
           - code: PUBLICATION_NOT_CONFIGURED
             kind: conflict
             public_detail: Dashboard publication is not present in the active configuration.
@@ -34125,6 +34128,10 @@ paths:
             kind: audit_unavailable
             public_detail: Dashboard publication audit could not be persisted.
             status_code: !!float 503
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Dashboard authorization could not be evaluated.
+            status_code: !!float 503
           - code: PUBLICATION_NOT_CONFIGURED
             kind: conflict
             public_detail: Dashboard publication is not present in the active configuration.
@@ -34455,6 +34462,10 @@ paths:
           - code: AUDIT_UNAVAILABLE
             kind: audit_unavailable
             public_detail: Dashboard publication audit could not be persisted.
+            status_code: !!float 503
+          - code: AUTHORIZATION_UNAVAILABLE
+            kind: authorization_unavailable
+            public_detail: Dashboard authorization could not be evaluated.
             status_code: !!float 503
           - code: PUBLICATION_NOT_CONFIGURED
             kind: conflict
@@ -36347,7 +36358,6 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
-      x-leapview-object-scope: project
     post:
       operationId: createDeployment
       summary: Deploy a ready project release
@@ -37091,7 +37101,6 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
-      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/activate:
     post:
       operationId: activateDeployment
@@ -39652,7 +39661,6 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
-      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/retry:
     post:
       operationId: retryDeployment

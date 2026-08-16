@@ -1198,6 +1198,5 @@ interface DataPolicies {
 @route("/projects/{project}/authorization-checks")
 @post
 @apigen.authz(#{ mode: "authenticated" })
-@extension("x-leapview-object-scope", "project")
 @apigen.query
 op checkAuthorizationBatch(@path project: ResourceId, @body body: AuthorizationBatchCheckRequest): OkJson<AuthorizationBatchCheckResponse> | CommonErrors;

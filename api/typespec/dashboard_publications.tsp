@@ -78,7 +78,10 @@ interface DashboardPublications {
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
   @apigen.command(#{
     auditAction: "dashboard_publication.suspended",
-    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." }],
+    failures: #[
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
+      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Dashboard authorization could not be evaluated." },
+    ],
   })
   suspendDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
@@ -91,7 +94,10 @@ interface DashboardPublications {
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
   @apigen.command(#{
     auditAction: "dashboard_publication.resumed",
-    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." }],
+    failures: #[
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
+      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Dashboard authorization could not be evaluated." },
+    ],
   })
   resumeDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
@@ -104,7 +110,10 @@ interface DashboardPublications {
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
   @apigen.command(#{
     auditAction: "dashboard_publication.public_id_rotated",
-    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." }],
+    failures: #[
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
+      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Dashboard authorization could not be evaluated." },
+    ],
   })
   rotateDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 }

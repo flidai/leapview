@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
@@ -146,7 +147,7 @@ func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Reques
 	for _, row := range rows {
 		allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID, row.Dashboard, access.CapabilityResourceRead)
 		if authErr != nil {
-			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "DASHBOARD_AUTHORIZATION_FAILED", "Dashboard authorization could not be evaluated", nil)
+			apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "AUTHORIZATION_UNAVAILABLE", "Dashboard authorization could not be evaluated", nil)
 			return
 		}
 		if !allowed {
@@ -164,7 +165,7 @@ func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request,
 	}
 	allowed, err := m.authorizeDashboardPublication(r, row.ProjectID, row.Dashboard, access.CapabilityResourceRead)
 	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "DASHBOARD_AUTHORIZATION_FAILED", "Dashboard authorization could not be evaluated", nil)
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "AUTHORIZATION_UNAVAILABLE", "Dashboard authorization could not be evaluated", nil)
 		return
 	}
 	if !allowed {
@@ -209,7 +210,7 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 	}
 	allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID, row.Dashboard, access.CapabilityResourcePublish)
 	if authErr != nil {
-		m.writePublicationMutation(w, r, operationID, publication.Publication{}, authErr)
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, apigenfailure.Wrap("authorization_unavailable", authErr))
 		return
 	}
 	if !allowed {

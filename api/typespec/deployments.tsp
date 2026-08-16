@@ -427,7 +427,6 @@ interface Deployments {
   @summary("List project deployments")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "project")
   listDeployments(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeploymentListResponse> | CommonErrors;
 
   @summary("Deploy a ready project release")
@@ -467,14 +466,12 @@ interface Deployments {
   @route("/{deployment}")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "project")
   getDeployment(@path project: ResourceId, @path deployment: string): OkJson<DeploymentResponse> | CommonErrors;
 
   @summary("List or stream deployment events")
   @route("/{deployment}/events")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "project")
   listDeploymentEvents(@path project: ResourceId, @path deployment: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 
   @summary("Cancel a deployment before cutover")
