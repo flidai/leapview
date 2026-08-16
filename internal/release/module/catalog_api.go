@@ -11,35 +11,6 @@ import (
 	releaseapi "github.com/flidai/leapview/internal/release/api"
 )
 
-func (m *Module) ListProjects(w http.ResponseWriter, r *http.Request, limit *int32, pageToken *string) {
-	if m == nil || m.catalog == nil {
-		apitransport.WriteJSON(w, http.StatusOK, projectapi.ProjectListResponse{Items: []projectapi.ProjectResponse{}, Page: projectapi.PageInfo{}})
-		return
-	}
-	rows, err := m.catalog.ListProjects(r.Context())
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PROJECT_LIST_FAILED", "Projects could not be loaded", nil)
-		return
-	}
-	items := make([]projectapi.ProjectResponse, 0, len(rows))
-	for _, row := range rows {
-		item := projectapi.ProjectResponse{ID: row.ID, Title: row.ID, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
-		if row.LatestReleaseID != "" {
-			item.LatestReleaseID = &row.LatestReleaseID
-		}
-		if row.ActiveDeploymentID != "" {
-			item.ActiveDeploymentID = &row.ActiveDeploymentID
-		}
-		items = append(items, item)
-	}
-	page, next, err := apitransport.KeysetPage(items, limit, pageToken, func(item projectapi.ProjectResponse) string { return item.ID })
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_CURSOR", err.Error(), nil)
-		return
-	}
-	apitransport.WriteJSON(w, http.StatusOK, projectapi.ProjectListResponse{Items: page, Page: projectapi.PageInfo{NextCursor: next}})
-}
-
 func (m *Module) GetProject(w http.ResponseWriter, r *http.Request, projectID string) {
 	if m == nil || m.catalog == nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project not found", nil)

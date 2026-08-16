@@ -70,7 +70,10 @@ func (applicationProjectIdentity) ProjectID(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return project.Name, nil
+	// Authoring credentials are scoped to the immutable graph root. The
+	// metadata name is only an executable-facing label and must not be used as
+	// the server-bound project assertion.
+	return project.ID.String(), nil
 }
 
 func openSystemBrowser(uri string) error {

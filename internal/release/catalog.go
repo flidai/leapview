@@ -16,7 +16,6 @@ type ConnectionRecord struct {
 }
 
 type CatalogRepository interface {
-	ListProjects(context.Context) ([]ProjectRecord, error)
 	GetProject(context.Context, string) (ProjectRecord, error)
 	ListConnections(context.Context, string, string) ([]ConnectionRecord, error)
 	GetConnection(context.Context, string, string, string) (ConnectionRecord, error)

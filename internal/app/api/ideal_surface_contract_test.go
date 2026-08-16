@@ -11,7 +11,6 @@ func TestIdealV1Surface(t *testing.T) {
 
 	required := map[string][]string{
 		"/api/v1/capabilities":                                                                       {"get"},
-		"/api/v1/projects":                                                                           {"get"},
 		"/api/v1/projects/{project}":                                                                 {"get"},
 		"/api/v1/projects/{project}/workspaces":                                                      {"get"},
 		"/api/v1/projects/{project}/connections":                                                     {"get"},
@@ -296,12 +295,6 @@ func TestIdealAPIUsesBoundedInputsAndBodylessDeletes(t *testing.T) {
 		}
 	}
 
-	list := openAPIOperation(t, paths, "/api/v1/projects", "get")
-	limit := requiredOperationParameter(t, list, "query", "limit")
-	limitSchema := openAPIMap(t, limit, "schema")
-	if limitSchema["minimum"] != float64(1) || limitSchema["maximum"] != float64(200) {
-		t.Fatalf("list limit schema = %#v", limitSchema)
-	}
 	schemas := openAPIMap(t, openAPIMap(t, spec, "components"), "schemas")
 	queryLimit := schemaProperty(t, openAPISchema(t, schemas, "SemanticQueryRequest"), "limit")
 	if queryLimit["minimum"] != float64(1) || queryLimit["maximum"] != float64(1000) {

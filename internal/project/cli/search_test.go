@@ -49,7 +49,7 @@ func TestSearchCommandUsesCanonicalFiltersAndCursor(t *testing.T) {
 	if request.Query.Get("project") != "" || request.Query.Get("workspace") != "" {
 		t.Fatalf("project/workspace selector leaked into query: %#v", request.Query)
 	}
-	if !strings.Contains(output.String(), "DASHBOARD") || !strings.Contains(output.String(), "dash_1") {
+	if !strings.Contains(output.String(), "dashboard") || !strings.Contains(output.String(), "dash_1") {
 		t.Fatalf("rendered output = %q", output.String())
 	}
 }

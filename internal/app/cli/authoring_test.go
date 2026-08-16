@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +14,41 @@ import (
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	"github.com/stretchr/testify/require"
 )
+
+func TestProjectIdentityUsesCanonicalGraphID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "leapview.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: leapview.dev/v1
+kind: Project
+metadata:
+  id: project:canonical
+  name: executable-name
+spec:
+  connections: {include: []}
+  sources: {include: []}
+  models: {include: []}
+  semanticModels: {include: []}
+  pipelines: {include: []}
+  dashboards: {include: []}
+  access: {include: []}
+  publications: {include: []}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadProjectID(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "project:canonical" {
+		t.Fatalf("project identity = %q, want graph ID project:canonical", got)
+	}
+	identity, err := (applicationProjectIdentity{}).ProjectID(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity != got {
+		t.Fatalf("authoring identity = %q, want %q", identity, got)
+	}
+}
 
 func TestGeneratedCandidateSynchronizationTransportMapsTypedProtocol(t *testing.T) {
 	generic := &candidateSyncTransportStub{}

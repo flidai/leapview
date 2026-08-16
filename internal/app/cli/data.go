@@ -42,5 +42,5 @@ func loadProjectID(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return project.Name, nil
+	return project.ID.String(), nil
 }

@@ -208,11 +208,11 @@ func TestPublicAPIRouterEnforcesJSONContentTypeAcrossPartitions(t *testing.T) {
 }
 
 func TestAPIGenTransportErrorsUseProblemDetailsWithoutLeakingCause(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects?limit=bad", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project:analytics", nil)
 	req.Header.Set("X-Request-ID", "req_transport")
 	recorder := httptest.NewRecorder()
 	apiprotocol.TransportErrorResponder{}.RespondTransportError(req.Context(), recorder, req, apigenapi.GenTransportError{
-		OperationID: "listProjects", Kind: "query_parameter", StatusCode: http.StatusBadRequest,
+		OperationID: "getProject", Kind: "query_parameter", StatusCode: http.StatusBadRequest,
 		Code: "INVALID_REQUEST", PublicDetail: "Invalid query parameter.", Cause: errors.New("secret parser detail"),
 	})
 
@@ -226,17 +226,17 @@ func TestAPIGenTransportErrorsUseProblemDetailsWithoutLeakingCause(t *testing.T)
 	if err := json.Unmarshal(recorder.Body.Bytes(), &problem); err != nil {
 		t.Fatalf("decode problem: %v", err)
 	}
-	if problem.Code != "INVALID_REQUEST" || problem.RequestId != "req_transport" || problem.Instance != "/api/v1/projects" || problem.Detail != "Invalid query parameter." {
+	if problem.Code != "INVALID_REQUEST" || problem.RequestId != "req_transport" || problem.Instance != "/api/v1/projects/project:analytics" || problem.Detail != "Invalid query parameter." {
 		t.Fatalf("problem = %#v", problem)
 	}
 }
 
 func TestAPIGenTransportErrorsIdentifyInvalidParameterWithoutLeakingValue(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects?limit=secret-value", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project:analytics?project=secret-value", nil)
 	recorder := httptest.NewRecorder()
 	apiprotocol.TransportErrorResponder{}.RespondTransportError(req.Context(), recorder, req, apigenapi.GenTransportError{
-		OperationID: "listProjects", Kind: "query_parameter", StatusCode: http.StatusBadRequest,
-		Code: "INVALID_REQUEST", PublicDetail: "Invalid query parameter.", Cause: errors.New(`invalid query parameter "limit": invalid integer "secret-value"`),
+		OperationID: "getProject", Kind: "query_parameter", StatusCode: http.StatusBadRequest,
+		Code: "INVALID_REQUEST", PublicDetail: "Invalid query parameter.", Cause: errors.New(`invalid query parameter "project": invalid value "secret-value"`),
 	})
 
 	if strings.Contains(recorder.Body.String(), "secret-value") {
@@ -246,7 +246,7 @@ func TestAPIGenTransportErrorsIdentifyInvalidParameterWithoutLeakingValue(t *tes
 	if err := json.Unmarshal(recorder.Body.Bytes(), &problem); err != nil {
 		t.Fatalf("decode problem: %v", err)
 	}
-	if problem.Detail != `Invalid query parameter "limit".` || len(problem.Errors) != 1 || problem.Errors[0].Field != "limit" {
+	if problem.Detail != `Invalid query parameter "project".` || len(problem.Errors) != 1 || problem.Errors[0].Field != "project" {
 		t.Fatalf("problem = %#v", problem)
 	}
 }

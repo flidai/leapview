@@ -174,9 +174,6 @@ func renderProjectPlan(out io.Writer, plan projectcompiler.ProjectPlan) error {
 
 func planChangeAnnotations(change projectcompiler.ProjectPlanChange) string {
 	parts := []string{}
-	if change.Breaking {
-		parts = append(parts, "breaking")
-	}
 	if change.MaterializationImpact {
 		parts = append(parts, "refresh")
 	}

@@ -10,27 +10,6 @@ import (
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
-func (r *Repository) ListProjects(ctx context.Context) ([]release.ProjectRecord, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT project_id, CAST(MIN(created_at) AS TEXT), CAST(MAX(updated_at) AS TEXT) FROM (
-SELECT project_id, created_at, COALESCE(finalized_at, created_at) AS updated_at FROM api_releases
-UNION ALL SELECT project_id, created_at, updated_at FROM managed_data_collections
-) GROUP BY project_id ORDER BY project_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []release.ProjectRecord
-	for rows.Next() {
-		var item release.ProjectRecord
-		if err := rows.Scan(&item.ID, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			return nil, err
-		}
-		r.populateProjectPointers(ctx, &item)
-		out = append(out, item)
-	}
-	return out, rows.Err()
-}
-
 func (r *Repository) GetProject(ctx context.Context, projectID string) (release.ProjectRecord, error) {
 	if projectID == "" || projectID != strings.TrimSpace(projectID) || projectgraph.ResourceID(projectID).Validate() != nil {
 		return release.ProjectRecord{}, release.ErrInvalid

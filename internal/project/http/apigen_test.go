@@ -11,33 +11,28 @@ import (
 var _ projectgen.GenOperationDispatcher = (*APIGenDispatcher)(nil)
 var _ projectgen.GenTransportErrorResponder = APIGenTransportErrorResponder{}
 
-func TestAPIGenDispatcherMapsProjectPaginationToCapabilityHandler(t *testing.T) {
-	limit := int32(25)
-	token := "next"
+func TestAPIGenDispatcherForwardsProjectIdentityToCapabilityHandler(t *testing.T) {
 	handler := &recordingProjectHandler{}
 	dispatcher := NewAPIGenDispatcher(handler)
 
-	dispatcher.ListProjects(
+	dispatcher.GetProject(
 		httptest.NewRecorder(),
-		httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects", nil),
-		projectgen.GenListProjectsParams{Limit: &limit, PageToken: &token},
+		httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/project:analytics", nil),
+		"project:analytics",
 	)
 
-	if handler.limit != &limit || handler.pageToken != &token {
-		t.Fatalf("pagination = (%v, %v), want (%v, %v)", handler.limit, handler.pageToken, &limit, &token)
+	if handler.project != "project:analytics" {
+		t.Fatalf("project = %q, want project:analytics", handler.project)
 	}
 }
 
 type recordingProjectHandler struct {
-	limit     *int32
-	pageToken *string
+	project string
 }
 
-func (h *recordingProjectHandler) ListProjects(_ stdhttp.ResponseWriter, _ *stdhttp.Request, limit *int32, pageToken *string) {
-	h.limit, h.pageToken = limit, pageToken
+func (h *recordingProjectHandler) GetProject(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project string) {
+	h.project = project
 }
-
-func (*recordingProjectHandler) GetProject(stdhttp.ResponseWriter, *stdhttp.Request, string) {}
 
 func (*recordingProjectHandler) Search(stdhttp.ResponseWriter, *stdhttp.Request, projectgen.GenSearchParams) {
 }
