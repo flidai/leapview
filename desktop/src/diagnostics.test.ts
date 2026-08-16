@@ -87,7 +87,7 @@ describe("DiagnosticJournal", () => {
         join(directory, "diagnostics.json"),
       );
       const secrets = [
-        "https://analytics.company.com/workspaces/acquisition?token=secret",
+        "https://analytics.company.com/dashboards/acquisition?token=secret",
         "pkce-verifier-super-secret",
         "authorization-code-secret",
         "session-cookie-secret",

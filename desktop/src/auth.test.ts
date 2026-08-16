@@ -19,7 +19,7 @@ const profile: DesktopAuthProfile = {
   id: "profile_0123456789abcdef0123456789abcdef",
   canonicalOrigin: "https://analytics.company.com",
   instanceId: "instance_0123456789abcdef0123456789abcdef",
-  lastSafePath: "/workspaces",
+  lastSafePath: "/explore",
 };
 
 describe("desktop system-browser authentication", () => {
@@ -29,7 +29,7 @@ describe("desktop system-browser authentication", () => {
       desktopSessionAvailable(
         {
           ...profile,
-          lastSafePath: "/workspaces?token=secret",
+          lastSafePath: "/explore?token=secret",
         },
         async () => {
           fetched = true;

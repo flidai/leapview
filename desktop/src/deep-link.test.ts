@@ -9,16 +9,20 @@ import {
 } from "./deep-link.js";
 
 const dashboardLink =
-  "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces%2Fsales%2Fdashboards%2Frevenue%2Fpages%2Foverview";
+  "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdashboards%2Frevenue%2Fpages%2Foverview";
 
 describe("parseDesktopDeepLink", () => {
-  test("accepts only canonical end-user workspace and dashboard routes", () => {
+  test("accepts only canonical insights, develop, and dashboard routes", () => {
     for (const path of [
       "/",
-      "/workspaces",
-      "/workspaces/sales",
-      "/workspaces/sales/dashboards/revenue",
-      "/workspaces/sales/dashboards/revenue/pages/overview",
+      "/explore",
+      "/data",
+      "/models",
+      "/semantic-models",
+      "/pipelines",
+      "/connections",
+      "/dashboards/revenue",
+      "/dashboards/revenue/pages/overview",
     ]) {
       const candidate = new URL("leapview-desktop://open");
       candidate.searchParams.set("origin", "https://analytics.company.com");
@@ -32,39 +36,39 @@ describe("parseDesktopDeepLink", () => {
 
   test("allows loopback HTTP only when explicitly enabled for development", () => {
     const candidate =
-      "leapview-desktop://open?origin=http%3A%2F%2F127.0.0.1%3A8149&path=%2Fworkspaces%2Fevaluation";
+      "leapview-desktop://open?origin=http%3A%2F%2F127.0.0.1%3A8149&path=%2Fexplore";
 
     expect(() => parseDesktopDeepLink(candidate)).toThrow("invalid");
     expect(
       parseDesktopDeepLink(candidate, { allowLoopbackHTTP: true }),
     ).toEqual({
       origin: "http://127.0.0.1:8149",
-      path: "/workspaces/evaluation",
+      path: "/explore",
     });
   });
 
   test("rejects ambiguous authority, unsafe routes, encoding tricks, and excess input", () => {
     const candidates = [
-      "leapview://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces",
-      "LEAPVIEW-DESKTOP://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces",
-      "leapview-desktop://close?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces",
-      "leapview-desktop://user:secret@open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces",
-      "leapview-desktop://open:80?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces",
-      "leapview-desktop://open/path?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces",
-      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces#fragment",
+      "leapview://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fexplore",
+      "LEAPVIEW-DESKTOP://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fexplore",
+      "leapview-desktop://close?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fexplore",
+      "leapview-desktop://user:secret@open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fexplore",
+      "leapview-desktop://open:80?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fexplore",
+      "leapview-desktop://open/path?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fexplore",
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fexplore#fragment",
       "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com",
-      "leapview-desktop://open?path=%2Fworkspaces",
-      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&origin=https%3A%2F%2Fattacker.example&path=%2Fworkspaces",
-      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces&next=https%3A%2F%2Fattacker.example",
-      "leapview-desktop://open?origin=https%3A%2F%2Fuser%3Asecret%40analytics.company.com&path=%2Fworkspaces",
-      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com%2Fpath&path=%2Fworkspaces",
+      "leapview-desktop://open?path=%2Fexplore",
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&origin=https%3A%2F%2Fattacker.example&path=%2Fexplore",
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fexplore&next=https%3A%2F%2Fattacker.example",
+      "leapview-desktop://open?origin=https%3A%2F%2Fuser%3Asecret%40analytics.company.com&path=%2Fexplore",
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com%2Fpath&path=%2Fexplore",
       "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fadmin",
-      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces%2Fsales%2Fassets%2Forders",
-      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces%2Fsales%2Fdashboards%2Frevenue%3Ffilter%3Dsecret",
-      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces%2F..%2Fadmin",
-      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces%2F%252e%252e%2Fadmin",
-      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces%255cadmin",
-      `leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces%2F${"a".repeat(2_048)}`,
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fprojects%2Fsales",
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdashboards%2Frevenue%3Ffilter%3Dsecret",
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdashboards%2F..%2Fadmin",
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdashboards%2F%252e%252e%2Fadmin",
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdashboards%255cadmin",
+      `leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdashboards%2F${"a".repeat(2_048)}`,
     ];
 
     for (const candidate of candidates) {
@@ -99,7 +103,7 @@ describe("desktopDeepLinkFromArguments", () => {
 describe("routeDesktopDeepLink", () => {
   const request: DesktopDeepLink = {
     origin: "https://analytics.company.com",
-    path: "/workspaces/sales/dashboards/revenue",
+    path: "/dashboards/revenue",
   };
   const profile = {
     id: "profile_0123456789abcdef0123456789abcdef",
@@ -177,7 +181,7 @@ describe("DeepLinkDispatcher", () => {
     });
     const first = parseDesktopDeepLink(dashboardLink);
     const secondURL = new URL(dashboardLink);
-    secondURL.searchParams.set("path", "/workspaces/sales");
+    secondURL.searchParams.set("path", "/explore");
     const second = parseDesktopDeepLink(secondURL.toString());
     let releaseFirst: () => void = () => undefined;
     const firstGate = new Promise<void>((resolve) => {
