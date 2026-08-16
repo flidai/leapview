@@ -549,6 +549,10 @@ func agentVisualFilterUsages(
 }
 
 func (p VisualProvider) queryAgentChart(ctx context.Context, projectID string, model *semanticmodel.Model, input agentVisualInput, id string) (agentVisualResult, error) {
+	semanticModelID, err := projectgraph.NewResourceID(input.Model)
+	if err != nil {
+		return agentVisualResult{}, fmt.Errorf("semantic model ID: %w", err)
+	}
 	shape := agentVisualShape(input)
 	if err := validateAgentChartContract(input); err != nil {
 		return agentVisualResult{}, err
@@ -566,7 +570,7 @@ func (p VisualProvider) queryAgentChart(ctx context.Context, projectID string, m
 	authored := agentReportVisual(input)
 	authored.Title = title
 	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
-		ID: "agent-visual", Title: "Agent visual", SemanticModel: input.Model,
+		ID: "agent-visual", Title: "Agent visual", SemanticModel: semanticModelID,
 		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{id: authored}),
 	}, model)
 	if err != nil {
@@ -838,6 +842,10 @@ func agentFloat(value any) float64 {
 }
 
 func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, model *semanticmodel.Model, input agentVisualInput, id string) (agentVisualResult, error) {
+	semanticModelID, err := projectgraph.NewResourceID(input.Model)
+	if err != nil {
+		return agentVisualResult{}, fmt.Errorf("semantic model ID: %w", err)
+	}
 	fields := input.Fields
 	aggregate := len(fields) == 0 && (len(input.Rows) > 0 || len(input.Measures) > 0)
 	if len(fields) == 0 {
@@ -906,7 +914,7 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, m
 		}
 	}
 	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
-		ID: "agent", SemanticModel: input.Model,
+		ID: "agent", SemanticModel: semanticModelID,
 		Visuals: dashboardauthoring.TabularVisualizations(input.Type, map[string]dashboardauthoring.TableVisual{id: authored}),
 	}, model)
 	if err != nil {

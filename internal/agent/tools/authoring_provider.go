@@ -45,7 +45,7 @@ type DashboardAuthoring interface {
 	Get(context.Context, catalog.GetRequest) (catalog.Dashboard, error)
 	Draft(context.Context, authoringapplication.DraftRequest) (authoringapplication.DraftRead, error)
 	Create(context.Context, authoringservice.CreateRequest) (authoringservice.Result, error)
-	Execute(context.Context, string, dashboardauthoring.Command) (authoringservice.Result, error)
+	Execute(context.Context, projectgraph.ResourceID, dashboardauthoring.Command) (authoringservice.Result, error)
 	ExecuteIntent(context.Context, authoringapplication.IntentRequest) (authoringservice.Result, error)
 	Fork(context.Context, sourceadapter.ForkRequest) (authoringservice.Result, error)
 	Preview(context.Context, previewservice.PreviewRequest) (previewservice.Preview, error)
