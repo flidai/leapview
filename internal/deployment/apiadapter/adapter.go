@@ -195,6 +195,14 @@ func stableID(project, actor, key string) string {
 	return "deployment_" + hex.EncodeToString(sum[:16])
 }
 
+// DeploymentID exposes the canonical idempotency identity to deployment
+// policy binders. It is the same stable identity used by Create.
+func DeploymentID(project, actor, key string) string { return stableID(project, actor, key) }
+
+// RequestDigest computes the immutable request binding before persistence so a
+// bootstrap policy can be armed before its worker payload is committed.
+func RequestDigest(request CreateRequest) (string, error) { return requestDigest(request) }
+
 func normalizePublishEvidence(evidence *PublishEvidence) error {
 	if evidence.ReleaseDigest != strings.TrimSpace(evidence.ReleaseDigest) || evidence.ArtifactContentDigest != strings.TrimSpace(evidence.ArtifactContentDigest) || evidence.ArtifactProvenanceDigest != strings.TrimSpace(evidence.ArtifactProvenanceDigest) || evidence.PlanDigest != strings.TrimSpace(evidence.PlanDigest) || evidence.PolicyDigest != strings.TrimSpace(evidence.PolicyDigest) || evidence.CandidateID != strings.TrimSpace(evidence.CandidateID) || evidence.TargetID != strings.TrimSpace(evidence.TargetID) || evidence.Environment != strings.TrimSpace(evidence.Environment) || evidence.GenerationID != strings.TrimSpace(evidence.GenerationID) {
 		return fmt.Errorf("%w: immutable publish evidence must be canonical", ErrInvalid)

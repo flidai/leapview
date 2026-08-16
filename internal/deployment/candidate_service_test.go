@@ -436,6 +436,10 @@ func (repository *candidateMemoryRepository) ActiveCandidateBaseScope(_ context.
 	return CandidateScope{ProjectID: projectID, Environment: environment}, nil
 }
 
+func (repository *candidateMemoryRepository) ClaimProject(_ context.Context, input ProjectClaimInput) (ProjectClaim, error) {
+	return ProjectClaim{ProjectID: input.ProjectID, Environment: input.Environment, ClaimedBy: input.ClaimedBy, ClaimedAt: input.ClaimedAt}, nil
+}
+
 func (repository *candidateMemoryRepository) StartCandidate(_ context.Context, candidate Candidate, maxActivePerOwner int) (Candidate, bool, error) {
 	active := 0
 	for _, existing := range repository.candidates {

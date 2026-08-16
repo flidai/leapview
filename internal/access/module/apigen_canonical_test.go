@@ -570,6 +570,88 @@ func TestAPIGenProjectPrivilegeRequiresRuntime(t *testing.T) {
 	}
 }
 
+func TestAPIGenCandidateActivePathKeepsNormalSessionSnapshotAuthorization(t *testing.T) {
+	identity, snapshot := apigenSnapshot(t, "principal", "", "project_demo", projectgraph.KindProject, true, false)
+	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "principal"}, true)
+	module.SetCurrentEffectiveCapabilities(func(context.Context, string) ([]access.Capability, error) {
+		return snapshot.EffectiveCapabilities([]access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "principal"}})
+	})
+	contract := APIGenOperationContract{
+		OperationID: "publishProjectCandidate", Method: http.MethodPost,
+		Path: "/api/v1/projects/{project}/candidates/{candidate}/publish", Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "PROJECT_ADMIN", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+	}
+	authorizer, err := module.APIGenAuthorizer(apigenRuntimeFake{project: "project_demo", lease: apigenLeaseFake{identity: identity, snapshot: snapshot}}, map[string]APIGenOperationContract{"publishProjectCandidate": contract}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer.SetBootstrapAuthorizer(func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (APIGenBootstrapDecision, error) {
+		return APIGenBootstrapDecision{Handled: false}, nil
+	})
+	protected, ok := authorizer.Protect("publishProjectCandidate", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	if !ok || protected == nil {
+		t.Fatal("candidate authorizer was not created")
+	}
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/candidates/candidate/publish", map[string]string{"project": "project_demo"}))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("active candidate path status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestAPIGenCandidatePreActivationRequiresExplicitRESTTokenPlatformAdmin(t *testing.T) {
+	contract := APIGenOperationContract{
+		OperationID: "startProjectCandidate", Method: http.MethodPost,
+		Path: "/api/v1/projects/{project}/candidates", Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_EDIT", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+	}
+	newAuthorizer := func(admin bool) *APIGenAuthorizer {
+		module := browserGuardModule(browserGuardRepository{admin: admin}, Principal{ID: "admin"}, true)
+		authorizer, err := module.APIGenAuthorizer(nil, map[string]APIGenOperationContract{"startProjectCandidate": contract}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		authorizer.SetBootstrapAuthorizer(func(_ context.Context, _ *http.Request, operation string, project projectgraph.ResourceID, _ access.Capability) (APIGenBootstrapDecision, error) {
+			if operation != "startProjectCandidate" || project != "project_demo" {
+				t.Fatalf("bootstrap decision identity = %q/%q", operation, project)
+			}
+			return APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
+		})
+		return authorizer
+	}
+	serve := func(authorizer *APIGenAuthorizer, credential *access.APICredential) (int, string) {
+		protected, ok := authorizer.Protect("startProjectCandidate", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+		if !ok {
+			t.Fatal("candidate authorizer was not created")
+		}
+		r := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/candidates", map[string]string{"project": "project_demo"})
+		if credential != nil {
+			r.Header.Set("Authorization", "Bearer test-token")
+			r = r.WithContext(WithAPICredential(r.Context(), *credential))
+		}
+		recorder := httptest.NewRecorder()
+		protected.ServeHTTP(recorder, r)
+		return recorder.Code, recorder.Body.String()
+	}
+	explicit := &access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceEdit}}}
+	if status, body := serve(newAuthorizer(true), explicit); status != http.StatusNoContent {
+		t.Fatalf("explicit token status = %d body=%q, want %d", status, body, http.StatusNoContent)
+	}
+	if status, _ := serve(newAuthorizer(true), nil); status != http.StatusUnauthorized {
+		t.Fatalf("session status = %d, want %d", status, http.StatusUnauthorized)
+	}
+	empty := *explicit
+	empty.Token.Capabilities = []access.Capability{}
+	if status, _ := serve(newAuthorizer(true), &empty); status != http.StatusForbidden {
+		t.Fatalf("empty token status = %d, want %d", status, http.StatusForbidden)
+	}
+	if status, _ := serve(newAuthorizer(false), explicit); status != http.StatusForbidden {
+		t.Fatalf("non-admin status = %d, want %d", status, http.StatusForbidden)
+	}
+}
+
 func TestAPIGenAuthenticatedOperationUsesPrincipalAuthentication(t *testing.T) {
 	module := browserGuardModule(nil, Principal{ID: "principal"}, true)
 	authorizer := &APIGenAuthorizer{

@@ -23,6 +23,7 @@ type CandidatePublishRequest struct {
 	ExpectedRevision int64  `json:"expectedRevision"`
 	ProvenanceDigest string `json:"provenanceDigest"`
 	TargetID         string `json:"targetId"`
+	Bootstrap        bool   `json:"bootstrap,omitempty"`
 }
 
 type CandidateSourceArtifact struct {

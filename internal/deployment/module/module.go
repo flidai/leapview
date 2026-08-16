@@ -37,6 +37,8 @@ type Module struct {
 	currentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
 	authorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
 	authorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
+	bootstrapPolicies         deployment.BootstrapActivationPolicyRepository
+	authorizeBootstrap        func(context.Context, deployment.BootstrapActivationPolicy) error
 }
 
 type Principal struct {
@@ -146,6 +148,12 @@ type Config struct {
 	CurrentApprovalActor func(*http.Request) (deployment.ApprovalActor, bool)
 	AuthorizeApproval    func(context.Context, deployment.ApprovalActor, string, string) error
 	AuthorizeActivation  func(context.Context, deployment.ApprovalActor, string, string) error
+	// BootstrapPolicies is the durable one-shot first-activation policy store.
+	// It is intentionally separate from approvals and active-generation
+	// snapshots; composition supplies the access-role/credential and
+	// no-active-generation revalidator.
+	BootstrapPolicies  deployment.BootstrapActivationPolicyRepository
+	AuthorizeBootstrap func(context.Context, deployment.BootstrapActivationPolicy) error
 	// AfterActivated runs after runtime publication and durable activation.
 	// It is observational and cannot influence activation.
 	AfterActivated           func(context.Context, deployment.Deployment)
@@ -172,6 +180,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var candidates *deployment.CandidateService
 	var approvals *deployment.ApprovalService
 	var candidateRuntimes *deployment.CandidateRuntimeService
+	var durableBootstrapPolicies deployment.BootstrapActivationPolicyRepository
 	if config.Database != nil {
 		if config.States == nil || config.Runtime == nil || config.ManagedData == nil {
 			return nil, errors.New("deployment states, runtime, and managed data are required")
@@ -185,6 +194,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			config.API.Releases,
 			config.API.Workflow,
 		)
+		if policyStore, ok := repository.(deployment.BootstrapActivationPolicyRepository); ok {
+			durableBootstrapPolicies = policyStore
+		}
 		service, err := deployment.New(repository, activation, config.States, config.Runtime, config.ManagedData)
 		if err != nil {
 			return nil, err
@@ -255,6 +267,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		currentApprovalActor: config.CurrentApprovalActor,
 		authorizeApproval:    config.AuthorizeApproval,
 		authorizeActivation:  config.AuthorizeActivation,
+		bootstrapPolicies:    config.BootstrapPolicies, authorizeBootstrap: config.AuthorizeBootstrap,
+	}
+	if m.bootstrapPolicies == nil {
+		m.bootstrapPolicies = durableBootstrapPolicies
 	}
 	if m.logger == nil {
 		m.logger = slog.Default()

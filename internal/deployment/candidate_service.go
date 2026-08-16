@@ -32,6 +32,7 @@ const (
 
 type CandidateRepository interface {
 	ActiveCandidateBaseScope(context.Context, projectgraph.ResourceID, string) (CandidateScope, error)
+	ClaimProject(context.Context, ProjectClaimInput) (ProjectClaim, error)
 	StartCandidate(context.Context, Candidate, int) (Candidate, bool, error)
 	StartCandidateWithClaim(context.Context, Candidate, int, ProjectClaimInput) (Candidate, bool, error)
 	ActiveCandidate(context.Context, string, projectgraph.ResourceID, string, string) (Candidate, error)
@@ -181,6 +182,38 @@ func (service *CandidateService) Start(ctx context.Context, request StartCandida
 	// that distinction as metadata instead of changing the audit action.
 	service.recordBestEffort(ctx, CandidateAuditStarted, candidate, map[string]any{"resumed": resumed})
 	return CandidateStartResult{Candidate: candidate, PreviewURL: service.PreviewURL(candidate.ID), Resumed: resumed}, nil
+}
+
+// ClaimProject establishes the singleton project/environment binding without
+// creating a candidate. CLI plan-before-upload uses this idempotent operation
+// so a source synchronization cannot race an unrelated project claim. The
+// concrete SQLite repository implements the optional port; lightweight test
+// repositories that predate durable claims retain their historical no-op
+// behavior.
+func (service *CandidateService) ClaimProject(ctx context.Context, projectID projectgraph.ResourceID, actorID string) error {
+	if service == nil || service.repository == nil {
+		return fmt.Errorf("candidate service is unavailable")
+	}
+	if err := projectID.Validate(); err != nil || projectID.String() != strings.TrimSpace(projectID.String()) {
+		return fmt.Errorf("%w: project id must be canonical", ErrCandidateInvalid)
+	}
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return fmt.Errorf("%w: actor is required", ErrCandidateInvalid)
+	}
+	_, err := service.repository.ClaimProject(ctx, ProjectClaimInput{
+		ProjectID: projectID, Environment: servingstate.Environment(service.environment),
+		ClaimedBy: actorID, ClaimedAt: service.now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	if service.bindProject != nil {
+		if err := service.bindProject(ctx, projectID, servingstate.Environment(service.environment)); err != nil {
+			return fmt.Errorf("bind claimed project: %w", err)
+		}
+	}
+	return nil
 }
 
 func (service *CandidateService) CancelActive(

@@ -43,6 +43,9 @@ model CandidatePublishRequest {
   expectedRevision: int64;
   provenanceDigest: string;
   targetId: string;
+  // Explicit one-shot first protected activation. Omission and false always
+  // use the normal protected publication/approval path.
+  bootstrap?: boolean;
 }
 
 model CandidateSourceArtifact {

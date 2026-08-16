@@ -72,6 +72,61 @@ func TestProjectClaimConcurrentABHasOneWinner(t *testing.T) {
 	}
 }
 
+func bootstrapPolicyInput(project, deploymentID, actor, credential string, armed time.Time) deployment.BootstrapActivationPolicy {
+	return deployment.BootstrapActivationPolicy{
+		ProjectID: projectgraph.ResourceID(project), Environment: servingstate.Environment("prod"), DeploymentID: deploymentID,
+		RequestDigest: deploymentDigest("a"), ActorID: actor, CredentialID: credential,
+		CredentialExpiresAt: armed.Add(time.Hour), ArmedAt: armed,
+	}
+}
+
+func TestBootstrapActivationPolicyIsIdempotentAndBound(t *testing.T) {
+	_, repository := openDeploymentRepository(t)
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	first, err := repository.ArmBootstrapActivation(t.Context(), bootstrapPolicyInput("finance", "deployment_1", "admin", "token_1", at))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay := bootstrapPolicyInput("finance", "deployment_1", "admin", "token_1", at.Add(time.Minute))
+	got, err := repository.ArmBootstrapActivation(t.Context(), replay)
+	if err != nil || got != first {
+		t.Fatalf("idempotent bootstrap replay = %#v, err=%v, want %#v", got, err, first)
+	}
+	if _, err := repository.ArmBootstrapActivation(t.Context(), bootstrapPolicyInput("finance", "deployment_2", "admin", "token_1", at)); !errors.Is(err, deployment.ErrBootstrapPolicyConflict) {
+		t.Fatalf("different deployment error = %v, want bootstrap policy conflict", err)
+	}
+	read, err := repository.BootstrapActivationPolicy(t.Context(), "deployment_1")
+	if err != nil || read != first {
+		t.Fatalf("bootstrap policy read = %#v, err=%v, want %#v", read, err, first)
+	}
+}
+
+func TestBootstrapActivationPolicyConcurrentDifferentDeploymentsHasOneWinner(t *testing.T) {
+	_, repository := openDeploymentRepository(t)
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	results := make(chan error, 2)
+	for _, id := range []string{"deployment_a", "deployment_b"} {
+		go func(id string) {
+			_, err := repository.ArmBootstrapActivation(t.Context(), bootstrapPolicyInput("finance", id, "admin", "token_1", at))
+			results <- err
+		}(id)
+	}
+	var winners, conflicts int
+	for range 2 {
+		switch err := <-results; err {
+		case nil:
+			winners++
+		case deployment.ErrBootstrapPolicyConflict:
+			conflicts++
+		default:
+			t.Fatalf("concurrent bootstrap error = %v", err)
+		}
+	}
+	if winners != 1 || conflicts != 1 {
+		t.Fatalf("concurrent outcomes = winners %d conflicts %d, want one each", winners, conflicts)
+	}
+}
+
 func TestCandidateClaimConflictRollsBackCandidate(t *testing.T) {
 	ctx, db, repository := testRepository(t)
 	insertCandidatePrincipal(t, ctx, db, "principal_1")

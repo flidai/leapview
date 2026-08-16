@@ -72,6 +72,35 @@ type APIGenAuthorizer struct {
 	runtime    apigenRuntimeHost
 	scopes     map[string]apiGenResourceScope
 	operations map[string]APIGenOperationContract
+	// bootstrap is an explicit, narrow pre-activation authorization seam. It
+	// is intentionally optional and is only consulted for candidate routes;
+	// active generations continue through the immutable snapshot path.
+	bootstrap APIGenBootstrapAuthorizer
+}
+
+type APIGenBootstrapDecision struct {
+	// Handled distinguishes "there is no active generation, use bootstrap"
+	// from "an active generation exists, continue with normal snapshot authz".
+	Handled bool
+	Allowed bool
+}
+
+// APIGenBootstrapAuthorizer is supplied by application composition. It is a
+// read-only decision seam: inspect the durable exact project/environment claim
+// and active-generation pointer, but never claim or mutate state here. It must
+// not infer bootstrap from an arbitrary lease error. The operation ID lets the
+// composition layer allow only the explicit pre-claim plan/start operations;
+// commit and all other candidate operations require an existing claim.
+type APIGenBootstrapAuthorizer func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (APIGenBootstrapDecision, error)
+
+// SetBootstrapAuthorizer installs the explicit pre-activation candidate
+// authorization seam. Keeping this as a setter avoids widening the existing
+// constructor while allowing composition to provide the deployment-owned
+// durable claim policy.
+func (a *APIGenAuthorizer) SetBootstrapAuthorizer(authorizer APIGenBootstrapAuthorizer) {
+	if a != nil {
+		a.bootstrap = authorizer
+	}
 }
 
 type apigenRuntimeHost interface {
@@ -98,7 +127,7 @@ func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[stri
 		if err := authorizer.validateOperation(operationID, contract); err != nil {
 			return nil, err
 		}
-		if runtime == nil && apiGenOperationNeedsRuntime(contract) {
+		if runtime == nil && apiGenOperationNeedsRuntime(contract) && !isCandidateAPIGenOperation(operationID) {
 			return nil, fmt.Errorf("APIGen operation %q requires an active runtime host", operationID)
 		}
 	}
@@ -199,10 +228,93 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	if resolver == nil {
 		return nil, false
 	}
+	if isCandidateAPIGenOperation(operationID) && a.bootstrap != nil {
+		capability, ok := apiGenOperationCapability(contract)
+		if !ok {
+			return nil, false
+		}
+		return a.protectCandidateBootstrap(operationID, capability, next), true
+	}
 	if a.runtime == nil {
 		return nil, false
 	}
 	return a.protectResources(capability, resolver, next), true
+}
+
+func isCandidateAPIGenOperation(operationID string) bool {
+	switch operationID {
+	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "commitProjectCandidateSynchronization":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *APIGenAuthorizer) protectCandidateBootstrap(operationID string, capability access.Capability, next http.Handler) http.Handler {
+	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r == nil {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		principal, ok := a.module.CurrentPrincipal(r)
+		if !ok || strings.TrimSpace(principal.ID) == "" {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		projectID, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+			return
+		}
+		decision, err := a.bootstrap(r.Context(), r, operationID, projectID, capability)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if !decision.Handled {
+			// The project has an active generation. Bootstrap never grants an
+			// active path; normal immutable-snapshot authz is authoritative.
+			if a.runtime == nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			resolver := a.resourceResolverForContractMust(operationID)
+			if resolver == nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			a.protectResources(capability, resolver, next).ServeHTTP(w, r)
+			return
+		}
+		// Bootstrap is intentionally narrower than normal project RBAC: only a
+		// REST API token with an explicit capability allowlist may establish the
+		// first project operation.
+		if bearerToken(r) == "" {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		credential, found := a.module.requestCredential(r)
+		if !found || credential.Authoring != nil || credential.Token.ID == "" || credential.Token.Capabilities == nil || len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, capability) || credential.Principal.ID != principal.ID {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		isAdmin, err := a.module.IsPlatformAdmin(r.Context(), principal.ID)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if !isAdmin || !decision.Allowed {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+func (a *APIGenAuthorizer) resourceResolverForContractMust(operationID string) APIGenResourceResolver {
+	contract := a.operations[operationID]
+	resolver, _ := a.resourceResolverForContract(contract)
+	return resolver
 }
 
 func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolve APIGenResourceResolver, next http.Handler) http.Handler {

@@ -42,6 +42,16 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 		writeCandidateAPIError(w, r, err)
 		return
 	}
+	// Planning is the first CLI side effect: claim the exact project and
+	// environment before reporting missing blobs. The durable singleton claim
+	// is idempotent for the same project and fails closed for a race with a
+	// different project.
+	if m.candidates != nil {
+		if err := m.candidates.ClaimProject(r.Context(), projectID, principalID); err != nil {
+			writeCandidateAPIError(w, r, err)
+			return
+		}
+	}
 	if !m.validateExpectedCandidate(w, r, project, principalID, request, nil) {
 		return
 	}

@@ -28,6 +28,9 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 		}
 		principal, ok := m.CurrentPrincipal(r)
 		var credential *access.APICredential
+		if current, found := APICredentialFromContext(r.Context()); found {
+			credential = &current
+		}
 		if m.auth != nil {
 			if current, found := m.auth.APICredential(r); found {
 				credential = &current

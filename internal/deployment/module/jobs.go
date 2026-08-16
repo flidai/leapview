@@ -21,6 +21,7 @@ type ActivateJob struct {
 	ApprovalID       string
 	ApprovalRevision int64
 	IdempotencyKey   string
+	Bootstrap        bool
 }
 
 type DeploymentCoordinator interface {
@@ -80,7 +81,22 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	if err != nil {
 		return err
 	}
-	if m.protected {
+	if payload.Bootstrap {
+		if !m.protected || m.bootstrapPolicies == nil || m.authorizeBootstrap == nil || payload.Credential.CredentialClass != deployment.CredentialClassAPIToken || payload.Credential.PrincipalID != payload.Actor {
+			return deployment.ErrApprovalRequired
+		}
+		policy, policyErr := m.bootstrapPolicies.BootstrapActivationPolicy(ctx, payload.Deployment)
+		if policyErr != nil || policy.ProjectID.String() != pending.Project || string(policy.Environment) != pending.Environment || policy.DeploymentID != pending.ID || policy.RequestDigest != pending.RequestDigest || policy.ActorID != payload.Credential.PrincipalID || policy.CredentialID != payload.Credential.CredentialID || !policy.CredentialExpiresAt.Equal(payload.Credential.CredentialExpiresAt) {
+			if policyErr != nil {
+				return policyErr
+			}
+			return deployment.ErrBootstrapPolicyConflict
+		}
+		if err := m.authorizeBootstrap(ctx, policy); err != nil {
+			m.appendEvent(ctx, payload.Deployment, "deployment.authorization_failed", "failed")
+			return err
+		}
+	} else if m.protected {
 		if m.api.Releases == nil ||
 			payload.Credential.PrincipalID != payload.Actor {
 			return deployment.ErrApprovalRequired
@@ -113,7 +129,7 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			return deployment.ErrApprovalConflict
 		}
 	}
-	if m.jobs.Authorize != nil {
+	if !payload.Bootstrap && m.jobs.Authorize != nil {
 		if err := m.jobs.Authorize(ctx, payload.Actor, pending.Environment, pending.GenerationID); err != nil {
 			m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
 			return err
@@ -171,12 +187,27 @@ func activationWorkflowForOperation(
 	approval deployment.Approval,
 	idempotencyKey string,
 ) (jobs.WorkflowIntent, error) {
+	return activationWorkflowForOperationWithBootstrap(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, false)
+}
+
+func activationWorkflowForOperationWithBootstrap(
+	operationID string,
+	execution apigencommand.AsyncExecutionContract,
+	enqueue bool,
+	project,
+	deploymentID,
+	releaseID string,
+	actor deployment.ApprovalActor,
+	approval deployment.Approval,
+	idempotencyKey string,
+	bootstrap bool,
+) (jobs.WorkflowIntent, error) {
 	payload, _ := json.Marshal(ActivateJob{
 		Project: project, Deployment: deploymentID,
 		Actor: actor.PrincipalID, Credential: actor,
 		ApprovalID:       approval.ID,
 		ApprovalRevision: approval.Revision,
-		IdempotencyKey:   idempotencyKey,
+		IdempotencyKey:   idempotencyKey, Bootstrap: bootstrap,
 	})
 	queuedPayload := deploymentgen.GenSchemaDeploymentQueuedAuditPayload{
 		DeploymentId: deploymentID, ProjectId: project, ReleaseId: releaseID, Status: execution.InitialState,

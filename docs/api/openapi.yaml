@@ -27165,6 +27165,7 @@ paths:
             schema:
               $ref: '#/components/schemas/CandidatePublishRequest'
             example:
+              bootstrap: true
               expectedRevision: 1
               provenanceDigest: example
               targetId: example
@@ -57701,7 +57702,11 @@ components:
         targetId:
           type: string
           example: example
+        bootstrap:
+          type: boolean
+          example: true
       example:
+        bootstrap: true
         expectedRevision: 1
         provenanceDigest: example
         targetId: example

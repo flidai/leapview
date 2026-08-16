@@ -23,6 +23,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 var (
@@ -75,6 +76,10 @@ func (m *Module) CreateDeployment(w http.ResponseWriter, r *http.Request, projec
 }
 
 func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, project, releaseID, idempotencyKey, rollbackOf string) {
+	m.createDeploymentWithBootstrap(w, r, operationID, project, releaseID, idempotencyKey, rollbackOf, false)
+}
+
+func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, project, releaseID, idempotencyKey, rollbackOf string, bootstrap bool) {
 	operationIDValue := operationID.APIGenOperationID()
 	execution, err := m.execution(operationIDValue)
 	if err != nil {
@@ -131,15 +136,41 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		ReleaseID: releaseID, Evidence: evidence, RollbackOf: rollbackOf,
 	}
 	createRequest.Workflow = func(deploymentID string) (jobs.WorkflowIntent, error) {
-		return activationWorkflowForOperation(operationIDValue, execution,
-			!m.protected,
+		return activationWorkflowForOperationWithBootstrap(operationIDValue, execution,
+			!m.protected || bootstrap,
 			project,
 			deploymentID,
 			releaseID,
-			deployment.ApprovalActor{PrincipalID: principal.ID},
+			approvalActor,
 			deployment.Approval{},
-			idempotencyKey+":cutover",
+			idempotencyKey+":cutover", bootstrap,
 		)
+	}
+	if bootstrap {
+		if !m.protected || m.bootstrapPolicies == nil || m.authorizeBootstrap == nil || approvalActor.CredentialClass != deployment.CredentialClassAPIToken {
+			m.writeCommandFailure(w, r, operationID, deployment.ErrApprovalRequired)
+			return
+		}
+		requestDigest, digestErr := apiadapter.RequestDigest(createRequest)
+		if digestErr != nil {
+			m.writeCommandFailure(w, r, operationID, digestErr)
+			return
+		}
+		deploymentID := apiadapter.DeploymentID(project, principal.ID, idempotencyKey)
+		bootstrapPolicy := deployment.BootstrapActivationPolicy{
+			ProjectID: projectgraph.ResourceID(project), Environment: servingstate.Environment(m.handlerEnvironment()), DeploymentID: deploymentID,
+			RequestDigest: requestDigest, ActorID: principal.ID, CredentialID: approvalActor.CredentialID,
+			CredentialExpiresAt: approvalActor.CredentialExpiresAt, ArmedAt: time.Now().UTC(),
+		}
+		if err := m.authorizeBootstrap(r.Context(), bootstrapPolicy); err != nil {
+			m.writeCommandFailure(w, r, operationID, err)
+			return
+		}
+		_, armErr := m.bootstrapPolicies.ArmBootstrapActivation(r.Context(), bootstrapPolicy)
+		if armErr != nil {
+			m.writeCommandFailure(w, r, operationID, armErr)
+			return
+		}
 	}
 	created, err := m.jobs.Coordinator.Create(r.Context(), createRequest)
 	if err != nil {
@@ -147,7 +178,7 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		return
 	}
 	response := deploymentResponse(created, targetRelease)
-	if m.protected {
+	if m.protected && !bootstrap {
 		approval, approvalErr := m.requestApproval(
 			r.Context(),
 			created,

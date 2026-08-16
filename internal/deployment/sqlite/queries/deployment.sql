@@ -115,6 +115,28 @@ SELECT project_id, environment, claimed_by, claimed_at
 FROM instance_project_claim
 WHERE singleton_id = 1;
 
+-- Permanent one-shot binding for first protected activation.
+
+-- name: InsertBootstrapActivationPolicy :execresult
+INSERT INTO bootstrap_activation_policies (
+  deployment_id, project_id, environment, request_digest, actor_id,
+  credential_id, credential_expires_at, armed_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(deployment_id) DO NOTHING;
+
+-- name: GetBootstrapActivationPolicy :one
+SELECT deployment_id, project_id, environment, request_digest, actor_id,
+       credential_id, credential_expires_at, armed_at
+FROM bootstrap_activation_policies
+WHERE deployment_id = ?;
+
+-- name: GetBootstrapActivationPolicyByScope :one
+SELECT deployment_id, project_id, environment, request_digest, actor_id,
+       credential_id, credential_expires_at, armed_at
+FROM bootstrap_activation_policies
+WHERE project_id = ? AND environment = ?;
+
 -- name: CreateProjectCandidate :exec
 INSERT INTO project_candidates (
   id, project_id, target_id, environment, owner_principal_id, candidate_key,

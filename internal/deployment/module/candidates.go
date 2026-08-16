@@ -287,6 +287,19 @@ func (m *Module) PublishProjectCandidate(
 	if m.candidateRuntimeLifecycle != nil {
 		m.candidateRuntimeLifecycle.RetireCandidate(candidate.ID)
 	}
+	if body.Bootstrap {
+		m.createDeploymentWithBootstrap(
+			w,
+			r,
+			deploymentgen.GenCommandOperationPublishProjectCandidate(),
+			project,
+			published.ID,
+			idempotencyKey,
+			"",
+			true,
+		)
+		return
+	}
 	m.createDeployment(
 		w,
 		r,
@@ -422,9 +435,13 @@ func writeCandidateAPIError(w http.ResponseWriter, r *http.Request, err error) {
 		status, code, detail = http.StatusNotFound, "CANDIDATE_NOT_FOUND", "Candidate not found"
 	case errors.Is(err, deployment.ErrCandidateConflict), errors.Is(err, project.ErrCandidateSourceConflict):
 		status, code, detail = http.StatusConflict, "CANDIDATE_CONFLICT", err.Error()
+	case errors.Is(err, deployment.ErrProjectClaimConflict):
+		status, code, detail = http.StatusConflict, "CANDIDATE_CONFLICT", err.Error()
 	case errors.Is(err, deployment.ErrCandidateQuota):
 		status, code, detail = http.StatusTooManyRequests, "CANDIDATE_QUOTA_EXCEEDED", "Candidate quota exceeded"
 	case errors.Is(err, deployment.ErrCandidateInvalid), errors.Is(err, project.ErrCandidateSourceInvalid):
+		status, code, detail = http.StatusUnprocessableEntity, "INVALID_CANDIDATE", err.Error()
+	case errors.Is(err, deployment.ErrProjectClaimInvalid):
 		status, code, detail = http.StatusUnprocessableEntity, "INVALID_CANDIDATE", err.Error()
 	}
 	apitransport.WriteProblem(w, r, status, code, detail, nil)
@@ -437,6 +454,10 @@ func (m *Module) writeCandidateCommandFailure(w http.ResponseWriter, r *http.Req
 
 func classifyCandidateFailure(err error) error {
 	switch {
+	case errors.Is(err, deployment.ErrProjectClaimConflict):
+		return apigenfailure.Wrap("candidate_conflict", err)
+	case errors.Is(err, deployment.ErrProjectClaimInvalid):
+		return apigenfailure.Wrap("candidate_invalid", err)
 	case errors.Is(err, project.ErrCandidateSourceUnavailable):
 		return apigenfailure.Wrap("candidate_unavailable", err)
 	case errors.Is(err, project.ErrCandidateSourceConflict):
