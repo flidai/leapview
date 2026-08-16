@@ -148,6 +148,17 @@ func TestRequirePlatformAdminAllowsDevelopmentBypass(t *testing.T) {
 	}
 }
 
+func TestRequirePlatformAdminAllowsDevelopmentBypassWithoutRepository(t *testing.T) {
+	module := browserGuardModule(nil, LocalDeveloperPrincipal(), true)
+	recorder := httptest.NewRecorder()
+	module.RequirePlatformAdmin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/storage", nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
 func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocation(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
 	if err != nil {

@@ -72,6 +72,14 @@ func (m *Module) RequirePlatformAdmin(next http.Handler) http.Handler {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
+		// DevBypass is only available to the explicitly non-production local
+		// configuration (production validation rejects it). Keep that local
+		// surface usable even before a durable access repository exists; every
+		// non-development principal still requires the durable platform role.
+		if principal.DevBypass {
+			next.ServeHTTP(w, r)
+			return
+		}
 		allowed, err := m.RequestPlatformAdmin(r.Context(), r, principal.ID)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
