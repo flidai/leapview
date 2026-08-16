@@ -54,9 +54,17 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 	if !ok {
 		return
 	}
-	dashboardID := lddatastar.DashboardID(r, signals, metrics.DefaultDashboardID())
+	dashboardID, validDashboard := commandDashboardID(r, signals)
+	if !validDashboard {
+		nethttp.NotFound(w, r)
+		return
+	}
 	pageID := lddatastar.PageID(r, signals)
-	modelID := lddatastar.ModelID(r, signals, dashboardID, metrics.ModelIDForDashboard)
+	modelID := metrics.ModelIDForDashboard(dashboardID)
+	if !commandModelMatches(r, signals, modelID) {
+		nethttp.NotFound(w, r)
+		return
+	}
 	streamID := h.scopedStreamID(lddatastar.ClientStreamID(r, signals, dashboardID, pageID))
 	request := command.Request{
 		DashboardID:               dashboardID,
@@ -165,7 +173,10 @@ func (h Handler) persistPreparedSelections(
 	}
 	definition := resolved.Definition
 	clientID := pagestream.ClientIDFromRequest(r, signals.Runtime.ClientID)
-	key := h.dashboardSessionKey(r, definition, clientID, signals.Runtime.StreamInstanceID)
+	key, keyErr := h.dashboardSessionKey(r, definition, clientID, signals.Runtime.StreamInstanceID)
+	if keyErr != nil {
+		return keyErr
+	}
 	interaction, err := selectionMaps(prepared.Filters.Selections)
 	if err != nil {
 		return err

@@ -42,15 +42,8 @@ func (m multiWorkspaceMetrics) ExpireVisualizationTileStream(streamID string) {
 	}
 }
 
-func (m multiWorkspaceMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
-	if metrics, ok := m.MetricsForWorkspace(workspaceID); ok {
-		if tiled, ok := metrics.(interface {
-			QueryVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
-		}); ok {
-			return tiled.QueryVisualizationTile(ctx, workspaceID, dashboardID, visualID, revision, zoom, x, y)
-		}
-	}
-	return dashboardruntime.SpatialTileResult{}, fmt.Errorf("workspace spatial tile runtime is not configured")
+func (m multiWorkspaceMetrics) QueryVisualizationTile(context.Context, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error) {
+	return dashboardruntime.SpatialTileResult{}, fmt.Errorf("unbound workspace spatial tile runtime is not configured")
 }
 
 func (m multiWorkspaceMetrics) Catalog() dashboard.Catalog {
@@ -217,15 +210,8 @@ func (m *dynamicRuntimeMetrics) QueryVisualizationWindow(ctx context.Context, da
 	return visualizationir.VisualizationEnvelope{}, fmt.Errorf("workspace metrics are not configured")
 }
 
-func (m *dynamicRuntimeMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
-	if metrics, ok := m.MetricsForWorkspace(workspaceID); ok {
-		if tiled, ok := metrics.(interface {
-			QueryVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
-		}); ok {
-			return tiled.QueryVisualizationTile(ctx, workspaceID, dashboardID, visualID, revision, zoom, x, y)
-		}
-	}
-	return dashboardruntime.SpatialTileResult{}, fmt.Errorf("workspace spatial tile runtime is not configured")
+func (m *dynamicRuntimeMetrics) QueryVisualizationTile(context.Context, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error) {
+	return dashboardruntime.SpatialTileResult{}, fmt.Errorf("unbound workspace spatial tile runtime is not configured")
 }
 
 func (m *dynamicRuntimeMetrics) ExpireVisualizationTileStream(streamID string) {

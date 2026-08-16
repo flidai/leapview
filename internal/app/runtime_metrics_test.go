@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -108,6 +109,9 @@ func (r *targetLeaseRuntime) Resolver() dashboardresolver.Resolver { return fake
 func (r *targetLeaseRuntime) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
 	return fakeMetrics{}.SemanticModel(modelID)
 }
+func (r *targetLeaseRuntime) SemanticModelByID(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	return fakeMetrics{}.SemanticModel(modelID.String())
+}
 
 func (r *targetLeaseRuntime) DefaultFilters(dashboardID string) dashboard.Filters {
 	return fakeMetrics{}.DefaultFilters(dashboardID)
@@ -150,6 +154,9 @@ func (r *leaseRecordingRuntime) Resolver() dashboardresolver.Resolver {
 func (r *leaseRecordingRuntime) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
 	return fakeMetrics{}.SemanticModel(modelID)
 }
+func (r *leaseRecordingRuntime) SemanticModelByID(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	return fakeMetrics{}.SemanticModel(modelID.String())
+}
 
 func (r *leaseRecordingRuntime) DefaultFilters(dashboardID string) dashboard.Filters {
 	return fakeMetrics{}.DefaultFilters(dashboardID)
@@ -171,6 +178,10 @@ type recordingLease struct {
 
 func (l *recordingLease) Runtime() runtimehost.Runtime {
 	return l.runtime
+}
+
+func (l *recordingLease) Identity() projectgraph.ServingIdentity {
+	return projectgraph.ServingIdentity{ProjectID: "test", Environment: "dev", GenerationID: "dep_test"}
 }
 
 func (l *recordingLease) ServingStateID() servingstate.ID {

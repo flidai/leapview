@@ -33,11 +33,12 @@ func TestCandidateHTTPScopesRoutesStreamsAndSessions(t *testing.T) {
 		handler.StreamNamespace != "candidate:cand_1" {
 		t.Fatalf("candidate handler scope = (%q, %q)", handler.RouteScope.BasePath, handler.StreamNamespace)
 	}
-	key := handler.SessionKey(
+	key, err := handler.SessionKey(
 		httptest.NewRequest("GET", "/", nil),
 		dashboarddefinition.Definition{ID: "sales-dashboard"},
 		"client", "stream",
 	)
+	require.NoError(t, err)
 	if key.WorkspaceOrPublication != "candidate:cand_1:sales" ||
 		key.ServingStateID != "candidate:cand_1:"+digest {
 		t.Fatalf("candidate session key = %#v", key)

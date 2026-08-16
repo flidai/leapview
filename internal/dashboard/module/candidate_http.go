@@ -103,7 +103,7 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 		r *http.Request,
 		report dashboarddefinition.Definition,
 		clientID, streamInstanceID string,
-	) dashboardsession.Key {
+	) (dashboardsession.Key, error) {
 		principalOrClient := clientID
 		if currentPrincipalID != nil {
 			if principalID := currentPrincipalID(r); principalID != "" {
@@ -119,7 +119,7 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 			DashboardID:            report.ID,
 			ServingStateID:         "candidate:" + config.CandidateID + ":" + config.ArtifactDigest,
 			StreamInstanceID:       streamInstanceID,
-		}
+		}, nil
 	}
 	return handler, nil
 }

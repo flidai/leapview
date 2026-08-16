@@ -115,13 +115,15 @@ type SessionKeyFactory func(
 	report dashboarddefinition.Definition,
 	clientID string,
 	streamInstanceID string,
-) dashboardsession.Key
+) (dashboardsession.Key, error)
 
 type Handler struct {
 	Metrics Metrics
 	// ProjectID is the stable graph project resource selected by app
-	// composition. It is deliberately not taken from a route segment.
+	// composition. It is deliberately not taken from a route segment. When
+	// ResolveProjectID is configured, the lease-bound resolver is authoritative.
 	ProjectID               projectgraph.ResourceID
+	ResolveProjectID        func(context.Context) (projectgraph.ResourceID, error)
 	AnalyticalContext       func(context.Context) context.Context
 	Broker                  SignalBroker
 	Coordinators            *dashboardstream.Registry
@@ -155,6 +157,47 @@ type Handler struct {
 	Authoring               AuthoringApplication
 }
 
+func (h Handler) projectIDForRequest(ctx context.Context) (projectgraph.ResourceID, error) {
+	if h.ResolveProjectID != nil {
+		projectID, err := h.ResolveProjectID(ctx)
+		if err != nil {
+			return "", err
+		}
+		if err := projectID.Validate(); err != nil {
+			return "", err
+		}
+		return projectID, nil
+	}
+	if err := h.ProjectID.Validate(); err != nil {
+		return "", err
+	}
+	return h.ProjectID, nil
+}
+
+func commandDashboardID(r *nethttp.Request, signals dashboard.Signals) (string, bool) {
+	routeID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
+	if routeID == "" {
+		return "", false
+	}
+	if queryID := strings.TrimSpace(r.URL.Query().Get("dashboard")); queryID != "" && queryID != routeID {
+		return "", false
+	}
+	if signalID := strings.TrimSpace(signals.Runtime.DashboardID); signalID != "" && signalID != routeID {
+		return "", false
+	}
+	return routeID, true
+}
+
+func commandModelMatches(r *nethttp.Request, signals dashboard.Signals, modelID string) bool {
+	if requested := strings.TrimSpace(r.URL.Query().Get("model")); requested != "" && requested != modelID {
+		return false
+	}
+	if requested := strings.TrimSpace(signals.Runtime.ModelID); requested != "" && requested != modelID {
+		return false
+	}
+	return true
+}
+
 func (h Handler) scopedStreamID(streamID string) string {
 	namespace := strings.TrimSpace(h.StreamNamespace)
 	if namespace == "" {
@@ -163,7 +206,7 @@ func (h Handler) scopedStreamID(streamID string) string {
 	return namespace + ":" + streamID
 }
 
-func (h Handler) dashboardSessionKey(r *nethttp.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) dashboardsession.Key {
+func (h Handler) dashboardSessionKey(r *nethttp.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) (dashboardsession.Key, error) {
 	if h.SessionKey != nil {
 		return h.SessionKey(r, definition, clientID, streamInstanceID)
 	}
@@ -173,13 +216,17 @@ func (h Handler) dashboardSessionKey(r *nethttp.Request, definition dashboarddef
 			principalOrClient = principalID + ":" + clientID
 		}
 	}
+	projectID, err := h.projectIDForRequest(r.Context())
+	if err != nil {
+		return dashboardsession.Key{}, err
+	}
 	return dashboardsession.Key{
-		WorkspaceOrPublication: h.ProjectID.String(),
+		WorkspaceOrPublication: projectID.String(),
 		PrincipalOrClient:      principalOrClient,
 		DashboardID:            definition.ID,
 		ServingStateID:         definition.DefaultFilterState().DefaultsRevision,
 		StreamInstanceID:       streamInstanceID,
-	}
+	}, nil
 }
 
 func (h Handler) analyticalContext(ctx context.Context) context.Context {

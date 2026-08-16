@@ -216,6 +216,8 @@ type workflowAssemblyInputs struct {
 
 type runtimeAssemblyInputs struct {
 	ProjectID               projectgraph.ResourceID
+	ProjectIDResolver       func(context.Context) (projectgraph.ResourceID, error)
+	ServingSnapshotResolver func(context.Context) (string, error)
 	InstanceID              string
 	DuckDBDir               string
 	DuckLakeCatalogPath     string
@@ -792,9 +794,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Authoring:   routes.dashboardAuthoring,
 			RecordAudit: routes.accessModule.RecordAudit,
 			HTTP: dashboardmodule.HTTPConfig{
-				Metrics:   runtime.metrics,
-				ProjectID: runtime.projectID,
-				Admission: workloadController(&runtime.workloads), Broker: runtime.broker, Logger: platform.logger,
+				Metrics:          runtime.metrics,
+				ProjectID:        runtime.projectID,
+				ResolveProjectID: runtimeConfig.ProjectIDResolver,
+				Admission:        workloadController(&runtime.workloads), Broker: runtime.broker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
@@ -908,13 +911,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return principal.ID
 			},
-			RuntimeMetrics: runtime.metrics,
-			ServingSnapshot: func(ctx context.Context, requestedWorkspaceID string) (string, error) {
-				if routes.workspaceModule == nil {
-					return "", nil
-				}
-				return routes.workspaceModule.ActiveServingStateID(ctx, requestedWorkspaceID)
-			},
+			RuntimeMetrics:  runtime.metrics,
+			ServingSnapshot: runtimeConfig.ServingSnapshotResolver,
 		})
 		if err != nil {
 			return fmt.Errorf("build dashboard module: %w", err)

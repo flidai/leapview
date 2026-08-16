@@ -692,19 +692,14 @@ func (m Metrics) QueryVisualizationWindow(ctx context.Context, dashboardID, page
 	return m.Metrics.QueryVisualizationWindow(dataquery.WithGovernor(ctx, m), dashboardID, pageID, filters, request)
 }
 
-func (m Metrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
-	scopedMetrics, found := m.MetricsForWorkspace(workspaceID)
-	scoped, ok := scopedMetrics.(Metrics)
-	if !found || !ok {
-		return dashboardruntime.SpatialTileResult{}, errors.New("workspace spatial tile metrics are not configured")
-	}
-	port, ok := scoped.Metrics.(interface {
-		QueryVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
+func (m Metrics) QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+	port, ok := m.Metrics.(interface {
+		QueryVisualizationTile(context.Context, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
 	})
 	if !ok {
 		return dashboardruntime.SpatialTileResult{}, errors.New("spatial tile metrics are not configured")
 	}
-	return port.QueryVisualizationTile(dataquery.WithGovernor(ctx, scoped), workspaceID, dashboardID, visualID, revision, zoom, x, y)
+	return port.QueryVisualizationTile(dataquery.WithGovernor(ctx, m), dashboardID, visualID, revision, zoom, x, y)
 }
 
 func (m Metrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {

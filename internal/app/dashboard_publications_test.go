@@ -30,9 +30,9 @@ type spatialTileAcceptanceMetrics struct {
 	fakeMetrics
 }
 
-func (*spatialTileAcceptanceMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+func (*spatialTileAcceptanceMetrics) QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
 	metadata := dataquery.MetadataFromContext(ctx)
-	if workspaceID != "test-workspace" || dashboardID != "executive-sales" || visualID != "orders" || revision != "active-auth" || metadata.PrincipalID == "" {
+	if dashboardID != "executive-sales" || visualID != "orders" || revision != "active-auth" || metadata.PrincipalID == "" {
 		return dashboardruntime.SpatialTileResult{}, errors.New("tile revision scope unavailable")
 	}
 	return dashboardruntime.SpatialTileResult{Bytes: []byte{0x1a, 0x00}, Features: 1, Precision: "raw", CacheOutcome: "hit"}, nil

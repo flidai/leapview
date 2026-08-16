@@ -244,7 +244,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
-	projectID, err := singletonProjectID(activeScopes)
+	projectID, err := singletonProjectID(activeScopes, environment)
 	if err != nil {
 		return fail(err)
 	}
@@ -270,6 +270,30 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	})
 	if err != nil {
 		return fail(err)
+	}
+	projectIDResolver := func(ctx context.Context) (projectgraph.ResourceID, error) {
+		lease, err := runtimeHostModule.Acquire(ctx)
+		if err != nil {
+			return "", err
+		}
+		defer lease.Release()
+		projectID := lease.Identity().ProjectID
+		if err := projectID.Validate(); err != nil {
+			return "", fmt.Errorf("active runtime project identity is invalid: %w", err)
+		}
+		return projectID, nil
+	}
+	servingSnapshotResolver := func(ctx context.Context) (string, error) {
+		lease, err := runtimeHostModule.Acquire(ctx)
+		if err != nil {
+			return "", err
+		}
+		defer lease.Release()
+		identity := lease.Identity()
+		if err := identity.Validate(); err != nil {
+			return "", fmt.Errorf("active runtime serving identity is invalid: %w", err)
+		}
+		return identity.GenerationID, nil
 	}
 	cleanup.Push("runtime-host", func(context.Context) error { return runtimeHostModule.Close() })
 	authoringAcquireRuntime := func(ctx context.Context) (runtimehostmodule.Lease, error) {
@@ -472,7 +496,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DeploymentConfig:      deploymentConfig,
 		},
 		runtimeAssemblyInputs{
-			ProjectID:           projectID,
+			ProjectID: projectID, ProjectIDResolver: projectIDResolver, ServingSnapshotResolver: servingSnapshotResolver,
 			DuckLakeCatalogPath: duckLakeCatalogPath, DuckLakeDataPath: cfg.DuckLakeDataDir(),
 			DefaultEnvironment: string(environment), SCIMBearerToken: cfg.SCIMBearerToken,
 			MetricsBearerToken: cfg.MetricsBearerToken, AllowedHosts: allowedHosts, Assets: assets,
@@ -515,9 +539,12 @@ func firstConfigured(values ...string) string {
 	return ""
 }
 
-func singletonProjectID(scopes []servingstatemodule.ActiveScope) (projectgraph.ResourceID, error) {
+func singletonProjectID(scopes []servingstatemodule.ActiveScope, environment servingstatemodule.Environment) (projectgraph.ResourceID, error) {
 	var projectID projectgraph.ResourceID
 	for _, scope := range scopes {
+		if scope.Environment != environment {
+			continue
+		}
 		if err := scope.ProjectID.Validate(); err != nil {
 			return "", fmt.Errorf("active serving project identity is invalid: %w", err)
 		}

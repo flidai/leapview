@@ -29,12 +29,12 @@ func (m *Module) ListDashboardFilterValues(w http.ResponseWriter, r *http.Reques
 	m.handler.ListDashboardFilterOptions(w, r)
 }
 
-func (m *Module) setServingSnapshot(r *http.Request, workspaceID string) {
+func (m *Module) setServingSnapshot(r *http.Request, _ string) {
 	r.Header.Del("X-Serving-Snapshot")
 	if m == nil || m.snapshot == nil {
 		return
 	}
-	if snapshot, err := m.snapshot(r.Context(), workspaceID); err == nil && snapshot != "" {
+	if snapshot, err := m.snapshot(r.Context()); err == nil && snapshot != "" {
 		r.Header.Set("X-Serving-Snapshot", snapshot)
 	}
 }

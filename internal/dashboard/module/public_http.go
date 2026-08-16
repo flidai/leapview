@@ -220,14 +220,14 @@ func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboard
 	handler.Broker = m.publicBroker
 	handler.CSRFToken = nil
 	handler.Layout = nil
-	handler.SessionKey = func(_ *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) dashboardsession.Key {
+	handler.SessionKey = func(_ *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) (dashboardsession.Key, error) {
 		return dashboardsession.Key{
 			WorkspaceOrPublication: resolved.Publication.ID,
 			PrincipalOrClient:      clientID,
 			DashboardID:            definition.ID,
 			ServingStateID:         resolved.Publication.ServingStateID,
 			StreamInstanceID:       streamInstanceID,
-		}
+		}, nil
 	}
 	handler.CommandGuard = func(r *http.Request, _ dashboardhttp.Metrics, request command.Request, signals dashboard.Signals) error {
 		current, err := m.PublicationByPublicID(r.Context(), resolved.Publication.PublicID)

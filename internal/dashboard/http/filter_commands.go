@@ -29,7 +29,11 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if !ok {
 		return
 	}
-	dashboardID := lddatastar.DashboardID(r, signals, metrics.DefaultDashboardID())
+	dashboardID, validDashboard := commandDashboardID(r, signals)
+	if !validDashboard {
+		nethttp.NotFound(w, r)
+		return
+	}
 	pageID := lddatastar.PageID(r, signals)
 	resolved, err := resolveDashboard(metrics, dashboardID)
 	if err != nil {
@@ -52,7 +56,11 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	clientID := pagestream.ClientIDFromRequest(r, signals.Runtime.ClientID)
-	key := h.dashboardSessionKey(r, definition, clientID, signals.Runtime.StreamInstanceID)
+	key, keyErr := h.dashboardSessionKey(r, definition, clientID, signals.Runtime.StreamInstanceID)
+	if keyErr != nil {
+		nethttp.NotFound(w, r)
+		return
+	}
 	record, err := h.SessionStore.Load(r.Context(), key)
 	if errors.Is(err, dashboardsession.ErrNotFound) {
 		state := dashboardsession.NewState(pageID, dashboardfilter.NewMachine(

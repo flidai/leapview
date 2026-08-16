@@ -15,6 +15,7 @@ import (
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -37,6 +38,24 @@ func TestRuntimeMetricsResolverPublishedSuccessUsesOneLease(t *testing.T) {
 	}
 	if provider.acquires != 1 || provider.lease == nil || provider.lease.releases != 1 {
 		t.Fatalf("lease counts acquire=%d release=%d", provider.acquires, provider.lease.releases)
+	}
+}
+
+func TestRuntimeMetricsUnboundStartupUsesLeaseProjectIdentity(t *testing.T) {
+	provider := &resolverTestProvider{runtime: &resolverTestRuntime{}, stateID: "state-1"}
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider})
+	runtime := metrics.(runtimeMetrics)
+	lease, err := provider.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := runtime.identityForLease(lease)
+	lease.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.ProjectID != "workspace" || identity.GenerationID != "state-1" {
+		t.Fatalf("identity = %#v, want lease-bound workspace/state-1", identity)
 	}
 }
 
@@ -218,7 +237,10 @@ type resolverTestLease struct {
 	releases int
 }
 
-func (l *resolverTestLease) Runtime() runtimehost.Runtime    { return l.runtime }
+func (l *resolverTestLease) Runtime() runtimehost.Runtime { return l.runtime }
+func (l *resolverTestLease) Identity() projectgraph.ServingIdentity {
+	return projectgraph.ServingIdentity{ProjectID: "workspace", Environment: "dev", GenerationID: string(l.stateID)}
+}
 func (l *resolverTestLease) ServingStateID() servingstate.ID { return l.stateID }
 func (l *resolverTestLease) DuckLakeSnapshotID() int64       { return 0 }
 func (l *resolverTestLease) Release()                        { l.releases++ }
@@ -245,6 +267,10 @@ func (r *resolverTestRuntime) Resolve(id string) (dashboardresolver.Resolved, er
 	return dashboardresolver.Resolved{Definition: dashboarddefinition.Definition{ID: id, SemanticModel: "sales_model"}, Model: r.model}, nil
 }
 func (r *resolverTestRuntime) SemanticModel(string) (*semanticmodel.Model, bool) {
+	r.modelCalls++
+	return r.model, r.model != nil
+}
+func (r *resolverTestRuntime) SemanticModelByID(projectgraph.ResourceID) (*semanticmodel.Model, bool) {
 	r.modelCalls++
 	return r.model, r.model != nil
 }

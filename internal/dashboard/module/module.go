@@ -34,14 +34,13 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
-	"github.com/go-chi/chi/v5"
 )
 
 type Module struct {
 	handler                       dashboardhttp.Handler
 	authoring                     *dashboardauthoringapplication.Application
 	semantic                      semanticapi.Handler
-	snapshot                      func(context.Context, string) (string, error)
+	snapshot                      func(context.Context) (string, error)
 	publications                  *publicationsqlite.Repository
 	publicationService            *publication.Service
 	publicURL                     string
@@ -70,7 +69,7 @@ type Config struct {
 	Authoring       *dashboardauthoringapplication.Application
 	HTTP            HTTPConfig
 	Semantic        SemanticConfig
-	ServingSnapshot func(context.Context, string) (string, error)
+	ServingSnapshot func(context.Context) (string, error)
 	PublicTelemetry PublicTelemetry
 	Logger          *slog.Logger
 	Trace           *pagestream.TraceStore
@@ -86,6 +85,7 @@ type Config struct {
 type HTTPConfig struct {
 	Metrics               queryruntime.Metrics
 	ProjectID             projectgraph.ResourceID
+	ResolveProjectID      func(context.Context) (projectgraph.ResourceID, error)
 	Admission             workload.Admitter
 	Broker                SignalBroker
 	Logger                *slog.Logger
@@ -192,9 +192,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	telemetry := config.HTTP.Telemetry
 	handler := dashboardhttp.Handler{
-		Metrics:   config.HTTP.Metrics,
-		ProjectID: config.HTTP.ProjectID,
-		Authoring: config.Authoring,
+		Metrics:          config.HTTP.Metrics,
+		ProjectID:        config.HTTP.ProjectID,
+		ResolveProjectID: config.HTTP.ResolveProjectID,
+		Authoring:        config.Authoring,
 		AnalyticalContext: func(ctx context.Context) context.Context {
 			return workload.WithAdmitter(ctx, config.HTTP.Admission)
 		},
@@ -241,16 +242,27 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if usageRecorder != nil {
 		handler.RecordDashboardView = usageRecorder.RecordView
 	}
-	handler.SessionKey = func(r *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) dashboardsession.Key {
-		workspaceID := chi.URLParam(r, "workspace")
-		if workspaceID == "" {
-			workspaceID = r.URL.Query().Get("workspace")
-		}
+	handler.SessionKey = func(r *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) (dashboardsession.Key, error) {
 		servingStateID := definition.DefaultFilterState().DefaultsRevision
 		if config.ServingSnapshot != nil {
-			if active, err := config.ServingSnapshot(r.Context(), workspaceID); err == nil && active != "" {
+			active, err := config.ServingSnapshot(r.Context())
+			if err != nil {
+				return dashboardsession.Key{}, err
+			}
+			if active != "" {
 				servingStateID = active
 			}
+		}
+		projectID := config.HTTP.ProjectID
+		if config.HTTP.ResolveProjectID != nil {
+			resolved, err := config.HTTP.ResolveProjectID(r.Context())
+			if err != nil {
+				return dashboardsession.Key{}, err
+			}
+			projectID = resolved
+		}
+		if err := projectID.Validate(); err != nil {
+			return dashboardsession.Key{}, err
 		}
 		principalOrClient := clientID
 		if config.HTTP.CurrentPrincipalID != nil {
@@ -259,12 +271,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			}
 		}
 		return dashboardsession.Key{
-			WorkspaceOrPublication: workspaceID,
+			WorkspaceOrPublication: projectID.String(),
 			PrincipalOrClient:      principalOrClient,
 			DashboardID:            definition.ID,
 			ServingStateID:         servingStateID,
 			StreamInstanceID:       streamInstanceID,
-		}
+		}, nil
 	}
 	module := &Module{
 		handler:   handler,

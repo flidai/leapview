@@ -80,12 +80,12 @@ func (m admittedMetrics) QueryVisualizationWindow(ctx context.Context, dashboard
 	return m.Metrics.QueryVisualizationWindow(m.readContext(ctx), dashboardID, pageID, filters, request)
 }
 
-func (m admittedMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+func (m admittedMetrics) QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
 	port, ok := m.Metrics.(visualizationTileMetrics)
 	if !ok {
 		return dashboardruntime.SpatialTileResult{}, errors.New("spatial tile metrics are not configured")
 	}
-	return port.QueryVisualizationTile(m.readContext(ctx), workspaceID, dashboardID, visualID, revision, zoom, x, y)
+	return port.QueryVisualizationTile(m.readContext(ctx), dashboardID, visualID, revision, zoom, x, y)
 }
 
 func (m admittedMetrics) ExpireVisualizationTileStream(streamID string) {

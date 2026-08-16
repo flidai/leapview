@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	nethttp "net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,7 +8,6 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
-	"github.com/go-chi/chi/v5"
 )
 
 func TestDashboardVisualAgentProjectionUsesCanonicalSpecKind(t *testing.T) {
@@ -37,12 +35,9 @@ func TestDashboardVisualAgentProjectionUsesCanonicalSpecKind(t *testing.T) {
 			}},
 		}},
 	}
-	request := httptest.NewRequest(nethttp.MethodGet, "/workspaces/workspace/dashboards/dash/visuals/revenue_kpi/query", nil)
-	routeContext := chi.NewRouteContext()
-	routeContext.URLParams.Add("workspace", "workspace")
-	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	request := httptest.NewRequest(nethttp.MethodGet, "/dashboards/dash/visuals/revenue_kpi/query", nil)
 
-	result, err := (Handler{}).dashboardVisualAgentProjection(
+	result, err := (Handler{ProjectID: "workspace"}).dashboardVisualAgentProjection(
 		request, fakeMetrics{}, envelope, dashboard.Filters{}, 0, maxAgentDashboardVisualRows, "scope", "snapshot",
 	)
 	if err != nil {
