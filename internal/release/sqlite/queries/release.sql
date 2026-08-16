@@ -35,7 +35,7 @@ SELECT connection_id, revision_id FROM api_release_connections WHERE release_id 
 
 -- name: GetReadyReleaseProvenanceByGeneration :one
 SELECT provenance_json FROM api_releases
-WHERE generation_id = ? AND status = 'ready'
+WHERE project_id = ? AND environment = ? AND generation_id = ? AND status = 'ready'
 ORDER BY finalized_at DESC, id DESC LIMIT 1;
 
 -- name: RecordAPIReleaseArtifact :execrows
@@ -54,10 +54,6 @@ WHERE id = ? AND project_id = ? AND status = 'validating';
 -- name: MarkAPIReleaseFailed :execrows
 UPDATE api_releases SET status = 'failed', error = ?, finalized_at = CURRENT_TIMESTAMP
 WHERE id = ? AND project_id = ? AND status = 'validating';
-
--- name: LinkAPIReleaseDeployment :exec
-INSERT INTO api_deployment_releases (deployment_id, project_id, release_id, rollback_of) VALUES (?, ?, ?, ?)
-ON CONFLICT(deployment_id) DO UPDATE SET release_id = excluded.release_id, rollback_of = excluded.rollback_of;
 
 -- name: GetAPIReleaseDeployment :one
 SELECT release_id, COALESCE(rollback_of, '') AS rollback_of FROM api_deployment_releases WHERE project_id = ? AND deployment_id = ?;

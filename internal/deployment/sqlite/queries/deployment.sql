@@ -1,14 +1,18 @@
 -- Canonical project-generation deployment records.
 
+-- name: GetServingStateForDeployment :one
+SELECT project_id, environment, digest, status FROM serving_states WHERE id = ?;
+
+-- name: GetActiveServingState :one
+SELECT serving_state_id FROM project_active_serving_states
+WHERE project_id = ? AND environment = ?;
+
 -- name: CreateProjectDeployment :exec
 INSERT INTO project_deployments (id, project_id, environment, generation_id, artifact_digest, prior_generation_id, request_digest, status, created_by)
 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?);
 
 -- name: GetProjectDeployment :one
 SELECT * FROM project_deployments WHERE id = ?;
-
--- name: GetActiveServingGeneration :one
-SELECT serving_state_id FROM project_active_serving_states WHERE project_id = ? AND environment = ?;
 
 -- Deployment approval decisions are immutable in scope and optimistic in
 -- transition. A revoked decision remains as audit evidence; a later request
@@ -47,22 +51,6 @@ WHERE id = ?
   AND deployment_id = ?
   AND revision = ?;
 
--- name: GetManagedDataEnvironmentPointer :one
-SELECT * FROM managed_data_environment_pointers
-WHERE collection_id = ? AND environment = ?;
-
--- name: UpsertManagedDataEnvironmentPointer :exec
-INSERT INTO managed_data_environment_pointers (
-  collection_id, environment, revision_id, deployment_id, generation, updated_by
-)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(collection_id, environment) DO UPDATE SET
-  revision_id = excluded.revision_id,
-  deployment_id = excluded.deployment_id,
-  generation = excluded.generation,
-  updated_by = excluded.updated_by,
-  updated_at = CURRENT_TIMESTAMP;
-
 -- name: ActivateProjectDeployment :execresult
 UPDATE project_deployments
 SET status = 'active',
@@ -87,25 +75,6 @@ WHERE id = ? AND status = 'pending';
 UPDATE project_deployments
 SET status = 'cancelled'
 WHERE id = ? AND status = 'pending';
-
--- name: DeleteManagedDataServingStateBindings :exec
-DELETE FROM managed_data_serving_state_bindings
-WHERE serving_state_id = ?;
-
--- name: CreateManagedDataServingStateBinding :exec
-INSERT INTO managed_data_serving_state_bindings (
-  serving_state_id, collection_id, revision_id, environment
-)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(serving_state_id, collection_id) DO UPDATE SET
-  revision_id = excluded.revision_id,
-  environment = excluded.environment,
-  bound_at = CURRENT_TIMESTAMP;
-
--- name: ListManagedDataServingStateBindings :many
-SELECT * FROM managed_data_serving_state_bindings
-WHERE serving_state_id = ?
-ORDER BY collection_id;
 
 -- Deployment-owned validation projections over managed-data records.
 
