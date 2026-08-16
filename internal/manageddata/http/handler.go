@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
 	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
@@ -147,6 +148,9 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
+	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceEdit) {
+		return
+	}
 	var body apigenapi.ManagedDataUploadSessionCreateRequest
 	if err := h.decodeRequiredJSON(w, r, &body); err != nil {
 		h.writeError(w, r, err)
@@ -250,6 +254,9 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
+	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceEdit) {
+		return
+	}
 	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession())
 	if !ok {
 		return
@@ -293,6 +300,9 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 	}
 	if !validUploadScope(project, connection, uploadSession) || !validIdempotencyKey(headers.IdempotencyKey) {
 		h.writeError(w, r, ErrInvalid)
+		return
+	}
+	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceEdit) {
 		return
 	}
 	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession())
@@ -404,7 +414,7 @@ func (h *Handler) SignManagedDataS3MultipartPart(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if _, ok := h.recoverUpload(w, r, project, connection, uploadSession); !ok {
+	if _, ok := h.recoverUploadWithCapability(w, r, project, connection, uploadSession, access.CapabilityResourceEdit); !ok {
 		return
 	}
 	if _, ok := h.actor(w, r); !ok {
@@ -532,6 +542,9 @@ func (h *Handler) collection(w stdhttp.ResponseWriter, r *stdhttp.Request, proje
 		h.writeError(w, r, ErrInvalid)
 		return manageddata.Collection{}, false
 	}
+	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceRead) {
+		return manageddata.Collection{}, false
+	}
 	collection, err := h.options.Repository.CollectionByProjectConnection(r.Context(), project, connection)
 	if err != nil {
 		h.writeError(w, r, err)
@@ -545,7 +558,7 @@ func (h *Handler) collection(w stdhttp.ResponseWriter, r *stdhttp.Request, proje
 }
 
 func (h *Handler) recoverUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string) (control.UploadResult, bool) {
-	result, err := h.recoverUploadResult(r, project, connection, uploadSession)
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.CapabilityResourceRead)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrUnavailable):
@@ -559,7 +572,7 @@ func (h *Handler) recoverUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, pr
 }
 
 func (h *Handler) recoverUploadCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID, project, connection, uploadSession string) (control.UploadResult, bool) {
-	result, err := h.recoverUploadResult(r, project, connection, uploadSession)
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.CapabilityResourceEdit)
 	if err != nil {
 		h.writeCommandError(w, r, operationID, err)
 		return control.UploadResult{}, false
@@ -567,12 +580,24 @@ func (h *Handler) recoverUploadCommand(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	return result, true
 }
 
-func (h *Handler) recoverUploadResult(r *stdhttp.Request, project, connection, uploadSession string) (control.UploadResult, error) {
+func (h *Handler) recoverUploadWithCapability(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string, capability access.Capability) (control.UploadResult, bool) {
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, capability)
+	if err != nil {
+		h.writeError(w, r, err)
+		return control.UploadResult{}, false
+	}
+	return result, true
+}
+
+func (h *Handler) recoverUploadResult(r *stdhttp.Request, project, connection, uploadSession string, capability access.Capability) (control.UploadResult, error) {
 	if h.options.Uploads == nil {
 		return control.UploadResult{}, ErrUnavailable
 	}
 	if !validUploadScope(project, connection, uploadSession) {
 		return control.UploadResult{}, ErrInvalid
+	}
+	if err := h.authorizeConnectionContext(r, project, connection, capability); err != nil {
+		return control.UploadResult{}, err
 	}
 	result, err := h.options.Uploads.RecoverUpload(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession})
 	if err != nil {
@@ -582,6 +607,35 @@ func (h *Handler) recoverUploadResult(r *stdhttp.Request, project, connection, u
 		return control.UploadResult{}, ErrNotFound
 	}
 	return result, nil
+}
+
+func (h *Handler) authorizeConnection(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection string, capability access.Capability) bool {
+	if err := h.authorizeConnectionContext(r, project, connection, capability); err != nil {
+		h.writeError(w, r, err)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) authorizeConnectionContext(r *stdhttp.Request, project, connection string, capability access.Capability) error {
+	if h.options.CurrentPrincipal == nil {
+		return ErrUnavailable
+	}
+	principal, ok := h.options.CurrentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return ErrUnauthorized
+	}
+	if h.options.AuthorizeConnection == nil {
+		return ErrUnavailable
+	}
+	allowed, err := h.options.AuthorizeConnection(r.Context(), strings.TrimSpace(principal.ID), project, connection, capability)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrForbidden
+	}
+	return nil
 }
 
 func (h *Handler) actor(w stdhttp.ResponseWriter, r *stdhttp.Request) (string, bool) {
@@ -699,6 +753,10 @@ func (h *Handler) writePublicError(w stdhttp.ResponseWriter, r *stdhttp.Request,
 
 func statusForError(err error) int {
 	switch {
+	case errors.Is(err, ErrUnauthorized):
+		return stdhttp.StatusUnauthorized
+	case errors.Is(err, ErrForbidden):
+		return stdhttp.StatusForbidden
 	case errors.Is(err, ErrTooLarge):
 		return stdhttp.StatusRequestEntityTooLarge
 	case errors.Is(err, ErrInvalid), errors.Is(err, control.ErrInvalid):

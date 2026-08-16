@@ -94,17 +94,18 @@ type Principal struct {
 }
 
 type Config struct {
-	Database         *sql.DB
-	Disabled         bool
-	Product          ProductConfig
-	Worker           MaintenanceWorkerConfig
-	MaxJSONBodyBytes int64
-	Environment      string
-	CurrentPrincipal func(*http.Request) (Principal, bool)
-	Jobs             JobStore
-	Workflow         jobs.WorkflowRecorder
-	ServingStates    ServingStateReader
-	RecordAudit      func(context.Context, CommandAuditEvent) error
+	Database            *sql.DB
+	Disabled            bool
+	Product             ProductConfig
+	Worker              MaintenanceWorkerConfig
+	MaxJSONBodyBytes    int64
+	Environment         string
+	CurrentPrincipal    func(*http.Request) (Principal, bool)
+	AuthorizeConnection manageddatahttp.ConnectionAuthorizer
+	Jobs                JobStore
+	Workflow            jobs.WorkflowRecorder
+	ServingStates       ServingStateReader
+	RecordAudit         func(context.Context, CommandAuditEvent) error
 }
 
 type ProductConfig struct {
@@ -153,7 +154,8 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		module := &Module{jobs: cfg.Jobs, maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker), finalizeExecution: finalizeExecution}
 		module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 			CurrentPrincipal: currentPrincipal, MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
-			Environment: cfg.Environment, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
+			Environment: cfg.Environment, AuthorizeConnection: cfg.AuthorizeConnection,
+			RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 		})
 		return module, nil
 	}
@@ -217,7 +219,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	}
 	module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 		Repository: apiRepository, Uploads: uploads, Multipart: multipart,
-		CurrentPrincipal: currentPrincipal, Environment: cfg.Environment,
+		CurrentPrincipal: currentPrincipal, AuthorizeConnection: cfg.AuthorizeConnection, Environment: cfg.Environment,
 		BeginFinalize: module.beginFinalize, RecordUploadCreated: module.recordUploadCreated,
 		AbortUpload: module.abortUpload, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 	})

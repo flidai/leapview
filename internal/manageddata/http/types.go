@@ -3,21 +3,25 @@ package http
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	stdhttp "net/http"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
 )
 
 var (
-	ErrInvalid     = control.ErrInvalid
-	ErrNotFound    = control.ErrNotFound
-	ErrConflict    = control.ErrConflict
-	ErrTooLarge    = apigenfailure.New("too_large", "managed-data request is too large")
-	ErrBackend     = control.ErrBackend
-	ErrUnavailable = apigenfailure.New("unavailable", "managed-data service is not configured")
+	ErrInvalid      = control.ErrInvalid
+	ErrNotFound     = control.ErrNotFound
+	ErrConflict     = control.ErrConflict
+	ErrTooLarge     = apigenfailure.New("too_large", "managed-data request is too large")
+	ErrBackend      = control.ErrBackend
+	ErrUnavailable  = apigenfailure.New("unavailable", "managed-data service is not configured")
+	ErrUnauthorized = errors.New("managed-data authentication is required")
+	ErrForbidden    = access.ErrForbidden
 )
 
 type Principal struct {
@@ -43,6 +47,12 @@ type CommandAuditInput struct {
 type RevisionMetadata = control.RevisionMetadata
 type Repository = control.MetadataRepository
 
+// ConnectionAuthorizer is the narrow authorization port for project-managed
+// connection resources. The caller resolves principal groups and evaluates
+// the active serving-generation snapshot; this transport layer never queries
+// mutable access storage.
+type ConnectionAuthorizer func(context.Context, string, string, string, access.Capability) (bool, error)
+
 type UploadCoordinator interface {
 	BeginUpload(context.Context, control.BeginUploadRequest) (control.UploadResult, error)
 	RecoverUpload(context.Context, control.UploadRequest) (control.UploadResult, error)
@@ -57,6 +67,7 @@ type Options struct {
 	Uploads               UploadCoordinator
 	Multipart             s3multipart.Coordinator
 	CurrentPrincipal      func(*stdhttp.Request) (Principal, bool)
+	AuthorizeConnection   ConnectionAuthorizer
 	MaxJSONBodyBytes      int64
 	Environment           string
 	EnqueueFinalize       func(context.Context, control.UploadRequest) error

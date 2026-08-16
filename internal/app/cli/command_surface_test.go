@@ -73,6 +73,14 @@ func TestRootHelpExposesCanonicalDeploymentLifecycle(t *testing.T) {
 	}
 }
 
+func TestDocumentationDoesNotAdvertiseWorkspaceCommands(t *testing.T) {
+	for path := range documentedCommandSafety {
+		if strings.Contains(path, "workspace") {
+			t.Fatalf("documentation safety advertises removed workspace command %q", path)
+		}
+	}
+}
+
 func TestVersionReportsDevelopmentIdentityAsJSON(t *testing.T) {
 	command := NewCommand(context.Background())
 	var output strings.Builder

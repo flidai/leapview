@@ -1,8 +1,10 @@
 package module
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/flidai/leapview/internal/access"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectapi "github.com/flidai/leapview/internal/project/api"
 	releaseapi "github.com/flidai/leapview/internal/release/api"
@@ -67,8 +69,21 @@ func (m *Module) ListManagedConnections(w http.ResponseWriter, r *http.Request, 
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_LIST_FAILED", "Connections could not be loaded", nil)
 		return
 	}
+	principal, ok := m.currentPrincipal(r)
+	if !ok {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
 	items := make([]releaseapi.ManagedConnectionResponse, 0, len(rows))
 	for _, row := range rows {
+		allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, row.ID, access.CapabilityResourceRead)
+		if err != nil {
+			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
+			return
+		}
+		if !allowed {
+			continue
+		}
 		item := releaseapi.ManagedConnectionResponse{ID: row.ID, ProjectID: projectID, Title: row.Title}
 		if row.Description != "" {
 			item.Description = &row.Description
@@ -91,6 +106,20 @@ func (m *Module) GetManagedConnection(w http.ResponseWriter, r *http.Request, pr
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "CONNECTION_NOT_FOUND", "Connection not found", nil)
 		return
 	}
+	principal, ok := m.currentPrincipal(r)
+	if !ok {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
+	allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, connectionID, access.CapabilityResourceRead)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
+		return
+	}
+	if !allowed {
+		apitransport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Connection access is forbidden", nil)
+		return
+	}
 	row, err := m.catalog.GetConnection(r.Context(), projectID, connectionID, m.environment)
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "CONNECTION_NOT_FOUND", "Connection not found", nil)
@@ -104,6 +133,13 @@ func (m *Module) GetManagedConnection(w http.ResponseWriter, r *http.Request, pr
 		item.ActiveRevisionID = &row.ActiveRevisionID
 	}
 	apitransport.WriteJSON(w, http.StatusOK, item)
+}
+
+func (m *Module) authorizeConnection(ctx context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
+	if m == nil || m.api.AuthorizeConnection == nil {
+		return false, errors.New("connection authorization is unavailable")
+	}
+	return m.api.AuthorizeConnection(ctx, principalID, projectID, connectionID, capability)
 }
 
 func (m *Module) ProjectCursorSnapshot(r *http.Request, projectID string) string {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/control"
@@ -424,8 +425,9 @@ func newHandler(repo managedhttp.Repository, uploads managedhttp.UploadCoordinat
 func handlerOptions(repo managedhttp.Repository, uploads managedhttp.UploadCoordinator, multipart s3multipart.Coordinator) managedhttp.Options {
 	return managedhttp.Options{
 		Repository: repo, Uploads: uploads, Multipart: multipart, Environment: "prod",
-		EnqueueFinalize:    func(context.Context, control.UploadRequest) error { return nil },
-		RecordCommandAudit: func(context.Context, managedhttp.CommandAuditInput) error { return nil },
+		AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) { return true, nil },
+		EnqueueFinalize:     func(context.Context, control.UploadRequest) error { return nil },
+		RecordCommandAudit:  func(context.Context, managedhttp.CommandAuditInput) error { return nil },
 		CurrentPrincipal: func(*http.Request) (managedhttp.Principal, bool) {
 			return managedhttp.Principal{ID: "principal-a"}, true
 		},

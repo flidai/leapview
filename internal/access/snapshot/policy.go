@@ -122,22 +122,29 @@ func (s AuthorizationSnapshot) EffectiveCapabilities(subjects []access.SubjectRe
 	if len(validatedSubjects) == 0 {
 		return []access.Capability{}, nil
 	}
-	allowed := make(map[access.Capability]struct{})
+	// Compute the capability universe once from the immutable graph. Project
+	// role bindings are project-wide, so a captured capability is effective if
+	// at least one graph resource supports it; direct grants are already
+	// validated against their concrete resource by the snapshot constructor.
+	supported := make(map[access.Capability]struct{})
 	for _, graphResource := range s.project.Resources() {
-		resource, err := access.NewResourceRef(graphResource.ID, graphResource.Kind)
-		if err != nil {
-			return nil, err
-		}
 		for _, capability := range access.CapabilitiesForKind(graphResource.Kind) {
-			for _, subject := range validatedSubjects {
-				ok, err := s.Allows(subject, resource, capability)
-				if err != nil {
-					return nil, err
-				}
-				if ok {
-					allowed[capability] = struct{}{}
-					break
-				}
+			supported[capability] = struct{}{}
+		}
+	}
+	allowed := make(map[access.Capability]struct{})
+	for _, grant := range s.grants {
+		if _, ok := seenSubjects[grant.Canonical.Subject()]; ok {
+			allowed[grant.Canonical.Capability()] = struct{}{}
+		}
+	}
+	for _, binding := range s.roleBindings {
+		if _, ok := seenSubjects[binding.Subject]; !ok {
+			continue
+		}
+		for _, capability := range binding.Capabilities {
+			if _, ok := supported[capability]; ok {
+				allowed[capability] = struct{}{}
 			}
 		}
 	}

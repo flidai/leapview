@@ -10,6 +10,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
@@ -34,9 +35,10 @@ type JobStore interface {
 }
 
 type APIConfig struct {
-	CurrentPrincipal func(*http.Request) (Principal, bool)
-	Jobs             JobStore
-	Workflow         jobs.WorkflowRecorder
+	CurrentPrincipal    func(*http.Request) (Principal, bool)
+	AuthorizeConnection func(context.Context, string, string, string, access.Capability) (bool, error)
+	Jobs                JobStore
+	Workflow            jobs.WorkflowRecorder
 }
 
 func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
