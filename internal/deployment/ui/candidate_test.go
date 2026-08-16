@@ -11,7 +11,7 @@ import (
 
 func TestCandidatePageRendersBoundedStatusWithoutArtifactOrOwnerDetails(t *testing.T) {
 	candidate := deployment.Candidate{
-		ID: "cand_opaque", ProjectID: "finance", TargetID: "lvinst_prod", OwnerID: "principal_secret",
+		ID: "cand_opaque", Scope: deployment.CandidateScope{ProjectID: "finance", Environment: "prod"}, TargetID: "lvinst_prod", OwnerID: "principal_secret",
 		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), Status: deployment.CandidateFailed,
 		FailureReason: "RUNTIME_PREPARATION_FAILED", UpdatedAt: time.Now(),
 	}
@@ -25,7 +25,7 @@ func TestCandidatePageRendersBoundedStatusWithoutArtifactOrOwnerDetails(t *testi
 			t.Fatalf("candidate page is missing %q:\n%s", want, body)
 		}
 	}
-	for _, forbidden := range []string{candidate.ArtifactDigest, candidate.OwnerID, candidate.ProjectID, candidate.TargetID} {
+	for _, forbidden := range []string{candidate.ArtifactDigest, candidate.OwnerID, candidate.Scope.ProjectID.String(), candidate.TargetID} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("candidate page leaked %q:\n%s", forbidden, body)
 		}
