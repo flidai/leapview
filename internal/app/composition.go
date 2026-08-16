@@ -157,14 +157,13 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads,
 		TempDir:             cfg.DuckDBTempDirPath(),
 		RuntimeCacheEntries: cfg.QueryCacheRuntimeMaxEntries, RuntimeCacheBytes: cfg.QueryCacheRuntimeMaxBytes,
-		WorkspaceCacheEntries: cfg.QueryCacheWorkspaceMaxEntries, WorkspaceCacheBytes: cfg.QueryCacheWorkspaceMaxBytes,
 		NodeCacheEntries: cfg.QueryCacheNodeMaxEntries, NodeCacheBytes: cfg.QueryCacheNodeMaxBytes,
 	})
 	if err != nil {
 		return fail(err)
 	}
 	cleanup.Push("analytics", func(context.Context) error { return analyticsModule.Close() })
-	analyticsWorkspaceFactory := analyticsModule.WorkspaceRuntimeFactory()
+	analyticsProjectFactory := analyticsModule.ProjectRuntimeFactory()
 	avatarBlobs, err := profileImageBlobStore(ctx, cfg)
 	if err != nil {
 		return fail(err)
@@ -324,8 +323,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		Factory: appruntimefactory.NewFactory(appruntimefactory.FactoryConfig{
 			DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(),
 			DashboardRuntime: dashboardmodule.NewRuntimeFactory(dashboardmodule.RuntimeFactoryConfig{
-				Workspaces: analyticsWorkspaceFactory,
-				MaxRows:    cfg.QueryResultMaxRows, MaxBytes: cfg.QueryResultMaxBytes,
+				Projects: analyticsProjectFactory,
+				MaxRows:  cfg.QueryResultMaxRows, MaxBytes: cfg.QueryResultMaxBytes,
 			}),
 		}),
 	})

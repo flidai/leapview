@@ -34,7 +34,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	}
 	config := refreshmodule.Config{
 		Database: database, Service: service,
-		Analytics: runtime.analyticsModule.WorkspaceMaterializer(), ManagedData: workflow.managedDataResolver,
+		Analytics: runtime.analyticsModule.ProjectMaterializer(), ManagedData: workflow.managedDataResolver,
 		Artifacts: appruntimefactory.NewRefreshArtifactLoader(),
 		HTTP: refreshmodule.HTTPConfig{
 			RunnerConfigured: func() bool { return runtime.metrics != nil },

@@ -12,14 +12,14 @@ import (
 	"github.com/flidai/leapview/internal/analytics/arrowresult"
 )
 
-func TestPoolEnforcesRuntimeWorkspaceAndNodeBudgets(t *testing.T) {
-	pool, err := New(Limits{RuntimeEntries: 2, RuntimeBytes: 1 << 20, WorkspaceEntries: 3, WorkspaceBytes: 1 << 20, NodeEntries: 4, NodeBytes: 1 << 20})
+func TestPoolEnforcesRuntimeAndNodeBudgets(t *testing.T) {
+	pool, err := New(Limits{RuntimeEntries: 2, RuntimeBytes: 1 << 20, NodeEntries: 4, NodeBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a1 := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "a1"})
-	a2 := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "a2"})
-	b1 := mustScope(t, pool, ScopeID{WorkspaceID: "b", RuntimeID: "b1"})
+	a1 := mustScope(t, pool, ScopeID{RuntimeID: "a1"})
+	a2 := mustScope(t, pool, ScopeID{RuntimeID: "a2"})
+	b1 := mustScope(t, pool, ScopeID{RuntimeID: "b1"})
 
 	put(t, a1, "a1-1", "one")
 	put(t, a1, "a1-2", "two")
@@ -28,23 +28,19 @@ func TestPoolEnforcesRuntimeWorkspaceAndNodeBudgets(t *testing.T) {
 
 	put(t, a2, "a2-1", "four")
 	put(t, a2, "a2-2", "five")
-	if got := pool.Stats().Workspaces["a"].Entries; got != 3 {
-		t.Fatalf("workspace entries = %d, want 3", got)
-	}
-
 	put(t, b1, "b1-1", "six")
 	put(t, b1, "b1-2", "seven")
 	if got := pool.Stats().Entries; got != 4 {
 		t.Fatalf("node entries = %d, want 4", got)
 	}
-	if pool.Stats().Evictions[ConstraintRuntime] == 0 || pool.Stats().Evictions[ConstraintWorkspace] == 0 || pool.Stats().Evictions[ConstraintNode] == 0 {
+	if pool.Stats().Evictions[ConstraintRuntime] == 0 || pool.Stats().Evictions[ConstraintNode] == 0 {
 		t.Fatalf("evictions = %#v", pool.Stats().Evictions)
 	}
 }
 
 func TestScopeInvalidationPreventsStaleStoreAndCloseBalancesAccounting(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
 	token := scope.Generation()
 	scope.Invalidate()
 	stale := testArrowResult(t, memory.DefaultAllocator, "stale")
@@ -67,8 +63,8 @@ func TestScopeInvalidationPreventsStaleStoreAndCloseBalancesAccounting(t *testin
 }
 
 func TestOversizedEntryIsSkipped(t *testing.T) {
-	pool, _ := New(Limits{RuntimeEntries: 2, RuntimeBytes: 64, WorkspaceEntries: 2, WorkspaceBytes: 64, NodeEntries: 2, NodeBytes: 64})
-	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	pool, _ := New(Limits{RuntimeEntries: 2, RuntimeBytes: 64, NodeEntries: 2, NodeBytes: 64})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
 	large := testArrowResult(t, memory.DefaultAllocator, string(make([]byte, 256)))
 	if outcome := scope.StoreArrow("large", scope.Generation(), large, Metadata{}); outcome != StoreOversized {
 		t.Fatalf("outcome = %q", outcome)
@@ -81,7 +77,7 @@ func TestOversizedEntryIsSkipped(t *testing.T) {
 
 func TestByteEntriesAreImmutableAndShareCacheBudgets(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
 	original := []byte{1, 2, 3}
 	if outcome := scope.StoreBytes("tile", scope.Generation(), original); outcome != StoreStored {
 		t.Fatalf("store bytes outcome = %q", outcome)
@@ -103,7 +99,7 @@ func TestByteEntriesAreImmutableAndShareCacheBudgets(t *testing.T) {
 
 func TestByteEntriesRetainValidEmptyPayloads(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
 	if outcome := scope.StoreBytes("empty-tile", scope.Generation(), []byte{}); outcome != StoreStored {
 		t.Fatalf("store empty bytes outcome = %q", outcome)
 	}
@@ -118,7 +114,7 @@ func BenchmarkWarmTileByteLookup(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	scope, err := pool.OpenScope(ScopeID{WorkspaceID: "maps", RuntimeID: "serving-1"})
+	scope, err := pool.OpenScope(ScopeID{RuntimeID: "serving-1"})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -140,7 +136,7 @@ func BenchmarkWarmTileByteLookup(b *testing.B) {
 
 func TestCoalesceCancellationDoesNotPoisonLiveWaiter(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
 	owner, cancel := context.WithCancel(context.Background())
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -170,7 +166,7 @@ func TestCoalesceArrowReturnsIndependentLeasesAndReleasesFlightHold(t *testing.T
 	defer allocator.AssertSize(t, 0)
 	pool, _ := New(testLimits())
 	defer pool.Close()
-	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
 	started := make(chan struct{})
 	release := make(chan struct{})
 	result := testArrowResult(t, allocator, "shared")
@@ -235,7 +231,7 @@ func TestCoalesceArrowCanceledWaiterDoesNotLeakOrCancelLiveWaiter(t *testing.T) 
 	defer allocator.AssertSize(t, 0)
 	pool, _ := New(testLimits())
 	defer pool.Close()
-	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
 	started := make(chan struct{})
 	release := make(chan struct{})
 	owner, cancel := context.WithCancel(context.Background())
@@ -296,7 +292,7 @@ func waitForArrowFlightWaiters(t *testing.T, pool *Pool, key string, want int) {
 
 func TestPoolConcurrentStatsInvalidateAndClose(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{WorkspaceID: "a", RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
@@ -319,7 +315,7 @@ func TestPoolConcurrentStatsInvalidateAndClose(t *testing.T) {
 }
 
 func testLimits() Limits {
-	return Limits{RuntimeEntries: 8, RuntimeBytes: 1 << 20, WorkspaceEntries: 16, WorkspaceBytes: 2 << 20, NodeEntries: 32, NodeBytes: 4 << 20}
+	return Limits{RuntimeEntries: 8, RuntimeBytes: 1 << 20, NodeEntries: 32, NodeBytes: 4 << 20}
 }
 func mustScope(t *testing.T, p *Pool, id ScopeID) *Scope {
 	t.Helper()

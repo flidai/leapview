@@ -9,11 +9,12 @@ import (
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	queryaudithttp "github.com/flidai/leapview/internal/analytics/queryaudit/http"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type QueryAuditAPIGenConfig struct {
 	Reader    func() (queryaudit.Reader, error)
-	ProjectID func(string) string
+	ProjectID func(string) projectgraph.ResourceID
 }
 
 type AnalyticsAPIGenConfig struct {
@@ -28,8 +29,8 @@ type analyticsAPIGenDispatcher struct {
 
 func newAnalyticsAPIGenDispatcher(config AnalyticsAPIGenConfig) *analyticsAPIGenDispatcher {
 	return &analyticsAPIGenDispatcher{queryEvents: queryaudithttp.Handler{
-		Reader:      queryaudithttp.ReaderProvider(config.QueryAudit.Reader),
-		WorkspaceID: queryaudithttp.WorkspaceIDNormalizer(config.QueryAudit.ProjectID),
+		Reader:    queryaudithttp.ReaderProvider(config.QueryAudit.Reader),
+		ProjectID: queryaudithttp.ProjectIDNormalizer(config.QueryAudit.ProjectID),
 	}, connections: connectionBindingAPIHandler{config: config.Connections}}
 }
 

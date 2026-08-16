@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type EventInput struct {
-	WorkspaceID      string
+	ProjectID        projectgraph.ResourceID
 	PrincipalID      string
 	Surface          string
 	Operation        string
@@ -41,8 +43,8 @@ type Event struct {
 }
 
 type Filter struct {
-	WorkspaceID  string
-	WorkspaceIDs []string
+	ProjectID    projectgraph.ResourceID
+	ProjectIDs   []projectgraph.ResourceID
 	PrincipalID  string
 	PrincipalIDs []string
 	Surface      string

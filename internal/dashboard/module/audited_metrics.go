@@ -62,8 +62,8 @@ func (m auditedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.
 	}
 	ctx = m.auditContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, errors.New("workspace ID is required")
+	if request.ProjectID == "" {
+		return dataquery.Result{}, errors.New("project ID is required")
 	}
 	return dataquery.ExecuteAudited(ctx, request, m.Metrics.ExecuteDataQuery)
 }
@@ -75,8 +75,8 @@ func (m auditedMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataq
 	}
 	ctx = m.auditContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, errors.New("workspace ID is required")
+	if request.ProjectID == "" {
+		return dataquery.Result{}, errors.New("project ID is required")
 	}
 	return dataquery.ExecuteAudited(ctx, request, func(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 		return executor.ExecuteDataQueryArrow(ctx, request, sink)
@@ -208,7 +208,7 @@ func (r queryEventRecorder) RecordDataQuery(ctx context.Context, request dataque
 
 func queryEventInput(request dataquery.Query, result dataquery.Result) queryaudit.EventInput {
 	return queryaudit.EventInput{
-		WorkspaceID: request.WorkspaceID, PrincipalID: request.PrincipalID, Surface: request.Surface,
+		ProjectID: request.ProjectID, PrincipalID: request.PrincipalID, Surface: request.Surface,
 		Operation: request.Operation, QueryKind: string(request.Kind), ModelID: request.ModelID, Target: request.Target,
 		ObjectType: request.ObjectType, ObjectID: request.ObjectID, RequestID: request.RequestID, CorrelationID: request.CorrelationID,
 		Status: firstNonEmpty(result.Status, dataquery.StatusSuccess), DurationMS: result.DurationMS,
@@ -221,7 +221,7 @@ func queryEventInput(request dataquery.Query, result dataquery.Result) queryaudi
 
 func queryShapeJSON(request dataquery.Query) string {
 	bytes, err := json.Marshal(struct {
-		WorkspaceID   string             `json:"workspaceId,omitempty"`
+		ProjectID     string             `json:"projectId,omitempty"`
 		Surface       string             `json:"surface,omitempty"`
 		Operation     string             `json:"operation,omitempty"`
 		RequestID     string             `json:"requestId,omitempty"`
@@ -242,7 +242,7 @@ func queryShapeJSON(request dataquery.Query) string {
 		BinCount      int                `json:"binCount,omitempty"`
 		IncludeTotal  bool               `json:"includeTotal,omitempty"`
 	}{
-		request.WorkspaceID, request.Surface, request.Operation, request.RequestID, request.ObjectType,
+		request.ProjectID.String(), request.Surface, request.Operation, request.RequestID, request.ObjectType,
 		request.ObjectID, request.CorrelationID, request.ModelID, request.Kind, request.Target, request.Fields,
 		request.Measures, request.Value, request.Time, request.Filters, request.Sort, request.Offset, request.Limit,
 		request.BinCount, request.IncludeTotal,

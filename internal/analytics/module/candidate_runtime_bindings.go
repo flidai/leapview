@@ -14,7 +14,7 @@ import (
 
 type candidateRuntimeBindingKey struct {
 	candidateID string
-	workspaceID string
+	projectID   string
 }
 
 type candidateRuntimeBindingEntry struct {
@@ -34,7 +34,7 @@ type candidateRuntimeBindingRegistry struct {
 }
 
 // RuntimeBindingRegistration owns validated target pool leases for one
-// candidate workspace. Closing it removes future discovery and releases the
+// candidate project. Closing it removes future discovery and releases the
 // exact pool generations only after Runtime Host drains the candidate runtime.
 type RuntimeBindingRegistration struct {
 	once     sync.Once
@@ -46,20 +46,20 @@ type RuntimeBindingRegistration struct {
 
 func (module *Module) BindCandidateRuntime(
 	candidateID string,
-	workspaceID string,
+	projectID string,
 	leases *RuntimeBindingLeases,
 	authoredConnections []CandidateAuthoredConnection,
 ) (*RuntimeBindingRegistration, error) {
 	candidateID = strings.TrimSpace(candidateID)
-	workspaceID = strings.TrimSpace(workspaceID)
-	if module == nil || candidateID == "" || workspaceID == "" || leases == nil {
+	projectID = strings.TrimSpace(projectID)
+	if module == nil || candidateID == "" || projectID == "" || leases == nil {
 		return nil, fmt.Errorf(
-			"%w: candidate, workspace, and validated leases are required",
+			"%w: candidate, project, and validated leases are required",
 			connectionbinding.ErrInvalidBinding,
 		)
 	}
 	key := candidateRuntimeBindingKey{
-		candidateID: candidateID, workspaceID: workspaceID,
+		candidateID: candidateID, projectID: projectID,
 	}
 	authored, err := candidateAuthoredConnectionSet(authoredConnections)
 	if err != nil {
@@ -129,14 +129,14 @@ func (registry *candidateRuntimeBindingRegistry) remove(
 
 func (module *Module) candidateRuntimeConnectionResolver(
 	candidateID string,
-	workspaceID string,
+	projectID string,
 ) (analyticsruntime.ConnectionResolver, bool) {
 	if module == nil {
 		return nil, false
 	}
 	return module.candidateRuntimeBindings.lookup(candidateRuntimeBindingKey{
 		candidateID: strings.TrimSpace(candidateID),
-		workspaceID: strings.TrimSpace(workspaceID),
+		projectID:   strings.TrimSpace(projectID),
 	})
 }
 

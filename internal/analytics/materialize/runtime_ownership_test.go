@@ -67,11 +67,11 @@ func TestOpenRuntimeBorrowedDatabaseRemainsOpenOnFailure(t *testing.T) {
 
 func TestOpenRuntimeCloseIsExactlyOnceAndSharedCacheSurvives(t *testing.T) {
 	db := &ownershipDatabase{}
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, WorkspaceEntries: 2, WorkspaceBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := pool.OpenScope(resultcache.ScopeID{WorkspaceID: "w", RuntimeID: "r"})
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestOpenRuntimeCloseIsExactlyOnceAndSharedCacheSurvives(t *testing.T) {
 	if got := db.closes.Load(); got != 0 {
 		t.Fatalf("borrowed database close count = %d, want 0", got)
 	}
-	other, err := pool.OpenScope(resultcache.ScopeID{WorkspaceID: "w", RuntimeID: "other"})
+	other, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "other"})
 	if err != nil || other == nil {
 		t.Fatalf("shared cache pool was closed: scope=%v err=%v", other, err)
 	}
@@ -98,11 +98,11 @@ func TestOpenRuntimeCloseIsExactlyOnceAndSharedCacheSurvives(t *testing.T) {
 
 func TestOpenRuntimeOwnedCacheScopeClosesOnRuntimeClose(t *testing.T) {
 	db := &ownershipDatabase{}
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, WorkspaceEntries: 2, WorkspaceBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := pool.OpenScope(resultcache.ScopeID{WorkspaceID: "w", RuntimeID: "owned"})
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestOpenRuntimeOwnedCacheScopeClosesOnRuntimeClose(t *testing.T) {
 	if err := runtime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.OpenScope(resultcache.ScopeID{WorkspaceID: "w", RuntimeID: "owned"}); err != nil {
+	if _, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned"}); err != nil {
 		t.Fatalf("owned cache scope remained open: %v", err)
 	}
 	_ = pool.Close()
@@ -122,11 +122,11 @@ func TestOpenRuntimeOwnedCacheScopeClosesOnRuntimeClose(t *testing.T) {
 func TestNewRuntimeViewOwnedCacheClosesOnModelCompilationFailure(t *testing.T) {
 	cleanup := errors.New("database close failed")
 	db := &ownershipDatabase{closeErr: cleanup}
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, WorkspaceEntries: 2, WorkspaceBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := pool.OpenScope(resultcache.ScopeID{WorkspaceID: "w", RuntimeID: "owned-input"})
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned-input"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,18 +140,18 @@ func TestNewRuntimeViewOwnedCacheClosesOnModelCompilationFailure(t *testing.T) {
 	if got := db.closes.Load(); got != 1 {
 		t.Fatalf("database close count = %d, want 1", got)
 	}
-	if _, err := pool.OpenScope(resultcache.ScopeID{WorkspaceID: "w", RuntimeID: "owned-input"}); err != nil {
+	if _, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned-input"}); err != nil {
 		t.Fatalf("owned cache scope leaked after model failure: %v", err)
 	}
 	_ = pool.Close()
 }
 
 func TestNewRuntimeViewBorrowedCacheRemainsOpenOnModelFailure(t *testing.T) {
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, WorkspaceEntries: 2, WorkspaceBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := pool.OpenScope(resultcache.ScopeID{WorkspaceID: "w", RuntimeID: "borrowed-failure"})
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "borrowed-failure"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestNewRuntimeViewBorrowedCacheRemainsOpenOnModelFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("model compilation unexpectedly succeeded")
 	}
-	if _, err := pool.OpenScope(resultcache.ScopeID{WorkspaceID: "w", RuntimeID: "borrowed-failure"}); err == nil {
+	if _, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "borrowed-failure"}); err == nil {
 		t.Fatal("borrowed cache scope was closed")
 	}
 	_ = pool.Close()

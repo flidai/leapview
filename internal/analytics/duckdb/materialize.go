@@ -22,6 +22,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type SourceRuntime struct {
@@ -370,14 +371,14 @@ func safeSourceError(source string, _ error) error {
 	return fmt.Errorf("acquiring source %q failed", source)
 }
 
-type WorkspaceRuntimeConfig struct {
+type ProjectRuntimeConfig struct {
 	Models                   map[string]*semanticmodel.Model
-	Database                 analyticsruntime.WorkspaceDatabase
+	Database                 analyticsruntime.ProjectDatabase
 	CredentialResolver       CredentialResolver
 	ConnectionResolver       analyticsruntime.ConnectionResolver
 	SnapshotID               int64
 	ServingStateID           string
-	WorkspaceID              string
+	ProjectID                projectgraph.ResourceID
 	Environment              string
 	TargetType               string
 	TargetID                 string
@@ -393,7 +394,7 @@ type WorkspaceRuntimeConfig struct {
 	ResultLimits             dataquery.ResultLimits
 }
 
-type WorkspaceRuntime struct {
+type ProjectRuntime struct {
 	mu                   sync.Mutex
 	db                   analyticsmaterialize.Database
 	sessions             analyticsresource.SessionProvider
@@ -412,9 +413,15 @@ type duckLakeCommitter interface {
 	CommitTransaction(ctx context.Context, servingStateID string, extra map[string]string, fn func(transaction.Transaction) error) (int64, error)
 }
 
-func OpenWorkspaceMaterializeRuntime(ctx context.Context, config WorkspaceRuntimeConfig) (*WorkspaceRuntime, error) {
+func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeConfig) (*ProjectRuntime, error) {
 	if len(config.Models) == 0 {
-		return nil, fmt.Errorf("workspace semantic models are required")
+		return nil, fmt.Errorf("project semantic models are required")
+	}
+	if config.ProjectID == "" {
+		return nil, fmt.Errorf("project id is required")
+	}
+	if err := config.ProjectID.Validate(); err != nil {
+		return nil, fmt.Errorf("project id: %w", err)
 	}
 	db := config.Database
 	if db == nil {
@@ -429,7 +436,7 @@ func OpenWorkspaceMaterializeRuntime(ctx context.Context, config WorkspaceRuntim
 	if config.ConnectionResolver != nil {
 		sources = NewSourceRuntimeWithConnectionResolver(db, config.ConnectionResolver)
 	}
-	materializationModel, err := physicalWorkspaceModel(config.Models)
+	materializationModel, err := physicalProjectModel(config.Models)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +445,7 @@ func OpenWorkspaceMaterializeRuntime(ctx context.Context, config WorkspaceRuntim
 			return nil, fmt.Errorf("semantic model %q: %w", modelID, err)
 		}
 	}
-	runtime := &WorkspaceRuntime{
+	runtime := &ProjectRuntime{
 		db:                   db,
 		sessions:             db,
 		committer:            db,
@@ -446,7 +453,7 @@ func OpenWorkspaceMaterializeRuntime(ctx context.Context, config WorkspaceRuntim
 		models:               config.Models,
 		materializationModel: materializationModel,
 		views:                map[string]*analyticsmaterialize.Runtime{},
-		commitMetadata:       workspaceCommitMetadata(config),
+		commitMetadata:       projectCommitMetadata(config),
 		cacheScope:           config.QueryCache,
 	}
 	for modelID, model := range config.Models {
@@ -459,7 +466,7 @@ func OpenWorkspaceMaterializeRuntime(ctx context.Context, config WorkspaceRuntim
 		view, err := analyticsmaterialize.NewRuntimeView(ctx, analyticsmaterialize.RuntimeConfig{
 			ModelID:             modelID,
 			Model:               model,
-			QueryCacheNamespace: workspaceQueryCacheNamespace(config),
+			QueryCacheNamespace: projectQueryCacheNamespace(config),
 			Database:            db,
 			Sources:             sources,
 			Resolver:            sources,
@@ -483,12 +490,12 @@ func OpenWorkspaceMaterializeRuntime(ctx context.Context, config WorkspaceRuntim
 	return runtime, nil
 }
 
-func workspaceQueryCacheNamespace(config WorkspaceRuntimeConfig) string {
+func projectQueryCacheNamespace(config ProjectRuntimeConfig) string {
 	return fmt.Sprintf(
-		"snapshot=%d;serving=%q;workspace=%q;environment=%q;semantic=%q;artifact=%q;source=%q;candidate=%q;authorization=%q;bindings=%q",
+		"snapshot=%d;serving=%q;project=%q;environment=%q;semantic=%q;artifact=%q;source=%q;candidate=%q;authorization=%q;bindings=%q",
 		config.SnapshotID,
 		config.ServingStateID,
-		config.WorkspaceID,
+		config.ProjectID.String(),
 		config.Environment,
 		config.SemanticDigest,
 		config.ArtifactDigest,
@@ -499,9 +506,9 @@ func workspaceQueryCacheNamespace(config WorkspaceRuntimeConfig) string {
 	)
 }
 
-func (r *WorkspaceRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
+func (r *ProjectRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 	if r == nil || r.db == nil {
-		return dataquery.Result{}, fmt.Errorf("workspace runtime is not initialized")
+		return dataquery.Result{}, fmt.Errorf("project runtime is not initialized")
 	}
 	modelID := strings.TrimSpace(request.ModelID)
 	if modelID == "" && len(r.models) == 1 {
@@ -521,9 +528,9 @@ func (r *WorkspaceRuntime) ExecuteDataQuery(ctx context.Context, request dataque
 	return view.ExecuteDataQuery(ctx, request)
 }
 
-func (r *WorkspaceRuntime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
+func (r *ProjectRuntime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
 	if r == nil || r.db == nil {
-		return dataquery.Result{}, fmt.Errorf("workspace runtime is not initialized")
+		return dataquery.Result{}, fmt.Errorf("project runtime is not initialized")
 	}
 	modelID := strings.TrimSpace(request.ModelID)
 	if modelID == "" && len(r.models) == 1 {
@@ -542,7 +549,7 @@ func (r *WorkspaceRuntime) ExecuteDataQueryArrow(ctx context.Context, request da
 	return view.ExecuteDataQueryArrow(ctx, request, sink)
 }
 
-func (r *WorkspaceRuntime) ExecuteDataQueryBundle(ctx context.Context, requests []dataquery.BundleRequest) (dataquery.BundleResult, error) {
+func (r *ProjectRuntime) ExecuteDataQueryBundle(ctx context.Context, requests []dataquery.BundleRequest) (dataquery.BundleResult, error) {
 	if len(requests) == 0 {
 		return dataquery.BundleResult{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("bundle is empty")}
 	}
@@ -567,9 +574,9 @@ func (r *WorkspaceRuntime) ExecuteDataQueryBundle(ctx context.Context, requests 
 	return view.ExecuteDataQueryBundle(ctx, requests)
 }
 
-func (r *WorkspaceRuntime) Refresh(ctx context.Context) error {
+func (r *ProjectRuntime) Refresh(ctx context.Context) error {
 	if r == nil {
-		return fmt.Errorf("workspace runtime is not initialized")
+		return fmt.Errorf("project runtime is not initialized")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -592,9 +599,9 @@ func (r *WorkspaceRuntime) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (r *WorkspaceRuntime) RefreshModelTables(ctx context.Context, modelID string, tableNames []string) error {
+func (r *ProjectRuntime) RefreshModelTables(ctx context.Context, modelID string, tableNames []string) error {
 	if r == nil {
-		return fmt.Errorf("workspace runtime is not initialized")
+		return fmt.Errorf("project runtime is not initialized")
 	}
 	model, ok := r.models[modelID]
 	if !ok {
@@ -622,9 +629,9 @@ func (r *WorkspaceRuntime) RefreshModelTables(ctx context.Context, modelID strin
 	return nil
 }
 
-func (r *WorkspaceRuntime) RefreshWorkspaceTables(ctx context.Context, tableNames []string) error {
+func (r *ProjectRuntime) RefreshProjectTables(ctx context.Context, tableNames []string) error {
 	if r == nil {
-		return fmt.Errorf("workspace runtime is not initialized")
+		return fmt.Errorf("project runtime is not initialized")
 	}
 	if len(tableNames) == 0 {
 		return fmt.Errorf("model table refresh plan is empty")
@@ -651,13 +658,13 @@ func (r *WorkspaceRuntime) RefreshWorkspaceTables(ctx context.Context, tableName
 	return nil
 }
 
-func (r *WorkspaceRuntime) clearQueryCaches() {
+func (r *ProjectRuntime) clearQueryCaches() {
 	for _, view := range r.views {
 		view.ClearQueryCache()
 	}
 }
 
-func (r *WorkspaceRuntime) discoverServingSchemas(ctx context.Context, refreshed *semanticmodel.Model) error {
+func (r *ProjectRuntime) discoverServingSchemas(ctx context.Context, refreshed *semanticmodel.Model) error {
 	applyDiscoveredSourceSchemas(refreshed, r.models)
 	for modelID, model := range r.models {
 		if err := discoverSchemas(ctx, r.sessions, model); err != nil {
@@ -705,15 +712,15 @@ func cloneTableSchema(schema semanticmodel.TableSchema) semanticmodel.TableSchem
 	return clone
 }
 
-func WorkspaceModelTableDependencyOrder(models map[string]*semanticmodel.Model, selectedTable string) ([]string, error) {
-	model, err := physicalWorkspaceModel(models)
+func ProjectModelTableDependencyOrder(models map[string]*semanticmodel.Model, selectedTable string) ([]string, error) {
+	model, err := physicalProjectModel(models)
 	if err != nil {
 		return nil, err
 	}
 	return analyticsmaterialize.ModelTableDependencyOrder(model, selectedTable)
 }
 
-func (r *WorkspaceRuntime) refreshModel(ctx context.Context, model *semanticmodel.Model, tableNames []string) (time.Time, int64, error) {
+func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.Model, tableNames []string) (time.Time, int64, error) {
 	prepared, err := r.sources.Prepare(ctx, model)
 	if err != nil {
 		return time.Time{}, 0, err
@@ -726,11 +733,11 @@ func (r *WorkspaceRuntime) refreshModel(ctx context.Context, model *semanticmode
 		lastRefresh, err := analyticsmaterialize.Refresh(ctx, r.db, prepared, model)
 		return lastRefresh, 0, errors.Join(err, prepared.Close())
 	}
-	metadata := map[string]string{"workspace": model.Name}
+	metadata := map[string]string{}
 	for key, value := range r.commitMetadata {
 		metadata[key] = value
 	}
-	servingStateID := firstNonEmpty(r.commitMetadata["servingStateId"], "workspace-refresh")
+	servingStateID := firstNonEmpty(r.commitMetadata["servingStateId"], "project-refresh")
 	snapshotID, err := r.committer.CommitTransaction(ctx, servingStateID, metadata, func(tx transaction.Transaction) error {
 		executor := txExecutor{tx: tx}
 		sources := txPreparedSources{PreparedSources: prepared.(*PreparedSources), tx: tx}
@@ -749,7 +756,7 @@ func (r *WorkspaceRuntime) refreshModel(ctx context.Context, model *semanticmode
 	return time.Now(), snapshotID, nil
 }
 
-func (r *WorkspaceRuntime) acquireOperation(ctx context.Context) (context.Context, func(), error) {
+func (r *ProjectRuntime) acquireOperation(ctx context.Context) (context.Context, func(), error) {
 	provider, ok := r.db.(analyticsresource.Provider)
 	if !ok {
 		return ctx, func() {}, nil
@@ -761,10 +768,12 @@ func (r *WorkspaceRuntime) acquireOperation(ctx context.Context) (context.Contex
 	return lease.Context(), lease.Release, nil
 }
 
-func workspaceCommitMetadata(config WorkspaceRuntimeConfig) map[string]string {
+func projectCommitMetadata(config ProjectRuntimeConfig) map[string]string {
 	metadata := map[string]string{}
 	addCommitMetadata(metadata, "servingStateId", config.ServingStateID)
-	addCommitMetadata(metadata, "workspaceId", config.WorkspaceID)
+	if config.ProjectID != "" {
+		addCommitMetadata(metadata, "projectId", config.ProjectID.String())
+	}
 	addCommitMetadata(metadata, "environment", config.Environment)
 	addCommitMetadata(metadata, "targetType", config.TargetType)
 	addCommitMetadata(metadata, "targetId", config.TargetID)
@@ -790,7 +799,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func (r *WorkspaceRuntime) Close() error {
+func (r *ProjectRuntime) Close() error {
 	if r == nil {
 		return nil
 	}
@@ -808,7 +817,7 @@ func (r *WorkspaceRuntime) Close() error {
 	return errors.Join(errs...)
 }
 
-func (r *WorkspaceRuntime) LastRefresh() time.Time {
+func (r *ProjectRuntime) LastRefresh() time.Time {
 	if r == nil {
 		return time.Time{}
 	}
@@ -817,14 +826,14 @@ func (r *WorkspaceRuntime) LastRefresh() time.Time {
 	return r.lastRefresh
 }
 
-func (r *WorkspaceRuntime) DBPath() string {
+func (r *ProjectRuntime) DBPath() string {
 	if r == nil || r.db == nil {
 		return ""
 	}
 	return r.db.Path()
 }
 
-func (r *WorkspaceRuntime) DuckLakeSnapshotID() int64 {
+func (r *ProjectRuntime) DuckLakeSnapshotID() int64 {
 	if r == nil {
 		return 0
 	}
@@ -833,7 +842,7 @@ func (r *WorkspaceRuntime) DuckLakeSnapshotID() int64 {
 	return r.lastSnapshotID
 }
 
-func (r *WorkspaceRuntime) ReadConcurrency() int {
+func (r *ProjectRuntime) ReadConcurrency() int {
 	if r == nil {
 		return 1
 	}
@@ -867,9 +876,9 @@ func (r txPreparedSources) PlanModelTable(ctx context.Context, _ *semanticmodel.
 	return planModelTable(ctx, r.tx, r.model, tableName, table, r.relations)
 }
 
-func physicalWorkspaceModel(models map[string]*semanticmodel.Model) (*semanticmodel.Model, error) {
-	workspaceModel := &semanticmodel.Model{
-		Name:              "workspace",
+func physicalProjectModel(models map[string]*semanticmodel.Model) (*semanticmodel.Model, error) {
+	projectModel := &semanticmodel.Model{
+		Name:              "project",
 		DefaultConnection: "",
 		Connections:       map[string]semanticmodel.Connection{},
 		Sources:           map[string]semanticmodel.Source{},
@@ -880,32 +889,32 @@ func physicalWorkspaceModel(models map[string]*semanticmodel.Model) (*semanticmo
 		if model == nil {
 			return nil, fmt.Errorf("semantic model %q is required", modelID)
 		}
-		if workspaceModel.DefaultConnection == "" {
-			workspaceModel.DefaultConnection = model.DefaultConnection
+		if projectModel.DefaultConnection == "" {
+			projectModel.DefaultConnection = model.DefaultConnection
 		}
 		for name, connection := range model.Connections {
-			existing, ok := workspaceModel.Connections[name]
+			existing, ok := projectModel.Connections[name]
 			if ok && !reflect.DeepEqual(existing, connection) {
-				return nil, fmt.Errorf("semantic model %q connection %q conflicts with another workspace model", modelID, name)
+				return nil, fmt.Errorf("semantic model %q connection %q conflicts with another project model", modelID, name)
 			}
-			workspaceModel.Connections[name] = connection
+			projectModel.Connections[name] = connection
 		}
 		for name, source := range model.Sources {
-			existing, ok := workspaceModel.Sources[name]
+			existing, ok := projectModel.Sources[name]
 			if ok && !reflect.DeepEqual(sourcePhysicalSignature(existing), sourcePhysicalSignature(source)) {
-				return nil, fmt.Errorf("semantic model %q source %q conflicts with another workspace model", modelID, name)
+				return nil, fmt.Errorf("semantic model %q source %q conflicts with another project model", modelID, name)
 			}
-			workspaceModel.Sources[name] = source
+			projectModel.Sources[name] = source
 		}
 		for name, table := range model.Tables {
-			existing, ok := workspaceModel.Tables[name]
+			existing, ok := projectModel.Tables[name]
 			if ok && !reflect.DeepEqual(tablePhysicalSignature(existing), tablePhysicalSignature(table)) {
-				return nil, fmt.Errorf("semantic model %q model table %q conflicts with another workspace model", modelID, name)
+				return nil, fmt.Errorf("semantic model %q model table %q conflicts with another project model", modelID, name)
 			}
-			workspaceModel.Tables[name] = table
+			projectModel.Tables[name] = table
 		}
 	}
-	return workspaceModel, nil
+	return projectModel, nil
 }
 
 func sourcePhysicalSignature(source semanticmodel.Source) semanticmodel.Source {

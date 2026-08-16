@@ -11,23 +11,23 @@ import (
 )
 
 type RuntimeFactoryConfig struct {
-	Workspaces analyticscontract.WorkspaceFactory
-	MaxRows    int
-	MaxBytes   int64
+	Projects analyticscontract.ProjectFactory
+	MaxRows  int
+	MaxBytes int64
 }
 
 func NewRuntimeBuilder(config RuntimeFactoryConfig) dashboardruntimefactory.Builder {
 	return func(ctx context.Context, input dashboardruntimefactory.Input) (*dashboardruntime.Service, error) {
-		if config.Workspaces == nil {
-			return nil, fmt.Errorf("analytical workspace factory is unavailable")
+		if config.Projects == nil {
+			return nil, fmt.Errorf("analytical project factory is unavailable")
 		}
-		return dashboardruntime.NewFromDefinition(ctx, input.Directory, NewFactory(Options{
-			Workspaces: config.Workspaces, ResultLimits: dataquery.ResultLimits{MaxRows: config.MaxRows, MaxBytes: config.MaxBytes},
-			SnapshotID: input.SnapshotID, ServingStateID: input.ServingStateID, WorkspaceID: input.WorkspaceID,
-			Environment: input.Environment, SemanticModelDigest: input.SemanticModelDigest,
+		return dashboardruntime.NewFromGeneration(ctx, input.Directory, NewFactory(Options{
+			Projects: config.Projects, ResultLimits: dataquery.ResultLimits{MaxRows: config.MaxRows, MaxBytes: config.MaxBytes},
+			SnapshotID: input.SnapshotID, ServingStateID: input.Identity.GenerationID, ProjectID: input.Identity.ProjectID,
+			Environment: input.Identity.Environment, SemanticModelDigest: input.SemanticModelDigest,
 			ArtifactDigest: input.ArtifactDigest, SourceDataDigest: input.SourceDataDigest,
 			CandidateID: input.CandidateID, AuthorizationFingerprint: input.AuthorizationFingerprint,
 			BindingFingerprint: input.BindingFingerprint,
-		}), input.Definition)
+		}), input.Identity, input.Definition)
 	}
 }

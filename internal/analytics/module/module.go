@@ -44,8 +44,6 @@ type Config struct {
 	TempDir               string
 	RuntimeCacheEntries   int
 	RuntimeCacheBytes     int64
-	WorkspaceCacheEntries int
-	WorkspaceCacheBytes   int64
 	NodeCacheEntries      int
 	NodeCacheBytes        int64
 }
@@ -142,7 +140,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	cache, err := resultcache.New(resultcache.Limits{
 		RuntimeEntries: config.RuntimeCacheEntries, RuntimeBytes: config.RuntimeCacheBytes,
-		WorkspaceEntries: config.WorkspaceCacheEntries, WorkspaceBytes: config.WorkspaceCacheBytes,
 		NodeEntries: config.NodeCacheEntries, NodeBytes: config.NodeCacheBytes,
 	})
 	if err != nil {
@@ -344,11 +341,11 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 	}
 }
 
-func (m *Module) WorkspaceMaterializer() analyticsmaterialization.Executor {
+func (m *Module) ProjectMaterializer() analyticsmaterialization.Executor {
 	if m == nil || m.environment == nil {
 		return nil
 	}
-	return duckDBWorkspaceMaterializer{environment: m.environment, credentials: m.credentials, module: m}
+	return duckDBProjectMaterializer{environment: m.environment, credentials: m.credentials, module: m}
 }
 
 func (m *Module) RetentionSnapshots() storagemaintenance.SnapshotMaintenance {
@@ -372,11 +369,11 @@ func (m *Module) Collector() prometheus.Collector {
 	return NewCollector(m.environment, m.cache)
 }
 
-func NewWorkspaceMaterializer(environment *analyticsducklake.Environment) analyticsmaterialization.Executor {
-	return NewWorkspaceMaterializerWithCredentials(environment, analyticsduckdb.NonSecretCredentialResolver{})
+func NewProjectMaterializer(environment *analyticsducklake.Environment) analyticsmaterialization.Executor {
+	return NewProjectMaterializerWithCredentials(environment, analyticsduckdb.NonSecretCredentialResolver{})
 }
 
-func NewWorkspaceMaterializerWithCredentials(
+func NewProjectMaterializerWithCredentials(
 	environment *analyticsducklake.Environment,
 	credentials analyticsduckdb.CredentialResolver,
 ) analyticsmaterialization.Executor {
@@ -386,7 +383,7 @@ func NewWorkspaceMaterializerWithCredentials(
 	if credentials == nil {
 		credentials = analyticsduckdb.NonSecretCredentialResolver{}
 	}
-	return duckDBWorkspaceMaterializer{environment: environment, credentials: credentials}
+	return duckDBProjectMaterializer{environment: environment, credentials: credentials}
 }
 
 func (m *Module) QueryAuditReader() queryaudit.Reader {

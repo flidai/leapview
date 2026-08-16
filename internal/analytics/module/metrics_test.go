@@ -15,7 +15,7 @@ func TestAnalyticalCollectorUsesBoundedLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	cache, err := resultcache.New(resultcache.Limits{RuntimeEntries: 1, RuntimeBytes: 1024, WorkspaceEntries: 1, WorkspaceBytes: 1024, NodeEntries: 1, NodeBytes: 1024})
+	cache, err := resultcache.New(resultcache.Limits{RuntimeEntries: 1, RuntimeBytes: 1024, NodeEntries: 1, NodeBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}

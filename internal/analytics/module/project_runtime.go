@@ -10,15 +10,15 @@ import (
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 )
 
-type workspaceRuntimeFactory struct {
+type projectRuntimeFactory struct {
 	module *Module
 }
 
-func (m *Module) WorkspaceRuntimeFactory() analyticsruntime.WorkspaceFactory {
-	return workspaceRuntimeFactory{module: m}
+func (m *Module) ProjectRuntimeFactory() analyticsruntime.ProjectFactory {
+	return projectRuntimeFactory{module: m}
 }
 
-func (f workspaceRuntimeFactory) OpenWorkspace(ctx context.Context, request analyticsruntime.WorkspaceRequest) (analyticsruntime.Workspace, error) {
+func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analyticsruntime.ProjectRequest) (analyticsruntime.Project, error) {
 	if f.module == nil || f.module.environment == nil || f.module.cache == nil {
 		return nil, fmt.Errorf("analytical runtime is unavailable")
 	}
@@ -27,7 +27,7 @@ func (f workspaceRuntimeFactory) OpenWorkspace(ctx context.Context, request anal
 		var ok bool
 		connectionResolver, ok = f.module.candidateRuntimeConnectionResolver(
 			request.CandidateID,
-			request.WorkspaceID,
+			request.ProjectID.String(),
 		)
 		if !ok {
 			return nil, connectionbinding.ErrProviderUnavailable
@@ -35,23 +35,22 @@ func (f workspaceRuntimeFactory) OpenWorkspace(ctx context.Context, request anal
 	} else if f.module.activeRuntimeBindingEvidence != nil {
 		connectionResolver = &activeRuntimeConnectionResolver{
 			module: f.module, servingStateID: request.ServingStateID,
-			workspaceID: request.WorkspaceID, environment: request.Environment,
+			projectID: request.ProjectID, environment: request.Environment,
 		}
 	}
 	cacheScope, err := f.module.cache.OpenScope(resultcache.ScopeID{
-		WorkspaceID: request.WorkspaceID,
-		RuntimeID:   workspaceRuntimeCacheIdentity(request),
+		RuntimeID: projectRuntimeCacheIdentity(request),
 	})
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := analyticsduckdb.OpenWorkspaceMaterializeRuntime(ctx, analyticsduckdb.WorkspaceRuntimeConfig{
+	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, Database: f.module.environment,
 		CredentialResolver: f.module.credentials,
 		ConnectionResolver: connectionResolver,
 		QueryCache:         cacheScope, ResultLimits: request.ResultLimits,
 		SnapshotID: request.SnapshotID, ServingStateID: request.ServingStateID,
-		WorkspaceID: request.WorkspaceID, Environment: request.Environment,
+		ProjectID: request.ProjectID, Environment: request.Environment,
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
 		SourceDataDigest: request.SourceDataDigest,
 		CandidateID:      request.CandidateID, AuthorizationFingerprint: request.AuthorizationFingerprint,
@@ -65,8 +64,8 @@ func (f workspaceRuntimeFactory) OpenWorkspace(ctx context.Context, request anal
 	return runtime, nil
 }
 
-func workspaceRuntimeCacheIdentity(
-	request analyticsruntime.WorkspaceRequest,
+func projectRuntimeCacheIdentity(
+	request analyticsruntime.ProjectRequest,
 ) string {
 	if request.CandidateID == "" {
 		return request.ServingStateID

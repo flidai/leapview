@@ -40,7 +40,7 @@ func (m *Module) ConfigureActiveRuntimeBindings(source ActiveRuntimeBindingEvide
 type activeRuntimeConnectionResolver struct {
 	module         *Module
 	servingStateID string
-	workspaceID    string
+	projectID      projectgraph.ResourceID
 	environment    string
 
 	mu       sync.Mutex
@@ -77,7 +77,7 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
 	}
 	binding, err := r.module.connectionBindings.Binding(ctx, connectionbinding.BindingScope{
-		ProjectID: projectgraph.ResourceID(r.workspaceID), Environment: r.environment,
+		ProjectID: r.projectID, Environment: r.environment,
 	}, r.module.targetID, logicalID)
 	if err != nil {
 		return semanticmodel.Connection{}, err
@@ -131,7 +131,7 @@ func (r *activeRuntimeConnectionResolver) evidenceFor(
 	defer r.mu.Unlock()
 	if r.evidence == nil {
 		values, err := r.module.activeRuntimeBindingEvidence.BindingEvidence(
-			ctx, r.servingStateID, r.workspaceID,
+			ctx, r.servingStateID, r.projectID.String(),
 		)
 		if err != nil {
 			return ActiveRuntimeBindingEvidence{}, err

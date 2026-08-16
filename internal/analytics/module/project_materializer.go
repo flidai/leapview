@@ -11,18 +11,18 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
-type duckDBWorkspaceMaterializer struct {
+type duckDBProjectMaterializer struct {
 	environment *analyticsducklake.Environment
 	credentials analyticsduckdb.CredentialResolver
 	module      *Module
 }
 
-func (e duckDBWorkspaceMaterializer) Materialize(ctx context.Context, request analyticsmaterialization.Request) (int64, error) {
-	runtime, err := analyticsduckdb.OpenWorkspaceMaterializeRuntime(ctx, analyticsduckdb.WorkspaceRuntimeConfig{
+func (e duckDBProjectMaterializer) Materialize(ctx context.Context, request analyticsmaterialization.Request) (int64, error) {
+	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, Database: e.environment,
 		CredentialResolver: e.credentials,
 		ConnectionResolver: e.connectionResolver(request),
-		ServingStateID:     request.Identity.GenerationID, WorkspaceID: request.Identity.ProjectID.String(),
+		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,
 		Environment: string(servingstate.NormalizeEnvironment(request.Environment)),
 		TargetType:  request.TargetType, TargetID: request.TargetID.String(),
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
@@ -32,7 +32,7 @@ func (e duckDBWorkspaceMaterializer) Materialize(ctx context.Context, request an
 		return 0, err
 	}
 	defer runtime.Close()
-	if err := runtime.RefreshWorkspaceTables(ctx, request.Tables); err != nil {
+	if err := runtime.RefreshProjectTables(ctx, request.Tables); err != nil {
 		return 0, err
 	}
 	snapshotID := runtime.DuckLakeSnapshotID()
@@ -42,12 +42,12 @@ func (e duckDBWorkspaceMaterializer) Materialize(ctx context.Context, request an
 	return snapshotID, nil
 }
 
-func (e duckDBWorkspaceMaterializer) connectionResolver(request analyticsmaterialization.Request) analyticsruntime.ConnectionResolver {
+func (e duckDBProjectMaterializer) connectionResolver(request analyticsmaterialization.Request) analyticsruntime.ConnectionResolver {
 	if e.module == nil || e.module.activeRuntimeBindingEvidence == nil || request.ConnectionEvidenceServingStateID == "" {
 		return nil
 	}
 	return &activeRuntimeConnectionResolver{
 		module: e.module, servingStateID: string(request.ConnectionEvidenceServingStateID),
-		workspaceID: request.Identity.ProjectID.String(), environment: string(servingstate.NormalizeEnvironment(request.Environment)),
+		projectID: request.Identity.ProjectID, environment: string(servingstate.NormalizeEnvironment(request.Environment)),
 	}
 }
