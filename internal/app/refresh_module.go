@@ -28,6 +28,18 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	if workflow.refreshMaterializer != nil {
 		service.Materializer = workflow.refreshMaterializer
 	}
+	var refreshIdentity projectgraph.ServingIdentity
+	if runtime.runtimeHostModule != nil {
+		lease, leaseErr := runtime.runtimeHostModule.Acquire(ctx)
+		if leaseErr != nil {
+			if database != nil {
+				return fmt.Errorf("resolve refresh serving identity: %w", leaseErr)
+			}
+		} else if lease != nil {
+			refreshIdentity = lease.Identity()
+			lease.Release()
+		}
+	}
 	config := refreshmodule.Config{
 		Database: database, Service: service,
 		Analytics: runtime.analyticsModule.ProjectMaterializer(), ManagedData: workflow.managedDataResolver,
@@ -63,7 +75,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 			},
 		},
 		Admission: workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,
-		Clock:            workflow.refreshPipelineClock,
+		Clock: workflow.refreshPipelineClock, Identity: refreshIdentity,
 		EnableDispatcher: workflow.enableRefreshDispatcher,
 		EnableScheduler:  false,
 		Logger:           platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,
