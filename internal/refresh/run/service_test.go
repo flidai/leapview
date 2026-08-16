@@ -9,6 +9,7 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/runtimehost"
 
 	"github.com/flidai/leapview/internal/refresh/artifact"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -547,15 +548,15 @@ type fakeRuntimeHost struct {
 	activateErr error
 }
 
-func (h *fakeRuntimeHost) PrepareServingState(context.Context, string) (servingstate.PreparedRuntime, error) {
+func (h *fakeRuntimeHost) PrepareServingState(context.Context, string) (*runtimehost.Prepared, error) {
 	if h.prepareErr != nil {
 		return nil, h.prepareErr
 	}
 	h.prepared = true
-	return fakePrepared{}, nil
+	return &runtimehost.Prepared{}, nil
 }
 
-func (h *fakeRuntimeHost) ActivatePrepared(_ servingstate.PreparedRuntime, activate func() error) error {
+func (h *fakeRuntimeHost) ActivatePrepared(_ *runtimehost.Prepared, activate func() error) error {
 	if h.activateErr != nil {
 		return h.activateErr
 	}
@@ -565,10 +566,6 @@ func (h *fakeRuntimeHost) ActivatePrepared(_ servingstate.PreparedRuntime, activ
 	h.committed = true
 	return nil
 }
-
-type fakePrepared struct{}
-
-func (fakePrepared) Close() error { return nil }
 
 type fakeRetention struct {
 	ran bool

@@ -401,10 +401,10 @@ type publishReleaseStub struct {
 
 func (stub *publishReleaseStub) Get(
 	_ context.Context,
-	projectID,
+	projectID projectgraph.ResourceID,
 	releaseID string,
 ) (release.Release, error) {
-	if projectID != stub.targetRelease.ServingIdentity.ProjectID.String() ||
+	if projectID != stub.targetRelease.ServingIdentity.ProjectID ||
 		releaseID != stub.targetRelease.ID {
 		return release.Release{}, release.ErrNotFound
 	}
