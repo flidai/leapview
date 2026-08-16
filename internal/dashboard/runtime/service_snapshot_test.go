@@ -9,7 +9,19 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+type runtimeAuditRecorder struct {
+	queries []dataquery.Query
+	results []dataquery.Result
+}
+
+func (r *runtimeAuditRecorder) RecordDataQuery(_ context.Context, query dataquery.Query, result dataquery.Result) error {
+	r.queries = append(r.queries, query)
+	r.results = append(r.results, result)
+	return nil
+}
 
 type failingBundleDataRuntime struct{ snapshotDataRuntime }
 

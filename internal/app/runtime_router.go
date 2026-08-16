@@ -753,6 +753,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}, true
 				},
 				AgentBootstrap: func(r *http.Request, _ string) dashboardmodule.AgentBootstrap {
+					if routes.agentModule == nil {
+						return dashboardmodule.AgentBootstrap{}
+					}
 					return dashboardAgentBootstrap(routes.agentModule.DashboardBootstrap(r))
 				},
 				AgentCommands: dashboardmodule.AgentCommandBindings{

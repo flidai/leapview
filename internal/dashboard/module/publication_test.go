@@ -6,20 +6,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 )
 
 func TestPublicationExecutionContextUsesPublicationPrincipal(t *testing.T) {
 	row := publication.Publication{
-		WorkspaceID: "visuals",
-		Name:        "website-showcase",
-		Dashboard:   "visual-showcase",
+		ProjectID: "project_1",
+		Name:      "website-showcase",
+		Dashboard: "visual-showcase",
 	}
 
 	metadata := dataquery.MetadataFromContext(PublicationExecutionContext(context.Background(), row, ""))
-	want := access.DashboardPublicationSubjectID("visuals", "website-showcase")
+	want := "dashboard_publication:project_1.website-showcase"
 	if metadata.PrincipalID != want {
 		t.Fatalf("public principal id = %q, want %q", metadata.PrincipalID, want)
 	}

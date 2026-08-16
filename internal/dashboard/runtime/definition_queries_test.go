@@ -19,10 +19,10 @@ func definitionOverlayService(t *testing.T, modelName string, ready bool) (*Serv
 		ID: "project", Title: "Project", SemanticModel: "sales_model",
 		Pages: []dashboard.Page{{ID: "project-page", Title: "Project Page"}},
 	}
-	workspace := &dashboarddefinition.Project{
-		Catalog:    dashboard.Catalog{Project: dashboard.CatalogProject{ID: "workspace"}},
-		Models:     map[projectgraph.ResourceID]*semanticmodel.Model{"sales_model": model},
-		Dashboards: map[projectgraph.ResourceID]dashboarddefinition.Definition{"project": project},
+	projectID := projectgraph.ResourceID("project_1")
+	definition, err := NewProjectDefinition(projectID, "Project", "", map[projectgraph.ResourceID]*semanticmodel.Model{"sales_model": model}, map[projectgraph.ResourceID]dashboarddefinition.Definition{"project": project})
+	if err != nil {
+		t.Fatal(err)
 	}
 	baseRuntime := &modelRuntime{model: model, ready: ready}
 	if !ready {
@@ -32,14 +32,13 @@ func definitionOverlayService(t *testing.T, modelName string, ready bool) (*Serv
 		runtimes: map[projectgraph.ResourceID]*modelRuntime{"sales_model": baseRuntime},
 		tiles:    newSpatialTileRegistry(),
 	}
-	var err error
-	service.catalog, err = NewCatalogService(&service.mu, workspace)
+	service.catalog, err = NewCatalogService(&service.mu, definition)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.reports = &ReportService{projectID: "workspace", models: workspace.Models, dashboards: workspace.Dashboards, catalog: workspace.Catalog, defaultID: "project"}
+	service.reports = &ReportService{projectID: projectID, models: definition.Models(), dashboards: definition.Dashboards(), catalog: service.catalog.catalog, defaultID: "project"}
 	service.filters = &FilterService{}
-	service.visualizations = &VisualizationDataService{mu: &service.mu, reports: service.reports, runtimes: service.runtimes, filters: service.filters, tiles: service.tiles, projectID: "workspace"}
+	service.visualizations = &VisualizationDataService{mu: &service.mu, reports: service.reports, runtimes: service.runtimes, filters: service.filters, tiles: service.tiles}
 	service.snapshots = &SnapshotService{mu: &service.mu, reports: service.reports, runtimes: service.runtimes, filters: service.filters, visualizations: service.visualizations}
 	service.queries = &QueryService{snapshots: service.snapshots, visualizations: service.visualizations}
 
@@ -59,7 +58,7 @@ func TestDefinitionServiceOverlayPreservesBaseWorkspaceAndExecutesArbitraryPage(
 	if patch.Status.Error != "" {
 		t.Fatalf("patch status error = %q", patch.Status.Error)
 	}
-	if _, err := service.reports.Resolve("published"); err == nil {
+	if _, err := service.reports.Resolve(projectgraph.ResourceID("published")); err == nil {
 		t.Fatal("published overlay leaked into base workspace")
 	}
 	pages := service.Pages("project")
@@ -83,6 +82,7 @@ func TestDefinitionServiceOverlayMetadataWorksBeforeDataReady(t *testing.T) {
 
 func TestDefinitionServiceOverlayRejectsSemanticModelMismatch(t *testing.T) {
 	service, published := definitionOverlayService(t, "other_model", true)
+	published.SemanticModel = "other_model"
 	if got := service.ModelIDForDashboardDefinition(published); got != "" {
 		t.Fatalf("model ID = %q, want empty on mismatch", got)
 	}

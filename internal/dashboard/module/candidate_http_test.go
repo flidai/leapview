@@ -5,9 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardhttp "github.com/flidai/leapview/internal/dashboard/http"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,18 +20,20 @@ type candidateMetricsStub struct {
 func TestCandidateHTTPScopesRoutesStreamsAndSessions(t *testing.T) {
 	module := &Module{handler: dashboardhttp.Handler{}}
 	digest := "sha256:" + strings.Repeat("a", 64)
+	resource, err := access.NewResourceRef(projectgraph.ResourceID("dashboard_1"), projectgraph.KindDashboard)
+	require.NoError(t, err)
 	handler, err := module.CandidateHTTP(CandidateHTTPConfig{
 		Metrics: candidateMetricsStub{}, CandidateID: "cand_1",
-		OwnerPrincipalID: "author_1", WorkspaceID: "sales",
+		OwnerPrincipalID: "author_1", ProjectID: "project_1",
 		ArtifactDigest: digest, AuthorizationFingerprint: digest,
-		RouteBasePath: "/candidates/cand_1/workspaces/sales",
+		RouteBasePath: "/candidates/cand_1/projects/project_1",
 		Restrictions: []CandidateRestriction{{
-			ID: "region", WorkspaceID: "sales", ObjectID: "workspace:sales",
+			ID: "region", Resource: resource,
 			PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","value":"EMEA"}`,
 		}},
 	})
 	require.NoError(t, err)
-	if handler.RouteScope.BasePath != "/candidates/cand_1/workspaces/sales" ||
+	if handler.RouteScope.BasePath != "/candidates/cand_1/projects/project_1" ||
 		handler.StreamNamespace != "candidate:cand_1" {
 		t.Fatalf("candidate handler scope = (%q, %q)", handler.RouteScope.BasePath, handler.StreamNamespace)
 	}
@@ -39,7 +43,7 @@ func TestCandidateHTTPScopesRoutesStreamsAndSessions(t *testing.T) {
 		"client", "stream",
 	)
 	require.NoError(t, err)
-	if key.ProjectID != config.ProjectID ||
+	if key.ProjectID != "project_1" ||
 		key.ServingStateID != "candidate:cand_1:"+digest {
 		t.Fatalf("candidate session key = %#v", key)
 	}
@@ -48,13 +52,15 @@ func TestCandidateHTTPScopesRoutesStreamsAndSessions(t *testing.T) {
 func TestCandidateHTTPRejectsUncompiledRestrictionAtAssembly(t *testing.T) {
 	module := &Module{handler: dashboardhttp.Handler{}}
 	digest := "sha256:" + strings.Repeat("a", 64)
-	_, err := module.CandidateHTTP(CandidateHTTPConfig{
+	resource, err := access.NewResourceRef(projectgraph.ResourceID("dashboard_1"), projectgraph.KindDashboard)
+	require.NoError(t, err)
+	_, err = module.CandidateHTTP(CandidateHTTPConfig{
 		Metrics: candidateMetricsStub{}, CandidateID: "cand_1",
-		OwnerPrincipalID: "author_1", WorkspaceID: "sales",
+		OwnerPrincipalID: "author_1", ProjectID: "project_1",
 		ArtifactDigest: digest, AuthorizationFingerprint: digest,
-		RouteBasePath: "/candidates/cand_1/workspaces/sales",
+		RouteBasePath: "/candidates/cand_1/projects/project_1",
 		Restrictions: []CandidateRestriction{{
-			ID: "unsafe", WorkspaceID: "sales", ObjectID: "workspace:sales",
+			ID: "unsafe", Resource: resource,
 			PolicyType: "row_filter", ExpressionJSON: `{}`,
 		}},
 	})

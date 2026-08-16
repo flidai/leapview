@@ -21,6 +21,7 @@ import (
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -35,7 +36,7 @@ func TestWorkloadRejectionsMapToStableOverloadProblems(t *testing.T) {
 		{reason: workload.QueueTimeout, status: http.StatusGatewayTimeout, code: "WORKLOAD_QUEUE_TIMEOUT"},
 	} {
 		recorder := httptest.NewRecorder()
-		err := &workload.Rejection{Reason: test.reason, Class: workload.Interactive, WorkspaceID: "sales", Operation: "query"}
+		err := &workload.Rejection{Reason: test.reason, Class: workload.Interactive, PrincipalID: "principal_1", Operation: "query"}
 		writeJSONError(recorder, err, http.StatusBadRequest)
 		if recorder.Code != test.status || recorder.Header().Get("Retry-After") != test.retry {
 			t.Fatalf("reason %s status=%d retry=%q", test.reason, recorder.Code, recorder.Header().Get("Retry-After"))
@@ -131,7 +132,7 @@ func TestSemanticQueryColumnsUseModelMetadataInsteadOfPageValues(t *testing.T) {
 		},
 	}
 	columns := semanticQueryColumns(
-		"sales", "commerce", model,
+		"commerce", model,
 		[]api.QueryColumn{
 			{Name: "created", Type: "string", Nullable: true},
 			{Name: "order_count", Type: "string", Nullable: true},
@@ -176,12 +177,12 @@ func TestIndexCursorIsSignedBoundAndExpiring(t *testing.T) {
 }
 
 func TestRequestCursorScopeIgnoresPageTokenButBindsNormalizedRequest(t *testing.T) {
-	first := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/sales/semantic-models/sales/query?limit=100&pageToken=one", nil)
-	second := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/sales/semantic-models/sales/query?pageToken=two&limit=100", nil)
+	first := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_1/semantic-models/commerce/query?limit=100&pageToken=one", nil)
+	second := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_1/semantic-models/commerce/query?pageToken=two&limit=100", nil)
 	if requestCursorScope(first, map[string]any{"field": "revenue"}) != requestCursorScope(second, map[string]any{"field": "revenue"}) {
 		t.Fatal("page token changed normalized request scope")
 	}
-	changed := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/sales/semantic-models/sales/query?limit=200", nil)
+	changed := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_1/semantic-models/commerce/query?limit=200", nil)
 	if requestCursorScope(first, map[string]any{"field": "revenue"}) == requestCursorScope(changed, map[string]any{"field": "revenue"}) {
 		t.Fatal("query shape did not change request scope")
 	}
@@ -253,7 +254,7 @@ func TestWriteSemanticArrowResponseUsesNativeExecutorAndStreamsPaginationProbe(t
 		recorder,
 		request,
 		metrics,
-		dataquery.Query{WorkspaceID: "sales", ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Limit: 3},
+		dataquery.Query{ProjectID: projectgraph.ResourceID("project_1"), ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Limit: 3},
 		2,
 		0,
 		"query-a",

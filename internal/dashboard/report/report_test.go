@@ -8,6 +8,7 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type fakeMetrics struct {
@@ -26,11 +27,11 @@ type fakeReportResolver struct {
 	definition dashboarddefinition.Definition
 }
 
-func (r fakeReportResolver) Resolve(string) (dashboardresolver.Resolved, error) {
+func (r fakeReportResolver) Resolve(projectgraph.ResourceID) (dashboardresolver.Resolved, error) {
 	return dashboardresolver.Resolved{
 		Definition: r.definition,
 		Model:      &semanticmodel.Model{Name: "model"},
-		Source:     dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, WorkspaceID: "workspace"},
+		Source:     dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject},
 	}, nil
 }
 
