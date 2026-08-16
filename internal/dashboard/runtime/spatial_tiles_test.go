@@ -87,7 +87,7 @@ func TestSpatialTileRevisionLifecycleIsBoundToItsStream(t *testing.T) {
 }
 
 func TestSpatialTileURLsAreSameOriginTemplates(t *testing.T) {
-	if got, want := spatialTileURL("sales team", "orders/2026", "density map", "revision"), "/projects/sales%20team/dashboards/orders%2F2026/visuals/density%20map/tiles/revision/{z}/{x}/{y}.mvt"; got != want {
+	if got, want := spatialTileURL("orders/2026", "density map", "revision"), "/dashboards/orders%2F2026/visuals/density%20map/tiles/revision/{z}/{x}/{y}.mvt"; got != want {
 		t.Fatalf("authenticated tile URL = %q, want %q", got, want)
 	}
 	if got, want := publicSpatialTileURL("public/orders", "density map", "revision"), "/public/dashboards/public%2Forders/visuals/density%20map/tiles/revision/{z}/{x}/{y}.mvt"; got != want {

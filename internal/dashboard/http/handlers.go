@@ -322,8 +322,6 @@ func (h Handler) Dashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	base := ""
 	if h.RouteScope.BasePath != "" {
 		base = strings.TrimSuffix(h.RouteScope.BasePath, "/")
-	} else if projectID, err := h.projectIDForRequest(r.Context()); err == nil {
-		base = "/projects/" + projectID.String()
 	}
 	nethttp.Redirect(w, r, base+"/dashboards/"+dashboardID+"/pages/"+pages[0].ID, nethttp.StatusFound)
 }

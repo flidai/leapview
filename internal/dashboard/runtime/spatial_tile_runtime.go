@@ -131,7 +131,7 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	}
 	tileURL := publicSpatialTileURL(publicID, visualID, token)
 	if publicID == "" {
-		tileURL = spatialTileURL(projectID, dashboardID, visualID, token)
+		tileURL = spatialTileURL(dashboardID, visualID, token)
 	}
 	envelope, err := visualizationruntime.SpatialTiledEnvelopeFromMetadata(definition, visualizationruntime.SpatialTiledMetadata{
 		Cardinality: cardinality, Extent: extent, RawDomains: rawDomains, AggregateDomains: aggregateDomains,

@@ -77,20 +77,20 @@ func (fakeMetrics) QueryVisualizationWindow(_ context.Context, _, _ string, _ da
 }
 func TestDashboardRedirectsToFirstPage(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(nethttp.MethodGet, "/projects/workspace/dashboards/dash", nil)
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/dash", nil)
 
 	testRouter(Handler{Metrics: fakeMetrics{}}).ServeHTTP(rec, req)
 
 	if rec.Code != nethttp.StatusFound {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if got := rec.Header().Get("Location"); got != "/projects/workspace/dashboards/dash/pages/overview" {
+	if got := rec.Header().Get("Location"); got != "/dashboards/dash/pages/overview" {
 		t.Fatalf("Location = %q", got)
 	}
 }
 
 func TestPageNotFound(t *testing.T) {
-	for _, path := range []string{"/projects/workspace/dashboards/missing/pages/overview", "/projects/workspace/dashboards/dash/pages/missing"} {
+	for _, path := range []string{"/dashboards/missing/pages/overview", "/dashboards/dash/pages/missing"} {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(nethttp.MethodGet, path, nil)
@@ -106,7 +106,7 @@ func TestPageNotFound(t *testing.T) {
 
 func TestPageSetsClientCookieAndRendersReport(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(nethttp.MethodGet, "/projects/workspace/dashboards/dash/pages/overview", nil)
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/dash/pages/overview", nil)
 
 	testRouter(Handler{Metrics: fakeMetrics{}}).ServeHTTP(rec, req)
 
@@ -185,7 +185,7 @@ func TestUpdatesRecordsOneHumanViewForNewSession(t *testing.T) {
 
 func testRouter(handler Handler) nethttp.Handler {
 	r := chi.NewRouter()
-	r.Get("/projects/{project}/dashboards/{dashboard}", handler.Dashboard)
-	r.Get("/projects/{project}/dashboards/{dashboard}/pages/{page}", handler.Page)
+	r.Get("/dashboards/{dashboard}", handler.Dashboard)
+	r.Get("/dashboards/{dashboard}/pages/{page}", handler.Page)
 	return r
 }
