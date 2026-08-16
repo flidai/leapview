@@ -301,7 +301,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsCapability(ctx, snapshot, principalID, credential.Token, objects, capabilityAction) {
+	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsCapability(ctx, snapshot, principalID, credential.Token, capabilityAction) {
 		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction, Credential: true}
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
@@ -622,30 +622,30 @@ func (m Metrics) PreviewSemantic(ctx context.Context, modelID string, request re
 
 func semanticAggregateDataQuery(modelID string, request reportdef.AggregateQuery) dataquery.Query {
 	return dataquery.Query{
-		ModelID:   modelID,
-		Kind:      dataquery.KindSemanticAggregate,
-		Target:    request.Table,
-		Fields:    queryFieldsToDataFields(request.Dimensions),
-		Measures:  queryFieldsToDataFields(request.Measures),
-		Time:      dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
-		Filters:   queryFiltersToDataFilters(request.Filters),
-		Sort:      querySortToDataSort(request.Sort),
-		Limit:     request.Limit,
-		Offset:    request.Offset,
+		ModelID:  modelID,
+		Kind:     dataquery.KindSemanticAggregate,
+		Target:   request.Table,
+		Fields:   queryFieldsToDataFields(request.Dimensions),
+		Measures: queryFieldsToDataFields(request.Measures),
+		Time:     dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+		Filters:  queryFiltersToDataFilters(request.Filters),
+		Sort:     querySortToDataSort(request.Sort),
+		Limit:    request.Limit,
+		Offset:   request.Offset,
 	}
 }
 
 func semanticRowsDataQuery(modelID string, request reportdef.RowQuery) dataquery.Query {
 	return dataquery.Query{
-		ModelID:   modelID,
-		Kind:      dataquery.KindSemanticRows,
-		Target:    request.Table,
-		Fields:    queryFieldsToDataFields(request.Dimensions),
-		Measures:  queryFieldsToDataFields(request.Measures),
-		Filters:   queryFiltersToDataFilters(request.Filters),
-		Sort:      querySortToDataSort(request.Sort),
-		Limit:     request.Limit,
-		Offset:    request.Offset,
+		ModelID:  modelID,
+		Kind:     dataquery.KindSemanticRows,
+		Target:   request.Table,
+		Fields:   queryFieldsToDataFields(request.Dimensions),
+		Measures: queryFieldsToDataFields(request.Measures),
+		Filters:  queryFiltersToDataFilters(request.Filters),
+		Sort:     querySortToDataSort(request.Sort),
+		Limit:    request.Limit,
+		Offset:   request.Offset,
 	}
 }
 
@@ -949,9 +949,8 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 			relevant[object.CanonicalID()] = struct{}{}
 		}
 		for _, restriction := range candidate.Restrictions {
-			if restriction.Resource.CanonicalID() == "" {
-				out.mandatory = append(out.mandatory, restriction)
-				continue
+			if err := restriction.Resource.Validate(); err != nil {
+				return effectiveDataPolicySet{}, fmt.Errorf("candidate restriction %q resource is invalid: %w", restriction.ID, err)
 			}
 			if _, ok := relevant[restriction.Resource.CanonicalID()]; ok {
 				out.mandatory = append(out.mandatory, restriction)
@@ -1193,7 +1192,7 @@ func (m Metrics) subjects(ctx context.Context, principalID string) ([]access.Sub
 	return m.subjectsFromContext(ctx, principalID)
 }
 
-func (m Metrics) capabilityAllowed(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, resource access.ResourceRef, capability access.Capability) (bool, error) {
+func (m Metrics) capabilityAllowed(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, capability access.Capability) (bool, error) {
 	subjects, err := m.subjects(ctx, principalID)
 	if err != nil {
 		return false, err
@@ -1210,15 +1209,13 @@ func (m Metrics) capabilityAllowed(ctx context.Context, snapshot accesssnapshot.
 	return false, nil
 }
 
-func (m Metrics) tokenAllowsCapability(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, objects []access.ResourceRef, capability access.Capability) bool {
+func (m Metrics) tokenAllowsCapability(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, capability access.Capability) bool {
 	if token.Capabilities == nil {
 		return true
 	}
-	for _, object := range objects {
-		allowed, err := m.capabilityAllowed(ctx, snapshot, principalID, token, object, capability)
-		if err == nil && allowed {
-			return true
-		}
+	allowed, err := m.capabilityAllowed(ctx, snapshot, principalID, token, capability)
+	if err == nil && allowed {
+		return true
 	}
 	return false
 }

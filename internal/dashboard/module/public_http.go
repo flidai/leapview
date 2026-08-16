@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/command"
@@ -261,15 +262,42 @@ func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboard
 
 func PublicationExecutionContext(ctx context.Context, row publication.Publication, modelID string) context.Context {
 	principalID := "dashboard_publication:" + row.ProjectID.String() + "." + strings.TrimSpace(row.Name)
+	dashboard := canonicalPublicationResource(row.Dashboard, projectgraph.KindDashboard)
+	model := canonicalPublicationResource(modelID, projectgraph.KindSemanticModel)
+	dependencies := make([]access.ResourceRef, 0, len(row.DependencyAssetIDs))
+	for _, id := range row.DependencyAssetIDs {
+		if resource := canonicalPublicationResourceID(id); resource.Validate() == nil {
+			dependencies = append(dependencies, resource)
+		}
+	}
 	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
 		ProjectID: row.ProjectID, Surface: dataquery.SurfacePublicDashboard,
 		PrincipalID: principalID, ObjectType: "dashboard_publication", ObjectID: row.Name,
 	})
 	return queryauthz.WithDashboardPublicationCapability(ctx, queryauthz.DashboardPublicationCapability{
 		ProjectID: row.ProjectID, Publication: row.Name,
-		Dashboard: row.Dashboard, ModelID: modelID,
-		DependencyAssetIDs: append([]string(nil), row.DependencyAssetIDs...),
+		Dashboard: dashboard, Model: model, Dependencies: dependencies,
 	})
+}
+
+func canonicalPublicationResource(id string, kind projectgraph.Kind) access.ResourceRef {
+	resourceID, err := projectgraph.NewResourceID(strings.TrimSpace(id))
+	if err != nil {
+		return access.ResourceRef{}
+	}
+	resource, err := access.NewResourceRef(resourceID, kind)
+	if err != nil {
+		return access.ResourceRef{}
+	}
+	return resource
+}
+
+func canonicalPublicationResourceID(id string) access.ResourceRef {
+	parts := strings.SplitN(strings.TrimSpace(id), ":", 2)
+	if len(parts) != 2 {
+		return access.ResourceRef{}
+	}
+	return canonicalPublicationResource(id, projectgraph.Kind(parts[0]))
 }
 
 func publicationPageExists(pages []dashboard.Page, pageID string) bool {

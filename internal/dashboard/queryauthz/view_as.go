@@ -63,7 +63,7 @@ func (m Metrics) authorizeViewAs(ctx context.Context, actor Principal, request d
 		return deny(err)
 	}
 	if credential, ok := m.currentCredential(ctx); ok {
-		allowed, err := m.capabilityAllowed(ctx, snapshot, actorID, credential.Token, projectRef, access.CapabilityProjectAdmin)
+		allowed, err := m.capabilityAllowed(ctx, snapshot, actorID, credential.Token, access.CapabilityProjectAdmin)
 		if err != nil || !allowed {
 			if err == nil {
 				err = errors.New("view-as credential lacks PROJECT_ADMIN")
