@@ -379,7 +379,7 @@ func TestRefreshRunAPIRejectsExternallySuppliedTarget(t *testing.T) {
 	token := testAPIToken(t, ctx, store, principal.ID, "refresh-contract-test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
-	req := authedJSONRequest(http.MethodPost, "/api/v1/workspaces/test/refresh-runs", token, `{"modelId":"model.orders","targetType":"model_table"}`)
+	req := authedJSONRequest(http.MethodPost, "/api/v1/projects/project:test/refresh-runs", token, `{"modelId":"model.orders","targetType":"model_table"}`)
 	req.Header.Set("Idempotency-Key", "legacy-refresh-target")
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
