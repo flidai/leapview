@@ -132,7 +132,7 @@ func TestCandidateRejectsInvalidIdentityDigestAndExpiry(t *testing.T) {
 		"target":      withCandidateStart(valid, func(input *CandidateStartInput) { input.TargetID = "" }),
 		"environment": withCandidateStart(valid, func(input *CandidateStartInput) { input.Scope.Environment = "" }),
 		"owner":       withCandidateStart(valid, func(input *CandidateStartInput) { input.OwnerID = "" }),
-		"base":        withCandidateStart(valid, func(input *CandidateStartInput) { input.Scope.BaseGenerationID = "" }),
+		"base":        withCandidateStart(valid, func(input *CandidateStartInput) { input.Scope.BaseGenerationID = " deployment_7" }),
 		"digest":      withCandidateStart(valid, func(input *CandidateStartInput) { input.ArtifactDigest = "secret" }),
 		"expiry":      withCandidateStart(valid, func(input *CandidateStartInput) { input.ExpiresAt = now }),
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 func testDeployment(id, project, generation string, status Status) Deployment {
-	return Deployment{ID: id, ServingIdentity: projectgraph.ServingIdentity{ProjectID: project, Environment: "prod", GenerationID: generation}, ArtifactDigest: "sha256:" + strings.Repeat("b", 64), RequestDigest: "sha256:" + strings.Repeat("c", 64), Status: status}
+	return Deployment{ID: id, ServingIdentity: projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(project), Environment: "prod", GenerationID: generation}, ArtifactDigest: "sha256:" + strings.Repeat("b", 64), RequestDigest: "sha256:" + strings.Repeat("c", 64), Status: status}
 }
 
 func TestActivateResolvesPersistedBindingsPreparesAndAtomicallyCommits(t *testing.T) {
