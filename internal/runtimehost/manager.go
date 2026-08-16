@@ -245,6 +245,23 @@ func (m *Manager) ProjectID() projectgraph.ResourceID {
 	defer m.mu.RUnlock()
 	return m.projectID
 }
+
+// ActiveArtifact reports the exact active serving generation for this
+// manager's immutable project/environment scope. It deliberately consults
+// the serving-state repository rather than inferring activity from the
+// process-local runtime pointer, which may be empty during initial boot or
+// between reloads.
+func (m *Manager) ActiveArtifact(ctx context.Context) (servingstate.State, servingstate.Artifact, error) {
+	if m == nil || m.repo == nil {
+		return servingstate.State{}, servingstate.Artifact{}, servingstate.ErrNotFound
+	}
+	projectID := m.ProjectID()
+	if err := projectID.Validate(); err != nil {
+		return servingstate.State{}, servingstate.Artifact{}, servingstate.ErrNotFound
+	}
+	return m.repo.ActiveArtifact(ctx, projectID, m.environment)
+}
+
 func (m *Manager) Environment() servingstate.Environment {
 	if m == nil {
 		return ""

@@ -24,8 +24,12 @@ type RuntimeBindingLeaser struct {
 }
 
 type RuntimeBindingRequest struct {
-	Actor        string
-	Identity     projectgraph.ServingIdentity
+	Actor    string
+	Identity projectgraph.ServingIdentity
+	// Scope is retained for older callers; canonical callers must provide the
+	// exact immutable Identity. It is only used to fill project/environment
+	// when Identity is otherwise zero.
+	Scope        BindingScope `json:"-"`
 	TargetID     TargetID
 	Requirements []Requirement
 }
@@ -58,10 +62,14 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 	if leaser == nil {
 		return nil, ErrProviderUnavailable
 	}
-	if request.Actor != strings.TrimSpace(request.Actor) {
-		return nil, fmt.Errorf("%w: actor must be canonical", ErrInvalidBinding)
-	}
 	request.Actor = strings.TrimSpace(request.Actor)
+	if request.Identity.ProjectID == "" && request.Scope.ProjectID == "" && request.Scope.WorkspaceID != "" {
+		request.Scope.ProjectID = projectgraph.ResourceID(request.Scope.WorkspaceID)
+	}
+	if request.Identity.ProjectID == "" && request.Scope.ProjectID != "" {
+		request.Identity.ProjectID = request.Scope.ProjectID
+		request.Identity.Environment = request.Scope.Environment
+	}
 	if _, err := ParseTargetID(request.TargetID.String()); err != nil {
 		return nil, err
 	}
@@ -185,15 +193,15 @@ func (leases *RuntimeBindingLeases) Close() error {
 func normalizeRuntimeRequirements(requirements []Requirement) ([]Requirement, error) {
 	normalized := append([]Requirement(nil), requirements...)
 	for index := range normalized {
+		if normalized[index].ConnectionID == "" {
+			normalized[index].ConnectionID = normalized[index].LogicalConnectionID
+		}
 		connectionID, err := ParseConnectionID(normalized[index].ConnectionID.String())
 		if err != nil {
 			return nil, err
 		}
 		normalized[index].ConnectionID = connectionID
-		if normalized[index].ConnectorKind != strings.TrimSpace(normalized[index].ConnectorKind) ||
-			normalized[index].ValidatedVersion != strings.TrimSpace(normalized[index].ValidatedVersion) {
-			return nil, fmt.Errorf("%w: runtime requirement identities must be canonical", ErrInvalidBinding)
-		}
+		normalized[index].LogicalConnectionID = connectionID
 		normalized[index].ConnectorKind = strings.TrimSpace(normalized[index].ConnectorKind)
 		normalized[index].ValidatedVersion = strings.TrimSpace(normalized[index].ValidatedVersion)
 		if normalized[index].ConnectorKind == "" || normalized[index].BindingRevision < 0 {

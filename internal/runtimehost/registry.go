@@ -73,6 +73,18 @@ func (r *Registry) ProjectID() projectgraph.ResourceID {
 	}
 	return r.manager.ProjectID()
 }
+
+// ActiveArtifact resolves activity from the repository for this registry's
+// fixed project/environment scope. Callers should use errors.Is with
+// servingstate.ErrNotFound to distinguish an empty deployment from a store
+// failure.
+func (r *Registry) ActiveArtifact(ctx context.Context) (servingstate.State, servingstate.Artifact, error) {
+	if r == nil || r.manager == nil {
+		return servingstate.State{}, servingstate.Artifact{}, servingstate.ErrNotFound
+	}
+	return r.manager.ActiveArtifact(ctx)
+}
+
 func (r *Registry) Environment() servingstate.Environment {
 	if r == nil || r.manager == nil {
 		return ""

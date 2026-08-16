@@ -114,6 +114,17 @@ func (m *Module) ProjectID() projectgraph.ResourceID {
 	}
 	return m.registry.ProjectID()
 }
+
+// ActiveArtifact resolves the exact active generation for the module's fixed
+// project/environment scope. A missing active row is returned as
+// servingstate.ErrNotFound and is not conflated with runtime lease readiness.
+func (m *Module) ActiveArtifact(ctx context.Context) (servingstate.State, servingstate.Artifact, error) {
+	if m == nil || m.registry == nil {
+		return servingstate.State{}, servingstate.Artifact{}, servingstate.ErrNotFound
+	}
+	return m.registry.ActiveArtifact(ctx)
+}
+
 func (m *Module) Environment() servingstate.Environment {
 	if m == nil || m.registry == nil {
 		return ""

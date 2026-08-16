@@ -16,13 +16,15 @@ func EncodeConnectionRotationAuditMetadata(event ConnectionRotationAuditEvent) (
 		Outcome:         string(event.Outcome),
 		ProviderVersion: event.ProviderVersion,
 		DiagnosticCode:  event.Reason,
-		TargetId:        event.TargetID,
+		TargetId:        event.TargetID.String(),
 	}
 	switch event.Operation {
 	case connectionbinding.RefreshRequested:
-		return analyticsgen.EncodeGenRefreshTargetConnectionBindingAuditPayload(payload)
+		encoded, err := analyticsgen.EncodeGenRefreshTargetConnectionBindingAuditPayload(payload)
+		return addBindingMetadata(encoded, event.BindingID.String(), err)
 	case connectionbinding.RefreshTest:
-		return analyticsgen.EncodeGenTestTargetConnectionBindingAuditPayload(payload)
+		encoded, err := analyticsgen.EncodeGenTestTargetConnectionBindingAuditPayload(payload)
+		return addBindingMetadata(encoded, event.BindingID.String(), err)
 	default:
 		legacy, err := json.Marshal(map[string]any{
 			"operation": event.Operation, "outcome": event.Outcome,
@@ -32,7 +34,7 @@ func EncodeConnectionRotationAuditMetadata(event ConnectionRotationAuditEvent) (
 		if err != nil {
 			return "", fmt.Errorf("encode connection rotation audit metadata: %w", err)
 		}
-		return string(legacy), nil
+		return addBindingMetadata(string(legacy), event.BindingID.String(), nil)
 	}
 }
 
@@ -40,20 +42,51 @@ func EncodeConnectionRotationAuditMetadata(event ConnectionRotationAuditEvent) (
 // contract selected by the domain-owned administration action.
 func EncodeConnectionAdministrationAuditMetadata(event ConnectionAdministrationAuditEvent) (string, error) {
 	payload := analyticsgen.GenSchemaTargetConnectionAdministrationAuditPayload{
-		TargetId:          event.TargetID,
-		LogicalConnection: string(event.LogicalConnectionID),
+		TargetId:          event.TargetID.String(),
+		LogicalConnection: event.ConnectionID.String(),
 		Revision:          event.Revision,
 	}
 	switch event.Action {
 	case connectionbinding.AuditBindingCreated:
-		return analyticsgen.EncodeGenCreateTargetConnectionBindingAuditPayload(payload)
+		encoded, err := analyticsgen.EncodeGenCreateTargetConnectionBindingAuditPayload(payload)
+		return addBindingMetadata(encoded, event.BindingID.String(), err)
 	case connectionbinding.AuditBindingUpdated:
-		return analyticsgen.EncodeGenUpdateTargetConnectionBindingAuditPayload(payload)
+		encoded, err := analyticsgen.EncodeGenUpdateTargetConnectionBindingAuditPayload(payload)
+		return addBindingMetadata(encoded, event.BindingID.String(), err)
 	case connectionbinding.AuditBindingEnabled:
-		return analyticsgen.EncodeGenEnableTargetConnectionBindingAuditPayload(payload)
+		encoded, err := analyticsgen.EncodeGenEnableTargetConnectionBindingAuditPayload(payload)
+		return addBindingMetadata(encoded, event.BindingID.String(), err)
 	case connectionbinding.AuditBindingDisabled:
-		return analyticsgen.EncodeGenDisableTargetConnectionBindingAuditPayload(payload)
+		encoded, err := analyticsgen.EncodeGenDisableTargetConnectionBindingAuditPayload(payload)
+		return addBindingMetadata(encoded, event.BindingID.String(), err)
 	default:
 		return "", fmt.Errorf("connection administration action %q has no generated audit payload encoder", event.Action)
 	}
+}
+
+// addBindingMetadata retains the concrete binding identity for operators while
+// keeping the graph connection as the durable audit resource. The generated
+// payload encoder remains the source of truth for required fields; this
+// bounded internal field is appended only after that validation succeeds.
+func addBindingMetadata(encoded, bindingID string, encodeErr error) (string, error) {
+	if encodeErr != nil {
+		return "", encodeErr
+	}
+	if bindingID == "" {
+		return encoded, nil
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(encoded), &envelope); err != nil {
+		return "", fmt.Errorf("decode connection audit metadata: %w", err)
+	}
+	if payload, ok := envelope["payload"].(map[string]any); ok {
+		payload["bindingId"] = bindingID
+	} else {
+		envelope["bindingId"] = bindingID
+	}
+	updated, err := json.Marshal(envelope)
+	if err != nil {
+		return "", fmt.Errorf("encode connection audit metadata: %w", err)
+	}
+	return string(updated), nil
 }

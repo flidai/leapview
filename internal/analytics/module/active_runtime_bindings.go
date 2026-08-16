@@ -17,7 +17,9 @@ import (
 // ActiveRuntimeBindingEvidence is the non-secret, immutable connection proof
 // retained with a ready release.
 type ActiveRuntimeBindingEvidence struct {
-	BindingID          string
+	// BindingID accepts the typed binding identity and legacy string adapters;
+	// it is canonicalized before comparison.
+	BindingID          any
 	LogicalConnection  string
 	ConnectorKind      string
 	Revision           int64
@@ -72,19 +74,19 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 	if err != nil {
 		return semanticmodel.Connection{}, err
 	}
-	logicalID, err := connectionbinding.ParseLogicalConnectionID(strings.TrimSpace(name))
+	connectionID, err := connectionbinding.ParseConnectionID(strings.TrimSpace(name))
 	if err != nil {
 		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
 	}
 	binding, err := r.module.connectionBindings.Binding(ctx, connectionbinding.BindingScope{
-		ProjectID: r.projectID, Environment: r.environment,
-	}, r.module.targetID, logicalID)
+		ProjectID: projectgraph.ResourceID(r.workspaceID), Environment: r.environment,
+	}, connectionbinding.TargetID(r.module.targetID), connectionID)
 	if err != nil {
 		return semanticmodel.Connection{}, err
 	}
 	actual := binding.Evidence()
-	if !binding.Enabled || binding.ID != evidence.BindingID ||
-		binding.LogicalConnectionID.String() != evidence.LogicalConnection ||
+	if !binding.Enabled || binding.ID.String() != activeEvidenceBindingID(evidence.BindingID) ||
+		binding.ConnectionID.String() != evidence.LogicalConnection ||
 		binding.ConnectorKind != evidence.ConnectorKind || binding.Revision < evidence.Revision ||
 		actual.EndpointConfigHash != evidence.EndpointConfigHash ||
 		strings.TrimSpace(evidence.ValidatedVersion) == "" {
@@ -138,7 +140,7 @@ func (r *activeRuntimeConnectionResolver) evidenceFor(
 		}
 		evidence := make(map[string]ActiveRuntimeBindingEvidence, len(values))
 		for _, value := range values {
-			value.BindingID = strings.TrimSpace(value.BindingID)
+			value.BindingID = activeEvidenceBindingID(value.BindingID)
 			value.LogicalConnection = strings.TrimSpace(value.LogicalConnection)
 			value.ConnectorKind = strings.TrimSpace(value.ConnectorKind)
 			value.ValidatedVersion = strings.TrimSpace(value.ValidatedVersion)
@@ -166,4 +168,15 @@ func (r *activeRuntimeConnectionResolver) evidenceFor(
 		return ActiveRuntimeBindingEvidence{}, connectionbinding.ErrBindingNotFound
 	}
 	return evidence, nil
+}
+
+func activeEvidenceBindingID(value any) string {
+	switch typed := value.(type) {
+	case connectionbinding.BindingID:
+		return strings.TrimSpace(typed.String())
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return ""
+	}
 }

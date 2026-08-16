@@ -79,7 +79,7 @@ func (handler connectionBindingAPIHandler) Create(
 	}
 	configuration := targetConnectionConfiguration(body.Configuration)
 	binding, err := handler.config.Administration.Create(r.Context(), principalID, connectionbinding.TargetBindingInput{
-		ID: body.Id, TargetID: target, LogicalConnectionID: body.LogicalConnection,
+		ID: connectionbinding.BindingID(body.Id), TargetID: connectionbinding.TargetID(target), ConnectionID: projectgraph.ResourceID(body.LogicalConnection),
 		ConnectorKind: configuration.ConnectorKind, AuthenticationMode: configuration.AuthenticationMode,
 		Scope:    connectionbinding.BindingScope{ProjectID: projectgraph.ResourceID(project), Environment: handler.config.Environment},
 		Endpoint: configuration.Endpoint, CredentialReference: configuration.CredentialReference,
@@ -89,7 +89,7 @@ func (handler connectionBindingAPIHandler) Create(
 		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationCreateTargetConnectionBinding(), err)
 		return
 	}
-	w.Header().Set("Location", strings.TrimSuffix(r.URL.Path, "/")+"/"+binding.LogicalConnectionID.String())
+	w.Header().Set("Location", strings.TrimSuffix(r.URL.Path, "/")+"/"+binding.ConnectionID.String())
 	apitransport.WriteJSON(w, http.StatusCreated, targetConnectionBindingResponse(binding))
 }
 
@@ -141,7 +141,7 @@ func (handler connectionBindingAPIHandler) Plan(
 		})
 	}
 	apitransport.WriteJSON(w, http.StatusOK, analyticsgen.TargetConnectionBindingChangePlanResponse{
-		BindingId: plan.BindingID, ExpectedRevision: plan.ExpectedRevision,
+		BindingId: plan.BindingID.String(), ExpectedRevision: plan.ExpectedRevision,
 		RequiresConfirmation: plan.RequiresConfirmation,
 		ConfirmationToken:    optionalString(plan.ConfirmationToken),
 		Dependencies:         dependencies,
@@ -260,9 +260,9 @@ func (handler connectionBindingAPIHandler) setEnabled(
 func (handler connectionBindingAPIHandler) Health(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, connection string,
 ) {
-	principalID, key, ok := handler.requestScope(w, r, workspace, target, environment, connection)
+	principalID, key, ok := handler.requestScope(w, r, project, target, handler.config.Environment, connection)
 	if !ok {
 		return
 	}
@@ -313,23 +313,23 @@ func (handler connectionBindingAPIHandler) principal(
 func (handler connectionBindingAPIHandler) requestScope(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, environment, connection string,
 ) (string, connectionbinding.BindingKey, bool) {
 	principalID, ok := handler.principal(w, r)
 	if !ok {
 		return "", connectionbinding.BindingKey{}, false
 	}
-	logicalID, err := connectionbinding.ParseLogicalConnectionID(connection)
+	connectionID, err := connectionbinding.ParseConnectionID(connection)
 	if err != nil {
 		writeConnectionBindingError(w, r, err)
 		return "", connectionbinding.BindingKey{}, false
 	}
 	return principalID, connectionbinding.BindingKey{
 		Scope: connectionbinding.BindingScope{
-			WorkspaceID: strings.TrimSpace(workspace),
+			ProjectID:   projectgraph.ResourceID(strings.TrimSpace(project)),
 			Environment: strings.TrimSpace(environment),
 		},
-		TargetID: strings.TrimSpace(target), LogicalConnectionID: logicalID,
+		TargetID: connectionbinding.TargetID(strings.TrimSpace(target)), ConnectionID: connectionID,
 	}, true
 }
 
@@ -356,7 +356,7 @@ func targetConnectionConfiguration(
 	}
 	if input.CredentialReference != nil {
 		configuration.CredentialReference = connectionbinding.CredentialReference{
-			ProjectID:   input.CredentialReference.ProjectId,
+			ProjectID:   projectgraph.ResourceID(input.CredentialReference.ProjectId),
 			Environment: input.CredentialReference.Environment,
 			SecretPath:  input.CredentialReference.SecretPath,
 			SecretKey:   input.CredentialReference.SecretKey,
@@ -369,8 +369,8 @@ func targetConnectionBindingResponse(
 	binding connectionbinding.TargetBinding,
 ) analyticsgen.TargetConnectionBindingResponse {
 	response := analyticsgen.TargetConnectionBindingResponse{
-		Id: binding.ID, TargetId: binding.TargetID,
-		LogicalConnection:  binding.LogicalConnectionID.String(),
+		Id: binding.ID.String(), TargetId: binding.TargetID.String(),
+		LogicalConnection:  binding.ConnectionID.String(),
 		ConnectorKind:      binding.ConnectorKind,
 		AuthenticationMode: analyticsgen.TargetConnectionAuthenticationMode(binding.AuthenticationMode),
 		Environment:        binding.Scope.Environment,
@@ -384,7 +384,7 @@ func targetConnectionBindingResponse(
 	}
 	if binding.CredentialReference != (connectionbinding.CredentialReference{}) {
 		response.CredentialReference = &analyticsgen.TargetConnectionCredentialReference{
-			ProjectId:   binding.CredentialReference.ProjectID,
+			ProjectId:   binding.CredentialReference.ProjectID.String(),
 			Environment: binding.CredentialReference.Environment,
 			SecretPath:  binding.CredentialReference.SecretPath,
 			SecretKey:   binding.CredentialReference.SecretKey,
@@ -421,8 +421,8 @@ func targetConnectionHealthResponse(
 	status connectionbinding.BindingHealthStatus,
 ) analyticsgen.TargetConnectionBindingHealthResponse {
 	response := analyticsgen.TargetConnectionBindingHealthResponse{
-		BindingId: status.BindingID, TargetId: status.TargetID,
-		LogicalConnection: status.LogicalConnection.String(),
+		BindingId: status.BindingID.String(), TargetId: status.TargetID.String(),
+		LogicalConnection: status.ConnectionID.String(),
 		ConnectorKind:     status.ConnectorKind,
 		Environment:       status.Scope.Environment,
 		BindingRevision:   status.BindingRevision,

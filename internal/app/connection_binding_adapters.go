@@ -44,8 +44,8 @@ func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 	return recorder.record(ctx, accessmodule.AuditEventInput{
 		PrincipalID:  principalID,
 		Action:       string(event.Operation),
-		ResourceKind: "connection_binding",
-		ResourceID:   event.BindingID.String(),
+		ResourceKind: "connection",
+		ResourceID:   event.ConnectionID.String(),
 		Capability:   access.CapabilityResourceUse,
 		Status:       string(event.Outcome),
 		MetadataJSON: metadata,
@@ -68,10 +68,13 @@ func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministra
 		return nil
 	}
 	return recorder.record(ctx, accessmodule.AuditEventInput{
-		PrincipalID: event.Actor,
-		Action:      string(event.Action), ResourceKind: "connection_binding", ResourceID: event.BindingID.String(),
-		Capability: access.CapabilityResourceManage,
-		Status:     string(event.Outcome), MetadataJSON: metadata,
+		PrincipalID:  event.Actor,
+		Action:       string(event.Action),
+		ResourceKind: "connection",
+		ResourceID:   event.ConnectionID.String(),
+		Capability:   access.CapabilityResourceManage,
+		Status:       string(event.Outcome),
+		MetadataJSON: metadata,
 	})
 }
 

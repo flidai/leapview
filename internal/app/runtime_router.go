@@ -46,6 +46,7 @@ import (
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 	"github.com/go-chi/chi/v5"
@@ -567,13 +568,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
-					if err := scope.ProjectID.Validate(); err != nil {
-						return err
-					}
-					if strings.TrimSpace(scope.Environment) == "" {
-						return errors.New("connection binding environment is required")
-					}
-					return nil
+					return validateCanonicalConnectionBindingScope(scope, runtime.projectID, runtimeConfig.DefaultEnvironment)
 				},
 				Authorize: func(
 					ctx context.Context,
@@ -1264,6 +1259,16 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if runtime.runtimeHostModule == nil {
 				return errors.New("runtime host is missing")
 			}
+			// ProjectID is configured at process startup, so it does not by
+			// itself prove that this exact project/environment has an active
+			// serving generation. Check the repository-backed scope first and
+			// only acquire a lease once one exists.
+			if _, _, err := runtime.runtimeHostModule.ActiveArtifact(ctx); err != nil {
+				if errors.Is(err, servingstate.ErrNotFound) && !platform.requireActiveDeployment {
+					return nil
+				}
+				return err
+			}
 			lease, err := runtime.runtimeHostModule.Acquire(ctx)
 			if err != nil {
 				return err
@@ -1285,6 +1290,26 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		platformlifecycle.Component{Start: routes.dashboardModule.Start, Stop: routes.dashboardModule.Stop},
 		platformlifecycle.Component{Start: platform.jobModule.Start, Stop: platform.jobModule.Stop},
 	)
+	return nil
+}
+
+func validateCanonicalConnectionBindingScope(
+	scope analyticsmodule.ConnectionBindingScope,
+	activeProjectID projectgraph.ResourceID,
+	configuredEnvironment string,
+) error {
+	if err := scope.ProjectID.Validate(); err != nil {
+		return err
+	}
+	if scope.ProjectID != activeProjectID {
+		return fmt.Errorf("connection binding project %q is not the active project %q", scope.ProjectID, activeProjectID)
+	}
+	if scope.Environment == "" || scope.Environment != strings.TrimSpace(scope.Environment) {
+		return errors.New("connection binding environment is required")
+	}
+	if scope.Environment != configuredEnvironment {
+		return fmt.Errorf("connection binding environment %q is not the configured environment %q", scope.Environment, configuredEnvironment)
+	}
 	return nil
 }
 

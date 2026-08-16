@@ -77,7 +77,12 @@ func (registration *RuntimeBindingRegistration) Evidence() []ConnectionBindingEv
 	if registration == nil || registration.leases == nil {
 		return nil
 	}
-	return registration.leases.Evidence()
+	runtimeEvidence := registration.leases.Evidence()
+	evidence := make([]ConnectionBindingEvidence, 0, len(runtimeEvidence))
+	for _, value := range runtimeEvidence {
+		evidence = append(evidence, value.BindingEvidence)
+	}
+	return evidence
 }
 
 func (registration *RuntimeBindingRegistration) Close() error {
@@ -150,12 +155,12 @@ func (resolver runtimeBindingConnectionResolver) Resolve(
 	name string,
 	logical semanticmodel.Connection,
 ) (resolved semanticmodel.Connection, resultErr error) {
-	logicalID, err := connectionbinding.ParseLogicalConnectionID(strings.TrimSpace(name))
+	connectionID, err := connectionbinding.ParseConnectionID(strings.TrimSpace(name))
 	if err != nil {
 		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
 	}
 	logicalKind := strings.TrimSpace(logical.Kind)
-	if authoredKind, ok := resolver.authored[logicalID.String()]; ok {
+	if authoredKind, ok := resolver.authored[connectionID.String()]; ok {
 		if logicalKind != authoredKind {
 			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 		}
@@ -173,7 +178,7 @@ func (resolver runtimeBindingConnectionResolver) Resolve(
 		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
 	}
 	err = resolver.leases.UsePool(
-		logicalID,
+		connectionID,
 		func(pool connectionbinding.RuntimePool) error {
 			target, ok := pool.(analyticsruntime.ConnectionResolver)
 			if !ok {
@@ -194,7 +199,7 @@ func candidateAuthoredConnectionSet(
 ) (map[string]string, error) {
 	result := make(map[string]string, len(values))
 	for _, value := range values {
-		logicalID, err := connectionbinding.ParseLogicalConnectionID(
+		connectionID, err := connectionbinding.ParseConnectionID(
 			strings.TrimSpace(value.LogicalConnectionID),
 		)
 		kind := strings.TrimSpace(value.ConnectorKind)
@@ -203,10 +208,10 @@ func candidateAuthoredConnectionSet(
 			spec.ActivationMode != connectors.AuthoredActivation {
 			return nil, connectionbinding.ErrIncompatibleBinding
 		}
-		if _, duplicate := result[logicalID.String()]; duplicate {
+		if _, duplicate := result[connectionID.String()]; duplicate {
 			return nil, connectionbinding.ErrIncompatibleBinding
 		}
-		result[logicalID.String()] = kind
+		result[connectionID.String()] = kind
 	}
 	return result, nil
 }

@@ -41,7 +41,11 @@ func (request RefreshRequest) valid() bool {
 }
 
 type RotationAuditEvent struct {
-	BindingID       BindingID                    `json:"bindingId"`
+	BindingID BindingID `json:"bindingId"`
+	// ConnectionID is the graph resource whose credential capability was used.
+	// BindingID remains metadata identifying the concrete target binding, but
+	// audit ownership is always attached to the canonical connection resource.
+	ConnectionID    projectgraph.ResourceID      `json:"connectionId"`
 	TargetID        TargetID                     `json:"targetId"`
 	Identity        projectgraph.ServingIdentity `json:"identity"`
 	ProjectID       projectgraph.ResourceID      `json:"projectId"`

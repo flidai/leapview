@@ -265,7 +265,7 @@ func (manager *PoolManager) withAudit(
 	binding := manager.binding
 	manager.mu.Unlock()
 	event := RotationAuditEvent{
-		BindingID: binding.ID, TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID,
+		BindingID: binding.ID, ConnectionID: binding.ConnectionID, TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID,
 		Identity:        projectgraph.ServingIdentity{ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment},
 		ProviderVersion: version,
 		Actor:           strings.TrimSpace(request.Actor), Operation: request.Operation,
@@ -447,7 +447,7 @@ func (manager *PoolManager) HealthStatus() BindingHealthStatus {
 	binding := manager.binding
 	status := BindingHealthStatus{
 		BindingID: binding.ID, TargetID: binding.TargetID,
-		ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind,
+		ConnectionID: binding.ConnectionID, LogicalConnection: binding.ConnectionID, ConnectorKind: binding.ConnectorKind,
 		Scope: binding.Scope, BindingRevision: binding.Revision,
 		ValidatedVersion: binding.ValidatedVersion, Health: binding.Health, DiagnosticCode: binding.HealthReason,
 		LastAttemptAt: manager.lastRun, LastValidatedAt: binding.LastValidatedAt,

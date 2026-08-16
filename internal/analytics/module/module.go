@@ -225,7 +225,7 @@ func (m *Module) NewConnectionAdministration(
 			permission connectionbinding.AdministrationPermission,
 			binding connectionbinding.TargetBinding,
 		) error {
-			if binding.TargetID != m.targetID || binding.Scope.Environment != m.targetEnvironment {
+			if binding.TargetID != connectionbinding.TargetID(m.targetID) || binding.Scope.Environment != m.targetEnvironment {
 				return connectionbinding.ErrUnauthorizedBinding
 			}
 			return authorize(ctx, actor, permission, binding)
@@ -282,7 +282,7 @@ func (m *Module) ensureConnectionPools(
 	}
 	pools, err := connectionbinding.NewPoolDirectory(connectionbinding.PoolDirectoryConfig{
 		Build: func(binding connectionbinding.TargetBinding) (*connectionbinding.PoolManager, error) {
-			if binding.TargetID != m.targetID ||
+			if binding.TargetID != connectionbinding.TargetID(m.targetID) ||
 				binding.Scope.Environment != m.targetEnvironment ||
 				binding.AuthenticationMode != connectionbinding.AuthenticationExternalBundle {
 				return nil, connectionbinding.ErrUnauthorizedBinding
@@ -329,7 +329,7 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 		return analyticsduckdb.NonSecretCredentialResolver{}, nil
 	case CredentialModeDevelopmentEnvironment:
 		selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-			TargetID: config.CredentialTargetID, Environment: config.CredentialEnvironment,
+			TargetID: connectionbinding.TargetID(config.CredentialTargetID), Environment: config.CredentialEnvironment,
 			TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,
 		})
 		if err != nil {

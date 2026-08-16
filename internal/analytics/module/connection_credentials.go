@@ -102,7 +102,7 @@ func buildDevelopmentTargetResolver(
 	}
 	sort.Strings(allowed)
 	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-		TargetID: targetID, Environment: environment,
+		TargetID: connectionbinding.TargetID(targetID), Environment: environment,
 		TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,
 	})
 	if err != nil {
