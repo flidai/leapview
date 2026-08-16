@@ -54,66 +54,66 @@ func NewAPIGenDispatcher(handler APIGenHandler) *APIGenDispatcher {
 	return &APIGenDispatcher{handler: handler}
 }
 
-func (d *APIGenDispatcher) ListDashboardAuthoringCatalog(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string) {
-	d.handler.ListDashboardAuthoringCatalog(w, r, workspace)
+func (d *APIGenDispatcher) ListDashboardAuthoringCatalog(w stdhttp.ResponseWriter, r *stdhttp.Request, project string) {
+	d.handler.ListDashboardAuthoringCatalog(w, r, project)
 }
-func (d *APIGenDispatcher) ExecuteDashboardAuthoringCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string, headers dashboardgen.GenExecuteDashboardAuthoringCommandHeaders) {
-	d.handler.ExecuteDashboardAuthoringCommand(w, r, workspace, headers)
+func (d *APIGenDispatcher) ExecuteDashboardAuthoringCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers dashboardgen.GenExecuteDashboardAuthoringCommandHeaders) {
+	d.handler.ExecuteDashboardAuthoringCommand(w, r, project, headers)
 }
-func (d *APIGenDispatcher) GetDashboardAuthoringDashboard(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, dashboard string) {
-	d.handler.GetDashboardAuthoringDashboard(w, r, workspace, dashboard)
+func (d *APIGenDispatcher) GetDashboardAuthoringDashboard(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard string) {
+	d.handler.GetDashboardAuthoringDashboard(w, r, project, dashboard)
 }
-func (d *APIGenDispatcher) GetDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, dashboard string) {
-	d.handler.GetDashboardAuthoringDraft(w, r, workspace, dashboard)
+func (d *APIGenDispatcher) GetDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard string) {
+	d.handler.GetDashboardAuthoringDraft(w, r, project, dashboard)
 }
-func (d *APIGenDispatcher) PreviewDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, dashboard, draft string) {
-	d.handler.PreviewDashboardAuthoringDraft(w, r, workspace, dashboard, draft)
+func (d *APIGenDispatcher) PreviewDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard, draft string) {
+	d.handler.PreviewDashboardAuthoringDraft(w, r, project, dashboard, draft)
 }
-func (d *APIGenDispatcher) GetDashboardAuthoringDraftRevision(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, dashboard, draft, revision string) {
-	d.handler.GetDashboardAuthoringDraftRevision(w, r, workspace, dashboard, draft, revision)
+func (d *APIGenDispatcher) GetDashboardAuthoringDraftRevision(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard, draft, revision string) {
+	d.handler.GetDashboardAuthoringDraftRevision(w, r, project, dashboard, draft, revision)
 }
-func (d *APIGenDispatcher) GetDashboardAuthoringPublishedRevision(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, dashboard, revision string) {
-	d.handler.GetDashboardAuthoringPublishedRevision(w, r, workspace, dashboard, revision)
+func (d *APIGenDispatcher) GetDashboardAuthoringPublishedRevision(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard, revision string) {
+	d.handler.GetDashboardAuthoringPublishedRevision(w, r, project, dashboard, revision)
 }
-func (d *APIGenDispatcher) CreateDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string, headers dashboardgen.GenCreateDashboardAuthoringDraftHeaders) {
-	d.handler.CreateDashboardAuthoringDraft(w, r, workspace, headers)
+func (d *APIGenDispatcher) CreateDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers dashboardgen.GenCreateDashboardAuthoringDraftHeaders) {
+	d.handler.CreateDashboardAuthoringDraft(w, r, project, headers)
 }
-func (d *APIGenDispatcher) ForkDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string, headers dashboardgen.GenForkDashboardAuthoringDraftHeaders) {
-	d.handler.ForkDashboardAuthoringDraft(w, r, workspace, headers)
+func (d *APIGenDispatcher) ForkDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers dashboardgen.GenForkDashboardAuthoringDraftHeaders) {
+	d.handler.ForkDashboardAuthoringDraft(w, r, project, headers)
 }
-func (d *APIGenDispatcher) ExportDashboardAuthoringSource(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, kind, dashboard string) {
-	d.handler.ExportDashboardAuthoringSource(w, r, workspace, kind, dashboard)
+func (d *APIGenDispatcher) ExportDashboardAuthoringSource(w stdhttp.ResponseWriter, r *stdhttp.Request, project, kind, dashboard string) {
+	d.handler.ExportDashboardAuthoringSource(w, r, project, kind, dashboard)
 }
 
-func (d *APIGenDispatcher) ListDashboardPublications(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string) {
-	d.handler.ListDashboardPublications(w, r, workspace)
+func (d *APIGenDispatcher) ListDashboardPublications(w stdhttp.ResponseWriter, r *stdhttp.Request, project string) {
+	d.handler.ListDashboardPublications(w, r, project)
 }
-func (d *APIGenDispatcher) GetDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, publication string) {
-	d.handler.GetDashboardPublication(w, r, workspace, publication)
+func (d *APIGenDispatcher) GetDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, project, publication string) {
+	d.handler.GetDashboardPublication(w, r, project, publication)
 }
-func (d *APIGenDispatcher) ResumeDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, publication string, headers dashboardgen.GenResumeDashboardPublicationHeaders) {
-	d.handler.ResumeDashboardPublication(w, r, workspace, publication)
+func (d *APIGenDispatcher) ResumeDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, project, publication string, headers dashboardgen.GenResumeDashboardPublicationHeaders) {
+	d.handler.ResumeDashboardPublication(w, r, project, publication, headers)
 }
-func (d *APIGenDispatcher) RotateDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, publication string, headers dashboardgen.GenRotateDashboardPublicationHeaders) {
-	d.handler.RotateDashboardPublication(w, r, workspace, publication)
+func (d *APIGenDispatcher) RotateDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, project, publication string, headers dashboardgen.GenRotateDashboardPublicationHeaders) {
+	d.handler.RotateDashboardPublication(w, r, project, publication, headers)
 }
-func (d *APIGenDispatcher) SuspendDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, publication string, headers dashboardgen.GenSuspendDashboardPublicationHeaders) {
-	d.handler.SuspendDashboardPublication(w, r, workspace, publication)
+func (d *APIGenDispatcher) SuspendDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, project, publication string, headers dashboardgen.GenSuspendDashboardPublicationHeaders) {
+	d.handler.SuspendDashboardPublication(w, r, project, publication, headers)
 }
-func (d *APIGenDispatcher) ListDashboards(w stdhttp.ResponseWriter, r *stdhttp.Request, _ dashboardgen.GenListDashboardsParams) {
-	d.handler.ListDashboards(w, r)
+func (d *APIGenDispatcher) ListDashboards(w stdhttp.ResponseWriter, r *stdhttp.Request, params dashboardgen.GenListDashboardsParams) {
+	d.handler.ListDashboards(w, r, params)
 }
-func (d *APIGenDispatcher) GetDashboard(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
-	d.handler.GetDashboard(w, r)
+func (d *APIGenDispatcher) GetDashboard(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard string) {
+	d.handler.GetDashboard(w, r, dashboard)
 }
 func (d *APIGenDispatcher) UpdateDashboardAppearance(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard string) {
 	d.handler.UpdateDashboardAppearance(w, r, dashboard)
 }
-func (d *APIGenDispatcher) GetDashboardPage(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
-	d.handler.GetDashboardPage(w, r)
+func (d *APIGenDispatcher) GetDashboardPage(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard, page string) {
+	d.handler.GetDashboardPage(w, r, dashboard, page)
 }
-func (d *APIGenDispatcher) GetDashboardFilter(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _, _ string) {
-	d.handler.GetDashboardFilter(w, r)
+func (d *APIGenDispatcher) GetDashboardFilter(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard, page, filter string) {
+	d.handler.GetDashboardFilter(w, r, dashboard, page, filter)
 }
 func (d *APIGenDispatcher) ListDashboardFilterValues(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard, page, filter string, params dashboardgen.GenListDashboardFilterValuesParams) {
 	d.handler.ListDashboardFilterValues(w, r, dashboard, page, filter, params)

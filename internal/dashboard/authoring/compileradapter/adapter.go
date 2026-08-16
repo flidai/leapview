@@ -34,7 +34,7 @@ type Runtime interface {
 
 // Lease is the narrow identity-bearing runtime capability consumed by the
 // compiler. The runtime host lease satisfies this contract structurally while
-// keeping host topology and workspace lookup out of authoring.
+// keeping host topology and container lookup out of authoring.
 type Lease = projectruntime.Lease
 
 // AcquireRuntime acquires one active runtime lease for a project. Keeping

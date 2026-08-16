@@ -152,15 +152,15 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, access.ErrForbidden)
 		return
 	}
-	command, err := input.authoringCommand(r, actorID, projectID, dashboardID)
+	command, err := input.authoringCommand(r, actorID, dashboardID)
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
 	}
 	if command.IsBuilderIntent() {
-		_, err = h.Authoring.ExecuteIntent(r.Context(), application.IntentRequest{ProjectID: projectID, ActorID: actorID, Command: command})
+		_, err = h.Authoring.ExecuteIntent(r.Context(), application.IntentRequest{ProjectID: project, ActorID: actorID, Command: command})
 	} else {
-		_, err = h.Authoring.Execute(r.Context(), projectID, command)
+		_, err = h.Authoring.Execute(r.Context(), project, command)
 	}
 	if err != nil {
 		writeBuilderError(w, r, err)
@@ -206,7 +206,7 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	result, err := h.Authoring.Preview(h.analyticalContext(r.Context()), preview.PreviewRequest{
-		ProjectID: projectID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+		ProjectID: project, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		DraftID:          authoring.DraftID(strings.TrimSpace(r.URL.Query().Get("draft"))),
 		ExpectedRevision: revision, PageID: strings.TrimSpace(r.URL.Query().Get("page")),
 	})
@@ -233,7 +233,7 @@ func (h Handler) DashboardBuilderExportYAML(w nethttp.ResponseWriter, r *nethttp
 		return
 	}
 	request := sourceadapter.ExportRequest{
-		Source:  sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: projectgraph.ResourceID(projectID), DashboardID: authoring.DashboardID(dashboardID)},
+		Source:  sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: project, DashboardID: authoring.DashboardID(dashboardID)},
 		ActorID: actorID,
 	}
 	var yaml []byte
@@ -281,7 +281,7 @@ type draftYAMLExporter interface {
 	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
-func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, actorID, workspaceID, dashboardID string) (authoring.Command, error) {
+func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, actorID, dashboardID string) (authoring.Command, error) {
 	action := strings.TrimSpace(s.Action)
 	if strings.TrimSpace(s.DraftID) == "" || strings.TrimSpace(s.RevisionID) == "" || strings.TrimSpace(s.RevisionContentHash) == "" {
 		return authoring.Command{}, fmt.Errorf("draft id and complete expected revision are required")
@@ -369,12 +369,18 @@ func dashboardBuilderEnvelope(builder uisignals.DashboardBuilderSignal) uisignal
 func (h Handler) dashboardBuilderEnvelopeWithPreview(ctx context.Context, actorID string, builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderEnvelope {
 	projectID, err := h.projectIDForRequest(ctx)
 	if err != nil {
-		envelope := dashboardBuilderEnvelope(builder)
-		envelope.Builder.Preview.Loading = false
-		envelope.Builder.Preview.Active = false
-		message := err.Error()
-		envelope.Builder.Preview.Error = &message
-		return envelope
+		// Inline projections already carry the server-authoritative project ID;
+		// use it when no request route context is available (for example tests or
+		// a caller rendering a previously resolved builder signal).
+		projectID, err = projectgraph.NewResourceID(builder.ProjectID)
+		if err != nil {
+			envelope := dashboardBuilderEnvelope(builder)
+			envelope.Builder.Preview.Loading = false
+			envelope.Builder.Preview.Active = false
+			message := err.Error()
+			envelope.Builder.Preview.Error = &message
+			return envelope
+		}
 	}
 	return h.dashboardBuilderEnvelopeWithPreviewForProject(ctx, projectID, actorID, builder)
 }
@@ -425,7 +431,7 @@ func dashboardBuilderPreviewVisuals(builder uisignals.DashboardBuilderSignal, re
 	if generation <= 0 {
 		generation = 1
 	}
-	servingStateID := strings.TrimSpace(result.SemanticEvidence.ServingStateID)
+	servingStateID := strings.TrimSpace(result.SemanticEvidence.Identity.GenerationID)
 	if servingStateID == "" {
 		servingStateID = strings.TrimSpace(result.PagePatch.Filters.ServingStateID)
 	}

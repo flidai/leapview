@@ -7,4 +7,4 @@ import "github.com/flidai/leapview/internal/dashboard/queryruntime"
 // remains shared by dashboard transports and runtime factories.
 type Metrics = queryruntime.Metrics
 
-type WorkspaceMetrics = queryruntime.WorkspaceMetrics
+type ProjectMetrics = queryruntime.ProjectMetrics

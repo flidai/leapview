@@ -11,7 +11,7 @@ import (
 )
 
 // ProjectDefinition is the immutable dashboard projection owned by one
-// project artifact. It deliberately has no workspace/container identity;
+// project artifact. It deliberately has no legacy container identity;
 // every resource map is keyed by its canonical graph ResourceID.
 type ProjectDefinition struct {
 	projectID   projectgraph.ResourceID

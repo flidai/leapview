@@ -23,6 +23,7 @@ import (
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,7 +80,7 @@ func newManagedFixtureRuntime(t *testing.T, dataDir, workspaceID string) (*Servi
 	if err != nil {
 		return nil, err
 	}
-	compiledWorkspace, ok := compiled.Workspace(workspaceID)
+	compiledWorkspace, ok := compiled.Project(workspaceID)
 	if !ok {
 		return nil, fmt.Errorf("showcase project has no %s workspace", workspaceID)
 	}
@@ -88,7 +89,7 @@ func newManagedFixtureRuntime(t *testing.T, dataDir, workspaceID string) (*Servi
 	return NewFromDefinition(t.Context(), filepath.Join(dataDir, workspaceID), testDataRuntimeFactory{}, definition)
 }
 
-func bindManagedFixtureRoots(definition *dashboarddefinition.Workspace, root string) {
+func bindManagedFixtureRoots(definition *dashboarddefinition.Project, root string) {
 	for _, model := range definition.Models {
 		for name, connection := range model.Connections {
 			if connection.Kind != "managed" {
@@ -155,7 +156,7 @@ o2,20
 	}
 }
 
-func sharedOrdersWorkspaceDefinition(t *testing.T) *dashboarddefinition.Workspace {
+func sharedOrdersWorkspaceDefinition(t *testing.T) *dashboarddefinition.Project {
 	t.Helper()
 	modelA := sharedOrdersModel("model_a")
 	modelA.Measures = map[string]semanticmodel.MetricMeasure{
@@ -171,20 +172,20 @@ func sharedOrdersWorkspaceDefinition(t *testing.T) *dashboarddefinition.Workspac
 	if err := modelB.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return &dashboarddefinition.Workspace{
+	return &dashboarddefinition.Project{
 		Catalog: catalog.Catalog{
-			Workspace: catalog.Workspace{ID: "shared", Title: "Shared"},
+			Project: catalog.Project{ID: "shared", Title: "Shared"},
 			Models: []catalog.Model{
 				{ID: "model_a", Title: "Model A"},
 				{ID: "model_b", Title: "Model B"},
 			},
 			Dashboards: []catalog.Dashboard{{ID: "dashboard", Title: "Dashboard"}},
 		},
-		Models: map[string]*semanticmodel.Model{
+		Models: map[projectgraph.ResourceID]*semanticmodel.Model{
 			"model_a": modelA,
 			"model_b": modelB,
 		},
-		Dashboards: map[string]dashboarddefinition.Definition{"dashboard": {ID: "dashboard", Title: "Dashboard", SemanticModel: "model_a", Pages: []dashboard.Page{}, Visualizations: map[string]visualizationdefinition.Definition{}}},
+		Dashboards: map[projectgraph.ResourceID]dashboarddefinition.Definition{"dashboard": {ID: "dashboard", Title: "Dashboard", SemanticModel: "model_a", Pages: []dashboard.Page{}, Visualizations: map[string]visualizationdefinition.Definition{}}},
 	}
 }
 
@@ -291,11 +292,11 @@ c2,20040,Rio de Janeiro,RJ
 	require.NoError(t, err)
 	defer metrics.Close()
 
-	report := metrics.reports.workspace.Dashboards["fulfillment-operations"]
+	report := metrics.reports.dashboards["fulfillment-operations"]
 	broken := report.Visualizations["delivery_speed"]
 	broken.Query.Aggregate.TableID = "missing_table"
 	report.Visualizations["delivery_speed"] = broken
-	metrics.reports.workspace.Dashboards["fulfillment-operations"] = report
+	metrics.reports.dashboards["fulfillment-operations"] = report
 
 	patch, err := metrics.QueryDashboardPage(context.Background(), "fulfillment-operations", "overview", dashboard.Filters{})
 	require.NoError(t, err)
@@ -346,8 +347,8 @@ c2,20040,Rio de Janeiro,RJ
 		t.Fatal("dashboard page query recorded no dataquery events")
 	}
 	for _, query := range recorder.queries {
-		if query.WorkspaceID != "operations" {
-			t.Fatalf("query workspace = %q, want operations: %#v", query.WorkspaceID, query)
+		if query.ProjectID != "operations" {
+			t.Fatalf("query workspace = %q, want operations: %#v", query.ProjectID, query)
 		}
 		if query.Surface != dataquery.SurfaceDashboard {
 			t.Fatalf("query surface = %q, want dashboard: %#v", query.Surface, query)
@@ -449,7 +450,7 @@ r2,o2,4,,,2018-01-16,2018-01-16 10:00:00
 
 	ctx := dataquery.WithMetadata(context.Background(), dataquery.Metadata{PrincipalID: "test_principal"})
 	query := dataquery.ModelTableRows("sales", "orders", []string{"order_id", "status"}, []dataquery.Sort{{Field: "status", Direction: "desc"}}, 0, 1, true)
-	query.WorkspaceID = "sales"
+	query.ProjectID = "sales"
 	modelResult, err := metrics.ExecuteDataQuery(ctx, query)
 	if err != nil {
 		t.Fatalf("unified model table query: %v", err)
@@ -458,7 +459,7 @@ r2,o2,4,,,2018-01-16,2018-01-16 10:00:00
 		t.Fatalf("unified model table result = %#v", modelResult)
 	}
 	missingQuery := dataquery.ModelTableRows("sales", "missing", nil, nil, 0, 1, false)
-	missingQuery.WorkspaceID = "sales"
+	missingQuery.ProjectID = "sales"
 	if _, err := metrics.ExecuteDataQuery(ctx, missingQuery); err == nil {
 		t.Fatal("missing model table preview error = nil")
 	}
@@ -732,11 +733,11 @@ relogios_presentes,watches_gifts
 		t.Fatalf("single-series chart row series = %q, want empty", got)
 	}
 
-	report := metrics.reports.workspace.Dashboards["executive-sales"]
+	report := metrics.reports.dashboards["executive-sales"]
 	ordersVisual := report.Visualizations["orders"]
 	setCompiledInteractionTarget(&ordersVisual.Spec, "orders", true)
 	report.Visualizations["orders"] = ordersVisual
-	metrics.reports.workspace.Dashboards["executive-sales"] = report
+	metrics.reports.dashboards["executive-sales"] = report
 	selfTargetPatch, err := metrics.QueryDashboardPage(context.Background(), "executive-sales", "overview", selectedFilters)
 	require.NoError(t, err)
 	if len(envelopeRows(t, selfTargetPatch.Visuals["orders"])) != 1 {
@@ -745,10 +746,10 @@ relogios_presentes,watches_gifts
 	if !pointSelected(envelopeRows(t, selfTargetPatch.Visuals["orders"]), "delivered") {
 		t.Fatalf("self-targeted orders chart did not mark delivered as selected: %#v", envelopeRows(t, selfTargetPatch.Visuals["orders"]))
 	}
-	report = metrics.reports.workspace.Dashboards["executive-sales"]
+	report = metrics.reports.dashboards["executive-sales"]
 	setCompiledInteractionTarget(&ordersVisual.Spec, "orders", false)
 	report.Visualizations["orders"] = ordersVisual
-	metrics.reports.workspace.Dashboards["executive-sales"] = report
+	metrics.reports.dashboards["executive-sales"] = report
 
 	columnPatch, err := metrics.QueryDashboardPage(context.Background(), "executive-sales", "chart-column", selectedFilters)
 	require.NoError(t, err)

@@ -3,6 +3,7 @@ package appearance
 import (
 	"errors"
 	"fmt"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"strings"
 )
 
@@ -33,13 +34,12 @@ type Value struct {
 }
 
 type Key struct {
-	WorkspaceID string
-	DashboardID string
+	ProjectID   projectgraph.ResourceID
+	DashboardID projectgraph.ResourceID
 }
 
 type Record struct {
 	Key
-	ProjectID string
 	Value
 	Revision int64
 }

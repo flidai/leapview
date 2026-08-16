@@ -21,7 +21,7 @@ func (reader *popularityReaderStub) ListSummaries(_ context.Context, since time.
 func TestPopularityExposesRankedUsageThroughModuleContract(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 	reader := &popularityReaderStub{summaries: []usage.Summary{
-		{Key: usage.Key{WorkspaceID: "finance", DashboardID: "executive"}, ViewerCount: 8, ViewerDays: 12, LastViewedAt: now},
+		{Key: usage.Key{ProjectID: "finance", DashboardID: "executive"}, ViewerCount: 8, ViewerDays: 12, LastViewedAt: now},
 	}}
 	module := &Module{usageReader: reader, usageNow: func() time.Time { return now }}
 

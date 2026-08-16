@@ -27,6 +27,9 @@ import (
 func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	projectID, projectErr := h.projectIDForRequest(r.Context())
 	if projectErr != nil {
+		projectID, projectErr = projectgraph.NewResourceID(strings.TrimSpace(r.URL.Query().Get("project")))
+	}
+	if projectErr != nil {
 		nethttp.NotFound(w, r)
 		return
 	}
@@ -162,7 +165,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	defer closeCoordinator()
 	h.observeRefreshes(coordinator, dashboardID, activePage.ID)
 	service := command.Service{Metrics: metrics}
-	registry.Bind(streamID, projectID.String(), environment, request.ModelID, func() {
+	registry.Bind(streamID, projectID, environment, request.ModelID, func() {
 		_, _ = coordinator.BeginPrepared(func(current dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 			prepared, err := service.PrepareInitial(request, current)
 			return streamPreparation(prepared), err

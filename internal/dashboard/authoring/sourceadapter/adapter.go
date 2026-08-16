@@ -16,9 +16,10 @@ import (
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
-// SourceKind is a closed discriminator. A project source is owned by the
-// authoring repository; a project source is retained by the active runtime
-// artifact. They have intentionally different provenance contracts.
+// SourceKind is a closed discriminator. An instance-managed source is owned
+// by the authoring repository; a deployed-project source is retained by the
+// active runtime artifact. They have intentionally different provenance
+// contracts.
 type SourceKind string
 
 const (
@@ -106,7 +107,7 @@ type ProjectRuntime interface {
 }
 
 // Lease is the source adapter's narrow runtime capability. Identity is the
-// exact serving generation selected for this project; no workspace lookup is
+// exact serving generation selected for this project; no container lookup is
 // available at this boundary.
 type Lease = projectruntime.Lease
 

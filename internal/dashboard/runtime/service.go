@@ -85,6 +85,10 @@ func (m *Service) definitionService(definition dashboarddefinition.Definition) (
 	if definition.ID == "" || definition.SemanticModel == "" {
 		return nil, fmt.Errorf("compiled dashboard requires ID and semantic model")
 	}
+	dashboardID, err := projectgraph.NewResourceID(definition.ID)
+	if err != nil {
+		return nil, fmt.Errorf("compiled dashboard id: %w", err)
+	}
 	modelID, err := projectgraph.NewResourceID(definition.SemanticModel)
 	if err != nil {
 		return nil, fmt.Errorf("compiled dashboard semantic model: %w", err)
@@ -102,7 +106,7 @@ func (m *Service) definitionService(definition dashboarddefinition.Definition) (
 	}
 	models[modelID] = runtime.model
 	reports := &ReportService{projectID: m.identity.ProjectID, identity: m.identity, models: models,
-		dashboards: map[projectgraph.ResourceID]dashboarddefinition.Definition{projectgraph.ResourceID(definition.ID): definition},
+		dashboards: map[projectgraph.ResourceID]dashboarddefinition.Definition{dashboardID: definition},
 		catalog:    m.reports.catalog, defaultID: definition.ID}
 	visualizations := *m.visualizations
 	visualizations.reports = reports
@@ -157,7 +161,11 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 		identity: identity,
 		runtimes: map[projectgraph.ResourceID]*modelRuntime{}, tiles: newSpatialTileRegistry(),
 	}
-	service.catalog = NewCatalogService(&service.mu, definition)
+	var err error
+	service.catalog, err = NewCatalogService(&service.mu, definition)
+	if err != nil {
+		return nil, err
+	}
 	service.reports = &ReportService{projectID: definition.ProjectID(), identity: identity,
 		models:     make(map[projectgraph.ResourceID]*semanticmodel.Model, len(definition.Models())),
 		dashboards: make(map[projectgraph.ResourceID]dashboarddefinition.Definition, len(definition.Dashboards())),

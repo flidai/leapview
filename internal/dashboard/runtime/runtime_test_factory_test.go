@@ -35,7 +35,7 @@ func (testDataRuntimeFactory) OpenDashboardWorkspaceDataRuntimes(ctx context.Con
 		_ = database.Close()
 		return nil, err
 	}
-	runtime, err := analyticsduckdb.OpenWorkspaceMaterializeRuntime(refreshLease.Context(), analyticsduckdb.WorkspaceRuntimeConfig{
+	runtime, err := analyticsduckdb.OpenWorkspaceMaterializeRuntime(refreshLease.Context(), analyticsduckdb.ProjectRuntimeConfig{
 		Models:   config.Definition.Models,
 		Database: database,
 	})
@@ -60,7 +60,7 @@ func (testDataRuntimeFactory) OpenDashboardWorkspaceDataRuntimes(ctx context.Con
 
 type testSharedDataRuntimeCloser struct {
 	once       sync.Once
-	runtime    *analyticsduckdb.WorkspaceRuntime
+	runtime    *analyticsduckdb.ProjectRuntime
 	database   *analyticsducklake.Environment
 	controller *workload.Controller
 	err        error
@@ -82,7 +82,7 @@ func (c *testSharedDataRuntimeCloser) Close() error {
 
 type testWorkspaceDataRuntime struct {
 	modelID string
-	runtime *analyticsduckdb.WorkspaceRuntime
+	runtime *analyticsduckdb.ProjectRuntime
 	close   *testSharedDataRuntimeCloser
 	data    reportdef.DataService
 }

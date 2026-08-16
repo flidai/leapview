@@ -11,6 +11,7 @@ import (
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Metrics interface {
@@ -33,6 +34,6 @@ type Metrics interface {
 	Pages(dashboardID string) []dashboard.Page
 }
 
-type WorkspaceMetrics interface {
-	MetricsForWorkspace(workspaceID string) (Metrics, bool)
+type ProjectMetrics interface {
+	MetricsForProject(projectID projectgraph.ResourceID) (Metrics, bool)
 }

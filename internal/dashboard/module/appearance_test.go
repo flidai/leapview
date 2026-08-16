@@ -9,6 +9,7 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	appearancesqlite "github.com/flidai/leapview/internal/workspace/appearance/sqlite"
 )
 
@@ -24,8 +25,8 @@ func TestDeploymentPatchesOnlyAuthoredAppearanceFields(t *testing.T) {
 	}
 	repository := appearancesqlite.NewRepository(store.SQLDB())
 	icon, color := "chart-no-axes-combined", "blue"
-	key := dashboardappearance.Key{WorkspaceID: "sales", DashboardID: "executive"}
-	if _, err := repository.ApplyPatch(ctx, key, "project", "ui", dashboardappearance.Patch{Icon: &icon, Color: &color}); err != nil {
+	key := dashboardappearance.Key{ProjectID: "sales", DashboardID: "executive"}
+	if _, err := repository.ApplyPatch(ctx, key, "ui", dashboardappearance.Patch{Icon: &icon, Color: &color}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -37,7 +38,7 @@ func TestDeploymentPatchesOnlyAuthoredAppearanceFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := dashboardmodule.ApplyAppearancePatches(ctx, transaction.Transaction(tx), "project", "sales", "deploy", map[string]json.RawMessage{"executive": raw}); err != nil {
+	if err := dashboardmodule.ApplyAppearancePatches(ctx, transaction.Transaction(tx), projectgraph.ResourceID("sales"), "deploy", map[string]json.RawMessage{"executive": raw}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

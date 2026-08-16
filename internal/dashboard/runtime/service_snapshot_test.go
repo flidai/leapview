@@ -115,7 +115,7 @@ func TestGovernedBundleAuditDoesNotReportSucceededExecutionOnError(t *testing.T)
 
 func TestServiceDuckLakeSnapshotIDRequiresOneWorkspaceSnapshot(t *testing.T) {
 	service := &Service{
-		runtimes: map[string]*modelRuntime{
+		runtimes: map[projectgraph.ResourceID]*modelRuntime{
 			"orders":   {data: snapshotDataRuntime{snapshotID: 42}},
 			"products": {data: snapshotDataRuntime{snapshotID: 42}},
 		},
@@ -132,7 +132,7 @@ func TestServiceDuckLakeSnapshotIDRequiresOneWorkspaceSnapshot(t *testing.T) {
 
 func TestServiceAdvertisesConcurrencyOnlyForPinnedSnapshotReaders(t *testing.T) {
 	service := &Service{
-		runtimes: map[string]*modelRuntime{
+		runtimes: map[projectgraph.ResourceID]*modelRuntime{
 			"orders": {ready: true, data: snapshotDataRuntime{snapshotID: 42, readConcurrency: 3}},
 		},
 	}

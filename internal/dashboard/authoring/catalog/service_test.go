@@ -119,7 +119,7 @@ func TestGetHidesUnauthorizedAndArchivedDashboards(t *testing.T) {
 func TestBackendErrorsPropagateAndLeaseIsSingle(t *testing.T) {
 	want := errors.New("repository unavailable")
 	repo := &fakeRepository{listErr: want}
-	provider := &fakeProvider{runtime: fakeRuntime{catalog: dashboardcatalog.Catalog{Workspace: dashboardcatalog.Workspace{ID: "sales"}}}}
+	provider := &fakeProvider{runtime: fakeRuntime{catalog: dashboardcatalog.Catalog{Project: dashboardcatalog.Project{ID: "sales"}}}}
 	service := newTestServiceWithProvider(t, repo, &fakeAuthorizer{}, provider)
 	if _, err := service.List(t.Context(), ListRequest{ProjectID: "sales", ActorID: "actor"}); !errors.Is(err, want) {
 		t.Fatalf("error = %v, want backend error", err)
@@ -130,7 +130,7 @@ func TestBackendErrorsPropagateAndLeaseIsSingle(t *testing.T) {
 }
 
 func newTestService(t *testing.T, repo *fakeRepository, auth *fakeAuthorizer, projects []dashboardcatalog.Dashboard) *Service {
-	return newTestServiceWithProvider(t, repo, auth, &fakeProvider{runtime: fakeRuntime{catalog: dashboardcatalog.Catalog{Workspace: dashboardcatalog.Workspace{ID: "sales"}, Dashboards: projects}}})
+	return newTestServiceWithProvider(t, repo, auth, &fakeProvider{runtime: fakeRuntime{catalog: dashboardcatalog.Catalog{Project: dashboardcatalog.Project{ID: "sales"}, Dashboards: projects}}})
 }
 
 func newTestServiceWithProvider(t *testing.T, repo *fakeRepository, auth *fakeAuthorizer, provider *fakeProvider) *Service {

@@ -53,8 +53,16 @@ func (repository *Repository) ListSummaries(ctx context.Context, cutoff time.Tim
 		if err != nil {
 			return nil, fmt.Errorf("decode dashboard usage timestamp: %w", err)
 		}
+		projectID, err := projectgraph.NewResourceID(strings.TrimSpace(row.ProjectID))
+		if err != nil {
+			return nil, fmt.Errorf("decode dashboard usage project ID: %w", err)
+		}
+		dashboardID, err := projectgraph.NewResourceID(strings.TrimSpace(row.DashboardID))
+		if err != nil {
+			return nil, fmt.Errorf("decode dashboard usage dashboard ID: %w", err)
+		}
 		summaries = append(summaries, usage.Summary{
-			Key:         usage.Key{ProjectID: projectgraph.ResourceID(row.ProjectID), DashboardID: projectgraph.ResourceID(row.DashboardID)},
+			Key:         usage.Key{ProjectID: projectID, DashboardID: dashboardID},
 			ViewerCount: row.ViewerCount, ViewerDays: row.ViewerDays, LastViewedAt: lastViewedAt,
 		})
 	}

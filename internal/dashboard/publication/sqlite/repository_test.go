@@ -6,11 +6,23 @@ import (
 	"errors"
 	"testing"
 
+	publicationdb "github.com/flidai/leapview/internal/dashboard/internal/db"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+func TestMapPublicationRejectsInvalidPersistedProjectID(t *testing.T) {
+	_, err := mapPublication(publicationdb.DashboardPublication{
+		ProjectID:              "invalid project",
+		AllowedOriginsJson:     "[]",
+		DependencyAssetIdsJson: "[]",
+	})
+	if err == nil {
+		t.Fatal("mapPublication accepted an invalid persisted project ID")
+	}
+}
 
 func TestReconcilePreservesPublicIDAcrossProjectCutover(t *testing.T) {
 	ctx := context.Background()

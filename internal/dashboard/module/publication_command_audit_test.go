@@ -93,7 +93,7 @@ func TestDashboardPublicationCommandsAuditExactlyOnceAndPreserveBestEffortResult
 					generated, _ := dashboardgen.GetAPIGenOperationContract(operation.operationID)
 					event := persisted[0]
 					if event.Action != generated.Command.Audit.SuccessAction || event.Privilege != access.Privilege(generated.Command.Privilege) ||
-						event.WorkspaceID != "sales" || event.PrincipalID != "principal-a" || event.TargetType != "dashboard_publication" || event.TargetID != "publication-a" ||
+						event.ProjectID != "sales" || event.PrincipalID != "principal-a" || event.TargetType != "dashboard_publication" || event.TargetID != "publication-a" ||
 						event.Status != "success" || event.RequestID != "request-a" || event.CorrelationID != "correlation-a" {
 						t.Fatalf("audit event = %#v", event)
 					}

@@ -296,13 +296,13 @@ func projectCandidates(runtime projectruntime.Runtime, identity graph.ServingIde
 	catalog := port.Catalog()
 	items := make([]Dashboard, 0, len(catalog.Dashboards))
 	for _, dashboard := range catalog.Dashboards {
-		id, err := graph.NewResourceID(strings.TrimSpace(dashboard.ID))
+		id, err := graph.NewResourceID(strings.TrimSpace(dashboard.ID.String()))
 		if err != nil {
 			return nil, fmt.Errorf("active runtime contains invalid dashboard id: %w", err)
 		}
 		item := Dashboard{
 			ID: id, ProjectID: identity.ProjectID, Title: dashboard.Title, Description: dashboard.Description,
-			SemanticModel: graph.ResourceID(dashboard.SemanticModel), Source: SourceProject, Origin: authoring.OriginFile,
+			SemanticModel: dashboard.SemanticModel, Source: SourceProject, Origin: authoring.OriginFile,
 			Status: authoring.LifecycleStatusPublished, Visibility: authoring.VisibilityOrganization,
 			Tags:            append([]string(nil), dashboard.Tags...),
 			ServingIdentity: identity,

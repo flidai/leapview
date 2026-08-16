@@ -73,8 +73,8 @@ type Metrics interface {
 }
 
 // resolveDashboard is the transport boundary for the capability-owned
-// resolver. Workspace composition must select a concrete resolver before an
-// HTTP dashboard lookup; no caller-controlled workspace argument is accepted.
+// resolver. Project composition must select a concrete resolver before an
+// HTTP dashboard lookup; no caller-controlled project argument is accepted.
 func resolveDashboard(metrics Metrics, dashboardID string) (dashboardresolver.Resolved, error) {
 	if metrics == nil {
 		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
@@ -83,7 +83,11 @@ func resolveDashboard(metrics Metrics, dashboardID string) (dashboardresolver.Re
 	if resolver == nil {
 		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
 	}
-	return resolver.Resolve(dashboardID)
+	identity, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
+	return resolver.Resolve(identity)
 }
 
 // ResolveDashboard exposes the shared transport adapter to dashboard module
@@ -111,7 +115,7 @@ type SharedCommandPrepare func(
 // repository or runtime internals.
 type AuthoringApplication interface {
 	Builder(context.Context, builderview.Request) (uisignals.DashboardBuilderSignal, error)
-	Execute(context.Context, string, authoring.Command) (authoringservice.Result, error)
+	Execute(context.Context, projectgraph.ResourceID, authoring.Command) (authoringservice.Result, error)
 	ExecuteIntent(context.Context, application.IntentRequest) (authoringservice.Result, error)
 	Preview(context.Context, preview.PreviewRequest) (preview.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
@@ -174,6 +178,15 @@ func (h Handler) projectIDForRequest(ctx context.Context) (projectgraph.Resource
 			return "", err
 		}
 		return projectID, nil
+	}
+	if h.ProjectID == "" {
+		if routeProject := strings.TrimSpace(chi.URLParamFromCtx(ctx, "project")); routeProject != "" {
+			projectID, err := projectgraph.NewResourceID(routeProject)
+			if err != nil {
+				return "", err
+			}
+			return projectID, nil
+		}
 	}
 	if err := h.ProjectID.Validate(); err != nil {
 		return "", err
@@ -308,6 +321,8 @@ func (h Handler) Dashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	base := ""
 	if h.RouteScope.BasePath != "" {
 		base = strings.TrimSuffix(h.RouteScope.BasePath, "/")
+	} else if projectID, err := h.projectIDForRequest(r.Context()); err == nil {
+		base = "/projects/" + projectID.String()
 	}
 	nethttp.Redirect(w, r, base+"/dashboards/"+dashboardID+"/pages/"+pages[0].ID, nethttp.StatusFound)
 }

@@ -40,7 +40,7 @@ func (m *Module) PublicationByPublicID(ctx context.Context, publicID string) (pu
 // the admin surface. It validates the generated cross-surface policy before
 // mutating state, then executes the generated audit contract with the same
 // request identity.
-func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceID, name, actorID string, action publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
+func (m *Module) MutatePublicationWithInvocation(ctx context.Context, projectID, name, actorID string, action publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
 	if m == nil || m.publicationService == nil || m.recordPublicationCommandAudit == nil {
 		return publication.Publication{}, publication.ErrNotFound
 	}
@@ -52,15 +52,15 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceI
 	if invocation.Surface == "" {
 		invocation.Surface = string(apigencommand.SurfaceUI)
 	}
-	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(workspaceID))
+	parsedProjectID, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
 	if err != nil {
 		return publication.Publication{}, err
 	}
-	ctx, err := beginGeneratedPublicationInvocation(ctx, action, workspaceID, invocation)
+	ctx, err := beginGeneratedPublicationInvocation(ctx, action, parsedProjectID, invocation)
 	if err != nil {
 		return publication.Publication{}, err
 	}
-	row, err := m.publicationService.Mutate(ctx, projectID, name, actorID, action)
+	row, err := m.publicationService.Mutate(ctx, parsedProjectID, name, actorID, action)
 	if err != nil {
 		return row, err
 	}
@@ -71,14 +71,14 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceI
 	err = executor.Execute(ctx, operationIDValue, apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
 			return m.recordPublicationCommandAudit(ctx, publicationCommandAuditInput{
-				operationID: operationIDValue, workspaceID: strings.TrimSpace(workspaceID), principalID: strings.TrimSpace(actorID),
+				operationID: operationIDValue, projectID: parsedProjectID, principalID: strings.TrimSpace(actorID),
 				targetID: strings.TrimSpace(row.ID), requestID: strings.TrimSpace(invocation.RequestID),
 				correlationID: strings.TrimSpace(invocation.CorrelationID), surface: string(invocation.Surface),
 			})
 		},
 		LogMessage: "best-effort dashboard publication command audit failed",
 		LogAttributes: []slog.Attr{
-			slog.String("workspace_id", strings.TrimSpace(workspaceID)),
+			slog.String("project_id", parsedProjectID.String()),
 			slog.String("principal_id", strings.TrimSpace(actorID)),
 			slog.String("target_id", strings.TrimSpace(row.ID)),
 		},
@@ -86,7 +86,7 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceI
 	return row, err
 }
 
-func beginGeneratedPublicationInvocation(ctx context.Context, action publication.Action, workspaceID string, invocation publication.CommandInvocation) (context.Context, error) {
+func beginGeneratedPublicationInvocation(ctx context.Context, action publication.Action, projectID projectgraph.ResourceID, invocation publication.CommandInvocation) (context.Context, error) {
 	operationID, ok := publicationOperationID(action)
 	if !ok {
 		return ctx, publication.ErrConflict
@@ -94,23 +94,23 @@ func beginGeneratedPublicationInvocation(ctx context.Context, action publication
 	if claimed := strings.TrimSpace(invocation.OperationID); claimed != "" && claimed != operationID.APIGenOperationID() {
 		return ctx, apigencommand.ErrOperationMismatch
 	}
-	workspaceID = strings.TrimSpace(workspaceID)
+	projectIDString := projectID.String()
 	switch action {
 	case publication.ActionSuspend:
 		started, _, err := dashboardgen.BeginGenSuspendDashboardPublicationCommand(ctx, dashboardgen.GenSuspendDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Project: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
 	case publication.ActionResume:
 		started, _, err := dashboardgen.BeginGenResumeDashboardPublicationCommand(ctx, dashboardgen.GenResumeDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Project: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
 	case publication.ActionRotate:
 		started, _, err := dashboardgen.BeginGenRotateDashboardPublicationCommand(ctx, dashboardgen.GenRotateDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Project: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
@@ -137,17 +137,17 @@ func (m *Module) PublicationDTO(row publication.Publication) dashboardapi.Public
 	return m.dashboardPublicationDTO(row)
 }
 
-func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Request, workspaceID string) {
+func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Request, projectID string) {
 	if m == nil || m.publications == nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATIONS_NOT_AVAILABLE", "Dashboard publications are not available", nil)
 		return
 	}
-	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(workspaceID))
+	parsedProjectID, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_PROJECT", "Project identity is invalid", nil)
 		return
 	}
-	rows, err := m.publications.List(r.Context(), projectID)
+	rows, err := m.publications.List(r.Context(), parsedProjectID)
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PUBLICATION_LIST_FAILED", "Dashboard publications could not be loaded", nil)
 		return
@@ -167,8 +167,8 @@ func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, dashboardapi.PublicationListResponse{Items: items})
 }
 
-func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) {
-	row, ok := m.dashboardPublication(w, r, workspaceID, name)
+func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
+	row, ok := m.dashboardPublication(w, r, projectID, name)
 	if !ok {
 		return
 	}
@@ -184,19 +184,19 @@ func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, m.dashboardPublicationDTO(row))
 }
 
-func (m *Module) SuspendDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) {
-	m.mutateDashboardPublication(w, r, workspaceID, name, publication.ActionSuspend)
+func (m *Module) SuspendDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
+	m.mutateDashboardPublication(w, r, projectID, name, publication.ActionSuspend)
 }
 
-func (m *Module) ResumeDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) {
-	m.mutateDashboardPublication(w, r, workspaceID, name, publication.ActionResume)
+func (m *Module) ResumeDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
+	m.mutateDashboardPublication(w, r, projectID, name, publication.ActionResume)
 }
 
-func (m *Module) RotateDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) {
-	m.mutateDashboardPublication(w, r, workspaceID, name, publication.ActionRotate)
+func (m *Module) RotateDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
+	m.mutateDashboardPublication(w, r, projectID, name, publication.ActionRotate)
 }
 
-func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string, action publication.Action) {
+func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string, action publication.Action) {
 	operationID, operationKnown := publicationOperationID(action)
 	if !operationKnown {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PUBLICATION_COMMAND_UNKNOWN", "Dashboard publication command is unknown", nil)
@@ -213,7 +213,7 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, errPublicationCommandAuditUnavailable)
 		return
 	}
-	row, lookupErr := m.dashboardPublication(w, r, workspaceID, name)
+	row, lookupErr := m.dashboardPublication(w, r, projectID, name)
 	if lookupErr {
 		return
 	}
@@ -230,12 +230,12 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 	if m.currentActor != nil {
 		actor = m.currentActor(r)
 	}
-	projectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(workspaceID))
+	parsedProjectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(projectID))
 	if parseErr != nil {
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, parseErr)
 		return
 	}
-	row, err := m.publicationService.Mutate(r.Context(), projectID, name, actor, action)
+	row, err := m.publicationService.Mutate(r.Context(), parsedProjectID, name, actor, action)
 	if err == nil {
 		logger := m.logger
 		if logger == nil {
@@ -247,11 +247,11 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		} else {
 			err = executor.Execute(r.Context(), operationIDValue, apigencommand.Execution{
 				BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
-					return m.recordPublicationCommandAudit(ctx, publicationAuditRequestInput(r, operationIDValue, workspaceID, actor, row.ID))
+					return m.recordPublicationCommandAudit(ctx, publicationAuditRequestInput(r, operationIDValue, parsedProjectID, actor, row.ID))
 				},
 				LogMessage: "best-effort dashboard publication command audit failed",
 				LogAttributes: []slog.Attr{
-					slog.String("workspace_id", strings.TrimSpace(workspaceID)),
+					slog.String("project_id", parsedProjectID.String()),
 					slog.String("principal_id", strings.TrimSpace(actor)),
 					slog.String("target_type", "dashboard_publication"),
 					slog.String("target_id", strings.TrimSpace(row.ID)),
@@ -286,17 +286,17 @@ func (m *Module) authorizeDashboardPublication(r *http.Request, projectID, dashb
 	return m.handler.AuthorizeListResource(r.Context(), principalID, resource, capability)
 }
 
-func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) (publication.Publication, bool) {
+func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) (publication.Publication, bool) {
 	if m == nil || m.publications == nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATION_NOT_FOUND", "Dashboard publication not found", nil)
 		return publication.Publication{}, false
 	}
-	projectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(workspaceID))
+	parsedProjectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(projectID))
 	if parseErr != nil {
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_PROJECT", "Project identity is invalid", nil)
 		return publication.Publication{}, false
 	}
-	row, err := m.publications.Get(r.Context(), projectID, name)
+	row, err := m.publications.Get(r.Context(), parsedProjectID, name)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, publication.ErrNotFound) {

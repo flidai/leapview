@@ -159,7 +159,7 @@ func (m *Module) PublicDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	streamFinished := m.observePublicStream(presentation)
 	defer streamFinished()
 	query := r.URL.Query()
-	query.Set("workspace", resolved.Publication.WorkspaceID)
+	query.Set("project", resolved.Publication.ProjectID.String())
 	query.Set("dashboard", resolved.Publication.Dashboard)
 	query.Set("model", resolved.ModelID)
 	query.Set("page", pageID)
@@ -180,7 +180,7 @@ func (m *Module) PublicDashboardCommand(commandName string) http.HandlerFunc {
 			return
 		}
 		query := r.URL.Query()
-		query.Set("workspace", resolved.Publication.WorkspaceID)
+		query.Set("project", resolved.Publication.ProjectID.String())
 		query.Set("dashboard", resolved.Publication.Dashboard)
 		query.Set("model", resolved.ModelID)
 		r.URL.RawQuery = query.Encode()
@@ -261,13 +261,13 @@ func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboard
 }
 
 func PublicationExecutionContext(ctx context.Context, row publication.Publication, modelID string) context.Context {
-	principalID := access.DashboardPublicationSubjectID(row.WorkspaceID, row.Name)
+	principalID := access.DashboardPublicationSubjectID(row.ProjectID, row.Name)
 	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
-		WorkspaceID: row.WorkspaceID, Surface: dataquery.SurfacePublicDashboard,
+		ProjectID: row.ProjectID, Surface: dataquery.SurfacePublicDashboard,
 		PrincipalID: principalID, ObjectType: "dashboard_publication", ObjectID: row.Name,
 	})
 	return queryauthz.WithDashboardPublicationCapability(ctx, queryauthz.DashboardPublicationCapability{
-		WorkspaceID: row.WorkspaceID, Publication: row.Name,
+		WorkspaceID: row.ProjectID.String(), Publication: row.Name,
 		Dashboard: row.Dashboard, ModelID: modelID,
 		DependencyAssetIDs: append([]string(nil), row.DependencyAssetIDs...),
 	})

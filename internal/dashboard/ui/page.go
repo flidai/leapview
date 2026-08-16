@@ -107,7 +107,7 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 	initialFilters = report.NormalizeFiltersForPage(activePage.ID, initialFilters)
 	initialURLParams := report.URLParamsFromFiltersForPage(activePage.ID, initialFilters)
 	initialURLParams["streamInstance"] = newStreamInstanceID()
-	dashboardUpdatesURL := updatesURLWithParams(catalog.Workspace.ID, report.ID, activePage.ID, initialURLParams)
+	dashboardUpdatesURL := updatesURLWithParams(catalog.Project.ID.String(), report.ID, activePage.ID, initialURLParams)
 	commandBase := "/dashboards/" + url.PathEscape(report.ID) + "/commands/"
 	if routes.BasePath != "" {
 		values := url.Values{}

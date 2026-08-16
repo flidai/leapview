@@ -24,7 +24,7 @@ import (
 
 type runtimeMetrics struct {
 	provider                   runtimehost.Provider
-	projectID                  string
+	projectID                  projectgraph.ResourceID
 	publishedCompilationReader dashboardresolver.PublishedCompilationReader
 }
 
@@ -35,7 +35,7 @@ type Catalog = dashboard.Catalog
 type dashboardRefreshRuntimeKey struct{}
 
 type dashboardRefreshRuntime struct {
-	projectID      string
+	projectID      projectgraph.ResourceID
 	identity       projectgraph.ServingIdentity
 	runtime        runtimehost.Runtime
 	servingStateID string
@@ -46,13 +46,6 @@ type dashboardRefreshResolutionCache struct {
 	mu     sync.Mutex
 	values map[string]dashboardresolver.Resolved
 	errors map[string]error
-}
-
-type dynamicRuntimeMetrics struct {
-	factory                    func(workspaceID string) runtimehost.Provider
-	publishedCompilationReader dashboardresolver.PublishedCompilationReader
-	mu                         sync.Mutex
-	metrics                    map[string]Metrics
 }
 
 type catalogRuntime interface {
@@ -129,14 +122,14 @@ func SupportsNativeArrow(metrics Metrics) bool {
 
 type RuntimeMetricsOptions struct {
 	Provider                   runtimehost.Provider
-	ProjectID                  string
+	ProjectID                  projectgraph.ResourceID
 	PublishedCompilationReader dashboardresolver.PublishedCompilationReader
 }
 
 func NewRuntimeMetrics(options RuntimeMetricsOptions) Metrics {
 	return runtimeMetrics{
 		provider:                   options.Provider,
-		projectID:                  strings.TrimSpace(options.ProjectID),
+		projectID:                  options.ProjectID,
 		publishedCompilationReader: options.PublishedCompilationReader,
 	}
 }
@@ -183,7 +176,7 @@ func (m runtimeMetrics) resolveOnRuntime(runtime runtimehost.Runtime, identity p
 	if err := identity.Validate(); err != nil {
 		return dashboardresolver.Resolved{}, fmt.Errorf("active runtime serving identity is invalid: %w", err)
 	}
-	if configured := strings.TrimSpace(m.projectID); configured != "" && configured != identity.ProjectID.String() {
+	if configured := m.projectID; configured != "" && configured != identity.ProjectID {
 		return dashboardresolver.Resolved{}, fmt.Errorf("active runtime project %q does not match configured project %q", identity.ProjectID, configured)
 	}
 	project, err := dashboardresolver.NewProject(port.Resolver(), identity, dashboardresolver.SourceMetadata{})
@@ -216,58 +209,20 @@ func (m runtimeMetrics) identityForLease(lease runtimehost.Lease) (projectgraph.
 	if err := identity.Validate(); err != nil {
 		return projectgraph.ServingIdentity{}, fmt.Errorf("active runtime serving identity is invalid: %w", err)
 	}
-	if configured := strings.TrimSpace(m.projectID); configured != "" && configured != identity.ProjectID.String() {
+	if configured := m.projectID; configured != "" && configured != identity.ProjectID {
 		return projectgraph.ServingIdentity{}, fmt.Errorf("active runtime project %q does not match configured project %q", identity.ProjectID, configured)
 	}
 	return identity, nil
 }
 
 type DynamicRuntimeMetricsOptions struct {
-	ProviderFactory            func(workspaceID string) runtimehost.Provider
+	Provider                   runtimehost.Provider
+	ProjectID                  projectgraph.ResourceID
 	PublishedCompilationReader dashboardresolver.PublishedCompilationReader
 }
 
 func NewDynamicRuntimeMetrics(options DynamicRuntimeMetricsOptions) Metrics {
-	return &dynamicRuntimeMetrics{
-		factory:                    options.ProviderFactory,
-		publishedCompilationReader: options.PublishedCompilationReader,
-		metrics:                    map[string]Metrics{},
-	}
-}
-
-func (m *dynamicRuntimeMetrics) RuntimeReady(ctx context.Context, workspaceID string) error {
-	metrics, ok := m.MetricsForWorkspace(workspaceID)
-	if !ok || metrics == nil {
-		return fmt.Errorf("runtime for workspace %q is not configured", workspaceID)
-	}
-	if readiness, ok := metrics.(runtimeReadiness); ok {
-		return readiness.RuntimeReady(ctx, workspaceID)
-	}
-	return metricsMetadataReady(metrics, workspaceID)
-}
-
-func (m *dynamicRuntimeMetrics) MetricsForWorkspace(workspaceID string) (Metrics, bool) {
-	if strings.TrimSpace(workspaceID) == "" || m.factory == nil {
-		return nil, false
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if metrics := m.metrics[workspaceID]; metrics != nil {
-		return metrics, true
-	}
-	provider := m.factory(workspaceID)
-	if provider == nil {
-		return nil, false
-	}
-	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: workspaceID, PublishedCompilationReader: m.publishedCompilationReader})
-	m.metrics[workspaceID] = metrics
-	return metrics, true
-}
-
-// unboundMetrics intentionally never selects a workspace. Callers must first
-// resolve a workspace through MetricsForWorkspace.
-func (m *dynamicRuntimeMetrics) unboundMetrics() Metrics {
-	return nil
+	return NewRuntimeMetrics(RuntimeMetricsOptions{Provider: options.Provider, ProjectID: options.ProjectID, PublishedCompilationReader: options.PublishedCompilationReader})
 }
 
 func (m runtimeMetrics) Catalog() dashboard.Catalog {
@@ -302,7 +257,7 @@ func (m runtimeMetrics) ModelIDForDashboard(dashboardID string) string {
 		return ""
 	}
 	defer release()
-	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+	if resolved.Source.Kind == dashboardresolver.SourceInstance {
 		if port, ok := runtime.(definitionMetadataRuntime); ok {
 			return port.ModelIDForDashboardDefinition(resolved.Definition)
 		}
@@ -333,7 +288,7 @@ func (m runtimeMetrics) DefaultFilters(dashboardID string) dashboard.Filters {
 		return dashboard.Filters{}.WithDefaults()
 	}
 	defer release()
-	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+	if resolved.Source.Kind == dashboardresolver.SourceInstance {
 		if port, ok := runtime.(definitionMetadataRuntime); ok {
 			return port.DefaultFiltersForDefinition(resolved.Definition)
 		}
@@ -351,7 +306,7 @@ func (m runtimeMetrics) NormalizeVisualizationWindow(dashboardID string, request
 		return request.WithDefaults()
 	}
 	defer release()
-	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+	if resolved.Source.Kind == dashboardresolver.SourceInstance {
 		if port, ok := runtime.(definitionVisualizationRuntime); ok {
 			return port.NormalizeVisualizationWindowForDefinition(resolved.Definition, request)
 		}
@@ -374,7 +329,7 @@ func (m runtimeMetrics) QueryCompiledFilterOptions(ctx context.Context, dashboar
 		return dashboardfilter.OptionResult{}, err
 	}
 	defer release()
-	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+	if resolved.Source.Kind == dashboardresolver.SourceInstance {
 		if port, ok := runtime.(definitionFilterRuntime); ok {
 			return port.QueryCompiledFilterOptionsForDefinition(ctx, resolved.Definition, query)
 		}
@@ -393,7 +348,7 @@ func (m runtimeMetrics) QueryDashboardPage(ctx context.Context, dashboardID, pag
 		return dashboard.EmptyPatch(filters.WithDefaults(), err), nil
 	}
 	defer release()
-	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+	if resolved.Source.Kind == dashboardresolver.SourceInstance {
 		if port, ok := runtime.(definitionDashboardRuntime); ok {
 			return port.QueryDashboardPageForDefinition(ctx, resolved.Definition, pageID, filters)
 		}
@@ -418,7 +373,7 @@ func (m runtimeMetrics) QueryVisualization(ctx context.Context, dashboardID, pag
 		return visualizationir.VisualizationEnvelope{}, err
 	}
 	defer release()
-	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+	if resolved.Source.Kind == dashboardresolver.SourceInstance {
 		if port, ok := runtime.(definitionVisualizationRuntime); ok {
 			return port.QueryVisualizationForDefinition(ctx, resolved.Definition, pageID, filters, visualID)
 		}
@@ -437,7 +392,7 @@ func (m runtimeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardI
 		return visualizationir.VisualizationEnvelope{}, err
 	}
 	defer release()
-	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+	if resolved.Source.Kind == dashboardresolver.SourceInstance {
 		if port, ok := runtime.(definitionVisualizationRuntime); ok {
 			return port.QueryVisualizationWindowForDefinition(ctx, resolved.Definition, pageID, filters, request)
 		}
@@ -500,7 +455,7 @@ func (m runtimeMetrics) WithDashboardRefreshLease(ctx context.Context, run func(
 	}
 	defer release()
 	ctx = context.WithValue(ctx, dashboardRefreshRuntimeKey{}, dashboardRefreshRuntime{
-		projectID: identity.ProjectID.String(), identity: identity, runtime: runtime, servingStateID: identity.GenerationID,
+		projectID: identity.ProjectID, identity: identity, runtime: runtime, servingStateID: identity.GenerationID,
 		resolutions: &dashboardRefreshResolutionCache{values: map[string]dashboardresolver.Resolved{}, errors: map[string]error{}},
 	})
 	return run(ctx)
@@ -519,11 +474,11 @@ func (m runtimeMetrics) activeResolvedForDashboardRefreshRaw(ctx context.Context
 }
 
 func (m runtimeMetrics) pinnedProjectMatches(pinned dashboardRefreshRuntime) bool {
-	if pinned.runtime == nil || strings.TrimSpace(pinned.projectID) == "" {
+	if pinned.runtime == nil || pinned.projectID == "" {
 		return false
 	}
-	configured := strings.TrimSpace(m.projectID)
-	return configured == "" || configured == pinned.identity.ProjectID.String()
+	configured := m.projectID
+	return configured == "" || configured == pinned.identity.ProjectID
 }
 
 func (m runtimeMetrics) QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
@@ -549,8 +504,8 @@ func (m runtimeMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.
 	if !ok {
 		return dataquery.Result{}, fmt.Errorf("active runtime does not provide semantic query data")
 	}
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, fmt.Errorf("workspace ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	return port.ExecuteDataQuery(ctx, request)
 }
@@ -565,8 +520,8 @@ func (m runtimeMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataq
 	if !ok {
 		return dataquery.Result{}, fmt.Errorf("active runtime does not provide native Arrow query data")
 	}
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, fmt.Errorf("workspace ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	return port.ExecuteDataQueryArrow(ctx, request, sink)
 }
@@ -606,7 +561,7 @@ func (m runtimeMetrics) Pages(dashboardID string) []dashboard.Page {
 		return nil
 	}
 	defer release()
-	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+	if resolved.Source.Kind == dashboardresolver.SourceInstance {
 		if port, ok := runtime.(definitionMetadataRuntime); ok {
 			return port.PagesForDefinition(resolved.Definition)
 		}
@@ -619,7 +574,13 @@ func (m runtimeMetrics) Pages(dashboardID string) []dashboard.Page {
 	return nil
 }
 
-func (m runtimeMetrics) RuntimeReady(ctx context.Context, workspaceID string) error {
+func (m runtimeMetrics) RuntimeReady(ctx context.Context, projectID projectgraph.ResourceID) error {
+	if err := projectID.Validate(); err != nil {
+		return fmt.Errorf("project ID: %w", err)
+	}
+	if m.projectID != "" && m.projectID != projectID {
+		return fmt.Errorf("configured project %q does not match requested project %q", m.projectID, projectID)
+	}
 	activeRuntime, release, err := m.active(ctx)
 	if err != nil {
 		return err
@@ -630,8 +591,8 @@ func (m runtimeMetrics) RuntimeReady(ctx context.Context, workspaceID string) er
 		return fmt.Errorf("active runtime does not provide catalog metadata")
 	}
 	catalog := catalogPort.Catalog()
-	if workspaceID != "" && catalog.Workspace.ID != "" && catalog.Workspace.ID != workspaceID {
-		return fmt.Errorf("catalog workspace = %q, want %q", catalog.Workspace.ID, workspaceID)
+	if catalog.Project.ID != "" && catalog.Project.ID != projectID {
+		return fmt.Errorf("catalog project = %q, want %q", catalog.Project.ID, projectID)
 	}
 	if len(catalog.Models) == 0 && len(catalog.Dashboards) == 0 {
 		return fmt.Errorf("runtime catalog is empty")

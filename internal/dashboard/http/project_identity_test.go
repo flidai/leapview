@@ -28,6 +28,16 @@ func TestProjectIDForRequestTracksFirstBoundProject(t *testing.T) {
 	}
 }
 
+func TestProjectIDForRequestRejectsInvalidRouteProject(t *testing.T) {
+	request := httptest.NewRequest("GET", "/projects/invalid%20project", nil)
+	route := chi.NewRouteContext()
+	route.URLParams.Add("project", "invalid project")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
+	if _, err := (Handler{}).projectIDForRequest(request.Context()); err == nil {
+		t.Fatal("invalid route project was accepted")
+	}
+}
+
 func TestCommandDashboardIDIsRouteBound(t *testing.T) {
 	request := httptest.NewRequest("POST", "/dashboards/dashboard-a/commands/select?dashboard=dashboard-b", nil)
 	route := chi.NewRouteContext()

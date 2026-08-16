@@ -36,7 +36,7 @@ type VisualizationWindowRequest = visualizationir.VisualizationWindowRequest
 type SpatialBounds = visualizationir.VisualizationSpatialBounds
 
 type Catalog = catalog.Catalog
-type CatalogWorkspace = catalog.Workspace
+type CatalogProject = catalog.Project
 type CatalogModel = catalog.Model
 type CatalogDashboard = catalog.Dashboard
 

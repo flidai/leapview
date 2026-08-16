@@ -130,7 +130,6 @@ type ChatArtifactSignal = dashboardsignals.ChatArtifactSignal
 type AgentReferenceSignal = dashboardsignals.AgentReferenceSignal
 type AgentReferenceLocationSignal = dashboardsignals.AgentReferenceLocationSignal
 type AgentReferenceKeySignal = dashboardsignals.AgentReferenceKeySignal
-type AgentReferenceWorkspaceSignal = dashboardsignals.AgentReferenceWorkspaceSignal
 type ChatStatus = dashboardsignals.ChatStatus
 type ComposerSignal = dashboardsignals.ComposerSignal
 

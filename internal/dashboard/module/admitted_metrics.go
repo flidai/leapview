@@ -3,7 +3,7 @@ package module
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
@@ -13,6 +13,7 @@ import (
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -32,10 +33,10 @@ func (m admittedMetrics) readContext(ctx context.Context) context.Context {
 	return workload.WithAdmitter(ctx, m.admitter)
 }
 
-func (m admittedMetrics) MetricsForWorkspace(workspaceID string) (Metrics, bool) {
-	provider, ok := m.Metrics.(WorkspaceMetrics)
+func (m admittedMetrics) MetricsForProject(projectID projectgraph.ResourceID) (Metrics, bool) {
+	provider, ok := m.Metrics.(ProjectMetrics)
 	if ok {
-		metrics, found := provider.MetricsForWorkspace(workspaceID)
+		metrics, found := provider.MetricsForProject(projectID)
 		if !found || metrics == nil {
 			return nil, found
 		}
@@ -44,7 +45,7 @@ func (m admittedMetrics) MetricsForWorkspace(workspaceID string) (Metrics, bool)
 	if m.Metrics == nil {
 		return nil, false
 	}
-	if m.Metrics.Catalog().Workspace.ID != workspaceID {
+	if m.Metrics.Catalog().Project.ID != projectID {
 		return nil, false
 	}
 	return m, true
@@ -105,8 +106,8 @@ func (m admittedMetrics) QueryPublicVisualizationTile(ctx context.Context, publi
 func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 	ctx = m.readContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, errors.New("workspace ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	if m.admitter == nil {
 		return m.Metrics.ExecuteDataQuery(ctx, request)
@@ -150,8 +151,8 @@ func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery
 func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
 	ctx = m.readContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, errors.New("workspace ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	executor, ok := m.Metrics.(arrowquery.Executor)
 	if !ok {

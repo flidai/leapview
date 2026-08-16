@@ -29,8 +29,12 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func mapPublication(row publicationdb.DashboardPublication) (publication.Publication, error) {
+	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(row.ProjectID))
+	if err != nil {
+		return publication.Publication{}, fmt.Errorf("decode publication project ID: %w", err)
+	}
 	out := publication.Publication{
-		ID: row.ID, ProjectID: projectgraph.ResourceID(row.ProjectID), Name: row.Name,
+		ID: row.ID, ProjectID: projectID, Name: row.Name,
 		PublicID: row.PublicID, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
 		ConfigurationDigest: row.ConfigurationDigest, Configured: row.Configured == 1,
 		ServingStateID: row.ActiveServingStateID.String, SuspendedAt: row.SuspendedAt.String,

@@ -29,7 +29,7 @@ import (
 // handlers to persist arbitrary patches or bypass the transactional service.
 type HeadlessAuthoringApplication interface {
 	Create(context.Context, authoringservice.CreateRequest) (authoringservice.Result, error)
-	Execute(context.Context, string, authoring.Command) (authoringservice.Result, error)
+	Execute(context.Context, projectgraph.ResourceID, authoring.Command) (authoringservice.Result, error)
 	ExecuteIntent(context.Context, application.IntentRequest) (authoringservice.Result, error)
 	List(context.Context, catalog.ListRequest) (catalog.ListResult, error)
 	Get(context.Context, catalog.GetRequest) (catalog.Dashboard, error)
@@ -41,7 +41,7 @@ type HeadlessAuthoringApplication interface {
 }
 
 // HeadlessAuthoringDraftExporter is the optional current-draft export
-// capability implemented by the composed application. Workspace exports use
+// capability implemented by the composed application. Instance exports use
 // it when available; project exports remain on ExportYAML and resolve the
 // active serving artifact.
 type HeadlessAuthoringDraftExporter interface {
@@ -77,6 +77,15 @@ func (h AuthoringAPI) actor(r *nethttp.Request) (string, error) {
 	return actor, nil
 }
 
+func requireProjectID(w nethttp.ResponseWriter, r *nethttp.Request) (projectgraph.ResourceID, bool) {
+	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(chi.URLParam(r, "project")))
+	if err != nil {
+		writeAuthoringError(w, r, fmt.Errorf("%w: projectId: %v", authoring.ErrInvalidAuthoring, err), nethttp.StatusBadRequest)
+		return "", false
+	}
+	return projectID, true
+}
+
 func (h AuthoringAPI) begin(r *nethttp.Request) (string, bool) {
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	if requestID == "" {
@@ -88,12 +97,16 @@ func (h AuthoringAPI) begin(r *nethttp.Request) (string, bool) {
 
 func (h AuthoringAPI) ListCatalog(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
+	projectID, ok := requireProjectID(w, r)
+	if !ok {
+		return
+	}
 	actor, err := h.actor(r)
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	result, err := h.Application.List(r.Context(), catalog.ListRequest{ProjectID: chi.URLParam(r, "project"), ActorID: actor})
+	result, err := h.Application.List(r.Context(), catalog.ListRequest{ProjectID: projectID, ActorID: actor})
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
@@ -103,13 +116,17 @@ func (h AuthoringAPI) ListCatalog(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 func (h AuthoringAPI) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
+	projectID, ok := requireProjectID(w, r)
+	if !ok {
+		return
+	}
 	actor, err := h.actor(r)
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
 	dashboardID := authoring.DashboardID(chi.URLParam(r, "dashboard"))
-	result, err := h.Application.Get(r.Context(), catalog.GetRequest{ProjectID: chi.URLParam(r, "project"), ActorID: actor, DashboardID: dashboardID})
+	result, err := h.Application.Get(r.Context(), catalog.GetRequest{ProjectID: projectID, ActorID: actor, DashboardID: dashboardID})
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
@@ -118,7 +135,7 @@ func (h AuthoringAPI) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request)
 }
 
 type authoringDraftResponse struct {
-	ProjectID   string                       `json:"projectId"`
+	ProjectID   projectgraph.ResourceID      `json:"projectId"`
 	DashboardID authoring.DashboardID        `json:"dashboardId"`
 	DraftID     authoring.DraftID            `json:"draftId"`
 	Revision    authoring.RevisionToken      `json:"revision"`
@@ -136,12 +153,16 @@ func draftResponse(read application.DraftRead) authoringDraftResponse {
 
 func (h AuthoringAPI) GetDraft(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
+	projectID, ok := requireProjectID(w, r)
+	if !ok {
+		return
+	}
 	actor, err := h.actor(r)
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	read, err := h.Application.Draft(r.Context(), application.DraftRequest{ProjectID: chi.URLParam(r, "project"), ActorID: actor, DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard"))})
+	read, err := h.Application.Draft(r.Context(), application.DraftRequest{ProjectID: projectID, ActorID: actor, DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard"))})
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
@@ -151,6 +172,10 @@ func (h AuthoringAPI) GetDraft(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h AuthoringAPI) GetRevision(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
+	projectID, ok := requireProjectID(w, r)
+	if !ok {
+		return
+	}
 	actor, err := h.actor(r)
 	if err != nil {
 		writeAuthoringError(w, r, err)
@@ -165,18 +190,22 @@ func (h AuthoringAPI) GetRevision(w nethttp.ResponseWriter, r *nethttp.Request) 
 		action = authoring.AuthorizationActionView
 	}
 	revision, err := h.Application.Revision(r.Context(), application.RevisionRequest{
-		ProjectID: chi.URLParam(r, "project"), ActorID: actor,
+		ProjectID: projectID, ActorID: actor,
 		DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard")), DraftID: authoring.DraftID(chi.URLParam(r, "draft")), RevisionID: authoring.RevisionID(chi.URLParam(r, "revision")), Action: action,
 	})
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, map[string]any{"projectId": chi.URLParam(r, "project"), "dashboardId": revision.DashboardID, "revision": revision.Token(), "document": revision.Document, "provenance": revision.Provenance, "createdAt": revision.CreatedAt})
+	writeJSON(w, nethttp.StatusOK, map[string]any{"projectId": projectID, "dashboardId": revision.DashboardID, "revision": revision.Token(), "document": revision.Document, "provenance": revision.Provenance, "createdAt": revision.CreatedAt})
 }
 
 func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
+	projectID, ok := requireProjectID(w, r)
+	if !ok {
+		return
+	}
 	key, ok := idempotencyKey(w, r)
 	if !ok {
 		return
@@ -199,16 +228,21 @@ func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) 
 	if origin == "" {
 		origin = authoring.OriginUI
 	}
+	semanticModel, err := projectgraph.NewResourceID(input.SemanticModel)
+	if err != nil {
+		writeAuthoringError(w, r, fmt.Errorf("%w: semanticModel: %v", authoring.ErrInvalidAuthoring, err))
+		return
+	}
 	result, err := h.Application.Create(r.Context(), authoringservice.CreateRequest{
-		ProjectID: chi.URLParam(r, "project"), ActorID: actor,
-		Title: input.Title, SemanticModel: input.SemanticModel, Slug: derefString(input.Slug),
+		ProjectID: projectID, ActorID: actor,
+		Title: input.Title, SemanticModel: semanticModel, Slug: derefString(input.Slug),
 		Origin: origin, IdempotencyKey: key,
 	})
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	if err := executeGeneratedAuthoringCommand(r, "createDashboardAuthoringDraft", chi.URLParam(r, "project"), key, actor, result.Lifecycle.ID.String(), draftIDFromLifecycle(result.Lifecycle), origin, access.CapabilityResourceEdit, h.RecordAudit); err != nil {
+	if err := executeGeneratedAuthoringCommand(r, "createDashboardAuthoringDraft", projectID.String(), key, actor, result.Lifecycle.ID.String(), draftIDFromLifecycle(result.Lifecycle), origin, access.CapabilityResourceEdit, h.RecordAudit); err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
@@ -217,6 +251,10 @@ func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
+	projectID, ok := requireProjectID(w, r)
+	if !ok {
+		return
+	}
 	key, ok := idempotencyKey(w, r)
 	if !ok {
 		return
@@ -252,9 +290,9 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 	}
 	var result authoringservice.Result
 	if command.IsBuilderIntent() {
-		result, err = h.Application.ExecuteIntent(r.Context(), application.IntentRequest{ProjectID: chi.URLParam(r, "project"), ActorID: actor, Command: command})
+		result, err = h.Application.ExecuteIntent(r.Context(), application.IntentRequest{ProjectID: projectID, ActorID: actor, Command: command})
 	} else {
-		result, err = h.Application.Execute(r.Context(), chi.URLParam(r, "project"), command)
+		result, err = h.Application.Execute(r.Context(), projectID, command)
 	}
 	if err != nil {
 		writeAuthoringError(w, r, err)
@@ -267,7 +305,7 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 			privilege = access.CapabilityResourceManage
 		}
 	}
-	if err := executeGeneratedAuthoringCommand(r, "executeDashboardAuthoringCommand", chi.URLParam(r, "project"), key, actor, command.DashboardID.String(), command.DraftID.String(), origin, privilege, h.RecordAudit); err != nil {
+	if err := executeGeneratedAuthoringCommand(r, "executeDashboardAuthoringCommand", projectID.String(), key, actor, command.DashboardID.String(), command.DraftID.String(), origin, privilege, h.RecordAudit); err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
@@ -276,6 +314,10 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 
 func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
+	projectID, ok := requireProjectID(w, r)
+	if !ok {
+		return
+	}
 	key, ok := idempotencyKey(w, r)
 	if !ok {
 		return
@@ -290,11 +332,11 @@ func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	source := sourceadapter.SourceRef{Kind: sourceadapter.SourceKind(input.Source.Kind), ProjectID: projectgraph.ResourceID(chi.URLParam(r, "project")), DashboardID: authoring.DashboardID(input.Source.DashboardId)}
-	if strings.TrimSpace(source.ProjectID) == "" {
-		source.ProjectID = chi.URLParam(r, "project")
+	source := sourceadapter.SourceRef{Kind: sourceadapter.SourceKind(input.Source.Kind), ProjectID: projectID, DashboardID: authoring.DashboardID(input.Source.DashboardId)}
+	if source.ProjectID == "" {
+		source.ProjectID = projectID
 	}
-	if source.Kind == sourceadapter.SourceProject && source.ProjectID.String() != chi.URLParam(r, "project") {
+	if source.Kind == sourceadapter.SourceProject && source.ProjectID != projectID {
 		writeAuthoringError(w, r, fmt.Errorf("%w: project source must use the route project", authoring.ErrInvalidAuthoring))
 		return
 	}
@@ -302,12 +344,12 @@ func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if origin == "" {
 		origin = authoring.OriginUI
 	}
-	result, err := h.Application.Fork(r.Context(), sourceadapter.ForkRequest{Source: source, TargetProjectID: chi.URLParam(r, "project"), ActorID: actor, Title: derefString(input.Title), Slug: derefString(input.Slug), Origin: origin, IdempotencyKey: key})
+	result, err := h.Application.Fork(r.Context(), sourceadapter.ForkRequest{Source: source, TargetProjectID: projectID, ActorID: actor, Title: derefString(input.Title), Slug: derefString(input.Slug), Origin: origin, IdempotencyKey: key})
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	if err := executeGeneratedAuthoringCommand(r, "forkDashboardAuthoringDraft", chi.URLParam(r, "project"), key, actor, result.Lifecycle.ID.String(), draftIDFromLifecycle(result.Lifecycle), origin, access.CapabilityResourceEdit, h.RecordAudit); err != nil {
+	if err := executeGeneratedAuthoringCommand(r, "forkDashboardAuthoringDraft", projectID.String(), key, actor, result.Lifecycle.ID.String(), draftIDFromLifecycle(result.Lifecycle), origin, access.CapabilityResourceEdit, h.RecordAudit); err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
@@ -316,6 +358,10 @@ func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h AuthoringAPI) Preview(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
+	projectID, ok := requireProjectID(w, r)
+	if !ok {
+		return
+	}
 	actor, err := h.actor(r)
 	if err != nil {
 		writeAuthoringError(w, r, err)
@@ -340,7 +386,7 @@ func (h AuthoringAPI) Preview(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	result, err := h.Application.Preview(r.Context(), preview.PreviewRequest{ProjectID: chi.URLParam(r, "project"), ActorID: actor, DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard")), DraftID: authoring.DraftID(chi.URLParam(r, "draft")), ExpectedRevision: expectedRevision, PageID: input.PageId, Filters: filters})
+	result, err := h.Application.Preview(r.Context(), preview.PreviewRequest{ProjectID: projectID, ActorID: actor, DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard")), DraftID: authoring.DraftID(chi.URLParam(r, "draft")), ExpectedRevision: expectedRevision, PageID: input.PageId, Filters: filters})
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
@@ -350,6 +396,10 @@ func (h AuthoringAPI) Preview(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h AuthoringAPI) Export(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
+	projectID, ok := requireProjectID(w, r)
+	if !ok {
+		return
+	}
 	actor, err := h.actor(r)
 	if err != nil {
 		writeAuthoringError(w, r, err)
@@ -360,9 +410,9 @@ func (h AuthoringAPI) Export(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeAuthoringError(w, r, fmt.Errorf("invalid dashboard source kind %q", kind), nethttp.StatusBadRequest)
 		return
 	}
-	request := sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: kind, ProjectID: chi.URLParam(r, "project"), DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard"))}, ActorID: actor}
+	request := sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: kind, ProjectID: projectID, DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard"))}, ActorID: actor}
 	var body []byte
-	if kind == sourceadapter.SourceProject {
+	if kind == sourceadapter.SourceInstance {
 		if exporter, ok := h.Application.(HeadlessAuthoringDraftExporter); ok {
 			body, err = exporter.ExportDraftYAML(r.Context(), request)
 		} else {

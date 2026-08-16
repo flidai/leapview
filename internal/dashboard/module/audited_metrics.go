@@ -17,6 +17,7 @@ import (
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type QueryAuditRecorder = queryaudit.Recorder
@@ -34,13 +35,13 @@ func WithQueryAudit(metrics queryruntime.Metrics, recorder queryaudit.Recorder, 
 	return auditedMetrics{Metrics: metrics, recorder: recorder, principalID: principalID}
 }
 
-func (m auditedMetrics) MetricsForWorkspace(workspaceID string) (queryruntime.Metrics, bool) {
-	if workspaceID == "" {
+func (m auditedMetrics) MetricsForProject(projectID projectgraph.ResourceID) (queryruntime.Metrics, bool) {
+	if err := projectID.Validate(); err != nil {
 		return nil, false
 	}
-	provider, ok := m.Metrics.(queryruntime.WorkspaceMetrics)
+	provider, ok := m.Metrics.(queryruntime.ProjectMetrics)
 	if ok {
-		metrics, found := provider.MetricsForWorkspace(workspaceID)
+		metrics, found := provider.MetricsForProject(projectID)
 		if !found || metrics == nil {
 			return nil, found
 		}
@@ -50,7 +51,7 @@ func (m auditedMetrics) MetricsForWorkspace(workspaceID string) (queryruntime.Me
 		return nil, false
 	}
 	catalog := m.Metrics.Catalog()
-	if catalog.Workspace.ID == workspaceID {
+	if catalog.Project.ID == projectID {
 		return m, true
 	}
 	return nil, false

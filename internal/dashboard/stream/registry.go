@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"sort"
 	"sync"
 	"time"
@@ -18,7 +19,7 @@ type Registry struct {
 }
 
 type registryBinding struct {
-	workspaceID string
+	projectID   projectgraph.ResourceID
 	environment string
 	modelID     string
 	refresh     func()
@@ -55,18 +56,18 @@ func (r *Registry) Open(streamID string, parent context.Context, publish EventPu
 	}
 }
 
-func (r *Registry) Bind(streamID, workspaceID, environment, modelID string, refresh func()) {
+func (r *Registry) Bind(streamID string, projectID projectgraph.ResourceID, environment, modelID string, refresh func()) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
 	if r.coordinators[streamID] != nil {
-		r.bindings[streamID] = registryBinding{workspaceID: workspaceID, environment: environment, modelID: modelID, refresh: refresh}
+		r.bindings[streamID] = registryBinding{projectID: projectID, environment: environment, modelID: modelID, refresh: refresh}
 	}
 	r.mu.Unlock()
 }
 
-func (r *Registry) RefreshSemanticModel(workspaceID, environment, modelID string) []string {
+func (r *Registry) RefreshSemanticModel(projectID projectgraph.ResourceID, environment, modelID string) []string {
 	if r == nil {
 		return nil
 	}
@@ -77,7 +78,7 @@ func (r *Registry) RefreshSemanticModel(workspaceID, environment, modelID string
 	}
 	var targets []target
 	for streamID, binding := range r.bindings {
-		if binding.workspaceID == workspaceID && binding.environment == environment && binding.modelID == modelID {
+		if binding.projectID == projectID && binding.environment == environment && binding.modelID == modelID {
 			targets = append(targets, target{streamID: streamID, refresh: binding.refresh})
 		}
 	}

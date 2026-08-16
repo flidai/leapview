@@ -6,6 +6,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestSemanticModelProjectionIsDetachedFromBaseRuntime(t *testing.T) {
@@ -17,11 +18,11 @@ func TestSemanticModelProjectionIsDetachedFromBaseRuntime(t *testing.T) {
 			}},
 		},
 	}
-	workspace := &dashboarddefinition.Workspace{
-		Catalog: dashboard.Catalog{Workspace: dashboard.CatalogWorkspace{ID: "workspace"}},
-		Models:  map[string]*semanticmodel.Model{"sales_model": base},
+	workspace := &dashboarddefinition.Project{
+		Catalog: dashboard.Catalog{Project: dashboard.CatalogProject{ID: "workspace"}},
+		Models:  map[projectgraph.ResourceID]*semanticmodel.Model{"sales_model": base},
 	}
-	service := &Service{reports: &ReportService{workspace: workspace}}
+	service := &Service{reports: &ReportService{projectID: "workspace", models: workspace.Models, dashboards: workspace.Dashboards, catalog: workspace.Catalog}}
 	projection, ok := service.SemanticModelProjection("sales_model")
 	if !ok || projection == nil {
 		t.Fatal("semantic model projection unavailable")

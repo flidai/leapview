@@ -36,7 +36,7 @@ func fieldRefs(fields ...string) []dashboardauthoring.FieldRef {
 
 func TestDashboardLayoutContextSelectsDashboardsNavigation(t *testing.T) {
 	context := dashboardLayoutContext(
-		dashboard.Catalog{Workspace: dashboard.CatalogWorkspace{ID: "sales", Title: "Sales"}},
+		dashboard.Catalog{Project: dashboard.CatalogProject{ID: "sales", Title: "Sales"}},
 		dashboarddefinition.Definition{ID: "executive-sales", Title: "Executive Sales"},
 		nil,
 		dashboard.Page{ID: "overview", Title: "Overview"},
@@ -331,7 +331,7 @@ func TestPrivateRouteScopeKeepsDashboardTrafficInsideCandidate(t *testing.T) {
 	if err := PageWithRouteScope(
 		Presentation{ProductName: "LeapView", FaviconPath: "/static/favicon.svg"},
 		RouteScope{BasePath: base},
-		"client", "", dashboard.Catalog{Workspace: dashboard.CatalogWorkspace{ID: "sales"}},
+		"client", "", dashboard.Catalog{Project: dashboard.CatalogProject{ID: "sales"}},
 		report, model, report.Pages, report.Pages[0], dashboard.Filters{},
 	).Render(&out); err != nil {
 		t.Fatal(err)

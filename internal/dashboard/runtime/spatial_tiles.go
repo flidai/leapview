@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const maximumSpatialTileRevisions = 8192
@@ -116,8 +117,8 @@ func (r *spatialTileRegistry) resolve(token, dashboardID, visualID, publicID, pr
 	return entry, nil
 }
 
-func spatialTileURL(legacyScope, dashboardID, visualID, token string) string {
-	return "/workspaces/" + url.PathEscape(legacyScope) + "/dashboards/" + url.PathEscape(dashboardID) + "/visuals/" + url.PathEscape(visualID) + "/tiles/" + url.PathEscape(token) + "/{z}/{x}/{y}.mvt"
+func spatialTileURL(projectID projectgraph.ResourceID, dashboardID, visualID, token string) string {
+	return "/projects/" + url.PathEscape(projectID.String()) + "/dashboards/" + url.PathEscape(dashboardID) + "/visuals/" + url.PathEscape(visualID) + "/tiles/" + url.PathEscape(token) + "/{z}/{x}/{y}.mvt"
 }
 
 func publicSpatialTileURL(publicID, visualID, token string) string {

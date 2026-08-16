@@ -178,6 +178,6 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 		},
 		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero", Label: "Orders"}},
 	}
-	catalog := catalog.Catalog{Workspace: catalog.Workspace{ID: "benchmark", Title: "Benchmark Workspace"}}
+	catalog := catalog.Catalog{Project: catalog.Project{ID: "benchmark", Title: "Benchmark Workspace"}}
 	return report, model, catalog
 }

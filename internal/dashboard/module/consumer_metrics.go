@@ -14,21 +14,13 @@ func (m runtimeMetrics) ExecuteConsumersPage(ctx context.Context, request consum
 		return err
 	}
 	defer release()
-	if resolved.Source.Kind == dashboardresolver.SourceWorkspace {
+	if resolved.Source.Kind == dashboardresolver.SourceInstance {
 		if port, ok := runtime.(definitionConsumerRuntime); ok {
 			return port.ExecuteConsumersPageForDefinition(ctx, resolved.Definition, request, publish)
 		}
 		return fmt.Errorf("active runtime does not provide compiled dashboard consumer execution")
 	}
 	return executeConsumersFrom(ctx, runtime, request, publish)
-}
-
-func (m multiWorkspaceMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {
-	return executeConsumersFrom(ctx, nil, request, publish)
-}
-
-func (m *dynamicRuntimeMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {
-	return executeConsumersFrom(ctx, nil, request, publish)
 }
 
 func (m admittedMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {

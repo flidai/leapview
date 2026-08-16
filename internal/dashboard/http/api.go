@@ -17,6 +17,7 @@ import (
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -436,7 +437,7 @@ func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp
 func (h Handler) biMetrics(w nethttp.ResponseWriter, r *nethttp.Request) (Metrics, bool) {
 	metrics, ok := h.metricsForRequest(r)
 	if !ok {
-		writeJSONError(w, fmt.Errorf("workspace %q not found", chi.URLParam(r, "workspace")), nethttp.StatusNotFound)
+		writeJSONError(w, fmt.Errorf("project %q not found", chi.URLParam(r, "project")), nethttp.StatusNotFound)
 		return nil, false
 	}
 	return metrics, true
@@ -473,7 +474,6 @@ func (h Handler) requestQueryMetadata(r *nethttp.Request, surface, operation, ob
 		surface = dataquery.SurfaceCLI
 	}
 	metadata := dataquery.Metadata{
-		WorkspaceID:   chi.URLParam(r, "workspace"),
 		Surface:       surface,
 		Operation:     requestQueryOperation(operation, objectType),
 		ObjectType:    objectType,
@@ -481,12 +481,15 @@ func (h Handler) requestQueryMetadata(r *nethttp.Request, surface, operation, ob
 		RequestID:     r.Header.Get("X-Request-ID"),
 		CorrelationID: r.Header.Get("X-Correlation-ID"),
 	}
+	if projectID, err := projectgraph.NewResourceID(strings.TrimSpace(chi.URLParam(r, "project"))); err == nil {
+		metadata.ProjectID = projectID
+	}
 	if h.CurrentPrincipalID != nil {
 		metadata.PrincipalID = h.CurrentPrincipalID(r)
 	}
 	existing := dataquery.MetadataFromContext(r.Context())
-	if existing.WorkspaceID != "" {
-		metadata.WorkspaceID = existing.WorkspaceID
+	if existing.ProjectID != "" {
+		metadata.ProjectID = existing.ProjectID
 	}
 	if existing.Surface != "" {
 		metadata.Surface = existing.Surface
@@ -607,10 +610,10 @@ func dashboardAPIFilterState(filters dashboard.Filters) map[string]any {
 
 func dashboardSummaryDTO(row catalog.Dashboard) api.DashboardSummary {
 	return api.DashboardSummary{
-		ID:            row.ID,
+		ID:            row.ID.String(),
 		Title:         row.Title,
 		Description:   row.Description,
-		SemanticModel: row.SemanticModel,
+		SemanticModel: row.SemanticModel.String(),
 		Tags:          row.Tags,
 		PageCount:     row.PageCount,
 	}

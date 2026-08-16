@@ -46,7 +46,11 @@ func (m *Service) Resolver() dashboardresolver.Resolver {
 }
 
 func (m *Service) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
-	return m.SemanticModelByID(projectgraph.ResourceID(modelID))
+	parsedModelID, err := projectgraph.NewResourceID(modelID)
+	if err != nil {
+		return nil, false
+	}
+	return m.SemanticModelByID(parsedModelID)
 }
 
 func (m *Service) SemanticModelByID(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
@@ -170,13 +174,17 @@ func (s *ReportService) Resolve(dashboardID projectgraph.ResourceID) (dashboardr
 	return dashboardresolver.Resolved{
 		Definition:      *report,
 		Model:           model,
-		SemanticModelID: projectgraph.ResourceID(report.SemanticModel),
+		SemanticModelID: modelID,
 		Source:          dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, Identity: s.identity},
 	}, nil
 }
 
 func (s *ReportService) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
-	return s.SemanticModelByID(projectgraph.ResourceID(modelID))
+	parsedModelID, err := projectgraph.NewResourceID(modelID)
+	if err != nil {
+		return nil, false
+	}
+	return s.SemanticModelByID(parsedModelID)
 }
 
 func (s *ReportService) SemanticModelByID(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {

@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var errPublicationCommandAuditUnavailable = apigenfailure.New("audit_unavailable", "dashboard publication command audit is unavailable")
@@ -22,7 +23,7 @@ type publicationCommandAuditContract struct {
 
 type publicationCommandAuditInput struct {
 	operationID   string
-	workspaceID   string
+	projectID     projectgraph.ResourceID
 	principalID   string
 	targetID      string
 	requestID     string
@@ -48,7 +49,7 @@ func buildPublicationCommandAuditRecorder(
 		privilege, ok := access.ParsePrivilege(command.Privilege)
 		if !ok || command.AuthzMode != "privilege" || generated.AuthzMode != command.AuthzMode ||
 			!command.Audit.Required || command.Audit.SuccessAction == "" || command.Target == nil ||
-			command.Audit.Guarantee != "best-effort" || command.Target.Type != "workspace" || command.Target.Parameter != "workspace" {
+			command.Audit.Guarantee != "best-effort" || command.Target.Type != "project" || command.Target.Parameter != "project" {
 			return nil, fmt.Errorf("dashboard publication operation %q has an invalid generated command audit contract", operationID)
 		}
 		contracts[operationID] = publicationCommandAuditContract{
@@ -85,7 +86,7 @@ func buildPublicationCommandAuditRecorder(
 		// this cross-domain Access audit. The caller observes recorder failures but
 		// preserves the already-successful publication result.
 		return record(ctx, access.AuditEventInput{
-			WorkspaceID: input.workspaceID, PrincipalID: input.principalID,
+			ResourceKind: "dashboard_publication", ResourceID: input.targetID, PrincipalID: input.principalID,
 			Action: contract.action, TargetType: "dashboard_publication", TargetID: input.targetID,
 			Privilege: contract.privilege, Status: "success",
 			RequestID: input.requestID, CorrelationID: input.correlationID,
@@ -107,7 +108,7 @@ func publicationOperationID(action publication.Action) (dashboardgen.GenCommandO
 	}
 }
 
-func publicationAuditRequestInput(r *http.Request, operationID, workspaceID, principalID, targetID string) publicationCommandAuditInput {
+func publicationAuditRequestInput(r *http.Request, operationID string, projectID projectgraph.ResourceID, principalID, targetID string) publicationCommandAuditInput {
 	requestID := firstPublicationHeader(r, "X-Request-Id", "X-Request-ID")
 	correlationID := firstPublicationHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 	if correlationID == "" {
@@ -118,7 +119,7 @@ func publicationAuditRequestInput(r *http.Request, operationID, workspaceID, pri
 		surface = "cli"
 	}
 	return publicationCommandAuditInput{
-		operationID: operationID, workspaceID: strings.TrimSpace(workspaceID), principalID: strings.TrimSpace(principalID),
+		operationID: operationID, projectID: projectID, principalID: strings.TrimSpace(principalID),
 		targetID: strings.TrimSpace(targetID), requestID: requestID, correlationID: correlationID, surface: surface,
 	}
 }

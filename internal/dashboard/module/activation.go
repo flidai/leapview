@@ -23,6 +23,10 @@ func ReconcilePublications(
 	input PublicationActivationInput,
 	activatePrincipal PublicationPrincipalActivator,
 ) error {
+	projectID, err := projectgraph.NewResourceID(input.ProjectID)
+	if err != nil {
+		return err
+	}
 	publications := make(map[string]publication.Definition, len(input.Publications))
 	for name, raw := range input.Publications {
 		var definition publication.Definition
@@ -32,7 +36,7 @@ func ReconcilePublications(
 		publications[name] = definition
 	}
 	return publicationsqlite.ReconcileTx(ctx, tx, publication.ReconcileInput{
-		ProjectID: projectgraph.ResourceID(input.ProjectID),
+		ProjectID:      projectID,
 		ServingStateID: input.ServingStateID, ActorID: input.ActorID,
 		Publications: publications,
 	}, activatePrincipal)

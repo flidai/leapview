@@ -9,6 +9,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func definitionOverlayService(t *testing.T, modelName string, ready bool) (*Service, dashboarddefinition.Definition) {
@@ -18,23 +19,27 @@ func definitionOverlayService(t *testing.T, modelName string, ready bool) (*Serv
 		ID: "project", Title: "Project", SemanticModel: "sales_model",
 		Pages: []dashboard.Page{{ID: "project-page", Title: "Project Page"}},
 	}
-	workspace := &dashboarddefinition.Workspace{
-		Catalog:    dashboard.Catalog{Workspace: dashboard.CatalogWorkspace{ID: "workspace"}},
-		Models:     map[string]*semanticmodel.Model{"sales_model": model},
-		Dashboards: map[string]dashboarddefinition.Definition{"project": project},
+	workspace := &dashboarddefinition.Project{
+		Catalog:    dashboard.Catalog{Project: dashboard.CatalogProject{ID: "workspace"}},
+		Models:     map[projectgraph.ResourceID]*semanticmodel.Model{"sales_model": model},
+		Dashboards: map[projectgraph.ResourceID]dashboarddefinition.Definition{"project": project},
 	}
 	baseRuntime := &modelRuntime{model: model, ready: ready}
 	if !ready {
 		baseRuntime.missing = errors.New("setup required")
 	}
 	service := &Service{
-		runtimes: map[string]*modelRuntime{"sales_model": baseRuntime},
+		runtimes: map[projectgraph.ResourceID]*modelRuntime{"sales_model": baseRuntime},
 		tiles:    newSpatialTileRegistry(),
 	}
-	service.catalog = NewCatalogService(&service.mu, workspace)
-	service.reports = &ReportService{workspace: workspace, defaultID: "project"}
+	var err error
+	service.catalog, err = NewCatalogService(&service.mu, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.reports = &ReportService{projectID: "workspace", models: workspace.Models, dashboards: workspace.Dashboards, catalog: workspace.Catalog, defaultID: "project"}
 	service.filters = &FilterService{}
-	service.visualizations = &VisualizationDataService{mu: &service.mu, reports: service.reports, runtimes: service.runtimes, filters: service.filters, tiles: service.tiles, workspaceID: "workspace"}
+	service.visualizations = &VisualizationDataService{mu: &service.mu, reports: service.reports, runtimes: service.runtimes, filters: service.filters, tiles: service.tiles, projectID: "workspace"}
 	service.snapshots = &SnapshotService{mu: &service.mu, reports: service.reports, runtimes: service.runtimes, filters: service.filters, visualizations: service.visualizations}
 	service.queries = &QueryService{snapshots: service.snapshots, visualizations: service.visualizations}
 

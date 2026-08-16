@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -38,7 +39,7 @@ func (f *fakeHeadlessAuthoring) Create(_ context.Context, request authoringservi
 	f.create = request
 	return f.result, f.createErr
 }
-func (f *fakeHeadlessAuthoring) Execute(_ context.Context, _ string, command authoring.Command) (authoringservice.Result, error) {
+func (f *fakeHeadlessAuthoring) Execute(_ context.Context, _ projectgraph.ResourceID, command authoring.Command) (authoringservice.Result, error) {
 	f.command = command
 	return f.result, f.executeErr
 }
@@ -53,7 +54,7 @@ func (f *fakeHeadlessAuthoring) Get(context.Context, catalog.GetRequest) (catalo
 	return catalog.Dashboard{}, nil
 }
 func (f *fakeHeadlessAuthoring) Draft(context.Context, application.DraftRequest) (application.DraftRead, error) {
-	return application.DraftRead{Lifecycle: authoring.DashboardLifecycle{WorkspaceID: "sales", ID: "dash"}, Revision: authoring.Revision{DashboardID: "dash", ID: "rev", Number: 1, ContentHash: strings.Repeat("a", 64)}}, f.draftErr
+	return application.DraftRead{Lifecycle: authoring.DashboardLifecycle{ProjectID: "sales", ID: "dash"}, Revision: authoring.Revision{DashboardID: "dash", ID: "rev", Number: 1, ContentHash: strings.Repeat("a", 64)}}, f.draftErr
 }
 func (f *fakeHeadlessAuthoring) Revision(_ context.Context, request application.RevisionRequest) (authoring.Revision, error) {
 	f.revision = request
@@ -146,7 +147,7 @@ func testAuthoringRouterWithAPI(api AuthoringAPI) *chi.Mux {
 
 func TestAuthoringAPIRequiresIdempotencyKeyForCommands(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/sales/authoring/commands", strings.NewReader(`{"id":"cmd-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"id":"cmd-1"}`))
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -159,7 +160,7 @@ func TestAuthoringAPIRequiresIdempotencyKeyForCommands(t *testing.T) {
 
 func TestAuthoringAPIMapsStaleRevisionToConflict(t *testing.T) {
 	app := &fakeHeadlessAuthoring{draftErr: authoring.ErrStaleRevision}
-	req := httptest.NewRequest(http.MethodGet, "/workspaces/sales/authoring/dashboards/dash/draft", nil)
+	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/dashboards/dash/draft", nil)
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
@@ -174,7 +175,7 @@ func TestAuthoringAPIDraftUsesAuthenticatedActor(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
 	api := AuthoringAPI{Application: app, ActorID: func(*http.Request) string { return "" }}
 	router := testAuthoringRouterWithAPI(api)
-	req := httptest.NewRequest(http.MethodGet, "/workspaces/sales/authoring/dashboards/dash/draft", nil)
+	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/dashboards/dash/draft", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -184,7 +185,7 @@ func TestAuthoringAPIDraftUsesAuthenticatedActor(t *testing.T) {
 
 func TestAuthoringAPIMapsValidation(t *testing.T) {
 	app := &fakeHeadlessAuthoring{executeErr: errors.New("invalid dashboard authoring contract")}
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/sales/authoring/commands", strings.NewReader(`{"id":"cmd-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"id":"cmd-1"}`))
 	req.Header.Set("Idempotency-Key", "cmd-1")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -197,7 +198,7 @@ func TestAuthoringAPIMapsValidation(t *testing.T) {
 
 func TestAuthoringAPIMutationDoesNotSpoofToolCallProvenance(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales"}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales"}`))
 	req.Header.Set("Idempotency-Key", "idem-1")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -214,7 +215,7 @@ func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{
 		ID: "created-dashboard", Draft: &authoring.Draft{ID: "created-draft"},
 	}}}
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales","origin":"file"}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales","origin":"file"}`))
 	req.Header.Set("Idempotency-Key", "idem-audit")
 	req.Header.Set("X-Correlation-ID", "corr-1")
 	rec := httptest.NewRecorder()
@@ -226,7 +227,7 @@ func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 		t.Fatalf("audit count = %d, want 1", len(app.audits))
 	}
 	event := app.audits[0]
-	if event.TargetType != "dashboard" || event.TargetID != "created-dashboard" || event.Privilege != access.PrivilegeEditItem || event.CorrelationID != "corr-1" {
+	if event.ResourceKind != "dashboard" || event.ResourceID != "created-dashboard" || event.Capability != access.CapabilityResourceEdit || event.CorrelationID != "corr-1" {
 		t.Fatalf("audit identity = %#v", event)
 	}
 	if !strings.Contains(event.MetadataJSON, `"origin":"file"`) || !strings.Contains(event.MetadataJSON, `"draftId":"created-draft"`) {
@@ -236,7 +237,7 @@ func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 
 func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{ID: "dash-command"}}}
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/sales/authoring/commands", strings.NewReader(`{"dashboardId":"dash-command","draftId":"draft-command","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"origin":"agent","publish":{}}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"dashboardId":"dash-command","draftId":"draft-command","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"origin":"agent","publish":{}}`))
 	req.Header.Set("Idempotency-Key", "cmd-audit")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -247,7 +248,7 @@ func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 		t.Fatalf("audit count = %d, want 1", len(app.audits))
 	}
 	event := app.audits[0]
-	if event.TargetType != "dashboard" || event.TargetID != "dash-command" || event.Privilege != access.PrivilegeManageItem {
+	if event.ResourceKind != "dashboard" || event.ResourceID != "dash-command" || event.Capability != access.CapabilityResourcePublish {
 		t.Fatalf("audit identity = %#v", event)
 	}
 	if !strings.Contains(event.MetadataJSON, `"origin":"agent"`) || !strings.Contains(event.MetadataJSON, `"draftId":"draft-command"`) {
@@ -255,17 +256,17 @@ func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 	}
 }
 
-func TestAuthoringAPIForkRejectsCrossWorkspaceWorkspaceSource(t *testing.T) {
+func TestAuthoringAPIForkBindsInstanceSourceToRouteProject(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/target/authoring/forks", strings.NewReader(`{"source":{"kind":"workspace","workspaceId":"other","dashboardId":"dash"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/target/authoring/forks", strings.NewReader(`{"source":{"kind":"instance","dashboardId":"dash"}}`))
 	req.Header.Set("Idempotency-Key", "fork-cross-workspace")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "VALIDATION_ERROR") {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if app.fork.Source.DashboardID != "" {
-		t.Fatalf("fork reached application with source %#v", app.fork)
+	if app.fork.Source.ProjectID != "target" || app.fork.Source.Kind != sourceadapter.SourceInstance {
+		t.Fatalf("fork source was not bound to route project: %#v", app.fork.Source)
 	}
 }
 
@@ -273,7 +274,7 @@ func TestAuthoringAPIForkAuditBindsResultIdentityAndOrigin(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{
 		ID: "forked-dashboard", Draft: &authoring.Draft{ID: "forked-draft"},
 	}}}
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/target/authoring/forks", strings.NewReader(`{"source":{"kind":"project","workspaceId":"source","dashboardId":"source-dashboard"},"origin":"file"}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/target/authoring/forks", strings.NewReader(`{"source":{"kind":"project","dashboardId":"source-dashboard"},"origin":"file"}`))
 	req.Header.Set("Idempotency-Key", "fork-audit")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -284,7 +285,7 @@ func TestAuthoringAPIForkAuditBindsResultIdentityAndOrigin(t *testing.T) {
 		t.Fatalf("audit count = %d, want 1", len(app.audits))
 	}
 	event := app.audits[0]
-	if event.TargetType != "dashboard" || event.TargetID != "forked-dashboard" || event.Privilege != access.PrivilegeEditItem {
+	if event.ResourceKind != "dashboard" || event.ResourceID != "forked-dashboard" || event.Capability != access.CapabilityResourceEdit {
 		t.Fatalf("audit identity = %#v", event)
 	}
 	if !strings.Contains(event.MetadataJSON, `"origin":"file"`) || !strings.Contains(event.MetadataJSON, `"draftId":"forked-draft"`) {
@@ -294,7 +295,7 @@ func TestAuthoringAPIForkAuditBindsResultIdentityAndOrigin(t *testing.T) {
 
 func TestAuthoringAPIRevisionRouteBindsExactDraftIdentity(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodGet, "/workspaces/sales/authoring/dashboards/dash/drafts/draft-1/revisions/rev-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/dashboards/dash/drafts/draft-1/revisions/rev-1", nil)
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -307,7 +308,7 @@ func TestAuthoringAPIRevisionRouteBindsExactDraftIdentity(t *testing.T) {
 
 func TestAuthoringAPIPublishedRevisionUsesViewAction(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodGet, "/workspaces/sales/authoring/dashboards/dash/revisions/rev-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/dashboards/dash/revisions/rev-1", nil)
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -320,7 +321,7 @@ func TestAuthoringAPIPublishedRevisionUsesViewAction(t *testing.T) {
 
 func TestAuthoringAPIExportSetsSafeDownloadFilename(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodGet, "/workspaces/sales/authoring/sources/workspace/dash.bad/export", nil)
+	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/sources/instance/dash.bad/export", nil)
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -329,14 +330,14 @@ func TestAuthoringAPIExportSetsSafeDownloadFilename(t *testing.T) {
 	if got := rec.Header().Get("Content-Disposition"); got != `attachment; filename="dashboard-dash.bad.yaml"` {
 		t.Fatalf("content disposition = %q", got)
 	}
-	if len(app.draftExports) != 1 || app.draftExports[0].Source.Kind != sourceadapter.SourceWorkspace || app.draftExports[0].Source.DashboardID != "dash.bad" {
+	if len(app.draftExports) != 1 || app.draftExports[0].Source.Kind != sourceadapter.SourceInstance || app.draftExports[0].Source.DashboardID != "dash.bad" {
 		t.Fatalf("workspace export requests = %#v", app.draftExports)
 	}
 }
 
 func TestAuthoringAPIProjectExportUsesActiveSourceExport(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	request := httptest.NewRequest(http.MethodGet, "/workspaces/sales/authoring/sources/project/project-sales/export", nil)
+	request := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/sources/project/project-sales/export", nil)
 	recording := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(recording, request)
 	if recording.Code != http.StatusOK {
@@ -352,7 +353,7 @@ func TestAuthoringAPIProjectExportUsesActiveSourceExport(t *testing.T) {
 
 func TestAuthoringAPIRejectsCommandActorSpoof(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/sales/authoring/commands", strings.NewReader(`{"dashboardId":"dash","draftId":"draft-1","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"shared"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"dashboardId":"dash","draftId":"draft-1","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"shared"}}`))
 	req.Header.Set("Idempotency-Key", "cmd-1")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -366,7 +367,7 @@ func TestAuthoringAPIRejectsCommandActorSpoof(t *testing.T) {
 
 func TestAuthoringAPIPreviewSemanticErrorIsUnprocessable(t *testing.T) {
 	app := &fakeHeadlessAuthoring{previewErr: preview.ErrSemanticMismatch}
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/sales/authoring/dashboards/dash/drafts/draft-1/preview", strings.NewReader(`{"pageId":"overview","revision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/dashboards/dash/drafts/draft-1/preview", strings.NewReader(`{"pageId":"overview","revision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`))
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {
