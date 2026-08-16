@@ -23,7 +23,7 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 	}
 	if !principal.DevBypass {
 		credential, hasCredential := m.credential(r)
-		allowed, err := m.capabilityAllowed(r, principal.ID, access.CapabilityResourcePublish, credential, hasCredential)
+		allowed, err := m.capabilityAllowed(r, principal.ID, command.ProjectID, access.CapabilityResourcePublish, credential, hasCredential)
 		if err != nil {
 			return err
 		}
@@ -107,7 +107,7 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 			if credential != nil {
 				credentialValue = *credential
 			}
-			allowed, err = m.capabilityAllowed(r, principal.ID, access.CapabilityResourcePublish, credentialValue, credential != nil)
+			allowed, err = m.capabilityAllowed(r, principal.ID, row.ProjectID.String(), access.CapabilityResourcePublish, credentialValue, credential != nil)
 			if err != nil {
 				return nil, false, err
 			}
@@ -139,17 +139,9 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 	return out, canManage, nil
 }
 
-func (m *Module) capabilityAllowed(r *http.Request, principalID string, required access.Capability, credential access.APICredential, hasCredential bool) (bool, error) {
-	if hasCredential && credential.Authoring != nil {
-		for _, capability := range credential.Authoring.Scope.Capabilities {
-			if capability == required {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
+func (m *Module) capabilityAllowed(r *http.Request, principalID, projectID string, required access.Capability, credential access.APICredential, hasCredential bool) (bool, error) {
 	if m.currentEffectiveCapabilities == nil {
-		return m.access == nil, nil
+		return m.access == nil && !hasCredential, nil
 	}
 	effective, err := m.currentEffectiveCapabilities(r.Context(), principalID)
 	if err != nil {
@@ -165,7 +157,23 @@ func (m *Module) capabilityAllowed(r *http.Request, principalID string, required
 	if !effectiveHas {
 		return false, nil
 	}
-	if !hasCredential || credential.Token.Capabilities == nil {
+	if !hasCredential {
+		return true, nil
+	}
+	if credential.Authoring != nil {
+		if credential.Authoring.Scope.ProjectID.String() != strings.TrimSpace(projectID) {
+			return false, nil
+		}
+		for _, capability := range credential.Authoring.Scope.Capabilities {
+			if capability == required {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	// A nil token capability list is dynamic and inherits the current snapshot;
+	// an explicit empty list denies every capability.
+	if credential.Token.Capabilities == nil {
 		return true, nil
 	}
 	for _, capability := range credential.Token.Capabilities {
