@@ -85,7 +85,7 @@ func qualificationProjectDataCapabilities() []string {
 }
 
 func qualificationReviewerCapabilities() []string {
-	return []string{"RESOURCE_READ", "RESOURCE_PUBLISH"}
+	return []string{"PROJECT_ADMIN"}
 }
 
 type qualificationAuthoringReport struct {
@@ -295,7 +295,7 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	var administratorToken qualificationBrowserToken
 	if err := browserWorker.CallContext(ctx, "issueAdministratorToken", map[string]any{
-		"privileges": []string{"MANAGE_GRANTS"},
+		"capabilities": []string{"PLATFORM_ADMIN", "PROJECT_ADMIN"},
 	}, &administratorToken, nil); err != nil {
 		return report, err
 	}
@@ -365,11 +365,7 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	var reviewerToken qualificationBrowserToken
 	if err := browserWorker.CallContext(ctx, "issueReviewerToken", map[string]any{
-		"privileges": []string{
-			"VIEW_ITEM",
-			"APPROVE_DEPLOYMENT",
-			"ACTIVATE_DEPLOYMENT",
-		},
+		"capabilities": qualificationReviewerCapabilities(),
 	}, &reviewerToken, nil); err != nil {
 		return report, err
 	}
