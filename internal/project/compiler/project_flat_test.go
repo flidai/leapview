@@ -238,6 +238,23 @@ func TestCompileProjectGraphShowcase(t *testing.T) {
 	if len(graph.Resources()) < 10 {
 		t.Fatalf("resource count = %d", len(graph.Resources()))
 	}
+	wantKinds := map[projectgraph.Kind]bool{
+		projectgraph.KindProject: true, projectgraph.KindConnection: true, projectgraph.KindSource: true,
+		projectgraph.KindModel: true, projectgraph.KindSemanticModel: true, projectgraph.KindPipeline: true,
+		projectgraph.KindDashboard: true,
+	}
+	seenKinds := map[projectgraph.Kind]bool{}
+	for _, resource := range graph.Resources() {
+		if !wantKinds[resource.Kind] {
+			t.Fatalf("project graph contains non-project resource kind %q", resource.Kind)
+		}
+		seenKinds[resource.Kind] = true
+	}
+	for kind := range wantKinds {
+		if !seenKinds[kind] {
+			t.Fatalf("project graph omitted project resource kind %q", kind)
+		}
+	}
 }
 
 func TestCompileProjectGraphAcceptsCanonicalReferenceIDs(t *testing.T) {
@@ -292,23 +309,39 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, primaryKey: id}
+spec:
+  source: orders
+  primaryKey: id
+  fields: {id: {type: string}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders_model], measures: {}}
+spec:
+  tables: [orders_model]
+  dimensions:
+    shared_id:
+      type: string
+      bindings: {orders_model: {field: orders_model.id}}
+  measures: {row_count: {fact: orders_model, aggregation: count, empty: zero}}
 `,
 		"semantic-models/operations.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:operations, name: operations}
-spec: {tables: [orders_model], measures: {}}
+spec:
+  tables: [orders_model]
+  dimensions:
+    shared_id:
+      type: string
+      bindings: {orders_model: {field: orders_model.id}}
+  measures: {row_count: {fact: orders_model, aggregation: count, empty: zero}}
 `,
 	})
-	graph, err := CompileProjectGraph(projectPath)
+	project, err := LoadProject(projectPath)
 	if err != nil {
-		t.Fatalf("CompileProjectGraph() error = %v", err)
+		t.Fatalf("LoadProject() error = %v", err)
 	}
+	graph := project.Graph
 	var consumers int
 	for _, edge := range graph.Edges() {
 		if edge.Relation == "uses_model" && edge.To == "model:orders" {
@@ -317,6 +350,12 @@ spec: {tables: [orders_model], measures: {}}
 	}
 	if consumers != 2 {
 		t.Fatalf("semantic consumers of model:orders = %d, want 2", consumers)
+	}
+	for _, id := range []string{"semantic:sales", "semantic:operations"} {
+		model := project.Manifest.SemanticModels[id]
+		if model == nil || model.Dimensions["shared_id"].Name != "shared_id" {
+			t.Fatalf("semantic model %s lost shared dimension: %#v", id, model)
+		}
 	}
 }
 

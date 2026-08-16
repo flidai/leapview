@@ -528,6 +528,18 @@ spec:
 	}
 }
 
+func TestProjectContractRejectsLegacyWorkspaceJSON(t *testing.T) {
+	valid := `{"apiVersion":"leapview.dev/v1","kind":"Project","metadata":{"id":"project:showcase","name":"showcase"},"spec":{"connections":{"include":["connections/*.yaml"]},"sources":{"include":["sources/*.yaml"]},"models":{"include":["models/*.yaml"]},"semanticModels":{"include":["semantic-models/*.yaml"]},"pipelines":{"include":["pipelines/*.yaml"]},"dashboards":{"include":["dashboards/*.yaml"]},"access":{"include":["access/*.yaml"]}}}`
+	for _, legacy := range []string{
+		strings.Replace(valid, `"access":{"include":["access/*.yaml"]}`, `"workspaces":{"include":["workspaces/*/workspace.yaml"]},"access":{"include":["access/*.yaml"]}`, 1),
+		strings.Replace(valid, `"metadata":{"id":"project:showcase","name":"showcase"}`, `"metadata":{"id":"project:showcase","name":"showcase","workspace":"sales"}`, 1),
+	} {
+		if err := ValidateBytes(KindProject, "project.json", []byte(legacy)); err == nil {
+			t.Fatalf("ValidateBytes() accepted legacy workspace JSON: %s", legacy)
+		}
+	}
+}
+
 func TestMetadataRequiresOpaqueIDAndSymbolicName(t *testing.T) {
 	base := `
 apiVersion: leapview.dev/v1
