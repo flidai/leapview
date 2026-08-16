@@ -57,7 +57,7 @@ func (repository *Repository) Reconcile(ctx context.Context, input refreshschedu
 			return err
 		}
 		for _, schedule := range pipeline.Schedules {
-			key := scheduleKey(pipeline.ID, schedule.Expression, schedule.Timezone)
+			key := scheduleKey(pipeline.ID.String(), schedule.Expression, schedule.Timezone)
 			next := schedule.Next(input.Now)
 			if prior, ok := existing[key]; ok && prior.artifactDigest == input.ArtifactDigest {
 				next = prior.nextRunAt

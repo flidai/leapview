@@ -6,17 +6,17 @@ import (
 	"context"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 type WorkspaceRequest struct {
 	Models                           map[string]*semanticmodel.Model
-	ServingStateID                   string
-	ConnectionEvidenceServingStateID string
-	WorkspaceID                      string
+	Identity                         projectgraph.ServingIdentity
+	ConnectionEvidenceServingStateID servingstate.ID
 	Environment                      servingstate.Environment
 	TargetType                       string
-	TargetID                         string
+	TargetID                         projectgraph.ResourceID
 	SemanticDigest                   string
 	ArtifactDigest                   string
 	Tables                           []string

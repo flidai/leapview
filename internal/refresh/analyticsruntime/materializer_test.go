@@ -7,6 +7,7 @@ import (
 
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/refresh/artifact"
 	refresh "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -21,7 +22,7 @@ func TestWorkspaceRefreshMaterializerResolvesCandidateManagedDataAndReleasesLife
 	materializer := WorkspaceRefreshMaterializer{ManagedData: resolver}
 	_, _ = materializer.Materialize(t.Context(), refresh.MaterializeInput{
 		Definition: &artifact.Definition{Models: map[string]*semanticmodel.Model{}},
-		Candidate:  servingstate.State{ID: "candidate-sales", WorkspaceID: "sales", Environment: "dev"}, Environment: "dev",
+		Candidate:  servingstate.State{ID: "candidate-sales", ProjectID: projectgraph.ResourceID("sales"), Environment: "dev"}, Environment: "dev",
 	})
 	if resolver.servingStateID != "candidate-sales" {
 		t.Fatalf("resolved serving state = %q", resolver.servingStateID)
@@ -37,18 +38,21 @@ func TestWorkspaceRefreshMaterializerUsesActiveReleaseConnectionEvidence(t *test
 
 	_, err := materializer.Materialize(t.Context(), refresh.MaterializeInput{
 		Definition:  &artifact.Definition{Models: map[string]*semanticmodel.Model{}},
-		Active:      servingstate.State{ID: "active-sales", WorkspaceID: "sales", Environment: "prod"},
-		Candidate:   servingstate.State{ID: "refresh-sales", WorkspaceID: "sales", Environment: "prod"},
+		Active:      servingstate.State{ID: "active-sales", ProjectID: projectgraph.ResourceID("sales"), Environment: "prod"},
+		Candidate:   servingstate.State{ID: "refresh-sales", ProjectID: projectgraph.ResourceID("sales"), Environment: "prod"},
 		Environment: "prod",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if executor.request.ServingStateID != "refresh-sales" {
-		t.Fatalf("materialization serving state = %q", executor.request.ServingStateID)
+	if executor.request.Identity.GenerationID != "refresh-sales" {
+		t.Fatalf("materialization serving generation = %q", executor.request.Identity.GenerationID)
 	}
 	if executor.request.ConnectionEvidenceServingStateID != "active-sales" {
 		t.Fatalf("connection evidence serving state = %q", executor.request.ConnectionEvidenceServingStateID)
+	}
+	if executor.request.Identity.ProjectID != "sales" || executor.request.Identity.GenerationID != "refresh-sales" {
+		t.Fatalf("materialization identity = %+v", executor.request.Identity)
 	}
 }
 

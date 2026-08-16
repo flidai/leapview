@@ -22,9 +22,9 @@ func (e duckDBWorkspaceMaterializer) MaterializeWorkspace(ctx context.Context, r
 		Models: request.Models, Database: e.environment,
 		CredentialResolver: e.credentials,
 		ConnectionResolver: e.connectionResolver(request),
-		ServingStateID:     request.ServingStateID, WorkspaceID: request.WorkspaceID,
+		ServingStateID:     request.Identity.GenerationID, WorkspaceID: request.Identity.ProjectID.String(),
 		Environment: string(servingstate.NormalizeEnvironment(request.Environment)),
-		TargetType:  request.TargetType, TargetID: request.TargetID,
+		TargetType:  request.TargetType, TargetID: request.TargetID.String(),
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
 		SkipInitialRefresh: true,
 	})
@@ -47,7 +47,7 @@ func (e duckDBWorkspaceMaterializer) connectionResolver(request analyticsmateria
 		return nil
 	}
 	return &activeRuntimeConnectionResolver{
-		module: e.module, servingStateID: request.ConnectionEvidenceServingStateID,
-		workspaceID: request.WorkspaceID, environment: string(servingstate.NormalizeEnvironment(request.Environment)),
+		module: e.module, servingStateID: string(request.ConnectionEvidenceServingStateID),
+		workspaceID: request.Identity.ProjectID.String(), environment: string(servingstate.NormalizeEnvironment(request.Environment)),
 	}
 }

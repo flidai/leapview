@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	"github.com/flidai/leapview/internal/refresh/artifact"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
@@ -202,7 +203,8 @@ func (f artifactLoaderFunc) Load(ctx context.Context, artifact servingstate.Arti
 
 type versionPublisher struct{ modelID string }
 
-func (*versionPublisher) PublishRefreshTarget(context.Context, string, string, string, string) {}
+func (*versionPublisher) PublishRefreshTarget(context.Context, projectgraph.ServingIdentity, string, projectgraph.ResourceID) {
+}
 func (p *versionPublisher) PublishSemanticModelVersion(_ context.Context, _, _, modelID string) {
 	p.modelID = modelID
 }

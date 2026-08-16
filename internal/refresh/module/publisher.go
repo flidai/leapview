@@ -2,6 +2,8 @@ package module
 
 import "context"
 
+import projectgraph "github.com/flidai/leapview/internal/project/graph"
+
 // Publisher adapts refresh-owned workspace presentation and an optional
 // semantic-model notification port to the durable refresh workflow.
 type Publisher struct {
@@ -9,9 +11,9 @@ type Publisher struct {
 	SemanticModelVersion func(context.Context, string, string, string)
 }
 
-func (p Publisher) PublishRefreshTarget(ctx context.Context, workspaceID, environment, targetType, targetID string) {
+func (p Publisher) PublishRefreshTarget(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID) {
 	if p.Workspace != nil {
-		p.Workspace().PublishWorkspaceAssetRefreshPatchesForTarget(ctx, workspaceID, environment, targetType, targetID)
+		p.Workspace().PublishWorkspaceAssetRefreshPatchesForTarget(ctx, identity.ProjectID.String(), identity.Environment, targetType, targetID.String())
 	}
 }
 

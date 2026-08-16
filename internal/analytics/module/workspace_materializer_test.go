@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +15,7 @@ func TestWorkspaceMaterializerResolvesConnectionsAgainstActiveReleaseState(t *te
 
 	resolver := materializer.connectionResolver(analyticsmaterialization.WorkspaceRequest{
 		ConnectionEvidenceServingStateID: "state_active",
-		WorkspaceID:                      "sales",
+		Identity:                         projectgraph.ServingIdentity{ProjectID: "sales", Environment: "prod", GenerationID: "candidate"},
 		Environment:                      servingstate.Environment("prod"),
 	})
 

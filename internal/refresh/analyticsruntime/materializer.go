@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refresh "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
@@ -35,11 +36,14 @@ func (m WorkspaceRefreshMaterializer) Materialize(ctx context.Context, input ref
 	if m.Executor == nil {
 		return 0, fmt.Errorf("analytical workspace materializer is unavailable")
 	}
+	identity, identityErr := projectgraph.NewServingIdentity(input.Candidate.ProjectID, string(input.Candidate.Environment), string(input.Candidate.ID))
+	if identityErr != nil {
+		return 0, fmt.Errorf("candidate serving identity: %w", identityErr)
+	}
 	return m.Executor.MaterializeWorkspace(ctx, analyticsmaterialization.WorkspaceRequest{
-		Models: input.Definition.Models, ServingStateID: string(input.Candidate.ID),
-		ConnectionEvidenceServingStateID: string(input.Active.ID),
-		WorkspaceID:                      string(input.Candidate.WorkspaceID), Environment: input.Environment,
-		TargetType: input.Plan.TargetType, TargetID: input.Plan.TargetID,
+		Models: input.Definition.Models, Identity: identity,
+		ConnectionEvidenceServingStateID: input.Active.ID,
+		Environment:                      input.Environment, TargetType: input.Plan.TargetType, TargetID: input.Plan.TargetID,
 		SemanticDigest: input.Candidate.Digest, ArtifactDigest: input.Artifact.Digest,
 		Tables: input.Plan.Tables,
 	})

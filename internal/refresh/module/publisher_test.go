@@ -3,6 +3,8 @@ package module
 import (
 	"context"
 	"testing"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestPublisherResolvesWorkspaceSupportAtPublicationTime(t *testing.T) {
@@ -18,7 +20,7 @@ func TestPublisherResolvesWorkspaceSupportAtPublicationTime(t *testing.T) {
 		},
 	}
 
-	publisher.PublishRefreshTarget(context.Background(), "sales", "production", "model", "orders")
+	publisher.PublishRefreshTarget(context.Background(), projectgraph.ServingIdentity{ProjectID: "sales", Environment: "production", GenerationID: "generation"}, "model", "orders")
 	publisher.PublishSemanticModelVersion(context.Background(), "sales", "production", "orders")
 
 	if resolutions != 1 {
