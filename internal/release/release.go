@@ -57,7 +57,11 @@ type Release struct {
 }
 
 func (r Release) Identity() (projectgraph.ServingIdentity, error) {
-	return projectgraph.NewServingIdentity(projectgraph.ResourceID(r.ProjectID), r.Environment, r.GenerationID)
+	identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(r.ProjectID), Environment: r.Environment, GenerationID: r.GenerationID}
+	if err := identity.Validate(); err != nil {
+		return projectgraph.ServingIdentity{}, err
+	}
+	return identity, nil
 }
 
 type Artifact struct {
@@ -72,8 +76,8 @@ type Artifact struct {
 }
 
 func (a Artifact) Identity() (projectgraph.ServingIdentity, error) {
-	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(a.ProjectID), a.Environment, a.GenerationID)
-	if err != nil {
+	identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(a.ProjectID), Environment: a.Environment, GenerationID: a.GenerationID}
+	if err := identity.Validate(); err != nil {
 		return projectgraph.ServingIdentity{}, err
 	}
 	return identity, nil
@@ -97,5 +101,9 @@ func (input CreateInput) Identity() (projectgraph.ServingIdentity, error) {
 	if input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" {
 		return projectgraph.ServingIdentity{}, fmt.Errorf("project, environment, and generation are required")
 	}
-	return projectgraph.NewServingIdentity(projectgraph.ResourceID(input.ProjectID), input.Environment, input.GenerationID)
+	identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.GenerationID}
+	if err := identity.Validate(); err != nil {
+		return projectgraph.ServingIdentity{}, err
+	}
+	return identity, nil
 }

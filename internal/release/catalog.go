@@ -10,10 +10,6 @@ type ProjectRecord struct {
 	ID, CreatedAt, UpdatedAt, LatestReleaseID, ActiveDeploymentID string
 }
 
-type WorkspaceRecord struct {
-	ID, Title, Description, ActiveServingStateID string
-}
-
 type ConnectionRecord struct {
 	ID, Title, Description, ActiveRevisionID string
 }
@@ -21,7 +17,6 @@ type ConnectionRecord struct {
 type CatalogRepository interface {
 	ListProjects(context.Context) ([]ProjectRecord, error)
 	GetProject(context.Context, string) (ProjectRecord, error)
-	ListProjectWorkspaces(context.Context, string, string) ([]WorkspaceRecord, error)
 	ListConnections(context.Context, string, string) ([]ConnectionRecord, error)
 	GetConnection(context.Context, string, string, string) (ConnectionRecord, error)
 }

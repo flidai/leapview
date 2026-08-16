@@ -97,10 +97,7 @@ func ValidateCreate(input CreateInput) error {
 		return fmt.Errorf("artifact digest must be canonical sha256")
 	}
 	if input.PriorGenerationID != "" {
-		prior, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.PriorGenerationID)
-		if err != nil {
-			return err
-		}
+		prior := graph.ServingIdentity{ProjectID: graph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.PriorGenerationID}
 		if err := prior.Validate(); err != nil {
 			return err
 		}
@@ -124,10 +121,7 @@ func ValidateActivation(input ActivationInput) error {
 		return fmt.Errorf("artifact digest must be canonical sha256")
 	}
 	if input.PriorGenerationID != "" {
-		prior, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.PriorGenerationID)
-		if err != nil {
-			return err
-		}
+		prior := graph.ServingIdentity{ProjectID: graph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.PriorGenerationID}
 		if err := prior.Validate(); err != nil {
 			return err
 		}
@@ -136,30 +130,21 @@ func ValidateActivation(input ActivationInput) error {
 }
 
 func (d Deployment) Identity() (graph.ServingIdentity, error) {
-	identity, err := graph.NewServingIdentity(graph.ResourceID(d.ProjectID), d.Environment, d.GenerationID)
-	if err != nil {
-		return graph.ServingIdentity{}, err
-	}
+	identity := graph.ServingIdentity{ProjectID: graph.ResourceID(d.ProjectID), Environment: d.Environment, GenerationID: d.GenerationID}
 	if err := identity.Validate(); err != nil {
 		return graph.ServingIdentity{}, err
 	}
 	return identity, nil
 }
 func (input CreateInput) Identity() (graph.ServingIdentity, error) {
-	identity, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.GenerationID)
-	if err != nil {
-		return graph.ServingIdentity{}, err
-	}
+	identity := graph.ServingIdentity{ProjectID: graph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.GenerationID}
 	if err := identity.Validate(); err != nil {
 		return graph.ServingIdentity{}, err
 	}
 	return identity, nil
 }
 func (input ActivationInput) Identity() (graph.ServingIdentity, error) {
-	identity, err := graph.NewServingIdentity(graph.ResourceID(input.ProjectID), input.Environment, input.GenerationID)
-	if err != nil {
-		return graph.ServingIdentity{}, err
-	}
+	identity := graph.ServingIdentity{ProjectID: graph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.GenerationID}
 	if err := identity.Validate(); err != nil {
 		return graph.ServingIdentity{}, err
 	}

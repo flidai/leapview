@@ -12,11 +12,13 @@ func TestValidateCreateRequiresExactGenerationIdentity(t *testing.T) {
 		t.Fatalf("valid create rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*CreateInput){
-		"missing project":     func(v *CreateInput) { v.ProjectID = "" },
-		"missing environment": func(v *CreateInput) { v.Environment = "" },
-		"missing generation":  func(v *CreateInput) { v.GenerationID = "" },
-		"invalid artifact":    func(v *CreateInput) { v.ArtifactDigest = "sha256:bad" },
-		"invalid request":     func(v *CreateInput) { v.RequestDigest = "request" },
+		"missing project":          func(v *CreateInput) { v.ProjectID = "" },
+		"missing environment":      func(v *CreateInput) { v.Environment = "" },
+		"missing generation":       func(v *CreateInput) { v.GenerationID = "" },
+		"invalid artifact":         func(v *CreateInput) { v.ArtifactDigest = "sha256:bad" },
+		"invalid request":          func(v *CreateInput) { v.RequestDigest = "request" },
+		"noncanonical environment": func(v *CreateInput) { v.Environment = " Prod" },
+		"noncanonical generation":  func(v *CreateInput) { v.GenerationID = "Generation_1" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			value := base

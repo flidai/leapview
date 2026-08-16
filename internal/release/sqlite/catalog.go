@@ -3,29 +3,39 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	"github.com/flidai/leapview/internal/release"
-	platformdb "github.com/flidai/leapview/internal/release/internal/db"
 )
 
 func (r *Repository) ListProjects(ctx context.Context) ([]release.ProjectRecord, error) {
-	rows, err := r.q.ListAPIProjects(ctx)
+	rows, err := r.db.QueryContext(ctx, `SELECT project_id, CAST(MIN(created_at) AS TEXT), CAST(MAX(updated_at) AS TEXT) FROM (
+SELECT project_id, created_at, COALESCE(finalized_at, created_at) AS updated_at FROM api_releases
+UNION ALL SELECT project_id, created_at, updated_at FROM managed_data_collections
+) GROUP BY project_id ORDER BY project_id`)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]release.ProjectRecord, 0, len(rows))
-	for _, row := range rows {
-		item := release.ProjectRecord{ID: row.ProjectID, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	defer rows.Close()
+	var out []release.ProjectRecord
+	for rows.Next() {
+		var item release.ProjectRecord
+		if err := rows.Scan(&item.ID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
 		r.populateProjectPointers(ctx, &item)
-		result = append(result, item)
+		out = append(out, item)
 	}
-	return result, nil
+	return out, rows.Err()
 }
 
 func (r *Repository) GetProject(ctx context.Context, projectID string) (release.ProjectRecord, error) {
-	item := release.ProjectRecord{ID: projectID}
-	row, err := r.q.GetAPIProject(ctx, projectID)
-	item.CreatedAt, item.UpdatedAt = row.CreatedAt, row.UpdatedAt
+	var item release.ProjectRecord
+	item.ID = strings.TrimSpace(projectID)
+	err := r.db.QueryRowContext(ctx, `SELECT CAST(COALESCE(MIN(created_at), '') AS TEXT), CAST(COALESCE(MAX(updated_at), '') AS TEXT) FROM (
+SELECT created_at, COALESCE(finalized_at, created_at) AS updated_at FROM api_releases WHERE project_id = ?
+UNION ALL SELECT created_at, updated_at FROM managed_data_collections WHERE project_id = ?
+)`, item.ID, item.ID).Scan(&item.CreatedAt, &item.UpdatedAt)
 	if err != nil || item.CreatedAt == "" {
 		return release.ProjectRecord{}, sql.ErrNoRows
 	}
@@ -34,37 +44,32 @@ func (r *Repository) GetProject(ctx context.Context, projectID string) (release.
 }
 
 func (r *Repository) populateProjectPointers(ctx context.Context, item *release.ProjectRecord) {
-	item.LatestReleaseID, _ = r.q.GetLatestAPIProjectReleaseID(ctx, item.ID)
-	item.ActiveDeploymentID, _ = r.q.GetActiveAPIProjectDeploymentID(ctx, item.ID)
-}
-
-func (r *Repository) ListProjectWorkspaces(ctx context.Context, projectID, environment string) ([]release.WorkspaceRecord, error) {
-	rows, err := r.q.ListAPIProjectWorkspaces(ctx, platformdb.ListAPIProjectWorkspacesParams{Environment: environment, ProjectID: projectID})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]release.WorkspaceRecord, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, release.WorkspaceRecord{ID: row.WorkspaceID, Title: row.Title, Description: row.Description, ActiveServingStateID: row.ActiveServingStateID})
-	}
-	return result, nil
+	_ = r.db.QueryRowContext(ctx, `SELECT id FROM api_releases WHERE project_id = ? ORDER BY created_at DESC,id DESC LIMIT 1`, item.ID).Scan(&item.LatestReleaseID)
+	_ = r.db.QueryRowContext(ctx, `SELECT id FROM project_deployments WHERE project_id = ? AND status = 'active' ORDER BY activated_at DESC LIMIT 1`, item.ID).Scan(&item.ActiveDeploymentID)
 }
 
 func (r *Repository) ListConnections(ctx context.Context, projectID, environment string) ([]release.ConnectionRecord, error) {
-	rows, err := r.q.ListAPIProjectConnections(ctx, platformdb.ListAPIProjectConnectionsParams{Environment: environment, ProjectID: projectID})
+	rows, err := r.db.QueryContext(ctx, `SELECT c.connection_name,c.name,c.description,COALESCE(rev.digest,'')
+FROM managed_data_collections c LEFT JOIN managed_data_environment_pointers ptr ON ptr.collection_id=c.id AND ptr.environment=?
+LEFT JOIN managed_data_revisions rev ON rev.id=ptr.revision_id WHERE c.project_id=? AND c.status='active' ORDER BY c.connection_name`, environment, projectID)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]release.ConnectionRecord, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, release.ConnectionRecord{ID: row.ConnectionName, Title: row.Name, Description: row.Description, ActiveRevisionID: row.ActiveRevisionID})
+	defer rows.Close()
+	var out []release.ConnectionRecord
+	for rows.Next() {
+		var item release.ConnectionRecord
+		if err := rows.Scan(&item.ID, &item.Title, &item.Description, &item.ActiveRevisionID); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
 	}
-	return result, nil
+	return out, rows.Err()
 }
 
 func (r *Repository) GetConnection(ctx context.Context, projectID, connectionID, environment string) (release.ConnectionRecord, error) {
-	item := release.ConnectionRecord{ID: connectionID}
-	row, err := r.q.GetAPIProjectConnection(ctx, platformdb.GetAPIProjectConnectionParams{Environment: environment, ProjectID: projectID, ConnectionName: connectionID})
-	item.Title, item.Description, item.ActiveRevisionID = row.Name, row.Description, row.ActiveRevisionID
+	var item release.ConnectionRecord
+	item.ID = connectionID
+	err := r.db.QueryRowContext(ctx, `SELECT c.name,c.description,COALESCE(rev.digest,'') FROM managed_data_collections c LEFT JOIN managed_data_environment_pointers ptr ON ptr.collection_id=c.id AND ptr.environment=? LEFT JOIN managed_data_revisions rev ON rev.id=ptr.revision_id WHERE c.project_id=? AND c.connection_name=? AND c.status='active'`, environment, projectID, connectionID).Scan(&item.Title, &item.Description, &item.ActiveRevisionID)
 	return item, err
 }
