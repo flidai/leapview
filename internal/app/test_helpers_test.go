@@ -77,6 +77,8 @@ type assemblyConfig struct {
 	EnableRefreshDispatcher bool
 	RuntimeHost             *runtimehostmodule.Module
 	ProjectID               projectgraph.ResourceID
+	ProjectIDResolver       func(context.Context) (projectgraph.ResourceID, error)
+	ServingSnapshotResolver func(context.Context) (string, error)
 	AnalyticsModule         *analyticsmodule.Module
 	Authoring               *authoringapplication.Application
 	DashboardAssets         dashboardmodule.Assets
@@ -177,6 +179,16 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			return nil, err
 		}
 	}
+	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
+		catalog, err := projectcatalog.NewService(
+			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
+			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
+		)
+		if err != nil {
+			return nil, err
+		}
+		options.ProjectCatalog = catalog
+	}
 	routes, runtime, platform, policy, err := buildApplicationSurfaces(ctx, metrics,
 		dataAssemblyInputs{
 			Database: options.Database, PlatformHealth: options.PlatformHealth,
@@ -200,8 +212,10 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			QueryAudit: options.QueryAudit,
 		},
 		runtimeAssemblyInputs{
-			RuntimeHost: options.RuntimeHost, ProjectID: options.ProjectID, InstanceID: instanceID,
-			DuckDBDir: options.DuckDBDir, DuckLakeCatalogPath: options.DuckLakeCatalogPath,
+			RuntimeHost: options.RuntimeHost, ProjectID: options.ProjectID,
+			ProjectIDResolver: options.ProjectIDResolver, ServingSnapshotResolver: options.ServingSnapshotResolver,
+			InstanceID: instanceID,
+			DuckDBDir:  options.DuckDBDir, DuckLakeCatalogPath: options.DuckLakeCatalogPath,
 			DuckLakeDataPath:   options.DuckLakeDataPath,
 			DefaultEnvironment: options.DefaultEnvironment, SCIMBearerToken: options.SCIMBearerToken,
 			MetricsBearerToken: options.MetricsBearerToken, AllowedHosts: options.AllowedHosts, Assets: options.Assets,

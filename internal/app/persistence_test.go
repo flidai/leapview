@@ -55,6 +55,39 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		options.ProjectID = testProjectID
 		options.DefaultEnvironment = string(environment)
 	}
+	if options.RuntimeHost != nil {
+		host := options.RuntimeHost
+		activeIdentity := func(ctx context.Context) (projectgraph.ServingIdentity, error) {
+			lease, err := host.Acquire(ctx)
+			if err != nil {
+				return projectgraph.ServingIdentity{}, err
+			}
+			defer lease.Release()
+			identity := lease.Identity()
+			if err := identity.Validate(); err != nil {
+				return projectgraph.ServingIdentity{}, err
+			}
+			return identity, nil
+		}
+		if options.ProjectIDResolver == nil {
+			options.ProjectIDResolver = func(ctx context.Context) (projectgraph.ResourceID, error) {
+				identity, err := activeIdentity(ctx)
+				if err != nil {
+					return "", err
+				}
+				return identity.ProjectID, nil
+			}
+		}
+		if options.ServingSnapshotResolver == nil {
+			options.ServingSnapshotResolver = func(ctx context.Context) (string, error) {
+				identity, err := activeIdentity(ctx)
+				if err != nil {
+					return "", err
+				}
+				return identity.GenerationID, nil
+			}
+		}
+	}
 	if options.ProjectGraph == nil {
 		if graph, ok := options.ServingStateRepo.(interface {
 			ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (servingstate.AssetGraph, bool, error)
