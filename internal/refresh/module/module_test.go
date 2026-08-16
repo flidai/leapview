@@ -13,6 +13,7 @@ import (
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
@@ -35,6 +36,12 @@ type generatedRefreshAPI interface {
 }
 
 var testRefreshWorkflow = jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return nil })
+
+func testAuthorization() AuthorizationConfig {
+	return AuthorizationConfig{AuthorizeObject: func(context.Context, string, access.Capability, access.ResourceRef) (bool, error) {
+		return true, nil
+	}}
+}
 
 var _ generatedRefreshAPI = (*Module)(nil)
 
@@ -62,7 +69,7 @@ func TestRefreshCreateVerifiesPersistedLifecycleWithoutAppendingDuplicate(t *tes
 		t.Fatal("generated refresh execution contract is unavailable")
 	}
 	store := &refreshEventStore{events: []jobs.Event{{EventType: contract.Execution.InitialEvent}}}
-	module, err := Build(t.Context(), Config{Events: store})
+	module, err := Build(t.Context(), Config{Events: store, Authorization: testAuthorization()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +89,9 @@ func TestRefreshCreateVerifiesPersistedLifecycleWithoutAppendingDuplicate(t *tes
 func TestRefreshCreatePersistedAuditVerificationFailureIsBestEffort(t *testing.T) {
 	var logs bytes.Buffer
 	module, err := Build(t.Context(), Config{
-		Events: &refreshEventStore{err: errors.New("event store unavailable")},
-		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+		Events:        &refreshEventStore{err: errors.New("event store unavailable")},
+		Logger:        slog.New(slog.NewTextHandler(&logs, nil)),
+		Authorization: testAuthorization(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +108,7 @@ func TestRefreshCreatePersistedAuditVerificationFailureIsBestEffort(t *testing.T
 }
 
 func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
-	module, err := Build(t.Context(), Config{HTTP: HTTPConfig{ServingIdentity: func(*http.Request) (projectgraph.ServingIdentity, error) {
+	module, err := Build(t.Context(), Config{Authorization: testAuthorization(), HTTP: HTTPConfig{ServingIdentity: func(*http.Request) (projectgraph.ServingIdentity, error) {
 		return projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation"}, nil
 	}}})
 	if err != nil {
@@ -108,6 +116,12 @@ func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
 	}
 	if module.HTTP().ServingIdentity == nil {
 		t.Fatal("serving identity resolver missing")
+	}
+}
+
+func TestBuildRequiresCanonicalAuthorizer(t *testing.T) {
+	if _, err := Build(t.Context(), Config{}); err == nil {
+		t.Fatal("Build accepted a missing canonical authorizer")
 	}
 }
 
@@ -130,6 +144,7 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 	publisher := &versionPublisher{}
 	module, err := Build(t.Context(), Config{
 		Database: store.SQLDB(), Workflow: testRefreshWorkflow,
+		Authorization: testAuthorization(),
 		Service: refreshrun.Service{
 			ServingStates: states,
 			Artifacts: artifactLoaderFunc(func(context.Context, servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
@@ -169,12 +184,39 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 	}
 }
 
+func TestReconcileRejectsMultipleActiveServingScopes(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	defer store.Close()
+	module, err := Build(t.Context(), Config{
+		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		Service: refreshrun.Service{
+			ServingStates: reconciliationStates{scopes: []servingstate.ActiveScope{{ProjectID: "sales", Environment: "prod"}, {ProjectID: "sales", Environment: "dev"}}},
+			Artifacts: artifactLoaderFunc(func(context.Context, servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
+				return refreshrun.LoadedArtifact{}, nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("build module: %v", err)
+	}
+	if err := module.Reconcile(t.Context()); err == nil {
+		t.Fatal("Reconcile accepted multiple active serving scopes")
+	}
+}
+
 type reconciliationStates struct {
 	state    servingstate.State
 	artifact servingstate.Artifact
+	scopes   []servingstate.ActiveScope
 }
 
 func (s reconciliationStates) ListActiveScopes(context.Context) ([]servingstate.ActiveScope, error) {
+	if s.scopes != nil {
+		return s.scopes, nil
+	}
 	return []servingstate.ActiveScope{{ProjectID: s.state.ProjectID, Environment: s.state.Environment}}, nil
 }
 func (s reconciliationStates) ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
@@ -226,7 +268,7 @@ func TestDispatchCoalescesConcurrentRequests(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int32
-	module, err := Build(t.Context(), Config{Dispatcher: dispatcherFunc(func(context.Context) {
+	module, err := Build(t.Context(), Config{Authorization: testAuthorization(), Dispatcher: dispatcherFunc(func(context.Context) {
 		calls.Add(1)
 		close(entered)
 		<-release
@@ -253,6 +295,7 @@ func TestStartOwnsSchedulerLifecycle(t *testing.T) {
 	reconciled := make(chan struct{}, 1)
 	dispatched := make(chan struct{}, 4)
 	module, err := Build(t.Context(), Config{
+		Authorization: testAuthorization(),
 		ReconcileSchedules: func(context.Context) error {
 			reconciled <- struct{}{}
 			return nil
@@ -292,6 +335,7 @@ func TestStartOwnsSchedulerLifecycle(t *testing.T) {
 func TestStartRedispatchesAfterLeaseWindow(t *testing.T) {
 	dispatched := make(chan struct{}, 2)
 	module, err := Build(t.Context(), Config{
+		Authorization: testAuthorization(),
 		Dispatcher: dispatcherFunc(func(context.Context) {
 			dispatched <- struct{}{}
 		}),
@@ -318,7 +362,7 @@ func TestStartRedispatchesAfterLeaseWindow(t *testing.T) {
 func TestStopHonorsCancellationWhileWorkerDrains(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	module, err := Build(t.Context(), Config{Dispatcher: dispatcherFunc(func(context.Context) {
+	module, err := Build(t.Context(), Config{Authorization: testAuthorization(), Dispatcher: dispatcherFunc(func(context.Context) {
 		close(entered)
 		<-release
 	})})

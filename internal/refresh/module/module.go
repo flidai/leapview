@@ -78,10 +78,9 @@ type AuthorizationPrincipal struct {
 }
 
 type AuthorizationConfig struct {
-	CurrentPrincipal     func(*http.Request) (AuthorizationPrincipal, bool)
-	CurrentCredential    func(*http.Request) (access.APICredential, bool)
-	ResolvePipelineModel func(context.Context, projectgraph.ServingIdentity, string) (string, bool, error)
-	AuthorizeObject      func(context.Context, string, access.Capability, access.ResourceRef) (bool, error)
+	CurrentPrincipal  func(*http.Request) (AuthorizationPrincipal, bool)
+	CurrentCredential func(*http.Request) (access.APICredential, bool)
+	AuthorizeObject   func(context.Context, string, access.Capability, access.ResourceRef) (bool, error)
 }
 
 type Module struct {
@@ -110,6 +109,9 @@ type Module struct {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if config.Authorization.AuthorizeObject == nil {
+		return nil, errors.New("refresh object authorizer is required")
+	}
 	refreshExecution, err := loadRefreshExecutionContract()
 	if err != nil {
 		return nil, err
@@ -256,6 +258,12 @@ func (m *Module) Reconcile(ctx context.Context) error {
 	scopes, err := states.ListActiveScopes(ctx)
 	if err != nil {
 		return err
+	}
+	if len(scopes) == 0 {
+		return nil
+	}
+	if len(scopes) > 1 {
+		return fmt.Errorf("refresh schedule reconciliation requires exactly one active serving scope, found %d", len(scopes))
 	}
 	clock := m.clock()
 	var reconcileErrors []error

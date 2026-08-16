@@ -8,6 +8,9 @@ import (
 )
 
 func authorizePipeline(r *http.Request, identity projectgraph.ServingIdentity, pipelineID string, capability access.Capability, config AuthorizationConfig) (bool, error) {
+	if err := identity.Validate(); err != nil {
+		return false, err
+	}
 	if config.CurrentPrincipal == nil {
 		return false, nil
 	}
@@ -18,17 +21,14 @@ func authorizePipeline(r *http.Request, identity projectgraph.ServingIdentity, p
 	if principal.DevBypass {
 		return true, nil
 	}
-	if config.ResolvePipelineModel == nil {
+	if config.AuthorizeObject == nil {
 		return false, nil
 	}
-	modelID, found, err := config.ResolvePipelineModel(r.Context(), identity, pipelineID)
-	if err != nil || !found {
+	pipelineResourceID, err := projectgraph.NewResourceID(pipelineID)
+	if err != nil {
 		return false, err
 	}
-	if config.AuthorizeObject == nil {
-		return true, nil
-	}
-	resource, err := access.NewResourceRef(projectgraph.ResourceID(modelID), projectgraph.KindModel)
+	resource, err := access.NewResourceRef(pipelineResourceID, projectgraph.KindPipeline)
 	if err != nil {
 		return false, err
 	}

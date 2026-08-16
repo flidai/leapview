@@ -22,17 +22,11 @@ func TestAuthorizePipelineAllowsDevelopmentBypassWithoutResolution(t *testing.T)
 	}
 }
 
-func TestAuthorizePipelineUsesCanonicalSemanticModelReference(t *testing.T) {
+func TestAuthorizePipelineUsesCanonicalPipelineReference(t *testing.T) {
 	var resource access.ResourceRef
 	allowed, err := authorizePipeline(newAuthorizationRequest(t), authorizationIdentity, "daily", access.CapabilityResourceRead, AuthorizationConfig{
 		CurrentPrincipal: func(*http.Request) (AuthorizationPrincipal, bool) {
 			return AuthorizationPrincipal{ID: "reader"}, true
-		},
-		ResolvePipelineModel: func(_ context.Context, identity projectgraph.ServingIdentity, pipelineID string) (string, bool, error) {
-			if identity != authorizationIdentity || pipelineID != "daily" {
-				t.Fatalf("resolution input = %+v %q", identity, pipelineID)
-			}
-			return "orders", true, nil
 		},
 		AuthorizeObject: func(_ context.Context, principalID string, capability access.Capability, candidate access.ResourceRef) (bool, error) {
 			if principalID != "reader" || capability != access.CapabilityResourceRead {
@@ -45,8 +39,39 @@ func TestAuthorizePipelineUsesCanonicalSemanticModelReference(t *testing.T) {
 	if err != nil || !allowed {
 		t.Fatalf("allowed = %v, err = %v", allowed, err)
 	}
-	if resource.ID() != "orders" || resource.Kind() != projectgraph.KindModel {
+	if resource.ID() != "daily" || resource.Kind() != projectgraph.KindPipeline {
 		t.Fatalf("resource = %#v", resource)
+	}
+}
+
+func TestAuthorizePipelineDoesNotSubstituteModelPermission(t *testing.T) {
+	allowed, err := authorizePipeline(newAuthorizationRequest(t), authorizationIdentity, "daily", access.CapabilityResourceRead, AuthorizationConfig{
+		CurrentPrincipal: func(*http.Request) (AuthorizationPrincipal, bool) {
+			return AuthorizationPrincipal{ID: "reader"}, true
+		},
+		AuthorizeObject: func(_ context.Context, _ string, _ access.Capability, candidate access.ResourceRef) (bool, error) {
+			return candidate.Kind() == projectgraph.KindModel, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Fatal("model permission substituted for pipeline permission")
+	}
+}
+
+func TestAuthorizePipelineFailsClosedWithoutAuthorizer(t *testing.T) {
+	allowed, err := authorizePipeline(newAuthorizationRequest(t), authorizationIdentity, "daily", access.CapabilityResourceRead, AuthorizationConfig{
+		CurrentPrincipal: func(*http.Request) (AuthorizationPrincipal, bool) {
+			return AuthorizationPrincipal{ID: "reader"}, true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Fatal("missing object authorizer allowed pipeline")
 	}
 }
 
