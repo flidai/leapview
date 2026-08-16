@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
@@ -22,6 +23,7 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
@@ -139,11 +141,17 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	projectClaimRepository := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
+	readClaim := memoizedClaimedProjectReader(projectClaimRepository, environment)
+	claimedProjectID, claimFound, err := readClaim(ctx)
+	if err != nil {
+		return fail(err)
+	}
 	activeScopes, err := servingStateRepo.ListActiveScopes(ctx)
 	if err != nil {
 		return fail(err)
 	}
-	projectID, err := singletonProjectID(activeScopes, environment)
+	projectID, err := resolveClaimedProjectID(activeScopes, environment, claimedProjectID, claimFound)
 	if err != nil {
 		return fail(err)
 	}
@@ -328,10 +336,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	runtimeHostModule, err = runtimehostmodule.Build(ctx, runtimehostmodule.Config{
-		States:      servingStateRepo,
-		ProjectID:   projectID,
-		Environment: environment,
-		ManagedData: managedDataResolver,
+		States:             servingStateRepo,
+		ProjectID:          projectID,
+		Environment:        environment,
+		ReadClaimedProject: readClaim,
+		ManagedData:        managedDataResolver,
 		OnDrained: func(_ servingstatemodule.ID, _ int64) {
 			go func() {
 				if err := retention.Run(context.Background(), false); err != nil {
@@ -441,7 +450,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	identity := buildinfo.Current()
 	deploymentConfig := deploymentmodule.Config{
 		Database: store.SQLDB(), States: servingStateRepo, Runtime: deploymentRuntime,
-		ManagedData: managedDataResolver,
+		ManagedData:        managedDataResolver,
+		BindClaimedProject: bindClaimedProject(runtimeHostModule, environment),
 		Protected: protectedPublishingTarget(
 			production,
 			cfg.EvaluationMode,
@@ -614,6 +624,53 @@ func protectedPublishingTarget(production, evaluation bool) bool {
 	return production && !evaluation
 }
 
+func readClaimedProject(repository deployment.ProjectClaimRepository, environment servingstatemodule.Environment) func(context.Context) (projectgraph.ResourceID, bool, error) {
+	return func(ctx context.Context) (projectgraph.ResourceID, bool, error) {
+		if repository == nil {
+			return "", false, errors.New("project claim repository is required")
+		}
+		claim, err := repository.GetProjectClaim(ctx)
+		if errors.Is(err, deployment.ErrProjectClaimNotFound) {
+			return "", false, nil
+		}
+		if err != nil {
+			return "", false, fmt.Errorf("read claimed project: %w", err)
+		}
+		if claim.Environment != environment {
+			return "", false, fmt.Errorf("claimed project environment %q does not match configured environment %q", claim.Environment, environment)
+		}
+		return claim.ProjectID, true, nil
+	}
+}
+
+func memoizedClaimedProjectReader(repository deployment.ProjectClaimRepository, environment servingstatemodule.Environment) func(context.Context) (projectgraph.ResourceID, bool, error) {
+	reader := readClaimedProject(repository, environment)
+	var once sync.Once
+	var projectID projectgraph.ResourceID
+	var found bool
+	var readErr error
+	return func(ctx context.Context) (projectgraph.ResourceID, bool, error) {
+		once.Do(func() { projectID, found, readErr = reader(ctx) })
+		return projectID, found, readErr
+	}
+}
+
+type claimedProjectBinder interface {
+	BindClaimedProject(projectgraph.ResourceID, servingstatemodule.Environment) error
+}
+
+func bindClaimedProject(runtimeHost claimedProjectBinder, environment servingstatemodule.Environment) func(context.Context, projectgraph.ResourceID, servingstatemodule.Environment) error {
+	return func(_ context.Context, projectID projectgraph.ResourceID, claimedEnvironment servingstatemodule.Environment) error {
+		if claimedEnvironment != environment {
+			return fmt.Errorf("claimed project environment %q does not match configured environment %q", claimedEnvironment, environment)
+		}
+		if runtimeHost == nil {
+			return errors.New("runtime host is unavailable")
+		}
+		return runtimeHost.BindClaimedProject(projectID, claimedEnvironment)
+	}
+}
+
 func firstConfigured(values ...string) string {
 	for _, value := range values {
 		if value = strings.TrimSpace(value); value != "" {
@@ -641,6 +698,23 @@ func singletonProjectID(scopes []servingstatemodule.ActiveScope, environment ser
 		}
 	}
 	return projectID, nil
+}
+
+func resolveClaimedProjectID(scopes []servingstatemodule.ActiveScope, environment servingstatemodule.Environment, claimedProjectID projectgraph.ResourceID, claimFound bool) (projectgraph.ResourceID, error) {
+	projectID, err := singletonProjectID(scopes, environment)
+	if err != nil {
+		return "", err
+	}
+	if !claimFound {
+		if projectID != "" {
+			return "", errors.New("active serving scopes require a durable project claim")
+		}
+		return "", nil
+	}
+	if projectID != "" && projectID != claimedProjectID {
+		return "", fmt.Errorf("active serving project %q does not match durable project claim %q", projectID, claimedProjectID)
+	}
+	return claimedProjectID, nil
 }
 
 func configuredListenURL(addr string) string {
