@@ -24,8 +24,8 @@ func TestRefreshMaterializerResolvesCandidateManagedDataAndReleasesLifetime(t *t
 		Definition: &artifact.Definition{Models: map[string]*semanticmodel.Model{}},
 		Candidate:  servingstate.State{ID: "candidate-sales", ProjectID: projectgraph.ResourceID("sales"), Environment: "dev"}, Environment: "dev",
 	})
-	if resolver.servingStateID != "candidate-sales" {
-		t.Fatalf("resolved serving state = %q", resolver.servingStateID)
+	if resolver.identity.GenerationID != "candidate-sales" || resolver.identity.ProjectID != "sales" {
+		t.Fatalf("resolved serving identity = %+v", resolver.identity)
 	}
 	if !lifetime.released {
 		t.Fatal("managed data lifetime was not released after materialization")
@@ -66,12 +66,12 @@ func (e *recordingExecutor) Materialize(_ context.Context, request analyticsmate
 }
 
 type recordingManagedDataResolver struct {
-	resolution     runtimehost.ManagedDataResolution
-	servingStateID servingstate.ID
+	resolution runtimehost.ManagedDataResolution
+	identity   projectgraph.ServingIdentity
 }
 
-func (r *recordingManagedDataResolver) ResolveManagedData(_ context.Context, id servingstate.ID) (runtimehost.ManagedDataResolution, error) {
-	r.servingStateID = id
+func (r *recordingManagedDataResolver) ResolveManagedDataForIdentity(_ context.Context, identity projectgraph.ServingIdentity) (runtimehost.ManagedDataResolution, error) {
+	r.identity = identity
 	return r.resolution, nil
 }
 

@@ -199,7 +199,8 @@ func (a *lifecycleAuth) InstallAuthorizationSnapshot(_ context.Context, snapshot
 
 func TestUnboundRuntimeAllowsFreshStartAndBindsFirstActivation(t *testing.T) {
 	repo := &unboundLifecycleRepo{lifecycleRepo: &lifecycleRepo{noActive: true}}
-	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, Environment: "prod", Factory: &lifecycleFactory{}, Authorization: &lifecycleAuth{}})
+	resolver := &candidateResolver{lifetime: &candidateManagedData{}}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, Environment: "prod", Factory: &lifecycleFactory{}, ManagedData: resolver, Authorization: &lifecycleAuth{}})
 	defer registry.Close()
 	if err := registry.Reload(t.Context()); err != nil {
 		t.Fatal(err)
@@ -216,6 +217,9 @@ func TestUnboundRuntimeAllowsFreshStartAndBindsFirstActivation(t *testing.T) {
 	}
 	if err := registry.ActivatePrepared(prepared, func() error { return nil }); err != nil {
 		t.Fatal(err)
+	}
+	if resolver.identity.ProjectID != "project_first" || resolver.identity.GenerationID != "generation_first" {
+		t.Fatalf("managed-data identity = %+v, want project_first/generation_first", resolver.identity)
 	}
 	if got := registry.ProjectID(); got != "project_first" {
 		t.Fatalf("bound runtime project = %q, want project_first", got)

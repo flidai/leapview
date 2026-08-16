@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
@@ -50,6 +51,55 @@ func TestBuildDevelopmentTargetResolverAllowsOnlyDedicatedConnectionVariables(t 
 	if !errors.Is(err, connectionbinding.ErrCredentialDenied) {
 		t.Fatalf("unscoped environment variable error = %v", err)
 	}
+}
+
+func TestBuildCredentialResolverAllowsUnboundDevelopmentStartup(t *testing.T) {
+	resolver, err := buildCredentialResolver(Config{
+		CredentialMode:        CredentialModeDevelopmentEnvironment,
+		CredentialTargetID:    "target-local",
+		CredentialProjectID:   "",
+		CredentialEnvironment: "dev",
+	})
+	require.NoError(t, err)
+	t.Setenv("LEAPVIEW_TEST_UNBOUND_CREDENTIAL", `{"password":"source-secret"}`)
+	auth, err := resolver.Resolve(context.Background(), "warehouse", semanticmodel.Connection{
+		Kind: "postgres", Credentials: semanticmodel.ConnectionCredentials{
+			Provider: "env", Secret: "LEAPVIEW_TEST_UNBOUND_CREDENTIAL",
+		},
+	})
+	require.NoError(t, err)
+	if auth["password"] != "source-secret" {
+		t.Fatalf("resolved auth = %#v", auth)
+	}
+}
+
+func TestTargetCredentialResolverBindsUnboundDevelopmentScopeAtSelectionTime(t *testing.T) {
+	t.Setenv("LEAPVIEW_DEV_CONNECTION_WAREHOUSE", `{"password":"source-secret"}`)
+	module := &Module{targetClass: connectionbinding.TargetDevelopment, targetID: "target-local", targetEnvironment: "dev", targetResolvers: connectionbinding.ResolverSet{
+		Environment: unboundProcessDevelopmentTargetResolver{targetID: "target-local", environment: "dev"},
+	}}
+	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
+		TargetID: "target-local", ProjectID: "project:active", Environment: "dev",
+		TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,
+	})
+	require.NoError(t, err)
+	resolver, err := module.TargetCredentialResolver(selection, module.targetResolvers.Environment)
+	require.NoError(t, err)
+	snapshot, err := resolver.Resolve(context.Background(), connectionbinding.CredentialReference{
+		ProjectID: "project:active", Environment: "dev", SecretPath: "/", SecretKey: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
+	})
+	require.NoError(t, err)
+	snapshot.Destroy()
+}
+
+func TestUnboundProcessDevelopmentResolverUsesReferenceProject(t *testing.T) {
+	t.Setenv("LEAPVIEW_DEV_CONNECTION_WAREHOUSE", `{"password":"source-secret"}`)
+	resolver := unboundProcessDevelopmentTargetResolver{targetID: "target-local", environment: "dev"}
+	snapshot, err := resolver.Resolve(context.Background(), connectionbinding.CredentialReference{
+		ProjectID: "project:active", Environment: "dev", SecretPath: "/", SecretKey: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
+	})
+	require.NoError(t, err)
+	snapshot.Destroy()
 }
 
 func TestBuildTargetResolversComposesOnlyTheConfiguredInfisicalAuthority(t *testing.T) {

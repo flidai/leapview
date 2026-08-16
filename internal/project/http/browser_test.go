@@ -42,6 +42,18 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 	}
 }
 
+func TestBoundProjectUsesActiveProjectResolver(t *testing.T) {
+	want := projectgraph.ResourceID("project:active")
+	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return want, nil }}
+	got, err := h.boundProject(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("project ID = %q, want %q", got, want)
+	}
+}
+
 type browserGraphStub struct{ graph servingstate.AssetGraph }
 
 func (s browserGraphStub) ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (servingstate.AssetGraph, bool, error) {
@@ -90,7 +102,7 @@ func TestAssetsFilterUnauthorizedSiblingAndEdges(t *testing.T) {
 	allowed := projectgraph.ResourceID("model:allowed")
 	denied := projectgraph.ResourceID("model:denied")
 	h := &BrowserHandler{
-		ProjectID: "project:test", Environment: "dev", Graph: browserGraphStub{graph: servingstate.AssetGraph{
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }, Environment: "dev", Graph: browserGraphStub{graph: servingstate.AssetGraph{
 			Assets: []servingstate.Asset{{ID: allowed, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "allowed", Title: "Allowed", PayloadJSON: "{}"}, {ID: denied, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "denied", Title: "Denied", PayloadJSON: "{}"}},
 			Edges:  []servingstate.AssetEdge{{ID: "edge", ProjectID: "project:test", ServingStateID: "state", FromAssetID: allowed, ToAssetID: denied, Type: "depends_on"}},
 		}},
@@ -110,7 +122,7 @@ func TestAssetsFilterUnauthorizedSiblingAndEdges(t *testing.T) {
 
 func TestAssetsConsumeCatalogPages(t *testing.T) {
 	h := &BrowserHandler{
-		ProjectID: "project:test", Environment: "dev", Graph: browserGraphStub{graph: servingstate.AssetGraph{
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }, Environment: "dev", Graph: browserGraphStub{graph: servingstate.AssetGraph{
 			Assets: []servingstate.Asset{{ID: "model:allowed", ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "allowed", PayloadJSON: "{}"}, {ID: "model:second", ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "second", PayloadJSON: "{}"}},
 		}},
 		Catalog: pagedBrowserCatalogStub{}, CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
@@ -129,7 +141,7 @@ func TestAssetsDoesNotMutateSharedServingGraph(t *testing.T) {
 		{ID: allowed, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "allowed", PayloadJSON: "{}"},
 	}}
 	h := &BrowserHandler{
-		ProjectID: "project:test", Environment: "dev", Graph: browserGraphStub{graph: graph},
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }, Environment: "dev", Graph: browserGraphStub{graph: graph},
 		Catalog: browserCatalogStub{}, CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
 	}
 	if _, _, _, ok := h.assets(httptest.NewRecorder(), httptest.NewRequest(stdhttp.MethodGet, "/models", nil)); !ok {
@@ -142,7 +154,7 @@ func TestAssetsDoesNotMutateSharedServingGraph(t *testing.T) {
 
 func TestDataRequiresVisibleSourceRatherThanUnrelatedResource(t *testing.T) {
 	h := &BrowserHandler{
-		ProjectID: "project:test", Environment: "dev",
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }, Environment: "dev",
 		Catalog:     kindAwareBrowserCatalogStub{available: projectgraph.KindModel},
 		CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
 	}
@@ -155,7 +167,7 @@ func TestDataRequiresVisibleSourceRatherThanUnrelatedResource(t *testing.T) {
 
 func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
 	h := &BrowserHandler{
-		ProjectID: "project:test", Environment: "dev",
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }, Environment: "dev",
 		Catalog:     kindAwareBrowserCatalogStub{available: projectgraph.KindModel},
 		CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
 	}

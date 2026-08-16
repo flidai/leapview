@@ -26,9 +26,11 @@ func (l *candidateManagedData) Release() error {
 
 type candidateResolver struct {
 	lifetime *candidateManagedData
+	identity projectgraph.ServingIdentity
 }
 
-func (r *candidateResolver) ResolveManagedData(context.Context, servingstate.ID) (ManagedDataResolution, error) {
+func (r *candidateResolver) ResolveManagedDataForIdentity(_ context.Context, identity projectgraph.ServingIdentity) (ManagedDataResolution, error) {
+	r.identity = identity
 	return ManagedDataResolution{RevisionID: "rev1", Roots: map[string]string{"warehouse": "/tmp/warehouse"}, Lifetime: r.lifetime}, nil
 }
 

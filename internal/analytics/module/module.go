@@ -123,15 +123,19 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return nil, err
 	}
 	if config.CredentialMode == CredentialModeDevelopmentEnvironment {
-		development, err := buildProcessDevelopmentTargetResolver(
-			config.CredentialProjectID,
-			config.CredentialTargetID,
-			config.CredentialEnvironment,
-		)
-		if err != nil {
-			return nil, err
+		if config.CredentialProjectID != "" {
+			development, err := buildProcessDevelopmentTargetResolver(
+				config.CredentialProjectID,
+				config.CredentialTargetID,
+				config.CredentialEnvironment,
+			)
+			if err != nil {
+				return nil, err
+			}
+			targetResolvers.Environment = development
+		} else {
+			targetResolvers.Environment = unboundProcessDevelopmentTargetResolver{targetID: config.CredentialTargetID, environment: config.CredentialEnvironment}
 		}
-		targetResolvers.Environment = development
 	}
 	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
 		RootDir: config.RootDir, CatalogPath: config.CatalogPath, DataPath: config.DataPath,
@@ -331,6 +335,11 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 	case "", CredentialModeNonSecret:
 		return analyticsduckdb.NonSecretCredentialResolver{}, nil
 	case CredentialModeDevelopmentEnvironment:
+		if config.CredentialProjectID == "" {
+			return analyticsduckdb.NewUnboundDevelopmentEnvironmentCredentialResolver(
+				connectionbinding.TargetID(config.CredentialTargetID), config.CredentialEnvironment,
+			)
+		}
 		selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
 			TargetID: connectionbinding.TargetID(config.CredentialTargetID), ProjectID: config.CredentialProjectID, Environment: config.CredentialEnvironment,
 			TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,

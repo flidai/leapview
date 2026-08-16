@@ -154,7 +154,7 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 	if err := r.manager.validateGeneration(state, artifact); err != nil {
 		return nil, err
 	}
-	managedData, err := r.manager.resolveManagedData(ctx, state.ID)
+	managedData, err := r.manager.resolveManagedData(ctx, state)
 	if err != nil {
 		return nil, err
 	}

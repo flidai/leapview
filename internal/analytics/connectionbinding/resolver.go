@@ -100,3 +100,16 @@ func NewResolverSelection(input ResolverSelectionInput) (ResolverSelection, erro
 	}
 	return ResolverSelection(input), nil
 }
+
+// ValidateResolverTarget validates the process-bound target and environment
+// portion of a resolver selection. It is used while the runtime is still
+// unbound, when the generation project identity is not known yet.
+func ValidateResolverTarget(targetID TargetID, environment string) error {
+	if _, err := ParseTargetID(targetID.String()); err != nil {
+		return err
+	}
+	if !identifierPattern.MatchString(strings.TrimSpace(environment)) {
+		return fmt.Errorf("%w: resolver target and environment are required", ErrInvalidBinding)
+	}
+	return nil
+}

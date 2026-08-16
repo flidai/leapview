@@ -16,8 +16,12 @@ type RefreshMaterializer struct {
 }
 
 func (m RefreshMaterializer) Materialize(ctx context.Context, input refresh.MaterializeInput) (snapshotID int64, err error) {
+	identity, identityErr := projectgraph.NewServingIdentity(input.Candidate.ProjectID, string(input.Candidate.Environment), string(input.Candidate.ID))
+	if identityErr != nil {
+		return 0, fmt.Errorf("candidate serving identity: %w", identityErr)
+	}
 	if m.ManagedData != nil {
-		resolution, resolveErr := m.ManagedData.ResolveManagedData(ctx, input.Candidate.ID)
+		resolution, resolveErr := m.ManagedData.ResolveManagedDataForIdentity(ctx, identity)
 		if resolveErr != nil {
 			return 0, resolveErr
 		}
@@ -35,10 +39,6 @@ func (m RefreshMaterializer) Materialize(ctx context.Context, input refresh.Mate
 	}
 	if m.Executor == nil {
 		return 0, fmt.Errorf("analytical refresh materializer is unavailable")
-	}
-	identity, identityErr := projectgraph.NewServingIdentity(input.Candidate.ProjectID, string(input.Candidate.Environment), string(input.Candidate.ID))
-	if identityErr != nil {
-		return 0, fmt.Errorf("candidate serving identity: %w", identityErr)
 	}
 	return m.Executor.Materialize(ctx, analyticsmaterialization.Request{
 		Models: input.Definition.Models, Identity: identity,

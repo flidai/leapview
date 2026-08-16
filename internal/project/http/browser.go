@@ -40,15 +40,15 @@ type Principal struct {
 }
 
 type BrowserHandler struct {
-	Graph        GraphReader
-	Catalog      CatalogAuthorizer
-	ProjectID    projectgraph.ResourceID
-	Environment  string
-	Trace        *pagestream.TraceStore
-	Layout       func(*stdhttp.Request) webpage.Provider
-	CSRFToken    func(*stdhttp.Request) string
-	CurrentUser  func(*stdhttp.Request) (Principal, bool)
-	Authenticate func(stdhttp.Handler) stdhttp.Handler
+	Graph            GraphReader
+	Catalog          CatalogAuthorizer
+	ResolveProjectID func(context.Context) (projectgraph.ResourceID, error)
+	Environment      string
+	Trace            *pagestream.TraceStore
+	Layout           func(*stdhttp.Request) webpage.Provider
+	CSRFToken        func(*stdhttp.Request) string
+	CurrentUser      func(*stdhttp.Request) (Principal, bool)
+	Authenticate     func(stdhttp.Handler) stdhttp.Handler
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -347,7 +347,7 @@ func (h *BrowserHandler) ProtectStream(next stdhttp.Handler) stdhttp.Handler {
 }
 
 func (h *BrowserHandler) assets(w stdhttp.ResponseWriter, r *stdhttp.Request) (projectgraph.ResourceID, []projectview.DevelopAssetView, []projectview.DevelopEdgeView, bool) {
-	projectID, err := h.boundProject()
+	projectID, err := h.boundProject(r.Context())
 	if err != nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return "", nil, nil, false
@@ -452,7 +452,7 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	if principal.DevBypass {
 		return true
 	}
-	if _, err := h.boundProject(); err != nil || h.Catalog == nil {
+	if _, err := h.boundProject(r.Context()); err != nil || h.Catalog == nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return false
 	}
@@ -488,11 +488,18 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	return true
 }
 
-func (h *BrowserHandler) boundProject() (projectgraph.ResourceID, error) {
-	if err := h.ProjectID.Validate(); err != nil {
+func (h *BrowserHandler) boundProject(ctx context.Context) (projectgraph.ResourceID, error) {
+	if h.ResolveProjectID == nil {
+		return "", errors.New("active project resolver is unavailable")
+	}
+	projectID, err := h.ResolveProjectID(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := projectID.Validate(); err != nil {
 		return "", fmt.Errorf("active project: %w", err)
 	}
-	return h.ProjectID, nil
+	return projectID, nil
 }
 
 func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation.Catalog {
@@ -507,7 +514,11 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	if err != nil {
 		return projectnavigation.Catalog{}
 	}
-	out := projectnavigation.Catalog{Project: projectnavigation.Project{ID: h.ProjectID.String(), Title: h.ProjectID.String()}}
+	projectID, err := h.boundProject(r.Context())
+	if err != nil {
+		return projectnavigation.Catalog{}
+	}
+	out := projectnavigation.Catalog{Project: projectnavigation.Project{ID: projectID.String(), Title: projectID.String()}}
 	for _, item := range page.Items {
 		switch item.Ref.Kind {
 		case projectgraph.KindProject:

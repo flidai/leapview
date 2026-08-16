@@ -90,14 +90,18 @@ type ManagedDataResolution struct {
 }
 type ManagedDataLifetime interface{ Release() error }
 type ManagedDataResolver interface {
-	ResolveManagedData(context.Context, servingstate.ID) (ManagedDataResolution, error)
+	ResolveManagedDataForIdentity(context.Context, projectgraph.ServingIdentity) (ManagedDataResolution, error)
 }
 
-func (m *Manager) resolveManagedData(ctx context.Context, id servingstate.ID) (ManagedDataResolution, error) {
+func (m *Manager) resolveManagedData(ctx context.Context, state servingstate.State) (ManagedDataResolution, error) {
 	if m == nil || m.managedData == nil {
 		return ManagedDataResolution{}, nil
 	}
-	return m.managedData.ResolveManagedData(ctx, id)
+	identity, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
+	if err != nil {
+		return ManagedDataResolution{}, err
+	}
+	return m.managedData.ResolveManagedDataForIdentity(ctx, identity)
 }
 
 type RuntimeInput struct {
@@ -455,7 +459,7 @@ func (m *Manager) prepare(ctx context.Context, state servingstate.State, artifac
 	var data ManagedDataResolution
 	var err error
 	if m.managedData != nil {
-		data, err = m.managedData.ResolveManagedData(ctx, state.ID)
+		data, err = m.resolveManagedData(ctx, state)
 		if err != nil {
 			return nil, err
 		}

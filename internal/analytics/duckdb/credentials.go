@@ -58,6 +58,20 @@ func NewDevelopmentEnvironmentCredentialResolver(
 	return DevelopmentEnvironmentCredentialResolver{selection: validated}, nil
 }
 
+// NewUnboundDevelopmentEnvironmentCredentialResolver builds the process
+// environment resolver before the first serving generation has established a
+// project. Environment credentials are resolved from the authored connection
+// reference at query time; no project identity is captured in this resolver.
+func NewUnboundDevelopmentEnvironmentCredentialResolver(targetID connectionbinding.TargetID, environment string) (DevelopmentEnvironmentCredentialResolver, error) {
+	if err := connectionbinding.ValidateResolverTarget(targetID, environment); err != nil {
+		return DevelopmentEnvironmentCredentialResolver{}, err
+	}
+	return DevelopmentEnvironmentCredentialResolver{selection: connectionbinding.ResolverSelection{
+		TargetID: targetID, Environment: strings.TrimSpace(environment),
+		TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,
+	}}, nil
+}
+
 func (resolver DevelopmentEnvironmentCredentialResolver) Resolve(
 	_ context.Context,
 	name string,

@@ -6,29 +6,25 @@ import (
 	manageddataresolver "github.com/flidai/leapview/internal/manageddata/resolver"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
-	"github.com/flidai/leapview/internal/servingstate"
 )
 
 type managedDataResolver struct {
-	resolver  ManagedDataSource
-	projectID projectgraph.ResourceID
-	env       servingstate.Environment
+	resolver ManagedDataSource
 }
 
 type ManagedDataSource interface {
 	ResolveManagedData(context.Context, projectgraph.ServingIdentity) (manageddataresolver.Resolution, error)
 }
 
-func NewManagedDataResolver(resolver ManagedDataSource, projectID projectgraph.ResourceID, environment servingstate.Environment) runtimehost.ManagedDataResolver {
+func NewManagedDataResolver(resolver ManagedDataSource) runtimehost.ManagedDataResolver {
 	if resolver == nil {
 		return nil
 	}
-	return managedDataResolver{resolver: resolver, projectID: projectID, env: environment}
+	return managedDataResolver{resolver: resolver}
 }
 
-func (r managedDataResolver) ResolveManagedData(ctx context.Context, id servingstate.ID) (runtimehost.ManagedDataResolution, error) {
-	identity, err := projectgraph.NewServingIdentity(r.projectID, string(r.env), string(id))
-	if err != nil {
+func (r managedDataResolver) ResolveManagedDataForIdentity(ctx context.Context, identity projectgraph.ServingIdentity) (runtimehost.ManagedDataResolution, error) {
+	if err := identity.Validate(); err != nil {
 		return runtimehost.ManagedDataResolution{}, err
 	}
 	resolved, err := r.resolver.ResolveManagedData(ctx, identity)

@@ -315,7 +315,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if managedDataResolution == nil {
 		return fail(errors.New("managed-data runtime resolver is required"))
 	}
-	managedDataResolver := appruntimefactory.NewManagedDataResolver(managedDataResolution, projectID, environment)
+	managedDataResolver := appruntimefactory.NewManagedDataResolver(managedDataResolution)
 	if err := refreshmodule.Recover(ctx, store.SQLDB(), string(environment)); err != nil {
 		return fail(err)
 	}

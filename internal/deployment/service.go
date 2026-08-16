@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -20,7 +21,7 @@ type ActivationUnitOfWork interface {
 	ActivateDeployment(context.Context, ActivationInput) (Deployment, error)
 }
 type ManagedDataResolver interface {
-	ResolveManagedData(context.Context, servingstate.ID) (runtimehost.ManagedDataResolution, error)
+	ResolveManagedDataForIdentity(context.Context, projectgraph.ServingIdentity) (runtimehost.ManagedDataResolution, error)
 }
 type ServingStateRepository interface {
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
@@ -157,7 +158,7 @@ func (s *Service) Activate(ctx context.Context, request ActivationRequest) (Depl
 	if row.ServingIdentity.GenerationID == "" || digest.ValidateSHA256Identity(row.ArtifactDigest) != nil {
 		return Deployment{}, fmt.Errorf("%w: deployment identity is incomplete", ErrConflict)
 	}
-	resolution, err := s.resolver.ResolveManagedData(ctx, servingstate.ID(row.ServingIdentity.GenerationID))
+	resolution, err := s.resolver.ResolveManagedDataForIdentity(ctx, row.ServingIdentity)
 	if err != nil {
 		_ = s.repository.FailDeployment(ctx, row.ID, err)
 		return Deployment{}, err

@@ -148,7 +148,7 @@ type fakeResolver struct {
 	err        error
 }
 
-func (r *fakeResolver) ResolveManagedData(context.Context, servingstate.ID) (runtimehost.ManagedDataResolution, error) {
+func (r *fakeResolver) ResolveManagedDataForIdentity(context.Context, projectgraph.ServingIdentity) (runtimehost.ManagedDataResolution, error) {
 	return r.resolution, r.err
 }
 

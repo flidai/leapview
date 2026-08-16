@@ -106,7 +106,7 @@ type HTTPConfig struct {
 
 type SemanticConfig struct {
 	Metrics               queryruntime.Metrics
-	ProjectID             projectgraph.ResourceID
+	ResolveProjectID      func(context.Context) (projectgraph.ResourceID, error)
 	CurrentPrincipalID    func(*http.Request) string
 	AuthorizeListResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
 	QueryFreshness        func(context.Context, string, string, string) (api.QueryFreshness, bool)
@@ -278,7 +278,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		handler:   handler,
 		authoring: config.Authoring,
 		semantic: semanticapi.Handler{
-			Metrics: config.Semantic.Metrics, ProjectID: config.Semantic.ProjectID,
+			Metrics: config.Semantic.Metrics, ResolveProjectID: config.Semantic.ResolveProjectID,
 			CurrentPrincipalID:    config.Semantic.CurrentPrincipalID,
 			AuthorizeListResource: config.Semantic.AuthorizeListResource,
 			QueryFreshness:        config.Semantic.QueryFreshness,

@@ -1,6 +1,7 @@
 package module
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -78,6 +79,42 @@ func buildProcessDevelopmentTargetResolver(
 	return buildDevelopmentTargetResolver(
 		projectID, targetID, environment, os.Environ(), os.LookupEnv, time.Now,
 	)
+}
+
+type unboundProcessDevelopmentTargetResolver struct {
+	targetID    string
+	environment string
+}
+
+func (r unboundProcessDevelopmentTargetResolver) resolver(reference connectionbinding.CredentialReference) (connectionbinding.CredentialResolver, error) {
+	resolver, err := buildProcessDevelopmentTargetResolver(reference.ProjectID, r.targetID, r.environment)
+	if err != nil {
+		return nil, err
+	}
+	if resolver == nil {
+		return nil, connectionbinding.ErrProviderUnavailable
+	}
+	return resolver, nil
+}
+
+func (r unboundProcessDevelopmentTargetResolver) Resolve(ctx context.Context, reference connectionbinding.CredentialReference) (connectionbinding.CredentialSnapshot, error) {
+	resolver, err := r.resolver(reference)
+	if err != nil {
+		return connectionbinding.CredentialSnapshot{}, err
+	}
+	return resolver.Resolve(ctx, reference)
+}
+
+func (r unboundProcessDevelopmentTargetResolver) ResolveVersion(ctx context.Context, reference connectionbinding.CredentialReference, providerVersion string) (connectionbinding.CredentialSnapshot, error) {
+	resolver, err := r.resolver(reference)
+	if err != nil {
+		return connectionbinding.CredentialSnapshot{}, err
+	}
+	versioned, ok := resolver.(connectionbinding.VersionedCredentialResolver)
+	if !ok {
+		return connectionbinding.CredentialSnapshot{}, connectionbinding.ErrProviderUnavailable
+	}
+	return versioned.ResolveVersion(ctx, reference, providerVersion)
 }
 
 func buildDevelopmentTargetResolver(
