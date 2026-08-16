@@ -114,7 +114,7 @@ func TestResolveContextResourceUsesServerBoundProject(t *testing.T) {
 	called := false
 	module := &Module{
 		projectID: projectgraph.ResourceID("active_project"),
-		resolveResource: func(_ context.Context, scope agenttools.Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+		resolveResource: func(_ context.Context, scope Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
 			called = true
 			if scope.ProjectID != "active_project" {
 				t.Fatalf("resolver project = %q, want active_project", scope.ProjectID)

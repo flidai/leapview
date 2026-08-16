@@ -260,10 +260,10 @@ func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, 
 	if err != nil {
 		return "", err
 	}
-	return m.resolveResource(ctx, agenttools.Scope{
+	return m.resolveResource(ctx, Scope{
 		ProjectID: projectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
-		Credential:    agenttools.CredentialScope{ProjectID: scope.Credential.ProjectID, Capabilities: append([]string(nil), scope.Credential.Capabilities...), Restricted: scope.Credential.Restricted},
+		Credential:    CredentialScope{ProjectID: scope.Credential.ProjectID, Capabilities: append([]string(nil), scope.Credential.Capabilities...), Restricted: scope.Credential.Restricted},
 	}, id, kind, capability)
 }
 

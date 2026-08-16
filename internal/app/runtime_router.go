@@ -19,8 +19,6 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	agenttools "github.com/flidai/leapview/internal/agent/tools"
-	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	apiapigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
@@ -901,7 +899,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			BuildVersion:       platform.buildIdentity.Version,
 			APIGenOperations:   agentAPIGenOperations(),
 			DashboardAuthoring: routes.dashboardAuthoring,
-			ResolveResource: func(ctx context.Context, scope agenttools.Scope, id projectgraph.ResourceID, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, error) {
+			ResolveResource: func(ctx context.Context, scope agentmodule.Scope, id projectgraph.ResourceID, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, error) {
 				if routes.projectCatalog == nil {
 					return "", projectcatalog.ErrUnavailable
 				}
@@ -1034,10 +1032,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				ctx = accessmodule.WithPrincipal(ctx, principal)
 				if projectID, err := projectgraph.NewResourceID(scope.ProjectID); err == nil {
-					ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
-						ProjectID: projectID, Surface: dataquery.SurfaceAgent, Operation: dataquery.OperationAgentQuery,
-						PrincipalID: scope.PrincipalID,
-					})
+					ctx = analyticsmodule.WithAgentQueryMetadata(ctx, projectID, scope.PrincipalID)
 				}
 				return ctx
 			},

@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -51,7 +52,7 @@ func (m *Module) DashboardAuthoringToolProvider() agenttools.DashboardAuthoringP
 		Application:      m.dashboardAuthoring,
 		ProjectID:        m.projectID,
 		ResolveProjectID: m.projectIDResolver,
-		Resolve:          m.resolveResource,
+		Resolve:          resourceResolverForTools(m.resolveResource),
 	}
 }
 
@@ -65,7 +66,7 @@ func (m *Module) CatalogToolProvider() agenttools.CatalogProvider {
 
 func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 	return agenttools.VisualProvider{
-		Resolve: m.resolveResource,
+		Resolve: resourceResolverForTools(m.resolveResource),
 		QueryContext: func(ctx context.Context, scope agenttools.Scope) context.Context {
 			if m.queryContext == nil {
 				return ctx
@@ -112,6 +113,26 @@ func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 				return m.queryMetadata(ctx, projectID, modelID)
 			}
 			return agenttools.VisualQueryMetadata{}
+		},
+	}
+}
+
+func resourceResolverForTools(resolve ResourceResolver) agenttools.ResourceResolver {
+	if resolve == nil {
+		return nil
+	}
+	return func(ctx context.Context, scope agenttools.Scope, id projectgraph.ResourceID, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, error) {
+		return resolve(ctx, moduleScopeFromTools(scope), id, kind, capability)
+	}
+}
+
+func moduleScopeFromTools(scope agenttools.Scope) Scope {
+	return Scope{
+		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+		DevAuthBypass: scope.DevAuthBypass,
+		Credential: CredentialScope{
+			ProjectID: scope.Credential.ProjectID, Restricted: scope.Credential.Restricted,
+			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
 		},
 	}
 }

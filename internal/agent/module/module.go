@@ -56,7 +56,7 @@ type Module struct {
 	buildVersion       string
 	apiOperations      []agenttools.APIGenOperation
 	dashboardAuthoring *authoringapplication.Application
-	resolveResource    agenttools.ResourceResolver
+	resolveResource    ResourceResolver
 	runExecution       apigencommand.AsyncExecutionContract
 }
 
@@ -108,7 +108,7 @@ type Config struct {
 	BuildVersion       string
 	APIGenOperations   []agenttools.APIGenOperation
 	DashboardAuthoring *authoringapplication.Application
-	ResolveResource    agenttools.ResourceResolver
+	ResolveResource    ResourceResolver
 	HTTP               HTTPConfig
 }
 
@@ -131,6 +131,12 @@ type Scope struct {
 	Credential     CredentialScope
 	DevAuthBypass  bool
 }
+
+// ResourceResolver resolves an exact graph resource through the authorized
+// active-generation catalog before an authoring or query tool executes. The
+// module-owned scope keeps application composition independent from the
+// implementation package used by the built-in tools.
+type ResourceResolver func(context.Context, Scope, projectgraph.ResourceID, projectgraph.Kind, access.Capability) (projectgraph.ResourceID, error)
 
 type CredentialScope struct {
 	ProjectID    string
