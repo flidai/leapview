@@ -50,3 +50,18 @@ func TestJobRecordRequiresCanonicalLeaseFence(t *testing.T) {
 		t.Fatal("Validate() = nil for whitespace lease owner")
 	}
 }
+
+func TestRunInputKeepsModelTargetDistinctFromPipeline(t *testing.T) {
+	input := RunInput{
+		Identity:        projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},
+		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", TargetType: TargetModelTable,
+		TargetID: "model_sales_customers", TriggerType: TriggerDependency, JobKind: JobKindChildRun,
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	input.TargetType = "invented_target"
+	if err := input.Validate(); err == nil {
+		t.Fatal("Validate() = nil for invented target type")
+	}
+}

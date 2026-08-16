@@ -15,6 +15,10 @@ var (
 	ErrLeaseLost         = errors.New("refresh job lease fence is no longer active")
 )
 
+var validTargetTypes = map[string]struct{}{TargetModelTable: {}, TargetRefreshPipeline: {}}
+var validTriggerTypes = map[string]struct{}{TriggerDependency: {}, TriggerManual: {}, TriggerSchedule: {}, TriggerRetry: {}}
+var validJobKinds = map[string]struct{}{JobKindRefreshPipeline: {}, JobKindChildRun: {}}
+
 const (
 	RunStatusQueued     = "queued"
 	RunStatusRunning    = "running"
@@ -37,24 +41,29 @@ const (
 )
 
 type RunRecord struct {
-	ID                   string                       `json:"id"`
-	Identity             projectgraph.ServingIdentity `json:"identity"`
-	SemanticModelID      projectgraph.ResourceID      `json:"semanticModelId"`
-	PipelineID           projectgraph.ResourceID      `json:"pipelineId,omitempty"`
-	PrincipalID          string                       `json:"principalId,omitempty"`
-	PrincipalDisplayName string                       `json:"principalDisplayName,omitempty"`
-	TargetType           string                       `json:"targetType"`
-	TargetID             projectgraph.ResourceID      `json:"targetId"`
-	TargetRevision       int64                        `json:"targetRevision"`
-	TriggerType          string                       `json:"triggerType"`
-	ParentRunID          string                       `json:"parentRunId,omitempty"`
-	RetryOf              string                       `json:"retryOf,omitempty"`
-	Status               string                       `json:"status"`
-	CreatedAt            string                       `json:"createdAt"`
-	UpdatedAt            string                       `json:"updatedAt"`
-	StartedAt            string                       `json:"startedAt,omitempty"`
-	FinishedAt           string                       `json:"finishedAt,omitempty"`
-	Error                string                       `json:"error,omitempty"`
+	ID       string                       `json:"id"`
+	Identity projectgraph.ServingIdentity `json:"identity"`
+	// SemanticModelID is the governed semantic model being materialized.
+	SemanticModelID projectgraph.ResourceID `json:"semanticModelId"`
+	// PipelineID identifies the authored refresh pipeline; it is equal to
+	// TargetID only for refresh_pipeline targets, never for model_table targets.
+	PipelineID           projectgraph.ResourceID `json:"pipelineId,omitempty"`
+	PrincipalID          string                  `json:"principalId,omitempty"`
+	PrincipalDisplayName string                  `json:"principalDisplayName,omitempty"`
+	TargetType           string                  `json:"targetType"`
+	// TargetID is the concrete materialization target, distinct from the
+	// semantic model and pipeline identities above.
+	TargetID       projectgraph.ResourceID `json:"targetId"`
+	TargetRevision int64                   `json:"targetRevision"`
+	TriggerType    string                  `json:"triggerType"`
+	ParentRunID    string                  `json:"parentRunId,omitempty"`
+	RetryOf        string                  `json:"retryOf,omitempty"`
+	Status         string                  `json:"status"`
+	CreatedAt      string                  `json:"createdAt"`
+	UpdatedAt      string                  `json:"updatedAt"`
+	StartedAt      string                  `json:"startedAt,omitempty"`
+	FinishedAt     string                  `json:"finishedAt,omitempty"`
+	Error          string                  `json:"error,omitempty"`
 }
 
 type RunInput struct {
@@ -99,10 +108,10 @@ type RunRepository interface {
 	CreateRun(ctx context.Context, input RunInput) (RunRecord, error)
 	GetRun(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
 	ListRuns(ctx context.Context, identity projectgraph.ServingIdentity, page RunPage) ([]RunRecord, error)
-	ListTargetRuns(ctx context.Context, identity projectgraph.ServingIdentity, targetType, targetID string, page RunPage) ([]RunRecord, error)
+	ListTargetRuns(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID, page RunPage) ([]RunRecord, error)
 	ListChildRuns(ctx context.Context, identity projectgraph.ServingIdentity, parentRunID string) ([]RunRecord, error)
-	LatestTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType, targetID string) (RunRecord, bool, error)
-	LatestSuccessfulTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType, targetID string) (RunRecord, bool, error)
+	LatestTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID) (RunRecord, bool, error)
+	LatestSuccessfulTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID) (RunRecord, bool, error)
 	MarkRunRunning(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
 	MarkRunSucceeded(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
 	MarkRunFailed(ctx context.Context, identity projectgraph.ServingIdentity, runID, message string) (RunRecord, error)
@@ -145,6 +154,18 @@ func (input RunInput) Validate() error {
 			return err
 		}
 	}
+	if _, ok := validTargetTypes[input.TargetType]; !ok {
+		return errors.New("refresh target type is unsupported")
+	}
+	if _, ok := validTriggerTypes[input.TriggerType]; !ok {
+		return errors.New("refresh trigger type is unsupported")
+	}
+	if _, ok := validJobKinds[input.JobKind]; !ok {
+		return errors.New("refresh job kind is unsupported")
+	}
+	if input.TargetType == TargetRefreshPipeline && (input.PipelineID == "" || input.PipelineID != input.TargetID) {
+		return errors.New("refresh pipeline target must equal pipeline id")
+	}
 	for name, value := range map[string]string{"principal id": input.PrincipalID, "parent run id": input.ParentRunID, "retry of": input.RetryOf} {
 		if err := validateOperational(value, name, false); err != nil {
 			return err
@@ -168,11 +189,37 @@ func (job JobRecord) Validate() error {
 			return err
 		}
 	}
-	for name, value := range map[string]string{"job id": job.ID, "run id": job.RunID, "lease owner": job.LeaseOwner} {
-		required := name != "lease owner" || job.LeaseRevision > 0
+	if err := job.TargetID.Validate(); err != nil {
+		return err
+	}
+	if _, ok := validTargetTypes[job.TargetType]; !ok {
+		return errors.New("refresh target type is unsupported")
+	}
+	if _, ok := validTriggerTypes[job.TriggerType]; !ok {
+		return errors.New("refresh trigger type is unsupported")
+	}
+	if _, ok := validJobKinds[job.Kind]; !ok {
+		return errors.New("refresh job kind is unsupported")
+	}
+	if job.TargetType == TargetRefreshPipeline && (job.PipelineID == "" || job.PipelineID != job.TargetID) {
+		return errors.New("refresh pipeline target must equal pipeline id")
+	}
+	for name, value := range map[string]string{"job id": job.ID, "run id": job.RunID} {
+		required := true
 		if err := validateOperational(value, name, required); err != nil {
 			return err
 		}
+	}
+	if (job.LeaseOwner == "") != (job.LeaseRevision == 0) {
+		return errors.New("refresh lease owner and revision must be provided together")
+	}
+	if job.LeaseOwner != "" {
+		if err := validateOperational(job.LeaseOwner, "lease owner", true); err != nil {
+			return err
+		}
+	}
+	if job.AttemptCount < 0 {
+		return errors.New("refresh job attempt count must not be negative")
 	}
 	for name, value := range map[string]string{"target type": job.TargetType, "trigger type": job.TriggerType} {
 		if err := validateOperational(value, name, true); err != nil {

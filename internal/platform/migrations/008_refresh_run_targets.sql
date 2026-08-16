@@ -15,7 +15,7 @@ ALTER TABLE refresh_job_runs
 
 UPDATE refresh_job_runs
 SET target_id = COALESCE((
-  SELECT model_id
+  SELECT semantic_model_id
   FROM refresh_jobs
   WHERE refresh_jobs.id = refresh_job_runs.job_id
 ), '')
