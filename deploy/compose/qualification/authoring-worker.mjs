@@ -5,7 +5,7 @@ import { chromium } from 'playwright'
 
 const baseURL = process.env.QUALIFICATION_URL || 'https://localhost'
 const evidenceRoot = process.env.QUALIFICATION_EVIDENCE_ROOT || '/evidence'
-const projectID = process.env.QUALIFICATION_PROJECT_ID || 'leapview-evaluation'
+const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
 const screenshotPath = `${evidenceRoot}/authoring-browser-failure.png`
 
 async function requireJSON(response, description) {
@@ -131,11 +131,11 @@ const methods = {
       { waitUntil: 'domcontentloaded', timeout: 60_000 },
     )
     await administratorPage.waitForURL(
-      (url) => url.pathname.startsWith(`${previewURL.pathname}/workspaces/`),
+      (url) => url.pathname.startsWith(`${previewURL.pathname}/dashboards/`),
       { timeout: 60_000 },
     )
     const dashboardURL = new URL(
-      `${previewURL.pathname}/workspaces/evaluation/dashboards/sales-overview`,
+      `${previewURL.pathname}/dashboards/sales-overview`,
       baseURL,
     )
     await administratorPage.goto(

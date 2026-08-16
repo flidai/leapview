@@ -48,7 +48,8 @@ try {
   }
 
   const denialRequestID = `qualification-denial-${Date.now()}`
-  const denial = await context.request.get(new URL('/api/v1/workspaces/evaluation/groups', baseURL).href, {
+  const projectPath = encodeURIComponent(process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation')
+  const denial = await context.request.get(new URL(`/api/v1/projects/${projectPath}/grants`, baseURL).href, {
     headers: {
       Authorization: `Bearer ${credentials.publisherToken}`,
       'X-Request-ID': denialRequestID,
@@ -58,8 +59,7 @@ try {
     throw new Error(`restricted publisher request returned ${denial.status()}, expected 403`)
   }
   const auditResponse = await context.request.get(
-    new URL('/api/v1/workspaces/evaluation/audit-events?action=authorization.denied&limit=200', baseURL).href,
-    { headers: { Authorization: `Bearer ${credentials.publisherToken}` } },
+    new URL(`/api/v1/projects/${projectPath}/audit-events?action=authorization.denied&limit=200`, baseURL).href,
   )
   if (!auditResponse.ok()) {
     throw new Error(`audit event lookup returned ${auditResponse.status()}`)
@@ -69,10 +69,10 @@ try {
     event.requestId === denialRequestID &&
     event.action === 'authorization.denied' &&
     event.status === 'denied' &&
-    event.privilege === 'MANAGE_GRANTS'
+    event.capability === 'PROJECT_ADMIN'
   )
   if (!recorded) {
-    throw new Error('restricted publisher denial was not recorded in the workspace audit stream')
+    throw new Error('restricted publisher denial was not recorded in the project audit stream')
   }
 } catch (error) {
   await page.screenshot({ path: screenshotPath }).catch(() => {})

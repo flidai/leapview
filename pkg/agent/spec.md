@@ -588,7 +588,7 @@ Avoid in core V1:
 
 ## LeapView Integration Direction
 
-LeapView should define the first concrete agent as a BI workspace assistant.
+LeapView should define the first concrete agent as a BI project assistant.
 
 Likely host-owned tools:
 
