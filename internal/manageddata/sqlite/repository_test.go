@@ -317,7 +317,10 @@ func testRepository(t *testing.T) (context.Context, *sql.DB, *Repository) {
 
 func createCollection(t *testing.T, ctx context.Context, repo *Repository, id, projectID, connectionName string) manageddata.Collection {
 	t.Helper()
-	collection, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: id, ProjectID: projectID, ConnectionID: connectionName, Name: connectionName})
+	collection, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{
+		ID: projectgraph.ResourceID(id), ProjectID: projectgraph.ResourceID(projectID),
+		ConnectionID: projectgraph.ResourceID(connectionName), Name: connectionName,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

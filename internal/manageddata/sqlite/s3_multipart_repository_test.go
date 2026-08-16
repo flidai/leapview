@@ -160,7 +160,7 @@ func multipartRepositoryFixture(t *testing.T) (context.Context, *Repository, man
 	return ctx, repo, session
 }
 
-func createMultipartRecord(t *testing.T, ctx context.Context, repo *Repository, sessionID string, size int64) manageddata.S3MultipartUpload {
+func createMultipartRecord(t *testing.T, ctx context.Context, repo *Repository, sessionID manageddata.UploadID, size int64) manageddata.S3MultipartUpload {
 	t.Helper()
 	upload, err := repo.CreateS3MultipartUpload(ctx, manageddata.CreateS3MultipartUploadInput{
 		ID: "multipart-1", UploadSessionID: sessionID, LogicalPath: "data.csv", SHA256: strings.Repeat("a", 64),
