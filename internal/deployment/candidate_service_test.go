@@ -30,8 +30,8 @@ func TestCandidateServiceCreatesResumesAndBuildsCanonicalPreviewURL(t *testing.T
 		ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: digest,
 	})
 	require.NoError(t, err)
-	if started.Candidate.BaseGeneration != "deployment_7" {
-		t.Fatalf("base generation = %q, want server-resolved deployment_7", started.Candidate.BaseGeneration)
+	if started.Candidate.Scope.BaseGenerationID != "deployment_7" {
+		t.Fatalf("base generation = %q, want server-resolved deployment_7", started.Candidate.Scope.BaseGenerationID)
 	}
 	resumed, err := service.Start(context.Background(), StartCandidateRequest{
 		ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: digest,

@@ -594,7 +594,7 @@ func TestCandidatePreviewMapsLifecycleAndConcealsRuntimeDetails(t *testing.T) {
 			}
 			for _, forbidden := range []string{
 				started.Candidate.ArtifactDigest, started.Candidate.OwnerID,
-				started.Candidate.ProjectID, started.Candidate.TargetID,
+				started.Candidate.Scope.ProjectID.String(), started.Candidate.TargetID,
 			} {
 				if strings.Contains(response.Body.String(), forbidden) {
 					t.Fatalf("preview leaked %q: %s", forbidden, response.Body.String())
