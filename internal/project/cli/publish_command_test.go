@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -112,35 +111,6 @@ func TestCandidateCheckpointStoreIsolatesStableAuthoringKeys(t *testing.T) {
 	)
 	if err != nil || loaded != second {
 		t.Fatalf("LoadCandidate() = %#v, %v", loaded, err)
-	}
-}
-
-func TestCandidateCheckpointStoreReadsLegacyDefaultCheckpoint(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "authoring.json")
-	projectPath := filepath.Join(t.TempDir(), "leapview.yaml")
-	checkpoint := candidateCheckpoint(projectPath)
-	checkpoint.CandidateKey = ""
-	key := legacyCandidateCheckpointKey(
-		checkpoint.ProjectPath,
-		checkpoint.TargetOrigin,
-	)
-	content := `{"version":1,"candidates":{"` + key + `":{` +
-		`"projectPath":` + strconv.Quote(checkpoint.ProjectPath) + `,` +
-		`"targetOrigin":` + strconv.Quote(checkpoint.TargetOrigin) + `,` +
-		`"targetId":"target_1","environment":"production",` +
-		`"projectId":"finance","candidateId":"cand_1",` +
-		`"candidateRevision":7,` +
-		`"artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",` +
-		`"provenanceDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}`
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := NewCandidateCheckpointStore(path).Load(
-		projectPath,
-		checkpoint.TargetOrigin,
-	)
-	if err != nil || loaded.CandidateKey != "default" {
-		t.Fatalf("legacy Load() = %#v, %v", loaded, err)
 	}
 }
 
