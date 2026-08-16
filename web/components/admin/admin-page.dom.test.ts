@@ -58,7 +58,7 @@ test('publications admin renders lifecycle controls and emits typed commands', a
         kind: 'admin', title: 'Publications', active: 'publications', headerTitle: 'Publications',
         headerDetail: 'Public dashboard lifecycle.',
         sidebar: { label: 'Admin', railLabel: 'Admin', ariaLabel: 'Admin navigation', storageKey: 'admin', activeId: 'publications', numbered: false, collapsible: false, items: [{ id: 'publications', title: 'Publications', href: '/admin/publications', active: true }] },
-        publications: [{ workspaceId: 'visuals', name: 'website-showcase', dashboard: 'visual-showcase', defaultPage: 'overview', status: 'active', origins: ['https://leapview.dev'], generation: 'state-2', publicUrl: 'https://app.leapview.dev/public/dashboards/id', embedUrl: 'https://app.leapview.dev/embed/dashboards/id', iframeSnippet: '<iframe></iframe>', configuredAt: '2026-07-20', history: ['2026-07-20 · configured · owner'] }],
+        publications: [{ projectId: 'visuals', name: 'website-showcase', dashboard: 'visual-showcase', defaultPage: 'overview', status: 'active', origins: ['https://leapview.dev'], generation: 'state-2', publicUrl: 'https://app.leapview.dev/public/dashboards/id', embedUrl: 'https://app.leapview.dev/embed/dashboards/id', iframeSnippet: '<iframe></iframe>', configuredAt: '2026-07-20', history: ['2026-07-20 · configured · owner'] }],
       } })
       const element = document.querySelector('lv-admin-page') as any
       await element.updateComplete
@@ -75,7 +75,7 @@ test('publications admin renders lifecycle controls and emits typed commands', a
     expect(state.cards).toBe(1)
     expect(state.text).toContain('website-showcase')
     expect(state.text).toContain('Lifecycle history')
-    expect(state.detail).toEqual({ workspaceId: 'visuals', publication: 'website-showcase', action: 'suspend' })
+    expect(state.detail).toEqual({ projectId: 'visuals', publication: 'website-showcase', action: 'suspend' })
   } finally {
     await page.close()
   }
@@ -94,7 +94,7 @@ test('profile settings renders the signed-in identity and editable local fields'
         active: 'profile',
         profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', avatarUrl: '/profile/avatar.png', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
         security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
-        tokens: { items: [], scopes: [] },
+        tokens: { items: [], capabilities: [] },
       } })
       const element = document.querySelector('lv-admin-page') as any
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -181,7 +181,7 @@ test('profile settings renders the signed-in identity and editable local fields'
   }
 })
 
-test('personal API tokens use authorized scope and permission selectors', async () => {
+test('personal API tokens use capability selectors', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 700 } })
   try {
     await page.goto(baseURL)
@@ -194,25 +194,19 @@ test('personal API tokens use authorized scope and permission selectors', async 
         active: 'api-tokens',
         profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
         security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
-        tokens: { items: [], scopes: [
-          { kind: 'workspace', workspaceId: 'sales', label: 'Sales analytics', description: 'Revenue and pipeline reporting.', privileges: [
-            { value: 'USE_WORKSPACE', label: 'Use workspace', description: 'Open and use the workspace.', category: 'Workspace' },
-            { value: 'VIEW_ITEM', label: 'View content', description: 'View dashboards and other workspace content.', category: 'Workspace' },
-            { value: 'EDIT_ITEM', label: 'Edit content', description: 'Create and update workspace content.', category: 'Workspace' },
-            { value: 'MANAGE_ITEM', label: 'Manage content', description: 'Delete and administer workspace content.', category: 'Workspace' },
-            { value: 'QUERY_DATA', label: 'Query data', description: 'Run governed queries against workspace data.', category: 'Data' },
-            { value: 'PREVIEW_DATA', label: 'Preview data', description: 'Preview source and model data.', category: 'Data' },
-            { value: 'REFRESH_DATA', label: 'Refresh data', description: 'Start and manage data refreshes.', category: 'Data' },
-            { value: 'VIEW_DATA', label: 'View managed data', description: 'View managed-data metadata and revisions.', category: 'Data' },
-            { value: 'INGEST_DATA', label: 'Ingest data', description: 'Upload and ingest managed data.', category: 'Data' },
-            { value: 'AUTHOR_PROJECT', label: 'Author project', description: 'Create and synchronize project candidates.', category: 'Projects and releases' },
-            { value: 'PUBLISH_RELEASE', label: 'Publish releases', description: 'Publish project releases.', category: 'Projects and releases' },
-            { value: 'USE_AGENT', label: 'Use agent', description: 'Start and continue agent conversations.', category: 'Agent' },
-            { value: 'MANAGE_PUBLICATIONS', label: 'Manage publications', description: 'Configure and control public dashboards.', category: 'Administration' },
-          ] },
-          { kind: 'workspace', workspaceId: 'operations', label: 'Operations', description: 'Access limited to this workspace.', privileges: [
-            { value: 'USE_WORKSPACE', label: 'Use workspace', description: 'Open and use the workspace.', category: 'Workspace' },
-          ] },
+        tokens: { items: [], capabilities: [
+          { value: 'RESOURCE_READ', label: 'View content', description: 'View dashboards and project content.', category: 'Project' },
+          { value: 'RESOURCE_EDIT', label: 'Edit content', description: 'Create and update project content.', category: 'Project' },
+          { value: 'RESOURCE_MANAGE', label: 'Manage content', description: 'Delete and administer project content.', category: 'Project' },
+          { value: 'QUERY_DATA', label: 'Query data', description: 'Run governed queries against project data.', category: 'Data' },
+          { value: 'PREVIEW_DATA', label: 'Preview data', description: 'Preview source and model data.', category: 'Data' },
+          { value: 'REFRESH_DATA', label: 'Refresh data', description: 'Start and manage data refreshes.', category: 'Data' },
+          { value: 'VIEW_DATA', label: 'View managed data', description: 'View managed-data metadata and revisions.', category: 'Data' },
+          { value: 'INGEST_DATA', label: 'Ingest data', description: 'Upload and ingest managed data.', category: 'Data' },
+          { value: 'AUTHOR_PROJECT', label: 'Author project', description: 'Create and synchronize project candidates.', category: 'Projects and releases' },
+          { value: 'PUBLISH_RELEASE', label: 'Publish releases', description: 'Publish project releases.', category: 'Projects and releases' },
+          { value: 'USE_AGENT', label: 'Use agent', description: 'Start and continue agent conversations.', category: 'Agent' },
+          { value: 'MANAGE_PUBLICATIONS', label: 'Manage publications', description: 'Configure and control public dashboards.', category: 'Administration' },
         ] },
       } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -221,18 +215,14 @@ test('personal API tokens use authorized scope and permission selectors', async 
       const personal = admin.shadowRoot.querySelector('lv-personal-settings') as any
       await personal.updateComplete
       const root = personal.shadowRoot as ShadowRoot
-      const scope = root.querySelector('#token-scope') as HTMLSelectElement
       const name = root.querySelector('#token-name') as HTMLInputElement
       const create = root.querySelector('button[type="submit"]') as HTMLButtonElement
       const initial = {
-        scopeOptions: Array.from(scope.options).map((option) => option.textContent?.trim()),
         createDisabled: create.disabled,
-        rawWorkspaceField: Boolean(root.querySelector('input[placeholder*="Workspace ID"]')),
+        rawProjectField: Boolean(root.querySelector('input[placeholder*="Project ID"]')),
         rawPrivilegeField: Boolean(root.querySelector('input[placeholder*="Privileges"]')),
       }
 
-      scope.value = 'workspace:sales'
-      scope.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       name.value = 'Sales automation'
       name.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
@@ -261,7 +251,6 @@ test('personal API tokens use authorized scope and permission selectors', async 
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await personal.updateComplete
       await Promise.resolve()
-      const scopeDescription = root.querySelector('.scope-description')?.textContent?.trim()
       const selectedPermissions = Array.from(root.querySelectorAll('.selected-permission .settings-label')).map((label) => label.textContent?.trim())
       const triggerFocused = root.activeElement === add
 
@@ -285,7 +274,7 @@ test('personal API tokens use authorized scope and permission selectors', async 
       }
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
       mergePatch({ personalSettings: { tokens: { items: [
-        { id: 'token-1', name: 'Sales automation', workspaceId: 'sales', privileges: ['QUERY_DATA'], createdAt: '2026-08-12T06:40:00Z' },
+        { id: 'token-1', name: 'Sales automation', capabilities: ['QUERY_DATA'], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '', revokedAt: '' },
       ], newToken: 'lv_created_secret' } } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await personal.updateComplete
@@ -298,7 +287,6 @@ test('personal API tokens use authorized scope and permission selectors', async 
       return {
         initial,
         menuLayout,
-        scopeDescription,
         filteredPermissions,
         selectedPermissions,
         menuClosed: !root.querySelector('.permission-menu'),
@@ -316,9 +304,6 @@ test('personal API tokens use authorized scope and permission selectors', async 
       const admin = document.querySelector('lv-admin-page') as any
       const personal = admin.shadowRoot.querySelector('lv-personal-settings') as any
       const root = personal.shadowRoot as ShadowRoot
-      const scope = root.querySelector('#token-scope') as HTMLSelectElement
-      scope.value = 'workspace:sales'
-      scope.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       await personal.updateComplete
       ;(root.querySelector('.permission-trigger') as HTMLButtonElement).click()
       await personal.updateComplete
@@ -336,12 +321,10 @@ test('personal API tokens use authorized scope and permission selectors', async 
     })
 
     expect(state.initial).toEqual({
-      scopeOptions: ['Choose a scope', 'Sales analytics', 'Operations'],
       createDisabled: true,
-      rawWorkspaceField: false,
+      rawProjectField: false,
       rawPrivilegeField: false,
     })
-    expect(state.scopeDescription).toBe('Revenue and pipeline reporting.')
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(true)
     expect(state.menuLayout.listOverflowY).toBe('auto')
@@ -351,7 +334,7 @@ test('personal API tokens use authorized scope and permission selectors', async 
     expect(state.searchFocused).toBe(true)
     expect(state.triggerFocused).toBe(true)
     expect(state.command).toMatchObject({
-      action: 'create', name: 'Sales automation', workspaceId: 'sales', privileges: ['QUERY_DATA'],
+      action: 'create', name: 'Sales automation', capabilities: ['QUERY_DATA'], expiresAt: '',
     })
     expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Creating…' })
     expect(state.failed).toEqual({
@@ -577,7 +560,7 @@ function queryAuditFixturePage() {
   const queryEvents = [
     {
       id: 'queryevent_1',
-      workspaceId: 'sales',
+      projectId: 'sales',
       principalId: 'analyst',
       surface: 'api',
       operation: 'api_query',
@@ -594,12 +577,12 @@ function queryAuditFixturePage() {
       error: '',
       sql: 'select status from orders',
       planText: 'orders plan',
-      queryJson: '{"workspaceId":"sales","target":"orders"}',
+      queryJson: '{"projectId":"sales","target":"orders"}',
       createdAt: '2026-07-02T10:00:00Z',
     },
     {
       id: 'queryevent_2',
-      workspaceId: 'operations',
+      projectId: 'operations',
       principalId: 'agent',
       surface: 'agent',
       operation: 'agent_query',
@@ -616,7 +599,7 @@ function queryAuditFixturePage() {
       error: 'invalid field',
       sql: '',
       planText: '',
-      queryJson: '{"workspaceId":"operations","target":"customers"}',
+      queryJson: '{"projectId":"operations","target":"customers"}',
       createdAt: '2026-07-02T10:01:00Z',
     },
   ]
@@ -653,7 +636,7 @@ function queryAuditFixturePage() {
       error: '',
       status: 'success',
       statusLabel: 'Success',
-      workspaceId: 'sales',
+      projectId: 'sales',
       principalId: 'analyst',
       surface: 'api',
       operation: 'api_query',
@@ -669,7 +652,7 @@ function queryAuditFixturePage() {
       queryError: '',
       sql: 'select status from orders',
       planText: 'orders plan',
-      queryJson: '{"workspaceId":"sales","target":"orders"}',
+      queryJson: '{"projectId":"sales","target":"orders"}',
       createdAt: '2026-07-02T10:00:00Z',
     },
   }
@@ -678,19 +661,19 @@ function queryAuditFixturePage() {
 function queryAuditFilterMenusFixture() {
   return [
     {
-      id: 'workspace',
-      label: 'Workspace',
-      summaryLabel: 'Workspace',
+      id: 'project',
+      label: 'Project',
+      summaryLabel: 'Project',
       mode: 'multi',
       search: '',
       selected: [],
       loading: false,
       error: '',
-      placeholder: 'Search workspaces',
-      emptyLabel: 'No workspaces found.',
+      placeholder: 'Search projects',
+      emptyLabel: 'No projects found.',
       options: [
-        { value: 'sales', label: 'sales', icon: 'workspace', countLabel: '1', selected: false, disabled: false },
-        { value: 'operations', label: 'operations', icon: 'workspace', countLabel: '1', selected: false, disabled: false },
+        { value: 'sales', label: 'sales', icon: 'project', countLabel: '1', selected: false, disabled: false },
+        { value: 'operations', label: 'operations', icon: 'project', countLabel: '1', selected: false, disabled: false },
       ],
     },
     {
@@ -791,7 +774,7 @@ function queryAuditTableFixture(events: any[]) {
       started_at: event.createdAt,
       duration_ms: { label: `${event.durationMs ?? 0} ms`, value: event.durationMs ?? 0 },
       source: event.surface,
-      runtime: event.workspaceId || '-',
+      runtime: event.projectId || '-',
       principal_id: event.principalId,
       rows_returned: event.rowsReturned,
       operation: event.operation,
@@ -841,10 +824,10 @@ test('query audit page filters table rows and exposes optional metadata columns'
       const menus = Array.from(root.querySelectorAll('lv-filter-menu')) as any[]
       menus[0]?.shadowRoot?.querySelector<HTMLButtonElement>('.trigger')?.click()
       await menus[0]?.updateComplete
-      const workspaceMenuSearch = menus[0]?.shadowRoot?.querySelector<HTMLInputElement>('.search input')
-      if (workspaceMenuSearch) {
-        workspaceMenuSearch.value = 'oper'
-        workspaceMenuSearch.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      const projectMenuSearch = menus[0]?.shadowRoot?.querySelector<HTMLInputElement>('.search input')
+      if (projectMenuSearch) {
+        projectMenuSearch.value = 'oper'
+        projectMenuSearch.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       }
       await new Promise((resolve) => setTimeout(resolve, 250))
       await element.updateComplete
@@ -975,7 +958,7 @@ test('query audit page filters table rows and exposes optional metadata columns'
 
     expect(state.title).toBe('Query History')
     expect(state.hasFilters).toBe(true)
-    expect(state.firstMenuText).toMatch(/Workspace/)
+    expect(state.firstMenuText).toMatch(/Project/)
     expect(state.hasMetrics).toBe(false)
     expect(state.rowText).toMatch(/Query/)
     expect(state.rowText).not.toMatch(/Status/)
@@ -989,7 +972,7 @@ test('query audit page filters table rows and exposes optional metadata columns'
     expect(state.rowText).toMatch(/customers/)
     expect(state.rowText).not.toMatch(/stale_page_event/)
     expect(state.commandAfterSearch).toMatchObject({ action: 'reset', limit: 50, filters: { search: 'select status' } })
-    expect(state.filterSearchCommand).toMatchObject({ action: 'filter_search', filterMenu: { menuId: 'workspace', action: 'search', search: 'oper' } })
+    expect(state.filterSearchCommand).toMatchObject({ action: 'filter_search', filterMenu: { menuId: 'project', action: 'search', search: 'oper' } })
     expect(state.filterToggleCommand).toMatchObject({ action: 'filter_toggle', filterMenu: { menuId: 'surface', action: 'toggle', value: 'api' } })
     expect(state.hasColumnSelector).toBe(true)
     expect(state.hasStatusHeader).toBe(false)
@@ -1066,26 +1049,26 @@ test('query audit emits load more commands from backend-driven history state', a
           ...fixture.queryHistory.table,
           rows: [fixture.queryHistory.table.rows[1]],
         },
-        filterMenus: fixture.queryHistory.filterMenus.map((menu: any) => menu.id === 'workspace' ? {
+        filterMenus: fixture.queryHistory.filterMenus.map((menu: any) => menu.id === 'project' ? {
           ...menu,
           summaryLabel: 'operations',
           selected: ['operations'],
           options: menu.options.map((option: any) => ({ ...option, selected: option.value === 'operations' })),
         } : menu),
-        filters: { workspaces: ['operations'] },
+        filters: { projects: ['operations'] },
         nextCursor: '',
         hasMore: false,
         loadedCountLabel: '1 query loaded',
       } })
       await element.updateComplete
       const updatedText = root.textContent ?? ''
-      const workspaceMenu = root.querySelector('lv-filter-menu') as HTMLElement | null
+      const projectMenu = root.querySelector('lv-filter-menu') as HTMLElement | null
       return {
         footerText,
         command,
         updatedText,
         hasLoadMoreAfterPatch: Boolean(root.querySelector('.query-history-load-more')),
-        workspaceFilterText: workspaceMenu?.shadowRoot?.textContent ?? '',
+        projectFilterText: projectMenu?.shadowRoot?.textContent ?? '',
       }
     }, queryAuditFixturePage())
 
@@ -1094,7 +1077,7 @@ test('query audit emits load more commands from backend-driven history state', a
     expect(state.updatedText).toMatch(/customers/)
     expect(state.updatedText).not.toMatch(/orders/)
     expect(state.hasLoadMoreAfterPatch).toBe(false)
-    expect(state.workspaceFilterText).toMatch(/operations/)
+    expect(state.projectFilterText).toMatch(/operations/)
   } finally {
     await page.close()
   }
@@ -1173,7 +1156,7 @@ test('query audit drawer does not block selecting another row', async () => {
         eventId: 'queryevent_2',
         status: 'error',
         statusLabel: 'Error',
-        workspaceId: 'operations',
+        projectId: 'operations',
         principalId: 'agent',
         surface: 'agent',
         operation: 'agent_query',
@@ -1189,7 +1172,7 @@ test('query audit drawer does not block selecting another row', async () => {
         queryError: 'invalid field',
         sql: '',
         planText: '',
-        queryJson: '{"workspaceId":"operations","target":"customers"}',
+        queryJson: '{"projectId":"operations","target":"customers"}',
         createdAt: '2026-07-02T10:01:00Z',
       } })
       await element.updateComplete
@@ -2018,7 +2001,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #fff; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-bg-accent: #0969da; --lv-bg-accent-muted: #ddf4ff; --lv-sidebar-bg: #f1f3f5; --lv-report-rail-bg: #ffffff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-fg-link: #0969da; --lv-fg-success: #1a7f37; --lv-fg-warning: #9a6700; --lv-fg-danger: #d1242f; --lv-fg-on-accent: #fff; --lv-icon-muted: #57606a; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-settings-content-max-width: 40rem; --lv-workspace-detail-max-width: 72rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --base-size-32: 32px; --base-size-40: 40px; --base-size-48: 48px; --base-size-64: 64px; --control-large-size: 40px; --lv-transition-fast: 160ms ease; }
+          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #fff; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-bg-accent: #0969da; --lv-bg-accent-muted: #ddf4ff; --lv-sidebar-bg: #f1f3f5; --lv-report-rail-bg: #ffffff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-fg-link: #0969da; --lv-fg-success: #1a7f37; --lv-fg-warning: #9a6700; --lv-fg-danger: #d1242f; --lv-fg-on-accent: #fff; --lv-icon-muted: #57606a; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-settings-content-max-width: 40rem; --lv-project-detail-max-width: 72rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --base-size-32: 32px; --base-size-40: 40px; --base-size-48: 48px; --base-size-64: 64px; --lv-transition-fast: 160ms ease; }
           lv-admin-page { min-height: 720px; }
         </style>
       </head>

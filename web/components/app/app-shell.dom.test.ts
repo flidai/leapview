@@ -44,11 +44,6 @@ beforeAll(async () => {
       response.end(testDocument(true, false, true))
       return
     }
-    if (url.pathname === '/workspaces') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument(true, false, false, true))
-      return
-    }
     if (url.pathname === '/admin-sidebar') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument(true, true, false, false, true))
@@ -1024,7 +1019,7 @@ function signalShellDocument(): string {
   const signals = {
     chrome: {
       sidebar: {
-        workspaceTitle: 'LeapView Workspace',
+        productName: 'LeapView',
         active: 'chat',
         area: 'insights',
         areas: [
@@ -1070,7 +1065,7 @@ function signalShellDocument(): string {
 function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false): string {
   const chromeConfig = compact || history || nav || admin ? {
     sidebar: {
-      workspaceTitle: 'LeapView Workspace',
+      productName: 'LeapView',
       active: admin ? 'principals' : history ? 'chat' : 'data',
       admin,
       area: admin ? undefined : history ? 'insights' : 'develop',
@@ -1086,7 +1081,7 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
       compact,
       userName: admin ? 'Ada Lovelace' : 'Current User',
       userAvatarUrl: admin ? '/profile/avatars/ada/avatar-digest' : undefined,
-      userRole: admin ? 'Platform admin' : 'Workspace member',
+      userRole: admin ? 'Platform admin' : 'Member',
       userSettingsHref: '/admin/profile',
       primaryAction: admin ? { label: 'Back to app', href: '/', icon: 'back' } : history ? { label: 'New chat', href: '/chats/new', icon: 'plus' } : undefined,
       history: history ? {
@@ -1110,7 +1105,7 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
           label: 'Product',
           items: [
             { id: 'general', label: 'General', href: '/admin/general', icon: 'settings' },
-            { id: 'workspaces-admin', label: 'Workspaces', href: '/admin/workspaces', icon: 'catalog' },
+            { id: 'projects-admin', label: 'Projects', href: '/admin/projects', icon: 'catalog' },
           ],
         },
         {

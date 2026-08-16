@@ -999,9 +999,9 @@ test('dashboard agent drawer carries page context and explicit visual references
       mergePatch({ agentReferenceSearch: {
         query: 'orders', requestId: 1,
         results: [
-		  { reference: { workspaceId: 'sales', type: 'visual', id: 'executive-sales.orders_chart' }, name: 'Orders by status', workspace: { id: 'sales', name: 'Sales' }, hierarchy: ['Sales', 'Executive Sales', 'Overview'], href: '/orders', locations: [{ dashboardId: 'executive-sales', pageId: 'overview', href: '/orders' }], context: ['current_page'] },
-		  { reference: { workspaceId: 'finance', type: 'visual', id: 'executive-sales.foreign_orders' }, name: 'Finance orders', description: 'From another workspace', workspace: { id: 'finance', name: 'Finance' }, hierarchy: ['Finance', 'Executive Sales', 'Overview'], href: '/finance', locations: [{ dashboardId: 'executive-sales', pageId: 'overview', href: '/finance' }], context: [] },
-		  { reference: { workspaceId: 'sales', type: 'measure', id: 'olist.order_count' }, name: 'Orders count', description: 'Across the sales workspace', workspace: { id: 'sales', name: 'Sales' }, hierarchy: ['Sales', 'Olist'], href: '/measure', locations: [], context: ['current_workspace'] },
+		  { reference: { kind: 'visual', id: 'executive-sales.orders_chart' }, name: 'Orders by status', hierarchy: ['Sales', 'Executive Sales', 'Overview'], href: '/orders', locations: [{ dashboardId: 'executive-sales', pageId: 'overview', href: '/orders' }], context: ['current_page'] },
+		  { reference: { kind: 'visual', id: 'executive-sales.foreign_orders' }, name: 'Finance orders', description: 'From another project', hierarchy: ['Finance', 'Executive Sales', 'Overview'], href: '/finance', locations: [{ dashboardId: 'executive-sales', pageId: 'overview', href: '/finance' }], context: [] },
+		  { reference: { kind: 'measure', id: 'olist.order_count' }, name: 'Orders count', description: 'Across the sales model', hierarchy: ['Sales', 'Olist'], href: '/measure', locations: [], context: [] },
         ],
       } })
       await element.updateComplete
@@ -1082,14 +1082,13 @@ test('dashboard agent drawer carries page context and explicit visual references
     expect(submitted).toEqual({
       input: 'Why did this decline?',
       references: [{
-        reference: { workspaceId: 'sales', type: 'visual', id: 'executive-sales.orders_chart' },
+        reference: { kind: 'visual', id: 'executive-sales.orders_chart' },
         name: 'Orders by status',
         visualType: 'bar',
-        workspace: { id: 'sales', name: 'sales' },
         hierarchy: ['sales', 'Executive Sales Dashboard', 'Overview'],
-        href: '/workspaces/sales/dashboards/executive-sales/pages/overview',
-        locations: [{ dashboardId: 'executive-sales', dashboardName: 'Executive Sales Dashboard', pageId: 'overview', pageName: 'Overview', href: '/workspaces/sales/dashboards/executive-sales/pages/overview' }],
-        context: ['current_page', 'current_dashboard', 'current_workspace'],
+        href: '/dashboards/executive-sales/pages/overview',
+        locations: [{ dashboardId: 'executive-sales', dashboardName: 'Executive Sales Dashboard', pageId: 'overview', pageName: 'Overview', href: '/dashboards/executive-sales/pages/overview' }],
+        context: ['current_page', 'current_dashboard'],
       }],
     })
 
@@ -1100,10 +1099,10 @@ test('dashboard agent drawer carries page context and explicit visual references
 		transcript: [{
 		  id: 'user_1', kind: 'user', runId: 'run_1', text: 'Why did this decline?',
 		  references: [{
-			reference: { workspaceId: 'sales', type: 'visual', id: 'executive-sales.orders_chart' },
-			name: 'Orders by status', workspace: { id: 'sales', name: 'Sales' },
+			reference: { kind: 'visual', id: 'executive-sales.orders_chart' },
+			name: 'Orders by status',
 			hierarchy: ['Sales', 'Executive Sales Dashboard', 'Overview'],
-			href: '/workspaces/sales/dashboards/executive-sales/pages/overview', locations: [], context: ['current_page'],
+			href: '/dashboards/executive-sales/pages/overview', locations: [], context: ['current_page'],
 		  }],
 		}],
 		status: { enabled: true, running: true },
@@ -2890,7 +2889,6 @@ function testDocument(): string {
     },
     agentContext: {
       surface: 'dashboard',
-      workspaceId: 'sales',
       dashboardId: 'executive-sales',
       dashboardTitle: 'Executive Sales Dashboard',
       pageId: 'overview',

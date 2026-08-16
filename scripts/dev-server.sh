@@ -209,7 +209,7 @@ wait_ready() {
   local interval="${LEAPVIEW_DEV_READY_INTERVAL:-0.2}"
 
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    if curl -fsS "http://localhost:$port/workspaces" >/dev/null 2>&1; then
+    if curl -fsS "http://localhost:$port/" >/dev/null 2>&1; then
       return 0
     fi
     if ! is_alive "$pid"; then
@@ -256,17 +256,16 @@ mcp_smoke() {
   local catalog
   catalog="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-catalog","method":"tools/call","params":{"name":"catalog_list","arguments":{}}}')" || return 1
   jq -e '(.error == null) and (.result.isError != true) and (.result.structuredContent.count > 0)' <<<"$catalog" >/dev/null || {
-    echo "Development MCP smoke check found no accessible workspaces" >&2
+    echo "Development MCP smoke check found no accessible project resources" >&2
     return 1
   }
 
   local measure
-  measure="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-measure","method":"tools/call","params":{"name":"catalog_search","arguments":{"query":"measure","types":["measure"],"limit":1}}}')" || return 1
+  measure="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-semantic-model","method":"tools/call","params":{"name":"catalog_search","arguments":{"query":"sales","kinds":["semantic_model"],"limit":1}}}')" || return 1
   local query_arguments
   query_arguments="$(jq -ce '
     .result.structuredContent.items[0] as $item |
-    ($item.hierarchy[] | select(.ref.type == "semantic_model") | .ref.id) as $model |
-    {workspace: $item.ref.workspaceId, model: $model, measures: [{field: $item.ref.id}], limit: 1}
+    {model: $item.ref.id, measures: [{field: "sales_orders.revenue"}], limit: 1}
   ' <<<"$measure")" || {
     echo "Development MCP smoke check could not resolve a semantic measure" >&2
     return 1
@@ -344,7 +343,7 @@ publish_running() {
 		echo "Dev server port file missing. Run task dev first." >&2
 		return 1
 	}
-	curl -fsS "http://localhost:${port}/workspaces" >/dev/null || {
+  curl -fsS "http://localhost:${port}/" >/dev/null || {
 		echo "Dev server is not running on http://localhost:${port}. Run task dev first." >&2
 		return 1
 	}

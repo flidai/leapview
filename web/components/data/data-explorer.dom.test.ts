@@ -58,22 +58,14 @@ test('data explorer renders object browser and emits preview commands', async ()
         kind: 'data',
         title: 'Data Explorer',
         description: 'Inspect rows.',
-        workspaceId: 'sales',
-        selectedWorkspaceId: 'sales',
         selectedObject: 'model_table:model_table:olist.orders',
-        workspaces: [
-          { id: 'sales', title: 'Sales', href: '/data?workspace=sales', objectCount: 3, active: true },
-          { id: 'operations', title: 'Operations', href: '/data?workspace=operations', objectCount: 1, active: false },
-        ],
         tabs: [],
       }
       const dataExplorer = {
         objects: [
           {
             key: 'source:source:olist.orders',
-            workspaceId: 'sales',
-            workspaceTitle: 'Sales',
-            assetId: 'source:olist.orders',
+            resourceId: 'source:olist.orders',
             layer: 'source',
             modelId: 'olist',
             source: 'orders',
@@ -84,9 +76,7 @@ test('data explorer renders object browser and emits preview commands', async ()
           },
           {
             key: 'model_table:model_table:olist.regions',
-            workspaceId: 'operations',
-            workspaceTitle: 'Operations',
-            assetId: 'model_table:olist.regions',
+            resourceId: 'model_table:olist.regions',
             layer: 'model_table',
             modelId: 'olist',
             table: 'regions',
@@ -97,9 +87,7 @@ test('data explorer renders object browser and emits preview commands', async ()
           },
           {
             key: 'model_table:model_table:olist.orders',
-            workspaceId: 'sales',
-            workspaceTitle: 'Sales',
-            assetId: 'model_table:olist.orders',
+            resourceId: 'model_table:olist.orders',
             layer: 'model_table',
             modelId: 'olist',
             table: 'orders',
@@ -113,9 +101,7 @@ test('data explorer renders object browser and emits preview commands', async ()
           },
           {
             key: 'source:source:olist.orders',
-            workspaceId: 'operations',
-            workspaceTitle: 'Operations',
-            assetId: 'source:olist.orders',
+            resourceId: 'source:olist.orders',
             layer: 'source',
             modelId: 'olist',
             source: 'orders',
@@ -126,9 +112,7 @@ test('data explorer renders object browser and emits preview commands', async ()
           },
           {
             key: 'model_table:model_table:olist.customers',
-            workspaceId: 'sales',
-            workspaceTitle: 'Sales',
-            assetId: 'model_table:olist.customers',
+            resourceId: 'model_table:olist.customers',
             layer: 'model_table',
             modelId: 'olist',
             table: 'customers',
@@ -139,12 +123,9 @@ test('data explorer renders object browser and emits preview commands', async ()
           },
         ],
         selectedKey: 'model_table:model_table:olist.orders',
-        selectedWorkspaceId: 'sales',
         selectedObject: {
           key: 'model_table:model_table:olist.orders',
-          workspaceId: 'sales',
-          workspaceTitle: 'Sales',
-          assetId: 'model_table:olist.orders',
+          resourceId: 'model_table:olist.orders',
           layer: 'model_table',
           modelId: 'olist',
           table: 'orders',
@@ -181,7 +162,7 @@ test('data explorer renders object browser and emits preview commands', async ()
           sql: 'SELECT * FROM model.orders',
           error: '',
         },
-        command: { workspaceId: 'sales', objectKey: 'model_table:model_table:olist.orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+        command: { objectKey: 'model_table:model_table:olist.orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
         warnings: [],
       }
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -220,10 +201,6 @@ test('data explorer renders object browser and emits preview commands', async ()
       await new Promise((resolve) => setTimeout(resolve, 80))
       const cellRect = grid.shadowRoot.querySelector('.cell')!.getBoundingClientRect()
       const tableRect = grid.shadowRoot.querySelector('.plane')!.getBoundingClientRect()
-      const operationsWorkspace = root.querySelector<HTMLDetailsElement>('.workspace-group[data-workspace-id="operations"]')!
-      operationsWorkspace.open = true
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      const openedWorkspacePreserved = operationsWorkspace.open
       const selectedNodeExpandedByDefault = Boolean(root.querySelector('.object-button.is-selected')?.closest('.object-node')?.hasAttribute('open'))
       const searchInput = root.querySelector<HTMLInputElement>('.search input')!
       searchInput.value = 'status'
@@ -265,11 +242,10 @@ test('data explorer renders object browser and emits preview commands', async ()
         selectedNodeExpandedByDefault,
         rowClickExpanded,
         expandClickExpanded,
-        workspaceSummaries: Array.from(root.querySelectorAll('.workspace-group > summary')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
-        workspaceIcons: Array.from(root.querySelectorAll('.workspace-icon')).map((item) => item.getAttribute('title')),
+        resourceSummaries: Array.from(root.querySelectorAll('.resource-group > summary')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
+        resourceIcons: Array.from(root.querySelectorAll('.resource-icon')).map((item) => item.getAttribute('title')),
         columnSearchMatchCount: columnSearchMatches.length,
         columnSearchMatchesOpen: columnSearchMatches.every((node) => node.open),
-        openedWorkspacePreserved,
         hasHeaderColumnsControl: root.querySelector('.header-columns summary')?.textContent?.replace(/\s+/g, ' ').trim(),
         hasPreviewTable: Boolean(previewTable),
         hasWindowedTable: Boolean(grid),
@@ -296,7 +272,7 @@ test('data explorer renders object browser and emits preview commands', async ()
 
     expect(state.title).toBe('Data Explorer')
     expect(state.groups.join(' ')).not.toContain('Sources')
-    expect(state.groups.join(' ')).toContain('Sales')
+    expect(state.groups.join(' ')).toContain('olist')
     expect(state.groups.join(' ')).not.toContain('Model tables')
     expect(state.groups.join(' ')).not.toContain('Semantic views')
     expect(state.hasBreadcrumb).toBe(false)
@@ -312,15 +288,14 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.selectedNodeExpandedByDefault).toBe(false)
     expect(state.rowClickExpanded).toBe(false)
     expect(state.expandClickExpanded).toBe(true)
-    expect(state.workspaceSummaries).toContain('Sales (2)')
-    expect(state.workspaceIcons).toEqual(['Workspace'])
+    expect(state.resourceSummaries).toContain('olist (3)')
+    expect(state.resourceIcons).toEqual(['Project resource'])
     expect(state.columnSearchMatchCount).toBe(2)
     expect(state.columnSearchMatchesOpen).toBe(true)
-    expect(state.openedWorkspacePreserved).toBe(true)
     expect(state.hasHeaderColumnsControl).toBe('Columns2/2')
     expect(state.hasPreviewTable).toBe(true)
     expect(state.hasWindowedTable).toBe(true)
-    expect(state.tableKey).toBe('sales:model_table:model_table:olist.orders')
+    expect(state.tableKey).toBe('model_table:model_table:olist.orders')
     expect(state.tableRowHeight).toBe(32)
     expect(state.tableFooterDisplay).toBe('flex')
     expect(state.tableFooterHeight).toBeGreaterThan(0)
@@ -335,12 +310,12 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.rowCount).toBeGreaterThan(0)
     expect(state.tableWidth).toBeGreaterThan(700)
     expect(state.firstCellWidth).toBeGreaterThan(100)
-    expect(state.commands.some((command) => command.workspaceId === 'sales' && command.objectKey === 'model_table:model_table:olist.customers')).toBe(true)
+    expect(state.commands.some((command) => command.objectKey === 'model_table:model_table:olist.customers')).toBe(true)
     expect(state.commands.some((command) => command.objectKey === 'model_table:model_table:olist.customers' && command.visibleColumns?.length === 0 && Object.keys(command.columnWidths ?? {}).length === 0)).toBe(true)
-    expect(state.commands.some((command) => command.workspaceId === 'sales' && command.sort?.column === 'order_id')).toBe(true)
+    expect(state.commands.some((command) => command.sort?.column === 'order_id')).toBe(true)
     expect(state.commands.some((command) => command.visibleColumns?.length === 1 && command.visibleColumns[0] === 'order_id')).toBe(true)
-    expect(state.commands.some((command) => command.workspaceId === 'sales' && command.objectKey === 'model_table:model_table:olist.orders' && command.columnWidths?.order_id > 200)).toBe(true)
-    expect(state.commands.some((command) => command.workspaceId === 'sales' && command.block && command.start > 0 && command.count === 100 && command.requestSeq > 0)).toBe(true)
+    expect(state.commands.some((command) => command.objectKey === 'model_table:model_table:olist.orders' && command.columnWidths?.order_id > 200)).toBe(true)
+    expect(state.commands.some((command) => command.block && command.start > 0 && command.count === 100 && command.requestSeq > 0)).toBe(true)
   } finally {
     await page.close()
   }
@@ -355,16 +330,14 @@ test('data explorer builds a governed semantic exploration and filter command', 
     const state = await page.evaluate(async () => {
       const element = document.createElement('lv-data-explorer') as any
       const pageSignal = {
-        kind: 'data', title: 'Data Explorer', description: 'Inspect or explore data.', workspaceId: 'sales',
-        selectedWorkspaceId: 'sales', workspaces: [{ id: 'sales', title: 'Sales', href: '/data?workspace=sales', objectCount: 3, active: true }], tabs: [],
+        kind: 'data', title: 'Data Explorer', description: 'Inspect or explore data.', tabs: [],
       }
       const exploreCommand = {
-        workspaceId: 'sales', modelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], measures: ['revenue'],
+        modelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], measures: ['revenue'],
         filters: [], sort: [{ field: 'revenue', direction: 'desc' }], limit: 100, requestSeq: 1, resetVersion: 1, columnWidths: {},
       }
       const selectedObject = {
-        key: 'model_table:model_table:sales.orders', workspaceId: 'sales', workspaceTitle: 'Sales',
-        assetId: 'model_table:sales.orders', layer: 'model_table', modelId: 'sales', table: 'orders', title: 'orders',
+        key: 'model_table:model_table:sales.orders', resourceId: 'model_table:sales.orders', layer: 'model_table', modelId: 'sales', table: 'orders', title: 'orders',
         description: 'One row per order.', grain: 'order_id', columnCount: 2, rowCountLabel: '10',
         columns: [
           { key: 'order_id', label: 'Order ID', type: 'string' },
@@ -372,20 +345,18 @@ test('data explorer builds a governed semantic exploration and filter command', 
         ],
       }
       const customersObject = {
-        key: 'model_table:model_table:sales.customers', workspaceId: 'sales', workspaceTitle: 'Sales',
-        assetId: 'model_table:sales.customers', layer: 'model_table', modelId: 'sales', table: 'customers', title: 'customers',
+        key: 'model_table:model_table:sales.customers', resourceId: 'model_table:sales.customers', layer: 'model_table', modelId: 'sales', table: 'customers', title: 'customers',
         columnCount: 1, rowCountLabel: '10', columns: [{ key: 'state', label: 'State', type: 'string' }],
       }
       const itemsObject = {
-        key: 'model_table:model_table:sales.items', workspaceId: 'sales', workspaceTitle: 'Sales',
-        assetId: 'model_table:sales.items', layer: 'model_table', modelId: 'sales', table: 'items', title: 'items',
+        key: 'model_table:model_table:sales.items', resourceId: 'model_table:sales.items', layer: 'model_table', modelId: 'sales', table: 'items', title: 'items',
         columnCount: 1, rowCountLabel: '10', columns: [{ key: 'sku', label: 'SKU', type: 'string' }],
       }
       const dataExplorer = {
-        objects: [selectedObject, customersObject, itemsObject], selectedKey: selectedObject.key, selectedWorkspaceId: 'sales', selectedObject, preview: {
+        objects: [selectedObject, customersObject, itemsObject], selectedKey: selectedObject.key, selectedObject, preview: {
           columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, totalRowLabel: 'Unknown', sort: {},
         },
-        command: { mode: 'explore', workspaceId: 'sales', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
+        command: { mode: 'explore', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
         explore: {
           command: exploreCommand,
           models: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grain: 'order_id', fieldCount: 3 }] }],
@@ -445,7 +416,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       const initialState = {
         modes: Array.from(root.querySelectorAll('.mode-button')).map((button) => ({ text: button.textContent?.trim(), pressed: button.getAttribute('aria-pressed') })),
         hasBreadcrumb: Boolean(root.querySelector('[aria-label="Breadcrumb"]')),
-        workspaceTables: root.querySelector('.workspace-group')?.textContent?.replace(/\s+/g, ' ').trim(),
+        resourceTables: root.querySelector('.resource-group')?.textContent?.replace(/\s+/g, ' ').trim(),
         chips: Array.from(root.querySelectorAll('.selection-shelf .chip')).map((chip) => chip.textContent?.replace(/\s+/g, ' ').trim()),
         grain: root.querySelector('.result-meta')?.textContent?.replace(/\s+/g, ' ').trim(),
         tableRows: table.result.rows,
@@ -495,7 +466,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
 
     expect(state.modes).toEqual([])
     expect(state.hasBreadcrumb).toBe(false)
-    expect(state.workspaceTables).toContain('orders')
+    expect(state.resourceTables).toContain('orders')
     expect(state.chips.join(' ')).toContain('Order ID')
     expect(state.chips.join(' ')).toContain('Revenue')
     expect(state.grain).toContain('Grain: order_id')

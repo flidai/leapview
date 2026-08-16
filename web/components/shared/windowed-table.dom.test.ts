@@ -274,12 +274,12 @@ test('windowed table clears cached rows when table key changes without reset ver
         columnWidths: {},
       })
 
-      element.table = makeTable('workspace:customers', [{ id: 'customer-1', state: 'SP' }])
+      element.table = makeTable('project:customers', [{ id: 'customer-1', state: 'SP' }])
       document.body.append(element)
       await element.updateComplete
       const before = element.shadowRoot!.textContent ?? ''
 
-      element.table = makeTable('workspace:orders', [])
+      element.table = makeTable('project:orders', [])
       await element.updateComplete
       const after = element.shadowRoot!.textContent ?? ''
       const skeletonRows = element.shadowRoot!.querySelectorAll('.row[aria-busy="true"]').length

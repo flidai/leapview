@@ -279,15 +279,5 @@ if [[ "$status" != "active" ]]; then
   exit 1
 fi
 
-project_workspaces="$("$leapview" api call listProjectWorkspaces \
-  --target "$demo_target" \
-  --token "$release_token" \
-  --path "project=$project_id")"
-jq -e '
-  any(.evidence.workspaces[]?; .workspaceId == "visuals")
-' <<<"$deployment" >/dev/null
-jq -e '
-  any(.items[]?; .id == "visuals")
-' <<<"$project_workspaces" >/dev/null
 curl --fail --silent --show-error --max-time 15 "$demo_target/readyz" >/dev/null
-printf 'deployed %s and the canonical Olist showcase to %s\n' "$demo_image" "$demo_target"
+printf 'deployed %s and the canonical project showcase to %s\n' "$demo_image" "$demo_target"

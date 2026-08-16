@@ -13,8 +13,8 @@ test('MapLibre owns usable shadow-DOM styles for map navigation controls', () =>
 })
 
 test('MapLibre geometry assets are same-origin and content addressed', async () => {
-  expect(sameOriginGeometryURL('/static/geometry/states.geojson', 'https://dash.example/workspaces/sales').href).toBe('https://dash.example/static/geometry/states.geojson')
-  expect(() => sameOriginGeometryURL('https://attacker.example/states.geojson', 'https://dash.example/workspaces/sales')).toThrow(/same-origin/)
+  expect(sameOriginGeometryURL('/static/geometry/states.geojson', 'https://dash.example/dashboards/sales').href).toBe('https://dash.example/static/geometry/states.geojson')
+  expect(() => sameOriginGeometryURL('https://attacker.example/states.geojson', 'https://dash.example/dashboards/sales')).toThrow(/same-origin/)
   await expect(verifyGeometryDigest(new TextEncoder().encode('geometry'), 'sha256:invalid')).rejects.toThrow(/canonical SHA-256/)
   await expect(verifyGeometryDigest(new TextEncoder().encode('geometry'), `sha256:${'0'.repeat(64)}`)).rejects.toThrow(/digest mismatch/)
   // Plain-HTTP development shares are not secure contexts, so browsers do
@@ -35,7 +35,7 @@ test('MapLibre map styles rewrite only pinned same-origin PMTiles and assets', a
   const previous = globalThis.fetch
   globalThis.fetch = (async () => new Response(style)) as typeof fetch
   try {
-    const loaded = await loadMapStyleAsset(asset, 'https://dash.example/workspaces/maps')
+    const loaded = await loadMapStyleAsset(asset, 'https://dash.example/dashboards/maps')
     expect((loaded.sources.base as { url?: string }).url).toBe(`pmtiles://https://dash.example/map-assets/leapview-streets/archives/${'a'.repeat(64)}/basemap.pmtiles`)
     expect(loaded.glyphs).toBe(`https://dash.example/map-assets/leapview-streets/assets/${'b'.repeat(40)}/glyphs/{fontstack}/{range}.pbf`)
     await expect(loadMapStyleAsset({ ...asset, styleUrl: 'https://attacker.example/style.json' }, 'https://dash.example/maps')).rejects.toThrow(/same-origin/)
@@ -298,7 +298,7 @@ test('MapLibre tiled layers reuse one native source and stable server-provided d
 	expect(JSON.stringify(style.paint['circle-color'])).toContain('__lv_aggregate')
 	expect(JSON.stringify(style.paint['circle-color'])).toContain('#54aeff')
   expect(JSON.stringify(style.paint['circle-opacity'])).toContain('["boolean",["get","__lv_has_selection"],false]')
-  expect(vectorTileTemplateURL(envelope.dataState.kind === 'spatial_tiled' ? envelope.dataState.tileURL : '', 'https://example.test/dashboard')).toBe('https://example.test/workspaces/sales/dashboards/orders/visuals/orders-map/tiles/revision/{z}/{x}/{y}.mvt')
+  expect(vectorTileTemplateURL(envelope.dataState.kind === 'spatial_tiled' ? envelope.dataState.tileURL : '', 'https://example.test/dashboard')).toBe('https://example.test/dashboards/orders/visuals/orders-map/tiles/revision/{z}/{x}/{y}.mvt')
 })
 
 test('MapLibre switches the complete tiled map to one precision family at the global transition', () => {
@@ -595,7 +595,7 @@ function tiledPointEnvelope(): VisualizationEnvelope {
       ] },
       cardinality: { kind: 'exact', count: 15_000 }, extent: { west: -47, south: -24, east: -46, north: -23 },
       rawDomains: [{ field: 'revenue', minimum: 0, maximum: 500, total: 5000 }], aggregateDomains: [{ field: 'revenue', minimum: 0, maximum: 5000, total: 5000 }],
-      tileURL: '/workspaces/sales/dashboards/orders/visuals/orders-map/tiles/revision/{z}/{x}/{y}.mvt', minimumZoom: 0, maximumZoom: 18, rawMinimumZoom: 10, featureCap: 5000, maximumTileBytes: 524288,
+      tileURL: '/dashboards/orders/visuals/orders-map/tiles/revision/{z}/{x}/{y}.mvt', minimumZoom: 0, maximumZoom: 18, rawMinimumZoom: 10, featureCap: 5000, maximumTileBytes: 524288,
     },
     selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope

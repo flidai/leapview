@@ -18,7 +18,7 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
-      response.end('<!doctype html><main><lv-workspace-registry></lv-workspace-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration><script type="module" src="/settings-surfaces.js"></script></main>')
+      response.end('<!doctype html><main><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration><script type="module" src="/settings-surfaces.js"></script></main>')
       return
     }
     const file = normalize(join(root, url.pathname))
@@ -58,36 +58,36 @@ test('settings surfaces render typed signals and emit commands', async () => {
   } finally { await page.close() }
 })
 
-test('workspace registry uses the shared searchable entity list', async () => {
+test('project registry uses the shared searchable entity list', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-workspace-registry') && customElements.get('lv-entity-list'))
+    await page.waitForFunction(() => customElements.get('lv-project-registry') && customElements.get('lv-entity-list'))
     const result = await page.evaluate(async () => {
       const runtime = await import('/settings-surfaces.js') as any
       const registry = {
         items: [
           {
-            id: 'sales', title: 'Sales', description: 'Revenue reporting', href: '/workspaces/sales',
+            id: 'sales', title: 'Sales', description: 'Revenue reporting', href: '/projects/sales',
             owner: { subjectType: 'principal', subjectId: 'owner-1', displayName: 'Ada Lovelace', email: 'ada@example.com' },
             administrators: [{ subjectType: 'principal', subjectId: 'admin-1', displayName: 'Grace Hopper', role: 'admin' }],
-            environment: 'production', deploymentStatus: 'Active', updatedAt: '2026-08-11T08:00:00Z', links: { self: '/api/v1/workspaces/sales', workspace: '/workspaces/sales' },
+            environment: 'production', deploymentStatus: 'Active', updatedAt: '2026-08-11T08:00:00Z', links: { self: '/api/v1/projects/sales', project: '/projects/sales' },
           },
           {
-            id: 'retail', title: 'Retail', description: 'Store operations', href: '/workspaces/retail',
+            id: 'retail', title: 'Retail', description: 'Store operations', href: '/projects/retail',
             administrators: [], environment: 'development', servingStateStatus: 'Not deployed', updatedAt: '2026-08-10T08:00:00Z',
-            links: { self: '/api/v1/workspaces/retail', workspace: '/workspaces/retail' },
+            links: { self: '/api/v1/projects/retail', project: '/projects/retail' },
           },
         ],
         loading: false,
         hasMore: false,
       }
       runtime.setDatastarLitRuntimeForTests?.({
-        root: { adminWorkspaces: registry },
-        getPath: (path: string) => path === 'adminWorkspaces' ? registry : undefined,
+        root: { adminProjects: registry },
+        getPath: (path: string) => path === 'adminProjects' ? registry : undefined,
         effect: (fn: () => void) => { fn(); return () => {} },
       })
-      const element = document.querySelector('lv-workspace-registry') as any
+      const element = document.querySelector('lv-project-registry') as any
       element.requestUpdate()
       await element.updateComplete
       const list = element.shadowRoot.querySelector('lv-entity-list') as any
@@ -106,9 +106,9 @@ test('workspace registry uses the shared searchable entity list', async () => {
         initialRows,
         filteredRows: rows(),
         firstHref: element.shadowRoot.querySelector('.entity-list-identity')?.getAttribute('href'),
-        workspaceIconsArePlain: Array.from(element.shadowRoot.querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
-        workspaceIconBorderWidth: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
-        workspaceIconBackground: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
+        projectIconsArePlain: Array.from(element.shadowRoot.querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
+        projectIconBorderWidth: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
+        projectIconBackground: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
       }
     })
 
@@ -124,10 +124,10 @@ test('workspace registry uses the shared searchable entity list', async () => {
     expect(result.initialRows[0]).toContain('Active')
     expect(result.filteredRows).toHaveLength(1)
     expect(result.filteredRows[0]).toContain('Retail Store operations')
-    expect(result.firstHref).toBe('/workspaces/retail')
-    expect(result.workspaceIconsArePlain).toBe(true)
-    expect(result.workspaceIconBorderWidth).toBe('0px')
-    expect(result.workspaceIconBackground).toBe('rgba(0, 0, 0, 0)')
+    expect(result.firstHref).toBe('/projects/retail')
+    expect(result.projectIconsArePlain).toBe(true)
+    expect(result.projectIconBorderWidth).toBe('0px')
+    expect(result.projectIconBackground).toBe('rgba(0, 0, 0, 0)')
   } finally { await page.close() }
 })
 
@@ -345,7 +345,7 @@ test('local group detail moves rename and add member into focused modals', async
   } finally { await page.close() }
 })
 
-test('group administration creates a local group in the selected workspace', async () => {
+test('group administration creates a local group in the selected project', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
