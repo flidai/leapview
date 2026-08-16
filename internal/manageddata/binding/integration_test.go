@@ -37,12 +37,12 @@ func TestBinderPinsRevisionAfterEnvironmentPointerChanges(t *testing.T) {
 	}
 	firstRevision := createReadyRevision(t, ctx, repository, collection.ID, "orders-v1.csv", "a")
 	firstTarget := createValidatedState(t, ctx, store, servingStates, "project-a", "prod")
-	activateRevision(t, ctx, servingStates, repository, collection.ID, firstRevision.ID, firstTarget.ID)
+	activateRevision(t, ctx, servingStates, repository, collection.ID, firstRevision.ID, firstTarget.ID, "")
 
 	validation := servingstate.Validation{ProjectID: "project-a", ManagedDataRevisions: map[string]string{"orders": firstRevision.Digest}}
 	secondRevision := createReadyRevision(t, ctx, repository, collection.ID, "orders-v2.csv", "b")
 	secondTarget := createValidatedState(t, ctx, store, servingStates, "project-a", "prod")
-	activateRevision(t, ctx, servingStates, repository, collection.ID, secondRevision.ID, secondTarget.ID)
+	activateRevision(t, ctx, servingStates, repository, collection.ID, secondRevision.ID, secondTarget.ID, firstTarget.ID)
 	binder, err := New(repository)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func createValidatedState(t *testing.T, ctx context.Context, store *platform.Sto
 	return state
 }
 
-func activateRevision(t *testing.T, ctx context.Context, states *servingstatesqlite.Repository, repository *manageddatasqlite.Repository, collectionID projectgraph.ResourceID, revisionID manageddata.RevisionID, targetID servingstate.ID) {
+func activateRevision(t *testing.T, ctx context.Context, states *servingstatesqlite.Repository, repository *manageddatasqlite.Repository, collectionID projectgraph.ResourceID, revisionID manageddata.RevisionID, targetID, expectedActiveID servingstate.ID) {
 	t.Helper()
 	identity := servingIdentity("project-a", "prod", string(targetID))
 	if err := repository.InstallServingStateBindings(ctx, identity, []manageddata.ServingStateBinding{{
@@ -103,7 +103,7 @@ func activateRevision(t *testing.T, ctx context.Context, states *servingstatesql
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := states.Activate(ctx, "project-a", "prod", targetID, ""); err != nil {
+	if _, err := states.Activate(ctx, "project-a", "prod", targetID, expectedActiveID); err != nil {
 		t.Fatal(err)
 	}
 }

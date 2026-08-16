@@ -136,7 +136,7 @@ func TestAbortUploadSessionWithWorkflowRollsBackStateOnEventFailure(t *testing.T
 	}
 	injected := errors.New("injected workflow failure")
 	repo := NewRepositoryWithWorkflow(db, jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return injected }))
-	err = repo.AbortUploadSessionWithWorkflow(ctx, session.ID.String(), jobs.WorkflowIntent{Event: jobs.EventInput{EventType: "upload_session.cancelled"}})
+	err = repo.AbortUploadSessionWithWorkflow(ctx, session.ID, jobs.WorkflowIntent{Event: jobs.EventInput{EventType: "upload_session.cancelled"}})
 	if !errors.Is(err, injected) {
 		t.Fatalf("abort error=%v", err)
 	}
@@ -163,7 +163,7 @@ func TestAbortUploadSessionWithWorkflowConcurrentReplayEmitsOneEvent(t *testing.
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if callErr := repo.AbortUploadSessionWithWorkflow(ctx, session.ID.String(), intent); callErr == nil {
+			if callErr := repo.AbortUploadSessionWithWorkflow(ctx, session.ID, intent); callErr == nil {
 				mu.Lock()
 				successes++
 				mu.Unlock()

@@ -261,14 +261,14 @@ func (r *Repository) AbortUploadSession(ctx context.Context, id manageddata.Uplo
 	return expectOne(result, err, "upload session is not open")
 }
 
-func (r *Repository) AbortUploadSessionWithWorkflow(ctx context.Context, id string, workflow jobs.WorkflowIntent) error {
+func (r *Repository) AbortUploadSessionWithWorkflow(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	result, err := q.AbortManagedDataUploadSession(ctx, strings.TrimSpace(id))
+	result, err := q.AbortManagedDataUploadSession(ctx, id.String())
 	if err := expectOne(result, err, "upload session is not open"); err != nil {
 		return err
 	}

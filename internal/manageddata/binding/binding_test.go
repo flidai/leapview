@@ -230,7 +230,7 @@ func validFakeRepository() *fakeRepository {
 }
 
 func activeCollection(id, connection string) manageddata.Collection {
-	return manageddata.Collection{ID: id, ProjectID: "project-a", ConnectionID: connection, Status: manageddata.CollectionStatusActive}
+	return manageddata.Collection{ID: projectgraph.ResourceID(id), ProjectID: "project-a", ConnectionID: projectgraph.ResourceID(connection), Status: manageddata.CollectionStatusActive}
 }
 
 func binderForRepository(repo Repository) *Binder {
@@ -243,6 +243,14 @@ func binderForRepository(repo Repository) *Binder {
 
 func validatedMetadata(projectID string, pins map[string]string) servingstate.Validation {
 	return servingstate.Validation{ProjectID: projectgraph.ResourceID(projectID), ManagedDataRevisions: pins}
+}
+
+func servingIdentity(projectID, environment, generationID string) projectgraph.ServingIdentity {
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(projectID), environment, generationID)
+	if err != nil {
+		panic(err)
+	}
+	return identity
 }
 
 type fakeRepository struct {
