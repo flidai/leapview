@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/report"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/project/graph"
@@ -215,5 +216,24 @@ func TestCanonicalTableRowsRespectInteractiveCap(t *testing.T) {
 	}
 	if !table.IsCapped || table.AvailableRows != dashboard.TableInteractiveRowCap || table.RowCap != dashboard.TableInteractiveRowCap {
 		t.Fatalf("table cap = %#v", table)
+	}
+}
+
+func TestCanonicalPowerFiltersTranslateComparisonAndRangePredicates(t *testing.T) {
+	definition := dashboardfilter.Definition{Field: "orders.category", Fact: "orders"}
+	contains, err := semanticFiltersForExpression(definition, dashboardfilter.Expression{
+		Kind: dashboardfilter.ExpressionComparison, Operator: dashboardfilter.OperatorContains,
+		Value: &dashboardfilter.Value{Kind: dashboardfilter.ValueString, Value: "watch"},
+	})
+	if err != nil || len(contains) != 1 || contains[0].Operator != string(dashboardfilter.OperatorContains) || contains[0].Values[0] != "watch" {
+		t.Fatalf("contains filter = %#v, err=%v", contains, err)
+	}
+	rangeFilters, err := semanticFiltersForExpression(definition, dashboardfilter.Expression{
+		Kind: dashboardfilter.ExpressionRange,
+		Lower: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueDecimal, Value: "10"}, Inclusive: true},
+		Upper: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueDecimal, Value: "20"}, Inclusive: false},
+	})
+	if err != nil || len(rangeFilters) != 2 || rangeFilters[0].Operator != string(dashboardfilter.OperatorGreaterThanOrEqual) || rangeFilters[1].Operator != string(dashboardfilter.OperatorLessThan) {
+		t.Fatalf("range filters = %#v, err=%v", rangeFilters, err)
 	}
 }
