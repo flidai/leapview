@@ -195,6 +195,12 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	objects = append(objects, semanticObjects...)
 	objects = append(objects, physicalObjects...)
 	if publicationQuery {
+		if err := validateDashboardPublicationCapability(snapshot.Project(), capability); err != nil {
+			if auditErr := m.recordDataAccessAudit(ctx, request, access.CapabilityResourceRead, "denied", err); auditErr != nil {
+				return request, nil, errors.Join(err, auditErr)
+			}
+			return request, nil, err
+		}
 		if candidateQuery || viewAsQuery || request.CandidateID != "" {
 			request.PrincipalID = dashboardPublicationSubjectID(capability.ProjectID, capability.Publication)
 			err := errors.New("public query cannot use candidate or view-as authority")

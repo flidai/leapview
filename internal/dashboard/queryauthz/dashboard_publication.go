@@ -14,11 +14,11 @@ import (
 // ProjectID and every dependency ID are canonical graph identities; no
 // workspace/path metadata is accepted as an authorization boundary.
 type DashboardPublicationCapability struct {
-	ProjectID    projectgraph.ResourceID
-	Publication  string
-	Dashboard    access.ResourceRef
-	Model        access.ResourceRef
-	Dependencies []access.ResourceRef
+	ProjectID          projectgraph.ResourceID
+	Publication        string
+	Dashboard          access.ResourceRef
+	ModelID            access.ResourceRef
+	DependencyAssetIDs []access.ResourceRef
 }
 
 type dashboardPublicationCapabilityKey struct{}
@@ -42,7 +42,7 @@ func validateDashboardPublicationQuery(capability DashboardPublicationCapability
 	if err := capability.Dashboard.Validate(); err != nil || capability.Dashboard.Kind() != projectgraph.KindDashboard {
 		return fmt.Errorf("dashboard publication dashboard resource is invalid")
 	}
-	if err := capability.Model.Validate(); err != nil || capability.Model.Kind() != projectgraph.KindSemanticModel {
+	if err := capability.ModelID.Validate(); err != nil || capability.ModelID.Kind() != projectgraph.KindSemanticModel {
 		return fmt.Errorf("dashboard publication model resource is invalid")
 	}
 	if request.ProjectID != capability.ProjectID {
@@ -51,8 +51,8 @@ func validateDashboardPublicationQuery(capability DashboardPublicationCapability
 	if request.Surface != dataquery.SurfacePublicDashboard {
 		return fmt.Errorf("public query surface %q is not allowed", request.Surface)
 	}
-	if request.ModelID != capability.Model.CanonicalID() {
-		return fmt.Errorf("public query model %q is outside publication model %q", request.ModelID, capability.Model.CanonicalID())
+	if request.ModelID != capability.ModelID.CanonicalID() {
+		return fmt.Errorf("public query model %q is outside publication model %q", request.ModelID, capability.ModelID.CanonicalID())
 	}
 	switch request.Operation {
 	case dataquery.OperationDashboardAggregate, dataquery.OperationDashboardRows, dataquery.OperationDashboardCount,
@@ -68,8 +68,8 @@ func validateDashboardPublicationQuery(capability DashboardPublicationCapability
 	default:
 		return fmt.Errorf("public query kind %q is not allowed", request.Kind)
 	}
-	closure := make(map[string]struct{}, len(capability.Dependencies))
-	for _, dependency := range capability.Dependencies {
+	closure := make(map[string]struct{}, len(capability.DependencyAssetIDs))
+	for _, dependency := range capability.DependencyAssetIDs {
 		if err := dependency.Validate(); err != nil {
 			return fmt.Errorf("publication dependency identity is invalid: %w", err)
 		}
@@ -85,6 +85,21 @@ func validateDashboardPublicationQuery(capability DashboardPublicationCapability
 		assetID := object.CanonicalID()
 		if _, ok := closure[assetID]; !ok {
 			return fmt.Errorf("public query dependency %q is outside publication closure", assetID)
+		}
+	}
+	return nil
+}
+
+func validateDashboardPublicationCapability(project projectgraph.ProjectGraph, capability DashboardPublicationCapability) error {
+	if err := capability.Dashboard.ValidateAgainst(project); err != nil {
+		return fmt.Errorf("publication dashboard resource is not in active project: %w", err)
+	}
+	if err := capability.ModelID.ValidateAgainst(project); err != nil {
+		return fmt.Errorf("publication model resource is not in active project: %w", err)
+	}
+	for _, dependency := range capability.DependencyAssetIDs {
+		if err := dependency.ValidateAgainst(project); err != nil {
+			return fmt.Errorf("publication dependency resource is not in active project: %w", err)
 		}
 	}
 	return nil

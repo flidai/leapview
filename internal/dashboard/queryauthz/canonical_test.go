@@ -209,7 +209,7 @@ func TestCanonicalActiveProjectIdentityRejectsMismatch(t *testing.T) {
 
 func TestCanonicalPublicPublicationAndCandidateClosures(t *testing.T) {
 	_, _, semantic, physical, dashboard := canonicalGraph(t)
-	capability := DashboardPublicationCapability{ProjectID: canonicalProject, Publication: "public", Dashboard: dashboard, Model: semantic, Dependencies: []access.ResourceRef{dashboard, semantic, physical}}
+	capability := DashboardPublicationCapability{ProjectID: canonicalProject, Publication: "public", Dashboard: dashboard, ModelID: semantic, DependencyAssetIDs: []access.ResourceRef{dashboard, semantic, physical}}
 	objects := []access.ResourceRef{semantic, physical}
 	request := dataquery.Query{ProjectID: canonicalProject, Surface: dataquery.SurfacePublicDashboard, Operation: dataquery.OperationDashboardRows, ModelID: semantic.CanonicalID(), Kind: dataquery.KindSemanticRows}
 	if err := validateDashboardPublicationQuery(capability, request, objects); err != nil {
@@ -274,7 +274,7 @@ func TestCanonicalArrowAuditRecordsSuccessAndFailure(t *testing.T) {
 		t.Fatalf("audit events = %#v", recorder.events)
 	}
 	recorder.err = errors.New("durable audit unavailable")
-	publication := DashboardPublicationCapability{ProjectID: canonicalProject, Publication: "public", Dashboard: dashboard, Model: semantic, Dependencies: []access.ResourceRef{dashboard, semantic}}
+	publication := DashboardPublicationCapability{ProjectID: canonicalProject, Publication: "public", Dashboard: dashboard, ModelID: semantic, DependencyAssetIDs: []access.ResourceRef{dashboard, semantic}}
 	publicQuery := query
 	publicQuery.Surface = dataquery.SurfacePublicDashboard
 	publicQuery.Operation = dataquery.OperationDashboardRows

@@ -276,7 +276,7 @@ func PublicationExecutionContext(ctx context.Context, row publication.Publicatio
 	})
 	return queryauthz.WithDashboardPublicationCapability(ctx, queryauthz.DashboardPublicationCapability{
 		ProjectID: row.ProjectID, Publication: row.Name,
-		Dashboard: dashboard, Model: model, Dependencies: dependencies,
+		Dashboard: dashboard, ModelID: model, DependencyAssetIDs: dependencies,
 	})
 }
 
