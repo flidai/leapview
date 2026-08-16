@@ -15,26 +15,14 @@ import (
 
 type currentUserRepository struct {
 	access.Repository
-	principal       access.Principal
-	management      access.PrincipalIdentityManagement
-	audit           access.AuditEventInput
-	password        struct{ current, next string }
-	tokenInput      access.APITokenInput
-	effective       []access.Privilege
-	effectiveObject access.ObjectRef
-}
-
-func (r *currentUserRepository) EffectivePrivileges(_ context.Context, _ string, object access.ObjectRef) ([]access.Privilege, error) {
-	r.effectiveObject = object
-	return r.effective, nil
+	principal  access.Principal
+	management access.PrincipalIdentityManagement
+	audit      access.AuditEventInput
+	password   struct{ current, next string }
 }
 
 func (r *currentUserRepository) CreateAPITokenWithMetadata(_ context.Context, input access.APITokenInput) (string, access.APIToken, error) {
-	r.tokenInput = input
-	return "secret", access.APIToken{
-		ID: "token_created", PrincipalID: input.PrincipalID, WorkspaceID: input.WorkspaceID,
-		Name: input.Name, Privileges: input.Privileges, CreatedAt: "2026-08-10T12:00:00Z",
-	}, nil
+	return "secret", access.APIToken{ID: "token_created", PrincipalID: input.PrincipalID, Name: input.Name, CreatedAt: "2026-08-10T12:00:00Z"}, nil
 }
 
 func (r *currentUserRepository) PrincipalByID(_ context.Context, principalID string) (access.Principal, error) {
@@ -198,52 +186,5 @@ func TestChangeCurrentPasswordIsAvailableOnlyForLocalCredential(t *testing.T) {
 	handler.ChangeCurrentPassword(denied, httptest.NewRequest(stdhttp.MethodPost, "/api/v1/me/password", strings.NewReader(`{"currentPassword":"old-secret","newPassword":"other"}`)))
 	if denied.Code != stdhttp.StatusUnprocessableEntity {
 		t.Fatalf("external password change = %d body=%s", denied.Code, denied.Body.String())
-	}
-}
-
-func TestCreateCurrentAPITokenValidatesAndAttenuatesCredentialScope(t *testing.T) {
-	repository := &currentUserRepository{
-		principal: access.Principal{ID: "principal_me", Kind: access.PrincipalKindUser},
-		effective: []access.Privilege{access.PrivilegeViewData},
-	}
-	handler := Handler{
-		Repository: func() (access.Repository, error) { return repository, nil },
-		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
-			return Principal{ID: repository.principal.ID, Kind: access.PrincipalKindUser}, true
-		},
-	}
-	invalid := httptest.NewRecorder()
-	handler.CreateCurrentAPIToken(invalid, httptest.NewRequest(stdhttp.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"invalid","privileges":["NOT_A_PRIVILEGE"]}`)))
-	if invalid.Code != stdhttp.StatusBadRequest || repository.tokenInput.Name != "" {
-		t.Fatalf("invalid token create = %d body=%s input=%#v", invalid.Code, invalid.Body.String(), repository.tokenInput)
-	}
-
-	absent := httptest.NewRecorder()
-	handler.CreateCurrentAPIToken(absent, httptest.NewRequest(stdhttp.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"absent","workspaceId":"alpha","privileges":["USE_AGENT"]}`)))
-	if absent.Code != stdhttp.StatusForbidden || repository.tokenInput.Name != "" || repository.effectiveObject != access.WorkspaceObject("alpha") {
-		t.Fatalf("absent-effective-privilege token create = %d body=%s input=%#v", absent.Code, absent.Body.String(), repository.tokenInput)
-	}
-
-	handler.CurrentCredential = func(*stdhttp.Request) (access.APICredential, bool) {
-		return access.APICredential{Token: access.APIToken{
-			ID: "token_parent", WorkspaceID: "alpha", Privileges: []access.Privilege{access.PrivilegeViewData},
-		}}, true
-	}
-	broader := httptest.NewRecorder()
-	handler.CreateCurrentAPIToken(broader, httptest.NewRequest(stdhttp.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"broader","workspaceId":"alpha","privileges":["USE_AGENT"]}`)))
-	if broader.Code != stdhttp.StatusForbidden || repository.tokenInput.Name != "" {
-		t.Fatalf("broader token create = %d body=%s input=%#v", broader.Code, broader.Body.String(), repository.tokenInput)
-	}
-
-	empty := httptest.NewRecorder()
-	handler.CreateCurrentAPIToken(empty, httptest.NewRequest(stdhttp.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"empty-child","workspaceId":"alpha","privileges":[]}`)))
-	if empty.Code != stdhttp.StatusCreated || repository.tokenInput.Name != "empty-child" || repository.tokenInput.Privileges == nil || len(repository.tokenInput.Privileges) != 0 {
-		t.Fatalf("empty child token create = %d body=%s input=%#v", empty.Code, empty.Body.String(), repository.tokenInput)
-	}
-
-	allowed := httptest.NewRecorder()
-	handler.CreateCurrentAPIToken(allowed, httptest.NewRequest(stdhttp.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"child","workspaceId":"alpha","privileges":["VIEW_DATA"]}`)))
-	if allowed.Code != stdhttp.StatusCreated || repository.tokenInput.Name != "child" || len(repository.tokenInput.Privileges) != 1 || repository.tokenInput.Privileges[0] != access.PrivilegeViewData {
-		t.Fatalf("allowed token create = %d body=%s input=%#v", allowed.Code, allowed.Body.String(), repository.tokenInput)
 	}
 }

@@ -12,34 +12,28 @@ import (
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	accesshttp "github.com/flidai/leapview/internal/access/http"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
-	accessoperation "github.com/flidai/leapview/internal/access/operation"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 )
 
 type Module struct {
-	handler             accesshttp.Handler
-	auth                *Auth
-	repository          func() (access.Repository, error)
-	workspaceIDs        func(context.Context) ([]string, error)
-	oauth               *mcpoauth.Service
-	oauthResource       mcpoauth.ResourceServer
-	desktopAuth         *desktopauth.Service
-	authoringAuth       *access.AuthoringAuthService
-	roleBindingCommands access.RoleBindingOperations
-	grantCommands       access.GrantOperations
-	logger              *slog.Logger
-	presentation        webpage.Presentation
-	assets              staticasset.Resolver
+	handler       accesshttp.Handler
+	auth          *Auth
+	repository    func() (access.Repository, error)
+	oauth         *mcpoauth.Service
+	oauthResource mcpoauth.ResourceServer
+	desktopAuth   *desktopauth.Service
+	authoringAuth *access.AuthoringAuthService
+	logger        *slog.Logger
+	presentation  webpage.Presentation
+	assets        staticasset.Resolver
 }
 
 type surfaceConfig struct {
 	Repository        func() (access.Repository, error)
 	CurrentPrincipal  func(*http.Request) (Principal, bool)
 	CurrentCredential func(*http.Request) (access.APICredential, bool)
-	WorkspaceID       func(string) string
 	Auth              *Auth
-	WorkspaceIDs      func(context.Context) ([]string, error)
 	Logger            *slog.Logger
 	OAuth             *mcpoauth.Service
 	OAuthResource     mcpoauth.ResourceServer
@@ -91,39 +85,14 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		}
 		return session.ID, true
 	}
-	roleBindingCommands, err := accessoperation.NewRoleBindingCommands(accessoperation.RepositoryProvider(config.Repository))
-	if err != nil {
-		return nil, err
-	}
-	grantCommands, err := accessoperation.NewGrantCommands(accessoperation.RepositoryProvider(config.Repository))
-	if err != nil {
-		return nil, err
-	}
-	return &Module{auth: config.Auth, repository: config.Repository, workspaceIDs: config.WorkspaceIDs, logger: logger,
+	return &Module{auth: config.Auth, repository: config.Repository, logger: logger,
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
-		roleBindingCommands: roleBindingCommands,
-		grantCommands:       grantCommands,
-		presentation:        config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
+		presentation: config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
 			Repository: config.Repository, CurrentPrincipal: currentPrincipal,
-			RoleBindingCommands: roleBindingCommands, GrantCommands: grantCommands,
 			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
-			WorkspaceID: config.WorkspaceID, AuthoringAuth: config.AuthoringAuth,
-			Avatar: avatarService, LocalPasswordEnabled: localPasswordEnabled,
+			AuthoringAuth: config.AuthoringAuth,
+			Avatar:        avatarService, LocalPasswordEnabled: localPasswordEnabled,
 		}}, nil
-}
-
-func (m *Module) RoleBindingCommands() access.RoleBindingOperations {
-	if m == nil {
-		return nil
-	}
-	return m.roleBindingCommands
-}
-
-func (m *Module) GrantCommands() access.GrantOperations {
-	if m == nil {
-		return nil
-	}
-	return m.grantCommands
 }
 
 func (m *Module) HTTP() accesshttp.Handler { return m.handler }

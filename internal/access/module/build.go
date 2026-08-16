@@ -22,7 +22,6 @@ type Config struct {
 	Database     *sql.DB
 	Auth         AuthConfig
 	ExistingAuth *Auth
-	WorkspaceIDs func(context.Context) ([]string, error)
 	PublicURL    string
 	InstanceID   string
 	MCPIssuerURL string
@@ -37,10 +36,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Database == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
-			Auth: auth, WorkspaceIDs: config.WorkspaceIDs, Presentation: config.Presentation, Assets: config.Assets,
-			WorkspaceID: func(value string) string {
-				return strings.TrimSpace(value)
-			},
+			Auth: auth, Presentation: config.Presentation, Assets: config.Assets,
 		}
 		if auth != nil {
 			surface.CurrentPrincipal = auth.Principal
@@ -93,15 +89,12 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		auth.authoringAuth = authoringAuth
 	}
 	surface := surfaceConfig{
-		Repository: func() (access.Repository, error) { return repository, nil },
-		Auth:       auth, WorkspaceIDs: config.WorkspaceIDs,
+		Repository:    func() (access.Repository, error) { return repository, nil },
+		Auth:          auth,
 		AuthoringAuth: authoringAuth,
 		Avatar:        avatarService,
 		Presentation:  config.Presentation,
 		Assets:        config.Assets,
-		WorkspaceID: func(value string) string {
-			return strings.TrimSpace(value)
-		},
 	}
 	if auth != nil {
 		surface.CurrentPrincipal = func(r *http.Request) (Principal, bool) {
@@ -175,7 +168,7 @@ func (m *Module) SeedLocalDeveloperPlatformAdmin(ctx context.Context) error {
 	}
 	principal := LocalDeveloperPrincipal()
 	_, err := repository.SetPlatformRole(ctx, access.PlatformRoleInput{
-		PrincipalID: principal.ID, Email: principal.Email, DisplayName: principal.DisplayName, Role: access.RolePlatformAdmin,
+		PrincipalID: principal.ID, Email: principal.Email, DisplayName: principal.DisplayName, Role: access.PlatformRoleAdmin,
 	})
 	return err
 }

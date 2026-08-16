@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	"github.com/flidai/leapview/internal/access/httpauth"
 	oidcauth "github.com/flidai/leapview/internal/access/oidc"
 	api "github.com/flidai/leapview/internal/platform/http/model"
 	"github.com/go-chi/chi/v5"
@@ -292,13 +291,13 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		if mutationErr == nil {
 			token, mutationErr = txRepo.CreateSession(r.Context(), principal.ID, 8*time.Hour)
 		}
-		return authAuditInput(r, "session.created", principal.ID, "", "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
+		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "", "principal", principal.ID, "", "success", map[string]any{"provider": provider})
+	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": provider})
 	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(8*time.Hour)))
 	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/"), http.StatusFound)
 }
@@ -308,12 +307,12 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 		principal, _ := a.sessions.PrincipalForToken(r.Context(), cookie.Value)
 		if err := runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
 			mutationErr := txRepo.DeleteSession(r.Context(), cookie.Value)
-			return authAuditInput(r, "session.revoked", principal.ID, "", "session", "", "", "success", nil), mutationErr
+			return authAuditInput(r, "session.revoked", principal.ID, "session", "", "", "success", nil), mutationErr
 		}); err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
-		recordAccessAudit(r, a.repo, "sign_out", principal.ID, "", "principal", principal.ID, "", "success", nil)
+		recordAccessAudit(r, a.repo, "sign_out", principal.ID, "principal", principal.ID, "", "success", nil)
 	}
 	http.SetCookie(w, &http.Cookie{Name: "lv_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.cookieSecure})
 	http.Redirect(w, r, "/", http.StatusFound)
@@ -337,7 +336,7 @@ func (a *Auth) LocalLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	principal, credential, err := local.VerifyLocalPassword(r.Context(), email, password)
 	if err != nil {
-		recordAccessAudit(r, a.repo, "sign_in", "", "", "principal", "", "", "denied", map[string]any{"provider": "local", "email": email})
+		recordAccessAudit(r, a.repo, "sign_in", "", "principal", "", "", "denied", map[string]any{"provider": "local", "email": email})
 		if wantsJSON(r) {
 			writeJSONError(w, errUnauthorized, http.StatusUnauthorized)
 			return
@@ -349,13 +348,13 @@ func (a *Auth) LocalLogin(w http.ResponseWriter, r *http.Request) {
 	err = runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
 		token, mutationErr = txRepo.CreateSession(r.Context(), principal.ID, 8*time.Hour)
-		return authAuditInput(r, "session.created", principal.ID, "", "session", "", "", "success", map[string]any{"provider": "local"}), mutationErr
+		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": "local"}), mutationErr
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "", "principal", principal.ID, "", "success", map[string]any{"provider": "local"})
+	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": "local"})
 	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(8*time.Hour)))
 	if credential.MustChangePassword {
 		http.Redirect(w, r, "/login", http.StatusFound)
@@ -389,7 +388,7 @@ func (a *Auth) LocalPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	err := runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
 		_, mutationErr := txRepo.ChangeLocalPassword(r.Context(), principal.ID, firstNonEmpty(r.Form.Get("currentPassword"), r.Form.Get("current_password")), firstNonEmpty(r.Form.Get("newPassword"), r.Form.Get("new_password")))
-		return authAuditInput(r, "password.changed", principal.ID, "", "principal", principal.ID, "", "success", map[string]any{"provider": "local"}), mutationErr
+		return authAuditInput(r, "password.changed", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": "local"}), mutationErr
 	})
 	if err != nil {
 		if wantsJSON(r) {
@@ -420,16 +419,11 @@ func (a *Auth) APICredential(r *http.Request) (access.APICredential, bool) {
 	return access.APICredential{}, false
 }
 
-func (a *Auth) Middleware(privilege access.Privilege, next http.Handler) http.Handler {
-	return a.MiddlewareWithObjectResolver(privilege, nil, next)
-}
-
-func (a *Auth) MiddlewareWithObjectResolver(privilege access.Privilege, objectResolver httpauth.ObjectResolver, next http.Handler) http.Handler {
+func (a *Auth) Middleware(next http.Handler) http.Handler {
 	if !a.Enabled() {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r = r.WithContext(access.WithAuthorizationCache(r.Context()))
 		principal, credential, ok := a.authenticate(r)
 		if !ok {
 			if a.apiTokenOnly {
@@ -450,128 +444,12 @@ func (a *Auth) MiddlewareWithObjectResolver(privilege access.Privilege, objectRe
 			writeAuthError(w, r, errForbidden, http.StatusForbidden)
 			return
 		}
-		if privilege != "" {
-			workspaceID := a.privilegeWorkspaceID(r)
-			objects := httpauth.ObjectsForRequest(privilege, r, workspaceID)
-			concealDenied := false
-			if objectResolver != nil && privilege != access.PrivilegeManagePlatform {
-				if resolved := objectResolver(r, workspaceID); len(resolved) > 0 {
-					objects = resolved
-					concealDenied = resolved[0].Type != access.SecurablePlatform && resolved[0].Type != access.SecurableWorkspace
-				}
-			}
-			// A non-global privilege must never fall back to a process-wide
-			// workspace. If the request did not carry a workspace scope and no
-			// explicit resolver supplied a valid object, fail closed.
-			if len(objects) == 0 || hasInvalidAuthorizationObject(objects) {
-				writeAuthError(w, r, errForbidden, http.StatusForbidden)
-				return
-			}
-			if credential != nil && credential.Authoring != nil {
-				projectID := authoringProjectScope(r, credential.Authoring)
-				if err := credential.Authoring.Scope.Authorize(a.authoringAuth.InstanceID(), projectID, privilege); err != nil {
-					status := http.StatusForbidden
-					if concealDenied && strings.HasPrefix(r.URL.Path, "/api/v1/") {
-						status = http.StatusNotFound
-					}
-					recordAuthorizationDenial(r, a.repo, principal.ID, workspaceID, privilege, objects, access.ReasonMissingPrivilege)
-					writeAuthError(w, r, errForbidden, status)
-					return
-				}
-			} else if credential != nil && !apiTokenAllows((*credential).Token, workspaceID, privilege) {
-				status := http.StatusForbidden
-				if concealDenied && strings.HasPrefix(r.URL.Path, "/api/v1/") {
-					status = http.StatusNotFound
-				}
-				recordAuthorizationDenial(r, a.repo, principal.ID, workspaceID, privilege, objects, access.ReasonMissingPrivilege)
-				writeAuthError(w, r, errForbidden, status)
-				return
-			}
-			decision, err := a.repo.AuthorizeAny(r.Context(), principal.ID, privilege, objects)
-			if err != nil {
-				writeAuthError(w, r, err, http.StatusInternalServerError)
-				return
-			}
-			if !decision.Allowed && httpauth.CanDeferDataAuth(privilege) {
-				useDecision, err := a.repo.Authorize(r.Context(), principal.ID, access.PrivilegeUseWorkspace, httpauth.ObjectForWorkspace(workspaceID))
-				if err != nil {
-					writeAuthError(w, r, err, http.StatusInternalServerError)
-					return
-				}
-				if useDecision.Allowed {
-					decision.Allowed = true
-				}
-			}
-			if !decision.Allowed && httpauth.CanDeferDataAuth(privilege) {
-				viewDecision, err := a.repo.AuthorizeAny(r.Context(), principal.ID, access.PrivilegeViewItem, objects)
-				if err != nil {
-					writeAuthError(w, r, err, http.StatusInternalServerError)
-					return
-				}
-				if viewDecision.Allowed {
-					decision.Allowed = true
-				}
-			}
-			if !decision.Allowed && httpauth.RouteCanDeferGrantManagement(privilege, r) {
-				useDecision, err := a.repo.Authorize(r.Context(), principal.ID, access.PrivilegeUseWorkspace, httpauth.ObjectForWorkspace(workspaceID))
-				if err != nil {
-					writeAuthError(w, r, err, http.StatusInternalServerError)
-					return
-				}
-				if useDecision.Allowed {
-					decision.Allowed = true
-				}
-			}
-			if !decision.Allowed {
-				status := http.StatusForbidden
-				// Public object routes deliberately conceal whether an inaccessible
-				// identifier exists. Collection and platform authorization failures
-				// remain explicit 403 responses.
-				if concealDenied && strings.HasPrefix(r.URL.Path, "/api/v1/") {
-					status = http.StatusNotFound
-				}
-				recordAuthorizationDenial(r, a.repo, principal.ID, workspaceID, privilege, objects, decision.Reason)
-				writeAuthError(w, r, errForbidden, status)
-				return
-			}
-			if connectionAuthorizationAuditRequired(privilege) {
-				if err := recordAuthorizationAllowed(
-					r, a.repo, principal.ID, workspaceID, privilege, objects,
-				); err != nil {
-					writeAuthError(w, r, err, http.StatusInternalServerError)
-					return
-				}
-			}
-		}
 		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
 		if credential != nil {
 			ctx = context.WithValue(ctx, apiCredentialContextKey{}, *credential)
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
-}
-
-func hasInvalidAuthorizationObject(objects []access.ObjectRef) bool {
-	for _, object := range objects {
-		if object.Type == "" {
-			return true
-		}
-		if object.Type == access.SecurableWorkspace && strings.TrimSpace(object.WorkspaceID) == "" {
-			return true
-		}
-	}
-	return false
-}
-
-func authoringProjectScope(
-	request *http.Request,
-	session *access.AuthoringSession,
-) string {
-	projectID := strings.TrimSpace(chi.URLParam(request, "project"))
-	if projectID == "" && session != nil {
-		projectID = strings.TrimSpace(session.Scope.ProjectID)
-	}
-	return projectID
 }
 
 func (a *Auth) defaultLoginRedirect() string {
@@ -629,101 +507,24 @@ func writeAuthError(w http.ResponseWriter, r *http.Request, err error, status in
 	http.Error(w, err.Error(), status)
 }
 
-func recordAccessAudit(r *http.Request, repo access.Repository, action, principalID, workspaceID, targetType, targetID string, privilege access.Privilege, status string, metadata map[string]any) {
+func recordAccessAudit(r *http.Request, repo access.Repository, action, principalID, resourceKind, resourceID string, capability access.Capability, status string, metadata map[string]any) {
 	if repo == nil {
 		return
 	}
-	_ = access.PersistAuditEvent(r.Context(), repo, authAuditInput(r, action, principalID, workspaceID, targetType, targetID, privilege, status, metadata))
+	_ = access.PersistAuditEvent(r.Context(), repo, authAuditInput(r, action, principalID, resourceKind, resourceID, capability, status, metadata))
 }
 
-func recordAuthorizationDenial(r *http.Request, repo access.Repository, principalID, workspaceID string, privilege access.Privilege, objects []access.ObjectRef, reason access.AuthorizationReason) {
-	if repo == nil {
-		return
-	}
-	_ = access.PersistAuditEvent(r.Context(), repo, authorizationDenialAuditInput(r, principalID, workspaceID, privilege, objects, reason))
-}
-
-func recordAuthorizationAllowed(
-	r *http.Request,
-	repo access.Repository,
-	principalID string,
-	workspaceID string,
-	privilege access.Privilege,
-	objects []access.ObjectRef,
-) error {
-	if repo == nil {
-		return nil
-	}
-	return access.PersistAuditEvent(
-		r.Context(),
-		repo,
-		authorizationAllowedAuditInput(r, principalID, workspaceID, privilege, objects),
-	)
-}
-
-func authorizationAllowedAuditInput(
-	r *http.Request,
-	principalID string,
-	workspaceID string,
-	privilege access.Privilege,
-	objects []access.ObjectRef,
-) access.AuditEventInput {
-	object := access.WorkspaceObject(workspaceID)
-	if len(objects) > 0 {
-		object = objects[0]
-	}
-	return authAuditInput(
-		r,
-		"authorization.allowed",
-		principalID,
-		workspaceID,
-		string(object.Type),
-		object.CanonicalID(),
-		privilege,
-		"allowed",
-		map[string]any{"reason": "granted"},
-	)
-}
-
-func connectionAuthorizationAuditRequired(privilege access.Privilege) bool {
-	return privilege == access.PrivilegeManageConnectionMetadata ||
-		privilege == access.PrivilegeTestConnection ||
-		privilege == access.PrivilegeViewConnectionHealth
-}
-
-func authorizationDenialAuditInput(r *http.Request, principalID, workspaceID string, privilege access.Privilege, objects []access.ObjectRef, reason access.AuthorizationReason) access.AuditEventInput {
-	object := access.WorkspaceObject(workspaceID)
-	if len(objects) > 0 {
-		object = objects[0]
-	}
-	if reason == "" {
-		reason = access.ReasonNoGrant
-	}
-	return authAuditInput(
-		r,
-		"authorization.denied",
-		principalID,
-		workspaceID,
-		string(object.Type),
-		object.CanonicalID(),
-		privilege,
-		"denied",
-		map[string]any{"reason": string(reason)},
-	)
-}
-
-func authAuditInput(r *http.Request, action, principalID, workspaceID, targetType, targetID string, privilege access.Privilege, status string, metadata map[string]any) access.AuditEventInput {
+func authAuditInput(r *http.Request, action, principalID, resourceKind, resourceID string, capability access.Capability, status string, metadata map[string]any) access.AuditEventInput {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
 	bytes, _ := json.Marshal(metadata)
 	return access.AuditEventInput{
-		WorkspaceID:   workspaceID,
 		PrincipalID:   principalID,
 		Action:        action,
-		TargetType:    targetType,
-		TargetID:      targetID,
-		Privilege:     privilege,
+		ResourceKind:  resourceKind,
+		ResourceID:    resourceID,
+		Capability:    capability,
 		Status:        status,
 		RequestID:     firstNonEmpty(r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID")),
 		CorrelationID: firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID")),
@@ -740,24 +541,6 @@ func runAuthAuditedMutation(r *http.Request, repo access.Repository, mutation fu
 		return err
 	}
 	return access.PersistAuditEvent(r.Context(), repo, input)
-}
-
-func (a *Auth) privilegeWorkspaceID(r *http.Request) string {
-	if workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace")); workspaceID != "" {
-		return workspaceID
-	}
-	if workspaceID := strings.TrimSpace(r.URL.Query().Get("workspace")); workspaceID != "" {
-		if workspaceID == "platform" && r.URL.Path == "/updates" {
-			return ""
-		}
-		return workspaceID
-	}
-	// Connection-asset streams carry the owning workspace under this explicit
-	// name because the visible route itself is project-global.
-	if workspaceID := strings.TrimSpace(r.URL.Query().Get("assetWorkspace")); workspaceID != "" {
-		return workspaceID
-	}
-	return ""
 }
 
 func (a *Auth) CSRFMiddleware(next http.Handler) http.Handler {
@@ -825,9 +608,8 @@ func (a *Auth) authenticateBearer(r *http.Request) (Principal, *access.APICreden
 				Principal: principal,
 				Token: access.APIToken{
 					ID: authoringCredential.ID, PrincipalID: principal.ID,
-					Name:       "authoring:" + string(authoringCredential.Session.Kind),
-					Privileges: append([]access.Privilege(nil), authoringCredential.Session.Scope.Privileges...),
-					ExpiresAt:  authoringCredential.AccessExpiresAt.UTC().Format(time.RFC3339),
+					Name:      "authoring:" + string(authoringCredential.Session.Kind),
+					ExpiresAt: authoringCredential.AccessExpiresAt.UTC().Format(time.RFC3339),
 				},
 				Authoring: &authoringCredential.Session,
 			}
@@ -861,11 +643,7 @@ func (a *Auth) auditDisabledCredentialFailure(r *http.Request, credentialType, s
 	if err != nil || principalID == "" {
 		return
 	}
-	recordAccessAudit(r, a.repo, "credential.denied", principalID, "", credentialType, targetID, "", "denied", map[string]any{"reason": "principal_disabled"})
-}
-
-func apiTokenAllows(token access.APIToken, workspaceID string, privilege access.Privilege) bool {
-	return access.TokenAllows(token, workspaceID, privilege)
+	recordAccessAudit(r, a.repo, "credential.denied", principalID, credentialType, targetID, "", "denied", map[string]any{"reason": "principal_disabled"})
 }
 
 func (a *Auth) sessionCookie(token string, expires time.Time) *http.Cookie {
@@ -1128,10 +906,6 @@ func WithAPICredential(ctx context.Context, credential access.APICredential) con
 
 func LocalDeveloperPrincipal() Principal {
 	return Principal{ID: "dev", Email: "dev@localhost", DisplayName: "Local Developer", DevBypass: true}
-}
-
-func TokenAllows(token access.APIToken, workspaceID string, privilege access.Privilege) bool {
-	return apiTokenAllows(token, workspaceID, privilege)
 }
 
 func BearerToken(r *http.Request) string { return bearerToken(r) }

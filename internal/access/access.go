@@ -98,6 +98,12 @@ type PlatformRoleInput struct {
 	Role        PlatformRole
 }
 
+// PlatformRoleReader resolves the immutable instance-wide administration role.
+// It is deliberately separate from project authorization snapshots.
+type PlatformRoleReader interface {
+	IsPlatformAdmin(context.Context, string) (bool, error)
+}
+
 type PrincipalInput struct {
 	ID          string
 	Kind        PrincipalKind

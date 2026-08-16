@@ -11,6 +11,15 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// CSRFMiddleware preserves browser-session CSRF protection for state-changing
+// form endpoints. Bearer-authenticated requests are exempted by Auth itself.
+func (m *Module) CSRFMiddleware(next http.Handler) http.Handler {
+	if m == nil || m.auth == nil {
+		return next
+	}
+	return m.auth.CSRFMiddleware(next)
+}
+
 func (m *Module) MountLoginPage(r chi.Router) {
 	if m != nil {
 		r.Get("/login", m.Login)
@@ -35,13 +44,13 @@ func (m *Module) MountAuthenticatedBrowser(r chi.Router) {
 	}
 	deviceAuthorization := http.Handler(http.HandlerFunc(m.DeviceAuthorizationPage))
 	if m.auth != nil {
-		deviceAuthorization = m.auth.Middleware("", deviceAuthorization)
+		deviceAuthorization = m.auth.Middleware(deviceAuthorization)
 	}
 	r.Method(http.MethodGet, "/device", deviceAuthorization)
 	r.Method(http.MethodPost, "/device", deviceAuthorization)
 	r.Post("/auth/logout", m.Logout)
 	r.Post("/auth/local/password", m.LocalPassword)
-	r.Method(http.MethodPut, "/profile/avatar", m.ProtectHandler("", http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+	r.Method(http.MethodPut, "/profile/avatar", m.auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		started, _, err := accessgen.BeginGenUploadCurrentAvatarCommand(request.Context(), accessgen.GenUploadCurrentAvatarCommandInvocation{
 			Surface: apigencommand.SurfaceUI, RequestID: strings.TrimSpace(request.Header.Get("X-Request-ID")),
 			CorrelationID: strings.TrimSpace(request.Header.Get("X-Correlation-ID")),
@@ -57,7 +66,7 @@ func (m *Module) MountAuthenticatedBrowser(r chi.Router) {
 		request = request.WithContext(started)
 		m.handler.UploadCurrentAvatar(w, request, request.Header.Get("Content-Type"))
 	})))
-	r.Method(http.MethodDelete, "/profile/avatar", m.ProtectHandler("", http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+	r.Method(http.MethodDelete, "/profile/avatar", m.auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if err := uicommand.VerifyClaim(uicommand.OperationClaims(request), accessgen.GenUIActionDeleteCurrentAvatar().OperationID()); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -72,7 +81,7 @@ func (m *Module) MountAuthenticatedBrowser(r chi.Router) {
 		}
 		m.handler.DeleteCurrentAvatar(w, request.WithContext(started))
 	})))
-	r.Method(http.MethodGet, "/profile/avatars/{principal}/{digest}", m.ProtectHandler("", http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+	r.Method(http.MethodGet, "/profile/avatars/{principal}/{digest}", m.auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		m.handler.GetPrincipalAvatar(w, request, chi.URLParam(request, "principal"), chi.URLParam(request, "digest"))
 	})))
 }
@@ -104,7 +113,7 @@ func (m *Module) MountOAuthMetadata(r chi.Router) {
 	r.Get("/.well-known/oauth-protected-resource/mcp", m.MCPProtectedResourceMetadata)
 	r.Get("/.well-known/oauth-authorization-server", m.MCPAuthorizationServerMetadata)
 	if m.auth != nil {
-		authorize := m.auth.Middleware("", http.HandlerFunc(m.MCPOAuthAuthorize))
+		authorize := m.auth.Middleware(http.HandlerFunc(m.MCPOAuthAuthorize))
 		r.Method(http.MethodGet, "/oauth/authorize", m.CSRFMiddleware(authorize))
 		r.Method(http.MethodPost, "/oauth/authorize", m.CSRFMiddleware(authorize))
 	}

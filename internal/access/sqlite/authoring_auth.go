@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	platformdb "github.com/flidai/leapview/internal/access/internal/db"
 	"github.com/flidai/leapview/internal/project/graph"
 )
@@ -397,18 +396,6 @@ func authoringDeviceAudit(action string, record access.DeviceAuthorization, prin
 		"decision": string(record.Status),
 	}
 	metadata, _ := json.Marshal(metadataValues)
-	if action == "authoring.device.decided" {
-		capabilities := make([]string, len(record.Scope.Capabilities))
-		for index, privilege := range record.Scope.Capabilities {
-			capabilities[index] = string(privilege)
-		}
-		if encoded, encodeErr := accessgen.EncodeGenDecideDeviceAuthorizationAuditPayload(accessgen.GenSchemaDeviceAuthorizationDecidedAuditPayload{
-			ClientId: record.ClientID, TargetId: record.Scope.TargetID, ProjectId: record.Scope.ProjectID.String(),
-			Privileges: capabilities, Decision: string(record.Status),
-		}); encodeErr == nil {
-			metadata = []byte(encoded)
-		}
-	}
 	return access.AuditEventInput{
 		PrincipalID: principalID, Action: action, ResourceKind: "device_authorization",
 		ResourceID: record.ID, Status: status, MetadataJSON: string(metadata),
@@ -421,18 +408,6 @@ func authoringSessionAudit(action string, session access.AuthoringSession, statu
 		"projectId": session.Scope.ProjectID.String(), "capabilities": session.Scope.Capabilities,
 	}
 	metadata, _ := json.Marshal(metadataValues)
-	if action == "authoring.session.revoked" {
-		capabilities := make([]string, len(session.Scope.Capabilities))
-		for index, privilege := range session.Scope.Capabilities {
-			capabilities[index] = string(privilege)
-		}
-		if encoded, err := accessgen.EncodeGenRevokeCurrentAuthoringSessionAuditPayload(accessgen.GenSchemaAuthoringSessionRevokedAuditPayload{
-			Kind: string(session.Kind), ClientId: session.ClientID, TargetId: session.Scope.TargetID,
-			ProjectId: session.Scope.ProjectID.String(), Privileges: capabilities,
-		}); err == nil {
-			metadata = []byte(encoded)
-		}
-	}
 	return access.AuditEventInput{
 		PrincipalID: session.PrincipalID, Action: action, ResourceKind: "authoring_session",
 		ResourceID: session.ID, Status: status, MetadataJSON: string(metadata),

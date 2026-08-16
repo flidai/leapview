@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 const authoringDeviceGrantType = "urn:ietf:params:oauth:grant-type:device_code"
@@ -28,12 +29,12 @@ func (m *Module) AuthoringDeviceAuthorization(w http.ResponseWriter, r *http.Req
 		writeAuthoringOAuthError(w, http.StatusUnauthorized, "invalid_client", "unknown device client")
 		return
 	}
-	privileges, err := authoringOAuthPrivileges(r.Form.Get("scope"))
+	capabilities, err := authoringOAuthCapabilities(r.Form.Get("scope"))
 	if err != nil {
 		writeAuthoringOAuthError(w, http.StatusBadRequest, "invalid_scope", err.Error())
 		return
 	}
-	scope, err := access.NewAuthoringScope(service.InstanceID(), r.Form.Get("project_id"), privileges)
+	scope, err := access.NewAuthoringScope(service.InstanceID(), graph.ResourceID(r.Form.Get("project_id")), capabilities)
 	if err != nil {
 		writeAuthoringOAuthError(w, http.StatusBadRequest, "invalid_scope", err.Error())
 		return
@@ -125,11 +126,11 @@ func requireAuthoringCLIClient(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func exchangeAuthoringClientCredentials(r *http.Request, service authoringOAuthAuthentication) (access.AuthoringTokenSet, error) {
-	privileges, err := authoringOAuthPrivileges(r.Form.Get("scope"))
+	capabilities, err := authoringOAuthCapabilities(r.Form.Get("scope"))
 	if err != nil {
 		return access.AuthoringTokenSet{}, fmt.Errorf("%w: %v", access.ErrAuthoringScopeDenied, err)
 	}
-	scope, err := access.NewAuthoringScope(service.InstanceID(), r.Form.Get("project_id"), privileges)
+	scope, err := access.NewAuthoringScope(service.InstanceID(), graph.ResourceID(r.Form.Get("project_id")), capabilities)
 	if err != nil {
 		return access.AuthoringTokenSet{}, fmt.Errorf("%w: %v", access.ErrAuthoringScopeDenied, err)
 	}
@@ -146,9 +147,9 @@ func exchangeAuthoringClientCredentials(r *http.Request, service authoringOAuthA
 }
 
 func writeAuthoringOAuthToken(w http.ResponseWriter, tokens access.AuthoringTokenSet) {
-	privileges := make([]string, len(tokens.Session.Scope.Privileges))
-	for index, privilege := range tokens.Session.Scope.Privileges {
-		privileges[index] = string(privilege)
+	capabilities := make([]string, len(tokens.Session.Scope.Capabilities))
+	for index, capability := range tokens.Session.Scope.Capabilities {
+		capabilities[index] = string(capability)
 	}
 	setAuthoringOAuthNoStore(w)
 	response := map[string]any{
@@ -158,8 +159,8 @@ func writeAuthoringOAuthToken(w http.ResponseWriter, tokens access.AuthoringToke
 		"session_id":   tokens.Session.ID,
 		"session_kind": tokens.Session.Kind,
 		"target_id":    tokens.Session.Scope.TargetID,
-		"project_id":   tokens.Session.Scope.ProjectID,
-		"scope":        strings.Join(privileges, " "),
+		"project_id":   tokens.Session.Scope.ProjectID.String(),
+		"scope":        strings.Join(capabilities, " "),
 	}
 	if tokens.RefreshToken != "" {
 		response["refresh_token"] = tokens.RefreshToken
@@ -184,20 +185,20 @@ func (m *Module) authoringOAuthService(w http.ResponseWriter) (authoringOAuthAut
 	return m.handler.AuthoringAuth, true
 }
 
-func authoringOAuthPrivileges(scope string) ([]access.Privilege, error) {
+func authoringOAuthCapabilities(scope string) ([]access.Capability, error) {
 	values := strings.Fields(scope)
 	if len(values) == 0 {
-		return nil, fmt.Errorf("at least one authoring privilege is required")
+		return nil, fmt.Errorf("at least one authoring capability is required")
 	}
-	privileges := make([]access.Privilege, 0, len(values))
+	capabilities := make([]access.Capability, 0, len(values))
 	for _, value := range values {
-		privilege, ok := access.ParsePrivilege(value)
-		if !ok {
-			return nil, fmt.Errorf("unsupported authoring privilege %q", value)
+		capability, err := access.ParseCapability(value)
+		if err != nil {
+			return nil, fmt.Errorf("unsupported authoring capability %q", value)
 		}
-		privileges = append(privileges, privilege)
+		capabilities = append(capabilities, capability)
 	}
-	return privileges, nil
+	return capabilities, nil
 }
 
 func writeAuthoringOAuthServiceError(w http.ResponseWriter, err error) {

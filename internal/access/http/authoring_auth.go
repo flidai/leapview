@@ -120,14 +120,14 @@ func authoringTokenDTO(tokens access.AuthoringTokenSet) map[string]any {
 }
 
 func authoringSessionDTO(session access.AuthoringSession, current bool) map[string]any {
-	privileges := make([]string, len(session.Scope.Privileges))
-	for index, privilege := range session.Scope.Privileges {
-		privileges[index] = string(privilege)
+	capabilities := make([]string, len(session.Scope.Capabilities))
+	for index, capability := range session.Scope.Capabilities {
+		capabilities[index] = string(capability)
 	}
 	response := map[string]any{
 		"id": session.ID, "kind": session.Kind, "current": current, "clientId": session.ClientID,
-		"targetId": session.Scope.TargetID, "projectId": session.Scope.ProjectID,
-		"privileges": privileges, "createdAt": session.CreatedAt.UTC().Format(time.RFC3339),
+		"targetId": session.Scope.TargetID, "projectId": session.Scope.ProjectID.String(),
+		"capabilities": capabilities, "createdAt": session.CreatedAt.UTC().Format(time.RFC3339),
 		"expiresAt": session.ExpiresAt.UTC().Format(time.RFC3339),
 	}
 	if !session.LastUsedAt.IsZero() {

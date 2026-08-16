@@ -46,7 +46,7 @@ func OAuthConsentPage(consent mcpoauth.Consent, values url.Values, csrfToken str
 						g.Text(consent.ClientName+" is requesting permission to use "+presentation.ProductName+" tools as your signed-in account.")),
 					h.Div(h.Class("mt-5 rounded-md border border-border-muted bg-canvas-subtle p-4"),
 						h.P(h.Class("text-sm font-medium"), g.Text("Permission")),
-						h.P(h.Class("mt-1 text-sm text-fg-muted"), g.Text("Use governed read-only BI tools. Workspace and asset permissions continue to be checked for every call.")),
+						h.P(h.Class("mt-1 text-sm text-fg-muted"), g.Text("Use governed read-only BI tools. Resource capabilities are checked for every call.")),
 						h.P(h.Class("mt-3 text-xs text-fg-subtle"), g.Text("Resource: "+consent.Resource)),
 					),
 					h.Form(h.Method("post"), h.Action("/oauth/authorize"), h.Class("mt-6 flex justify-end gap-3"),

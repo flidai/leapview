@@ -167,8 +167,8 @@ func TestAdministratorRevokesOnlyTheTargetPrincipalsSession(t *testing.T) {
 	if repository.revokedPrincipalID != "principal_target" || repository.revokedSessionID != "session_device" {
 		t.Fatalf("revoked principal/session = %q/%q, want principal_target/session_device", repository.revokedPrincipalID, repository.revokedSessionID)
 	}
-	if repository.audit.PrincipalID != "principal_admin" || repository.audit.Privilege != access.PrivilegeManageGrants {
-		t.Fatalf("audit actor/privilege = %q/%q, want principal_admin/%q", repository.audit.PrincipalID, repository.audit.Privilege, access.PrivilegeManageGrants)
+	if repository.audit.PrincipalID != "principal_admin" || repository.audit.ResourceKind != "session" {
+		t.Fatalf("audit actor/resource = %q/%q, want principal_admin/session", repository.audit.PrincipalID, repository.audit.ResourceKind)
 	}
 	var metadata map[string]any
 	if err := json.Unmarshal([]byte(repository.audit.MetadataJSON), &metadata); err != nil {

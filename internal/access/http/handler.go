@@ -15,20 +15,15 @@ import (
 	"strings"
 	"time"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
-	accessapi "github.com/flidai/leapview/internal/access/api"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/access/avatar"
-	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
-	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/go-chi/chi/v5"
 )
 
 var (
 	errUnauthorized = errors.New("unauthorized")
-	errForbidden    = errors.New("forbidden")
+	errForbidden    = access.ErrForbidden
 )
 
 type Principal struct {
@@ -44,7 +39,6 @@ type RepositoryProvider func() (access.Repository, error)
 type PrincipalProvider func(*stdhttp.Request) (Principal, bool)
 type CredentialProvider func(*stdhttp.Request) (access.APICredential, bool)
 type SessionProvider func(*stdhttp.Request) (string, bool)
-type WorkspaceIDNormalizer func(string) string
 
 type AuthoringAuthentication interface {
 	InstanceID() string
@@ -61,12 +55,9 @@ type AuthoringAuthentication interface {
 
 type Handler struct {
 	Repository           RepositoryProvider
-	RoleBindingCommands  access.RoleBindingCommander
-	GrantCommands        access.GrantCommander
 	CurrentPrincipal     PrincipalProvider
 	CurrentCredential    CredentialProvider
 	CurrentSession       SessionProvider
-	WorkspaceID          WorkspaceIDNormalizer
 	AuthoringAuth        AuthoringAuthentication
 	Avatar               AvatarService
 	LocalPasswordEnabled bool
@@ -88,7 +79,7 @@ func (h Handler) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Reques
 }
 
 func (h Handler) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	current, ok := h.currentPrincipal(r)
+	principal, ok := h.currentPrincipal(r)
 	if !ok {
 		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
 		return
@@ -117,7 +108,7 @@ func (h Handler) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	existing, err := repo.PrincipalByID(r.Context(), current.ID)
+	existing, err := repo.PrincipalByID(r.Context(), principal.ID)
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
@@ -140,14 +131,10 @@ func (h Handler) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return
 	}
 	var updated access.Principal
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
-		updated, mutationErr = txRepo.UpsertPrincipal(r.Context(), access.PrincipalInput{
-			ID: existing.ID, Kind: existing.Kind, Email: existing.Email, DisplayName: displayName,
-		})
-		return commandAccessAuditInput(r, "principal.profile.updated", existing.ID, "", "principal", existing.ID, "", "success", map[string]any{
-			"email": existing.Email, "displayName": displayName,
-		}, mutationErr)
+		updated, mutationErr = tx.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: existing.ID, Kind: existing.Kind, Email: existing.Email, DisplayName: displayName})
+		return auditInput(r, "principal.profile.updated", principal.ID, "principal", existing.ID, "", "success", map[string]any{"email": existing.Email, "displayName": displayName}), mutationErr
 	})
 	if err != nil {
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateCurrentPrincipal(), err, stdhttp.StatusBadRequest)
@@ -171,10 +158,7 @@ func (h Handler) ChangeCurrentPassword(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	if h.rejectAuthoringCredential(w, r) {
 		return
 	}
-	var input struct {
-		CurrentPassword string `json:"currentPassword"`
-		NewPassword     string `json:"newPassword"`
-	}
+	var input struct{ CurrentPassword, NewPassword string }
 	if err := decodeStrictJSON(r, &input); err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
@@ -201,11 +185,9 @@ func (h Handler) ChangeCurrentPassword(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeJSONError(w, fmt.Errorf("local password changes are unavailable for this principal"), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		_, mutationErr := txRepo.ChangeLocalPassword(r.Context(), principal.ID, input.CurrentPassword, input.NewPassword)
-		return commandAccessAuditInput(r, "password.changed", principal.ID, "", "principal", principal.ID, "", "success", map[string]any{
-			"email": principal.Email, "provider": "local",
-		}, mutationErr)
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		_, mutationErr := tx.ChangeLocalPassword(r.Context(), principal.ID, input.CurrentPassword, input.NewPassword)
+		return auditInput(r, "password.changed", principal.ID, "principal", principal.ID, "", "success", map[string]any{"email": principal.Email, "provider": "local"}), mutationErr
 	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -234,8 +216,8 @@ func (h Handler) UpdateCurrentTheme(w stdhttp.ResponseWriter, r *stdhttp.Request
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), err)
 		return
 	}
-	theme, ok := access.ParseThemeMode(input.Theme)
-	if !ok {
+	theme, valid := access.ParseThemeMode(input.Theme)
+	if !valid {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), fmt.Errorf("unsupported theme %q", input.Theme))
 		return
 	}
@@ -244,56 +226,36 @@ func (h Handler) UpdateCurrentTheme(w stdhttp.ResponseWriter, r *stdhttp.Request
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), err)
 		return
 	}
-	preferences, ok := repo.(access.AuditedPrincipalPreferences)
+	writer, ok := repo.(access.AuditedPrincipalPreferences)
 	if !ok {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), fmt.Errorf("principal preferences are unavailable"))
 		return
 	}
-	if err := preferences.SetPrincipalThemeAudited(r.Context(), principal.ID, theme); err != nil {
+	if err := writer.SetPrincipalThemeAudited(r.Context(), principal.ID, theme); err != nil {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateCurrentTheme(), err)
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
-func (h Handler) ListCurrentEffectivePrivileges(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, ok := h.currentPrincipal(r)
-	if !ok {
-		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
-		return
-	}
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	workspaceID := h.workspaceID(r.URL.Query().Get("workspace"))
-	privileges, err := repo.EffectivePrivileges(r.Context(), principal.ID, access.WorkspaceObject(workspaceID))
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	allowed := make([]string, 0, len(privileges))
-	for _, privilege := range privileges {
-		if credential, ok := h.currentCredential(r); ok && !apiTokenAllows(credential.Token, workspaceID, privilege) {
-			continue
-		}
-		allowed = append(allowed, string(privilege))
-	}
-	writeJSON(w, stdhttp.StatusOK, map[string]any{"workspaceId": workspaceID, "privileges": allowed})
-}
-
 func (h Handler) ListCurrentAPITokens(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
-		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
+		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
 		return
 	}
 	if h.rejectAuthoringCredential(w, r) {
 		return
 	}
-	if principal.Kind != "" && principal.Kind != access.PrincipalKindUser {
+	if !principalKindAllowsGenericMutation(principal.Kind) {
 		writeJSONError(w, fmt.Errorf("personal API tokens are only available to user principals"), stdhttp.StatusForbidden)
+		return
+	}
+	h.listAPITokens(w, r, principal.ID)
+}
+func (h Handler) listAPITokens(w stdhttp.ResponseWriter, r *stdhttp.Request, principalID string) {
+	if principalID == "" {
+		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
 		return
 	}
 	repo, err := h.repository()
@@ -301,176 +263,114 @@ func (h Handler) ListCurrentAPITokens(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	rows, err := repo.ListAPITokens(r.Context(), principal.ID)
+	rows, err := repo.ListAPITokens(r.Context(), principalID)
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	out := make([]map[string]any, 0, len(rows))
+	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, apiTokenDTO(row))
+		items = append(items, apiTokenDTO(row))
 	}
-	_ = writePagedJSON(w, r, out)
+	_ = writePagedJSON(w, r, items)
 }
 
 func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), fmt.Errorf("authenticated principal is required"))
+		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), errUnauthorized)
 		return
 	}
 	if h.rejectAuthoringCredential(w, r) {
 		return
 	}
-	if principal.Kind != "" && principal.Kind != access.PrincipalKindUser {
+	if !principalKindAllowsGenericMutation(principal.Kind) {
 		writeJSONError(w, fmt.Errorf("personal API tokens are only available to user principals"), stdhttp.StatusForbidden)
 		return
 	}
 	var input struct {
-		Name        string   `json:"name"`
-		WorkspaceID string   `json:"workspaceId"`
-		Privileges  []string `json:"privileges"`
-		ExpiresAt   string   `json:"expiresAt"`
+		Name      string `json:"name"`
+		ExpiresAt string `json:"expiresAt"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), apigenfailure.Wrap("invalid", err))
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
-	var expiresAt time.Time
-	if strings.TrimSpace(input.ExpiresAt) != "" {
-		parsed, err := time.Parse(time.RFC3339, input.ExpiresAt)
+	var expires time.Time
+	var err error
+	if input.ExpiresAt != "" {
+		expires, err = time.Parse(time.RFC3339, input.ExpiresAt)
 		if err != nil {
-			writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), apigenfailure.Wrap("invalid", err))
+			writeJSONError(w, err, stdhttp.StatusBadRequest)
 			return
-		}
-		expiresAt = parsed
-	}
-	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
-	requestedPrivileges := privilegesFromStrings(input.Privileges)
-	if input.Privileges == nil {
-		requestedPrivileges = nil
-	}
-	for _, privilege := range requestedPrivileges {
-		if !knownPrivilege(privilege) {
-			writeJSONError(w, fmt.Errorf("unsupported API token privilege %q", privilege), stdhttp.StatusBadRequest)
-			return
-		}
-	}
-	if credential, ok := h.currentCredential(r); ok && credential.Token.ID != "" {
-		if credential.Token.WorkspaceID != "" && credential.Token.WorkspaceID != input.WorkspaceID {
-			writeJSONError(w, fmt.Errorf("API tokens cannot create credentials outside their workspace scope"), stdhttp.StatusForbidden)
-			return
-		}
-		if credential.Token.Privileges != nil && input.Privileges == nil {
-			writeJSONError(w, fmt.Errorf("API tokens cannot create credentials broader than their privilege scope"), stdhttp.StatusForbidden)
-			return
-		}
-		for _, privilege := range requestedPrivileges {
-			if !apiTokenAllows(credential.Token, input.WorkspaceID, privilege) {
-				writeJSONError(w, fmt.Errorf("API tokens cannot create credentials broader than their privilege scope"), stdhttp.StatusForbidden)
-				return
-			}
 		}
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	if len(requestedPrivileges) > 0 {
-		target := access.PlatformObject()
-		if input.WorkspaceID != "" {
-			target = access.WorkspaceObject(input.WorkspaceID)
-		}
-		effective, effectiveErr := repo.EffectivePrivileges(r.Context(), principal.ID, target)
-		if effectiveErr != nil {
-			writeJSONError(w, effectiveErr, stdhttp.StatusInternalServerError)
-			return
-		}
-		allowed := make(map[access.Privilege]struct{}, len(effective))
-		for _, privilege := range effective {
-			allowed[privilege] = struct{}{}
-		}
-		for _, privilege := range requestedPrivileges {
-			if _, ok := allowed[privilege]; !ok {
-				writeJSONError(w, fmt.Errorf("requested API token privileges exceed the principal's effective privileges"), stdhttp.StatusForbidden)
-				return
-			}
-		}
-	}
-	var token string
-	var row access.APIToken
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+	var secret string
+	var token access.APIToken
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
-		token, row, mutationErr = txRepo.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{
-			PrincipalID: principal.ID, WorkspaceID: input.WorkspaceID, Name: input.Name,
-			Privileges: requestedPrivileges, ExpiresAt: expiresAt,
-		})
-		return commandAccessAuditInput(r, "api_token.created", principal.ID, row.WorkspaceID, "api_token", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"name": row.Name, "privileges": row.Privileges}, mutationErr)
+		secret, token, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: input.Name, ExpiresAt: expires})
+		return auditInput(r, "api_token.created", principal.ID, "api_token", token.ID, "", "success", nil), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateCurrentAPIToken(), err, stdhttp.StatusBadRequest)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
-	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"token": token, "apiToken": apiTokenDTO(row)})
+	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"token": secret, "apiToken": apiTokenDTO(token)})
 }
 
 func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentAPIToken(), fmt.Errorf("authenticated principal is required"))
+		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentAPIToken(), errUnauthorized)
 		return
 	}
 	if h.rejectAuthoringCredential(w, r) {
 		return
 	}
-	if principal.Kind != "" && principal.Kind != access.PrincipalKindUser {
+	if !principalKindAllowsGenericMutation(principal.Kind) {
 		writeJSONError(w, fmt.Errorf("personal API tokens are only available to user principals"), stdhttp.StatusForbidden)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentAPIToken(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	tokenID := chi.URLParam(r, "token")
-	var revoked access.APIToken
-	if rows, err := repo.ListAPITokens(r.Context(), principal.ID); err == nil {
-		for _, row := range rows {
-			if row.ID == tokenID {
-				revoked = row
-				break
-			}
-		}
-	}
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.RevokeAPITokenForPrincipal(r.Context(), principal.ID, tokenID)
-		return commandAccessAuditInput(r, "api_token.revoked", principal.ID, revoked.WorkspaceID, "api_token", tokenID, access.PrivilegeManageGrants, "success", map[string]any{"name": revoked.Name, "privileges": revoked.Privileges}, mutationErr)
+	id := chi.URLParam(r, "token")
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		mutationErr := tx.RevokeAPITokenForPrincipal(r.Context(), principal.ID, id)
+		return auditInput(r, "api_token.revoked", principal.ID, "api_token", id, "", "success", nil), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRevokeCurrentAPIToken(), err, statusForNotFound(err))
+		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
 func (h Handler) ListCurrentSessions(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, ok := h.currentPrincipal(r)
-	if !ok {
-		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
-		return
-	}
-	if h.rejectAuthoringCredential(w, r) {
-		return
-	}
-	h.listPrincipalSessions(w, r, principal.ID)
+	h.listSessions(w, r, h.currentPrincipalID(r))
 }
-
 func (h Handler) ListPrincipalSessions(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.listPrincipalSessions(w, r, chi.URLParam(r, "principal"))
+	target := chi.URLParam(r, "principal")
+	if target == "" || target != h.currentPrincipalID(r) {
+		if !h.requirePlatformAdmin(w, r) {
+			return
+		}
+	}
+	h.listSessions(w, r, target)
 }
-
-func (h Handler) listPrincipalSessions(w stdhttp.ResponseWriter, r *stdhttp.Request, principalID string) {
+func (h Handler) listSessions(w stdhttp.ResponseWriter, r *stdhttp.Request, principalID string) {
+	if principalID == "" {
+		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -481,73 +381,52 @@ func (h Handler) listPrincipalSessions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	out := make([]map[string]any, 0, len(rows))
-	currentSessionID := ""
-	if current, ok := h.currentPrincipal(r); ok && current.ID == principalID && h.CurrentSession != nil {
-		currentSessionID, _ = h.CurrentSession(r)
+	current := ""
+	if h.CurrentSession != nil {
+		current, _ = h.CurrentSession(r)
 	}
+	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, sessionDTOFor(row, currentSessionID))
+		items = append(items, sessionDTOFor(row, current))
 	}
-	_ = writePagedJSON(w, r, out)
+	_ = writePagedJSON(w, r, items)
 }
-
 func (h Handler) RevokeCurrentSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, ok := h.currentPrincipal(r)
-	if !ok {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeCurrentSession(), fmt.Errorf("authenticated principal is required"))
-		return
-	}
-	if h.rejectAuthoringCredential(w, r) {
-		return
-	}
-	h.revokePrincipalSession(w, r, accessgen.GenCommandOperationRevokeCurrentSession(), principal.ID, principal.ID, access.PrivilegeUseWorkspace, nil)
+	h.revokeSession(w, r, h.currentPrincipalID(r), h.currentPrincipalID(r))
 }
-
 func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	targetPrincipalID := chi.URLParam(r, "principal")
-	h.revokePrincipalSession(
-		w,
-		r,
-		accessgen.GenCommandOperationRevokePrincipalSession(),
-		h.currentPrincipalID(r),
-		targetPrincipalID,
-		access.PrivilegeManageGrants,
-		map[string]any{"targetPrincipalId": targetPrincipalID},
-	)
+	target := chi.URLParam(r, "principal")
+	if target == "" || target != h.currentPrincipalID(r) {
+		if !h.requirePlatformAdmin(w, r) {
+			return
+		}
+	}
+	h.revokeSession(w, r, h.currentPrincipalID(r), target)
 }
-
-func (h Handler) revokePrincipalSession(
-	w stdhttp.ResponseWriter,
-	r *stdhttp.Request,
-	operationID accessgen.GenCommandOperationID,
-	actorPrincipalID string,
-	targetPrincipalID string,
-	privilege access.Privilege,
-	metadata map[string]any,
-) {
+func (h Handler) revokeSession(w stdhttp.ResponseWriter, r *stdhttp.Request, actor, target string) {
+	if actor == "" || target == "" {
+		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, operationID, err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	sessionID := chi.URLParam(r, "session")
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.RevokeSessionForPrincipal(r.Context(), targetPrincipalID, sessionID)
-		return commandAccessAuditInput(r, "session.revoked", actorPrincipalID, "", "session", sessionID, privilege, "success", metadata, mutationErr)
+	id := chi.URLParam(r, "session")
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		mutationErr := tx.RevokeSessionForPrincipal(r.Context(), target, id)
+		return auditInput(r, "session.revoked", actor, "session", id, "", "success", nil), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, operationID, err, statusForNotFound(err))
+		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
 func (h Handler) ListPrincipals(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	if _, ok := apiLimitForRequest(w, r); !ok {
-		return
-	}
-	if _, ok := apiCursorKeyForRequest(w, r); !ok {
+	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
 	repo, err := h.repository()
@@ -555,129 +434,82 @@ func (h Handler) ListPrincipals(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	if repo == nil {
-		_ = writePagedJSON(w, r, []map[string]any{})
-		return
-	}
-	rows, err := repo.ListPrincipals(r.Context(), access.PrincipalFilter{
-		Email: r.URL.Query().Get("email"),
-		Query: r.URL.Query().Get("q"),
-	})
+	rows, err := repo.ListPrincipals(r.Context(), access.PrincipalFilter{Email: r.URL.Query().Get("email"), Query: r.URL.Query().Get("q")})
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	out := make([]map[string]any, 0, len(rows))
+	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		dto, dtoErr := h.principalAdministrationDTO(r.Context(), repo, row, h.currentPrincipalID(r))
-		if dtoErr != nil {
-			writeJSONError(w, dtoErr, stdhttp.StatusInternalServerError)
-			return
-		}
-		out = append(out, dto)
+		items = append(items, principalDTO(row))
 	}
-	_ = writePagedJSON(w, r, out)
+	_ = writePagedJSON(w, r, items)
 }
-
 func (h Handler) CreatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	var input struct {
-		Email       string `json:"email"`
-		DisplayName string `json:"displayName"`
+	if !h.requirePlatformAdmin(w, r) {
+		return
 	}
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		if err := decodeStrictJSON(r, &input); err != nil {
-			writeCommandFailure(w, r, accessgen.GenCommandOperationCreatePrincipal(), err)
-			return
-		}
-	} else {
-		if err := r.ParseForm(); err != nil {
-			writeCommandFailure(w, r, accessgen.GenCommandOperationCreatePrincipal(), err)
-			return
-		}
-		input.Email = r.Form.Get("email")
-		input.DisplayName = r.Form.Get("displayName")
+	var input struct{ Email, DisplayName string }
+	if err := decodeStrictJSON(r, &input); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreatePrincipal(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	var created access.LocalPasswordReset
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		created, mutationErr = txRepo.CreateLocalUser(r.Context(), access.LocalUserInput{Email: input.Email, DisplayName: input.DisplayName, MustChange: true})
-		return commandAccessAuditInput(r, "principal.local_user.created", h.currentPrincipalID(r), "", "principal", created.Principal.ID, access.PrivilegeManageGrants, "success", map[string]any{"email": created.Principal.Email}, mutationErr)
-	})
+	created, err := repo.CreateLocalUser(r.Context(), access.LocalUserInput{Email: input.Email, DisplayName: input.DisplayName, MustChange: true})
 	if err != nil {
-		if errors.Is(err, access.ErrPrincipalAlreadyExists) {
-			email := access.NormalizeEmail(input.Email)
-			audit := accessAuditInput(
-				r,
-				"principal.local_user.create_rejected",
-				h.currentPrincipalID(r),
-				"",
-				"principal",
-				access.PrincipalIDForEmail(email),
-				access.PrivilegeManageGrants,
-				"conflict",
-				map[string]any{"email": email, "reason": "duplicate"},
-			)
-			if auditErr := access.PersistAuditEvent(r.Context(), repo, audit); auditErr != nil {
-				writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreatePrincipal(), fmt.Errorf("%w: %v", access.ErrAuditTransaction, auditErr), stdhttp.StatusInternalServerError)
-				return
-			}
-			writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreatePrincipal(), err, stdhttp.StatusConflict)
-			return
-		}
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreatePrincipal(), err, stdhttp.StatusBadRequest)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, localPasswordResetDTO(created))
 }
-
 func (h Handler) GetPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	principal, err := repo.PrincipalByID(r.Context(), chi.URLParam(r, "principal"))
+	row, err := repo.PrincipalByID(r.Context(), chi.URLParam(r, "principal"))
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
-	if revision, revisionErr := access.PrincipalRevision(principal); revisionErr == nil {
+	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
 		w.Header().Set("ETag", revision)
 	}
-	dto, err := h.principalAdministrationDTO(r.Context(), repo, principal, h.currentPrincipalID(r))
+	dto, err := h.principalAdministrationDTO(r.Context(), repo, row, h.currentPrincipalID(r))
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, dto)
 }
-
 func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
 	id := chi.URLParam(r, "principal")
 	existing, err := repo.PrincipalByID(r.Context(), id)
 	if err != nil {
-		status := statusForNotFound(err)
-		if status == stdhttp.StatusNotFound {
-			err = apigenfailure.Wrap("not_found", err)
-		}
 		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), err)
 		return
 	}
 	if !principalKindAllowsGenericMutation(existing.Kind) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)))
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), fmt.Errorf("principal kind %q is managed by its owning subsystem", existing.Kind))
 		return
 	}
-	management, err := principalIdentityManagement(r.Context(), repo, existing.ID)
+	management, err := principalIdentityManagement(r.Context(), repo, id)
 	if err != nil {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), err)
 		return
@@ -686,50 +518,45 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), principalManagedExternallyError(management))
 		return
 	}
-	if existing.ID == h.currentPrincipalID(r) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), apigenfailure.New("invalid", "the current principal cannot delete itself"))
+	if id == h.currentPrincipalID(r) {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), fmt.Errorf("the current principal cannot delete itself"))
 		return
 	}
-	if _, ok := repo.(interface {
+	_, ok := repo.(interface {
 		DeletePrincipal(context.Context, string) error
-	}); !ok {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeletePrincipal(), fmt.Errorf("principal deletion is unavailable"))
+	})
+	if !ok {
+		writeJSONError(w, fmt.Errorf("principal deletion is unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		management, managementErr := principalIdentityManagement(r.Context(), txRepo, id)
-		if managementErr != nil {
-			return access.AuditEventInput{}, managementErr
-		}
-		if management.Source != access.IdentityManagementLocal {
-			return access.AuditEventInput{}, principalManagedExternallyError(management)
-		}
-		txDeleter, ok := txRepo.(interface {
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		txDeleter, ok := tx.(interface {
 			DeletePrincipal(context.Context, string) error
 		})
 		if !ok {
 			return access.AuditEventInput{}, fmt.Errorf("principal deletion is unavailable")
 		}
 		mutationErr := txDeleter.DeletePrincipal(r.Context(), id)
-		return commandAccessAuditInput(r, "principal.deleted", h.currentPrincipalID(r), "", "principal", id, access.PrivilegeManageGrants, "success", map[string]any{
-			"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName,
-		}, mutationErr)
+		return auditInput(r, "principal.deleted", h.currentPrincipalID(r), "principal", id, "", "success", map[string]any{"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName}), mutationErr
 	})
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeletePrincipal(), err, principalDeletionStatus(err))
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeletePrincipal(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
-
 func (h Handler) DisablePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	h.setPrincipalDisabled(w, r, true)
 }
-
 func (h Handler) EnablePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	h.setPrincipalDisabled(w, r, false)
 }
-
 func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Request, disabled bool) {
 	operationID := accessgen.GenCommandOperationDisablePrincipal()
 	if !disabled {
@@ -750,7 +577,7 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		writeJSONError(w, fmt.Errorf("principal kind %q is managed by its owning subsystem", existing.Kind), stdhttp.StatusUnprocessableEntity)
 		return
 	}
-	if disabled && existing.ID == h.currentPrincipalID(r) {
+	if disabled && id == h.currentPrincipalID(r) {
 		writeJSONError(w, fmt.Errorf("the current principal cannot disable itself"), stdhttp.StatusUnprocessableEntity)
 		return
 	}
@@ -762,13 +589,13 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		writeJSONError(w, fmt.Errorf("principal status changes are unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
+	var updated access.Principal
 	action := "principal.blocked"
 	if !disabled {
 		action = "principal.unblocked"
 	}
-	var updated access.Principal
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		writer, ok := txRepo.(principalStatusWriter)
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		writer, ok := tx.(principalStatusWriter)
 		if !ok {
 			return access.AuditEventInput{}, fmt.Errorf("principal status changes are unavailable")
 		}
@@ -778,9 +605,7 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		} else {
 			updated, mutationErr = writer.EnablePrincipal(r.Context(), id)
 		}
-		return commandAccessAuditInput(r, action, h.currentPrincipalID(r), "", "principal", id, access.PrivilegeManageGrants, "success", map[string]any{
-			"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName,
-		}, mutationErr)
+		return auditInput(r, action, h.currentPrincipalID(r), "principal", id, "", "success", map[string]any{"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName}), mutationErr
 	})
 	if err != nil {
 		writeAuditedMutationError(w, r, operationID, err, statusForNotFound(err))
@@ -796,8 +621,10 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	}
 	writeJSON(w, stdhttp.StatusOK, dto)
 }
-
 func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), err)
@@ -810,56 +637,48 @@ func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return
 	}
 	if !management.HasLocalPassword {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), apigenfailure.New("invalid", "this principal does not have a local password"))
+		writeCommandFailure(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), fmt.Errorf("this principal does not have a local password"))
 		return
 	}
 	var reset access.LocalPasswordReset
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		management, managementErr := principalIdentityManagement(r.Context(), txRepo, principalID)
-		if managementErr != nil {
-			return access.AuditEventInput{}, managementErr
-		}
-		if !management.HasLocalPassword {
-			return access.AuditEventInput{}, apigenfailure.New("invalid", "this principal does not have a local password")
-		}
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
-		reset, mutationErr = txRepo.ResetLocalPassword(r.Context(), principalID)
-		return commandAccessAuditInput(r, "principal.local_password.reset", h.currentPrincipalID(r), "", "principal", reset.Principal.ID, access.PrivilegeManageGrants, "success", map[string]any{"email": reset.Principal.Email}, mutationErr)
+		reset, mutationErr = tx.ResetLocalPassword(r.Context(), principalID)
+		return auditInput(r, "principal.local_password.reset", h.currentPrincipalID(r), "principal", principalID, "", "success", map[string]any{"email": reset.Principal.Email}), mutationErr
 	})
 	if err != nil {
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationResetPrincipalPassword(), err, statusForNotFound(err))
 		return
 	}
-	writeJSON(w, stdhttp.StatusOK, localPasswordResetDTO(reset))
+	writeSecretJSON(w, stdhttp.StatusOK, localPasswordResetDTO(reset))
 }
-
 func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	var input struct {
 		DisplayName string `json:"displayName"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	existing, err := repo.PrincipalByID(r.Context(), chi.URLParam(r, "principal"))
+	id := chi.URLParam(r, "principal")
+	row, err := repo.PrincipalByID(r.Context(), id)
 	if err != nil {
-		status := statusForNotFound(err)
-		if status == stdhttp.StatusNotFound {
-			err = apigenfailure.Wrap("not_found", err)
-		}
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err)
+		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
-	if !principalKindAllowsGenericMutation(existing.Kind) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), apigenfailure.New("invalid", fmt.Sprintf("principal kind %q is managed by its owning subsystem", existing.Kind)))
+	if !principalKindAllowsGenericMutation(row.Kind) {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), fmt.Errorf("principal kind %q is managed by its owning subsystem", row.Kind))
 		return
 	}
-	management, err := principalIdentityManagement(r.Context(), repo, existing.ID)
+	management, err := principalIdentityManagement(r.Context(), repo, id)
 	if err != nil {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err)
 		return
@@ -868,48 +687,36 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdatePrincipal(), principalManagedExternallyError(management))
 		return
 	}
-	if strings.TrimSpace(input.DisplayName) != "" {
-		existing.DisplayName = input.DisplayName
+	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+		if !requireIfMatch(w, r, revision) {
+			return
+		}
 	}
-	var principal access.Principal
-	err = runAuditedMutationWithConcurrency(r, repo, accessgen.GenCommandOperationUpdatePrincipal(), func(txRepo access.Repository) (string, error) {
-		current, err := txRepo.PrincipalByID(r.Context(), existing.ID)
-		if err != nil {
-			return "", err
-		}
-		return access.PrincipalRevision(current)
-	}, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		management, managementErr := principalIdentityManagement(r.Context(), txRepo, existing.ID)
-		if managementErr != nil {
-			return access.AuditEventInput{}, managementErr
-		}
-		if management.Source != access.IdentityManagementLocal {
-			return access.AuditEventInput{}, principalManagedExternallyError(management)
-		}
+	var updated access.Principal
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
-		principal, mutationErr = txRepo.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: existing.ID, Kind: existing.Kind, Email: existing.Email, DisplayName: existing.DisplayName})
-		return commandAccessAuditInput(r, "principal.updated", h.currentPrincipalID(r), "", "principal", principal.ID, access.PrivilegeManageGrants, "success", map[string]any{
-			"email": principal.Email, "kind": string(principal.Kind), "displayName": principal.DisplayName,
-		}, mutationErr)
+		updated, mutationErr = tx.UpsertPrincipal(r.Context(), access.PrincipalInput{ID: id, Kind: row.Kind, Email: row.Email, DisplayName: strings.TrimSpace(input.DisplayName)})
+		return auditInput(r, "principal.updated", h.currentPrincipalID(r), "principal", id, "", "success", map[string]any{"email": row.Email, "displayName": strings.TrimSpace(input.DisplayName)}), mutationErr
 	})
 	if err != nil {
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdatePrincipal(), err, stdhttp.StatusBadRequest)
 		return
 	}
-	if revision, revisionErr := access.PrincipalRevision(principal); revisionErr == nil {
+	if revision, revisionErr := access.PrincipalRevision(updated); revisionErr == nil {
 		w.Header().Set("ETag", revision)
 	}
-	dto, dtoErr := h.principalAdministrationDTO(r.Context(), repo, principal, h.currentPrincipalID(r))
-	if dtoErr != nil {
-		writeJSONError(w, dtoErr, stdhttp.StatusInternalServerError)
+	dto, err := h.principalAdministrationDTO(r.Context(), repo, updated, h.currentPrincipalID(r))
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, dto)
 }
 
-// OAuthToken issues the existing REST API credential used by service-principal
-// automation. MCP tokens share the public token endpoint but are routed to the
-// MCP authorization server before this handler is called.
+// OAuthToken issues an identity-only REST API credential for service-principal
+// automation. Authoring and MCP grants are dispatched by the access module;
+// this handler owns the legacy service-principal client-credentials exchange.
 func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
@@ -921,23 +728,20 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		ClientID     string `json:"client_id"`
 		ClientSecret string `json:"client_secret"`
 		Scope        string `json:"scope"`
-		WorkspaceID  string `json:"workspace_id"`
 	}
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		if err := decodeStrictJSON(r, &input); err != nil {
 			writeJSONError(w, err, stdhttp.StatusBadRequest)
 			return
 		}
+	} else if err := r.ParseForm(); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
 	} else {
-		if err := r.ParseForm(); err != nil {
-			writeJSONError(w, err, stdhttp.StatusBadRequest)
-			return
-		}
 		input.GrantType = r.Form.Get("grant_type")
 		input.ClientID = r.Form.Get("client_id")
 		input.ClientSecret = r.Form.Get("client_secret")
 		input.Scope = r.Form.Get("scope")
-		input.WorkspaceID = r.Form.Get("workspace_id")
 	}
 	if strings.TrimSpace(input.GrantType) != "client_credentials" {
 		writeJSONError(w, fmt.Errorf("unsupported grant_type %q", input.GrantType), stdhttp.StatusBadRequest)
@@ -949,20 +753,15 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	ttl := time.Hour
-	privileges, err := privilegesFromOAuthScope(input.Scope)
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
-		return
-	}
 	var token string
-	var row access.APIToken
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
-		token, row, mutationErr = txRepo.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{
-			PrincipalID: principal.ID, WorkspaceID: input.WorkspaceID, Name: "oauth-client-credentials",
-			Privileges: privileges, ExpiresAt: time.Now().Add(ttl),
+		token, _, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{
+			PrincipalID: principal.ID,
+			Name:        "oauth-client-credentials",
+			ExpiresAt:   time.Now().Add(ttl),
 		})
-		return commandAccessAuditInput(r, "oauth.token.created", principal.ID, input.WorkspaceID, "api_token", row.ID, "", "success", map[string]any{"grantType": "client_credentials"}, mutationErr)
+		return auditInput(r, "oauth.token.created", principal.ID, "api_token", "", "", "success", map[string]any{"grantType": "client_credentials"}), mutationErr
 	})
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
@@ -977,6 +776,9 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h Handler) ListServicePrincipals(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -987,14 +789,16 @@ func (h Handler) ListServicePrincipals(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	out := make([]map[string]any, 0, len(rows))
+	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, principalDTO(row))
+		items = append(items, principalDTO(row))
 	}
-	_ = writePagedJSON(w, r, out)
+	_ = writePagedJSON(w, r, items)
 }
-
 func (h Handler) GetServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -1005,146 +809,90 @@ func (h Handler) GetServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
 		return
 	}
-	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
-		w.Header().Set("ETag", revision)
-	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
 }
-
 func (h Handler) CreateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
-	var input struct {
-		ID          string `json:"id"`
-		DisplayName string `json:"displayName"`
+	if !h.requirePlatformAdmin(w, r) {
+		return
 	}
+	var input access.ServicePrincipalInput
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipal(), err)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipal(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	var row access.Principal
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		row, mutationErr = txRepo.CreateServicePrincipal(r.Context(), access.ServicePrincipalInput{ID: input.ID, DisplayName: input.DisplayName})
-		return commandAccessAuditInput(r, "service_principal.created", principal.ID, "", "service_principal", row.ID, access.PrivilegeManagePlatform, "success", nil, mutationErr)
-	})
+	row, err := repo.CreateServicePrincipal(r.Context(), input)
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateServicePrincipal(), err, stdhttp.StatusBadRequest)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
 	writeJSON(w, stdhttp.StatusCreated, principalDTO(row))
 }
-
 func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
-	var input struct {
-		DisplayName string `json:"displayName"`
+	if !h.requirePlatformAdmin(w, r) {
+		return
 	}
+	var input access.ServicePrincipalInput
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	existing, err := repo.PrincipalByID(r.Context(), chi.URLParam(r, "servicePrincipal"))
+	row, err := repo.UpdateServicePrincipal(r.Context(), chi.URLParam(r, "servicePrincipal"), input)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			err = apigenfailure.Wrap("not_found", err)
-		}
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
-	}
-	if existing.Kind != access.PrincipalKindServicePrincipal {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), apigenfailure.Wrap("not_found", sql.ErrNoRows))
-		return
-	}
-	var row access.Principal
-	err = runAuditedMutationWithConcurrency(r, repo, accessgen.GenCommandOperationUpdateServicePrincipal(), func(txRepo access.Repository) (string, error) {
-		current, err := txRepo.PrincipalByID(r.Context(), existing.ID)
-		if err != nil {
-			return "", err
-		}
-		return access.PrincipalRevision(current)
-	}, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		row, mutationErr = txRepo.UpdateServicePrincipal(r.Context(), chi.URLParam(r, "servicePrincipal"), access.ServicePrincipalInput{DisplayName: input.DisplayName})
-		return commandAccessAuditInput(r, "service_principal.updated", principal.ID, "", "service_principal", row.ID, access.PrivilegeManagePlatform, "success", nil, mutationErr)
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateServicePrincipal(), err, statusForNotFound(err))
-		return
-	}
-	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
-		w.Header().Set("ETag", revision)
 	}
 	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
 }
-
 func (h Handler) DeleteServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteServicePrincipal(), err)
+	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
-	id := chi.URLParam(r, "servicePrincipal")
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.DeleteServicePrincipal(r.Context(), id)
-		return commandAccessAuditInput(r, "service_principal.deleted", principal.ID, "", "service_principal", id, access.PrivilegeManagePlatform, "success", nil, mutationErr)
-	})
+	repo, err := h.repository()
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteServicePrincipal(), err, principalDeletionStatus(err))
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	if err := repo.DeleteServicePrincipal(r.Context(), chi.URLParam(r, "servicePrincipal")); err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
-
 func (h Handler) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
-	var input struct {
-		Name      string `json:"name"`
-		ExpiresAt string `json:"expiresAt"`
-	}
-	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipalSecret(), err)
+	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
-	var expiresAt time.Time
-	if strings.TrimSpace(input.ExpiresAt) != "" {
-		parsed, err := time.Parse(time.RFC3339, input.ExpiresAt)
-		if err != nil {
-			writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipalSecret(), err)
-			return
-		}
-		expiresAt = parsed
+	var input access.ServicePrincipalSecretInput
+	if err := decodeStrictJSON(r, &input); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateServicePrincipalSecret(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	var rawSecret string
-	var row access.ServicePrincipalSecret
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		rawSecret, row, mutationErr = txRepo.CreateServicePrincipalSecret(r.Context(), chi.URLParam(r, "servicePrincipal"), access.ServicePrincipalSecretInput{Name: input.Name, ExpiresAt: expiresAt})
-		return commandAccessAuditInput(r, "service_principal_secret.created", principal.ID, "", "service_principal", row.ServicePrincipalID, access.PrivilegeManagePlatform, "success", map[string]any{"secretId": row.ID}, mutationErr)
-	})
+	secret, row, err := repo.CreateServicePrincipalSecret(r.Context(), chi.URLParam(r, "servicePrincipal"), input)
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateServicePrincipalSecret(), err, stdhttp.StatusBadRequest)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
-	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"secret": rawSecret, "clientSecret": servicePrincipalSecretDTO(row, "")})
+	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"secret": secret, "clientSecret": servicePrincipalSecretDTO(row, "")})
 }
-
 func (h Handler) ListServicePrincipalSecrets(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -1154,7 +902,7 @@ func (h Handler) ListServicePrincipalSecrets(w stdhttp.ResponseWriter, r *stdhtt
 		ListServicePrincipalSecrets(context.Context, string) ([]access.ServicePrincipalSecret, error)
 	})
 	if !ok {
-		writeJSONError(w, fmt.Errorf("secret metadata is unavailable"), stdhttp.StatusServiceUnavailable)
+		writeJSONError(w, fmt.Errorf("secret metadata unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
 	rows, err := reader.ListServicePrincipalSecrets(r.Context(), chi.URLParam(r, "servicePrincipal"))
@@ -1168,8 +916,10 @@ func (h Handler) ListServicePrincipalSecrets(w stdhttp.ResponseWriter, r *stdhtt
 	}
 	_ = writePagedJSON(w, r, items)
 }
-
 func (h Handler) GetServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -1179,7 +929,7 @@ func (h Handler) GetServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.
 		GetServicePrincipalSecret(context.Context, string, string) (access.ServicePrincipalSecret, error)
 	})
 	if !ok {
-		writeJSONError(w, fmt.Errorf("secret metadata is unavailable"), stdhttp.StatusServiceUnavailable)
+		writeJSONError(w, fmt.Errorf("secret metadata unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
 	row, err := reader.GetServicePrincipalSecret(r.Context(), chi.URLParam(r, "servicePrincipal"), chi.URLParam(r, "secret"))
@@ -1189,958 +939,240 @@ func (h Handler) GetServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.
 	}
 	writeJSON(w, stdhttp.StatusOK, servicePrincipalSecretDTO(row, ""))
 }
-
 func (h Handler) RevokeServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationRevokeServicePrincipalSecret(), err)
+	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
-	servicePrincipalID := chi.URLParam(r, "servicePrincipal")
-	secretID := chi.URLParam(r, "secret")
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.RevokeServicePrincipalSecret(r.Context(), servicePrincipalID, secretID)
-		return commandAccessAuditInput(r, "service_principal_secret.revoked", principal.ID, "", "service_principal", servicePrincipalID, access.PrivilegeManagePlatform, "success", map[string]any{"secretId": secretID}, mutationErr)
-	})
+	repo, err := h.repository()
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRevokeServicePrincipalSecret(), err, statusForNotFound(err))
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	if err := repo.RevokeServicePrincipalSecret(r.Context(), chi.URLParam(r, "servicePrincipal"), chi.URLParam(r, "secret")); err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
 func (h Handler) ListGroups(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	rows, err := applicableGroups(r.Context(), repo, h.workspaceID(chi.URLParam(r, "workspace")))
+	rows, err := repo.ListGroups(r.Context())
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	out := make([]map[string]any, 0, len(rows))
+	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, groupDTO(row))
+		items = append(items, groupDTO(row))
 	}
-	_ = writePagedJSON(w, r, out)
+	_ = writePagedJSON(w, r, items)
 }
-
 func (h Handler) CreateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	var input struct {
-		Name        string `json:"name"`
-		DisplayName string `json:"displayName"`
+	if !h.requirePlatformAdmin(w, r) {
+		return
 	}
+	var input struct{ Name, DisplayName string }
 	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGroup(), err)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGroup(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	name := firstNonEmpty(input.DisplayName, input.Name)
-	var group access.Group
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		group, mutationErr = txRepo.UpsertGroup(r.Context(), access.GroupInput{WorkspaceID: h.workspaceID(chi.URLParam(r, "workspace")), Provider: "local", ExternalID: input.Name, Name: name})
-		return commandAccessAuditInput(r, "group.created", h.currentPrincipalID(r), group.WorkspaceID, "group", group.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(group), mutationErr)
-	})
+	row, err := repo.UpsertGroup(r.Context(), access.GroupInput{Provider: "local", ExternalID: input.Name, Name: firstNonEmpty(input.DisplayName, input.Name)})
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateGroup(), err, stdhttp.StatusBadRequest)
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
-	writeJSON(w, stdhttp.StatusCreated, groupDTO(group))
+	writeJSON(w, stdhttp.StatusCreated, groupDTO(row))
 }
-
 func (h Handler) GetGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	group, ok := h.groupByID(w, r, nil)
-	if !ok {
+	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
-	if revision, revisionErr := access.GroupRevision(group); revisionErr == nil {
-		w.Header().Set("ETag", revision)
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
 	}
-	writeJSON(w, stdhttp.StatusOK, groupDTO(group))
+	row, err := findGroup(r.Context(), repo, chi.URLParam(r, "group"))
+	if err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, groupDTO(row))
 }
-
 func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	var input struct {
 		DisplayName string `json:"displayName"`
-	}
-	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGroup(), err)
-		return
-	}
-	group, ok := h.groupByID(w, r, commandOperation(accessgen.GenCommandOperationUpdateGroup()))
-	if !ok {
-		return
-	}
-	if !groupIsLocallyManaged(group) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGroup(), groupManagedExternallyError(group))
-		return
-	}
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGroup(), err)
-		return
-	}
-	var updated access.Group
-	err = runAuditedMutationWithConcurrency(r, repo, accessgen.GenCommandOperationUpdateGroup(), func(txRepo access.Repository) (string, error) {
-		rows, err := txRepo.ListGroups(r.Context(), group.WorkspaceID)
-		if err != nil {
-			return "", err
-		}
-		for _, current := range rows {
-			if current.ID == group.ID {
-				return access.GroupRevision(current)
-			}
-		}
-		return "", sql.ErrNoRows
-	}, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		updated, mutationErr = txRepo.UpsertGroup(r.Context(), access.GroupInput{ID: group.ID, WorkspaceID: group.WorkspaceID, Provider: group.Provider, ExternalID: group.ExternalID, Name: firstNonEmpty(input.DisplayName, group.Name)})
-		return commandAccessAuditInput(r, "group.updated", h.currentPrincipalID(r), updated.WorkspaceID, "group", updated.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(updated), mutationErr)
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateGroup(), err, stdhttp.StatusBadRequest)
-		return
-	}
-	if revision, revisionErr := access.GroupRevision(updated); revisionErr == nil {
-		w.Header().Set("ETag", revision)
-	}
-	writeJSON(w, stdhttp.StatusOK, groupDTO(updated))
-}
-
-func (h Handler) DeleteGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	group, ok := h.groupByID(w, r, commandOperation(accessgen.GenCommandOperationDeleteGroup()))
-	if !ok {
-		return
-	}
-	if !groupIsLocallyManaged(group) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGroup(), groupManagedExternallyError(group))
-		return
-	}
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGroup(), err)
-		return
-	}
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.DeleteGroup(r.Context(), group.WorkspaceID, group.ID)
-		return commandAccessAuditInput(r, "group.deleted", h.currentPrincipalID(r), group.WorkspaceID, "group", group.ID, access.PrivilegeManageGrants, "success", groupAuditMetadata(group), mutationErr)
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteGroup(), err, stdhttp.StatusBadRequest)
-		return
-	}
-	w.WriteHeader(stdhttp.StatusNoContent)
-}
-
-func (h Handler) ListGroupMembers(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	group, ok := h.groupByID(w, r, nil)
-	if !ok {
-		return
-	}
-	var rows []access.GroupMember
-	if groupIsLocallyManaged(group) {
-		rows, err = repo.ListGroupMembers(r.Context(), group.WorkspaceID, group.ID)
-	} else {
-		rows, err = repo.ListGroupMembersByGroup(r.Context(), group.ID)
-	}
-	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
-		return
-	}
-	out := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, groupMemberPrincipalDTO(row))
-	}
-	_ = writePagedJSON(w, r, out)
-}
-
-func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationAddGroupMember(), err)
-		return
-	}
-	group, ok := h.groupByID(w, r, commandOperation(accessgen.GenCommandOperationAddGroupMember()))
-	if !ok {
-		return
-	}
-	if !groupIsLocallyManaged(group) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationAddGroupMember(), groupManagedExternallyError(group))
-		return
-	}
-	workspaceID := group.WorkspaceID
-	groupID := group.ID
-	principalID := chi.URLParam(r, "principal")
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.AddGroupMember(r.Context(), workspaceID, groupID, principalID)
-		return commandAccessAuditInput(r, "group.member_added", h.currentPrincipalID(r), workspaceID, "group_member", groupID+":"+principalID, access.PrivilegeManageGrants, "success", map[string]any{"groupId": groupID, "memberPrincipalId": principalID}, mutationErr)
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationAddGroupMember(), err, statusForNotFound(err))
-		return
-	}
-	writeJSON(w, stdhttp.StatusOK, map[string]string{"status": "added"})
-}
-
-func (h Handler) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationRemoveGroupMember(), err)
-		return
-	}
-	group, ok := h.groupByID(w, r, commandOperation(accessgen.GenCommandOperationRemoveGroupMember()))
-	if !ok {
-		return
-	}
-	if !groupIsLocallyManaged(group) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationRemoveGroupMember(), groupManagedExternallyError(group))
-		return
-	}
-	workspaceID := group.WorkspaceID
-	groupID := group.ID
-	principalID := chi.URLParam(r, "principal")
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.RemoveGroupMember(r.Context(), workspaceID, groupID, principalID)
-		return commandAccessAuditInput(r, "group.member_removed", h.currentPrincipalID(r), workspaceID, "group_member", groupID+":"+principalID, access.PrivilegeManageGrants, "success", map[string]any{"groupId": groupID, "memberPrincipalId": principalID}, mutationErr)
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRemoveGroupMember(), err, statusForNotFound(err))
-		return
-	}
-	w.WriteHeader(stdhttp.StatusNoContent)
-}
-
-func (h Handler) ListWorkspaceRoles(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	roles, err := repo.ListRoles(r.Context())
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	out := make([]accessapi.RoleResponse, 0, len(roles))
-	for _, role := range roles {
-		out = append(out, accessapi.RoleResponse{Name: role.Name, Privileges: privilegeStrings(role.Privileges)})
-	}
-	_ = writePagedJSON(w, r, out)
-}
-
-func (h Handler) ListRoleBindings(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	if repo == nil {
-		_ = writePagedJSON(w, r, []map[string]any{})
-		return
-	}
-	bindings, err := repo.ListRoleBindings(r.Context(), h.workspaceID(chi.URLParam(r, "workspace")))
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	out := make([]map[string]any, 0, len(bindings))
-	for _, binding := range bindings {
-		out = append(out, apiRoleBindingDTO(binding))
-	}
-	_ = writePagedJSON(w, r, out)
-}
-
-func (h Handler) GetRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	row, err := repo.GetRoleBinding(r.Context(), h.workspaceID(chi.URLParam(r, "workspace")), chi.URLParam(r, "binding"))
-	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
-		return
-	}
-	if revision, revisionErr := access.RoleBindingRevision(row); revisionErr == nil {
-		w.Header().Set("ETag", revision)
-	}
-	writeJSON(w, stdhttp.StatusOK, apiRoleBindingDTO(row))
-}
-
-func (h Handler) CreateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	input, ok := decodeRoleBindingInput(w, r, accessgen.GenCommandOperationCreateRoleBinding())
-	if !ok {
-		return
-	}
-	commands := h.RoleBindingCommands
-	if commands == nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateRoleBinding(), fmt.Errorf("role binding command service is not configured"))
-		return
-	}
-	row, err := commands.CreateRoleBinding(r.Context(), h.roleBindingInvocation(r), input)
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateRoleBinding(), err, stdhttp.StatusBadRequest)
-		return
-	}
-	writeJSON(w, stdhttp.StatusCreated, apiRoleBindingDTO(row))
-}
-
-func (h Handler) ListEffectivePrivileges(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, ok := h.currentPrincipal(r)
-	if !ok {
-		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
-		return
-	}
-	object, ok := objectRefFromRequest(w, r)
-	if !ok {
-		return
-	}
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	effective, err := repo.EffectiveAccess(r.Context(), principal.ID, object)
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	allowed := make([]string, 0, len(effective))
-	explanations := make([]map[string]any, 0, len(effective))
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	for _, decision := range effective {
-		if credential, ok := h.currentCredential(r); ok && !apiTokenAllows(credential.Token, workspaceID, decision.Privilege) {
-			continue
-		}
-		allowed = append(allowed, string(decision.Privilege))
-		explanations = append(explanations, authorizationDecisionDTO(decision))
-	}
-	writeJSON(w, stdhttp.StatusOK, map[string]any{
-		"workspaceId":     object.WorkspaceID,
-		"objectType":      string(object.Type),
-		"objectId":        emptyToNil(object.ObjectID),
-		"privileges":      allowed,
-		"effectiveGrants": explanations,
-	})
-}
-
-func (h Handler) ListGrants(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	object, ok := objectRefFromRequest(w, r)
-	if !ok {
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, object) {
-		return
-	}
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	rows, err := repo.ListGrantsWithOptions(r.Context(), object, parseBoolQuery(r.URL.Query().Get("includeInherited")))
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	out := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, grantViewDTO(row))
-	}
-	_ = writePagedJSON(w, r, out)
-}
-
-func (h Handler) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	var input struct {
-		ObjectType  string `json:"objectType"`
-		ObjectID    string `json:"objectId"`
-		SubjectType string `json:"subjectType"`
-		SubjectID   string `json:"subjectId"`
-		Privilege   string `json:"privilege"`
-	}
-	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGrant(), err)
-		return
-	}
-	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationCreateGrant()), input.ObjectType, input.ObjectID)
-	if !ok {
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, object) {
-		return
-	}
-	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
-	if !knownGrantSubjectType(subjectType) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGrant(), apigenfailure.New("invalid", fmt.Sprintf("unsupported subject type %q", input.SubjectType)))
-		return
-	}
-	privilege := access.Privilege(strings.TrimSpace(input.Privilege))
-	if !knownPrivilege(privilege) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGrant(), apigenfailure.New("invalid", fmt.Sprintf("unsupported privilege %q", input.Privilege)))
-		return
-	}
-	commands := h.GrantCommands
-	if commands == nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateGrant(), fmt.Errorf("grant command service is not configured"))
-		return
-	}
-	grant, err := commands.CreateGrant(r.Context(), h.grantInvocation(r), access.GrantInput{
-		Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege,
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateGrant(), err, stdhttp.StatusBadRequest)
-		return
-	}
-	writeJSON(w, stdhttp.StatusCreated, grantDTO(grant))
-}
-
-func (h Handler) GetGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	row, err := repo.GetGrant(r.Context(), h.workspaceID(chi.URLParam(r, "workspace")), chi.URLParam(r, "grant"))
-	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromGrant(row)) {
-		return
-	}
-	dto := grantDTO(row)
-	if revision, revisionErr := access.GrantRevision(row); revisionErr == nil {
-		w.Header().Set("ETag", revision)
-	}
-	writeJSON(w, stdhttp.StatusOK, dto)
-}
-
-func (h Handler) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), err)
-		return
-	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	id := chi.URLParam(r, "grant")
-	current, err := repo.GetGrant(r.Context(), workspaceID, id)
-	if err != nil {
-		status := statusForNotFound(err)
-		if status == stdhttp.StatusNotFound {
-			err = apigenfailure.Wrap("not_found", err)
-		}
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), err)
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromGrant(current)) {
-		return
-	}
-	var input struct {
-		ObjectType, ObjectID, SubjectType, SubjectID, Privilege string
-	}
-	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), err)
-		return
-	}
-	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationUpdateGrant()), input.ObjectType, input.ObjectID)
-	if !ok {
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, object) {
-		return
-	}
-	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
-	privilege := access.Privilege(strings.TrimSpace(input.Privilege))
-	if !knownGrantSubjectType(subjectType) || !knownPrivilege(privilege) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), apigenfailure.New("invalid", "unsupported grant subject or privilege"))
-		return
-	}
-	commands := h.GrantCommands
-	if commands == nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateGrant(), fmt.Errorf("grant command service is not configured"))
-		return
-	}
-	updated, err := commands.UpdateGrant(r.Context(), h.grantInvocation(r), workspaceID, id, access.GrantInput{
-		Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, Privilege: privilege,
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateGrant(), err, stdhttp.StatusUnprocessableEntity)
-		return
-	}
-	dto := grantDTO(updated)
-	if revision, revisionErr := access.GrantRevision(updated); revisionErr == nil {
-		w.Header().Set("ETag", revision)
-	}
-	writeJSON(w, stdhttp.StatusOK, dto)
-}
-
-func (h Handler) DeleteGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGrant(), err)
-		return
-	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	grant, err := repo.GetGrant(r.Context(), workspaceID, chi.URLParam(r, "grant"))
-	if err != nil {
-		status := statusForNotFound(err)
-		if status == stdhttp.StatusNotFound {
-			err = apigenfailure.Wrap("not_found", err)
-		}
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGrant(), err)
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromGrant(grant)) {
-		return
-	}
-	commands := h.GrantCommands
-	if commands == nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteGrant(), fmt.Errorf("grant command service is not configured"))
-		return
-	}
-	_, err = commands.DeleteGrant(r.Context(), h.grantInvocation(r), workspaceID, grant.ID)
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteGrant(), err, stdhttp.StatusBadRequest)
-		return
-	}
-	w.WriteHeader(stdhttp.StatusNoContent)
-}
-
-func (h Handler) ListDataPolicies(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	object, ok := objectRefFromRequest(w, r)
-	if !ok {
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, object) {
-		return
-	}
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	rows, err := repo.ListDataPoliciesWithOptions(r.Context(), object, parseBoolQuery(r.URL.Query().Get("includeInherited")))
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	out := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, dataPolicyDTO(row))
-	}
-	_ = writePagedJSON(w, r, out)
-}
-
-func (h Handler) CreateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
-	var input struct {
-		ObjectType  string         `json:"objectType"`
-		ObjectID    string         `json:"objectId"`
-		SubjectType string         `json:"subjectType"`
-		SubjectID   string         `json:"subjectId"`
-		PolicyType  string         `json:"policyType"`
-		Expression  map[string]any `json:"expression"`
-	}
-	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), err)
-		return
-	}
-	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationCreateDataPolicy()), input.ObjectType, input.ObjectID)
-	if !ok {
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, object) {
-		return
-	}
-	if !knownDataPolicyType(input.PolicyType) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), apigenfailure.New("invalid", fmt.Sprintf("unsupported policyType %q", input.PolicyType)))
-		return
-	}
-	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
-	subjectID := strings.TrimSpace(input.SubjectID)
-	if subjectType != "" && !knownDataPolicySubjectType(subjectType) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), apigenfailure.New("invalid", fmt.Sprintf("unsupported subjectType %q", input.SubjectType)))
-		return
-	}
-	if subjectType != "" && subjectID == "" {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), apigenfailure.New("invalid", "subjectId is required when subjectType is set"))
-		return
-	}
-	if subjectType == "" && subjectID != "" {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), apigenfailure.New("invalid", "subjectType is required when subjectId is set"))
-		return
-	}
-	expression, err := json.Marshal(input.Expression)
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), err)
-		return
-	}
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationCreateDataPolicy(), err)
-		return
-	}
-	var row access.DataPolicy
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		row, mutationErr = txRepo.UpsertDataPolicy(r.Context(), access.DataPolicyInput{Object: object, SubjectType: subjectType, SubjectID: subjectID, PolicyType: input.PolicyType, ExpressionJSON: string(expression)})
-		return commandAccessAuditInput(r, "data_policy.created", principal.ID, row.WorkspaceID, "data_policy", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": row.ObjectID, "policyType": row.PolicyType}, mutationErr)
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationCreateDataPolicy(), err, stdhttp.StatusBadRequest)
-		return
-	}
-	writeJSON(w, stdhttp.StatusCreated, dataPolicyDTO(row))
-}
-
-func (h Handler) GetDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	row, err := repo.GetDataPolicy(r.Context(), h.workspaceID(chi.URLParam(r, "workspace")), chi.URLParam(r, "policy"))
-	if err != nil {
-		writeJSONError(w, err, statusForNotFound(err))
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromCanonical(row.WorkspaceID, row.ObjectID)) {
-		return
-	}
-	dto := dataPolicyDTO(row)
-	if revision, revisionErr := access.DataPolicyRevision(row); revisionErr == nil {
-		w.Header().Set("ETag", revision)
-	}
-	writeJSON(w, stdhttp.StatusOK, dto)
-}
-
-func (h Handler) UpdateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err)
-		return
-	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	id := chi.URLParam(r, "policy")
-	current, err := repo.GetDataPolicy(r.Context(), workspaceID, id)
-	if err != nil {
-		status := statusForNotFound(err)
-		if status == stdhttp.StatusNotFound {
-			err = apigenfailure.Wrap("not_found", err)
-		}
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err)
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromCanonical(current.WorkspaceID, current.ObjectID)) {
-		return
-	}
-	var input struct {
-		ObjectType  string         `json:"objectType"`
-		ObjectID    string         `json:"objectId"`
-		SubjectType string         `json:"subjectType"`
-		SubjectID   string         `json:"subjectId"`
-		PolicyType  string         `json:"policyType"`
-		Expression  map[string]any `json:"expression"`
-	}
-	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err)
-		return
-	}
-	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationUpdateDataPolicy()), input.ObjectType, input.ObjectID)
-	if !ok {
-		return
-	}
-	if !knownDataPolicyType(input.PolicyType) {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), apigenfailure.New("invalid", fmt.Sprintf("unsupported policyType %q", input.PolicyType)))
-		return
-	}
-	subjectType := access.SubjectType(strings.TrimSpace(input.SubjectType))
-	if subjectType != "" && (!knownDataPolicySubjectType(subjectType) || strings.TrimSpace(input.SubjectID) == "") {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), apigenfailure.New("invalid", "invalid data policy subject"))
-		return
-	}
-	expression, err := json.Marshal(input.Expression)
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err)
-		return
-	}
-	var updated access.DataPolicy
-	err = runAuditedMutationWithConcurrency(r, repo, accessgen.GenCommandOperationUpdateDataPolicy(), func(txRepo access.Repository) (string, error) {
-		current, err := txRepo.GetDataPolicy(r.Context(), workspaceID, id)
-		if err != nil {
-			return "", err
-		}
-		return access.DataPolicyRevision(current)
-	}, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		updated, mutationErr = txRepo.UpsertDataPolicy(r.Context(), access.DataPolicyInput{ID: id, Object: object, SubjectType: subjectType, SubjectID: input.SubjectID, PolicyType: input.PolicyType, ExpressionJSON: string(expression)})
-		return commandAccessAuditInput(r, "data_policy.updated", principal.ID, updated.WorkspaceID, "data_policy", updated.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": updated.ObjectID, "policyType": updated.PolicyType}, mutationErr)
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateDataPolicy(), err, stdhttp.StatusUnprocessableEntity)
-		return
-	}
-	dto := dataPolicyDTO(updated)
-	if revision, revisionErr := access.DataPolicyRevision(updated); revisionErr == nil {
-		w.Header().Set("ETag", revision)
-	}
-	writeJSON(w, stdhttp.StatusOK, dto)
-}
-
-func (h Handler) CheckAuthorizationBatch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, ok := h.currentPrincipal(r)
-	if !ok {
-		writeJSONError(w, fmt.Errorf("authentication required"), stdhttp.StatusUnauthorized)
-		return
-	}
-	var input struct {
-		Checks []struct{ Privilege, ObjectType, ObjectID string } `json:"checks"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
-	if len(input.Checks) == 0 || len(input.Checks) > 200 {
-		writeJSONError(w, fmt.Errorf("checks must contain 1 to 200 items"), stdhttp.StatusUnprocessableEntity)
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	checks := make([]access.AuthorizationCheck, 0, len(input.Checks))
-	for _, item := range input.Checks {
-		privilege := access.Privilege(strings.TrimSpace(item.Privilege))
-		if !knownPrivilege(privilege) {
-			writeJSONError(w, fmt.Errorf("unsupported privilege %q", item.Privilege), stdhttp.StatusUnprocessableEntity)
-			return
-		}
-		object, valid := objectRefFromValues(w, r, nil, item.ObjectType, item.ObjectID)
-		if !valid {
-			return
-		}
-		object.WorkspaceID = workspaceID
-		checks = append(checks, access.AuthorizationCheck{Privilege: privilege, Object: object})
+	row, err := findGroup(r.Context(), repo, chi.URLParam(r, "group"))
+	if err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	if !groupIsLocallyManaged(row) {
+		writeJSONError(w, groupManagedExternallyError(row), stdhttp.StatusUnprocessableEntity)
+		return
+	}
+	row, err = repo.UpsertGroup(r.Context(), access.GroupInput{ID: row.ID, Provider: row.Provider, ExternalID: row.ExternalID, Name: input.DisplayName})
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, groupDTO(row))
+}
+func (h Handler) DeleteGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
 	}
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	decisions, err := repo.AuthorizeBatch(r.Context(), principal.ID, checks)
+	group, err := findGroup(r.Context(), repo, chi.URLParam(r, "group"))
+	if err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	if !groupIsLocallyManaged(group) {
+		writeJSONError(w, groupManagedExternallyError(group), stdhttp.StatusUnprocessableEntity)
+		return
+	}
+	if err := repo.DeleteGroup(r.Context(), group.ID); err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
+func (h Handler) ListGroupMembers(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
+	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	out := make([]map[string]any, 0, len(decisions))
-	for _, decision := range decisions {
-		item := authorizationDecisionDTO(decision)
-		item["allowed"] = decision.Allowed
-		out = append(out, item)
+	rows, err := repo.ListGroupMembers(r.Context(), chi.URLParam(r, "group"))
+	if err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
 	}
-	writeJSON(w, stdhttp.StatusOK, map[string]any{"decisions": out})
+	items := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, groupMemberPrincipalDTO(row))
+	}
+	_ = writePagedJSON(w, r, items)
 }
-
-func (h Handler) DeleteDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
-	repo, err := h.repository()
-	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteDataPolicy(), err)
-		return
-	}
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	row, err := repo.GetDataPolicy(r.Context(), workspaceID, chi.URLParam(r, "policy"))
-	if err != nil {
-		status := statusForNotFound(err)
-		if status == stdhttp.StatusNotFound {
-			err = apigenfailure.Wrap("not_found", err)
-		}
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteDataPolicy(), err)
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageGrants, objectRefFromCanonical(row.WorkspaceID, row.ObjectID)) {
-		return
-	}
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		mutationErr := txRepo.DeleteDataPolicy(r.Context(), workspaceID, row.ID)
-		return commandAccessAuditInput(r, "data_policy.deleted", principal.ID, row.WorkspaceID, "data_policy", row.ID, access.PrivilegeManageGrants, "success", map[string]any{"objectId": row.ObjectID, "policyType": row.PolicyType}, mutationErr)
-	})
-	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteDataPolicy(), err, stdhttp.StatusBadRequest)
-		return
-	}
-	w.WriteHeader(stdhttp.StatusNoContent)
-}
-
-func (h Handler) TransferOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, _ := h.currentPrincipal(r)
-	var input struct {
-		ObjectType       string `json:"objectType"`
-		ObjectID         string `json:"objectId"`
-		OwnerPrincipalID string `json:"ownerPrincipalId"`
-	}
-	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationTransferOwnership(), err)
-		return
-	}
-	object, ok := objectRefFromValues(w, r, commandOperation(accessgen.GenCommandOperationTransferOwnership()), input.ObjectType, input.ObjectID)
-	if !ok {
-		return
-	}
-	if !h.authorizeCurrentObject(w, r, access.PrivilegeManageItem, object) {
+func (h Handler) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
 	repo, err := h.repository()
 	if err != nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationTransferOwnership(), err)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	var updated access.SecurableObject
-	err = runAuditedMutation(r, repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		updated, mutationErr = txRepo.SetObjectOwner(r.Context(), object, input.OwnerPrincipalID)
-		return commandAccessAuditInput(r, "ownership.transferred", principal.ID, updated.WorkspaceID, "securable_object", updated.ID, access.PrivilegeManageItem, "success", map[string]any{"ownerPrincipalId": updated.OwnerPrincipalID, "objectType": string(updated.Type)}, mutationErr)
-	})
+	group, err := findGroup(r.Context(), repo, chi.URLParam(r, "group"))
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationTransferOwnership(), err, stdhttp.StatusBadRequest)
+		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
-	writeJSON(w, stdhttp.StatusOK, securableObjectDTO(updated))
+	if !groupIsLocallyManaged(group) {
+		writeJSONError(w, groupManagedExternallyError(group), stdhttp.StatusUnprocessableEntity)
+		return
+	}
+	if err := repo.AddGroupMember(r.Context(), group.ID, chi.URLParam(r, "principal")); err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, map[string]string{"status": "added"})
 }
-
-func (h Handler) UpdateRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	input, ok := decodeRoleBindingInput(w, r, accessgen.GenCommandOperationUpdateRoleBinding())
-	if !ok {
+func (h Handler) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
-	commands := h.RoleBindingCommands
-	if commands == nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationUpdateRoleBinding(), fmt.Errorf("role binding command service is not configured"))
-		return
-	}
-	row, err := commands.UpdateRoleBinding(r.Context(), h.roleBindingInvocation(r), input.WorkspaceID, chi.URLParam(r, "binding"), input)
+	repo, err := h.repository()
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationUpdateRoleBinding(), err, stdhttp.StatusBadRequest)
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	if revision, revisionErr := access.RoleBindingRevision(row); revisionErr == nil {
-		w.Header().Set("ETag", revision)
-	}
-	writeJSON(w, stdhttp.StatusOK, apiRoleBindingDTO(row))
-}
-
-func (h Handler) DeleteRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	workspaceID := h.workspaceID(chi.URLParam(r, "workspace"))
-	bindingID := chi.URLParam(r, "binding")
-	commands := h.RoleBindingCommands
-	if commands == nil {
-		writeCommandFailure(w, r, accessgen.GenCommandOperationDeleteRoleBinding(), fmt.Errorf("role binding command service is not configured"))
-		return
-	}
-	_, err := commands.DeleteRoleBinding(r.Context(), h.roleBindingInvocation(r), workspaceID, bindingID)
+	group, err := findGroup(r.Context(), repo, chi.URLParam(r, "group"))
 	if err != nil {
-		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteRoleBinding(), err, statusForNotFound(err))
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	if !groupIsLocallyManaged(group) {
+		writeJSONError(w, groupManagedExternallyError(group), stdhttp.StatusUnprocessableEntity)
+		return
+	}
+	if err := repo.RemoveGroupMember(r.Context(), group.ID, chi.URLParam(r, "principal")); err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
-}
-
-func (h Handler) roleBindingInvocation(r *stdhttp.Request) access.RoleBindingInvocation {
-	// The client surface is audit attribution only. Authorization is enforced
-	// from the generated operation contract before this handler is dispatched.
-	surface := access.OperationSurfaceAPI
-	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Invocation-Surface")), string(access.OperationSurfaceCLI)) ||
-		strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Client")), string(access.OperationSurfaceCLI)) {
-		surface = access.OperationSurfaceCLI
-	}
-	return access.RoleBindingInvocation{
-		PrincipalID: h.currentPrincipalID(r), Surface: surface,
-		RequestID: requestIDFromRequest(r), CorrelationID: correlationIDFromRequest(r),
-		IdempotencyKey:   strings.TrimSpace(r.Header.Get("Idempotency-Key")),
-		ConcurrencyToken: strings.TrimSpace(r.Header.Get("If-Match")),
-	}
-}
-
-func (h Handler) grantInvocation(r *stdhttp.Request) access.GrantInvocation {
-	return h.roleBindingInvocation(r)
 }
 
 func (h Handler) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.listAuditEvents(w, r, h.workspaceID(chi.URLParam(r, "workspace")))
-}
-
-func (h Handler) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	workspaceID := strings.TrimSpace(r.URL.Query().Get("workspace"))
-	if workspaceID != "" {
-		workspaceID = h.workspaceID(workspaceID)
+	if !h.requirePlatformAdmin(w, r) {
+		return
 	}
-	h.listAuditEvents(w, r, workspaceID)
-}
-
-func (h Handler) listAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, workspaceID string) {
 	repo, err := h.repository()
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	limit, ok := apiLimitForRequest(w, r)
-	if !ok {
-		return
-	}
-	cursorTime, cursorID := decodeCursor(r.URL.Query().Get("pageToken"))
-	rows, err := repo.ListAuditEvents(r.Context(), access.AuditEventFilter{
-		WorkspaceID: workspaceID,
-		PrincipalID: r.URL.Query().Get("actor"),
-		Action:      r.URL.Query().Get("action"),
-		TargetType:  r.URL.Query().Get("targetType"),
-		TargetID:    r.URL.Query().Get("targetId"),
-		From:        r.URL.Query().Get("from"),
-		To:          r.URL.Query().Get("to"),
-		CursorTime:  cursorTime,
-		CursorID:    cursorID,
-		Limit:       limit + 1,
-	})
+	rows, err := repo.ListAuditEvents(r.Context(), access.AuditEventFilter{PrincipalID: r.URL.Query().Get("principalId"), Action: r.URL.Query().Get("action"), ResourceKind: r.URL.Query().Get("resourceKind"), ResourceID: r.URL.Query().Get("resourceId"), Limit: 100})
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	nextCursor := ""
-	if len(rows) > limit {
-		last := rows[limit-1]
-		nextCursor = encodeCursor(last.CreatedAt, last.ID)
-		rows = rows[:limit]
-	}
-	out := make([]map[string]any, 0, len(rows))
+	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, auditEventDTO(row))
+		items = append(items, auditEventDTO(row))
 	}
-	writeJSON(w, stdhttp.StatusOK, pagedResponseWithCursor(out, nextCursor))
+	_ = writePagedJSON(w, r, items)
+}
+func (h Handler) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.ListAuditEvents(w, r)
 }
 
 func (h Handler) repository() (access.Repository, error) {
 	if h.Repository == nil {
-		return nil, fmt.Errorf("access repository is unavailable")
+		return nil, errors.New("access repository is unavailable")
 	}
 	return h.Repository()
 }
-
 func (h Handler) currentPrincipal(r *stdhttp.Request) (Principal, bool) {
 	if h.CurrentPrincipal == nil {
 		return Principal{}, false
 	}
 	return h.CurrentPrincipal(r)
 }
-
 func (h Handler) currentPrincipalID(r *stdhttp.Request) string {
 	principal, ok := h.currentPrincipal(r)
 	if !ok {
@@ -2148,7 +1180,6 @@ func (h Handler) currentPrincipalID(r *stdhttp.Request) string {
 	}
 	return principal.ID
 }
-
 func (h Handler) currentCredential(r *stdhttp.Request) (access.APICredential, bool) {
 	if h.CurrentCredential == nil {
 		return access.APICredential{}, false
@@ -2156,86 +1187,56 @@ func (h Handler) currentCredential(r *stdhttp.Request) (access.APICredential, bo
 	return h.CurrentCredential(r)
 }
 
-func (h Handler) rejectAuthoringCredential(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
-	credential, ok := h.currentCredential(r)
-	if !ok || credential.Authoring == nil {
+func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
+	principal, ok := h.currentPrincipal(r)
+	if !ok {
+		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
 		return false
 	}
-	writeJSONError(w, fmt.Errorf("authoring credentials cannot manage personal account security"), stdhttp.StatusForbidden)
-	return true
-}
-
-func (h Handler) workspaceID(value string) string {
-	if h.WorkspaceID == nil {
-		return strings.TrimSpace(value)
+	if h.Repository == nil {
+		writeJSONError(w, errors.New("access repository is unavailable"), stdhttp.StatusInternalServerError)
+		return false
 	}
-	return h.WorkspaceID(value)
+	repo, err := h.Repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return false
+	}
+	checker, ok := repo.(access.PlatformRoleReader)
+	if !ok {
+		writeJSONError(w, errors.New("platform role checker is unavailable"), stdhttp.StatusInternalServerError)
+		return false
+	}
+	admin, err := checker.IsPlatformAdmin(r.Context(), principal.ID)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return false
+	}
+	if admin {
+		return true
+	}
+	writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+	return false
+}
+func (h Handler) rejectAuthoringCredential(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
+	if credential, ok := h.currentCredential(r); ok && credential.Authoring != nil {
+		writeJSONError(w, errors.New("authoring credentials cannot perform this mutation"), stdhttp.StatusForbidden)
+		return true
+	}
+	return false
 }
 
 func principalDTO(row access.Principal) map[string]any {
-	dto := map[string]any{"id": row.ID, "kind": string(row.Kind), "email": row.Email, "displayName": row.DisplayName, "createdAt": normalizeTimestamp(row.CreatedAt), "updatedAt": normalizeTimestamp(row.UpdatedAt)}
-	if row.DisabledAt != "" {
-		dto["disabledAt"] = normalizeTimestamp(row.DisabledAt)
-	}
-	if row.BlockedAt != "" {
-		dto["blockedAt"] = normalizeTimestamp(row.BlockedAt)
-	}
-	return dto
-}
-
-func (h Handler) principalAdministrationDTO(ctx context.Context, repo access.Repository, principal access.Principal, actorID string) (map[string]any, error) {
-	management, err := principalIdentityManagement(ctx, repo, principal.ID)
-	if err != nil {
-		return nil, err
-	}
-	response := principalDTO(principal)
-	identity := map[string]any{"source": management.Source}
-	if management.Provider != "" {
-		identity["provider"] = management.Provider
-	}
-	response["identityManagement"] = identity
-	isUser := principalKindAllowsGenericMutation(principal.Kind)
-	isSelf := strings.TrimSpace(actorID) != "" && actorID == principal.ID
-	response["capabilities"] = map[string]bool{
-		"canUpdateProfile":       isUser && management.Source == access.IdentityManagementLocal,
-		"canResetPassword":       isUser && management.HasLocalPassword,
-		"canBlock":               isUser && !isSelf && principal.BlockedAt == "" && principal.DisabledAt == "",
-		"canUnblock":             isUser && principal.BlockedAt != "",
-		"canDelete":              isUser && !isSelf && management.Source == access.IdentityManagementLocal,
-		"canManageSessions":      isUser,
-		"canManageAuthorization": isUser,
-	}
-	return response, nil
-}
-
-func principalManagedExternallyError(management access.PrincipalIdentityManagement) error {
-	provider := strings.TrimSpace(management.Provider)
-	if provider == "" {
-		provider = "the owning identity subsystem"
-	}
-	return apigenfailure.New("invalid", fmt.Sprintf("principal profile is managed by %s", provider))
-}
-
-func localPasswordResetDTO(row access.LocalPasswordReset) map[string]any {
-	return map[string]any{"principal": principalDTO(row.Principal), "temporaryPassword": row.Password}
-}
-
-func currentPrincipalDTO(row Principal) map[string]any {
-	kind := row.Kind
-	if kind == "" {
-		kind = access.PrincipalKindUser
-	}
-	return map[string]any{"id": row.ID, "kind": string(kind), "email": row.Email, "displayName": row.DisplayName, "createdAt": normalizeTimestamp(row.CreatedAt), "updatedAt": normalizeTimestamp(row.UpdatedAt)}
+	return map[string]any{"id": row.ID, "kind": row.Kind, "email": row.Email, "displayName": row.DisplayName, "createdAt": row.CreatedAt, "updatedAt": row.UpdatedAt, "disabledAt": emptyToNil(row.DisabledAt), "blockedAt": emptyToNil(row.BlockedAt)}
 }
 
 func (h Handler) currentPrincipalResponse(r *stdhttp.Request, current Principal) (map[string]any, error) {
-	ctx := r.Context()
 	accountManagement := true
 	if credential, ok := h.currentCredential(r); ok && credential.Authoring != nil {
 		accountManagement = false
 	}
 	if h.Repository == nil {
-		return h.currentPrincipalResponseFor(ctx, access.Principal{
+		return h.currentPrincipalResponseFor(r.Context(), access.Principal{
 			ID: current.ID, Kind: current.Kind, Email: current.Email, DisplayName: current.DisplayName,
 			CreatedAt: current.CreatedAt, UpdatedAt: current.UpdatedAt,
 		}, access.PrincipalIdentityManagement{Source: access.IdentityManagementSystem}, nil, accountManagement)
@@ -2244,24 +1245,18 @@ func (h Handler) currentPrincipalResponse(r *stdhttp.Request, current Principal)
 	if err != nil {
 		return nil, err
 	}
-	stored, err := repo.PrincipalByID(ctx, current.ID)
+	stored, err := repo.PrincipalByID(r.Context(), current.ID)
 	if err != nil {
 		return nil, err
 	}
-	management, err := principalIdentityManagement(ctx, repo, stored.ID)
+	management, err := principalIdentityManagement(r.Context(), repo, stored.ID)
 	if err != nil {
 		return nil, err
 	}
-	return h.currentPrincipalResponseFor(ctx, stored, management, repo, accountManagement)
+	return h.currentPrincipalResponseFor(r.Context(), stored, management, repo, accountManagement)
 }
 
-func (h Handler) currentPrincipalResponseFor(
-	ctx context.Context,
-	principal access.Principal,
-	management access.PrincipalIdentityManagement,
-	repo access.Repository,
-	accountManagement bool,
-) (map[string]any, error) {
+func (h Handler) currentPrincipalResponseFor(ctx context.Context, principal access.Principal, management access.PrincipalIdentityManagement, repo access.Repository, accountManagement bool) (map[string]any, error) {
 	response := principalDTO(principal)
 	identity := map[string]any{"source": management.Source}
 	if management.Provider != "" {
@@ -2290,6 +1285,31 @@ func (h Handler) currentPrincipalResponseFor(
 	return response, nil
 }
 
+func (h Handler) principalAdministrationDTO(ctx context.Context, repo access.Repository, principal access.Principal, actorID string) (map[string]any, error) {
+	management, err := principalIdentityManagement(ctx, repo, principal.ID)
+	if err != nil {
+		return nil, err
+	}
+	response := principalDTO(principal)
+	identity := map[string]any{"source": management.Source}
+	if management.Provider != "" {
+		identity["provider"] = management.Provider
+	}
+	response["identityManagement"] = identity
+	isUser := principalKindAllowsGenericMutation(principal.Kind)
+	isSelf := strings.TrimSpace(actorID) != "" && actorID == principal.ID
+	response["capabilities"] = map[string]bool{
+		"canUpdateProfile":       isUser && management.Source == access.IdentityManagementLocal,
+		"canResetPassword":       isUser && management.HasLocalPassword,
+		"canBlock":               isUser && !isSelf && principal.BlockedAt == "" && principal.DisabledAt == "",
+		"canUnblock":             isUser && principal.BlockedAt != "",
+		"canDelete":              isUser && !isSelf && management.Source == access.IdentityManagementLocal,
+		"canManageSessions":      isUser,
+		"canManageAuthorization": isUser,
+	}
+	return response, nil
+}
+
 func principalIdentityManagement(ctx context.Context, repo access.Repository, principalID string) (access.PrincipalIdentityManagement, error) {
 	resolver, ok := repo.(access.PrincipalIdentityManagementRepository)
 	if !ok {
@@ -2298,832 +1318,115 @@ func principalIdentityManagement(ctx context.Context, repo access.Repository, pr
 	return resolver.PrincipalIdentityManagement(ctx, principalID)
 }
 
-func normalizeTimestamp(value string) string {
-	if normalized, err := apitransport.NormalizeTimestamp(value); err == nil {
-		return normalized
-	}
-	return ""
+func principalKindAllowsGenericMutation(kind access.PrincipalKind) bool {
+	return kind == "" || kind == access.PrincipalKindUser
 }
 
+func principalManagedExternallyError(management access.PrincipalIdentityManagement) error {
+	provider := strings.TrimSpace(management.Provider)
+	if provider == "" {
+		provider = "the owning identity subsystem"
+	}
+	return fmt.Errorf("principal profile is managed by %s", provider)
+}
+
+func localPasswordResetDTO(row access.LocalPasswordReset) map[string]any {
+	out := principalDTO(row.Principal)
+	out["temporaryPassword"] = row.Password
+	return out
+}
 func groupDTO(row access.Group) map[string]any {
 	local := groupIsLocallyManaged(row)
 	return map[string]any{
-		"id": row.ID, "workspaceId": row.WorkspaceID, "provider": row.Provider, "externalId": row.ExternalID,
-		"name": row.ExternalID, "displayName": row.Name, "createdAt": row.CreatedAt, "updatedAt": row.CreatedAt,
+		"id": row.ID, "provider": row.Provider, "externalId": row.ExternalID,
+		"name": row.Name, "createdAt": row.CreatedAt,
 		"capabilities": map[string]bool{
-			"canUpdate": local, "canDelete": local, "canManageMembers": local, "canManageAuthorization": true,
+			"canUpdate": local, "canDelete": local, "canManageMembers": local,
 		},
 	}
 }
-
-func groupIsLocallyManaged(group access.Group) bool {
-	return strings.EqualFold(strings.TrimSpace(group.Provider), "local") && strings.TrimSpace(group.WorkspaceID) != ""
-}
-
-func groupManagedExternallyError(group access.Group) error {
-	provider := strings.TrimSpace(group.Provider)
-	if provider == "" {
-		provider = "the owning provisioning system"
-	}
-	return apigenfailure.New("invalid", fmt.Sprintf("group is managed by %s", provider))
-}
-
 func groupMemberPrincipalDTO(row access.GroupMember) map[string]any {
-	return map[string]any{"id": row.PrincipalID, "kind": string(row.Kind), "email": row.Email, "displayName": row.DisplayName, "createdAt": normalizeTimestamp(row.CreatedAt), "updatedAt": normalizeTimestamp(row.CreatedAt)}
+	return map[string]any{"groupId": row.GroupID, "principalId": row.PrincipalID, "kind": row.Kind, "email": row.Email, "displayName": row.DisplayName, "createdAt": row.CreatedAt}
 }
-
-func apiRoleBindingDTO(row access.RoleBinding) map[string]any {
-	return map[string]any{"id": row.ID, "workspaceId": row.WorkspaceID, "subjectType": string(row.SubjectType), "subjectId": row.SubjectID, "email": row.Email, "displayName": firstNonEmpty(row.DisplayName, row.GroupName), "role": row.Role, "createdAt": row.CreatedAt}
-}
-
-func groupAuditMetadata(row access.Group) map[string]any {
-	return map[string]any{"provider": row.Provider, "externalId": row.ExternalID, "displayName": row.Name}
-}
-
-func grantDTO(row access.Grant) map[string]any {
-	return map[string]any{
-		"id":          row.ID,
-		"objectId":    row.ObjectID,
-		"objectType":  string(row.ObjectType),
-		"workspaceId": row.WorkspaceID,
-		"subjectType": string(row.SubjectType),
-		"subjectId":   row.SubjectID,
-		"privilege":   string(row.Privilege),
-		"createdAt":   row.CreatedAt,
-	}
-}
-
-func grantViewDTO(row access.GrantView) map[string]any {
-	out := grantDTO(row.Grant)
-	out["inherited"] = row.Inherited
-	out["parentId"] = emptyToNil(row.ParentID)
-	out["parentType"] = emptyToNil(string(row.ParentType))
-	out["parentObject"] = emptyToNil(row.ParentObject)
-	return out
-}
-
-func dataPolicyDTO(row access.DataPolicy) map[string]any {
-	var expression map[string]any
-	if err := json.Unmarshal([]byte(row.ExpressionJSON), &expression); err != nil || expression == nil {
-		expression = map[string]any{}
-	}
-	return map[string]any{
-		"id":          row.ID,
-		"workspaceId": row.WorkspaceID,
-		"objectId":    row.ObjectID,
-		"subjectType": emptyToNil(string(row.SubjectType)),
-		"subjectId":   emptyToNil(row.SubjectID),
-		"policyType":  row.PolicyType,
-		"expression":  expression,
-		"createdAt":   row.CreatedAt,
-		"updatedAt":   row.UpdatedAt,
-	}
-}
-
-func securableObjectDTO(row access.SecurableObject) map[string]any {
-	return map[string]any{
-		"id":               row.ID,
-		"type":             string(row.Type),
-		"workspaceId":      row.WorkspaceID,
-		"parentId":         emptyToNil(row.ParentID),
-		"ownerPrincipalId": emptyToNil(row.OwnerPrincipalID),
-		"displayName":      emptyToNil(row.DisplayName),
-		"createdAt":        row.CreatedAt,
-		"updatedAt":        row.UpdatedAt,
-	}
-}
-
-func authorizationDecisionDTO(row access.AuthorizationDecision) map[string]any {
-	return map[string]any{
-		"privilege":     string(row.Privilege),
-		"reason":        string(row.Reason),
-		"objectType":    string(row.Object.Type),
-		"objectId":      emptyToNil(row.Object.ObjectID),
-		"grantId":       emptyToNil(row.GrantID),
-		"grantObjectId": emptyToNil(row.GrantObjectID),
-		"subjectType":   emptyToNil(string(row.SubjectType)),
-		"subjectId":     emptyToNil(row.SubjectID),
-		"inherited":     row.Inherited,
-		"owner":         row.Owner,
-		"platform":      row.Platform,
-	}
-}
-
 func apiTokenDTO(row access.APIToken) map[string]any {
-	dto := map[string]any{"id": row.ID, "name": row.Name, "workspaceId": row.WorkspaceID, "expiresAt": emptyToNil(row.ExpiresAt), "revokedAt": emptyToNil(row.RevokedAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt)}
-	if row.Privileges != nil {
-		dto["privileges"] = row.Privileges
-	}
-	return dto
+	return map[string]any{"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "expiresAt": emptyToNil(row.ExpiresAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt)}
 }
-
-func servicePrincipalSecretDTO(row access.ServicePrincipalSecret, rawSecret string) map[string]any {
-	out := map[string]any{
-		"id":                 row.ID,
-		"servicePrincipalId": row.ServicePrincipalID,
-		"name":               row.Name,
-		"expiresAt":          emptyToNil(row.ExpiresAt),
-		"createdAt":          emptyToNil(row.CreatedAt),
-		"revokedAt":          emptyToNil(row.RevokedAt),
-	}
-	if strings.TrimSpace(rawSecret) != "" {
-		out["secret"] = rawSecret
+func servicePrincipalSecretDTO(row access.ServicePrincipalSecret, raw string) map[string]any {
+	out := map[string]any{"id": row.ID, "servicePrincipalId": row.ServicePrincipalID, "name": row.Name, "expiresAt": row.ExpiresAt, "createdAt": row.CreatedAt, "revokedAt": emptyToNil(row.RevokedAt)}
+	if raw != "" {
+		out["secret"] = raw
 	}
 	return out
 }
-
-func sessionDTO(row access.Session) map[string]any {
-	return sessionDTOFor(row, "")
+func sessionDTOFor(row access.Session, current string) map[string]any {
+	return map[string]any{"id": row.ID, "principalId": row.PrincipalID, "kind": row.Kind, "instanceId": row.InstanceID, "profileId": row.ProfileID, "clientId": row.ClientID, "expiresAt": row.ExpiresAt, "absoluteExpiresAt": row.AbsoluteExpiresAt, "createdAt": row.CreatedAt, "lastSeenAt": row.LastSeenAt, "revokedAt": emptyToNil(row.RevokedAt), "current": row.ID == current}
+}
+func sessionDTO(row access.Session) map[string]any { return sessionDTOFor(row, "") }
+func auditEventDTO(row access.AuditEvent) map[string]any {
+	return map[string]any{"id": row.ID, "principalId": emptyToNil(row.PrincipalID), "action": row.Action, "resourceKind": row.ResourceKind, "resourceId": row.ResourceID, "capability": emptyToNil(string(row.Capability)), "status": row.Status, "requestId": emptyToNil(row.RequestID), "correlationId": emptyToNil(row.CorrelationID), "metadata": json.RawMessage(row.MetadataJSON), "createdAt": row.CreatedAt}
 }
 
-func sessionDTOFor(row access.Session, currentSessionID string) map[string]any {
-	return map[string]any{
-		"id":                row.ID,
-		"kind":              row.Kind,
-		"current":           row.ID != "" && row.ID == currentSessionID,
-		"instanceId":        emptyToNil(row.InstanceID),
-		"profileId":         emptyToNil(row.ProfileID),
-		"clientId":          emptyToNil(row.ClientID),
-		"createdAt":         row.CreatedAt,
-		"expiresAt":         row.ExpiresAt,
-		"absoluteExpiresAt": emptyToNil(row.AbsoluteExpiresAt),
-		"lastSeenAt":        emptyToNil(row.LastSeenAt),
-		"revokedAt":         emptyToNil(row.RevokedAt),
-	}
-}
-
-func accessAuditInput(r *stdhttp.Request, action, principalID, workspaceID, targetType, targetID string, privilege access.Privilege, status string, metadata map[string]any) access.AuditEventInput {
-	input, _ := buildAccessAuditInput(r, action, principalID, workspaceID, targetType, targetID, privilege, status, metadata)
-	return input
-}
-
-func commandAccessAuditInput(r *stdhttp.Request, action, principalID, workspaceID, targetType, targetID string, privilege access.Privilege, status string, metadata map[string]any, mutationErr error) (access.AuditEventInput, error) {
-	if mutationErr != nil {
-		return access.AuditEventInput{}, mutationErr
-	}
-	return buildAccessAuditInput(r, action, principalID, workspaceID, targetType, targetID, privilege, status, metadata)
-}
-
-func buildAccessAuditInput(r *stdhttp.Request, action, principalID, workspaceID, targetType, targetID string, privilege access.Privilege, status string, metadata map[string]any) (access.AuditEventInput, error) {
+func auditInput(r *stdhttp.Request, action, principalID, resourceKind, resourceID string, capability access.Capability, status string, metadata map[string]any) access.AuditEventInput {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	encoded, err := encodeAccessAuditPayload(r, action, targetID, metadata)
-	if err != nil {
-		return access.AuditEventInput{}, err
-	}
-	return access.AuditEventInput{
-		WorkspaceID:   workspaceID,
-		PrincipalID:   principalID,
-		Action:        action,
-		TargetType:    targetType,
-		TargetID:      targetID,
-		Privilege:     privilege,
-		Status:        status,
-		RequestID:     requestIDFromRequest(r),
-		CorrelationID: correlationIDFromRequest(r),
-		MetadataJSON:  encoded,
-	}, nil
+	encoded, _ := json.Marshal(metadata)
+	return access.AuditEventInput{PrincipalID: principalID, Action: action, ResourceKind: resourceKind, ResourceID: resourceID, Capability: capability, Status: status, RequestID: requestIDFromRequest(r), CorrelationID: correlationIDFromRequest(r), MetadataJSON: string(encoded)}
 }
-
-// encodeAccessAuditPayload is the single HTTP boundary for Access command
-// metadata.  The generated operation encoder supplies the durable envelope and
-// enforces the field sensitivity contract; the action fallback keeps internal
-// callers (which do not carry an APIGen command context) on the same path.
-func encodeAccessAuditPayload(r *stdhttp.Request, action, targetID string, metadata map[string]any) (string, error) {
-	operationID, ok := apigencommand.OperationID(r.Context())
-	if !ok {
-		switch action {
-		case "principal.profile.updated":
-			operationID = "updateCurrentPrincipal"
-		case "password.changed":
-			operationID = "changeCurrentPassword"
-		case "api_token.created":
-			operationID = "createCurrentAPIToken"
-		case "api_token.revoked":
-			operationID = "revokeCurrentAPIToken"
-		case "session.revoked":
-			if _, exists := metadata["targetPrincipalId"]; exists {
-				operationID = "revokePrincipalSession"
-			} else {
-				operationID = "revokeCurrentSession"
-			}
-		case "principal.local_user.created":
-			operationID = "createPrincipal"
-		case "principal.deleted":
-			operationID = "deletePrincipal"
-		case "principal.updated":
-			operationID = "updatePrincipal"
-		case "principal.disabled":
-			operationID = "disablePrincipal"
-		case "principal.enabled":
-			operationID = "enablePrincipal"
-		case "principal.local_password.reset":
-			operationID = "resetPrincipalPassword"
-		case "service_principal.created":
-			operationID = "createServicePrincipal"
-		case "service_principal.updated":
-			operationID = "updateServicePrincipal"
-		case "service_principal.deleted":
-			operationID = "deleteServicePrincipal"
-		case "service_principal_secret.created":
-			operationID = "createServicePrincipalSecret"
-		case "service_principal_secret.revoked":
-			operationID = "revokeServicePrincipalSecret"
-		case "group.created":
-			operationID = "createGroup"
-		case "group.updated":
-			operationID = "updateGroup"
-		case "group.deleted":
-			operationID = "deleteGroup"
-		case "group.member_added":
-			operationID = "addGroupMember"
-		case "group.member_removed":
-			operationID = "removeGroupMember"
-		case "ownership.transferred":
-			operationID = "transferOwnership"
-		case "data_policy.created":
-			operationID = "createDataPolicy"
-		case "data_policy.updated":
-			operationID = "updateDataPolicy"
-		case "data_policy.deleted":
-			operationID = "deleteDataPolicy"
-		}
-	}
-	str := func(name string) string {
-		value, _ := metadata[name].(string)
-		return value
-	}
-	stringsValue := func(name string) []string {
-		switch values := metadata[name].(type) {
-		case []string:
-			return values
-		case []access.Privilege:
-			return privilegeStrings(values)
-		default:
-			return []string{}
-		}
-	}
-	var encoded string
-	var err error
-	switch operationID {
-	case "updateCurrentPrincipal":
-		encoded, err = accessgen.EncodeGenUpdateCurrentPrincipalAuditPayload(accessgen.GenSchemaCurrentPrincipalUpdatedAuditPayload{Email: str("email"), DisplayName: str("displayName")})
-	case "changeCurrentPassword":
-		encoded, err = accessgen.EncodeGenChangeCurrentPasswordAuditPayload(accessgen.GenSchemaCurrentPasswordChangedAuditPayload{Email: str("email"), Provider: str("provider")})
-	case "createCurrentAPIToken":
-		encoded, err = accessgen.EncodeGenCreateCurrentAPITokenAuditPayload(accessgen.GenSchemaAPITokenAuditPayload{Name: str("name"), Privileges: stringsValue("privileges")})
-	case "revokeCurrentAPIToken":
-		encoded, err = accessgen.EncodeGenRevokeCurrentAPITokenAuditPayload(accessgen.GenSchemaAPITokenAuditPayload{Name: str("name"), Privileges: stringsValue("privileges")})
-	case "revokeCurrentSession":
-		encoded, err = accessgen.EncodeGenRevokeCurrentSessionAuditPayload(accessgen.GenSchemaCurrentSessionRevokedAuditPayload{SessionId: targetID})
-	case "revokePrincipalSession":
-		encoded, err = accessgen.EncodeGenRevokePrincipalSessionAuditPayload(accessgen.GenSchemaPrincipalSessionRevokedAuditPayload{TargetPrincipalId: str("targetPrincipalId")})
-	case "createPrincipal":
-		encoded, err = accessgen.EncodeGenCreatePrincipalAuditPayload(accessgen.GenSchemaPrincipalCreatedAuditPayload{Email: str("email")})
-	case "deletePrincipal":
-		encoded, err = accessgen.EncodeGenDeletePrincipalAuditPayload(accessgen.GenSchemaPrincipalDeletedAuditPayload{Email: str("email"), Kind: str("kind"), DisplayName: str("displayName")})
-	case "updatePrincipal":
-		encoded, err = accessgen.EncodeGenUpdatePrincipalAuditPayload(accessgen.GenSchemaPrincipalUpdatedAuditPayload{Email: str("email"), Kind: str("kind"), DisplayName: str("displayName")})
-	case "disablePrincipal":
-		encoded, err = accessgen.EncodeGenDisablePrincipalAuditPayload(accessgen.GenSchemaPrincipalUpdatedAuditPayload{Email: str("email"), Kind: str("kind"), DisplayName: str("displayName")})
-	case "enablePrincipal":
-		encoded, err = accessgen.EncodeGenEnablePrincipalAuditPayload(accessgen.GenSchemaPrincipalUpdatedAuditPayload{Email: str("email"), Kind: str("kind"), DisplayName: str("displayName")})
-	case "resetPrincipalPassword":
-		encoded, err = accessgen.EncodeGenResetPrincipalPasswordAuditPayload(accessgen.GenSchemaPrincipalPasswordResetAuditPayload{Email: str("email")})
-	case "createServicePrincipal":
-		encoded, err = accessgen.EncodeGenCreateServicePrincipalAuditPayload(accessgen.GenSchemaServicePrincipalAuditPayload{ServicePrincipalId: targetID})
-	case "updateServicePrincipal":
-		encoded, err = accessgen.EncodeGenUpdateServicePrincipalAuditPayload(accessgen.GenSchemaServicePrincipalAuditPayload{ServicePrincipalId: targetID})
-	case "deleteServicePrincipal":
-		encoded, err = accessgen.EncodeGenDeleteServicePrincipalAuditPayload(accessgen.GenSchemaServicePrincipalAuditPayload{ServicePrincipalId: targetID})
-	case "createServicePrincipalSecret":
-		encoded, err = accessgen.EncodeGenCreateServicePrincipalSecretAuditPayload(accessgen.GenSchemaServicePrincipalSecretAuditPayload{SecretId: str("secretId")})
-	case "revokeServicePrincipalSecret":
-		encoded, err = accessgen.EncodeGenRevokeServicePrincipalSecretAuditPayload(accessgen.GenSchemaServicePrincipalSecretAuditPayload{SecretId: str("secretId")})
-	case "createGroup":
-		encoded, err = accessgen.EncodeGenCreateGroupAuditPayload(accessgen.GenSchemaGroupAuditPayload{Provider: str("provider"), ExternalId: str("externalId"), DisplayName: str("displayName")})
-	case "updateGroup":
-		encoded, err = accessgen.EncodeGenUpdateGroupAuditPayload(accessgen.GenSchemaGroupAuditPayload{Provider: str("provider"), ExternalId: str("externalId"), DisplayName: str("displayName")})
-	case "deleteGroup":
-		encoded, err = accessgen.EncodeGenDeleteGroupAuditPayload(accessgen.GenSchemaGroupAuditPayload{Provider: str("provider"), ExternalId: str("externalId"), DisplayName: str("displayName")})
-	case "addGroupMember":
-		encoded, err = accessgen.EncodeGenAddGroupMemberAuditPayload(accessgen.GenSchemaGroupMemberAuditPayload{GroupId: str("groupId"), MemberPrincipalId: str("memberPrincipalId")})
-	case "removeGroupMember":
-		encoded, err = accessgen.EncodeGenRemoveGroupMemberAuditPayload(accessgen.GenSchemaGroupMemberAuditPayload{GroupId: str("groupId"), MemberPrincipalId: str("memberPrincipalId")})
-	case "transferOwnership":
-		encoded, err = accessgen.EncodeGenTransferOwnershipAuditPayload(accessgen.GenSchemaOwnershipTransferAuditPayload{OwnerPrincipalId: str("ownerPrincipalId"), ObjectType: str("objectType")})
-	case "createDataPolicy":
-		encoded, err = accessgen.EncodeGenCreateDataPolicyAuditPayload(accessgen.GenSchemaDataPolicyAuditPayload{ObjectId: str("objectId"), PolicyType: str("policyType")})
-	case "updateDataPolicy":
-		encoded, err = accessgen.EncodeGenUpdateDataPolicyAuditPayload(accessgen.GenSchemaDataPolicyAuditPayload{ObjectId: str("objectId"), PolicyType: str("policyType")})
-	case "deleteDataPolicy":
-		encoded, err = accessgen.EncodeGenDeleteDataPolicyAuditPayload(accessgen.GenSchemaDataPolicyAuditPayload{ObjectId: str("objectId"), PolicyType: str("policyType")})
-	}
-	if err != nil {
-		return "", err
-	}
-	if encoded != "" {
-		return encoded, nil
-	}
-	bytes, err := json.Marshal(metadata)
-	if err != nil {
-		return "", err
-	}
-	return string(bytes), nil
-}
-
 func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation func(access.Repository) (access.AuditEventInput, error)) error {
 	transactional, ok := repo.(access.AuditedMutationRepository)
 	if !ok {
-		return fmt.Errorf("%w: access repository does not support transactional auditing", access.ErrAuditTransaction)
+		return errors.New("transactional access repository is required")
 	}
-	operationID, generatedCommand := apigencommand.OperationID(r.Context())
-	if !generatedCommand {
-		// Non-generated internal callers retain the same atomic repository path.
-		return transactional.RunAuditedMutation(r.Context(), mutation)
-	}
-	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
-	if err != nil {
+	return transactional.RunAuditedMutation(r.Context(), mutation)
+}
+
+func decodeStrictJSON(r *stdhttp.Request, target any) error {
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
 		return err
 	}
-	return executor.Execute(r.Context(), operationID, apigencommand.Execution{
-		Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
-			return transactional.RunAuditedMutation(ctx, func(txRepo access.Repository) (access.AuditEventInput, error) {
-				input, mutationErr := mutation(txRepo)
-				if mutationErr == nil && input.Action != contract.AuditAction {
-					return access.AuditEventInput{}, fmt.Errorf("generated audit action %q does not match mutation action %q", contract.AuditAction, input.Action)
-				}
-				return input, mutationErr
-			})
-		},
-	})
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return errors.New("request body must contain one JSON value")
+	}
+	return nil
 }
-
-// runAuditedMutationWithConcurrency keeps the revision read and comparison in
-// the same repository transaction as the mutation and required audit write.
-// The generated executor owns If-Match parsing and PRECONDITION_FAILED
-// semantics; this helper only supplies the domain revision source.
-func runAuditedMutationWithConcurrency(
-	r *stdhttp.Request,
-	repo access.Repository,
-	operationID accessgen.GenCommandOperationID,
-	currentRevision func(access.Repository) (string, error),
-	mutation func(access.Repository) (access.AuditEventInput, error),
-) error {
-	transactional, ok := repo.(access.AuditedMutationRepository)
-	if !ok {
-		return fmt.Errorf("%w: access repository does not support transactional auditing", access.ErrAuditTransaction)
-	}
-	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
-	if err != nil {
-		return err
-	}
-	operation := operationID.APIGenOperationID()
-	return executor.Execute(r.Context(), operation, apigencommand.Execution{
-		Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
-			return transactional.RunAuditedMutation(ctx, func(txRepo access.Repository) (access.AuditEventInput, error) {
-				if contract.Concurrency == apigencommand.ConcurrencyIfMatch {
-					if currentRevision == nil {
-						return access.AuditEventInput{}, fmt.Errorf("operation %q concurrency revision source is unavailable", operation)
-					}
-					current, revisionErr := currentRevision(txRepo)
-					if revisionErr != nil {
-						return access.AuditEventInput{}, revisionErr
-					}
-					if revisionErr := executor.CheckConcurrency(ctx, operation, r.Header.Get("If-Match"), current); revisionErr != nil {
-						return access.AuditEventInput{}, revisionErr
-					}
-				}
-				input, mutationErr := mutation(txRepo)
-				if mutationErr == nil && input.Action != contract.AuditAction {
-					return access.AuditEventInput{}, fmt.Errorf("generated audit action %q does not match mutation action %q", contract.AuditAction, input.Action)
-				}
-				return input, mutationErr
-			})
-		},
-	})
+func writeJSON(w stdhttp.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
 }
-
-func writeCommandFailure(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID, err error) {
-	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, accessgen.GetAPIGenCommandFailureContracts, err)
+func writeSecretJSON(w stdhttp.ResponseWriter, status int, value any) { writeJSON(w, status, value) }
+func writeJSONError(w stdhttp.ResponseWriter, err error, status int) {
+	writeJSON(w, status, map[string]any{"error": err.Error()})
 }
-
-func writeAuditedMutationError(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID, err error, mutationStatus int) {
-	if errors.Is(err, apigencommand.ErrPreconditionRequired) || errors.Is(err, apigencommand.ErrPreconditionFailed) {
-		apitransport.WriteProblem(w, r, stdhttp.StatusPreconditionFailed, "PRECONDITION_FAILED", "The command revision does not match the current resource.", nil)
-		return
-	}
-	if mutationStatus == stdhttp.StatusNotFound && errors.Is(err, sql.ErrNoRows) {
-		err = apigenfailure.Wrap("not_found", err)
-	}
-	if _, classified := apigenfailure.KindOf(err); !classified {
-		switch operationID.APIGenOperationID() {
-		case "createCurrentAPIToken", "createServicePrincipal", "createServicePrincipalSecret", "createGroup", "createRoleBinding", "createGrant", "transferOwnership", "createDataPolicy":
-			err = apigenfailure.Wrap("invalid", err)
-		case "updateGrant", "updateDataPolicy":
-			if mutationStatus == stdhttp.StatusUnprocessableEntity {
-				err = apigenfailure.Wrap("invalid", err)
-			}
-		}
-	}
-	writeCommandFailure(w, r, operationID, err)
-}
-
-func auditEventDTO(row access.AuditEvent) map[string]any {
-	var metadata map[string]any
-	if strings.TrimSpace(row.MetadataJSON) != "" {
-		_ = json.Unmarshal([]byte(row.MetadataJSON), &metadata)
-	}
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	dto := map[string]any{
-		"id":         row.ID,
-		"action":     row.Action,
-		"targetType": row.TargetType,
-		"targetId":   row.TargetID,
-		"metadata":   metadata,
-		"createdAt":  row.CreatedAt,
-	}
-	if row.WorkspaceID != "" {
-		dto["workspaceId"] = row.WorkspaceID
-	}
-	if row.PrincipalID != "" {
-		dto["principalId"] = row.PrincipalID
-	}
-	if row.Privilege != "" {
-		dto["privilege"] = row.Privilege
-	}
-	if row.Status != "" {
-		dto["status"] = row.Status
-	}
-	if row.RequestID != "" {
-		dto["requestId"] = row.RequestID
-	}
-	if row.CorrelationID != "" {
-		dto["correlationId"] = row.CorrelationID
-	}
-	return dto
-}
-
-func emptyToNil(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
-}
-
-func requestIDFromRequest(r *stdhttp.Request) string {
-	return firstNonEmpty(r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID"))
-}
-
-func correlationIDFromRequest(r *stdhttp.Request) string {
-	return firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), requestIDFromRequest(r))
-}
-
-func knownPrivileges() []string {
-	known := access.KnownPrivileges()
-	out := make([]string, len(known))
-	for i, privilege := range known {
-		out[i] = string(privilege)
-	}
-	return out
-}
-
-func privilegesFromStrings(values []string) []access.Privilege {
-	privileges := make([]access.Privilege, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		privileges = append(privileges, access.Privilege(value))
-	}
-	return privileges
-}
-
-func privilegesFromOAuthScope(scope string) ([]access.Privilege, error) {
-	scope = strings.TrimSpace(scope)
-	if scope == "" {
-		return nil, fmt.Errorf("OAuth client credentials require at least one privilege scope")
-	}
-	values := strings.FieldsFunc(scope, func(r rune) bool {
-		return r == ' ' || r == ',' || r == '\n' || r == '\t'
-	})
-	privileges := make([]access.Privilege, 0, len(values))
-	for _, value := range values {
-		privilege := access.Privilege(strings.TrimSpace(value))
-		if privilege == "" {
-			continue
-		}
-		if !knownPrivilege(privilege) {
-			return nil, fmt.Errorf("unsupported OAuth scope privilege %q", value)
-		}
-		privileges = append(privileges, privilege)
-	}
-	if len(privileges) == 0 {
-		return nil, fmt.Errorf("OAuth client credentials require at least one privilege scope")
-	}
-	return privileges, nil
-}
-
-func knownPrivilege(value access.Privilege) bool {
-	parsed, ok := access.ParsePrivilege(string(value))
-	return ok && parsed == value
-}
-
-func knownGrantSubjectType(value access.SubjectType) bool {
-	switch value {
-	case access.SubjectPrincipal, access.SubjectGroup, access.SubjectServicePrincipal:
-		return true
-	default:
-		return false
-	}
-}
-
-func knownDataPolicySubjectType(value access.SubjectType) bool {
-	return knownGrantSubjectType(value) || value == access.SubjectDashboardPublication
-}
-
-func principalKindAllowsGenericMutation(kind access.PrincipalKind) bool {
-	return kind == access.PrincipalKindUser
-}
-
-func knownDataPolicyType(value string) bool {
-	switch strings.TrimSpace(value) {
-	case "row_filter", "column_mask":
-		return true
-	default:
-		return false
-	}
-}
-
-func objectRefFromRequest(w stdhttp.ResponseWriter, r *stdhttp.Request) (access.ObjectRef, bool) {
-	return objectRefFromValues(w, r, nil, r.URL.Query().Get("objectType"), r.URL.Query().Get("objectId"))
-}
-
-func commandOperation(operationID accessgen.GenCommandOperationID) *accessgen.GenCommandOperationID {
-	return &operationID
-}
-
-func objectRefFromValues(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID *accessgen.GenCommandOperationID, objectType, objectID string) (access.ObjectRef, bool) {
-	writeInvalid := func(err error) {
-		if operationID != nil {
-			writeCommandFailure(w, r, *operationID, apigenfailure.Wrap("invalid", err))
-			return
-		}
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
-	}
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace"))
-	if workspaceID == "" {
-		writeInvalid(fmt.Errorf("workspace is required"))
-		return access.ObjectRef{}, false
-	}
-	objectType = strings.TrimSpace(objectType)
-	objectID = strings.TrimSpace(objectID)
-	if objectType == "" || objectType == string(access.SecurableWorkspace) {
-		if objectID != "" {
-			writeInvalid(fmt.Errorf("workspace objectId must be empty"))
-			return access.ObjectRef{}, false
-		}
-		return access.WorkspaceObject(workspaceID), true
-	}
-	if access.SecurableType(objectType) == access.SecurablePlatform {
-		if objectID != "" {
-			writeInvalid(fmt.Errorf("platform objectId must be empty"))
-			return access.ObjectRef{}, false
-		}
-		return access.PlatformObject(), true
-	}
-	typ := access.SecurableType(objectType)
-	if !validWorkspaceSecurableType(typ) {
-		writeInvalid(fmt.Errorf("unsupported securable object type %q", objectType))
-		return access.ObjectRef{}, false
-	}
-	if objectID == "" {
-		writeInvalid(fmt.Errorf("objectId is required for %s grants", objectType))
-		return access.ObjectRef{}, false
-	}
-	if typ == access.SecurableProjectEnvironment {
-		return access.ProjectEnvironmentObject(workspaceID, objectID), true
-	}
-	return objectWithInferredParent(typ, workspaceID, objectID), true
-}
-
-func objectWithInferredParent(typ access.SecurableType, workspaceID, objectID string) access.ObjectRef {
-	parts := strings.Split(objectID, "/")
-	switch typ {
-	case access.SecurableDataset, access.SecurableTable:
-		if len(parts) >= 2 && strings.TrimSpace(parts[0]) != "" {
-			return access.ItemObjectWithParent(typ, workspaceID, objectID, access.ItemObject(access.SecurableSemanticModel, workspaceID, parts[0]))
-		}
-	case access.SecurableColumn:
-		if len(parts) >= 3 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
-			parent := access.ItemObjectWithParent(access.SecurableDataset, workspaceID, parts[0]+"/"+parts[1], access.ItemObject(access.SecurableSemanticModel, workspaceID, parts[0]))
-			return access.ItemObjectWithParent(typ, workspaceID, objectID, parent)
-		}
-	case access.SecurableSemanticField:
-		if len(parts) >= 2 && strings.TrimSpace(parts[0]) != "" {
-			return access.ItemObjectWithParent(typ, workspaceID, objectID, access.ItemObject(access.SecurableSemanticModel, workspaceID, parts[0]))
-		}
-	}
-	return access.ItemObject(typ, workspaceID, objectID)
-}
-
-func objectRefFromCanonical(workspaceID, canonicalID string) access.ObjectRef {
-	canonicalID = strings.TrimSpace(canonicalID)
-	if canonicalID == access.PlatformObject().CanonicalID() {
-		return access.PlatformObject()
-	}
-	if canonicalID == access.WorkspaceObject(workspaceID).CanonicalID() {
-		return access.WorkspaceObject(workspaceID)
-	}
-	prefix, rest, ok := strings.Cut(canonicalID, ":")
-	if !ok {
-		return access.WorkspaceObject(workspaceID)
-	}
-	objectWorkspace, objectID, ok := strings.Cut(rest, ":")
-	if !ok {
-		return access.WorkspaceObject(workspaceID)
-	}
-	return objectWithInferredParent(access.SecurableType(prefix), objectWorkspace, objectID)
-}
-
-func objectRefFromGrant(grant access.Grant) access.ObjectRef {
-	switch grant.ObjectType {
-	case access.SecurablePlatform:
-		return access.PlatformObject()
-	case access.SecurableWorkspace:
-		return access.WorkspaceObject(grant.WorkspaceID)
-	default:
-		prefix := string(grant.ObjectType) + ":" + grant.WorkspaceID + ":"
-		objectID := strings.TrimPrefix(grant.ObjectID, prefix)
-		return objectWithInferredParent(grant.ObjectType, grant.WorkspaceID, objectID)
-	}
-}
-
-func validWorkspaceSecurableType(typ access.SecurableType) bool {
-	switch typ {
-	case access.SecurableDashboard,
-		access.SecurableProjectEnvironment,
-		access.SecurableSemanticModel,
-		access.SecurableSemanticField,
-		access.SecurableSource,
-		access.SecurableModelTable,
-		access.SecurableDataset,
-		access.SecurableTable,
-		access.SecurableColumn:
-		return true
-	default:
-		return false
-	}
-}
-
-func (h Handler) authorizeCurrentObject(w stdhttp.ResponseWriter, r *stdhttp.Request, privilege access.Privilege, object access.ObjectRef) bool {
-	principal, ok := h.currentPrincipal(r)
-	if !ok {
-		writeJSONError(w, fmt.Errorf("authenticated principal is required"), stdhttp.StatusUnauthorized)
-		return false
-	}
-	if credential, ok := h.currentCredential(r); ok && !apiTokenAllows(credential.Token, object.WorkspaceID, privilege) {
-		writeJSONError(w, errForbidden, objectAuthorizationDenialStatus(r))
-		return false
-	}
-	repo, err := h.repository()
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return false
-	}
-	decision, err := repo.Authorize(r.Context(), principal.ID, privilege, object)
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return false
-	}
-	if !decision.Allowed {
-		writeJSONError(w, errForbidden, objectAuthorizationDenialStatus(r))
-		return false
-	}
-	return true
-}
-
-func objectAuthorizationDenialStatus(r *stdhttp.Request) int {
-	// Only routes whose path identifies a concrete access resource conceal its
-	// existence. Collection commands describe their target in the request body
-	// and therefore report an ordinary authorization failure.
-	if chi.URLParam(r, "grant") != "" || chi.URLParam(r, "policy") != "" {
-		return stdhttp.StatusNotFound
-	}
-	return stdhttp.StatusForbidden
-}
-
-func (h Handler) groupByID(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID *accessgen.GenCommandOperationID) (access.Group, bool) {
-	writeFailure := func(err error) {
-		if operationID != nil {
-			writeCommandFailure(w, r, *operationID, err)
-			return
-		}
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-	}
-	repo, err := h.repository()
-	if err != nil {
-		writeFailure(err)
-		return access.Group{}, false
-	}
-	rows, err := applicableGroups(r.Context(), repo, h.workspaceID(chi.URLParam(r, "workspace")))
-	if err != nil {
-		writeFailure(err)
-		return access.Group{}, false
-	}
-	for _, row := range rows {
-		if row.ID == chi.URLParam(r, "group") {
-			return row, true
-		}
-	}
-	if operationID != nil {
-		writeCommandFailure(w, r, *operationID, apigenfailure.Wrap("not_found", sql.ErrNoRows))
-	} else {
-		writeJSONError(w, sql.ErrNoRows, stdhttp.StatusNotFound)
-	}
-	return access.Group{}, false
-}
-
-func applicableGroups(ctx context.Context, repo access.Repository, workspaceID string) ([]access.Group, error) {
-	localGroups, err := repo.ListGroups(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	directoryGroups, err := repo.ListSCIMGroups(ctx, access.SCIMGroupFilter{})
-	if err != nil {
-		return nil, err
-	}
-	return append(localGroups, directoryGroups...), nil
-}
-
-func decodeRoleBindingInput(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID accessgen.GenCommandOperationID) (access.RoleBindingInput, bool) {
-	var input struct {
-		SubjectType string `json:"subjectType"`
-		SubjectID   string `json:"subjectId"`
-		Role        string `json:"role"`
-	}
-	if err := decodeStrictJSON(r, &input); err != nil {
-		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("invalid", err))
-		return access.RoleBindingInput{}, false
-	}
-	return access.RoleBindingInput{
-		WorkspaceID: chi.URLParam(r, "workspace"),
-		SubjectType: access.SubjectType(input.SubjectType),
-		SubjectID:   input.SubjectID,
-		Role:        input.Role,
-	}, true
-}
-
-func apiTokenAllows(token access.APIToken, workspaceID string, privilege access.Privilege) bool {
-	if token.WorkspaceID != "" && token.WorkspaceID != workspaceID {
-		return false
-	}
-	if token.Privileges == nil {
-		return true
-	}
-	for _, allowed := range token.Privileges {
-		if allowed == privilege {
-			return true
-		}
-	}
-	return false
-}
-
-type pageResponse struct {
-	NextCursor string `json:"nextCursor"`
-}
-
-func pagedResponseWithCursor(items any, nextCursor string) map[string]any {
-	return map[string]any{"items": items, "page": pageResponse{NextCursor: nextCursor}}
-}
-
 func writePagedJSON[T any](w stdhttp.ResponseWriter, r *stdhttp.Request, items []T) bool {
 	page, nextCursor, ok := pageSliceForRequest(w, r, items)
 	if !ok {
 		return false
 	}
-	writeJSON(w, stdhttp.StatusOK, pagedResponseWithCursor(page, nextCursor))
+	writeJSON(w, stdhttp.StatusOK, map[string]any{"items": page, "page": map[string]any{"nextCursor": nextCursor}})
 	return true
 }
 
 func pageSliceForRequest[T any](w stdhttp.ResponseWriter, r *stdhttp.Request, items []T) ([]T, string, bool) {
-	limit, ok := apiLimitForRequest(w, r)
-	if !ok {
+	limit, err := parseAPILimitQuery(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return nil, "", false
 	}
-	cursorKey, ok := apiCursorKeyForRequest(w, r)
-	if !ok {
+	cursor, err := decodeKeyCursor(r.URL.Query().Get("pageToken"))
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return nil, "", false
 	}
 	start := 0
-	if cursorKey != "" {
+	if cursor != "" {
 		start = -1
 		for index, item := range items {
-			if apiItemPageKey(item) == cursorKey {
+			if apiItemPageKey(item) == cursor {
 				start = index + 1
 				break
 			}
@@ -3137,95 +1440,82 @@ func pageSliceForRequest[T any](w stdhttp.ResponseWriter, r *stdhttp.Request, it
 	if end > len(items) {
 		end = len(items)
 	}
-	nextCursor := ""
-	if end < len(items) {
-		nextCursor = encodeKeyCursor(apiItemPageKey(items[end-1]))
+	next := ""
+	if end < len(items) && end > start {
+		next = encodeKeyCursor(apiItemPageKey(items[end-1]))
 	}
-	return append(make([]T, 0, end-start), items[start:end]...), nextCursor, true
+	page := make([]T, end-start)
+	copy(page, items[start:end])
+	return page, next, true
 }
-
-const (
-	defaultAPILimit = 50
-	maxAPILimit     = 200
-)
-
-func apiLimitForRequest(w stdhttp.ResponseWriter, r *stdhttp.Request) (int, bool) {
-	limit, err := parseAPILimit(r.URL.Query().Get("limit"))
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
-		return 0, false
-	}
-	return limit, true
+func writeCommandFailure(w stdhttp.ResponseWriter, _ *stdhttp.Request, _ accessgen.GenCommandOperationID, err error) {
+	writeJSONError(w, err, stdhttp.StatusBadRequest)
 }
-
-func parseAPILimit(raw string) (int, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return defaultAPILimit, nil
+func writeAuditedMutationError(w stdhttp.ResponseWriter, _ *stdhttp.Request, _ accessgen.GenCommandOperationID, err error, status int) {
+	writeJSONError(w, err, status)
+}
+func statusForNotFound(err error) int {
+	if errors.Is(err, sql.ErrNoRows) {
+		return stdhttp.StatusNotFound
 	}
-	value, err := strconv.Atoi(raw)
+	return stdhttp.StatusInternalServerError
+}
+func emptyToNil(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+func requestIDFromRequest(r *stdhttp.Request) string {
+	return firstNonEmpty(r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID"))
+}
+func correlationIDFromRequest(r *stdhttp.Request) string {
+	return firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), requestIDFromRequest(r))
+}
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+func servicePrincipalSecretHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+func resourceETag(value any) string {
+	encoded, _ := json.Marshal(value)
+	sum := sha256.Sum256(encoded)
+	return `"` + hex.EncodeToString(sum[:]) + `"`
+}
+func requireIfMatch(w stdhttp.ResponseWriter, r *stdhttp.Request, current string) bool {
+	if value := strings.TrimSpace(r.Header.Get("If-Match")); value != "" && value != current {
+		writeJSONError(w, errors.New("resource changed"), stdhttp.StatusPreconditionFailed)
+		return false
+	}
+	return true
+}
+func writeAPIProblem(w stdhttp.ResponseWriter, _ *stdhttp.Request, status int, code, detail string, _ any) {
+	writeJSON(w, status, map[string]any{"code": code, "detail": detail})
+}
+func apiTokenID(value string) string { return base64.RawURLEncoding.EncodeToString([]byte(value)) }
+func parseAPILimitQuery(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 50, nil
+	}
+	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return 0, fmt.Errorf("limit must be an integer")
 	}
-	if value <= 0 {
+	if parsed <= 0 {
 		return 0, fmt.Errorf("limit must be at least 1")
 	}
-	if value > maxAPILimit {
+	if parsed > 200 {
 		return 0, fmt.Errorf("limit must not exceed 200")
 	}
-	return value, nil
-}
-
-func parseBoolQuery(raw string) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "1", "t", "true", "y", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-func privilegeStrings(values []access.Privilege) []string {
-	if values == nil {
-		return nil
-	}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		out = append(out, string(value))
-	}
-	return out
-}
-
-func apiCursorKeyForRequest(w stdhttp.ResponseWriter, r *stdhttp.Request) (string, bool) {
-	key, err := decodeKeyCursor(r.URL.Query().Get("pageToken"))
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
-		return "", false
-	}
-	return key, true
-}
-
-func encodeKeyCursor(key string) string {
-	if key == "" {
-		return ""
-	}
-	return base64.RawURLEncoding.EncodeToString([]byte("key:" + key))
-}
-
-func decodeKeyCursor(token string) (string, error) {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return "", nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		return "", fmt.Errorf("pageToken is invalid")
-	}
-	text := string(raw)
-	if !strings.HasPrefix(text, "key:") || strings.TrimPrefix(text, "key:") == "" {
-		return "", fmt.Errorf("pageToken is invalid")
-	}
-	return strings.TrimPrefix(text, "key:"), nil
+	return parsed, nil
 }
 
 func apiItemPageKey(value any) string {
@@ -3242,117 +1532,45 @@ func apiItemPageKey(value any) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func cleanQueryValues(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
-func encodeCursor(createdAt, id string) string {
-	if createdAt == "" || id == "" {
+func encodeKeyCursor(key string) string {
+	if key == "" {
 		return ""
 	}
-	return base64.RawURLEncoding.EncodeToString([]byte(createdAt + "\x00" + id))
+	return base64.RawURLEncoding.EncodeToString([]byte("key:" + key))
 }
 
-func decodeCursor(token string) (string, string) {
+func decodeKeyCursor(token string) (string, error) {
 	if strings.TrimSpace(token) == "" {
-		return "", ""
+		return "", nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || !strings.HasPrefix(string(raw), "key:") || strings.TrimPrefix(string(raw), "key:") == "" {
+		return "", fmt.Errorf("pageToken is invalid")
+	}
+	return strings.TrimPrefix(string(raw), "key:"), nil
+}
+func normalizeTimestamp(value string) string { return strings.TrimSpace(value) }
+func hashValue(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+func formatAuditTime(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
+func groupManagedExternallyError(group access.Group) error {
+	return fmt.Errorf("group %q is managed by provider %q", group.ID, group.Provider)
+}
+func groupIsLocallyManaged(group access.Group) bool {
+	return strings.TrimSpace(group.Provider) == "local"
+}
+
+func findGroup(ctx context.Context, repo access.Repository, id string) (access.Group, error) {
+	rows, err := repo.ListGroups(ctx)
 	if err != nil {
-		return "", ""
+		return access.Group{}, err
 	}
-	createdAt, id, ok := strings.Cut(string(raw), "\x00")
-	if !ok {
-		return "", ""
-	}
-	return createdAt, id
-}
-
-func writeJSON(w stdhttp.ResponseWriter, status int, value any) {
-	apitransport.WriteJSON(w, status, value)
-}
-
-func writeSecretJSON(w stdhttp.ResponseWriter, status int, value any) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Pragma", "no-cache")
-	writeJSON(w, status, value)
-}
-
-func writeJSONError(w stdhttp.ResponseWriter, err error, status int) {
-	writeJSON(w, status, httpmodel.ErrorResponse{
-		Code:      status,
-		Message:   err.Error(),
-		Details:   map[string]any{},
-		RequestID: "",
-	})
-}
-
-func decodeStrictJSON(r *stdhttp.Request, target any) error {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return fmt.Errorf("request body must contain exactly one JSON value")
-		}
-		return err
-	}
-	return nil
-}
-
-func resourceETag(value any) string {
-	encoded, _ := apitransport.CanonicalJSON(value)
-	return apitransport.StrongETag(string(encoded))
-}
-
-func requireIfMatch(w stdhttp.ResponseWriter, r *stdhttp.Request, current string) bool {
-	value := strings.TrimSpace(r.Header.Get("If-Match"))
-	if value == "*" || value == current {
-		return true
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	writeJSONError(w, fmt.Errorf("If-Match does not match the current resource"), stdhttp.StatusPreconditionFailed)
-	return false
-}
-
-func statusForNotFound(err error) int {
-	if err == sql.ErrNoRows {
-		return stdhttp.StatusNotFound
-	}
-	return stdhttp.StatusInternalServerError
-}
-
-func principalDeletionStatus(err error) int {
-	if errors.Is(err, access.ErrPrincipalOwnsSecurableObject) {
-		return stdhttp.StatusConflict
-	}
-	return statusForNotFound(err)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
+	for _, row := range rows {
+		if row.ID == id {
+			return row, nil
 		}
 	}
-	return ""
+	return access.Group{}, sql.ErrNoRows
 }

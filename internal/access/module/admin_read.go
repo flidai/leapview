@@ -6,14 +6,10 @@ import (
 	"github.com/flidai/leapview/internal/access"
 )
 
-// AdminReader is the read-only access surface consumed by platform
-// administration. It deliberately excludes every access mutation.
+// AdminReader is the read-only global identity directory surface. Project
+// authorization and role listings are intentionally not part of this reader.
 type AdminReader struct {
 	repository access.Repository
-}
-
-type principalActivityReader interface {
-	ListPrincipalsWithActivity(context.Context, access.PrincipalFilter) ([]access.Principal, error)
 }
 
 func (m *Module) AdminReader() *AdminReader {
@@ -28,7 +24,9 @@ func (m *Module) AdminReader() *AdminReader {
 }
 
 func (r *AdminReader) ListPrincipals(ctx context.Context, filter access.PrincipalFilter) ([]access.Principal, error) {
-	if reader, ok := r.repository.(principalActivityReader); ok {
+	if reader, ok := r.repository.(interface {
+		ListPrincipalsWithActivity(context.Context, access.PrincipalFilter) ([]access.Principal, error)
+	}); ok {
 		return reader.ListPrincipalsWithActivity(ctx, filter)
 	}
 	return r.repository.ListPrincipals(ctx, filter)
@@ -40,20 +38,4 @@ func (r *AdminReader) ListAllGroups(ctx context.Context) ([]access.Group, error)
 
 func (r *AdminReader) ListGroupMembersByGroup(ctx context.Context, groupID string) ([]access.GroupMember, error) {
 	return r.repository.ListGroupMembersByGroup(ctx, groupID)
-}
-
-func (r *AdminReader) ListRoles(ctx context.Context) ([]access.Role, error) {
-	return r.repository.ListRoles(ctx)
-}
-
-func (r *AdminReader) ListAllRoleBindings(ctx context.Context) ([]access.RoleBinding, error) {
-	return r.repository.ListAllRoleBindings(ctx)
-}
-
-func (r *AdminReader) GetSecurableObject(ctx context.Context, object access.ObjectRef) (access.SecurableObject, error) {
-	return r.repository.GetSecurableObject(ctx, object)
-}
-
-func (r *AdminReader) Authorize(ctx context.Context, principalID string, privilege access.Privilege, object access.ObjectRef) (access.AuthorizationDecision, error) {
-	return r.repository.Authorize(ctx, principalID, privilege, object)
 }

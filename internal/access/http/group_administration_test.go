@@ -1,12 +1,13 @@
 package http
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
@@ -15,117 +16,110 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestWorkspaceGroupAPIIncludesReadOnlySCIMGroups(t *testing.T) {
+func TestGlobalGroupAPIIncludesSourceAwareSCIMGroups(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatal(err)
-	}
 	repository := accesssqlite.NewRepository(store.SQLDB())
-	member, err := repository.UpsertSCIMUser(t.Context(), access.SCIMUserInput{
-		ExternalID: "directory-member", UserName: "member@example.test", DisplayName: "Directory Member", Active: true,
-	})
+	admin, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "admin@example.test", Role: access.PlatformRoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scimGroup, err := repository.UpsertSCIMGroup(t.Context(), access.SCIMGroupInput{
-		ExternalID: "directory-analysts", Name: "Directory Analysts", MemberIDs: []string{member.Principal.ID},
-	})
+	member, err := repository.UpsertSCIMUser(t.Context(), access.SCIMUserInput{ExternalID: "directory-member", UserName: "member@example.test", DisplayName: "Directory Member", Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.UpsertGroup(t.Context(), access.GroupInput{
-		WorkspaceID: "sales", Provider: "local", ExternalID: "local-analysts", Name: "Local Analysts",
-	}); err != nil {
+	scimGroup, err := repository.UpsertSCIMGroup(t.Context(), access.SCIMGroupInput{ExternalID: "directory-analysts", Name: "Directory Analysts", MemberIDs: []string{member.Principal.ID}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }}
-
-	listRecorder := httptest.NewRecorder()
-	handler.ListGroups(listRecorder, groupRequest(stdhttp.MethodGet, "/api/v1/workspaces/sales/groups", "sales", "", "", nil))
-	if listRecorder.Code != stdhttp.StatusOK {
-		t.Fatalf("list status=%d body=%s", listRecorder.Code, listRecorder.Body.String())
-	}
-	var list struct {
-		Items []struct {
-			ID           string          `json:"id"`
-			Provider     string          `json:"provider"`
-			Capabilities map[string]bool `json:"capabilities"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(listRecorder.Body.Bytes(), &list); err != nil {
+	if _, err := repository.UpsertGroup(t.Context(), access.GroupInput{Provider: "local", ExternalID: "local-analysts", Name: "Local Analysts"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Items) != 2 {
-		t.Fatalf("groups=%#v", list.Items)
-	}
-	var foundSCIM bool
-	for _, item := range list.Items {
-		if item.ID != scimGroup.ID {
-			continue
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+		return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
+	}}
+	request := func(method, path, groupID string, principalID ...string) *stdhttp.Request {
+		r := httptest.NewRequest(method, path, nil)
+		ctx := chi.NewRouteContext()
+		if groupID != "" {
+			ctx.URLParams.Add("group", groupID)
 		}
-		foundSCIM = true
-		if item.Provider != "scim" || item.Capabilities["canUpdate"] || item.Capabilities["canDelete"] || item.Capabilities["canManageMembers"] || !item.Capabilities["canManageAuthorization"] {
-			t.Fatalf("SCIM group response=%#v", item)
+		if len(principalID) > 0 && principalID[0] != "" {
+			ctx.URLParams.Add("principal", principalID[0])
+		}
+		return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, ctx))
+	}
+	response := httptest.NewRecorder()
+	handler.ListGroups(response, request(stdhttp.MethodGet, "/api/v1/groups", ""))
+	if response.Code != stdhttp.StatusOK {
+		t.Fatalf("list status=%d body=%s", response.Code, response.Body.String())
+	}
+	groups := repositoryGroups(t, response.Body.Bytes())
+	var found bool
+	for _, group := range groups {
+		if group.ID == scimGroup.ID {
+			found = true
+			if group.Provider != "scim" || group.Capabilities["canUpdate"] || group.Capabilities["canDelete"] || group.Capabilities["canManageMembers"] {
+				t.Fatalf("SCIM group response=%#v", group)
+			}
 		}
 	}
-	if !foundSCIM {
-		t.Fatalf("SCIM group missing from response: %#v", list.Items)
+	if !found {
+		t.Fatalf("SCIM group missing: %#v", groups)
 	}
-
-	membersRecorder := httptest.NewRecorder()
-	handler.ListGroupMembers(membersRecorder, groupRequest(stdhttp.MethodGet, "/api/v1/workspaces/sales/groups/"+scimGroup.ID+"/members", "sales", scimGroup.ID, "", nil))
-	if membersRecorder.Code != stdhttp.StatusOK {
-		t.Fatalf("members status=%d body=%s", membersRecorder.Code, membersRecorder.Body.String())
+	membersResponse := httptest.NewRecorder()
+	handler.ListGroupMembers(membersResponse, request(stdhttp.MethodGet, "/api/v1/groups/"+scimGroup.ID+"/members", scimGroup.ID))
+	if membersResponse.Code != stdhttp.StatusOK {
+		t.Fatalf("list SCIM members status=%d body=%s", membersResponse.Code, membersResponse.Body.String())
 	}
 	var members struct {
-		Items []map[string]any `json:"items"`
+		Items []struct {
+			PrincipalID string `json:"principalId"`
+		} `json:"items"`
 	}
-	if err := json.Unmarshal(membersRecorder.Body.Bytes(), &members); err != nil {
+	if err := json.Unmarshal(membersResponse.Body.Bytes(), &members); err != nil {
 		t.Fatal(err)
 	}
-	if len(members.Items) != 1 || members.Items[0]["id"] != member.Principal.ID {
-		t.Fatalf("members=%#v", members.Items)
+	if len(members.Items) != 1 || members.Items[0].PrincipalID != member.Principal.ID {
+		t.Fatalf("SCIM members=%#v, want principal %q", members.Items, member.Principal.ID)
 	}
-
+	update := request(stdhttp.MethodPatch, "/api/v1/groups/"+scimGroup.ID, scimGroup.ID)
+	update.Body = io.NopCloser(strings.NewReader(`{"displayName":"Changed"}`))
+	update.Header.Set("Content-Type", "application/json")
 	for _, mutation := range []struct {
-		name      string
-		method    string
-		path      string
-		principal string
-		body      []byte
-		call      func(stdhttp.ResponseWriter, *stdhttp.Request)
+		name string
+		call func(stdhttp.ResponseWriter, *stdhttp.Request)
+		req  *stdhttp.Request
 	}{
-		{name: "update", method: stdhttp.MethodPatch, path: "/api/v1/workspaces/sales/groups/" + scimGroup.ID, body: []byte(`{"displayName":"Changed"}`), call: handler.UpdateGroup},
-		{name: "delete", method: stdhttp.MethodDelete, path: "/api/v1/workspaces/sales/groups/" + scimGroup.ID, call: handler.DeleteGroup},
-		{name: "add member", method: stdhttp.MethodPut, path: "/api/v1/workspaces/sales/groups/" + scimGroup.ID + "/members/" + member.Principal.ID, principal: member.Principal.ID, call: handler.AddGroupMember},
-		{name: "remove member", method: stdhttp.MethodDelete, path: "/api/v1/workspaces/sales/groups/" + scimGroup.ID + "/members/" + member.Principal.ID, principal: member.Principal.ID, call: handler.RemoveGroupMember},
+		{name: "update", call: handler.UpdateGroup, req: update},
+		{name: "delete", call: handler.DeleteGroup, req: request(stdhttp.MethodDelete, "/api/v1/groups/"+scimGroup.ID, scimGroup.ID)},
+		{name: "add member", call: handler.AddGroupMember, req: request(stdhttp.MethodPost, "/api/v1/groups/"+scimGroup.ID+"/members/"+member.Principal.ID, scimGroup.ID, member.Principal.ID)},
+		{name: "remove member", call: handler.RemoveGroupMember, req: request(stdhttp.MethodDelete, "/api/v1/groups/"+scimGroup.ID+"/members/"+member.Principal.ID, scimGroup.ID, member.Principal.ID)},
 	} {
-		t.Run(mutation.name, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			mutation.call(recorder, groupRequest(mutation.method, mutation.path, "sales", scimGroup.ID, mutation.principal, mutation.body))
-			if recorder.Code != stdhttp.StatusUnprocessableEntity {
-				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-			}
-		})
+		recorder := httptest.NewRecorder()
+		mutation.call(recorder, mutation.req)
+		if recorder.Code != stdhttp.StatusUnprocessableEntity {
+			t.Fatalf("%s status=%d body=%s", mutation.name, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 
-func groupRequest(method, path, workspaceID, groupID, principalID string, body []byte) *stdhttp.Request {
-	request := httptest.NewRequest(method, path, bytes.NewReader(body))
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
+type groupResponse struct {
+	ID           string          `json:"id"`
+	Provider     string          `json:"provider"`
+	Capabilities map[string]bool `json:"capabilities"`
+}
+
+func repositoryGroups(t *testing.T, body []byte) []groupResponse {
+	t.Helper()
+	var response struct {
+		Items []groupResponse `json:"items"`
 	}
-	routeContext := chi.NewRouteContext()
-	routeContext.URLParams.Add("workspace", workspaceID)
-	if groupID != "" {
-		routeContext.URLParams.Add("group", groupID)
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
 	}
-	if principalID != "" {
-		routeContext.URLParams.Add("principal", principalID)
-	}
-	return request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	return response.Items
 }
