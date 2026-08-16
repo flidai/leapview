@@ -8,6 +8,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -16,7 +17,7 @@ import (
 // command ID, and provenance; ProjectID and ActorID are kept alongside it
 // so an HTTP or agent adapter cannot smuggle an alternate scope.
 type IntentRequest struct {
-	ProjectID string
+	ProjectID projectgraph.ResourceID
 	ActorID   string
 	Command   authoring.Command
 }
@@ -58,7 +59,7 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 // runtime lease. The lease is released before the transactional edit begins;
 // the reducer remains the final authority for optimistic revision and exact
 // placement checks.
-func (a *Application) validateAssignedField(ctx context.Context, project string, command authoring.Command, lifecycle authoring.DashboardLifecycle, field *authoring.AssignFieldPayload) error {
+func (a *Application) validateAssignedField(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, field *authoring.AssignFieldPayload) error {
 	if err := command.Validate(); err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func (a *Application) validateAssignedField(ctx context.Context, project string,
 	if revision.DashboardID != command.DashboardID || !sameRevision(revision.Token(), command.ExpectedRevision) {
 		return fmt.Errorf("%w: intent revision identity does not match request", authoring.ErrStaleRevision)
 	}
-	if strings.TrimSpace(revision.Document.SemanticModel) != strings.TrimSpace(lifecycle.SemanticModel) {
+	if revision.Document.SemanticModel != lifecycle.SemanticModel {
 		return fmt.Errorf("dashboard intent semantic model does not match lifecycle")
 	}
 	var componentVisual string
@@ -116,7 +117,8 @@ func (a *Application) validateAssignedField(ctx context.Context, project string,
 		return fmt.Errorf("dashboard intent runtime lease is empty")
 	}
 	defer lease.Release()
-	if strings.TrimSpace(string(lease.ServingStateID())) == "" {
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil || identity.GenerationID == "" {
 		return fmt.Errorf("dashboard intent serving-state identity is empty")
 	}
 	if lease.Runtime() == nil {
@@ -124,13 +126,13 @@ func (a *Application) validateAssignedField(ctx context.Context, project string,
 	}
 	active, ok := lease.Runtime().(interface {
 		runtimehost.Runtime
-		SemanticModelProjection(string) (*semanticmodel.Model, bool)
+		SemanticModelProjection(projectgraph.ResourceID) (*semanticmodel.Model, bool)
 	})
 	if !ok || active == nil {
 		return fmt.Errorf("active runtime does not provide semantic model projection")
 	}
 	model, ok := active.SemanticModelProjection(revision.Document.SemanticModel)
-	if !ok || model == nil || strings.TrimSpace(model.Name) != strings.TrimSpace(revision.Document.SemanticModel) {
+	if !ok || model == nil || model.Name != revision.Document.SemanticModel.String() {
 		return fmt.Errorf("semantic model %q is unavailable in active runtime", revision.Document.SemanticModel)
 	}
 	if err := validateGovernedField(model, field.FieldID, field.Role); err != nil {

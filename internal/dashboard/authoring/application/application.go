@@ -7,7 +7,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
@@ -116,7 +115,7 @@ func (a *Application) Create(ctx context.Context, request authoringservice.Creat
 
 // Execute executes one typed authoring command through the transactional
 // service.
-func (a *Application) Execute(ctx context.Context, project string, command authoring.Command) (authoringservice.Result, error) {
+func (a *Application) Execute(ctx context.Context, project projectgraph.ResourceID, command authoring.Command) (authoringservice.Result, error) {
 	if err := a.validate(); err != nil {
 		return authoringservice.Result{}, err
 	}
@@ -174,9 +173,6 @@ func (a *Application) Fork(ctx context.Context, request sourceadapter.ForkReques
 		return authoringservice.Result{}, err
 	}
 	request.Source.ProjectID = project
-	if target := strings.TrimSpace(request.TargetProjectID); target != "" {
-		request.TargetProjectID = target
-	}
 	return a.sources.Fork(ctx, request)
 }
 
@@ -268,7 +264,7 @@ func (a *Application) validate() error {
 	return nil
 }
 
-func (a *Application) newCatalogService(projectID string) (*catalog.Service, error) {
+func (a *Application) newCatalogService(projectID projectgraph.ResourceID) (*catalog.Service, error) {
 	return catalog.NewService(catalog.Options{
 		Provider:   projectProvider{projectID: projectID, acquire: a.acquireRuntime},
 		Repository: a.repository,
@@ -276,10 +272,9 @@ func (a *Application) newCatalogService(projectID string) (*catalog.Service, err
 	})
 }
 
-func projectID(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", fmt.Errorf("project id is required")
+func projectID(value projectgraph.ResourceID) (projectgraph.ResourceID, error) {
+	if err := value.Validate(); err != nil {
+		return "", fmt.Errorf("project id is invalid: %w", err)
 	}
 	return value, nil
 }
@@ -300,7 +295,7 @@ func guardedAcquire(acquire sourceadapter.AcquireRuntime) sourceadapter.AcquireR
 			lease.Release()
 			return nil, fmt.Errorf("dashboard authoring runtime is empty")
 		}
-		if strings.TrimSpace(string(lease.ServingStateID())) == "" {
+		if identity := lease.Identity(); identity.Validate() != nil || identity.GenerationID == "" {
 			lease.Release()
 			return nil, fmt.Errorf("dashboard authoring serving-state identity is empty")
 		}
@@ -312,13 +307,13 @@ func guardedAcquire(acquire sourceadapter.AcquireRuntime) sourceadapter.AcquireR
 // implements only runtimehost.Provider, so catalog and preview cannot acquire
 // a different project through a request after construction.
 type projectProvider struct {
-	projectID string
+	projectID projectgraph.ResourceID
 	acquire   sourceadapter.AcquireRuntime
 }
 
 func (p projectProvider) Acquire(ctx context.Context) (runtimehost.Lease, error) {
-	if strings.TrimSpace(p.projectID) == "" {
-		return nil, fmt.Errorf("project id is required")
+	if err := p.projectID.Validate(); err != nil {
+		return nil, fmt.Errorf("project id is invalid: %w", err)
 	}
 	if p.acquire == nil {
 		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
@@ -327,14 +322,9 @@ func (p projectProvider) Acquire(ctx context.Context) (runtimehost.Lease, error)
 	if err != nil {
 		return nil, err
 	}
-	project, err := projectgraph.NewResourceID(p.projectID)
-	if err != nil {
+	if lease.Identity().ProjectID != p.projectID {
 		lease.Release()
-		return nil, err
-	}
-	if lease.Identity().ProjectID != project {
-		lease.Release()
-		return nil, fmt.Errorf("dashboard authoring runtime project %q does not match requested project %q", lease.Identity().ProjectID, project)
+		return nil, fmt.Errorf("dashboard authoring runtime project %q does not match requested project %q", lease.Identity().ProjectID, p.projectID)
 	}
 	return lease, nil
 }

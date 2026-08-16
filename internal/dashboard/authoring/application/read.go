@@ -8,13 +8,14 @@ import (
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // DraftRequest identifies the current immutable draft revision for one
 // project dashboard. Draft reads are edit-authorized because they expose
 // private authored content.
 type DraftRequest struct {
-	ProjectID   string
+	ProjectID   projectgraph.ResourceID
 	ActorID     string
 	DashboardID authoring.DashboardID
 }
@@ -30,7 +31,7 @@ type DraftRead struct {
 // explicit so transports cannot accidentally expose a draft through a VIEW
 // only path.
 type RevisionRequest struct {
-	ProjectID   string
+	ProjectID   projectgraph.ResourceID
 	ActorID     string
 	DashboardID authoring.DashboardID
 	DraftID     authoring.DraftID
