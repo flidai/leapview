@@ -53,7 +53,6 @@ import (
 )
 
 type QueryMetrics = dashboardmodule.Metrics
-type workspaceMetrics = dashboardmodule.WorkspaceMetrics
 
 type capabilityRoutes struct {
 	accessModule       *accessmodule.Module
@@ -748,21 +747,21 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Environment: func(r *http.Request) string {
 					return string(requestServingEnvironment(policy.defaultEnvironment, r))
 				},
-				DataRefreshedAt: func(ctx context.Context, workspaceID, environment, modelID string) string {
+				DataRefreshedAt: func(ctx context.Context, projectID, environment, modelID string) string {
 					if routes.refreshModule == nil {
 						return ""
 					}
-					version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, environment, modelID)
+					version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, environment, modelID)
 					if err != nil || !ok {
 						return ""
 					}
 					return version.RefreshedAt.Format(time.RFC3339)
 				},
-				QueryFreshness: func(ctx context.Context, workspaceID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
+				QueryFreshness: func(ctx context.Context, projectID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
 					if routes.refreshModule == nil {
 						return dashboardmodule.QueryFreshness{}, false
 					}
-					version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, policy.defaultEnvironment, modelID)
+					version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, policy.defaultEnvironment, modelID)
 					if err != nil || !ok {
 						return dashboardmodule.QueryFreshness{}, false
 					}
@@ -801,11 +800,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				AuthorizeListResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 				},
-				QueryFreshness: func(ctx context.Context, workspaceID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
+				QueryFreshness: func(ctx context.Context, projectID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
 					if routes.refreshModule == nil {
 						return dashboardmodule.QueryFreshness{}, false
 					}
-					version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, policy.defaultEnvironment, modelID)
+					version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, policy.defaultEnvironment, modelID)
 					if err != nil || !ok {
 						return dashboardmodule.QueryFreshness{}, false
 					}
@@ -860,20 +859,24 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Environment: func(r *http.Request) string {
 				return string(requestServingEnvironment(policy.defaultEnvironment, r))
 			},
-			DashboardMetrics: func(workspaceID string) (QueryMetrics, bool) {
-				return metricsForWorkspace(runtime.metrics, workspaceID)
+			DashboardMetrics: func(projectID string) (QueryMetrics, bool) {
+				requested, err := projectgraph.NewResourceID(projectID)
+				if err != nil || requested != runtime.projectID || runtime.metrics == nil {
+					return nil, false
+				}
+				return runtime.metrics, true
 			},
 			AuthorizeAnyObject:       routes.accessModule.AuthorizeAnyObject,
 			SkipContextAuthorization: platform.auth == nil,
 			RecordAudit:              routes.accessModule.RecordAudit,
 			Documentation:            documentation,
 			Catalog:                  agentmodule.BuildCatalog(agentmodule.CatalogConfig{ProjectCatalog: capabilities.ProjectCatalog}),
-			QueryMetadata: func(ctx context.Context, workspaceID, modelID string) agentmodule.VisualQueryMetadata {
+			QueryMetadata: func(ctx context.Context, projectID, modelID string) agentmodule.VisualQueryMetadata {
 				metadata := agentmodule.VisualQueryMetadata{ServingSnapshot: "unversioned"}
 				if routes.refreshModule == nil {
 					return metadata
 				}
-				version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, policy.defaultEnvironment, modelID)
+				version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, policy.defaultEnvironment, modelID)
 				if err != nil || !ok {
 					return metadata
 				}
@@ -1327,31 +1330,4 @@ func writeProductCommandFailure(ctx context.Context, w http.ResponseWriter, r *h
 		OperationID: operationID, Kind: "handler", StatusCode: http.StatusInternalServerError,
 		Code: "INTERNAL_ERROR", PublicDetail: "The request could not be completed.", Cause: cause,
 	})
-}
-
-func authorizeListObject(access *accessmodule.Module, authenticationRequired bool, ctx context.Context, principalID string, object accessmodule.ObjectRef) (bool, error) {
-	if !authenticationRequired {
-		return true, nil
-	}
-	if strings.TrimSpace(principalID) == "" {
-		return false, nil
-	}
-	return access.AuthorizeObject(ctx, principalID, accessmodule.PrivilegeViewItem, object)
-}
-
-func metricsForWorkspace(metrics QueryMetrics, workspaceID string) (QueryMetrics, bool) {
-	if workspaceID == "" {
-		return nil, false
-	}
-	if provider, ok := metrics.(workspaceMetrics); ok {
-		return provider.MetricsForWorkspace(workspaceID)
-	}
-	if metrics == nil {
-		return nil, false
-	}
-	catalog := metrics.Catalog()
-	if catalog.Workspace.ID == "" || catalog.Workspace.ID == workspaceID {
-		return metrics, true
-	}
-	return nil, false
 }
