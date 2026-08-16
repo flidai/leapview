@@ -3,6 +3,7 @@ package connectionbinding
 import (
 	"context"
 	"fmt"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"log/slog"
 	"strings"
 	"time"
@@ -25,15 +26,15 @@ type AdministrationAuditOutcome string
 const AdministrationAuditSucceeded AdministrationAuditOutcome = "succeeded"
 
 type AdministrationAuditEvent struct {
-	WorkspaceID         string                     `json:"workspaceId"`
-	BindingID           string                     `json:"bindingId"`
-	TargetID            string                     `json:"targetId"`
-	LogicalConnectionID LogicalConnectionID        `json:"logicalConnection"`
-	Actor               string                     `json:"actor"`
-	Action              AdministrationAuditAction  `json:"action"`
-	Outcome             AdministrationAuditOutcome `json:"outcome"`
-	Revision            int64                      `json:"revision"`
-	Timestamp           time.Time                  `json:"timestamp"`
+	ProjectID    projectgraph.ResourceID    `json:"projectId"`
+	BindingID    BindingID                  `json:"bindingId"`
+	TargetID     string                     `json:"targetId"`
+	ConnectionID projectgraph.ResourceID    `json:"connectionId"`
+	Actor        string                     `json:"actor"`
+	Action       AdministrationAuditAction  `json:"action"`
+	Outcome      AdministrationAuditOutcome `json:"outcome"`
+	Revision     int64                      `json:"revision"`
+	Timestamp    time.Time                  `json:"timestamp"`
 }
 
 type AdministrationAuditRecorder interface {
@@ -50,8 +51,8 @@ func (service *Administration) recordMutation(
 		return ErrAdministrationAuditUnavailable
 	}
 	event := AdministrationAuditEvent{
-		WorkspaceID: binding.Scope.WorkspaceID, BindingID: binding.ID,
-		TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
+		ProjectID: binding.Scope.ProjectID, BindingID: binding.ID,
+		TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 		Actor: strings.TrimSpace(actor), Action: action, Outcome: AdministrationAuditSucceeded,
 		Revision: binding.Revision, Timestamp: service.now().UTC(),
 	}
@@ -69,11 +70,11 @@ func (service *Administration) recordMutation(
 		},
 		LogMessage: "best-effort connection administration audit failed",
 		LogAttributes: []slog.Attr{
-			slog.String("workspace_id", binding.Scope.WorkspaceID),
+			slog.String("project_id", binding.Scope.ProjectID.String()),
 			slog.String("principal_id", strings.TrimSpace(actor)),
 			slog.String("binding_id", binding.ID),
 			slog.String("target_id", binding.TargetID),
-			slog.String("logical_connection", string(binding.LogicalConnectionID)),
+			slog.String("connection_id", binding.ConnectionID.String()),
 			slog.Int64("revision", binding.Revision),
 		},
 	})

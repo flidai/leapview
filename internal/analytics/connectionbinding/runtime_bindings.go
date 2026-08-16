@@ -3,6 +3,7 @@ package connectionbinding
 import (
 	"context"
 	"fmt"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"sort"
 	"strings"
 	"sync"
@@ -24,7 +25,7 @@ type RuntimeBindingLeaser struct {
 
 type RuntimeBindingRequest struct {
 	Actor        string
-	Scope        BindingScope
+	Identity     projectgraph.ServingIdentity
 	TargetID     string
 	Requirements []Requirement
 }
@@ -59,12 +60,15 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 	}
 	request.Actor = strings.TrimSpace(request.Actor)
 	request.TargetID = strings.TrimSpace(request.TargetID)
-	request.Scope.WorkspaceID = strings.TrimSpace(request.Scope.WorkspaceID)
-	request.Scope.Environment = strings.TrimSpace(request.Scope.Environment)
+	if request.Identity.ProjectID.String() != strings.TrimSpace(request.Identity.ProjectID.String()) ||
+		request.Identity.Environment != strings.TrimSpace(request.Identity.Environment) ||
+		request.Identity.GenerationID != strings.TrimSpace(request.Identity.GenerationID) {
+		return nil, fmt.Errorf("%w: serving identity fields must be canonical", ErrInvalidBinding)
+	}
 	if request.Actor == "" || request.TargetID == "" ||
-		request.Scope.WorkspaceID == "" || request.Scope.Environment == "" {
+		request.Identity.Validate() != nil {
 		return nil, fmt.Errorf(
-			"%w: actor, target, workspace, and environment are required",
+			"%w: actor, target, and exact serving identity are required",
 			ErrInvalidBinding,
 		)
 	}
@@ -84,14 +88,14 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 	for _, requirement := range requirements {
 		binding, err := leaser.bindings.Binding(
 			ctx,
-			request.Scope,
+			BindingScope{ProjectID: request.Identity.ProjectID, Environment: request.Identity.Environment},
 			request.TargetID,
 			requirement.LogicalConnectionID,
 		)
 		if err != nil {
 			return nil, err
 		}
-		if binding.TargetID != request.TargetID || binding.Scope != request.Scope {
+		if binding.TargetID != request.TargetID || binding.Scope.ProjectID != request.Identity.ProjectID || binding.Scope.Environment != request.Identity.Environment {
 			return nil, ErrBindingNotFound
 		}
 		if err := leaser.authorize(ctx, request.Actor, binding); err != nil {
@@ -105,6 +109,7 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 			return nil, err
 		}
 		evidence := lease.Evidence()
+		evidence.Identity = request.Identity
 		if err := validateRuntimeBindingEvidence(binding, requirement, evidence); err != nil {
 			lease.Release()
 			return nil, err
@@ -127,20 +132,20 @@ func (leases *RuntimeBindingLeases) Evidence() []BindingEvidence {
 // UsePool exposes one admitted pool generation to an in-process Analytics
 // consumer without exposing credential snapshots to Deployment or Runtime Host.
 func (leases *RuntimeBindingLeases) UsePool(
-	logical LogicalConnectionID,
+	connectionID projectgraph.ResourceID,
 	consumer func(RuntimePool) error,
 ) error {
 	if leases == nil || consumer == nil {
 		return ErrBindingNotFound
 	}
-	normalized, err := ParseLogicalConnectionID(strings.TrimSpace(logical.String()))
+	normalized, err := ParseConnectionID(strings.TrimSpace(connectionID.String()))
 	if err != nil {
 		return ErrBindingNotFound
 	}
 	leases.mu.RLock()
 	defer leases.mu.RUnlock()
 	for index, evidence := range leases.evidence {
-		if evidence.LogicalConnection != normalized || index >= len(leases.leases) {
+		if evidence.ConnectionID != normalized || index >= len(leases.leases) {
 			continue
 		}
 		pool := leases.leases[index].Pool()
@@ -175,13 +180,13 @@ func (leases *RuntimeBindingLeases) Close() error {
 func normalizeRuntimeRequirements(requirements []Requirement) ([]Requirement, error) {
 	normalized := append([]Requirement(nil), requirements...)
 	for index := range normalized {
-		logical, err := ParseLogicalConnectionID(
-			strings.TrimSpace(normalized[index].LogicalConnectionID.String()),
+		connectionID, err := ParseConnectionID(
+			strings.TrimSpace(normalized[index].ConnectionID.String()),
 		)
 		if err != nil {
 			return nil, err
 		}
-		normalized[index].LogicalConnectionID = logical
+		normalized[index].ConnectionID = connectionID
 		normalized[index].ConnectorKind = strings.TrimSpace(normalized[index].ConnectorKind)
 		normalized[index].ValidatedVersion = strings.TrimSpace(normalized[index].ValidatedVersion)
 		if normalized[index].ConnectorKind == "" || normalized[index].BindingRevision < 0 {
@@ -192,14 +197,14 @@ func normalizeRuntimeRequirements(requirements []Requirement) ([]Requirement, er
 		}
 	}
 	sort.Slice(normalized, func(i, j int) bool {
-		return normalized[i].LogicalConnectionID < normalized[j].LogicalConnectionID
+		return normalized[i].ConnectionID < normalized[j].ConnectionID
 	})
 	for index := 1; index < len(normalized); index++ {
-		if normalized[index-1].LogicalConnectionID == normalized[index].LogicalConnectionID {
+		if normalized[index-1].ConnectionID == normalized[index].ConnectionID {
 			return nil, fmt.Errorf(
 				"%w: duplicate runtime requirement %q",
 				ErrInvalidBinding,
-				normalized[index].LogicalConnectionID,
+				normalized[index].ConnectionID,
 			)
 		}
 	}
@@ -213,12 +218,17 @@ func validateRuntimeBindingEvidence(
 ) error {
 	if evidence.BindingID != binding.ID ||
 		evidence.TargetID != binding.TargetID ||
-		evidence.LogicalConnection != binding.LogicalConnectionID ||
+		evidence.ConnectionID != binding.ConnectionID ||
 		evidence.ConnectorKind != binding.ConnectorKind ||
 		evidence.Scope != binding.Scope ||
 		evidence.BindingRevision < 1 ||
 		strings.TrimSpace(evidence.ValidatedVersion) == "" ||
 		evidence.Health == HealthDisabled {
+		return ErrIncompatibleBinding
+	}
+	if err := evidence.Identity.Validate(); err != nil ||
+		evidence.Identity.ProjectID != binding.Scope.ProjectID ||
+		evidence.Identity.Environment != binding.Scope.Environment {
 		return ErrIncompatibleBinding
 	}
 	if requirement.BindingRevision > 0 &&

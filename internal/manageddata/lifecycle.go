@@ -8,6 +8,7 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -68,34 +69,37 @@ func NormalizeEnvironment(value string) (Environment, error) {
 }
 
 func ValidateCollectionID(value string) error {
-	return validateSlug("collection id", strings.TrimSpace(value))
+	if _, err := projectgraph.NewResourceID(strings.TrimSpace(value)); err != nil {
+		return fmt.Errorf("collection id: %w", err)
+	}
+	return nil
 }
 
 type Collection struct {
-	ID             string
-	ProjectID      string
-	ConnectionName string
-	Name           string
-	Description    string
-	Status         CollectionStatus
-	CreatedBy      string
-	CreatedAt      string
-	UpdatedAt      string
-	ArchivedAt     string
+	ID           projectgraph.ResourceID
+	ProjectID    projectgraph.ResourceID
+	ConnectionID projectgraph.ResourceID
+	Name         string
+	Description  string
+	Status       CollectionStatus
+	CreatedBy    string
+	CreatedAt    string
+	UpdatedAt    string
+	ArchivedAt   string
 }
 
 type CreateCollectionInput struct {
-	ID             string
-	ProjectID      string
-	ConnectionName string
-	Name           string
-	Description    string
-	CreatedBy      string
+	ID           projectgraph.ResourceID
+	ProjectID    projectgraph.ResourceID
+	ConnectionID projectgraph.ResourceID
+	Name         string
+	Description  string
+	CreatedBy    string
 }
 
 type Revision struct {
-	ID           string
-	CollectionID string
+	ID           RevisionID
+	CollectionID projectgraph.ResourceID
 	Sequence     int64
 	Digest       string
 	Status       RevisionStatus
@@ -116,16 +120,16 @@ type StoredFile struct {
 }
 
 type RevisionFile struct {
-	RevisionID string
+	RevisionID RevisionID
 	StoredFile
 	CreatedAt string
 }
 
 type UploadSession struct {
-	ID                string
-	CollectionID      string
-	BaseRevisionID    string
-	RevisionID        string
+	ID                UploadID
+	CollectionID      projectgraph.ResourceID
+	BaseRevisionID    RevisionID
+	RevisionID        RevisionID
 	Status            UploadStatus
 	ManifestJSON      string
 	ExpectedFileCount int64
@@ -143,9 +147,9 @@ type UploadSession struct {
 }
 
 type CreateUploadSessionInput struct {
-	ID             string
-	CollectionID   string
-	BaseRevisionID string
+	ID             UploadID
+	CollectionID   projectgraph.ResourceID
+	BaseRevisionID RevisionID
 	Manifest       Manifest
 	StorageBackend string
 	StagingPrefix  string
@@ -171,8 +175,8 @@ const (
 )
 
 type S3MultipartUpload struct {
-	ID                    string
-	UploadSessionID       string
+	ID                    MultipartUploadID
+	UploadSessionID       UploadID
 	LogicalPath           string
 	SHA256                string
 	SizeBytes             int64
@@ -192,8 +196,8 @@ type S3MultipartUpload struct {
 }
 
 type CreateS3MultipartUploadInput struct {
-	ID                  string
-	UploadSessionID     string
+	ID                  MultipartUploadID
+	UploadSessionID     UploadID
 	LogicalPath         string
 	SHA256              string
 	SizeBytes           int64
@@ -201,21 +205,21 @@ type CreateS3MultipartUploadInput struct {
 }
 
 type InitializeS3MultipartUploadInput struct {
-	ID               string
+	ID               MultipartUploadID
 	ObjectKey        string
 	ProviderUploadID string
 	Existing         bool
 }
 
 type S3MultipartPart struct {
-	MultipartUploadID string
+	MultipartUploadID MultipartUploadID
 	PartNumber        int32
 	SizeBytes         int64
 	SHA256            string
 }
 
 type BeginS3MultipartCompletionInput struct {
-	ID                  string
+	ID                  MultipartUploadID
 	IdempotencyIdentity string
 	RequestHash         string
 }
@@ -227,7 +231,7 @@ type S3MultipartCompletion struct {
 }
 
 type BeginS3MultipartAbortInput struct {
-	ID                  string
+	ID                  MultipartUploadID
 	IdempotencyIdentity string
 }
 
@@ -237,15 +241,15 @@ type S3MultipartAbort struct {
 }
 
 type CompleteUploadInput struct {
-	SessionID  string
-	RevisionID string
+	SessionID  UploadID
+	RevisionID RevisionID
 	Files      []StoredFile
 }
 
 type EnvironmentPointer struct {
-	CollectionID string
+	CollectionID projectgraph.ResourceID
 	Environment  Environment
-	RevisionID   string
+	RevisionID   RevisionID
 	DeploymentID string
 	Generation   int64
 	UpdatedBy    string
@@ -253,46 +257,45 @@ type EnvironmentPointer struct {
 }
 
 type ServingStateBinding struct {
-	ServingStateID string
-	CollectionID   string
-	RevisionID     string
-	Environment    Environment
-	BoundAt        string
+	Identity     projectgraph.ServingIdentity
+	CollectionID projectgraph.ResourceID
+	RevisionID   RevisionID
+	BoundAt      string
 }
 
 // Repository owns project-global managed-data metadata. Implementations must
 // make CompleteUpload and ReplaceServingStateBindings atomic.
 type Repository interface {
 	CreateCollection(context.Context, CreateCollectionInput) (Collection, error)
-	CollectionByID(context.Context, string) (Collection, error)
-	CollectionByProjectConnection(context.Context, string, string) (Collection, error)
+	CollectionByID(context.Context, projectgraph.ResourceID) (Collection, error)
+	CollectionByProjectConnection(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (Collection, error)
 	ListCollections(context.Context, bool) ([]Collection, error)
-	ArchiveCollection(context.Context, string) error
+	ArchiveCollection(context.Context, projectgraph.ResourceID) error
 	CreateUploadSession(context.Context, CreateUploadSessionInput) (UploadSession, error)
-	UploadSessionByID(context.Context, string) (UploadSession, error)
-	UpdateUploadProgress(context.Context, string, UploadProgress) error
-	BeginUploadFinalization(context.Context, string, jobs.WorkflowIntent) (UploadSession, error)
-	FailUploadFinalization(context.Context, string, string) (UploadSession, error)
-	AbortUploadSession(context.Context, string) error
+	UploadSessionByID(context.Context, UploadID) (UploadSession, error)
+	UpdateUploadProgress(context.Context, UploadID, UploadProgress) error
+	BeginUploadFinalization(context.Context, UploadID, jobs.WorkflowIntent) (UploadSession, error)
+	FailUploadFinalization(context.Context, UploadID, string) (UploadSession, error)
+	AbortUploadSession(context.Context, UploadID) error
 	ExpireUploadSessions(context.Context, time.Time) (int64, error)
 	CreateS3MultipartUpload(context.Context, CreateS3MultipartUploadInput) (S3MultipartUpload, error)
-	S3MultipartUploadByID(context.Context, string) (S3MultipartUpload, error)
+	S3MultipartUploadByID(context.Context, MultipartUploadID) (S3MultipartUpload, error)
 	InitializeS3MultipartUpload(context.Context, InitializeS3MultipartUploadInput) (S3MultipartUpload, error)
 	ReserveS3MultipartPart(context.Context, S3MultipartPart) (S3MultipartPart, error)
-	ListS3MultipartParts(context.Context, string) ([]S3MultipartPart, error)
+	ListS3MultipartParts(context.Context, MultipartUploadID) ([]S3MultipartPart, error)
 	BeginS3MultipartCompletion(context.Context, BeginS3MultipartCompletionInput) (S3MultipartCompletion, error)
-	FinishS3MultipartCompletion(context.Context, string) (S3MultipartUpload, error)
+	FinishS3MultipartCompletion(context.Context, MultipartUploadID) (S3MultipartUpload, error)
 	BeginS3MultipartAbort(context.Context, BeginS3MultipartAbortInput) (S3MultipartAbort, error)
-	FinishS3MultipartAbort(context.Context, string) (S3MultipartUpload, error)
-	FailS3MultipartUpload(context.Context, string, string) (S3MultipartUpload, error)
+	FinishS3MultipartAbort(context.Context, MultipartUploadID) (S3MultipartUpload, error)
+	FailS3MultipartUpload(context.Context, MultipartUploadID, string) (S3MultipartUpload, error)
 	ListRecoverableS3MultipartUploads(context.Context, time.Time, int64) ([]S3MultipartUpload, error)
 	CompleteUpload(context.Context, CompleteUploadInput) (Revision, error)
-	RevisionByID(context.Context, string) (Revision, error)
-	ListRevisions(context.Context, string) ([]Revision, error)
-	ListRevisionFiles(context.Context, string) ([]RevisionFile, error)
-	EnvironmentPointer(context.Context, string, Environment) (EnvironmentPointer, error)
-	ReplaceServingStateBindings(context.Context, string, []ServingStateBinding) error
-	ListServingStateBindings(context.Context, string) ([]ServingStateBinding, error)
+	RevisionByID(context.Context, RevisionID) (Revision, error)
+	ListRevisions(context.Context, projectgraph.ResourceID) ([]Revision, error)
+	ListRevisionFiles(context.Context, RevisionID) ([]RevisionFile, error)
+	EnvironmentPointer(context.Context, projectgraph.ResourceID, Environment) (EnvironmentPointer, error)
+	ReplaceServingStateBindings(context.Context, projectgraph.ServingIdentity, []ServingStateBinding) error
+	ListServingStateBindings(context.Context, projectgraph.ServingIdentity) ([]ServingStateBinding, error)
 }
 
 func validateSlug(kind, value string) error {
