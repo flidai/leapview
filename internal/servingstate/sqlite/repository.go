@@ -86,7 +86,7 @@ func (r *Repository) ByID(ctx context.Context, id servingstate.ID) (servingstate
 	if err != nil {
 		return servingstate.State{}, mapNotFound(err)
 	}
-	return mapServingState(row), nil
+	return mapServingState(row)
 }
 
 func (r *Repository) MarkFailed(ctx context.Context, servingStateID servingstate.ID, cause error) error {
@@ -343,7 +343,7 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 	case servingstate.StatusValidated:
 		existingArtifact, existingErr := q.GetArtifactByServingState(ctx, current.ID)
 		if existingErr == nil && current.ProjectID == projectID.String() && current.ProjectDigest == validation.ProjectDigest && current.AccessPolicyJson == string(accessPolicyJSON) && current.DashboardPublicationsJson == string(canonicalPublicationsJSON) && current.DashboardAppearancesJson == string(canonicalAppearancesJSON) && current.Digest == validation.Digest && current.ManifestJson == validation.ManifestJSON && sameArtifact(existingArtifact, artifact) {
-			return mapServingState(current), nil
+			return mapServingState(current)
 		}
 		return servingstate.State{}, fmt.Errorf("validated serving state %s is immutable", servingStateID)
 	default:
@@ -455,7 +455,10 @@ func (r *Repository) activate(ctx context.Context, projectID projectgraph.Resour
 	if err != nil {
 		return servingstate.State{}, mapNotFound(err)
 	}
-	current := mapServingState(row)
+	current, err := mapServingState(row)
+	if err != nil {
+		return servingstate.State{}, err
+	}
 	if current.ProjectID != canonicalProjectID {
 		return servingstate.State{}, fmt.Errorf("serving state %s project = %q, want %q", servingStateID, current.ProjectID, canonicalProjectID)
 	}
@@ -520,7 +523,11 @@ func (r *Repository) ActiveArtifact(ctx context.Context, projectID projectgraph.
 	if err != nil {
 		return servingstate.State{}, servingstate.Artifact{}, mapNotFound(err)
 	}
-	return mapServingState(row), mapArtifact(artifact), nil
+	state, err := mapServingState(row)
+	if err != nil {
+		return servingstate.State{}, servingstate.Artifact{}, err
+	}
+	return state, mapArtifact(artifact), nil
 }
 
 func (r *Repository) ListActiveScopes(ctx context.Context) ([]servingstate.ActiveScope, error) {
@@ -530,7 +537,15 @@ func (r *Repository) ListActiveScopes(ctx context.Context) ([]servingstate.Activ
 	}
 	out := make([]servingstate.ActiveScope, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, servingstate.ActiveScope{ProjectID: projectgraph.ResourceID(row.ProjectID), Environment: servingstate.Environment(row.Environment)})
+		projectID, err := projectgraph.NewResourceID(row.ProjectID)
+		if err != nil {
+			return nil, fmt.Errorf("active serving scope project id: %w", err)
+		}
+		environment := servingstate.Environment(row.Environment)
+		if err := servingstate.ValidateEnvironment(environment); err != nil {
+			return nil, fmt.Errorf("active serving scope environment: %w", err)
+		}
+		out = append(out, servingstate.ActiveScope{ProjectID: projectID, Environment: environment})
 	}
 	return out, nil
 }
@@ -547,15 +562,23 @@ func (r *Repository) ArtifactByServingState(ctx context.Context, servingStateID 
 	return mapArtifact(artifact), nil
 }
 
-func mapServingState(row platformdb.ServingState) servingstate.State {
+func mapServingState(row platformdb.ServingState) (servingstate.State, error) {
+	projectID, err := projectgraph.NewResourceID(row.ProjectID)
+	if err != nil {
+		return servingstate.State{}, fmt.Errorf("serving state %q has invalid project id: %w", row.ID, err)
+	}
+	environment := servingstate.Environment(row.Environment)
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return servingstate.State{}, fmt.Errorf("serving state %q has invalid environment: %w", row.ID, err)
+	}
 	out := servingstate.State{
 		ID:                        servingstate.ID(row.ID),
-		ProjectID:                 projectgraph.ResourceID(row.ProjectID),
+		ProjectID:                 projectID,
 		ProjectDigest:             row.ProjectDigest,
 		AccessPolicyJSON:          row.AccessPolicyJson,
 		DashboardPublicationsJSON: row.DashboardPublicationsJson,
 		DashboardAppearancesJSON:  row.DashboardAppearancesJson,
-		Environment:               servingstate.Environment(row.Environment),
+		Environment:               environment,
 		Status:                    servingstate.Status(row.Status),
 		Source:                    servingstate.NormalizeSource(servingstate.Source(row.Source)),
 		Digest:                    row.Digest,
@@ -571,7 +594,7 @@ func mapServingState(row platformdb.ServingState) servingstate.State {
 	if row.SupersededAt.Valid {
 		out.SupersededAt = row.SupersededAt.String
 	}
-	return out
+	return out, nil
 }
 
 func mapArtifact(row platformdb.ServingStateArtifact) servingstate.Artifact {

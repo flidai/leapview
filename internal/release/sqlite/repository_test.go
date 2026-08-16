@@ -45,6 +45,36 @@ func TestReleaseRepositoryRoundTripsAndValidatesImmutableProvenance(t *testing.T
 	}
 }
 
+func TestReleaseRepositoryRejectsMalformedPersistedServingIdentity(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	identity := testServingIdentity("commerce", "dev", "generation_1")
+	insertServingState(t, store, identity)
+	repo := NewRepository(store.SQLDB())
+	provenance := testReleaseProvenance(t, identity)
+	created, err := repo.Create(t.Context(), release.CreateInput{
+		ID: "rel_invalid_identity", ServingIdentity: identity,
+		ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"),
+		IdempotencyKey: "invalid-identity", CreatedBy: "principal_1", Provenance: &provenance,
+	})
+	require.NoError(t, err)
+	connection, err := store.SQLDB().Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if _, err := connection.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.ExecContext(t.Context(), `UPDATE api_releases SET environment = 'prod/env' WHERE id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Get(t.Context(), identity.ProjectID, created.ID); err == nil {
+		t.Fatal("Get accepted malformed persisted serving identity")
+	}
+}
+
 func TestReleaseRepositoryRetainsCandidateProvenanceImmutably(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
 	require.NoError(t, err)

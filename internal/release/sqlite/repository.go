@@ -384,7 +384,11 @@ func getRelease(ctx context.Context, q *releasedb.Queries, projectID, releaseID 
 	if err != nil {
 		return release.Release{}, err
 	}
-	row := release.Release{ID: dbrow.ID, ServingIdentity: projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(dbrow.ProjectID), Environment: dbrow.Environment, GenerationID: dbrow.GenerationID}, ProjectDigest: dbrow.ProjectDigest, ArtifactDigest: dbrow.ArtifactDigest, ActualDigest: dbrow.ArtifactActualDigest, ArtifactSizeBytes: dbrow.ArtifactSizeBytes, ArtifactUploadedAt: dbrow.ArtifactUploadedAt, RequestDigest: dbrow.RequestDigest, IdempotencyKey: dbrow.IdempotencyKey, Status: release.Status(dbrow.Status), CreatedBy: dbrow.CreatedBy, CreatedAt: dbrow.CreatedAt, FinalizedAt: dbrow.FinalizedAt, Error: dbrow.Error}
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(dbrow.ProjectID), dbrow.Environment, dbrow.GenerationID)
+	if err != nil {
+		return release.Release{}, fmt.Errorf("release %q has invalid serving identity: %w", dbrow.ID, err)
+	}
+	row := release.Release{ID: dbrow.ID, ServingIdentity: identity, ProjectDigest: dbrow.ProjectDigest, ArtifactDigest: dbrow.ArtifactDigest, ActualDigest: dbrow.ArtifactActualDigest, ArtifactSizeBytes: dbrow.ArtifactSizeBytes, ArtifactUploadedAt: dbrow.ArtifactUploadedAt, RequestDigest: dbrow.RequestDigest, IdempotencyKey: dbrow.IdempotencyKey, Status: release.Status(dbrow.Status), CreatedBy: dbrow.CreatedBy, CreatedAt: dbrow.CreatedAt, FinalizedAt: dbrow.FinalizedAt, Error: dbrow.Error}
 	if dbrow.ProvenanceJson != "" && dbrow.ProvenanceJson != "{}" {
 		var p release.Provenance
 		if err := json.Unmarshal([]byte(dbrow.ProvenanceJson), &p); err != nil {

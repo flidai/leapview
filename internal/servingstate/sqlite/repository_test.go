@@ -26,6 +26,26 @@ func TestRepositoryCreateRejectsMalformedProjectIdentity(t *testing.T) {
 	}
 }
 
+func TestRepositoryRejectsMalformedPersistedServingIdentity(t *testing.T) {
+	store, repo := openRepo(t)
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: "project", Environment: servingstate.DefaultEnvironment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET project_id = 'not a project id' WHERE id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ByID(t.Context(), created.ID); err == nil {
+		t.Fatal("ByID accepted malformed persisted project identity")
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET project_id = 'project', environment = 'prod/env' WHERE id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ByID(t.Context(), created.ID); err == nil {
+		t.Fatal("ByID accepted malformed persisted environment")
+	}
+}
+
 func TestRepositoryRejectsIdentityAliasesAtValidationAndActivationBoundaries(t *testing.T) {
 	_, repo := openRepo(t)
 	projectID := projectgraph.ResourceID("project")
