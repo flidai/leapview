@@ -172,7 +172,7 @@ type authorizationRunRepository struct {
 func (r *authorizationRunRepository) CreateRun(context.Context, refreshrun.RunInput) (refreshrun.RunRecord, error) {
 	return refreshrun.RunRecord{}, nil
 }
-func (r *authorizationRunRepository) GetRun(_ context.Context, _ projectgraph.ServingIdentity, runID string) (refreshrun.RunRecord, error) {
+func (r *authorizationRunRepository) GetRun(_ context.Context, _ refreshrun.ReadScope, runID string) (refreshrun.RunRecord, error) {
 	for _, run := range r.runs {
 		if run.ID == runID {
 			return run, nil
@@ -180,19 +180,19 @@ func (r *authorizationRunRepository) GetRun(_ context.Context, _ projectgraph.Se
 	}
 	return refreshrun.RunRecord{}, sql.ErrNoRows
 }
-func (r *authorizationRunRepository) ListRuns(context.Context, projectgraph.ServingIdentity, refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
+func (r *authorizationRunRepository) ListRuns(context.Context, refreshrun.ReadScope, refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
 	return append([]refreshrun.RunRecord(nil), r.runs...), nil
 }
-func (r *authorizationRunRepository) ListTargetRuns(context.Context, projectgraph.ServingIdentity, string, projectgraph.ResourceID, refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
+func (r *authorizationRunRepository) ListTargetRuns(context.Context, refreshrun.ReadScope, string, projectgraph.ResourceID, refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
 	return nil, nil
 }
-func (r *authorizationRunRepository) ListChildRuns(context.Context, projectgraph.ServingIdentity, string) ([]refreshrun.RunRecord, error) {
+func (r *authorizationRunRepository) ListChildRuns(context.Context, refreshrun.ReadScope, string) ([]refreshrun.RunRecord, error) {
 	return nil, nil
 }
-func (r *authorizationRunRepository) LatestTargetRun(context.Context, projectgraph.ServingIdentity, string, projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
+func (r *authorizationRunRepository) LatestTargetRun(context.Context, refreshrun.ReadScope, string, projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
 	return refreshrun.RunRecord{}, false, nil
 }
-func (r *authorizationRunRepository) LatestSuccessfulTargetRun(context.Context, projectgraph.ServingIdentity, string, projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
+func (r *authorizationRunRepository) LatestSuccessfulTargetRun(context.Context, refreshrun.ReadScope, string, projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
 	return refreshrun.RunRecord{}, false, nil
 }
 func (r *authorizationRunRepository) MarkRunRunning(context.Context, projectgraph.ServingIdentity, string) (refreshrun.RunRecord, error) {

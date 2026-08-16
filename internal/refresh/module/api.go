@@ -98,7 +98,11 @@ func (m *Module) VerifyRunCancelled(ctx context.Context, run refreshrun.RunRecor
 
 func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) func(context.Context, refreshrun.JobRecord) {
 	return func(ctx context.Context, job refreshrun.JobRecord) {
-		run, err := m.runs.GetRun(ctx, job.Identity, job.RunID)
+		scope, scopeErr := refreshrun.ReadScopeForIdentity(job.Identity)
+		if scopeErr != nil {
+			return
+		}
+		run, err := m.runs.GetRun(ctx, scope, job.RunID)
 		if err != nil {
 			return
 		}
@@ -140,8 +144,13 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
-	prior, err := m.runs.GetRun(r.Context(), identity, runID)
-	if err != nil || prior.Identity != identity {
+	scope, scopeErr := refreshrun.ReadScopeForIdentity(identity)
+	if scopeErr != nil {
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
+		return
+	}
+	prior, err := m.runs.GetRun(r.Context(), scope, runID)
+	if err != nil || !scope.Matches(prior.Identity) {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
@@ -159,7 +168,9 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
-	row, err := m.runs.CancelRun(r.Context(), identity, runID)
+	// Cancellation remains generation-fenced: use the run's originating
+	// identity for the mutation after authorizing it in the active scope.
+	row, err := m.runs.CancelRun(r.Context(), prior.Identity, runID)
 	if err != nil {
 		if errors.Is(err, refreshrun.ErrRunNotCancellable) {
 			writeRefreshCommandFailure(m, w, r, operationID, err)
@@ -203,8 +214,13 @@ func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, pr
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return
 	}
-	run, err := m.runs.GetRun(r.Context(), identity, runID)
-	if err != nil || run.Identity != identity {
+	scope, scopeErr := refreshrun.ReadScopeForIdentity(identity)
+	if scopeErr != nil {
+		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
+		return
+	}
+	run, err := m.runs.GetRun(r.Context(), scope, runID)
+	if err != nil || !scope.Matches(run.Identity) {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return
 	}

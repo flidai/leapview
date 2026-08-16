@@ -116,7 +116,6 @@ WITH eligible AS (
   WHERE COALESCE(r.parent_run_id, '') = ''
     AND j.kind = sqlc.arg(refresh_pipeline_kind)
     AND j.project_id = sqlc.arg(project_id)
-    AND j.generation_id = sqlc.arg(generation_id)
     AND r.environment = sqlc.arg(environment)
     AND (
       (j.status = sqlc.arg(queued_status) AND r.status = sqlc.arg(run_queued_status))
@@ -219,7 +218,6 @@ JOIN refresh_job_runs r ON r.job_id = j.id
 WHERE COALESCE(r.parent_run_id, '') = ''
     AND j.kind = sqlc.arg(refresh_pipeline_kind)
     AND j.project_id = sqlc.arg(project_id)
-    AND j.generation_id = sqlc.arg(generation_id)
   AND r.environment = sqlc.arg(environment);
 
 -- name: GetMaterializationRun :one
@@ -231,7 +229,7 @@ FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
 LEFT JOIN principals p ON p.id = r.principal_id
 WHERE r.id = sqlc.arg(run_id) AND j.project_id = sqlc.arg(project_id)
-  AND j.generation_id = sqlc.arg(generation_id) AND r.environment = sqlc.arg(environment);
+  AND r.environment = sqlc.arg(environment);
 
 -- name: ListChildMaterializationRuns :many
 SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
@@ -241,7 +239,7 @@ SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, 
 FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
 LEFT JOIN principals p ON p.id = r.principal_id
-WHERE j.project_id = sqlc.arg(project_id) AND j.generation_id = sqlc.arg(generation_id) AND r.environment = sqlc.arg(environment)
+WHERE j.project_id = sqlc.arg(project_id) AND r.environment = sqlc.arg(environment)
   AND r.parent_run_id = sqlc.arg(parent_run_id)
 ORDER BY r.rowid ASC;
 
@@ -253,7 +251,7 @@ SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, 
 FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
 LEFT JOIN principals p ON p.id = r.principal_id
-WHERE j.project_id = sqlc.arg(project_id) AND j.generation_id = sqlc.arg(generation_id) AND r.target_type = sqlc.arg(target_type)
+WHERE j.project_id = sqlc.arg(project_id) AND r.target_type = sqlc.arg(target_type)
   AND r.environment = sqlc.arg(environment)
   AND r.target_id = sqlc.arg(target_id) AND r.status = sqlc.arg(status)
 ORDER BY j.created_at DESC, r.rowid DESC
@@ -558,7 +556,6 @@ FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
 LEFT JOIN principals p ON p.id = r.principal_id
 WHERE j.project_id = sqlc.arg(project_id)
-  AND j.generation_id = sqlc.arg(generation_id)
   AND r.environment = sqlc.arg(environment)
   AND COALESCE(r.parent_run_id, '') = ''
   AND r.target_type = 'refresh_pipeline'
@@ -579,7 +576,6 @@ FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
 LEFT JOIN principals p ON p.id = r.principal_id
 WHERE j.project_id = sqlc.arg(project_id)
-  AND j.generation_id = sqlc.arg(generation_id)
   AND r.environment = sqlc.arg(environment)
   AND r.target_type = sqlc.arg(target_type)
   AND r.target_id = sqlc.arg(target_id)
@@ -597,7 +593,6 @@ FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
 WHERE r.id = sqlc.arg(run_id)
   AND j.project_id = sqlc.arg(project_id)
-  AND j.generation_id = sqlc.arg(generation_id)
   AND r.environment = sqlc.arg(environment)
   AND (
     CAST(sqlc.arg(target_type) AS TEXT) = ''

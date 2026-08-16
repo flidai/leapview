@@ -30,7 +30,7 @@ type ServingStateRepository interface {
 
 type WorkflowRepository interface {
 	CreateRun(context.Context, RunInput) (RunRecord, error)
-	ListChildRuns(context.Context, projectgraph.ServingIdentity, string) ([]RunRecord, error)
+	ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error)
 	MarkRunRunning(context.Context, projectgraph.ServingIdentity, string) (RunRecord, error)
 	MarkRunSucceeded(context.Context, projectgraph.ServingIdentity, string) (RunRecord, error)
 	MarkRunFailed(context.Context, projectgraph.ServingIdentity, string, string) (RunRecord, error)
@@ -259,7 +259,11 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 	if err != nil {
 		return err
 	}
-	children, err := s.Runs.ListChildRuns(ctx, job.Identity, job.RunID)
+	readScope, err := ReadScopeForIdentity(job.Identity)
+	if err != nil {
+		return err
+	}
+	children, err := s.Runs.ListChildRuns(ctx, readScope, job.RunID)
 	if err != nil {
 		return err
 	}

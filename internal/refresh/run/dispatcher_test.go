@@ -20,7 +20,8 @@ func TestDispatcherMarksUnsupportedJobFailed(t *testing.T) {
 	queue := &fakeQueueRepository{jobs: []JobRecord{dispatcherJob("unknown")}}
 
 	Dispatcher{
-		Runs: queue,
+		Runs:     queue,
+		Identity: dispatcherIdentity,
 		Admitter: func() workload.Admitter {
 			controller, err := workload.New(workload.Config{MaxRunning: 1, MaximumQueued: 1, Classes: map[workload.Class]workload.Policy{workload.Refresh: {MaximumRunning: 1, MaximumQueued: 1}}})
 			if err != nil {
@@ -88,7 +89,7 @@ type fakeQueueRepository struct {
 	failedMessage string
 }
 
-func (r *fakeQueueRepository) ListExecutableJobs(context.Context, projectgraph.ServingIdentity, int) ([]JobRecord, error) {
+func (r *fakeQueueRepository) ListExecutableJobs(context.Context, ReadScope, int) ([]JobRecord, error) {
 	if len(r.jobs) == 0 {
 		return nil, nil
 	}
@@ -113,7 +114,7 @@ func (r *fakeQueueRepository) RenewJobLease(context.Context, JobRecord, time.Dur
 	return nil
 }
 
-func (r *fakeQueueRepository) JobQueueStats(context.Context, projectgraph.ServingIdentity) (JobQueueStats, error) {
+func (r *fakeQueueRepository) JobQueueStats(context.Context, ReadScope) (JobQueueStats, error) {
 	return JobQueueStats{}, nil
 }
 
@@ -121,7 +122,7 @@ func (r *fakeQueueRepository) CreateRun(context.Context, RunInput) (RunRecord, e
 	return RunRecord{}, nil
 }
 
-func (r *fakeQueueRepository) ListChildRuns(context.Context, projectgraph.ServingIdentity, string) ([]RunRecord, error) {
+func (r *fakeQueueRepository) ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error) {
 	return nil, nil
 }
 

@@ -112,7 +112,11 @@ func TestRefreshVisibilityStreamsAndPersistsSemanticModelRuns(t *testing.T) {
 	}
 
 	repo := materializesqlite.NewSQLRunRepository(h.store.SQLDB())
-	rootRuns, err := repo.ListTargetRuns(ctx, finished.Identity, refreshrun.TargetRefreshPipeline, h.pipelineID, refreshrun.RunPage{Limit: 10})
+	scope, err := refreshrun.ReadScopeForIdentity(finished.Identity)
+	if err != nil {
+		t.Fatalf("refresh read scope: %v", err)
+	}
+	rootRuns, err := repo.ListTargetRuns(ctx, scope, refreshrun.TargetRefreshPipeline, h.pipelineID, refreshrun.RunPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("list refresh pipeline runs: %v", err)
 	}
@@ -124,7 +128,7 @@ func TestRefreshVisibilityStreamsAndPersistsSemanticModelRuns(t *testing.T) {
 		t.Fatalf("refresh pipeline run = %#v, want succeeded manual run attributed to dev", root)
 	}
 
-	children, err := repo.ListChildRuns(ctx, finished.Identity, root.ID)
+	children, err := repo.ListChildRuns(ctx, scope, root.ID)
 	if err != nil {
 		t.Fatalf("list refresh child runs: %v", err)
 	}
@@ -132,7 +136,7 @@ func TestRefreshVisibilityStreamsAndPersistsSemanticModelRuns(t *testing.T) {
 		t.Fatalf("refresh child runs = %d, want %d (%#v)", len(children), len(h.modelIDs), children)
 	}
 	for _, expectedID := range h.modelIDs {
-		childRuns, listErr := repo.ListTargetRuns(ctx, finished.Identity, refreshrun.TargetModelTable, expectedID, refreshrun.RunPage{Limit: 10})
+		childRuns, listErr := repo.ListTargetRuns(ctx, scope, refreshrun.TargetModelTable, expectedID, refreshrun.RunPage{Limit: 10})
 		if listErr != nil {
 			t.Fatalf("list %s child runs: %v", expectedID, listErr)
 		}

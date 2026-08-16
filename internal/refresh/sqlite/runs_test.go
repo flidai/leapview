@@ -280,7 +280,11 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	if newB.TargetRevision != 2 {
 		t.Fatalf("generation B target revision = %d, want 2", newB.TargetRevision)
 	}
-	unchangedA, err := repository.GetRun(t.Context(), testRunIdentity, runA.ID)
+	readScope, err := refreshrun.ReadScopeForIdentity(testRunIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchangedA, err := repository.GetRun(t.Context(), readScope, runA.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,6 +301,106 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	}
 	if allowedB {
 		t.Fatal("generation B superseded publication fence = true, want false")
+	}
+}
+
+func TestSQLRunRepositoryRunRemainsVisibleAfterGenerationActivation(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status) VALUES
+  ('generation_a', 'project_sales', 'dev', 'active'),
+  ('generation_b', 'project_sales', 'dev', 'validated');`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@example.test', 'Test')`); err != nil {
+		t.Fatal(err)
+	}
+	repository := NewSQLRunRepository(store.SQLDB())
+	run, err := repository.CreateRun(t.Context(), refreshrun.RunInput{
+		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET status = CASE id WHEN 'generation_a' THEN 'superseded' ELSE 'active' END`); err != nil {
+		t.Fatal(err)
+	}
+	activeIdentity := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_b"}
+	scope, err := refreshrun.ReadScopeForIdentity(activeIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible, err := repository.GetRun(t.Context(), scope, run.ID)
+	if err != nil {
+		t.Fatalf("GetRun() after activation: %v", err)
+	}
+	if visible.ID != run.ID || visible.Identity != testRunIdentity {
+		t.Fatalf("visible run = %#v, want originating identity %v", visible, testRunIdentity)
+	}
+	listed, err := repository.ListRuns(t.Context(), scope, refreshrun.RunPage{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuns() after activation: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != run.ID {
+		t.Fatalf("listed runs = %#v, want originating run", listed)
+	}
+}
+
+func TestSQLRunRepositoryListsExecutableJobsAcrossGenerationsWithinReadScope(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status) VALUES
+  ('generation_a', 'project_sales', 'dev', 'active'),
+  ('generation_b', 'project_sales', 'dev', 'validated'),
+  ('generation_other', 'project_other', 'dev', 'active'),
+  ('generation_prod', 'project_sales', 'prod', 'active');
+INSERT INTO principals (id, email, display_name) VALUES
+  ('user:a', 'a@example.test', 'A'),
+  ('user:b', 'b@example.test', 'B'),
+  ('user:c', 'c@example.test', 'C'),
+  ('user:d', 'd@example.test', 'D');`); err != nil {
+		t.Fatal(err)
+	}
+	repository := NewSQLRunRepository(store.SQLDB())
+	identities := []projectgraph.ServingIdentity{
+		testRunIdentity,
+		{ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_b"},
+		{ProjectID: "project_other", Environment: "dev", GenerationID: "generation_other"},
+		{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_prod"},
+	}
+	for index, identity := range identities {
+		if _, err := repository.CreateRun(t.Context(), refreshrun.RunInput{
+			Identity: identity, SemanticModelID: projectgraph.ResourceID("semantic_" + string(rune('a'+index))), PipelineID: projectgraph.ResourceID("pipeline_" + string(rune('a'+index))),
+			PrincipalID: "user:" + string(rune('a'+index)), GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
+			TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID("pipeline_" + string(rune('a'+index))), TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scope, err := refreshrun.ReadScopeForIdentity(testRunIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := repository.ListExecutableJobs(t.Context(), scope, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("jobs in project/dev scope = %#v, want both serving generations only", jobs)
+	}
+	for _, job := range jobs {
+		if job.Identity.ProjectID != testRunIdentity.ProjectID || job.Identity.Environment != testRunIdentity.Environment {
+			t.Fatalf("out-of-scope executable job = %#v", job)
+		}
 	}
 }
 

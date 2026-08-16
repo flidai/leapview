@@ -449,7 +449,7 @@ func (r *fakeRepo) CreateRun(_ context.Context, input RunInput) (RunRecord, erro
 	return RunRecord{ID: id, Identity: input.Identity, SemanticModelID: input.SemanticModelID, PipelineID: input.PipelineID, PrincipalID: input.PrincipalID, TargetType: input.TargetType, TargetID: input.TargetID, TriggerType: input.TriggerType, ParentRunID: input.ParentRunID}, nil
 }
 
-func (r *fakeRepo) ListChildRuns(context.Context, projectgraph.ServingIdentity, string) ([]RunRecord, error) {
+func (r *fakeRepo) ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error) {
 	return []RunRecord{{ID: "run_child", Identity: serviceIdentity, TargetType: TargetModelTable, TargetID: "customers"}}, nil
 }
 

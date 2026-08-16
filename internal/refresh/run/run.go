@@ -111,14 +111,45 @@ type JobQueueStats struct {
 	StaleLeasedJobs int
 }
 
+// ReadScope is the stable API scope for refresh runs. Run records are created
+// in an immutable serving generation, but callers must continue to be able to
+// read them after that generation is replaced by a newer active generation.
+// Mutating operations retain ServingIdentity and therefore remain generation
+// fenced.
+type ReadScope struct {
+	ProjectID   projectgraph.ResourceID
+	Environment string
+}
+
+// ReadScopeForIdentity derives the canonical project/environment read scope
+// from a complete serving identity without discarding any validation of the
+// originating generation.
+func ReadScopeForIdentity(identity projectgraph.ServingIdentity) (ReadScope, error) {
+	if err := identity.Validate(); err != nil {
+		return ReadScope{}, err
+	}
+	return ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, nil
+}
+
+func (scope ReadScope) Validate() error {
+	// Reuse the serving identity grammar for the project/environment pair while
+	// keeping generation metadata out of this read contract.
+	_, err := projectgraph.NewServingIdentity(scope.ProjectID, scope.Environment, "generation")
+	return err
+}
+
+func (scope ReadScope) Matches(identity projectgraph.ServingIdentity) bool {
+	return scope.ProjectID == identity.ProjectID && scope.Environment == identity.Environment
+}
+
 type RunRepository interface {
 	CreateRun(ctx context.Context, input RunInput) (RunRecord, error)
-	GetRun(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
-	ListRuns(ctx context.Context, identity projectgraph.ServingIdentity, page RunPage) ([]RunRecord, error)
-	ListTargetRuns(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID, page RunPage) ([]RunRecord, error)
-	ListChildRuns(ctx context.Context, identity projectgraph.ServingIdentity, parentRunID string) ([]RunRecord, error)
-	LatestTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID) (RunRecord, bool, error)
-	LatestSuccessfulTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID) (RunRecord, bool, error)
+	GetRun(ctx context.Context, scope ReadScope, runID string) (RunRecord, error)
+	ListRuns(ctx context.Context, scope ReadScope, page RunPage) ([]RunRecord, error)
+	ListTargetRuns(ctx context.Context, scope ReadScope, targetType string, targetID projectgraph.ResourceID, page RunPage) ([]RunRecord, error)
+	ListChildRuns(ctx context.Context, scope ReadScope, parentRunID string) ([]RunRecord, error)
+	LatestTargetRun(ctx context.Context, scope ReadScope, targetType string, targetID projectgraph.ResourceID) (RunRecord, bool, error)
+	LatestSuccessfulTargetRun(ctx context.Context, scope ReadScope, targetType string, targetID projectgraph.ResourceID) (RunRecord, bool, error)
 	MarkRunRunning(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
 	MarkRunSucceeded(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
 	MarkRunFailed(ctx context.Context, identity projectgraph.ServingIdentity, runID, message string) (RunRecord, error)

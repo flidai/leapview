@@ -13,10 +13,10 @@ import (
 
 type QueueRepository interface {
 	WorkflowRepository
-	ListExecutableJobs(ctx context.Context, identity projectgraph.ServingIdentity, limit int) ([]JobRecord, error)
+	ListExecutableJobs(ctx context.Context, scope ReadScope, limit int) ([]JobRecord, error)
 	ClaimExecutableJob(ctx context.Context, candidate JobRecord, owner string, lease time.Duration) (JobRecord, bool, error)
 	RenewJobLease(ctx context.Context, job JobRecord, lease time.Duration) error
-	JobQueueStats(ctx context.Context, identity projectgraph.ServingIdentity) (JobQueueStats, error)
+	JobQueueStats(ctx context.Context, scope ReadScope) (JobQueueStats, error)
 }
 
 type Dispatcher struct {
@@ -38,13 +38,20 @@ func (d Dispatcher) Run(ctx context.Context) {
 	if d.Admitter == nil {
 		d.Admitter, _ = workload.New(workload.DefaultConfig())
 	}
+	scope, err := ReadScopeForIdentity(d.Identity)
+	if err != nil {
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "invalid refresh dispatcher identity", "error", err)
+		}
+		return
+	}
 	owner := d.Owner
 	if owner == "" {
 		owner = fmt.Sprintf("leapview-%d", time.Now().UnixNano())
 	}
 	for {
-		queueStats, _ := d.Runs.JobQueueStats(ctx, d.Identity)
-		candidates, err := d.Runs.ListExecutableJobs(ctx, d.Identity, 16)
+		queueStats, _ := d.Runs.JobQueueStats(ctx, scope)
+		candidates, err := d.Runs.ListExecutableJobs(ctx, scope, 16)
 		if err != nil {
 			if d.Logger != nil {
 				d.Logger.WarnContext(ctx, "list refresh job candidates failed", "error", err)

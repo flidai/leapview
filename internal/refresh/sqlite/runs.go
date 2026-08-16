@@ -145,22 +145,54 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 	if err := tx.Commit(); err != nil {
 		return refreshrun.RunRecord{}, err
 	}
-	return r.GetRun(ctx, normalized.Identity, runID)
+	return r.getRunForIdentity(ctx, normalized.Identity, runID)
 }
 
 func (r *SQLRunRepository) ClaimNextExecutableJob(ctx context.Context, identity projectgraph.ServingIdentity, owner string, lease time.Duration) (refreshrun.JobRecord, bool, error) {
-	candidates, err := r.ListExecutableJobs(ctx, identity, 1)
-	if err != nil || len(candidates) == 0 {
+	if err := identity.Validate(); err != nil {
 		return refreshrun.JobRecord{}, false, err
 	}
-	return r.ClaimExecutableJob(ctx, candidates[0], owner, lease)
+	row, err := r.q.NextExecutableRefreshJob(ctx, platformdb.NextExecutableRefreshJobParams{
+		RefreshPipelineKind: refreshrun.JobKindRefreshPipeline, ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID,
+		Environment: identity.Environment, QueuedStatus: refreshrun.RunStatusQueued, RunQueuedStatus: refreshrun.RunStatusQueued, RunningStatus: refreshrun.RunStatusRunning,
+	})
+	if err == sql.ErrNoRows {
+		return refreshrun.JobRecord{}, false, nil
+	}
+	if err != nil {
+		return refreshrun.JobRecord{}, false, err
+	}
+	rowIdentity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(row.ProjectID), row.Environment, row.GenerationID)
+	if err != nil || rowIdentity != identity {
+		return refreshrun.JobRecord{}, false, fmt.Errorf("invalid persisted refresh job serving identity for %s", row.ID)
+	}
+	var groupIDs []string
+	if err := json.Unmarshal([]byte(row.GroupIdsJson), &groupIDs); err != nil {
+		return refreshrun.JobRecord{}, false, fmt.Errorf("invalid persisted refresh job group ids for %s: %w", row.ID, err)
+	}
+	canonicalGroups, err := json.Marshal(groupIDs)
+	if err != nil || string(canonicalGroups) != row.GroupIdsJson || groupIDs == nil {
+		return refreshrun.JobRecord{}, false, fmt.Errorf("invalid persisted refresh job group ids for %s", row.ID)
+	}
+	if err := refreshrun.ValidateGroupIDs(groupIDs); err != nil {
+		return refreshrun.JobRecord{}, false, fmt.Errorf("invalid persisted refresh job group ids for %s: %w", row.ID, err)
+	}
+	candidate := refreshrun.JobRecord{
+		ID: row.ID, Identity: rowIdentity, PipelineID: projectgraph.ResourceID(row.PipelineID), SemanticModelID: projectgraph.ResourceID(row.SemanticModelID), PrincipalID: row.PrincipalID,
+		GroupIDs: groupIDs, EstimatedMemoryBytes: row.EstimatedMemoryBytes, Kind: row.Kind, PayloadJSON: row.PayloadJson, RunID: row.RunID,
+		TargetType: row.TargetType, TargetID: projectgraph.ResourceID(row.TargetID), TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, AttemptCount: int(row.AttemptCount), LeaseOwner: row.LeaseOwner, LeaseRevision: row.LeaseRevision,
+	}
+	if err := candidate.Validate(); err != nil {
+		return refreshrun.JobRecord{}, false, fmt.Errorf("invalid persisted refresh job %s: %w", row.ID, err)
+	}
+	return r.ClaimExecutableJob(ctx, candidate, owner, lease)
 }
 
-func (r *SQLRunRepository) ListExecutableJobs(ctx context.Context, identity projectgraph.ServingIdentity, limit int) ([]refreshrun.JobRecord, error) {
+func (r *SQLRunRepository) ListExecutableJobs(ctx context.Context, scope refreshrun.ReadScope, limit int) ([]refreshrun.JobRecord, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("refresh run database is required")
 	}
-	if err := identity.Validate(); err != nil {
+	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
 	if limit <= 0 {
@@ -168,7 +200,7 @@ func (r *SQLRunRepository) ListExecutableJobs(ctx context.Context, identity proj
 	}
 	rows, err := r.q.ListExecutableRefreshJobHeads(ctx, platformdb.ListExecutableRefreshJobHeadsParams{
 		ResultLimit: int64(limit), RefreshPipelineKind: refreshrun.JobKindRefreshPipeline,
-		ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment, QueuedStatus: refreshrun.RunStatusQueued,
+		ProjectID: scope.ProjectID.String(), Environment: scope.Environment, QueuedStatus: refreshrun.RunStatusQueued,
 		RunQueuedStatus: refreshrun.RunStatusQueued, RunningStatus: refreshrun.RunStatusRunning,
 	})
 	if err != nil {
@@ -177,7 +209,7 @@ func (r *SQLRunRepository) ListExecutableJobs(ctx context.Context, identity proj
 	jobs := make([]refreshrun.JobRecord, 0, len(rows))
 	for _, row := range rows {
 		rowIdentity, identityErr := projectgraph.NewServingIdentity(projectgraph.ResourceID(row.ProjectID), row.Environment, row.GenerationID)
-		if identityErr != nil || rowIdentity != identity {
+		if identityErr != nil {
 			return nil, fmt.Errorf("invalid persisted refresh job serving identity for %s", row.ID)
 		}
 		pipelineID := projectgraph.ResourceID(row.PipelineID)
@@ -287,7 +319,7 @@ func (r *SQLRunRepository) MarkRunPrepared(ctx context.Context, job refreshrun.J
 	if changed != 1 {
 		return refreshrun.RunRecord{}, refreshrun.ErrLeaseLost
 	}
-	return r.GetRun(ctx, job.Identity, job.RunID)
+	return r.getRunForIdentity(ctx, job.Identity, job.RunID)
 }
 
 func (r *SQLRunRepository) RunMayPublish(ctx context.Context, job refreshrun.JobRecord) (bool, error) {
@@ -298,17 +330,17 @@ func (r *SQLRunRepository) RunMayPublish(ctx context.Context, job refreshrun.Job
 	return allowed == 1, err
 }
 
-func (r *SQLRunRepository) JobQueueStats(ctx context.Context, identity projectgraph.ServingIdentity) (refreshrun.JobQueueStats, error) {
+func (r *SQLRunRepository) JobQueueStats(ctx context.Context, scope refreshrun.ReadScope) (refreshrun.JobQueueStats, error) {
 	if r == nil || r.db == nil {
 		return refreshrun.JobQueueStats{}, fmt.Errorf("refresh run database is required")
 	}
-	if err := identity.Validate(); err != nil {
+	if err := scope.Validate(); err != nil {
 		return refreshrun.JobQueueStats{}, err
 	}
 	row, err := r.q.GetRefreshJobQueueStats(ctx, platformdb.GetRefreshJobQueueStatsParams{
 		QueuedStatus: refreshrun.RunStatusQueued, RunningStatus: refreshrun.RunStatusRunning,
 		StaleRunningStatus: refreshrun.RunStatusRunning, RefreshPipelineKind: refreshrun.JobKindRefreshPipeline,
-		ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment,
+		ProjectID: scope.ProjectID.String(), Environment: scope.Environment,
 	})
 	if err != nil {
 		return refreshrun.JobQueueStats{}, err
@@ -316,29 +348,37 @@ func (r *SQLRunRepository) JobQueueStats(ctx context.Context, identity projectgr
 	return refreshrun.JobQueueStats{QueuedJobs: int(row.QueuedJobs), RunningJobs: int(row.RunningJobs), StaleLeasedJobs: int(row.StaleLeasedJobs)}, nil
 }
 
-func (r *SQLRunRepository) GetRun(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (refreshrun.RunRecord, error) {
-	if err := identity.Validate(); err != nil {
+func (r *SQLRunRepository) GetRun(ctx context.Context, scope refreshrun.ReadScope, runID string) (refreshrun.RunRecord, error) {
+	if err := scope.Validate(); err != nil {
 		return refreshrun.RunRecord{}, err
 	}
 	if runID == "" || runID != strings.TrimSpace(runID) {
 		return refreshrun.RunRecord{}, fmt.Errorf("run id is required")
 	}
-	row, err := r.q.GetMaterializationRun(ctx, platformdb.GetMaterializationRunParams{RunID: runID, ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment})
+	row, err := r.q.GetMaterializationRun(ctx, platformdb.GetMaterializationRunParams{RunID: runID, ProjectID: scope.ProjectID.String(), Environment: scope.Environment})
 	if err != nil {
 		return refreshrun.RunRecord{}, err
 	}
 	return materializationRunFromGetRow(row)
 }
 
-func (r *SQLRunRepository) ListRuns(ctx context.Context, identity projectgraph.ServingIdentity, page refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
-	if err := identity.Validate(); err != nil {
+func (r *SQLRunRepository) getRunForIdentity(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (refreshrun.RunRecord, error) {
+	scope, err := refreshrun.ReadScopeForIdentity(identity)
+	if err != nil {
+		return refreshrun.RunRecord{}, err
+	}
+	return r.GetRun(ctx, scope, runID)
+}
+
+func (r *SQLRunRepository) ListRuns(ctx context.Context, scope refreshrun.ReadScope, page refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
+	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
 	limit := runPageLimit(page)
 	cursor := runPageCursor{}
 	after := strings.TrimSpace(page.After)
 	if after != "" {
-		resolved, ok, err := r.runPageCursor(ctx, identity, "", "", after)
+		resolved, ok, err := r.runPageCursor(ctx, scope, "", "", after)
 		if err != nil {
 			return nil, err
 		}
@@ -348,7 +388,7 @@ func (r *SQLRunRepository) ListRuns(ctx context.Context, identity projectgraph.S
 		cursor = resolved
 	}
 	rows, err := r.q.ListMaterializationRuns(ctx, platformdb.ListMaterializationRunsParams{
-		ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment, CursorCreatedAt: cursor.CreatedAt, CursorSequence: cursor.Sequence, Limit: int64(limit),
+		ProjectID: scope.ProjectID.String(), Environment: scope.Environment, CursorCreatedAt: cursor.CreatedAt, CursorSequence: cursor.Sequence, Limit: int64(limit),
 	})
 	if err != nil {
 		return nil, err
@@ -364,8 +404,8 @@ func (r *SQLRunRepository) ListRuns(ctx context.Context, identity projectgraph.S
 	return out, nil
 }
 
-func (r *SQLRunRepository) ListTargetRuns(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID, page refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
-	if err := identity.Validate(); err != nil {
+func (r *SQLRunRepository) ListTargetRuns(ctx context.Context, scope refreshrun.ReadScope, targetType string, targetID projectgraph.ResourceID, page refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
+	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
 	if targetType != refreshrun.TargetModelTable && targetType != refreshrun.TargetRefreshPipeline {
@@ -378,7 +418,7 @@ func (r *SQLRunRepository) ListTargetRuns(ctx context.Context, identity projectg
 	cursor := runPageCursor{}
 	after := strings.TrimSpace(page.After)
 	if after != "" {
-		resolved, ok, err := r.runPageCursor(ctx, identity, targetType, targetID.String(), after)
+		resolved, ok, err := r.runPageCursor(ctx, scope, targetType, targetID.String(), after)
 		if err != nil {
 			return nil, err
 		}
@@ -388,7 +428,7 @@ func (r *SQLRunRepository) ListTargetRuns(ctx context.Context, identity projectg
 		cursor = resolved
 	}
 	rows, err := r.q.ListTargetMaterializationRuns(ctx, platformdb.ListTargetMaterializationRunsParams{
-		ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment, TargetType: targetType, TargetID: targetID.String(),
+		ProjectID: scope.ProjectID.String(), Environment: scope.Environment, TargetType: targetType, TargetID: targetID.String(),
 		CursorCreatedAt: cursor.CreatedAt, CursorSequence: cursor.Sequence, Limit: int64(limit),
 	})
 	if err != nil {
@@ -405,15 +445,15 @@ func (r *SQLRunRepository) ListTargetRuns(ctx context.Context, identity projectg
 	return out, nil
 }
 
-func (r *SQLRunRepository) ListChildRuns(ctx context.Context, identity projectgraph.ServingIdentity, parentRunID string) ([]refreshrun.RunRecord, error) {
-	if err := identity.Validate(); err != nil {
+func (r *SQLRunRepository) ListChildRuns(ctx context.Context, scope refreshrun.ReadScope, parentRunID string) ([]refreshrun.RunRecord, error) {
+	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
 	if parentRunID == "" || parentRunID != strings.TrimSpace(parentRunID) {
 		return nil, fmt.Errorf("parent run id is required")
 	}
 	rows, err := r.q.ListChildMaterializationRuns(ctx, platformdb.ListChildMaterializationRunsParams{
-		ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment, ParentRunID: sql.NullString{String: parentRunID, Valid: true},
+		ProjectID: scope.ProjectID.String(), Environment: scope.Environment, ParentRunID: sql.NullString{String: parentRunID, Valid: true},
 	})
 	if err != nil {
 		return nil, err
@@ -429,8 +469,8 @@ func (r *SQLRunRepository) ListChildRuns(ctx context.Context, identity projectgr
 	return out, nil
 }
 
-func (r *SQLRunRepository) LatestTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
-	runs, err := r.ListTargetRuns(ctx, identity, targetType, targetID, refreshrun.RunPage{Limit: 1})
+func (r *SQLRunRepository) LatestTargetRun(ctx context.Context, scope refreshrun.ReadScope, targetType string, targetID projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
+	runs, err := r.ListTargetRuns(ctx, scope, targetType, targetID, refreshrun.RunPage{Limit: 1})
 	if err != nil {
 		return refreshrun.RunRecord{}, false, err
 	}
@@ -440,8 +480,8 @@ func (r *SQLRunRepository) LatestTargetRun(ctx context.Context, identity project
 	return runs[0], true, nil
 }
 
-func (r *SQLRunRepository) LatestSuccessfulTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
-	if err := identity.Validate(); err != nil {
+func (r *SQLRunRepository) LatestSuccessfulTargetRun(ctx context.Context, scope refreshrun.ReadScope, targetType string, targetID projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
+	if err := scope.Validate(); err != nil {
 		return refreshrun.RunRecord{}, false, err
 	}
 	if targetType != refreshrun.TargetModelTable && targetType != refreshrun.TargetRefreshPipeline {
@@ -451,7 +491,7 @@ func (r *SQLRunRepository) LatestSuccessfulTargetRun(ctx context.Context, identi
 		return refreshrun.RunRecord{}, false, err
 	}
 	row, err := r.q.LatestSuccessfulMaterializationRun(ctx, platformdb.LatestSuccessfulMaterializationRunParams{
-		ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment,
+		ProjectID: scope.ProjectID.String(), Environment: scope.Environment,
 		TargetType: targetType, TargetID: targetID.String(), Status: refreshrun.RunStatusSucceeded,
 	})
 	if err == sql.ErrNoRows {
@@ -487,7 +527,7 @@ func (r *SQLRunRepository) MarkRunFailedClaimed(ctx context.Context, job refresh
 	if err := r.MarkRunTreeFailedClaimed(ctx, job, message); err != nil {
 		return refreshrun.RunRecord{}, err
 	}
-	return r.GetRun(ctx, job.Identity, job.RunID)
+	return r.getRunForIdentity(ctx, job.Identity, job.RunID)
 }
 
 func (r *SQLRunRepository) MarkRunTreeFailedClaimed(ctx context.Context, job refreshrun.JobRecord, message string) error {
@@ -540,9 +580,16 @@ func (r *SQLRunRepository) CancelRun(ctx context.Context, identity projectgraph.
 	if err := identity.Validate(); err != nil || runID == "" || runID != strings.TrimSpace(runID) {
 		return refreshrun.RunRecord{}, fmt.Errorf("serving identity and canonical run id are required")
 	}
-	prior, err := r.GetRun(ctx, identity, runID)
+	scope, err := refreshrun.ReadScopeForIdentity(identity)
 	if err != nil {
 		return refreshrun.RunRecord{}, err
+	}
+	prior, err := r.GetRun(ctx, scope, runID)
+	if err != nil {
+		return refreshrun.RunRecord{}, err
+	}
+	if prior.Identity != identity {
+		return refreshrun.RunRecord{}, sql.ErrNoRows
 	}
 	if prior.ParentRunID != "" || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.Identity.GenerationID == "" {
 		return refreshrun.RunRecord{}, refreshrun.ErrRunNotCancellable
@@ -568,7 +615,7 @@ func (r *SQLRunRepository) CancelRun(ctx context.Context, identity projectgraph.
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {
 			return refreshrun.RunRecord{}, rollbackErr
 		}
-		if _, getErr := r.GetRun(ctx, identity, runID); getErr != nil {
+		if _, getErr := r.GetRun(ctx, scope, runID); getErr != nil {
 			return refreshrun.RunRecord{}, getErr
 		}
 		return refreshrun.RunRecord{}, refreshrun.ErrRunNotCancellable
@@ -605,7 +652,7 @@ func (r *SQLRunRepository) CancelRun(ctx context.Context, identity projectgraph.
 	if err := tx.Commit(); err != nil {
 		return refreshrun.RunRecord{}, err
 	}
-	return r.GetRun(ctx, identity, runID)
+	return r.getRunForIdentity(ctx, identity, runID)
 }
 
 func (r *SQLRunRepository) FailRunsForTerminalServingStates(ctx context.Context, environment, message string) error {
@@ -677,7 +724,7 @@ func (r *SQLRunRepository) markRun(ctx context.Context, identity projectgraph.Se
 	if err := tx.Commit(); err != nil {
 		return refreshrun.RunRecord{}, err
 	}
-	return r.GetRun(ctx, identity, runID)
+	return r.getRunForIdentity(ctx, identity, runID)
 }
 
 func (r *SQLRunRepository) markRunClaimed(ctx context.Context, job refreshrun.JobRecord, status, message string) (refreshrun.RunRecord, error) {
@@ -735,7 +782,7 @@ func (r *SQLRunRepository) markRunClaimed(ctx context.Context, job refreshrun.Jo
 	if err := tx.Commit(); err != nil {
 		return refreshrun.RunRecord{}, err
 	}
-	return r.GetRun(ctx, job.Identity, job.RunID)
+	return r.getRunForIdentity(ctx, job.Identity, job.RunID)
 }
 
 type materializationRunDBRow struct {
@@ -890,9 +937,9 @@ type runPageCursor struct {
 	Sequence  int64
 }
 
-func (r *SQLRunRepository) runPageCursor(ctx context.Context, identity projectgraph.ServingIdentity, targetType, targetID, runID string) (runPageCursor, bool, error) {
+func (r *SQLRunRepository) runPageCursor(ctx context.Context, scope refreshrun.ReadScope, targetType, targetID, runID string) (runPageCursor, bool, error) {
 	row, err := r.q.GetMaterializationRunCursor(ctx, platformdb.GetMaterializationRunCursorParams{
-		RunID: runID, ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment, TargetType: targetType, TargetID: targetID,
+		RunID: runID, ProjectID: scope.ProjectID.String(), Environment: scope.Environment, TargetType: targetType, TargetID: targetID,
 	})
 	if err != nil {
 		if err == sql.ErrNoRows {

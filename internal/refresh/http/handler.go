@@ -132,12 +132,17 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 		return
 	}
 	if input.RetryOf != "" {
-		prior, err := repo.GetRun(r.Context(), identity, input.RetryOf)
+		scope, scopeErr := refreshrun.ReadScopeForIdentity(identity)
+		if scopeErr != nil {
+			writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh run not found"))
+			return
+		}
+		prior, err := repo.GetRun(r.Context(), scope, input.RetryOf)
 		if err != nil {
 			writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh run not found"))
 			return
 		}
-		if prior.Identity != identity || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.PipelineID != pipelineID {
+		if !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.PipelineID != pipelineID {
 			writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh run not found"))
 			return
 		}
@@ -186,9 +191,14 @@ func (h Handler) ListRuns(w nethttp.ResponseWriter, r *nethttp.Request, project 
 		return
 	}
 	responses := make([]PipelineRunResponse, 0, limit+1)
+	scope, err := refreshrun.ReadScopeForIdentity(identity)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusBadRequest)
+		return
+	}
 	after := firstNonEmpty(r.URL.Query().Get("pageToken"), r.URL.Query().Get("after"))
 	for len(responses) <= limit {
-		runs, err := repo.ListRuns(r.Context(), identity, refreshrun.RunPage{Limit: maxAPILimit, After: after})
+		runs, err := repo.ListRuns(r.Context(), scope, refreshrun.RunPage{Limit: maxAPILimit, After: after})
 		if err != nil {
 			writeJSONError(w, err, nethttp.StatusInternalServerError)
 			return
@@ -231,12 +241,17 @@ func (h Handler) GetRun(w nethttp.ResponseWriter, r *nethttp.Request, project, r
 	if !ok {
 		return
 	}
-	run, err := repo.GetRun(r.Context(), identity, runID)
+	scope, err := refreshrun.ReadScopeForIdentity(identity)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusBadRequest)
+		return
+	}
+	run, err := repo.GetRun(r.Context(), scope, runID)
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
-	if run.Identity != identity {
+	if !scope.Matches(run.Identity) {
 		writeJSONError(w, sql.ErrNoRows, nethttp.StatusNotFound)
 		return
 	}
