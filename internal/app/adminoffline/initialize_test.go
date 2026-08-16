@@ -45,34 +45,18 @@ func TestAdminInitializeCreatesOneTimeCredentialBundle(t *testing.T) {
 	if err != nil || !local.MustChangePassword {
 		t.Fatalf("initialized administrator = %#v credential=%#v err=%v", principal, local, err)
 	}
-	decision, err := repo.Authorize(context.Background(), principal.ID, access.PrivilegeManagePlatform, access.PlatformObject())
-	if err != nil || !decision.Allowed {
-		t.Fatalf("initialized administrator authorization = %#v err=%v", decision, err)
-	}
 	apiCredential, err := repo.CredentialForAPIToken(context.Background(), credentials.PublisherToken)
-	if err != nil || len(apiCredential.Token.Privileges) == 0 {
+	if err != nil {
 		t.Fatalf("publisher credential = %#v err=%v", apiCredential, err)
 	}
-	canVerifyAudit := false
-	for _, privilege := range apiCredential.Token.Privileges {
-		switch privilege {
-		case access.PrivilegeManagePlatform,
-			access.PrivilegeManageGrants,
-			access.PrivilegeQueryData,
-			access.PrivilegePreviewData,
-			access.PrivilegeViewData,
-			access.PrivilegeIngestData,
-			access.PrivilegeActivateDeployment,
-			access.PrivilegeApproveDeployment:
-			t.Fatalf("publisher token contains forbidden privilege %q", privilege)
-		}
-		if privilege == access.PrivilegeViewAudit {
-			canVerifyAudit = true
-		}
-	}
-	if !canVerifyAudit {
-		t.Fatal("publisher token cannot verify the audit trail for its release operations")
-	}
+	require.Equal(t, access.InitialPublisherCapabilities(), apiCredential.Token.Capabilities)
+	var role string
+	require.NoError(t, store.SQLDB().QueryRowContext(
+		context.Background(),
+		`SELECT role FROM platform_role_bindings WHERE principal_id = ?`,
+		principal.ID,
+	).Scan(&role))
+	require.Equal(t, string(access.PlatformRoleAdmin), role)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -118,25 +102,8 @@ func TestAdminInitializeEvaluationPublisherCanStageDataWithoutAdminAuthority(
 		credentials.PublisherToken,
 	)
 	require.NoError(t, err)
-	privileges := make(map[access.Privilege]bool)
-	for _, privilege := range credential.Token.Privileges {
-		privileges[privilege] = true
-	}
-	if !privileges[access.PrivilegeIngestData] {
-		t.Fatal("evaluation publisher cannot stage bundled managed data")
-	}
-	for _, forbidden := range []access.Privilege{
-		access.PrivilegeManagePlatform,
-		access.PrivilegeApproveDeployment,
-		access.PrivilegeActivateDeployment,
-	} {
-		if privileges[forbidden] {
-			t.Fatalf(
-				"evaluation publisher contains forbidden privilege %q",
-				forbidden,
-			)
-		}
-	}
+	require.Equal(t, access.LocalEvaluationPublisherCapabilities(), credential.Token.Capabilities)
+	require.NotContains(t, credential.Token.Capabilities, access.CapabilityProjectAdmin)
 }
 
 func TestAdminInitializeReplaysCredentialsAfterDeliveryFailure(t *testing.T) {

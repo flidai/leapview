@@ -52,10 +52,15 @@ func (r *Repository) InitializeInstance(
 			return nil, err
 		}
 		expires := input.Now.UTC().Add(24 * time.Hour).Truncate(time.Second)
+		capabilities := access.InitialPublisherCapabilities()
+		if input.EvaluationDataIngest {
+			capabilities = access.LocalEvaluationPublisherCapabilities()
+		}
 		token, _, err := txRepo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-			PrincipalID: principal.ID,
-			Name:        access.APITokenNameInitialPublisher,
-			ExpiresAt:   expires,
+			PrincipalID:  principal.ID,
+			Name:         access.APITokenNameInitialPublisher,
+			Capabilities: capabilities,
+			ExpiresAt:    expires,
 		})
 		if err != nil {
 			return nil, err

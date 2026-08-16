@@ -9,151 +9,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"syscall"
 	"testing"
 
-	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	agentconfig "github.com/flidai/leapview/internal/agent/config"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/platform/locking"
 )
-
-func TestAccessInitializationReconcilesRolesAfterStoreMigration(t *testing.T) {
-	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "leapview.db")
-	store, err := Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := accesssqlite.Initialize(ctx, store.SQLDB()); err != nil {
-		t.Fatalf("initialize access: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close store: %v", err)
-	}
-	store, err = Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("reopen migrated store: %v", err)
-	}
-	defer store.Close()
-	if err := accesssqlite.Initialize(ctx, store.SQLDB()); err != nil {
-		t.Fatalf("reinitialize access: %v", err)
-	}
-
-	rows, err := store.SQLDB().QueryContext(ctx, `SELECT name FROM roles ORDER BY name`)
-	if err != nil {
-		t.Fatalf("list roles: %v", err)
-	}
-	defer rows.Close()
-	var roles []string
-	for rows.Next() {
-		var role string
-		if err := rows.Scan(&role); err != nil {
-			t.Fatalf("scan role: %v", err)
-		}
-		roles = append(roles, role)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("roles rows: %v", err)
-	}
-	defaultRoles := access.DefaultRoles()
-	want := make([]string, 0, len(defaultRoles))
-	for _, role := range defaultRoles {
-		want = append(want, role.Name)
-	}
-	sort.Strings(want)
-	if len(roles) != len(want) {
-		t.Fatalf("roles = %#v, want %#v", roles, want)
-	}
-	for i := range want {
-		if roles[i] != want[i] {
-			t.Fatalf("roles = %#v, want %#v", roles, want)
-		}
-	}
-}
-
-func TestAccessInitializationReconcilesDefaultsWithoutOverwritingSettings(t *testing.T) {
-	ctx := t.Context()
-	dbPath := filepath.Join(t.TempDir(), "leapview.db")
-	store, err := Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := accesssqlite.Initialize(ctx, store.SQLDB()); err != nil {
-		t.Fatalf("initialize access: %v", err)
-	}
-	const customPrompt = "Keep this customized prompt."
-	if err := store.UpsertSetting(ctx, agentconfig.SystemPromptSettingKey, customPrompt); err != nil {
-		t.Fatalf("customize system prompt: %v", err)
-	}
-	defaultRole := access.DefaultRoles()[0]
-	if _, err := store.SQLDB().ExecContext(ctx, `DELETE FROM role_grant_templates WHERE role_name = ?`, defaultRole.Name); err != nil {
-		t.Fatalf("remove default role templates: %v", err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO role_grant_templates (role_name, privilege) VALUES (?, 'STALE_PRIVILEGE')`, defaultRole.Name); err != nil {
-		t.Fatalf("insert stale role template: %v", err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE securable_objects SET object_type = 'stale', display_name = 'Stale' WHERE id = 'platform'`); err != nil {
-		t.Fatalf("corrupt platform object: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close store: %v", err)
-	}
-
-	store, err = Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("reopen store: %v", err)
-	}
-	defer store.Close()
-	if err := accesssqlite.Initialize(ctx, store.SQLDB()); err != nil {
-		t.Fatalf("reinitialize access: %v", err)
-	}
-
-	prompt, err := store.GetSetting(ctx, agentconfig.SystemPromptSettingKey)
-	if err != nil {
-		t.Fatalf("get customized system prompt: %v", err)
-	}
-	if prompt != customPrompt {
-		t.Fatalf("system prompt = %q, want %q", prompt, customPrompt)
-	}
-
-	rows, err := store.SQLDB().QueryContext(ctx, `SELECT privilege FROM role_grant_templates WHERE role_name = ? ORDER BY privilege`, defaultRole.Name)
-	if err != nil {
-		t.Fatalf("list default role templates: %v", err)
-	}
-	defer rows.Close()
-	var privileges []string
-	for rows.Next() {
-		var privilege string
-		if err := rows.Scan(&privilege); err != nil {
-			t.Fatalf("scan default role template: %v", err)
-		}
-		privileges = append(privileges, privilege)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate default role templates: %v", err)
-	}
-	wantPrivileges := make([]string, len(defaultRole.Privileges))
-	for i, privilege := range defaultRole.Privileges {
-		wantPrivileges[i] = string(privilege)
-	}
-	sort.Strings(wantPrivileges)
-	if !slices.Equal(privileges, wantPrivileges) {
-		t.Fatalf("default role privileges = %#v, want %#v", privileges, wantPrivileges)
-	}
-
-	var objectType, workspaceID, parentID, displayName string
-	if err := store.SQLDB().QueryRowContext(ctx, `SELECT object_type, workspace_id, parent_id, display_name FROM securable_objects WHERE id = 'platform'`).Scan(&objectType, &workspaceID, &parentID, &displayName); err != nil {
-		t.Fatalf("get platform object: %v", err)
-	}
-	if objectType != "platform" || workspaceID != "" || parentID != "" || displayName != "Platform" {
-		t.Fatalf("platform object = (%q, %q, %q, %q), want (platform, empty, empty, Platform)", objectType, workspaceID, parentID, displayName)
-	}
-}
 
 func TestStoreOpenMakesDatabasePrivate(t *testing.T) {
 	ctx := context.Background()
@@ -217,12 +80,12 @@ func TestStoreBackupCreatesReadableSQLiteCopy(t *testing.T) {
 		t.Fatalf("open backup: %v", err)
 	}
 	defer backup.Close()
-	var roleCount int
-	if err := backup.QueryRowContext(ctx, `SELECT count(*) FROM roles`).Scan(&roleCount); err != nil {
-		t.Fatalf("query backup roles: %v", err)
+	var tableCount int
+	if err := backup.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'platform_settings'`).Scan(&tableCount); err != nil {
+		t.Fatalf("query backup schema: %v", err)
 	}
-	if roleCount == 0 {
-		t.Fatal("backup roles = 0, want seeded roles")
+	if tableCount != 1 {
+		t.Fatalf("backup platform settings tables = %d, want 1", tableCount)
 	}
 }
 
@@ -1132,9 +995,10 @@ func TestStoreAndDuckLakeUseSeparateCatalogs(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	var roleCount int
-	if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM roles`).Scan(&roleCount); err != nil {
-		t.Fatalf("query roles before DuckLake: %v", err)
+	const settingKey = "test.catalog-separation"
+	const settingValue = "preserved"
+	if err := store.UpsertSetting(ctx, settingKey, settingValue); err != nil {
+		t.Fatalf("seed platform setting: %v", err)
 	}
 
 	env, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
@@ -1155,11 +1019,12 @@ func TestStoreAndDuckLakeUseSeparateCatalogs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("commit DuckLake snapshot: %v", err)
 	}
-	if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM roles`).Scan(&roleCount); err != nil {
-		t.Fatalf("query roles after DuckLake: %v", err)
+	value, err := store.GetSetting(ctx, settingKey)
+	if err != nil {
+		t.Fatalf("read platform setting after DuckLake commit: %v", err)
 	}
-	if roleCount == 0 {
-		t.Fatal("roles were not preserved after DuckLake commit")
+	if value != settingValue {
+		t.Fatalf("platform setting after DuckLake commit = %q, want %q", value, settingValue)
 	}
 	if _, err := os.Stat(catalogPath); err != nil {
 		t.Fatalf("separate DuckLake catalog was not created: %v", err)
