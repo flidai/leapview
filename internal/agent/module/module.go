@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
@@ -186,14 +185,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		service = agent.NewService(repository, agent.Config{
 			APIKey: config.Model.APIKey, BaseURL: config.Model.BaseURL, Model: config.Model.Model,
 		})
-		if reconciler, ok := repository.(agent.PreparingRunReconciler); ok && workflow != nil {
-			reconcileCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			reconcileErr := reconciler.ReconcilePreparingRuns(reconcileCtx)
-			cancel()
-			if reconcileErr != nil {
-				return nil, fmt.Errorf("reconcile preparing agent runs: %w", reconcileErr)
-			}
-		}
 	}
 	if service != nil {
 		if config.RecordAudit == nil {

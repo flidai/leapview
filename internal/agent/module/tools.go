@@ -71,16 +71,6 @@ func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 			}
 			return m.queryContext(ctx, scopeFromTools(scope))
 		},
-		Authorize: func(ctx context.Context, scope agenttools.Scope, request agenttools.VisualAuthorizationRequest) (agentcore.ToolResult, bool) {
-			agentScope := scopeFromTools(scope)
-			model := access.ItemObjectWithParent(access.SecurableSemanticModel, agentScope.ProjectID, request.Model, access.WorkspaceObject(agentScope.ProjectID))
-			objects := []access.ObjectRef{
-				access.ItemObjectWithParent(access.SecurableDataset, agentScope.ProjectID, request.Model+"/"+request.Dataset, model),
-				model,
-				access.WorkspaceObject(agentScope.ProjectID),
-			}
-			return m.authorizePrivilege(ctx, agentScope, access.PrivilegeQueryData, objects, "agent_tool", request.ToolName)
-		},
 		SemanticModel: func(projectID, modelID string) (model *semanticmodel.Model, ok bool) {
 			metrics, ok := m.dashboardMetrics(projectID)
 			if !ok || metrics == nil {

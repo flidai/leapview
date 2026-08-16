@@ -46,7 +46,6 @@ const maxAgentQueryRows = 50
 func (p APIGenProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 	definitions := make([]agentcore.ToolDefinition, 0, len(p.Operations))
 	for _, operation := range p.Operations {
-		operation := operationForScope(operation, scope)
 		outputSchema := requireToolObjectSchema(operation.Tool.OutputSchema)
 		if operation.Tool.Name == "query_dashboard_visual" {
 			outputSchema = json.RawMessage(agentcontracts.DashboardVisualQueryResultSchemaJSON)
@@ -289,71 +288,6 @@ func (r *responseCapture) Response() *http.Response {
 		ContentLength: int64(r.body.Len()),
 		Request:       r.request,
 	}
-}
-
-func operationForScope(operation APIGenOperation, scope Scope) APIGenOperation {
-	if strings.TrimSpace(scope.ProjectID) != "" {
-		return operation
-	}
-	hasWorkspaceContext := false
-	for index := range operation.Tool.Bindings {
-		binding := &operation.Tool.Bindings[index]
-		if binding.Mode != "context" || binding.ContextKey != "workspace" {
-			continue
-		}
-		hasWorkspaceContext = true
-		break
-	}
-	if !hasWorkspaceContext {
-		return operation
-	}
-	tool := agenttool.CloneContract(operation.Tool)
-	for index := range tool.Bindings {
-		binding := &tool.Bindings[index]
-		if binding.Mode != "context" || binding.ContextKey != "workspace" {
-			continue
-		}
-		binding.Argument = "workspace"
-		binding.Mode = "model"
-		binding.ContextKey = ""
-		binding.Required = true
-	}
-	tool.InputSchema = requireToolStringProperty(tool.InputSchema, "workspace")
-	operation.Tool = tool
-	return operation
-}
-
-func requireToolStringProperty(input json.RawMessage, name string) json.RawMessage {
-	var schema map[string]any
-	if err := json.Unmarshal(input, &schema); err != nil {
-		return input
-	}
-	properties, _ := schema["properties"].(map[string]any)
-	if properties == nil {
-		properties = map[string]any{}
-		schema["properties"] = properties
-	}
-	properties[name] = map[string]any{
-		"type":        "string",
-		"minLength":   1,
-		"description": "Workspace ID to query.",
-	}
-	required, _ := schema["required"].([]any)
-	for _, item := range required {
-		if item == name {
-			encoded, err := json.Marshal(schema)
-			if err == nil {
-				return encoded
-			}
-			return input
-		}
-	}
-	schema["required"] = append(required, name)
-	encoded, err := json.Marshal(schema)
-	if err != nil {
-		return input
-	}
-	return encoded
 }
 
 func withAPIGenRouteContext(request *http.Request, pathTemplate string) *http.Request {

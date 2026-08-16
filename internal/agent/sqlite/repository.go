@@ -61,46 +61,6 @@ func validAgentJobClaim(ctx context.Context, q *platformdb.Queries, jobID, runID
 		claim.LeaseGeneration == fence.Generation && claim.LeaseExpiresAt.Valid && claim.LeaseValid == 1
 }
 
-// ReconcilePreparingRuns terminalizes legacy preparing rows that have no
-// durable activation after a process restart. It is idempotent and bounded by
-// the caller's context; newly created runs are protected by the activation
-// transaction and are not touched once running.
-func (r *Repository) ReconcilePreparingRuns(ctx context.Context) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	q := r.q.WithTx(tx)
-	// Only reconcile genuinely orphaned preparing rows.  Activation commits the
-	// run transition and queue intent in one transaction, so a preparing row
-	// with a corresponding durable job is still in-flight (or being reclaimed)
-	// and must not be terminalized by the startup sweeper.
-	candidates, err := q.ListOrphanedPreparingAgentRuns(ctx)
-	if err != nil {
-		return err
-	}
-	for _, c := range candidates {
-		data, _ := json.Marshal(map[string]any{"runId": c.RunID, "conversationId": c.ConversationID, "reason": "activation did not complete"})
-		row, err := q.FinishAgentRun(ctx, platformdb.FinishAgentRunParams{Status: agent.RunStatusFailed, Error: "durable workflow activation did not complete", MetadataJson: `{}`, ID: c.RunID, ConversationID: c.ConversationID, PrincipalID: c.PrincipalID})
-		if err != nil {
-			if current, getErr := q.GetAgentRunInConversation(ctx, platformdb.GetAgentRunInConversationParams{RunID: c.RunID, ConversationID: c.ConversationID, PrincipalID: c.PrincipalID}); getErr == nil {
-				if current.Status != agent.RunStatusPreparing {
-					continue
-				}
-			}
-			return err
-		}
-		if r.workflow != nil {
-			if err := r.workflow.RecordWorkflow(ctx, tx, jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.failed:" + c.RunID, ResourceKind: "agent_run", ResourceID: c.RunID, EventType: "agent_run.failed", Data: data}}); err != nil {
-				return err
-			}
-		}
-		_ = row
-	}
-	return tx.Commit()
-}
-
 func (r *Repository) CreateConversation(ctx context.Context, input agent.ConversationInput) (agent.Conversation, error) {
 	metadata, err := normalizedJSONObject(input.MetadataJSON)
 	if err != nil {

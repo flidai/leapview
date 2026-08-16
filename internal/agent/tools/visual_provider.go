@@ -134,9 +134,6 @@ func (p VisualProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 }
 
 func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.ToolCall) agentcore.ToolResult {
-	if p.Authorize == nil {
-		return apigenAgentToolError("authorization_failed", "agent visual tool authorizer is not configured")
-	}
 	input, err := decodeAgentVisualInput(call.Arguments)
 	if err != nil {
 		return apigenAgentToolError("invalid_arguments", err.Error())
@@ -170,14 +167,19 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 	if p.QueryContext != nil {
 		ctx = p.QueryContext(ctx, runScope)
 	}
-	if errResult, ok := p.Authorize(ctx, runScope, VisualAuthorizationRequest{
-		ToolName: agentVisualToolName,
-		CallID:   call.ID,
-		Type:     input.Type,
-		Model:    input.Model,
-		Dataset:  input.Dataset,
-	}); !ok {
-		return errResult
+	if strings.TrimSpace(scope.PrincipalID) == "" {
+		return apigenAgentToolError("authorization_failed", "agent visual tool requires an authenticated principal")
+	}
+	if p.Authorize != nil {
+		if errResult, ok := p.Authorize(ctx, runScope, VisualAuthorizationRequest{
+			ToolName: agentVisualToolName,
+			CallID:   call.ID,
+			Type:     input.Type,
+			Model:    input.Model,
+			Dataset:  input.Dataset,
+		}); !ok {
+			return errResult
+		}
 	}
 	queryMetadata := VisualQueryMetadata{ServingSnapshot: "unversioned"}
 	if p.QueryMetadata != nil {

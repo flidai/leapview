@@ -68,29 +68,8 @@ func (m *Module) CancelQueuedRun(ctx context.Context, scope agent.Scope, convers
 		Key: "agent_run.canceled:" + runID, ResourceKind: m.runExecution.ResourceKind, ResourceID: runID,
 		EventType: "agent_run.canceled", Data: data,
 	}}
-	if m.service.SupportsCancellationWorkflow() {
-		// An atomic adapter owns rollback. Never cancel the queue separately
-		// after it reports an error, or a failed event write could leave the
-		// domain and job out of sync.
-		return m.service.CancelPersistedRunWithWorkflow(ctx, scope, conversationID, runID, workflow)
-	}
-	// Adapters without the capability retain the legacy two-step behavior.
-	transactional, err := m.service.CancelPersistedRunWithWorkflow(ctx, scope, conversationID, runID, workflow)
-	if err == nil && transactional {
-		return true, nil
-	}
-	cancelled, cancelErr := jobs.CancelQueued(ctx, m.jobs, "agent:"+runID+":run")
-	if cancelErr != nil {
-		return false, cancelErr
-	}
-	if !cancelled {
-		return err == nil, err
-	}
-	if err != nil {
-		if _, fallbackErr := m.service.CancelPersistedRunWithWorkflow(ctx, scope, conversationID, runID, workflow); fallbackErr != nil {
-			return false, fallbackErr
-		}
-	}
-	_ = jobs.AppendJSONEvent(ctx, m.jobs, m.runExecution.ResourceKind, runID, "agent_run.canceled", map[string]any{"runId": runID, "conversationId": conversationID})
-	return true, nil
+	// Cancellation is one transactional domain/job transition. The service
+	// fails closed when the repository cannot provide that workflow; queue-only
+	// cancellation would leave durable run state inconsistent.
+	return m.service.CancelPersistedRunWithWorkflow(ctx, scope, conversationID, runID, workflow)
 }

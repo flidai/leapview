@@ -1,12 +1,11 @@
 // Package catalog exposes the project-wide resource catalog used by agent and
-// browser consumers.  The catalog is deliberately backed by the immutable
+// browser consumers. The catalog is deliberately backed by the immutable
 // graph carried by the active serving lease: a caller cannot select a project,
-// workspace, domain, or generation and cannot resolve an ID outside that lease.
+// domain, or generation and cannot resolve an ID outside that lease.
 package catalog
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -22,15 +21,16 @@ import (
 var (
 	ErrUnavailable     = errors.New("project catalog unavailable")
 	ErrNotFound        = errors.New("catalog resource not found")
-	ErrUnauthorized    = errors.New("catalog resource is not authorized")
 	ErrInvalidRequest  = errors.New("invalid catalog request")
 	ErrInvalidCursor   = errors.New("invalid catalog cursor")
 	ErrSnapshotChanged = errors.New("catalog snapshot changed")
 )
 
 const (
-	DefaultLimit = 25
-	MaxLimit     = 200
+	DefaultLimit    = 25
+	MaxLimit        = 200
+	MaxQueryLength  = 200
+	MaxCursorLength = 4096
 )
 
 // Lease is the minimal runtime-host port needed by catalog.  Keeping this
@@ -124,6 +124,9 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 	if request.Query == "" {
 		return Page{}, fmt.Errorf("%w: query is required", ErrInvalidRequest)
 	}
+	if len(request.Query) > MaxQueryLength {
+		return Page{}, fmt.Errorf("%w: query must not exceed %d characters", ErrInvalidRequest, MaxQueryLength)
+	}
 	lease, snapshot, graph, subjects, err := s.authorized(ctx, request.PrincipalID)
 	if err != nil {
 		return Page{}, err
@@ -158,7 +161,11 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 		}
 	}
 	sortResults(items)
-	return paginate(items, request.Cursor, cursorInput{Snapshot: snapshotDigest(snapshot), Query: request.Query, Kinds: kinds, Domain: domain, Limit: limit})
+	digest, err := snapshotDigest(snapshot)
+	if err != nil {
+		return Page{}, err
+	}
+	return paginate(items, request.Cursor, cursorInput{Snapshot: digest, Query: request.Query, Kinds: kinds, Domain: domain, Limit: limit})
 }
 
 func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
@@ -251,7 +258,11 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 	if request.Parent != nil {
 		parentKey = string(request.Parent.Kind) + ":" + request.Parent.ID.String()
 	}
-	return paginate(items, request.Cursor, cursorInput{Snapshot: snapshotDigest(snapshot), Kinds: kinds, Domain: domain, Limit: limit, Parent: parentKey})
+	digest, err := snapshotDigest(snapshot)
+	if err != nil {
+		return Page{}, err
+	}
+	return paginate(items, request.Cursor, cursorInput{Snapshot: digest, Kinds: kinds, Domain: domain, Limit: limit, Parent: parentKey})
 }
 
 // Resolve validates the exact ID/kind against the leased graph and then checks
@@ -406,8 +417,11 @@ func normalizeKinds(kinds []projectgraph.Kind) ([]projectgraph.Kind, error) {
 }
 
 func normalizeLimit(limit int) (int, error) {
-	if limit <= 0 {
+	if limit == 0 {
 		return DefaultLimit, nil
+	}
+	if limit < 0 {
+		return 0, fmt.Errorf("%w: limit must be positive", ErrInvalidRequest)
 	}
 	if limit > MaxLimit {
 		return 0, fmt.Errorf("%w: limit must not exceed %d", ErrInvalidRequest, MaxLimit)
@@ -445,6 +459,9 @@ type cursorWire struct {
 func paginate(items []Result, cursor string, input cursorInput) (Page, error) {
 	offset := 0
 	if strings.TrimSpace(cursor) != "" {
+		if len(cursor) > MaxCursorLength {
+			return Page{}, ErrInvalidCursor
+		}
 		decoded, err := base64.RawURLEncoding.DecodeString(cursor)
 		if err != nil {
 			return Page{}, ErrInvalidCursor
@@ -491,11 +508,13 @@ func sameKinds(left, right []projectgraph.Kind) bool {
 	return true
 }
 
-func snapshotDigest(snapshot accesssnapshot.AuthorizationSnapshot) string {
+func snapshotDigest(snapshot accesssnapshot.AuthorizationSnapshot) (string, error) {
 	digest, err := snapshot.Digest()
-	if err == nil && digest != "" {
-		return digest
+	if err != nil || digest == "" {
+		if err == nil {
+			err = errors.New("authorization snapshot digest is empty")
+		}
+		return "", fmt.Errorf("%w: %v", ErrSnapshotChanged, err)
 	}
-	hash := sha256.Sum256(snapshot.Project().CanonicalBytes())
-	return fmt.Sprintf("sha256:%x", hash[:])
+	return digest, nil
 }

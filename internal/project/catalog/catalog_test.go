@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
@@ -274,5 +275,36 @@ func TestListCursorIsBoundToParent(t *testing.T) {
 	_, err = service.List(context.Background(), ListRequest{PrincipalID: principal.ID, Parent: &Ref{ID: "model_b", Kind: projectgraph.KindModel}, Limit: 1, Cursor: first.NextCursor})
 	if !errors.Is(err, ErrInvalidCursor) {
 		t.Fatalf("cross-parent cursor error = %v, want invalid cursor", err)
+	}
+}
+
+func TestSearchRejectsOversizedQuery(t *testing.T) {
+	service, _, principal, _ := catalogFixture(t, nil)
+	_, err := service.Search(context.Background(), SearchRequest{PrincipalID: principal.ID, Query: strings.Repeat("x", MaxQueryLength+1)})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("oversized query error = %v, want invalid request", err)
+	}
+}
+
+func TestListRejectsNegativeLimit(t *testing.T) {
+	service, _, principal, _ := catalogFixture(t, nil)
+	_, err := service.List(context.Background(), ListRequest{PrincipalID: principal.ID, Limit: -1})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("negative limit error = %v, want invalid request", err)
+	}
+}
+
+func TestListRejectsOversizedCursor(t *testing.T) {
+	service, _, principal, _ := catalogFixture(t, nil)
+	_, err := service.List(context.Background(), ListRequest{PrincipalID: principal.ID, Cursor: strings.Repeat("x", MaxCursorLength+1)})
+	if !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("oversized cursor error = %v, want invalid cursor", err)
+	}
+}
+
+func TestSnapshotDigestFailsClosed(t *testing.T) {
+	_, err := snapshotDigest(accesssnapshot.AuthorizationSnapshot{})
+	if !errors.Is(err, ErrSnapshotChanged) {
+		t.Fatalf("invalid snapshot digest error = %v, want snapshot changed", err)
 	}
 }
