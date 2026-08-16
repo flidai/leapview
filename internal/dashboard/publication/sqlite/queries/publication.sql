@@ -1,7 +1,7 @@
 -- name: GetDashboardPublication :one
 SELECT *
 FROM dashboard_publications
-WHERE workspace_id = sqlc.arg(workspace_id)
+WHERE project_id = sqlc.arg(project_id)
   AND name = sqlc.arg(name)
 ORDER BY configured DESC, updated_at DESC
 LIMIT 1;
@@ -16,13 +16,13 @@ WHERE public_id = sqlc.arg(public_id)
 -- name: ListDashboardPublications :many
 SELECT *
 FROM dashboard_publications
-WHERE workspace_id = sqlc.arg(workspace_id)
+WHERE project_id = sqlc.arg(project_id)
 ORDER BY name, project_id;
 
 -- name: ListAllDashboardPublications :many
 SELECT *
 FROM dashboard_publications
-ORDER BY workspace_id, name, project_id;
+ORDER BY project_id, name;
 
 -- name: ListDashboardPublicationEvents :many
 SELECT event_type, actor_id, COALESCE(serving_state_id, '') AS serving_state_id, created_at
@@ -35,7 +35,7 @@ UPDATE dashboard_publications
 SET suspended_at = COALESCE(suspended_at, CURRENT_TIMESTAMP),
     suspended_by = sqlc.arg(actor_id),
     updated_at = CURRENT_TIMESTAMP
-WHERE workspace_id = sqlc.arg(workspace_id)
+WHERE project_id = sqlc.arg(project_id)
   AND name = sqlc.arg(name)
   AND configured = 1;
 
@@ -44,7 +44,7 @@ UPDATE dashboard_publications
 SET suspended_at = NULL,
     suspended_by = '',
     updated_at = CURRENT_TIMESTAMP
-WHERE workspace_id = sqlc.arg(workspace_id)
+WHERE project_id = sqlc.arg(project_id)
   AND name = sqlc.arg(name)
   AND configured = 1;
 
@@ -53,14 +53,14 @@ UPDATE dashboard_publications
 SET public_id = sqlc.arg(public_id),
     rotated_at = CURRENT_TIMESTAMP,
     updated_at = CURRENT_TIMESTAMP
-WHERE workspace_id = sqlc.arg(workspace_id)
+WHERE project_id = sqlc.arg(project_id)
   AND name = sqlc.arg(name)
   AND configured = 1;
 
 -- name: GetDashboardPublicationConfiguredState :one
 SELECT configured
 FROM dashboard_publications
-WHERE workspace_id = sqlc.arg(workspace_id)
+WHERE project_id = sqlc.arg(project_id)
   AND name = sqlc.arg(name)
 ORDER BY configured DESC
 LIMIT 1;
@@ -68,7 +68,7 @@ LIMIT 1;
 -- name: GetConfiguredDashboardPublication :one
 SELECT *
 FROM dashboard_publications
-WHERE workspace_id = sqlc.arg(workspace_id)
+WHERE project_id = sqlc.arg(project_id)
   AND name = sqlc.arg(name)
   AND configured = 1;
 
@@ -81,8 +81,7 @@ VALUES
 -- name: ListProjectDashboardPublicationStates :many
 SELECT id, name, configured, configuration_digest
 FROM dashboard_publications
-WHERE project_id = sqlc.arg(project_id)
-  AND workspace_id = sqlc.arg(workspace_id);
+WHERE project_id = sqlc.arg(project_id);
 
 -- name: DisableDashboardPublication :exec
 UPDATE dashboard_publications
@@ -108,11 +107,11 @@ WHERE id = sqlc.arg(id);
 
 -- name: CreateDashboardPublication :exec
 INSERT INTO dashboard_publications
-  (id, project_id, workspace_id, name, public_id, dashboard, default_page,
+  (id, project_id, name, public_id, dashboard, default_page,
    configuration_digest, allowed_origins_json, dependency_asset_ids_json,
    configured, active_serving_state_id, configured_at)
 VALUES
-  (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(workspace_id), sqlc.arg(name),
+  (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(name),
    sqlc.arg(public_id), sqlc.arg(dashboard), sqlc.arg(default_page),
    sqlc.arg(configuration_digest), sqlc.arg(allowed_origins_json),
    sqlc.arg(dependency_asset_ids_json), 1, sqlc.arg(active_serving_state_id),
@@ -121,8 +120,7 @@ VALUES
 -- name: ListSupersededDashboardPublicationIDs :many
 SELECT id
 FROM dashboard_publications
-WHERE workspace_id = sqlc.arg(workspace_id)
-  AND project_id <> sqlc.arg(project_id)
+WHERE project_id <> sqlc.arg(project_id)
   AND configured = 1;
 
 -- name: UpsertDashboardPublicationStream :exec

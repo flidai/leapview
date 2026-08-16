@@ -32,13 +32,13 @@ func TestBindInstanceEnvironmentRejectsConflictingActiveState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
+	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO projects (id, title) VALUES ('sales', 'Sales')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO serving_states (id, workspace_id, environment, status, source) VALUES ('state_prod', 'sales', 'prod', 'active', 'publish')`); err != nil {
+	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO serving_states (id, project_id, environment, status, source) VALUES ('state_prod', 'sales', 'prod', 'active', 'publish')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO workspace_active_serving_states (workspace_id, environment, serving_state_id) VALUES ('sales', 'prod', 'state_prod')`); err != nil {
+	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO project_active_serving_states (project_id, environment, generation_id) VALUES ('sales', 'prod', 'state_prod')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.BindInstanceEnvironment(ctx, "staging"); err == nil || !strings.Contains(err.Error(), "existing active state") {

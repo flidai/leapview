@@ -16,9 +16,9 @@ import (
 	"github.com/flidai/leapview/internal/app"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/platform"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func buildServeTestApplication(ctx context.Context, cfg config.Config, production bool, environment servingstate.Environment) (*app.Application, func(), error) {
@@ -347,7 +347,7 @@ func TestDeploymentBackedDevServerSeedsPlatformAdminPrincipal(t *testing.T) {
 	}
 	defer store.Close()
 	repo := accesssqlite.NewRepository(store.SQLDB())
-	if err := workspacesqlite.NewRepositoryWithSecurables(store.SQLDB(), repo).Ensure(ctx, workspace.EnsureInput{ID: "other", Title: "Other"}); err != nil {
+	if err := projectsqlite.NewRepositoryWithSecurables(store.SQLDB(), repo).Ensure(ctx, workspace.EnsureInput{ID: "other", Title: "Other"}); err != nil {
 		t.Fatalf("ensure other workspace: %v", err)
 	}
 	principal, err := repo.PrincipalByID(ctx, "dev")
@@ -380,7 +380,7 @@ func TestDeploymentBackedDevServerDoesNotCreateWorkspacesOrDeployments(t *testin
 		t.Fatalf("open platform store: %v", err)
 	}
 	defer store.Close()
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	workspaceRepo := projectsqlite.NewRepository(store.SQLDB())
 	workspaces, err := workspaceRepo.List(ctx)
 	if err != nil {
 		t.Fatalf("list workspaces: %v", err)

@@ -1,7 +1,7 @@
 -- +goose Up
 CREATE TABLE IF NOT EXISTS query_events (
   id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL DEFAULT '',
+  project_id TEXT NOT NULL DEFAULT '',
   principal_id TEXT NOT NULL DEFAULT '',
   surface TEXT NOT NULL DEFAULT '',
   operation TEXT NOT NULL DEFAULT '',
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS query_events (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS query_events_workspace_created_idx ON query_events(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS query_events_project_created_idx ON query_events(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS query_events_principal_created_idx ON query_events(principal_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS query_events_surface_created_idx ON query_events(surface, created_at DESC);
 CREATE INDEX IF NOT EXISTS query_events_status_created_idx ON query_events(status, created_at DESC);
@@ -32,5 +32,5 @@ CREATE INDEX IF NOT EXISTS query_events_status_created_idx ON query_events(statu
 DROP INDEX IF EXISTS query_events_status_created_idx;
 DROP INDEX IF EXISTS query_events_surface_created_idx;
 DROP INDEX IF EXISTS query_events_principal_created_idx;
-DROP INDEX IF EXISTS query_events_workspace_created_idx;
+DROP INDEX IF EXISTS query_events_project_created_idx;
 DROP TABLE IF EXISTS query_events;

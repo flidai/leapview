@@ -27,11 +27,11 @@ import (
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/project/testing/dashboardfixture"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	materializesqlite "github.com/flidai/leapview/internal/refresh/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func fieldRefs(fields ...string) []dashboardauthoring.FieldRef {
@@ -891,7 +891,7 @@ func TestHomeRouteRendersDashboardCatalog(t *testing.T) {
 func TestHomeRouteAggregatesDBBackedWorkspaceCatalogs(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	workspaceRepo := projectsqlite.NewRepository(store.SQLDB())
 	for _, row := range []workspace.EnsureInput{
 		{ID: "operations", Title: "Operations Workspace"},
 		{ID: "sales", Title: "Sales Workspace"},

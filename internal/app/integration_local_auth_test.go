@@ -17,8 +17,8 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 var localAuthCSRFPattern = regexp.MustCompile(`<meta name="csrf-token" content="([^"]*)"`)
@@ -149,7 +149,7 @@ func newLocalAuthHarness(t *testing.T) (*harness, *accesssqlite.Repository) {
 	if workspaceID == "" {
 		t.Fatal("local-auth runtime catalog has no workspace ID")
 	}
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{
 		ID:          workspace.WorkspaceID(workspaceID),
 		Title:       metrics.Catalog().Workspace.Title,
 		Description: metrics.Catalog().Workspace.Description,

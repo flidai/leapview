@@ -1247,7 +1247,7 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 		"internal/refresh/internal/db",
 		"internal/release/internal/db",
 		"internal/servingstate/internal/db",
-		"internal/workspace/internal/db",
+		"internal/project/internal/db",
 	} {
 		fragment := "package: \"db\"\n        out: \"" + output + "\""
 		if !strings.Contains(config, fragment) {
@@ -1265,7 +1265,7 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 		"internal/refresh/sqlite/refreshdb",
 		"internal/release/sqlite/releasedb",
 		"internal/servingstate/sqlite/servingdb",
-		"internal/workspace/sqlite/workspacedb",
+		"internal/workspace/internal/db",
 	} {
 		if strings.Contains(config, legacy) {
 			t.Errorf("sqlc retains public capability output %s", legacy)
@@ -2037,7 +2037,7 @@ func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
 		"internal/deployment/sqlite":            true,
 		"internal/manageddata/sqlite":           true,
 		"internal/servingstate/sqlite":          true,
-		"internal/workspace/sqlite":             true,
+		"internal/project/sqlite":               true,
 	}
 	generatedOnlyFiles := map[string]bool{
 		"internal/access/sqlite/api_symmetry.go":             true,
@@ -2169,7 +2169,7 @@ func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 		"internal/refresh/sqlite/schedulequeries/refresh_pipeline.sql",
 		"internal/release/sqlite/queries/release.sql",
 		"internal/servingstate/sqlite/queries/serving_state.sql",
-		"internal/workspace/sqlite/queries/workspace.sql",
+		"internal/project/sqlite/queries/project.sql",
 	} {
 		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(domain)))
 		if err != nil {
@@ -3599,7 +3599,7 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"COPY --from=sourcegen /src/internal/refresh/internal/db ./internal/refresh/internal/db",
 			"COPY --from=sourcegen /src/internal/release/internal/db ./internal/release/internal/db",
 			"COPY --from=sourcegen /src/internal/servingstate/internal/db ./internal/servingstate/internal/db",
-			"COPY --from=sourcegen /src/internal/workspace/internal/db ./internal/workspace/internal/db",
+			"COPY --from=sourcegen /src/internal/project/internal/db ./internal/project/internal/db",
 			"COPY --from=sourcegen /src/internal/platform/http/cursorsigning/sqlite/cursordb ./internal/platform/http/cursorsigning/sqlite/cursordb",
 			"COPY --from=sourcegen /src/internal/platform/http/idempotency/sqlite/idempotencydb ./internal/platform/http/idempotency/sqlite/idempotencydb",
 			"COPY --from=sourcegen /src/internal/platform/jobs/sqlite/jobdb ./internal/platform/jobs/sqlite/jobdb",

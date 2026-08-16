@@ -1,5 +1,5 @@
 -- Canonical project-generation authorization persistence. This query source
--- intentionally contains no workspace, legacy privilege, or securable-object
+-- intentionally contains no project, legacy privilege, or securable-object
 -- fields; global identity queries remain in access.sql until their owning
 -- identity slices are migrated.
 

@@ -11,8 +11,8 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestCreateAgentRunGeneratedExecutionContractMatchesJobRegistration(t *testing.T) {
@@ -32,7 +32,7 @@ func TestCreateAgentRunGeneratedExecutionContractIsPersistedAtomically(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(t.Context(), workspace.EnsureInput{ID: "workspace-1", Title: "Contract proof"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(t.Context(), workspace.EnsureInput{ID: "workspace-1", Title: "Contract proof"}); err != nil {
 		t.Fatal(err)
 	}
 	principal, err := accesssqlite.NewRepository(store.SQLDB()).SetPrincipalRole(t.Context(), access.PrincipalRoleInput{

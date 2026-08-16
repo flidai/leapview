@@ -13,8 +13,8 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	"github.com/flidai/leapview/internal/platform"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +32,7 @@ func TestGovernModelAggregateUsesTransitivePhysicalPolicies(t *testing.T) {
 	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
 		t.Fatal(err)
 	}
 	repo := accesssqlite.NewRepository(store.SQLDB())
@@ -114,7 +114,7 @@ func TestGovernDashboardCountUsesAuthorizationProjectionPolicies(t *testing.T) {
 	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
 		t.Fatal(err)
 	}
 	repo := accesssqlite.NewRepository(store.SQLDB())
@@ -171,7 +171,7 @@ func TestGovernDataQueryRejectsPrincipalEscalationAgainstAuthenticatedActor(t *t
 	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(
 		ctx,
 		workspace.EnsureInput{ID: "test", Title: "Test"},
 	); err != nil {
@@ -240,7 +240,7 @@ func TestPublicationQueryFailsClosedWhenAuditIdentityIsMissing(t *testing.T) {
 	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
 		t.Fatal(err)
 	}
 	model := governanceTestModel()
@@ -270,7 +270,7 @@ func TestPublicationQueryAppliesGlobalAndPublicationPoliciesAndPersistsAudit(t *
 	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
 		t.Fatal(err)
 	}
 	repo := accesssqlite.NewRepository(store.SQLDB())

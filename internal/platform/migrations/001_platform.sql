@@ -3,7 +3,7 @@
 -- Runtime migration and sqlc generation both use this migration chain as the
 -- authoritative SQLite schema source.
 
-CREATE TABLE IF NOT EXISTS workspaces (
+CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',

@@ -10,8 +10,8 @@ import (
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/platform"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func BenchmarkGovernDataQueryWithPolicies(b *testing.B) {
@@ -21,7 +21,7 @@ func BenchmarkGovernDataQueryWithPolicies(b *testing.B) {
 		b.Fatalf("open store: %v", err)
 	}
 	b.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
 		b.Fatalf("ensure workspace: %v", err)
 	}
 	repo := accesssqlite.NewRepository(store.SQLDB())

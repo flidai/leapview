@@ -17,10 +17,10 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -443,7 +443,7 @@ func catalogTestServer(t *testing.T) *catalogTestHarness {
 	ctx := context.Background()
 	store := testStore(t)
 	workspaceID := workspace.WorkspaceID("test-workspace")
-	repository := workspacesqlite.NewRepository(store.SQLDB())
+	repository := projectsqlite.NewRepository(store.SQLDB())
 	if err := repository.Ensure(ctx, workspace.EnsureInput{ID: workspaceID, Title: "Test Workspace", Description: "Fixture workspace"}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}

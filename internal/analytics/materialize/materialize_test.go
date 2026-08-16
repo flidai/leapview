@@ -19,12 +19,12 @@ import (
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/platform"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	analyticsmaterializesqlite "github.com/flidai/leapview/internal/refresh/sqlite"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestModelTableExecutesPlannedSQL(t *testing.T) {
@@ -367,7 +367,7 @@ func TestWorkspaceRuntimeKeepsControlPlaneAndDuckLakeCatalogSeparate(t *testing.
 		t.Fatalf("open platform store: %v", err)
 	}
 	defer store.Close()
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "sales", Title: "Sales"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "sales", Title: "Sales"}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}
 	model := &semanticmodel.Model{
@@ -1649,7 +1649,7 @@ func openMaterializationStore(t *testing.T, ctx context.Context) *platform.Store
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}
 	if _, err := store.SQLDB().ExecContext(ctx, `

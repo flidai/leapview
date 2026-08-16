@@ -19,10 +19,10 @@ import (
 	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestMCPIntegrationCallsEveryAdvertisedAgentTool(t *testing.T) {
@@ -460,7 +460,7 @@ func TestApplicationCompositionCatalogListsPersistedWorkspaces(t *testing.T) {
 		t.Fatalf("open application store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	repository := workspacesqlite.NewRepository(store.SQLDB())
+	repository := projectsqlite.NewRepository(store.SQLDB())
 	if err := repository.Ensure(ctx, workspace.EnsureInput{ID: "sales", Title: "Sales Workspace"}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}

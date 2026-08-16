@@ -6,8 +6,9 @@ import (
 	"errors"
 
 	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 type SecurableRegistrar interface {
@@ -21,25 +22,35 @@ type Directory interface {
 }
 
 type directory struct {
-	repository workspace.Repository
+	repository *projectsqlite.Repository
+	securables SecurableRegistrar
 }
 
 func BuildDirectory(database *sql.DB, securables SecurableRegistrar) (Directory, error) {
 	if database == nil {
 		return nil, errors.New("workspace database is required")
 	}
-	return &directory{repository: workspacesqlite.NewRepositoryWithSecurables(database, securables)}, nil
+	return &directory{repository: projectsqlite.NewRepository(database), securables: securables}, nil
 }
 
 func BuildReadModel(database *sql.DB) (ReadModel, error) {
 	if database == nil {
 		return nil, errors.New("workspace database is required")
 	}
-	return workspacesqlite.NewRepository(database), nil
+	return &readModel{repository: projectsqlite.NewRepository(database)}, nil
 }
 
 func (p *directory) Ensure(ctx context.Context, input workspace.EnsureInput) error {
-	return p.repository.Ensure(ctx, input)
+	if err := p.repository.Ensure(ctx, projectsqlite.EnsureInput{ID: projectgraph.ResourceID(input.ID), Title: input.Title, Description: input.Description}); err != nil {
+		return err
+	}
+	if p.securables == nil {
+		return nil
+	}
+	object := access.WorkspaceObject(string(input.ID))
+	object.DisplayName = input.Title
+	_, err := p.securables.UpsertSecurableObject(ctx, object, "")
+	return err
 }
 
 func (p *directory) WorkspaceIDs(ctx context.Context) ([]string, error) {
@@ -49,12 +60,45 @@ func (p *directory) WorkspaceIDs(ctx context.Context) ([]string, error) {
 	}
 	ids := make([]string, 0, len(rows))
 	for _, row := range rows {
-		ids = append(ids, string(row.ID))
+		ids = append(ids, row.ID.String())
 	}
 	return ids, nil
 }
 
 func (p *directory) ActiveServingStateID(ctx context.Context, workspaceID string) (string, error) {
-	row, err := p.repository.ByID(ctx, workspace.WorkspaceID(workspaceID))
-	return string(row.ActiveServingStateID), err
+	_, err := p.repository.ByID(ctx, projectgraph.ResourceID(workspaceID))
+	return "", err
+}
+
+type readModel struct{ repository *projectsqlite.Repository }
+
+func (r *readModel) List(ctx context.Context) ([]workspace.Summary, error) {
+	rows, err := r.repository.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]workspace.Summary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, workspace.Summary{ID: workspace.WorkspaceID(row.ID.String()), Title: row.Title, Description: row.Description, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+	}
+	return out, nil
+}
+
+func (r *readModel) ByID(ctx context.Context, id workspace.WorkspaceID) (workspace.Summary, error) {
+	row, err := r.repository.ByID(ctx, projectgraph.ResourceID(id))
+	if err != nil {
+		if errors.Is(err, projectsqlite.ErrNotFound) {
+			return workspace.Summary{}, workspace.ErrNotFound
+		}
+		return workspace.Summary{}, err
+	}
+	return workspace.Summary{ID: workspace.WorkspaceID(row.ID.String()), Title: row.Title, Description: row.Description, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
+}
+
+func (r *readModel) ActiveServingStateGraph(context.Context, workspace.WorkspaceID, string) (workspace.AssetGraph, bool, error) {
+	return workspace.AssetGraph{}, false, nil
+}
+
+func (r *readModel) AssetVersions(context.Context, workspace.WorkspaceID, string, workspace.AssetID) ([]workspace.AssetVersion, error) {
+	return nil, nil
 }

@@ -45,6 +45,7 @@ import (
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
 	"github.com/flidai/leapview/internal/project/manifest"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -52,7 +53,6 @@ import (
 	servingstatevalidation "github.com/flidai/leapview/internal/servingstate/validation"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 type harness struct {
@@ -174,7 +174,7 @@ func newStoreBackedHarness(t *testing.T, opts ...harnessOption) *harness {
 	if workspaceID == "" {
 		t.Fatal("integration runtime catalog has no workspace ID")
 	}
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	workspaceRepo := projectsqlite.NewRepository(store.SQLDB())
 	if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: metrics.Catalog().Workspace.Title, Description: metrics.Catalog().Workspace.Description}); err != nil {
 		t.Fatalf("ensure integration workspace: %v", err)
 	}
@@ -884,7 +884,7 @@ func seedIntegrationActiveDeployment(t *testing.T, store *platform.Store, worksp
 
 func integrationAssetID(t *testing.T, store *platform.Store, workspaceID, assetType, key string) string {
 	t.Helper()
-	repo := workspacesqlite.NewRepository(store.SQLDB())
+	repo := projectsqlite.NewRepository(store.SQLDB())
 	graph, ok, err := repo.ActiveServingStateGraph(context.Background(), workspace.WorkspaceID(workspaceID), string(servingstate.DefaultEnvironment))
 	if err != nil {
 		t.Fatalf("active serving-state graph: %v", err)

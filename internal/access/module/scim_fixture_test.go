@@ -10,8 +10,8 @@ import (
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 type fakeMetrics struct{}
@@ -51,7 +51,7 @@ func testAccessRepository(store *platform.Store) access.Repository {
 
 func assembleSCIMTestHarness(_ fakeMetrics, config assemblyConfig) *scimTestHarness {
 	if config.WorkspaceID != "" {
-		if err := workspacesqlite.NewRepository(config.store.SQLDB()).Ensure(context.Background(), workspace.EnsureInput{
+		if err := projectsqlite.NewRepository(config.store.SQLDB()).Ensure(context.Background(), workspace.EnsureInput{
 			ID: workspace.WorkspaceID(config.WorkspaceID), Title: config.WorkspaceID,
 		}); err != nil {
 			panic(err)

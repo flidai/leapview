@@ -29,10 +29,10 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workspace"
 	productsearch "github.com/flidai/leapview/internal/workspace/search"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestTypedChatArtifactsPreserveTabularTypeAcrossJSON(t *testing.T) {
@@ -198,7 +198,7 @@ func TestChatReferenceSearchWithoutWorkspaceSearchesVisibleWorkspaces(t *testing
 	server := assembleRuntime(NewMultiWorkspaceMetrics(map[string]QueryMetrics{"sales": fakeMetrics{}}), testStoreOptions(store, assemblyConfig{
 		Auth: auth, Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"}),
 	}))
-	repo := workspacesqlite.NewRepository(store.SQLDB())
+	repo := projectsqlite.NewRepository(store.SQLDB())
 	if err := repo.Ensure(context.Background(), workspace.EnsureInput{ID: "sales", Title: "Sales"}); err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestGlobalChatReferenceSearchRanksAcrossWorkspaces(t *testing.T) {
 	seedEnvironmentAssetDeployment(t, store, "archive", servingstate.DefaultEnvironment, "Revenue archive", "Archive Warehouse")
 	seedEnvironmentAssetDeployment(t, store, "sales", servingstate.DefaultEnvironment, "Revenue", "Sales Warehouse")
 	server := assembleRuntime(nil, testStoreOptions(store, assemblyConfig{}))
-	repo := workspacesqlite.NewRepository(store.SQLDB())
+	repo := projectsqlite.NewRepository(store.SQLDB())
 	for _, workspaceID := range []string{"archive", "sales"} {
 		if err := repo.Ensure(context.Background(), workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: workspaceID}); err != nil {
 			t.Fatal(err)
@@ -324,7 +324,7 @@ func TestChatReferenceSearchRouteAuthorizesAcrossAccessibleWorkspaces(t *testing
 	store := testStore(t)
 	seedEnvironmentAssetDeployment(t, store, "sales", servingstate.DefaultEnvironment, "Orders dashboard", "Sales Warehouse")
 	ctx := context.Background()
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	workspaceRepo := projectsqlite.NewRepository(store.SQLDB())
 	if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: "sales", Title: "Sales"}); err != nil {
 		t.Fatal(err)
 	}

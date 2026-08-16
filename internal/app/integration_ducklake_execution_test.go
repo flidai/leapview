@@ -32,6 +32,7 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	analyticsmaterializesqlite "github.com/flidai/leapview/internal/refresh/sqlite"
 	releasefilesystem "github.com/flidai/leapview/internal/release/filesystem"
@@ -41,7 +42,6 @@ import (
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 type duckLakeHarness struct {
@@ -107,7 +107,7 @@ func newDuckLakeHarness(t *testing.T, opts ...func(*assemblyConfig)) *duckLakeHa
 	}
 	t.Cleanup(func() { _ = duckDBEnvironment.Close() })
 	workspaceID := "sales"
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	workspaceRepo := projectsqlite.NewRepository(store.SQLDB())
 	if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: "Sales Workspace"}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}
@@ -829,8 +829,8 @@ func (h *duckLakeHarness) startReplacementRegistry(t *testing.T) {
 		return registry.ProviderForWorkspace(servingstate.WorkspaceID(workspaceID))
 	}), testStoreOptions(h.store, assemblyConfig{
 		ServingStateRepo: h.deployments,
-		WorkspaceRepo:    workspacesqlite.NewRepository(h.store.SQLDB()),
-		AssetCatalog:     workspace.NewAssetCatalogService(workspacesqlite.NewRepository(h.store.SQLDB())),
+		WorkspaceRepo:    projectsqlite.NewRepository(h.store.SQLDB()),
+		AssetCatalog:     workspace.NewAssetCatalogService(projectsqlite.NewRepository(h.store.SQLDB())),
 		Auth:             NewAuth(accesssqlite.NewRepository(h.store.SQLDB()), AuthConfig{DevBypass: true}),
 		Reloader:         registry,
 

@@ -9,8 +9,8 @@ import (
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyConfig {
@@ -22,7 +22,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		options.AccessRepo = accesssqlite.NewRepository(store.SQLDB())
 	}
 	if options.WorkspaceRepo == nil && options.WorkspaceDirectory == nil {
-		options.WorkspaceRepo = workspacesqlite.NewRepository(store.SQLDB())
+		options.WorkspaceRepo = projectsqlite.NewRepository(store.SQLDB())
 	}
 	if options.AccessModule == nil && options.Auth != nil {
 		publicURL := options.PublicURL

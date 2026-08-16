@@ -17,8 +17,8 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestAuthSpecItemSharingAndDataPrivileges(t *testing.T) {
@@ -707,7 +707,7 @@ func newAuthSpecHarnessWithAuthWorkspace(t *testing.T, authConfig AuthConfig, au
 	if workspaceID == "" {
 		t.Fatal("auth-spec runtime catalog has no workspace ID")
 	}
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	workspaceRepo := projectsqlite.NewRepository(store.SQLDB())
 	if err := workspaceRepo.Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: metrics.Catalog().Workspace.Title, Description: metrics.Catalog().Workspace.Description}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}

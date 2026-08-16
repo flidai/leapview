@@ -1,6 +1,6 @@
 -- +goose Up
 -- Canonical project-generation capability grants. Resource identity is the
--- graph ResourceID plus kind; no workspace, path, domain, or parent scope is
+-- graph ResourceID plus kind; no path, domain, or parent scope is
 -- persisted in authorization.
 
 ALTER TABLE principals ADD COLUMN kind TEXT NOT NULL DEFAULT 'user';

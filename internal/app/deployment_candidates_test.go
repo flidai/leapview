@@ -27,12 +27,12 @@ import (
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
 	"github.com/flidai/leapview/internal/workspace/api"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 	"github.com/gorilla/csrf"
 )
 
@@ -610,7 +610,7 @@ func TestWorkspaceListUsesActiveDeploymentCatalogMetadata(t *testing.T) {
 	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
 	store := testStore(t)
 	seedActiveDeployment(t, store, "test")
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(context.Background(), workspace.EnsureInput{
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(context.Background(), workspace.EnsureInput{
 		ID:          "test",
 		Title:       "stale title",
 		Description: "stale description",
@@ -1170,7 +1170,7 @@ func TestWorkspaceAssetsDoesNotRefreshCleanGraphWithoutPageItems(t *testing.T) {
 	t.Setenv("LEAPVIEW_DEV_AUTH_BYPASS", "1")
 	store := testStore(t)
 	ctx := context.Background()
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}
 	servingStateRepo := servingstatesqlite.NewRepository(store.SQLDB())
@@ -1204,7 +1204,7 @@ func TestWorkspaceAssetsDoesNotRefreshCleanGraphWithoutPageItems(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	graph, ok, err := workspacesqlite.NewRepository(store.SQLDB()).ActiveServingStateGraph(ctx, "test", string(servingstate.DefaultEnvironment))
+	graph, ok, err := projectsqlite.NewRepository(store.SQLDB()).ActiveServingStateGraph(ctx, "test", string(servingstate.DefaultEnvironment))
 	if err != nil {
 		t.Fatalf("active graph: %v", err)
 	}
@@ -1415,7 +1415,7 @@ func TestGroupDeleteIsWorkspaceScopedAndCleansMembershipsAndBindings(t *testing.
 	if err != nil {
 		t.Fatalf("seed member: %v", err)
 	}
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "other", Title: "Other"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "other", Title: "Other"}); err != nil {
 		t.Fatalf("ensure other workspace: %v", err)
 	}
 	repo := testAccessRepository(store)
@@ -1862,7 +1862,7 @@ func testStore(t *testing.T) *platform.Store {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	workspaceRepo := projectsqlite.NewRepository(store.SQLDB())
 	if err := workspaceRepo.Ensure(context.Background(), workspace.EnsureInput{ID: workspace.WorkspaceID("test"), Title: "Test"}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}
@@ -1993,7 +1993,7 @@ func seedActiveDeployment(t *testing.T, store *platform.Store, workspaceID strin
 func seedActiveDeploymentFromWorkspaceAssets(t *testing.T, store *platform.Store, workspaceID string, provider workspaceAssetGraphProvider) servingstate.ID {
 	t.Helper()
 	ctx := context.Background()
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: workspaceID}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: workspaceID}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}
 	servingStateRepo := servingstatesqlite.NewRepository(store.SQLDB())
@@ -2023,7 +2023,7 @@ func seedActiveDeploymentFromWorkspaceAssets(t *testing.T, store *platform.Store
 func seedEnvironmentAssetDeployment(t *testing.T, store *platform.Store, workspaceID string, environment servingstate.Environment, dashboardTitle, connectionTitle string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: workspaceID}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: workspaceID}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}
 	servingStateRepo := servingstatesqlite.NewRepository(store.SQLDB())
@@ -2068,7 +2068,7 @@ func remapTestSourceFiles(sourceFiles map[string]string, fromWorkspace, toWorksp
 
 func activeAssetID(t *testing.T, store *platform.Store, workspaceID, typ, key string) string {
 	t.Helper()
-	repo := workspacesqlite.NewRepository(store.SQLDB())
+	repo := projectsqlite.NewRepository(store.SQLDB())
 	graph, ok, err := repo.ActiveServingStateGraph(context.Background(), workspace.WorkspaceID(workspaceID), string(servingstate.DefaultEnvironment))
 	if err != nil {
 		t.Fatalf("active serving state graph: %v", err)
@@ -2087,7 +2087,7 @@ func activeAssetID(t *testing.T, store *platform.Store, workspaceID, typ, key st
 
 func activeAssetIDByType(t *testing.T, store *platform.Store, workspaceID, typ string) string {
 	t.Helper()
-	repo := workspacesqlite.NewRepository(store.SQLDB())
+	repo := projectsqlite.NewRepository(store.SQLDB())
 	graph, ok, err := repo.ActiveServingStateGraph(context.Background(), workspace.WorkspaceID(workspaceID), string(servingstate.DefaultEnvironment))
 	if err != nil {
 		t.Fatalf("active serving state graph: %v", err)

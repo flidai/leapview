@@ -1,7 +1,7 @@
 -- name: InsertQueryEvent :exec
 INSERT INTO query_events (
   id,
-  workspace_id,
+  project_id,
   principal_id,
   surface,
   operation,
@@ -29,7 +29,7 @@ INSERT INTO query_events (
 )
 VALUES (
   sqlc.arg(id),
-  sqlc.arg(workspace_id),
+  sqlc.arg(project_id),
   sqlc.arg(principal_id),
   sqlc.arg(surface),
   sqlc.arg(operation),
@@ -64,7 +64,7 @@ WHERE id = sqlc.arg(id);
 -- name: ListQueryEvents :many
 WITH params AS (
   SELECT
-    CAST(sqlc.arg(workspace_ids_json) AS TEXT) AS workspace_ids_json,
+    CAST(sqlc.arg(project_ids_json) AS TEXT) AS project_ids_json,
     CAST(sqlc.arg(principal_ids_json) AS TEXT) AS principal_ids_json,
     CAST(sqlc.arg(surfaces_json) AS TEXT) AS surfaces_json,
     CAST(sqlc.arg(query_kinds_json) AS TEXT) AS query_kinds_json,
@@ -73,8 +73,8 @@ WITH params AS (
 SELECT query_events.*
 FROM query_events CROSS JOIN params
 WHERE (
-    NOT EXISTS (SELECT 1 FROM json_each(params.workspace_ids_json))
-    OR workspace_id IN (SELECT CAST(value AS TEXT) FROM json_each(params.workspace_ids_json))
+    NOT EXISTS (SELECT 1 FROM json_each(params.project_ids_json))
+    OR project_id IN (SELECT CAST(value AS TEXT) FROM json_each(params.project_ids_json))
   )
   AND (
     NOT EXISTS (SELECT 1 FROM json_each(params.principal_ids_json))
@@ -113,7 +113,7 @@ LIMIT sqlc.arg(limit);
 -- name: ListQueryEventFilterOptions :many
 WITH option_values AS (
   SELECT CASE CAST(sqlc.arg(field) AS TEXT)
-    WHEN 'workspace' THEN workspace_id
+    WHEN 'project' THEN project_id
     WHEN 'principal' THEN principal_id
     WHEN 'surface' THEN surface
     WHEN 'kind' THEN query_kind

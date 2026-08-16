@@ -15,11 +15,11 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/locking"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	storagemaintenance "github.com/flidai/leapview/internal/servingstate/retention"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestAdminDoesNotExposeUnrestrictedBootstrap(t *testing.T) {
@@ -830,7 +830,7 @@ func recordAdminDeploymentSnapshotWithStatus(t *testing.T, ctx context.Context, 
 		t.Fatalf("open platform store: %v", err)
 	}
 	defer store.Close()
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
 		t.Fatalf("ensure workspace: %v", err)
 	}
 	repo := servingstatesqlite.NewRepository(store.SQLDB())

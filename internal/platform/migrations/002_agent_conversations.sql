@@ -3,7 +3,6 @@
 
 CREATE TABLE IF NOT EXISTS agent_conversations (
   id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   principal_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
@@ -55,7 +54,7 @@ CREATE TABLE IF NOT EXISTS agent_events (
   UNIQUE(run_id, seq)
 );
 
-CREATE INDEX IF NOT EXISTS agent_conversations_owner_updated_idx ON agent_conversations(workspace_id, principal_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS agent_conversations_owner_updated_idx ON agent_conversations(principal_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS agent_messages_conversation_seq_idx ON agent_messages(conversation_id, seq);
 CREATE INDEX IF NOT EXISTS agent_runs_conversation_started_idx ON agent_runs(conversation_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS agent_events_run_seq_idx ON agent_events(run_id, seq);

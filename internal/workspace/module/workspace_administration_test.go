@@ -12,9 +12,9 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	"github.com/flidai/leapview/internal/workspace"
 	workspaceapi "github.com/flidai/leapview/internal/workspace/api"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestWorkspaceAdministrationReturnsScopedAccessAndCapabilityLinks(t *testing.T) {
@@ -25,7 +25,7 @@ func TestWorkspaceAdministrationReturnsScopedAccessAndCapabilityLinks(t *testing
 	t.Cleanup(func() { _ = store.Close() })
 
 	accessRepo := accesssqlite.NewRepository(store.SQLDB())
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
+	workspaceRepo := projectsqlite.NewRepository(store.SQLDB())
 	for _, input := range []workspace.EnsureInput{{ID: "sales", Title: "Sales"}, {ID: "other", Title: "Other"}} {
 		if err := workspaceRepo.Ensure(t.Context(), input); err != nil {
 			t.Fatal(err)

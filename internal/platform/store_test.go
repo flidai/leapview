@@ -1190,7 +1190,7 @@ func TestStoreUsesServingStateSchemaTerminology(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("table rows: %v", err)
 	}
-	for _, name := range []string{"serving_states", "workspace_active_serving_states", "serving_state_artifacts"} {
+	for _, name := range []string{"serving_states", "project_active_serving_states", "serving_state_artifacts"} {
 		if !tables[name] {
 			t.Fatalf("missing canonical serving-state table %q; tables=%v", name, tables)
 		}
