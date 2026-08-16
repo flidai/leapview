@@ -940,6 +940,11 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 			return effectiveDataPolicySet{}, err
 		}
 	}
+	if projectResource, err := access.NewResourceRef(request.ProjectID, projectgraph.KindProject); err == nil {
+		if err := addObject(projectResource); err != nil {
+			return effectiveDataPolicySet{}, err
+		}
+	}
 	if candidate, ok := candidateQueryCapabilityFromContext(ctx); ok {
 		// Candidate restrictions are appended without deduplicating against the
 		// active policy IDs. An authored policy can therefore never shadow or
