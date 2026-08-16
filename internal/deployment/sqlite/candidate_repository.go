@@ -22,7 +22,7 @@ func (r *Repository) StartCandidate(ctx context.Context, candidate deployment.Ca
 		return deployment.Candidate{}, false, err
 	}
 	defer tx.Rollback()
-	queries := r.q.WithTx(tx)
+	queries := r.queries.WithTx(tx)
 	now := formatCandidateTime(candidate.CreatedAt)
 	if _, err := queries.ExpireProjectCandidates(ctx, platformdb.ExpireProjectCandidatesParams{
 		ExpiredAt: nullableCandidateTime(candidate.CreatedAt), UpdatedAt: now,
@@ -105,10 +105,10 @@ func (r *Repository) ActiveCandidate(
 	ownerID,
 	key string,
 ) (deployment.Candidate, error) {
-	if r == nil || r.q == nil || targetID == "" || targetID != strings.TrimSpace(targetID) || projectID.Validate() != nil || projectID.String() != strings.TrimSpace(projectID.String()) || ownerID == "" || ownerID != strings.TrimSpace(ownerID) || key != strings.TrimSpace(key) {
+	if r == nil || r.queries == nil || targetID == "" || targetID != strings.TrimSpace(targetID) || projectID.Validate() != nil || projectID.String() != strings.TrimSpace(projectID.String()) || ownerID == "" || ownerID != strings.TrimSpace(ownerID) || key != strings.TrimSpace(key) {
 		return deployment.Candidate{}, deployment.ErrCandidateNotFound
 	}
-	row, err := r.q.GetActiveProjectCandidateByKey(
+	row, err := r.queries.GetActiveProjectCandidateByKey(
 		ctx,
 		platformdb.GetActiveProjectCandidateByKeyParams{
 			TargetID: targetID, ProjectID: projectID.String(),
@@ -125,10 +125,10 @@ func (r *Repository) ActiveCandidate(
 }
 
 func (r *Repository) CandidateByID(ctx context.Context, id string) (deployment.Candidate, error) {
-	if r == nil || r.q == nil || id == "" || id != strings.TrimSpace(id) {
+	if r == nil || r.queries == nil || id == "" || id != strings.TrimSpace(id) {
 		return deployment.Candidate{}, deployment.ErrCandidateNotFound
 	}
-	row, err := r.q.GetProjectCandidate(ctx, id)
+	row, err := r.queries.GetProjectCandidate(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return deployment.Candidate{}, deployment.ErrCandidateNotFound
 	}
@@ -139,10 +139,10 @@ func (r *Repository) CandidateByID(ctx context.Context, id string) (deployment.C
 }
 
 func (r *Repository) ActiveCandidateBaseScope(ctx context.Context, projectID projectgraph.ResourceID, environment string) (deployment.CandidateScope, error) {
-	if r == nil || r.q == nil || projectID.Validate() != nil || environment == "" || environment != strings.TrimSpace(environment) {
+	if r == nil || r.queries == nil || projectID.Validate() != nil || environment == "" || environment != strings.TrimSpace(environment) {
 		return deployment.CandidateScope{}, fmt.Errorf("candidate project and environment are required")
 	}
-	return r.activeCandidateBaseScopeTx(ctx, r.q, projectID, environment)
+	return r.activeCandidateBaseScopeTx(ctx, r.queries, projectID, environment)
 }
 
 type candidateGenerationQuerier interface {
@@ -161,10 +161,10 @@ func (r *Repository) activeCandidateBaseScopeTx(ctx context.Context, q candidate
 }
 
 func (r *Repository) SaveCandidate(ctx context.Context, candidate deployment.Candidate, expectedRevision int64) (deployment.Candidate, error) {
-	if r == nil || r.q == nil || candidate.ID == "" || expectedRevision <= 0 || candidate.Revision != expectedRevision+1 {
+	if r == nil || r.queries == nil || candidate.ID == "" || expectedRevision <= 0 || candidate.Revision != expectedRevision+1 {
 		return deployment.Candidate{}, fmt.Errorf("%w: invalid candidate revision", deployment.ErrCandidateConflict)
 	}
-	count, err := r.q.UpdateProjectCandidate(ctx, platformdb.UpdateProjectCandidateParams{
+	count, err := r.queries.UpdateProjectCandidate(ctx, platformdb.UpdateProjectCandidateParams{
 		ArtifactDigest:   candidate.ArtifactDigest,
 		ProvenanceDigest: candidate.ProvenanceDigest,
 		Status:           string(candidate.Status), FailureReason: candidate.FailureReason,
@@ -183,11 +183,11 @@ func (r *Repository) SaveCandidate(ctx context.Context, candidate deployment.Can
 }
 
 func (r *Repository) ExpireCandidates(ctx context.Context, targetID string, now time.Time) (int64, error) {
-	if r == nil || r.q == nil || targetID == "" || targetID != strings.TrimSpace(targetID) || now.IsZero() {
+	if r == nil || r.queries == nil || targetID == "" || targetID != strings.TrimSpace(targetID) || now.IsZero() {
 		return 0, fmt.Errorf("candidate target and reconciliation time are required")
 	}
 	value := formatCandidateTime(now)
-	return r.q.ExpireProjectCandidates(ctx, platformdb.ExpireProjectCandidatesParams{
+	return r.queries.ExpireProjectCandidates(ctx, platformdb.ExpireProjectCandidatesParams{
 		ExpiredAt: nullableCandidateTime(now), UpdatedAt: value, TargetID: targetID, ExpiresAt: value,
 	})
 }

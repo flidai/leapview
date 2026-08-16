@@ -16,9 +16,10 @@ import (
 )
 
 type Repository struct {
-	db      *sql.DB
-	queries *deploydb.Queries
-	hooks   ActivationHooks
+	db                    *sql.DB
+	queries               *deploydb.Queries
+	hooks                 ActivationHooks
+	candidateBaseReadHook func()
 }
 type ActivationHooks struct {
 	LinkRelease    func(context.Context, transaction.Transaction, deployment.CreateInput) error
@@ -116,7 +117,7 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 	if row.ServingIdentity != input.ServingIdentity || row.ArtifactDigest != input.ArtifactDigest || row.PriorGenerationID != input.PriorGenerationID {
 		return deployment.Deployment{}, deployment.ErrConflict
 	}
-	state, err := deploydb.New(tx).GetServingStateForDeployment(ctx, row.GenerationID)
+	state, err := deploydb.New(tx).GetServingStateForDeployment(ctx, row.ServingIdentity.GenerationID)
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
@@ -165,7 +166,7 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
-	n, _ := result.RowsAffected()
+	n, _ = result.RowsAffected()
 	if n != 1 {
 		return deployment.Deployment{}, fmt.Errorf("%w: active generation CAS failed", deployment.ErrConflict)
 	}
@@ -223,27 +224,34 @@ func (r *Repository) FailDeployment(ctx context.Context, id string, cause error)
 	if cause == nil {
 		return fmt.Errorf("deployment failure cause is required")
 	}
-	n, err := deploydb.New(r.db).FailProjectDeployment(ctx, deploydb.FailProjectDeploymentParams{Error: cause.Error(), ID: strings.TrimSpace(id)})
+	if id == "" || id != strings.TrimSpace(id) {
+		return deployment.ErrConflict
+	}
+	result, err := deploydb.New(r.db).FailProjectDeployment(ctx, deploydb.FailProjectDeploymentParams{Error: cause.Error(), ID: id})
 	if err != nil {
 		return err
 	}
+	n, _ := result.RowsAffected()
 	if n != 1 {
 		return deployment.ErrConflict
 	}
 	return nil
 }
 func (r *Repository) CancelDeployment(ctx context.Context, id string) (deployment.Deployment, error) {
-	n, err := deploydb.New(r.db).CancelProjectDeployment(ctx, strings.TrimSpace(id))
+	if id == "" || id != strings.TrimSpace(id) {
+		return deployment.Deployment{}, deployment.ErrConflict
+	}
+	result, err := deploydb.New(r.db).CancelProjectDeployment(ctx, id)
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
+	n, _ := result.RowsAffected()
 	if n != 1 {
 		return deployment.Deployment{}, deployment.ErrConflict
 	}
 	return r.DeploymentByID(ctx, id)
 }
 func nullableSQLString(value string) sql.NullString {
-	value = strings.TrimSpace(value)
 	return sql.NullString{String: value, Valid: value != ""}
 }
 func mapError(err error) error {
