@@ -49,7 +49,7 @@ func (b *Binder) AfterArtifactValidation(ctx context.Context, candidate servings
 		return ErrRepository
 	}
 	projectID := validation.ProjectID
-	if !projectID.Valid() || candidate.ID.String() == "" || projectID != validation.ProjectID || validation.ManagedDataRevisions == nil {
+	if !projectID.Valid() || string(candidate.ID) == "" || projectID != validation.ProjectID || validation.ManagedDataRevisions == nil {
 		return ErrArtifactMetadata
 	}
 
@@ -111,7 +111,7 @@ func (b *Binder) ValidateServingStatePins(ctx context.Context, identity projectg
 	if len(actual) != len(expected) {
 		return ErrArtifactMetadata
 	}
-	actualByCollection := make(map[string]manageddata.ServingStateBinding, len(actual))
+	actualByCollection := make(map[projectgraph.ResourceID]manageddata.ServingStateBinding, len(actual))
 	for _, binding := range actual {
 		if binding.Identity != identity || !binding.CollectionID.Valid() || binding.RevisionID.String() == "" {
 			return ErrArtifactMetadata
@@ -158,7 +158,7 @@ func (b *Binder) ResolveCandidatePins(
 		return nil, ErrArtifactMetadata
 	}
 	connections = append([]projectgraph.ResourceID(nil), connections...)
-	sort.Strings(connections)
+	sort.Slice(connections, func(i, j int) bool { return connections[i] < connections[j] })
 	pins := make(map[projectgraph.ResourceID]string, len(connections))
 	for index, connection := range connections {
 		if !connection.Valid() ||
