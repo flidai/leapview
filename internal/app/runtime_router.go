@@ -906,18 +906,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Semantic: dashboardmodule.SemanticConfig{
 				Metrics:   runtime.metrics,
 				ProjectID: runtimeConfig.ProjectID,
-				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-					return metricsForWorkspace(runtime.metrics, workspaceID)
-				},
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
 					if !ok {
 						return ""
 					}
 					return principal.ID
-				},
-				AuthorizeListObject: func(ctx context.Context, principalID string, object accessmodule.ObjectRef) (bool, error) {
-					return authorizeListObject(routes.accessModule, platform.auth != nil, ctx, principalID, object)
 				},
 				AuthorizeListResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
@@ -1236,7 +1230,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	apiGenAuthorizer, err := routes.accessModule.APIGenAuthorizer(accessAPIGenOperationContracts(), accessmodule.APIGenObjectResolvers{
 		Dashboard:      dashboardmodule.DashboardObjectRefs,
-		SemanticModel:  dashboardmodule.SemanticDatasetObjectRefs,
 		WorkspaceAsset: workspacemodule.AssetObjectRefs,
 		ProjectEnvironment: func(
 			r *http.Request,

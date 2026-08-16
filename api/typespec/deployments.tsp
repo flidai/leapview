@@ -427,13 +427,13 @@ interface Deployments {
   @summary("List project deployments")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "project")
   listDeployments(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeploymentListResponse> | CommonErrors;
 
   @summary("Deploy a ready project release")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "REQUEST_DEPLOYMENT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
     guarantee: "transactional",
     jobKind: "deployment.activate",
@@ -467,21 +467,21 @@ interface Deployments {
   @route("/{deployment}")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "project")
   getDeployment(@path project: ResourceId, @path deployment: string): OkJson<DeploymentResponse> | CommonErrors;
 
   @summary("List or stream deployment events")
   @route("/{deployment}/events")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "project")
   listDeploymentEvents(@path project: ResourceId, @path deployment: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 
   @summary("Cancel a deployment before cutover")
   @route("/{deployment}/cancel")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "REQUEST_DEPLOYMENT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(DeploymentNotFoundFailure)
   @apigen.failsWith(DeploymentConflictFailure)
   @apigen.failsWith(DeploymentServiceUnavailableFailure)
@@ -498,8 +498,8 @@ interface Deployments {
   @summary("Retry a terminal publication request without changing its immutable release")
   @route("/{deployment}/retry")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "REQUEST_DEPLOYMENT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
     guarantee: "transactional",
     jobKind: "deployment.activate",
@@ -528,8 +528,8 @@ interface Deployments {
   @summary("Roll back by creating a deployment of the prior release")
   @route("/{deployment}/rollback")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "ROLLBACK_DEPLOYMENT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
     guarantee: "transactional",
     jobKind: "deployment.activate",
@@ -558,8 +558,8 @@ interface Deployments {
   @summary("Request approval for an immutable deployment plan")
   @route("/{deployment}/approval-requests")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "REQUEST_DEPLOYMENT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(DeploymentApprovalUnavailableFailure)
   @apigen.failsWith(DeploymentApprovalNotFoundFailure)
   @apigen.failsWith(ApprovalCredentialExpiredFailure)
@@ -579,8 +579,8 @@ interface Deployments {
   @summary("Approve an immutable deployment plan")
   @route("/{deployment}/approval-requests/{approval}/approve")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "APPROVE_DEPLOYMENT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(DeploymentApprovalUnavailableFailure)
   @apigen.failsWith(DeploymentApprovalNotFoundFailure)
   @apigen.failsWith(ApprovalCredentialExpiredFailure)
@@ -600,8 +600,8 @@ interface Deployments {
   @summary("Deny an immutable deployment plan")
   @route("/{deployment}/approval-requests/{approval}/deny")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "APPROVE_DEPLOYMENT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(DeploymentApprovalUnavailableFailure)
   @apigen.failsWith(DeploymentApprovalNotFoundFailure)
   @apigen.failsWith(ApprovalCredentialExpiredFailure)
@@ -621,8 +621,8 @@ interface Deployments {
   @summary("Revoke a pending or approved deployment decision")
   @route("/{deployment}/approval-requests/{approval}/revoke")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "APPROVE_DEPLOYMENT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(DeploymentApprovalUnavailableFailure)
   @apigen.failsWith(DeploymentApprovalNotFoundFailure)
   @apigen.failsWith(ApprovalCredentialExpiredFailure)
@@ -642,8 +642,8 @@ interface Deployments {
   @summary("Activate an approved immutable deployment plan")
   @route("/{deployment}/activate")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "ACTIVATE_DEPLOYMENT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
     guarantee: "transactional",
     jobKind: "deployment.activate",
@@ -679,8 +679,8 @@ interface Deployments {
 interface ProjectCandidates {
   @summary("Create or resume the current author's private project candidate")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "AUTHOR_PROJECT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(CandidateServiceUnavailableFailure)
   @apigen.failsWith(CandidateNotFoundFailure)
   @apigen.failsWith(CandidateConflictFailure)
@@ -695,15 +695,15 @@ interface ProjectCandidates {
   @summary("Get an owned private project candidate")
   @route("/{candidate}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "AUTHOR_PROJECT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   getProjectCandidate(@path project: ResourceId, @path candidate: string): OkJson<CandidateResponse> | CommonErrors;
 
   @summary("Replace a private candidate artifact with optimistic concurrency")
   @route("/{candidate}/artifact")
   @put
-  @apigen.authz(#{ mode: "privilege", privilege: "AUTHOR_PROJECT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(CandidateServiceUnavailableFailure)
   @apigen.failsWith(CandidateNotFoundFailure)
   @apigen.failsWith(CandidateConflictFailure)
@@ -717,8 +717,8 @@ interface ProjectCandidates {
   @summary("Retry preparation of a failed private candidate")
   @route("/{candidate}/retry")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "AUTHOR_PROJECT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(CandidateServiceUnavailableFailure)
   @apigen.failsWith(CandidateNotFoundFailure)
   @apigen.failsWith(CandidateConflictFailure)
@@ -732,8 +732,8 @@ interface ProjectCandidates {
   @summary("Cancel an owned private project candidate")
   @route("/{candidate}/cancel")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "AUTHOR_PROJECT" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(CandidateServiceUnavailableFailure)
   @apigen.failsWith(CandidateNotFoundFailure)
   @apigen.failsWith(CandidateConflictFailure)
@@ -747,8 +747,8 @@ interface ProjectCandidates {
   @summary("Publish the exact ready candidate through target policy")
   @route("/{candidate}/publish")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
     guarantee: "transactional",
     jobKind: "deployment.activate",
@@ -783,16 +783,16 @@ interface ProjectCandidates {
 @summary("Review a private candidate without acquiring its data credentials")
 @route("/projects/{project}/candidate-reviews/{candidate}")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "REVIEW_CANDIDATE" })
-@extension("x-leapview-object-scope", "project-environment")
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
 op reviewProjectCandidate(@path project: ResourceId, @path candidate: string): OkJson<CandidateResponse> | CommonErrors;
 
 @tag("Deployments")
 @summary("Cancel the current principal's active candidate by stable authoring key")
 @route("/projects/{project}/candidate-sessions/{candidateKey}/cancel")
 @post
-@apigen.authz(#{ mode: "privilege", privilege: "AUTHOR_PROJECT" })
-@extension("x-leapview-object-scope", "project-environment")
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
 @apigen.failsWith(CandidateServiceUnavailableFailure)
 @apigen.failsWith(CandidateNotFoundFailure)
 @apigen.failsWith(CandidateConflictFailure)
@@ -806,14 +806,14 @@ op cancelProjectCandidateByKey(@path @apigen.target project: ResourceId, @path c
 
 @route("/projects/{project}/candidate-sync")
 @tag("Deployments")
-@apigen.authz(#{ mode: "privilege", privilege: "AUTHOR_PROJECT" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 interface CandidateSynchronization {
   @summary("Plan content-addressed synchronization for the current author's private candidate")
   @doc("Query classification: reports missing immutable blobs without uploading or committing source state.")
   @route("/plan")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "project")
   @apigen.query
   planProjectCandidateSynchronization(
     @path project: ResourceId,
@@ -824,7 +824,7 @@ interface CandidateSynchronization {
   @summary("Upload a missing immutable private-candidate source blob")
   @route("/blobs/{digest}")
   @put
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(CandidateServiceUnavailableFailure)
   @apigen.failsWith(CandidateConflictFailure)
   @apigen.failsWith(InvalidCandidateFailure)
@@ -840,7 +840,7 @@ interface CandidateSynchronization {
   @summary("Atomically commit a complete source snapshot to the current author's private candidate")
   @route("/commit")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(CandidateServiceUnavailableFailure)
   @apigen.failsWith(CandidateNotFoundFailure)
   @apigen.failsWith(CandidateConflictFailure)

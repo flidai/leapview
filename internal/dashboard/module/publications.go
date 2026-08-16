@@ -307,7 +307,7 @@ func (m *Module) dashboardPublicationDTO(row publication.Publication) dashboarda
 	embedURL := m.absolutePublicURL(embedPath)
 	iframe := `<iframe src="` + html.EscapeString(embedURL) + `" title="` + html.EscapeString(row.Name) + `" loading="lazy" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>`
 	dto := dashboardapi.PublicationResponse{
-		Name: row.Name, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, Dashboard: row.Dashboard,
+		Name: row.Name, ProjectID: row.ProjectID, Dashboard: row.Dashboard,
 		DefaultPage: row.DefaultPage, Status: dashboardapi.PublicationStatus(row.Status()), Configured: row.Configured,
 		AllowedOrigins: append([]string(nil), row.AllowedOrigins...), PublicURL: publicURL, EmbedURL: embedURL, IFrameSnippet: iframe,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,

@@ -680,13 +680,13 @@ interface Principals {
   @summary("List principals")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   listPrincipals(@query email?: string, @query q?: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListPrincipalsOK | CommonErrors;
 
   @summary("Create a local principal")
   @post
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "principal.local_user.created" })
   @apigen.failsWith(PrincipalAlreadyExistsFailure)
   @apigen.auditPayload(PrincipalCreatedAuditPayload)
@@ -697,14 +697,14 @@ interface Principals {
   @route("/{principal}")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   getPrincipal(@path principal: string): GetPrincipalOK | CommonErrors;
 
   @summary("Update a principal")
   @route("/{principal}")
   @patch
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "principal.updated",
     failures: #[
@@ -720,7 +720,7 @@ interface Principals {
   @route("/{principal}")
   @delete
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "principal.deleted",
     failures: #[
@@ -737,7 +737,7 @@ interface Principals {
   @route("/{principal}/password-reset")
   @post
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "principal.local_password.reset" })
   @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalPasswordResetAuditPayload)
@@ -749,7 +749,7 @@ interface Principals {
   @route("/{principal}/disable")
   @post
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "principal.blocked",
     failures: #[
@@ -766,7 +766,7 @@ interface Principals {
   @route("/{principal}/enable")
   @post
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "principal.unblocked",
     failures: #[
@@ -782,14 +782,14 @@ interface Principals {
   @route("/{principal}/sessions")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   listPrincipalSessions(@path principal: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListPrincipalSessionsOK | CommonErrors;
 
   @summary("Revoke a principal's session")
   @route("/{principal}/sessions/{session}")
   @delete
   @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "grant-management")
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "session.revoked" })
   @apigen.failsWith(SessionNotFoundFailure)
   @apigen.auditPayload(PrincipalSessionRevokedAuditPayload)
@@ -809,11 +809,13 @@ interface ServicePrincipals {
   @summary("List service principals")
   @get
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   listServicePrincipals(@query limit?: ListLimit, @query pageToken?: PageToken): ListServicePrincipalsOK | CommonErrors;
 
   @summary("Create a service principal")
   @post
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "service_principal.created" })
   @apigen.failsWith(ServicePrincipalInvalidFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
@@ -824,12 +826,14 @@ interface ServicePrincipals {
   @route("/{servicePrincipal}")
   @get
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   getServicePrincipal(@path servicePrincipal: string): OkJson<PrincipalResponse> | CommonErrors;
 
   @summary("Update a service principal")
   @route("/{servicePrincipal}")
   @patch
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "service_principal.updated",
     failures: #[
@@ -844,6 +848,7 @@ interface ServicePrincipals {
   @route("/{servicePrincipal}")
   @delete
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "service_principal.deleted" })
   @apigen.failsWith(ServicePrincipalNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
@@ -854,6 +859,7 @@ interface ServicePrincipals {
   @route("/{servicePrincipal}/secrets")
   @post
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "service_principal_secret.created" })
   @apigen.failsWith(ServicePrincipalSecretInvalidFailure)
   @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
@@ -864,18 +870,21 @@ interface ServicePrincipals {
   @route("/{servicePrincipal}/secrets")
   @get
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   listServicePrincipalSecrets(@path servicePrincipal: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ServicePrincipalSecretListResponse> | CommonErrors;
 
   @summary("Get service-principal secret metadata")
   @route("/{servicePrincipal}/secrets/{secret}")
   @get
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   getServicePrincipalSecret(@path servicePrincipal: string, @path secret: string): OkJson<ServicePrincipalSecretResponse> | CommonErrors;
 
   @summary("Revoke a service principal secret")
   @route("/{servicePrincipal}/secrets/{secret}")
   @delete
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "service_principal_secret.revoked" })
   @apigen.failsWith(ServicePrincipalSecretNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
@@ -897,11 +906,13 @@ interface Groups {
   @summary("List groups")
   @get
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   listGroups(@query limit?: ListLimit, @query pageToken?: PageToken): ListGroupsOK | CommonErrors;
 
   @summary("Create a group")
   @post
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "group.created" })
   @apigen.failsWith(GroupInvalidFailure)
   @apigen.auditPayload(GroupAuditPayload)
@@ -912,6 +923,7 @@ interface Groups {
   @route("/{group}")
   @delete
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "group.deleted" })
   @apigen.failsWith(GroupNotFoundFailure)
   @apigen.failsWith(GroupNotMutableFailure)
@@ -923,12 +935,14 @@ interface Groups {
   @route("/{group}")
   @get
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   getGroup(@path group: string): GetGroupOK | CommonErrors;
 
   @summary("Update a group")
   @route("/{group}")
   @patch
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "group.updated" })
   @apigen.failsWith(GroupNotFoundFailure)
   @apigen.failsWith(GroupNotMutableFailure)
@@ -940,12 +954,14 @@ interface Groups {
   @route("/{group}/members")
   @get
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   listGroupMembers(@path group: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListGroupMembersOK | CommonErrors;
 
   @summary("Remove a group member")
   @route("/{group}/members/{principal}")
   @delete
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "group.member_removed",
     failures: #[
@@ -961,6 +977,7 @@ interface Groups {
   @route("/{group}/members/{principal}")
   @put
   @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "group.member_added",
     failures: #[
@@ -985,10 +1002,12 @@ alias UpdateRoleBindingOK = OkJson<RoleBindingResponse>;
 interface RoleBindings {
   @summary("List role bindings")
   @get
+  @extension("x-leapview-object-scope", "project")
   listRoleBindings(@path project: ResourceId, @query subjectType?: string, @query subjectId?: string, @query role?: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListRoleBindingsOK | CommonErrors;
 
   @summary("Create a role binding")
   @post
+  @extension("x-leapview-object-scope", "project")
   @apigen.ui("project.access.role-binding.create")
   @apigen.failsWith(RoleBindingInvalidFailure)
   @apigen.command(#{ auditAction: "role_binding.created" })
@@ -998,11 +1017,13 @@ interface RoleBindings {
   @summary("Get a project role binding")
   @route("/{binding}")
   @get
+  @extension("x-leapview-object-scope", "project")
   getRoleBinding(@path project: ResourceId, @path binding: string): OkJson<RoleBindingResponse> | CommonErrors;
 
   @summary("Delete a role binding")
   @route("/{binding}")
   @delete
+  @extension("x-leapview-object-scope", "project")
   @apigen.ui("project.access.role-binding.delete")
   @apigen.failsWith(RoleBindingNotFoundFailure)
   @apigen.failsWith(RoleBindingInvalidFailure)
@@ -1012,6 +1033,7 @@ interface RoleBindings {
   @summary("Update a role binding")
   @route("/{binding}")
   @patch
+  @extension("x-leapview-object-scope", "project")
   @apigen.ui("project.access.role-binding.update")
   @apigen.failsWith(RoleBindingNotFoundFailure)
   @apigen.command(#{ auditAction: "role_binding.updated" })
@@ -1025,6 +1047,7 @@ alias ListProjectRolesOK = OkJson<RoleListResponse>;
 @route("/projects/{project}/roles")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
 op listProjectRoles(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRolesOK | CommonErrors;
 
 alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
@@ -1034,6 +1057,7 @@ alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 @route("/projects/{project}/effective-capabilities")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
 op listEffectiveCapabilities(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId): ListEffectiveCapabilitiesOK | CommonErrors;
 
 alias ListGrantsOK = OkJson<GrantListResponse>;
@@ -1046,11 +1070,13 @@ interface Grants {
   @summary("List grants")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   listGrants(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListGrantsOK | CommonErrors;
 
   @summary("Create a grant")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.ui("project.access.grant.create")
   @apigen.command(#{
     auditAction: "grant.created",
@@ -1064,13 +1090,15 @@ interface Grants {
   @summary("Get a resource capability grant")
   @route("/{grant}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   getGrant(@path project: ResourceId, @path grant: string): OkJson<GrantResponse> | CommonErrors;
 
   @summary("Update a resource capability grant")
   @route("/{grant}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.command(#{
     auditAction: "grant.updated",
     failures: #[
@@ -1084,7 +1112,8 @@ interface Grants {
   @summary("Delete a grant")
   @route("/{grant}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.ui("project.access.grant.delete")
   @apigen.command(#{ auditAction: "grant.deleted" })
   @apigen.failsWith(GrantNotFoundFailure)
@@ -1098,7 +1127,8 @@ alias TransferOwnershipOK = OkJson<SecurableObjectResponse>;
 @summary("Transfer object ownership")
 @route("/projects/{project}/ownership")
 @post
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
 @apigen.command(#{ auditAction: "ownership.transferred", guarantee: "transactional" })
 @apigen.failsWith(OwnershipTransferInvalidFailure)
 @apigen.auditPayload(OwnershipTransferAuditPayload)
@@ -1114,11 +1144,13 @@ interface DataPolicies {
   @summary("List data policies")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   listDataPolicies(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListDataPoliciesOK | CommonErrors;
 
   @summary("Create a data policy")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.command(#{
     auditAction: "data_policy.created",
     failures: #[
@@ -1131,13 +1163,15 @@ interface DataPolicies {
   @summary("Get a data policy")
   @route("/{policy}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   getDataPolicy(@path project: ResourceId, @path policy: string): OkJson<DataPolicyResponse> | CommonErrors;
 
   @summary("Update a data policy")
   @route("/{policy}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.command(#{
     auditAction: "data_policy.updated",
     failures: #[
@@ -1151,7 +1185,8 @@ interface DataPolicies {
   @summary("Delete a data policy")
   @route("/{policy}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.command(#{ auditAction: "data_policy.deleted" })
   @apigen.failsWith(DataPolicyNotFoundFailure)
   @apigen.auditPayload(DataPolicyAuditPayload)
@@ -1163,5 +1198,6 @@ interface DataPolicies {
 @route("/projects/{project}/authorization-checks")
 @post
 @apigen.authz(#{ mode: "authenticated" })
+@extension("x-leapview-object-scope", "project")
 @apigen.query
 op checkAuthorizationBatch(@path project: ResourceId, @body body: AuthorizationBatchCheckRequest): OkJson<AuthorizationBatchCheckResponse> | CommonErrors;

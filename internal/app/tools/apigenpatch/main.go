@@ -10,17 +10,25 @@ import (
 )
 
 func main() {
-	const path = "internal/project/api/gen/client.apigen.gen.go"
-	source, err := os.ReadFile(path)
-	if err != nil {
-		panic(err)
+	patches := []struct {
+		path  string
+		patch func([]byte) ([]byte, error)
+	}{
+		{path: "internal/project/api/gen/client.apigen.gen.go", patch: applySearchPolicy},
+		{path: "internal/access/api/gen/server.apigen.gen.go", patch: applyAccessResourceKindPolicy},
 	}
-	formatted, err := applySearchPolicy(source)
-	if err != nil {
-		panic(err)
-	}
-	if err := os.WriteFile(path, formatted, 0o644); err != nil {
-		panic(err)
+	for _, entry := range patches {
+		source, err := os.ReadFile(entry.path)
+		if err != nil {
+			panic(err)
+		}
+		formatted, err := entry.patch(source)
+		if err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(entry.path, formatted, 0o644); err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -54,8 +62,8 @@ func applySearchPolicy(source []byte) ([]byte, error) {
 	}
 	var err error
 	search, err = replaceGeneratedPolicy(search,
-		"AddQuery(query, \"type\", request.Params.Type, false)",
-		"AddQuery(query, \"type\", request.Params.Type, true)")
+		"AddQuery(query, \"kind\", request.Params.Kind, false)",
+		"AddQuery(query, \"kind\", request.Params.Kind, true)")
 	if err != nil {
 		return nil, err
 	}
@@ -75,4 +83,28 @@ func replaceGeneratedPolicy(source, old, desired string) (string, error) {
 		return "", fmt.Errorf("generated client policy anchor changed: %q", old)
 	}
 	return strings.Replace(source, old, desired, 1), nil
+}
+
+// applyAccessResourceKindPolicy qualifies ResourceKind in APIGen's generated
+// request parameter structs. The schema alias is generated in request_models,
+// while the server generator currently emits the unqualified identifier.
+func applyAccessResourceKindPolicy(source []byte) ([]byte, error) {
+	text := string(source)
+	const old = "*ResourceKind"
+	const desired = "*GenSchemaResourceKind"
+	oldCount := strings.Count(text, old)
+	desiredCount := strings.Count(text, desired)
+	switch {
+	case oldCount == 0 && desiredCount == 3:
+		// Already patched; keep the operation idempotent.
+	case oldCount == 3 && desiredCount == 0:
+		text = strings.ReplaceAll(text, old, desired)
+	default:
+		return nil, fmt.Errorf("generated access ResourceKind policy anchor changed: old=%d desired=%d", oldCount, desiredCount)
+	}
+	formatted, err := format.Source([]byte(text))
+	if err != nil {
+		return nil, fmt.Errorf("format generated access server: %w", err)
+	}
+	return formatted, nil
 }

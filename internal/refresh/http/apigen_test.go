@@ -17,7 +17,8 @@ func TestAPIGenDispatcherMapsRefreshEventPagination(t *testing.T) {
 	handler := &recordingRefreshHandler{}
 	NewAPIGenDispatcher(handler).ListRefreshRunEvents(
 		httptest.NewRecorder(),
-		httptest.NewRequest(stdhttp.MethodGet, "/api/v1/refresh-runs/run-1/events", nil),
+		httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/sales/refresh-runs/run-1/events", nil),
+		"sales",
 		"run-1",
 		refreshgen.GenListRefreshRunEventsParams{Limit: &limit, PageToken: &token},
 		refreshgen.GenListRefreshRunEventsHeaders{},
@@ -32,14 +33,14 @@ type recordingRefreshHandler struct {
 	pageToken *string
 }
 
-func (*recordingRefreshHandler) ListRefreshRuns(stdhttp.ResponseWriter, *stdhttp.Request) {
+func (*recordingRefreshHandler) ListRefreshRuns(stdhttp.ResponseWriter, *stdhttp.Request, string) {
 }
-func (*recordingRefreshHandler) CreateRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request) {
+func (*recordingRefreshHandler) CreateRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string) {
 }
-func (*recordingRefreshHandler) GetRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string) {
+func (*recordingRefreshHandler) GetRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string, string) {
 }
-func (*recordingRefreshHandler) CancelRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string) {
+func (*recordingRefreshHandler) CancelRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string, string) {
 }
-func (h *recordingRefreshHandler) ListRefreshRunEvents(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _ string, limit *int32, pageToken *string) {
+func (h *recordingRefreshHandler) ListRefreshRunEvents(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, _ string, limit *int32, pageToken *string) {
 	h.limit, h.pageToken = limit, pageToken
 }

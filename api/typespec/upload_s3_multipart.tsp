@@ -96,7 +96,7 @@ model ManagedDataS3MultipartCompleteRequest {
 interface ManagedDataS3MultipartUploads {
   @summary("Create an S3 multipart upload for a session file")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
   @apigen.failsWith(ManagedDataUploadConflictFailure)
@@ -121,7 +121,7 @@ interface ManagedDataS3MultipartUploads {
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
   @apigen.query
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "connection")
   signManagedDataS3MultipartPart(
     @path project: ResourceId,
     @path @apigen.target connection: ResourceId,
@@ -135,7 +135,7 @@ interface ManagedDataS3MultipartUploads {
   @summary("Complete an S3 multipart upload")
   @route("/{multipartUpload}/complete")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
   @apigen.failsWith(ManagedDataUploadConflictFailure)
@@ -159,7 +159,7 @@ interface ManagedDataS3MultipartUploads {
   @summary("Abort an S3 multipart upload")
   @route("/{multipartUpload}/abort")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
   @apigen.failsWith(ManagedDataUploadConflictFailure)

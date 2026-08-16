@@ -23,10 +23,9 @@ func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 			contract.Command.Audit.SuccessAction != auditAction ||
 			!contract.Command.Audit.Required ||
 			contract.Command.Audit.Guarantee != "best-effort" ||
-			(operationID == "createRefreshRun" && contract.Command.Target != nil) ||
+			(contract.Command.Target == nil || contract.Command.Target.Parameter != "project") ||
 			contract.Command.Idempotency != "required" ||
-			(operationID == "createRefreshRun" && contract.Command.Privilege != "RESOURCE_USE") ||
-			(operationID == "cancelRefreshRun" && contract.Command.Privilege != "RESOURCE_USE") {
+			contract.Command.Privilege != "" {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
 	}

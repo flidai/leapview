@@ -28,11 +28,11 @@ import (
 )
 
 type generatedRefreshAPI interface {
-	CreateRefreshRun(http.ResponseWriter, *http.Request)
-	ListRefreshRuns(http.ResponseWriter, *http.Request)
-	GetRefreshRun(http.ResponseWriter, *http.Request, string)
-	CancelRefreshRun(http.ResponseWriter, *http.Request, string)
-	ListRefreshRunEvents(http.ResponseWriter, *http.Request, string, *int32, *string)
+	CreateRefreshRun(http.ResponseWriter, *http.Request, string)
+	ListRefreshRuns(http.ResponseWriter, *http.Request, string)
+	GetRefreshRun(http.ResponseWriter, *http.Request, string, string)
+	CancelRefreshRun(http.ResponseWriter, *http.Request, string, string)
+	ListRefreshRunEvents(http.ResponseWriter, *http.Request, string, string, *int32, *string)
 }
 
 var testRefreshWorkflow = jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return nil })

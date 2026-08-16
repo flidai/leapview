@@ -46,6 +46,7 @@ type managedDataStorage struct {
 	blobs        storage.BlobStore
 	inventory    storage.BlobInventory
 	transport    control.Transport
+	tusEngine    storage.ResumableUploadEngine
 	materializer manageddata.RevisionMaterializer
 	runtimeCache *runtimeview.Cache
 	tus          http.Handler
@@ -74,6 +75,7 @@ type Module struct {
 	finalizeExecution   apigencommand.AsyncExecutionContract
 	currentPrincipal    func(*http.Request) (Principal, bool)
 	authorizeConnection manageddatahttp.ConnectionAuthorizer
+	resolveTusTarget    func(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error)
 }
 
 type repository interface {
@@ -220,6 +222,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: cfg.AuthorizeConnection,
 		metadata: metadataReader{repository: repository}, finalizeExecution: finalizeExecution,
 	}
+	module.resolveTusTarget = newTusTargetResolver(services.tusEngine, repository)
 	module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 		Repository: apiRepository, Uploads: uploads, Multipart: multipart,
 		CurrentPrincipal: currentPrincipal, AuthorizeConnection: cfg.AuthorizeConnection, Environment: cfg.Environment,
@@ -385,7 +388,7 @@ func newManagedDataStorage(ctx context.Context, cfg ProductConfig) (managedDataS
 		if err != nil {
 			return managedDataStorage{}, err
 		}
-		result.blobs, result.transport, result.materializer, result.tus = blobs, transport, blobs, capacityProtectedTus(handler, capacity)
+		result.blobs, result.transport, result.tusEngine, result.materializer, result.tus = blobs, transport, engine, blobs, capacityProtectedTus(handler, capacity)
 	case "s3":
 		store, err := newManagedDataS3Store(ctx, cfg)
 		if err != nil {

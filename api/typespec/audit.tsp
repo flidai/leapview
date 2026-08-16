@@ -31,6 +31,7 @@ alias ListAuditEventsOK = OkJson<AuditEventListResponse>;
 @route("/projects/{project}/audit-events")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
 op listAuditEvents(@path project: ResourceId, @query actor?: string, @query action?: string, @query resourceKind?: AuditTargetKind, @query resourceId?: ResourceId, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListAuditEventsOK | CommonErrors;
 
 @tag("Audit")

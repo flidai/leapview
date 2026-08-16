@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestPipelineRunResponseForExposesOnlyPipelineContract(t *testing.T) {
@@ -82,18 +84,84 @@ func TestHandlerSeparatesPipelineVisibilityFromExecutionAuthorization(t *testing
 			return false, nil
 		},
 	}
-	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/refresh-runs", nil)
+	listRequest := withRouteParams(httptest.NewRequest(http.MethodGet, "/api/v1/projects/sales/refresh-runs", nil), map[string]string{"project": "sales"})
 	listResponse := httptest.NewRecorder()
-	handler.ListRuns(listResponse, listRequest)
+	handler.ListRuns(listResponse, listRequest, "sales")
 	if listResponse.Code != http.StatusOK || viewChecks != 1 || runChecks != 0 {
 		t.Fatalf("list response=%d viewChecks=%d runChecks=%d body=%s", listResponse.Code, viewChecks, runChecks, listResponse.Body.String())
 	}
 
-	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/refresh-runs", strings.NewReader(`{"pipelineId":"sales-refresh"}`))
+	createRequest := withRouteParams(httptest.NewRequest(http.MethodPost, "/api/v1/projects/sales/refresh-runs", strings.NewReader(`{"pipelineId":"sales-refresh"}`)), map[string]string{"project": "sales"})
 	createResponse := httptest.NewRecorder()
-	handler.CreateRun(createResponse, createRequest)
-	if createResponse.Code != http.StatusForbidden || viewChecks != 1 || runChecks != 1 {
+	handler.CreateRun(createResponse, createRequest, "sales")
+	if createResponse.Code != http.StatusNotFound || viewChecks != 1 || runChecks != 1 {
 		t.Fatalf("create response=%d viewChecks=%d runChecks=%d body=%s", createResponse.Code, viewChecks, runChecks, createResponse.Body.String())
+	}
+}
+
+func TestHandlerBindsProjectAndFiltersUnauthorizedRuns(t *testing.T) {
+	repo := &authorizationRunRepository{runs: []refreshrun.RunRecord{
+		{ID: "run-visible", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "visible", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "visible", Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z"},
+		{ID: "run-hidden", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "hidden", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "hidden", Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:01:00Z"},
+	}}
+	handler := Handler{
+		Repository:      func() (refreshrun.RunRepository, error) { return repo, nil },
+		ServingIdentity: func(*http.Request) (projectgraph.ServingIdentity, error) { return testIdentity(), nil },
+		AuthorizePipelineView: func(_ *http.Request, _ projectgraph.ServingIdentity, pipelineID string) (bool, error) {
+			return pipelineID == "visible", nil
+		},
+	}
+	request := withRouteParams(httptest.NewRequest(http.MethodGet, "/api/v1/projects/sales/refresh-runs", nil), map[string]string{"project": "sales"})
+	response := httptest.NewRecorder()
+	handler.ListRuns(response, request, "sales")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "run-visible") || strings.Contains(response.Body.String(), "run-hidden") {
+		t.Fatalf("response=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestHandlerProjectMismatchAndAuthorizationFailureDoNotEnumerate(t *testing.T) {
+	called := false
+	handler := Handler{
+		Repository: func() (refreshrun.RunRepository, error) {
+			return &authorizationRunRepository{runs: []refreshrun.RunRecord{{
+				ID: "run-1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "daily", Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z",
+			}}}, nil
+		},
+		ServingIdentity: func(*http.Request) (projectgraph.ServingIdentity, error) { return testIdentity(), nil },
+		AuthorizePipelineView: func(_ *http.Request, _ projectgraph.ServingIdentity, _ string) (bool, error) {
+			called = true
+			return false, errors.New("policy store unavailable")
+		},
+	}
+	mismatch := withRouteParams(httptest.NewRequest(http.MethodGet, "/api/v1/projects/other/refresh-runs", nil), map[string]string{"project": "other"})
+	mismatchResponse := httptest.NewRecorder()
+	handler.ListRuns(mismatchResponse, mismatch, "other")
+	if mismatchResponse.Code != http.StatusNotFound || called {
+		t.Fatalf("mismatch response=%d called=%t body=%s", mismatchResponse.Code, called, mismatchResponse.Body.String())
+	}
+
+	visible := withRouteParams(httptest.NewRequest(http.MethodGet, "/api/v1/projects/sales/refresh-runs", nil), map[string]string{"project": "sales"})
+	visibleResponse := httptest.NewRecorder()
+	handler.ListRuns(visibleResponse, visible, "sales")
+	if visibleResponse.Code != http.StatusServiceUnavailable || !called {
+		t.Fatalf("authorization response=%d called=%t body=%s", visibleResponse.Code, called, visibleResponse.Body.String())
+	}
+}
+
+func TestHandlerDeniedRunIsNonEnumeratingNotFound(t *testing.T) {
+	repo := &authorizationRunRepository{runs: []refreshrun.RunRecord{{
+		ID: "run-hidden", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "hidden", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "hidden", Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z",
+	}}}
+	handler := Handler{
+		Repository:            func() (refreshrun.RunRepository, error) { return repo, nil },
+		ServingIdentity:       func(*http.Request) (projectgraph.ServingIdentity, error) { return testIdentity(), nil },
+		AuthorizePipelineView: func(*http.Request, projectgraph.ServingIdentity, string) (bool, error) { return false, nil },
+	}
+	request := withRouteParams(httptest.NewRequest(http.MethodGet, "/api/v1/projects/sales/refresh-runs/run-hidden", nil), map[string]string{"project": "sales", "run": "run-hidden"})
+	response := httptest.NewRecorder()
+	handler.GetRun(response, request, "sales", "run-hidden")
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("response=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -139,4 +207,12 @@ func (r *authorizationRunRepository) MarkRunFailed(context.Context, projectgraph
 
 func testIdentity() projectgraph.ServingIdentity {
 	return projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation"}
+}
+
+func withRouteParams(request *http.Request, params map[string]string) *http.Request {
+	ctx := chi.NewRouteContext()
+	for key, value := range params {
+		ctx.URLParams.Add(key, value)
+	}
+	return request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, ctx))
 }

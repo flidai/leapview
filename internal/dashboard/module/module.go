@@ -107,9 +107,7 @@ type HTTPConfig struct {
 type SemanticConfig struct {
 	Metrics               queryruntime.Metrics
 	ProjectID             projectgraph.ResourceID
-	MetricsForWorkspace   func(string) (queryruntime.Metrics, bool)
 	CurrentPrincipalID    func(*http.Request) string
-	AuthorizeListObject   func(context.Context, string, access.ObjectRef) (bool, error)
 	AuthorizeListResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
 	QueryFreshness        func(context.Context, string, string, string) (api.QueryFreshness, bool)
 }
@@ -184,13 +182,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	usageNow := config.UsageNow
 	if usageNow == nil {
 		usageNow = time.Now
-	}
-	metricsForSemantic := func(workspaceID string) (semanticapi.Metrics, bool) {
-		if config.Semantic.MetricsForWorkspace == nil {
-			return nil, false
-		}
-		metrics, ok := config.Semantic.MetricsForWorkspace(workspaceID)
-		return metrics, ok
 	}
 	telemetry := config.HTTP.Telemetry
 	handler := dashboardhttp.Handler{
@@ -284,9 +275,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		handler:   handler,
 		authoring: config.Authoring,
 		semantic: semanticapi.Handler{
-			Metrics: config.Semantic.Metrics, ProjectID: config.Semantic.ProjectID, MetricsForWorkspace: metricsForSemantic,
+			Metrics: config.Semantic.Metrics, ProjectID: config.Semantic.ProjectID,
 			CurrentPrincipalID:    config.Semantic.CurrentPrincipalID,
-			AuthorizeListObject:   config.Semantic.AuthorizeListObject,
 			AuthorizeListResource: config.Semantic.AuthorizeListResource,
 			QueryFreshness:        config.Semantic.QueryFreshness,
 		},

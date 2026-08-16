@@ -70,14 +70,14 @@ model InvalidRefreshRunFailure {}
 @apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "REFRESH_RUN_CONFLICT", publicDetail: "The refresh run conflicts with its current state." })
 model RefreshRunConflictFailure {}
 
-@apigen.failureDefinition(#{ kind: "forbidden", statusCode: 403, code: "REFRESH_RUN_FORBIDDEN", publicDetail: "The refresh run is not permitted." })
-model RefreshRunForbiddenFailure {}
-
 @apigen.failureDefinition(#{ kind: "unavailable", statusCode: 503, code: "REFRESH_SERVICE_UNAVAILABLE", publicDetail: "Refresh service is unavailable." })
 model RefreshServiceUnavailableFailure {}
 
 @apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "REFRESH_RUN_NOT_FOUND", publicDetail: "Refresh run not found." })
 model RefreshRunNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "REFRESH_PIPELINE_NOT_FOUND", publicDetail: "Refresh pipeline not found." })
+model RefreshPipelineNotFoundFailure {}
 
 @apigen.failureDefinition(#{ kind: "not_cancellable", statusCode: 409, code: "REFRESH_RUN_NOT_CANCELLABLE", publicDetail: "Only queued refresh runs can be cancelled." })
 model RefreshRunNotCancellableFailure {}
@@ -86,22 +86,22 @@ alias ListRefreshRunsOK = OkJson<RefreshRunListResponse>;
 alias CreateRefreshRunAccepted = AcceptedJson<RefreshRunResponse>;
 alias GetRefreshRunOK = OkJson<RefreshRunResponse>;
 
-@route("/refresh-runs")
+@route("/projects/{project}/refresh-runs")
 @tag("Refresh Runs")
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 interface RefreshRuns {
   @summary("List refresh runs")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  listRefreshRuns(@query limit?: ListLimit, @query pageToken?: PageToken): ListRefreshRunsOK | CommonErrors;
+  @apigen.authz(#{ mode: "authenticated" })
+  listRefreshRuns(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListRefreshRunsOK | CommonErrors;
 
   @summary("Create a refresh run")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("refresh.run")
   @apigen.failsWith(InvalidRefreshRunFailure)
   @apigen.failsWith(RefreshRunConflictFailure)
-  @apigen.failsWith(RefreshRunForbiddenFailure)
+  @apigen.failsWith(RefreshPipelineNotFoundFailure)
   @apigen.failsWith(RefreshServiceUnavailableFailure)
   @apigen.asyncExecution(RefreshRuns.getRefreshRun, RefreshRuns.listRefreshRunEvents, #{
     guarantee: "transactional",
@@ -113,30 +113,29 @@ interface RefreshRuns {
   })
   @apigen.command(#{ auditAction: "refresh.queued" })
   @apigen.auditPayload(RefreshQueuedAuditPayload)
-  createRefreshRun(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RefreshRunCreateRequest): CreateRefreshRunAccepted | CommonErrors;
+  createRefreshRun(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RefreshRunCreateRequest): CreateRefreshRunAccepted | CommonErrors;
 
   @summary("Get a refresh run")
   @route("/{run}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  getRefreshRun(@path run: string): GetRefreshRunOK | CommonErrors;
+  @apigen.authz(#{ mode: "authenticated" })
+  getRefreshRun(@path project: ResourceId, @path run: string): GetRefreshRunOK | CommonErrors;
 
   @summary("List or stream refresh run events")
   @route("/{run}/events")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  listRefreshRunEvents(@path run: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
+  @apigen.authz(#{ mode: "authenticated" })
+  listRefreshRunEvents(@path project: ResourceId, @path run: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 
   @summary("Cancel a refresh run")
   @route("/{run}/cancel")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("refresh.cancel")
   @apigen.failsWith(RefreshRunNotFoundFailure)
-  @apigen.failsWith(RefreshRunForbiddenFailure)
   @apigen.failsWith(RefreshRunNotCancellableFailure)
   @apigen.failsWith(RefreshServiceUnavailableFailure)
   @apigen.auditPayload(RefreshCancelledAuditPayload)
   @apigen.command(#{ auditAction: "refresh.cancelled" })
-  cancelRefreshRun(@path run: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<RefreshRunResponse> | CommonErrors;
+  cancelRefreshRun(@path @apigen.target project: ResourceId, @path run: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<RefreshRunResponse> | CommonErrors;
 }

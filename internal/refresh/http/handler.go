@@ -15,7 +15,6 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
-	"github.com/go-chi/chi/v5"
 )
 
 type Principal struct {
@@ -33,6 +32,8 @@ type Handler struct {
 	AuthorizePipelineRun  func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
 	QueuePipeline         func(context.Context, projectgraph.ServingIdentity, string, string, string) (refreshrun.RunRecord, error)
 }
+
+var errAuthorizationUnavailable = errors.New("refresh authorization is unavailable")
 
 type materializationRunRequest struct {
 	PipelineID string `json:"pipelineId"`
@@ -85,9 +86,9 @@ func PipelineRunResponseFor(run refreshrun.RunRecord) (PipelineRunResponse, bool
 	}, true
 }
 
-func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
+func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project string) {
 	operationID := refreshgen.GenCommandOperationCreateRefreshRun()
-	repo, identity, ok := h.commandRunRepository(w, r, operationID)
+	repo, identity, ok := h.commandRunRepository(w, r, operationID, project)
 	if !ok {
 		return
 	}
@@ -109,32 +110,39 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 		}
 	}
 	if strings.TrimSpace(input.PipelineID) == "" {
-		writeCommandFailure(w, r, operationID, apigenfailure.New("invalid", "pipelineId is required"))
+		writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh pipeline not found"))
 		return
 	}
-	if h.AuthorizePipelineRun != nil {
-		allowed, err := h.AuthorizePipelineRun(r, identity, input.PipelineID)
-		if err != nil {
-			writeCommandFailure(w, r, operationID, apigenfailure.Wrap("unavailable", err))
-			return
-		}
-		if !allowed {
-			writeCommandFailure(w, r, operationID, apigenfailure.New("forbidden", "refresh run is not permitted"))
-			return
-		}
+	pipelineID, err := projectgraph.NewResourceID(input.PipelineID)
+	if err != nil || pipelineID.String() != input.PipelineID {
+		writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh pipeline not found"))
+		return
+	}
+	if h.AuthorizePipelineRun == nil {
+		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("unavailable", errAuthorizationUnavailable))
+		return
+	}
+	allowed, err := h.AuthorizePipelineRun(r, identity, input.PipelineID)
+	if err != nil {
+		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("unavailable", err))
+		return
+	}
+	if !allowed {
+		writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh pipeline not found"))
+		return
 	}
 	if input.RetryOf != "" {
 		prior, err := repo.GetRun(r.Context(), identity, input.RetryOf)
 		if err != nil {
-			writeCommandFailure(w, r, operationID, apigenfailure.New("invalid", "retryOf does not identify a refresh run"))
+			writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh run not found"))
+			return
+		}
+		if prior.Identity != identity || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.PipelineID != pipelineID {
+			writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh run not found"))
 			return
 		}
 		if prior.Status == refreshrun.RunStatusQueued || prior.Status == refreshrun.RunStatusRunning {
 			writeCommandFailure(w, r, operationID, apigenfailure.New("conflict", "retryOf refresh run is not terminal"))
-			return
-		}
-		if prior.Identity != identity || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.PipelineID.String() != input.PipelineID {
-			writeCommandFailure(w, r, operationID, apigenfailure.New("invalid", "retryOf does not belong to pipelineId"))
 			return
 		}
 	}
@@ -168,8 +176,8 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, nethttp.StatusAccepted, response)
 }
 
-func (h Handler) ListRuns(w nethttp.ResponseWriter, r *nethttp.Request) {
-	repo, identity, ok := h.runRepository(w, r)
+func (h Handler) ListRuns(w nethttp.ResponseWriter, r *nethttp.Request, project string) {
+	repo, identity, ok := h.runRepository(w, r, project)
 	if !ok {
 		return
 	}
@@ -195,7 +203,7 @@ func (h Handler) ListRuns(w nethttp.ResponseWriter, r *nethttp.Request) {
 			}
 			allowed, err := h.pipelineAllowed(r, identity, response.PipelineID)
 			if err != nil {
-				writeJSONError(w, err, nethttp.StatusInternalServerError)
+				writeJSONError(w, err, nethttp.StatusServiceUnavailable)
 				return
 			}
 			if allowed {
@@ -218,12 +226,12 @@ func (h Handler) ListRuns(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, nethttp.StatusOK, pagedResponseWithCursor(responses, nextCursor))
 }
 
-func (h Handler) GetRun(w nethttp.ResponseWriter, r *nethttp.Request) {
-	repo, identity, ok := h.runRepository(w, r)
+func (h Handler) GetRun(w nethttp.ResponseWriter, r *nethttp.Request, project, runID string) {
+	repo, identity, ok := h.runRepository(w, r, project)
 	if !ok {
 		return
 	}
-	run, err := repo.GetRun(r.Context(), identity, chi.URLParam(r, "run"))
+	run, err := repo.GetRun(r.Context(), identity, runID)
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
@@ -239,11 +247,11 @@ func (h Handler) GetRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	allowed, err := h.pipelineAllowed(r, identity, response.PipelineID)
 	if err != nil {
-		writeJSONError(w, err, nethttp.StatusInternalServerError)
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
 		return
 	}
 	if !allowed {
-		writeJSONError(w, fmt.Errorf("forbidden"), nethttp.StatusForbidden)
+		writeJSONError(w, sql.ErrNoRows, nethttp.StatusNotFound)
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, response)
@@ -251,12 +259,23 @@ func (h Handler) GetRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h Handler) pipelineAllowed(r *nethttp.Request, identity projectgraph.ServingIdentity, pipelineID string) (bool, error) {
 	if h.AuthorizePipelineView == nil {
-		return true, nil
+		return false, errAuthorizationUnavailable
 	}
 	return h.AuthorizePipelineView(r, identity, pipelineID)
 }
 
-func (h Handler) runRepository(w nethttp.ResponseWriter, r *nethttp.Request) (refreshrun.RunRepository, projectgraph.ServingIdentity, bool) {
+// ProjectMatchesIdentity binds the project route to the active serving
+// identity. A request for another project must not enumerate or mutate runs
+// from the active project.
+func (h Handler) ProjectMatchesIdentity(project string, identity projectgraph.ServingIdentity) bool {
+	if project == "" || project != strings.TrimSpace(project) {
+		return false
+	}
+	projectID, err := projectgraph.NewResourceID(project)
+	return err == nil && projectID == identity.ProjectID
+}
+
+func (h Handler) runRepository(w nethttp.ResponseWriter, r *nethttp.Request, project string) (refreshrun.RunRepository, projectgraph.ServingIdentity, bool) {
 	if h.Repository == nil {
 		writeJSONError(w, fmt.Errorf("platform store is required"), nethttp.StatusServiceUnavailable)
 		return nil, projectgraph.ServingIdentity{}, false
@@ -271,10 +290,14 @@ func (h Handler) runRepository(w nethttp.ResponseWriter, r *nethttp.Request) (re
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return nil, projectgraph.ServingIdentity{}, false
 	}
+	if !h.ProjectMatchesIdentity(project, identity) {
+		writeJSONError(w, sql.ErrNoRows, nethttp.StatusNotFound)
+		return nil, projectgraph.ServingIdentity{}, false
+	}
 	return repo, identity, true
 }
 
-func (h Handler) commandRunRepository(w nethttp.ResponseWriter, r *nethttp.Request, operationID refreshgen.GenCommandOperationID) (refreshrun.RunRepository, projectgraph.ServingIdentity, bool) {
+func (h Handler) commandRunRepository(w nethttp.ResponseWriter, r *nethttp.Request, operationID refreshgen.GenCommandOperationID, project string) (refreshrun.RunRepository, projectgraph.ServingIdentity, bool) {
 	if h.Repository == nil {
 		writeCommandFailure(w, r, operationID, apigenfailure.New("unavailable", "refresh persistence is not configured"))
 		return nil, projectgraph.ServingIdentity{}, false
@@ -286,7 +309,11 @@ func (h Handler) commandRunRepository(w nethttp.ResponseWriter, r *nethttp.Reque
 	}
 	identity, err := h.servingIdentity(r)
 	if err != nil {
-		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("invalid", err))
+		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("not_found", err))
+		return nil, projectgraph.ServingIdentity{}, false
+	}
+	if !h.ProjectMatchesIdentity(project, identity) {
+		writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh run not found"))
 		return nil, projectgraph.ServingIdentity{}, false
 	}
 	return repo, identity, true

@@ -45,48 +45,34 @@ type Metrics interface {
 type Handler struct {
 	Metrics               Metrics
 	ProjectID             projectgraph.ResourceID
-	MetricsForWorkspace   func(workspaceID string) (Metrics, bool)
 	CurrentPrincipalID    func(r *nethttp.Request) string
-	AuthorizeListObject   func(ctx context.Context, principalID string, object access.ObjectRef) (bool, error)
 	AuthorizeListResource func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error)
-	QueryFreshness        func(ctx context.Context, workspaceID, modelID, servingSnapshot string) (api.QueryFreshness, bool)
+	QueryFreshness        func(ctx context.Context, projectID, modelID, servingSnapshot string) (api.QueryFreshness, bool)
 }
 
-func filterAuthorized[T any](h Handler, r *nethttp.Request, objectFor func(T) access.ObjectRef, rows []T) ([]T, error) {
-	if h.AuthorizeListObject == nil {
-		return rows, nil
+var errSemanticAuthorizationUnavailable = errors.New("semantic model authorization is unavailable")
+
+func (h Handler) authorizeSemanticModel(r *nethttp.Request, modelID string) (bool, error) {
+	if h.AuthorizeListResource == nil {
+		return false, errSemanticAuthorizationUnavailable
+	}
+	projectID, err := projectgraph.NewResourceID(h.ProjectID.String())
+	if err != nil {
+		return false, err
+	}
+	resourceID, err := projectgraph.NewResourceID(modelID)
+	if err != nil {
+		return false, err
+	}
+	resource, err := access.NewResourceRef(resourceID, projectgraph.KindSemanticModel)
+	if err != nil {
+		return false, err
 	}
 	principalID := ""
 	if h.CurrentPrincipalID != nil {
 		principalID = h.CurrentPrincipalID(r)
 	}
-	out := make([]T, 0, len(rows))
-	for _, row := range rows {
-		allowed, err := h.AuthorizeListObject(r.Context(), principalID, objectFor(row))
-		if err != nil {
-			return nil, err
-		}
-		if allowed {
-			out = append(out, row)
-		}
-	}
-	return out, nil
-}
-
-func SemanticDatasetObjectRefs(r *nethttp.Request, workspaceID string) []access.ObjectRef {
-	objects := []access.ObjectRef{}
-	modelID := strings.TrimSpace(chi.URLParam(r, "model"))
-	if modelID != "" {
-		model := access.ItemObjectWithParent(access.SecurableSemanticModel, workspaceID, modelID, access.WorkspaceObject(workspaceID))
-		if datasetID := strings.TrimSpace(chi.URLParam(r, "dataset")); datasetID != "" {
-			objects = append(objects, access.ItemObjectWithParent(access.SecurableDataset, workspaceID, modelID+"/"+datasetID, model))
-		}
-		objects = append(objects, model)
-	}
-	if strings.TrimSpace(workspaceID) != "" {
-		objects = append(objects, access.WorkspaceObject(workspaceID))
-	}
-	return objects
+	return h.AuthorizeListResource(r.Context(), principalID, projectID, resource, access.CapabilityResourceRead)
 }
 
 func (h Handler) ListSemanticModels(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -99,34 +85,11 @@ func (h Handler) ListSemanticModels(w nethttp.ResponseWriter, r *nethttp.Request
 	for _, row := range catalog.Models {
 		out = append(out, semanticModelSummaryDTO(row))
 	}
-	principalID := ""
-	if h.CurrentPrincipalID != nil {
-		principalID = h.CurrentPrincipalID(r)
-	}
-	if h.AuthorizeListResource == nil {
-		writeJSONError(w, fmt.Errorf("semantic model authorization is unavailable"), nethttp.StatusServiceUnavailable)
-		return
-	}
-	projectID := h.ProjectID
-	if err := projectID.Validate(); err != nil {
-		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
-		return
-	}
 	filtered := make([]api.SemanticModelSummary, 0, len(out))
 	for _, row := range out {
-		modelID, err := projectgraph.NewResourceID(row.ID)
+		allowed, err := h.authorizeSemanticModel(r, row.ID)
 		if err != nil {
-			writeJSONError(w, err, nethttp.StatusInternalServerError)
-			return
-		}
-		resource, err := access.NewResourceRef(modelID, projectgraph.KindSemanticModel)
-		if err != nil {
-			writeJSONError(w, err, nethttp.StatusInternalServerError)
-			return
-		}
-		allowed, err := h.AuthorizeListResource(r.Context(), principalID, projectID, resource, access.CapabilityResourceRead)
-		if err != nil {
-			writeJSONError(w, err, nethttp.StatusInternalServerError)
+			writeJSONError(w, err, nethttp.StatusServiceUnavailable)
 			return
 		}
 		if allowed {
@@ -301,13 +264,14 @@ func (h Handler) ListSemanticDatasets(w nethttp.ResponseWriter, r *nethttp.Reque
 			MeasureCount: semanticDatasetMeasureCount(model, datasetID),
 		})
 	}
-	workspaceID, modelID := chi.URLParam(r, "workspace"), chi.URLParam(r, "model")
-	parent := access.ItemObjectWithParent(access.SecurableSemanticModel, workspaceID, modelID, access.WorkspaceObject(workspaceID))
-	out, err := filterAuthorized(h, r, func(row api.SemanticDatasetSummary) access.ObjectRef {
-		return access.ItemObjectWithParent(access.SecurableDataset, workspaceID, modelID+"/"+row.ID, parent)
-	}, out)
+	modelID := chi.URLParam(r, "model")
+	allowed, err := h.authorizeSemanticModel(r, modelID)
 	if err != nil {
-		writeJSONError(w, err, nethttp.StatusInternalServerError)
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	if !allowed {
+		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
 		return
 	}
 	items, nextCursor, ok := pageSliceForRequest(w, r, out)
@@ -475,24 +439,20 @@ func (h Handler) ExplainSemanticPreview(w nethttp.ResponseWriter, r *nethttp.Req
 func (h Handler) biMetrics(w nethttp.ResponseWriter, r *nethttp.Request) (Metrics, bool) {
 	metrics, ok := h.metricsForRequest(r)
 	if !ok {
-		writeJSONError(w, fmt.Errorf("workspace %q not found", chi.URLParam(r, "workspace")), nethttp.StatusNotFound)
+		writeJSONError(w, fmt.Errorf("project metrics are unavailable"), nethttp.StatusServiceUnavailable)
 		return nil, false
 	}
 	return metrics, true
 }
 
-func (h Handler) metricsForRequest(r *nethttp.Request) (Metrics, bool) {
-	workspaceID := chi.URLParam(r, "workspace")
-	if strings.TrimSpace(workspaceID) == "" {
-		return nil, false
-	}
-	if h.MetricsForWorkspace != nil {
-		return h.MetricsForWorkspace(workspaceID)
-	}
+func (h Handler) metricsForRequest(_ *nethttp.Request) (Metrics, bool) {
 	if h.Metrics == nil {
 		return nil, false
 	}
-	return h.Metrics, h.Metrics.Catalog().Workspace.ID == workspaceID
+	if err := h.ProjectID.Validate(); err != nil {
+		return nil, false
+	}
+	return h.Metrics, true
 }
 
 func (h Handler) semanticModelForRequest(w nethttp.ResponseWriter, r *nethttp.Request) (*semanticmodel.Model, bool) {
@@ -968,22 +928,22 @@ func (h Handler) enrichSemanticQueryResponse(
 	if response == nil {
 		return
 	}
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace"))
-	if workspaceID == "" {
+	projectID := h.ProjectID.String()
+	if projectID == "" {
 		return
 	}
 	if model := semanticModelForID(metrics, modelID); model != nil {
-		response.Columns = semanticQueryColumns(workspaceID, modelID, model, response.Columns, dimensions, measures, timeRef)
+		response.Columns = semanticQueryColumns(modelID, model, response.Columns, dimensions, measures, timeRef)
 	}
 	if h.QueryFreshness != nil {
-		if freshness, ok := h.QueryFreshness(r.Context(), workspaceID, modelID, response.ServingSnapshot); ok {
+		if freshness, ok := h.QueryFreshness(r.Context(), projectID, modelID, response.ServingSnapshot); ok {
 			response.Freshness = &freshness
 		}
 	}
 }
 
 func semanticQueryColumns(
-	workspaceID, modelID string,
+	modelID string,
 	model *semanticmodel.Model,
 	columns []api.QueryColumn,
 	dimensions, measures []reportdef.QueryField,
@@ -991,14 +951,14 @@ func semanticQueryColumns(
 ) []api.QueryColumn {
 	semantic := make(map[string]api.QueryColumn, len(dimensions)+len(measures)+1)
 	for _, field := range dimensions {
-		semantic[semanticOutputName(field.Field, field.Alias)] = semanticDimensionColumn(workspaceID, modelID, model, field)
+		semantic[semanticOutputName(field.Field, field.Alias)] = semanticDimensionColumn(modelID, model, field)
 	}
 	if timeRef != nil && timeRef.Field != "" {
 		field := reportdef.QueryField{Field: timeRef.Field, Alias: timeRef.Alias}
-		semantic[semanticOutputName(field.Field, field.Alias)] = semanticDimensionColumn(workspaceID, modelID, model, field)
+		semantic[semanticOutputName(field.Field, field.Alias)] = semanticDimensionColumn(modelID, model, field)
 	}
 	for _, field := range measures {
-		semantic[semanticOutputName(field.Field, field.Alias)] = semanticMeasureColumn(workspaceID, modelID, model, field)
+		semantic[semanticOutputName(field.Field, field.Alias)] = semanticMeasureColumn(modelID, model, field)
 	}
 	out := make([]api.QueryColumn, len(columns))
 	for index, column := range columns {
@@ -1012,13 +972,13 @@ func semanticQueryColumns(
 	return out
 }
 
-func semanticDimensionColumn(workspaceID, modelID string, model *semanticmodel.Model, field reportdef.QueryField) api.QueryColumn {
+func semanticDimensionColumn(modelID string, model *semanticmodel.Model, field reportdef.QueryField) api.QueryColumn {
 	if dimension, ok := model.Dimensions[field.Field]; ok {
 		dataType := semanticColumnType(dimension.Type)
 		return api.QueryColumn{
 			Name: semanticOutputName(field.Field, field.Alias), Type: dataType,
 			Nullable: semanticDimensionNullable(model, dimension),
-			FieldRef: &api.QueryFieldRef{WorkspaceID: workspaceID, Type: "field", ID: modelID + "." + field.Field},
+			FieldRef: &api.QueryFieldRef{Type: "field", ID: modelID + "." + field.Field},
 			Label:    semanticLabel(dimension.Label, field.Field), Kind: "dimension",
 		}
 	}
@@ -1027,27 +987,27 @@ func semanticDimensionColumn(workspaceID, modelID string, model *semanticmodel.M
 		return api.QueryColumn{
 			Name: semanticOutputName(field.Field, field.Alias), Type: dataType,
 			Nullable: physicalDimensionNullable(model.Tables[dimension.Table], dimension.Name),
-			FieldRef: &api.QueryFieldRef{WorkspaceID: workspaceID, Type: "field", ID: modelID + "." + field.Field},
+			FieldRef: &api.QueryFieldRef{Type: "field", ID: modelID + "." + field.Field},
 			Label:    semanticLabel(dimension.Label, dimension.Name), Kind: "dimension",
 		}
 	}
 	return api.QueryColumn{Name: semanticOutputName(field.Field, field.Alias), Type: "string", Nullable: true}
 }
 
-func semanticMeasureColumn(workspaceID, modelID string, model *semanticmodel.Model, field reportdef.QueryField) api.QueryColumn {
+func semanticMeasureColumn(modelID string, model *semanticmodel.Model, field reportdef.QueryField) api.QueryColumn {
 	if measure, ok := model.Measures[field.Field]; ok {
 		dataType := semanticMeasureType(model, measure)
 		return api.QueryColumn{
 			Name: semanticOutputName(field.Field, field.Alias), Type: dataType,
 			Nullable: measure.Empty != "zero",
-			FieldRef: &api.QueryFieldRef{WorkspaceID: workspaceID, Type: "measure", ID: modelID + "." + field.Field},
+			FieldRef: &api.QueryFieldRef{Type: "measure", ID: modelID + "." + field.Field},
 			Label:    semanticLabel(measure.Label, field.Field), Kind: "measure", Unit: measure.Unit, Format: measure.Format,
 		}
 	}
 	if metric, ok := model.Metrics[field.Field]; ok {
 		return api.QueryColumn{
 			Name: semanticOutputName(field.Field, field.Alias), Type: "decimal", Nullable: true,
-			FieldRef: &api.QueryFieldRef{WorkspaceID: workspaceID, Type: "measure", ID: modelID + "." + field.Field},
+			FieldRef: &api.QueryFieldRef{Type: "measure", ID: modelID + "." + field.Field},
 			Label:    semanticLabel(metric.Label, field.Field), Kind: "metric", Unit: metric.Unit, Format: metric.Format,
 		}
 	}
@@ -1303,7 +1263,6 @@ func (h Handler) requestQueryMetadata(r *nethttp.Request, surface, operation, ob
 		surface = dataquery.SurfaceCLI
 	}
 	metadata := dataquery.Metadata{
-		WorkspaceID:   chi.URLParam(r, "workspace"),
 		Surface:       surface,
 		Operation:     requestQueryOperation(operation, objectType),
 		ObjectType:    objectType,
@@ -1315,9 +1274,6 @@ func (h Handler) requestQueryMetadata(r *nethttp.Request, surface, operation, ob
 		metadata.PrincipalID = h.CurrentPrincipalID(r)
 	}
 	existing := dataquery.MetadataFromContext(r.Context())
-	if existing.WorkspaceID != "" {
-		metadata.WorkspaceID = existing.WorkspaceID
-	}
 	if existing.Surface != "" {
 		metadata.Surface = existing.Surface
 	}

@@ -16,7 +16,8 @@ import (
 type searchOptions struct {
 	remote     cliapi.RemoteOptions
 	pagination cliapi.PaginationOptions
-	types      []string
+	kinds      []string
+	domain     string
 	jsonOutput bool
 }
 
@@ -36,7 +37,8 @@ func SearchCommand(ctx context.Context, client cliapi.Client) *cobra.Command {
 	}
 	options.remote.AddFlags(command)
 	options.pagination.AddFlags(command)
-	command.Flags().StringArrayVar(&options.types, "type", nil, "result type filter; repeatable or comma-separated")
+	command.Flags().StringArrayVar(&options.kinds, "kind", nil, "resource kind filter; repeatable or comma-separated")
+	command.Flags().StringVar(&options.domain, "domain", "", "resource domain filter")
 	command.Flags().BoolVar(&options.jsonOutput, "json", false, "print JSON response")
 	return command
 }
@@ -46,17 +48,18 @@ func runSearch(ctx context.Context, client cliapi.Client, options *searchOptions
 	if err != nil {
 		return err
 	}
-	typeValues := splitValues(options.types)
-	typeFilters := make([]projectgen.GenSchemaSearchResultType, len(typeValues))
-	for index, value := range typeValues {
-		typeFilters[index] = projectgen.GenSchemaSearchResultType(value)
+	kindValues := splitValues(options.kinds)
+	kindFilters := make([]projectgen.GenSchemaSearchKind, len(kindValues))
+	for index, value := range kindValues {
+		kindFilters[index] = projectgen.GenSchemaSearchKind(value)
 	}
 	response, err := api.Search(ctx, projectgen.GenSearchClientRequest{
 		Params: projectgen.GenSearchClientParams{
-			Q:         &queryText,
-			Type:      optionalSlice(typeFilters),
-			Limit:     options.pagination.LimitPtr(),
-			PageToken: optionalString(options.pagination.PageToken),
+			Q:      queryText,
+			Kind:   optionalSlice(kindFilters),
+			Domain: optionalString(options.domain),
+			Limit:  options.pagination.LimitPtr(),
+			Cursor: optionalString(options.pagination.PageToken),
 		},
 	})
 	if err != nil {
@@ -93,13 +96,13 @@ func splitValues(values []string) []string {
 
 func renderSearchResults(out io.Writer, response projectgen.GenSchemaSearchResponse) error {
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "TYPE\tNAME\tDESCRIPTION\tID")
+	fmt.Fprintln(writer, "KIND\tNAME\tDESCRIPTION\tID")
 	for _, item := range response.Items {
 		description := ""
 		if item.Description != nil {
 			description = *item.Description
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", item.Reference.Type, item.Name, description, item.Reference.Id)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", item.Reference.Kind, item.Name, description, item.Reference.Id)
 	}
 	if response.Page.NextCursor != nil && *response.Page.NextCursor != "" {
 		fmt.Fprintf(writer, "PAGE\tNEXT\t%s\t\t\n", *response.Page.NextCursor)

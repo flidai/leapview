@@ -5349,6 +5349,9 @@ paths:
       tags:
         - BI
       x-apigen-operation-kind: query
+      x-authz:
+        mode: privilege
+        privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/appearance:
     put:
@@ -7890,6 +7893,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
     post:
       operationId: createGroup
       summary: Create a group
@@ -8202,6 +8206,7 @@ paths:
         owner: LeapViewAPI.Access
         ui:
           action_id: group.create
+      x-leapview-object-scope: platform
   /api/v1/groups/{group}:
     delete:
       operationId: deleteGroup
@@ -8488,6 +8493,7 @@ paths:
           type: group
         ui:
           action_id: group.delete
+      x-leapview-object-scope: platform
     get:
       operationId: getGroup
       summary: Get a group
@@ -8755,6 +8761,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
     patch:
       operationId: updateGroup
       summary: Update a group
@@ -9072,6 +9079,7 @@ paths:
           type: group
         ui:
           action_id: group.update
+      x-leapview-object-scope: platform
   /api/v1/groups/{group}/members:
     get:
       operationId: listGroupMembers
@@ -9358,6 +9366,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
   /api/v1/groups/{group}/members/{principal}:
     delete:
       operationId: removeGroupMember
@@ -9648,6 +9657,7 @@ paths:
           type: group
         ui:
           action_id: group.member.remove
+      x-leapview-object-scope: platform
     put:
       operationId: addGroupMember
       summary: Add a group member
@@ -9943,6 +9953,7 @@ paths:
           type: group
         ui:
           action_id: group.member.add
+      x-leapview-object-scope: platform
   /api/v1/instance:
     get:
       operationId: getInstance
@@ -16935,7 +16946,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
     post:
       operationId: createPrincipal
       summary: Create a local principal
@@ -17242,7 +17253,7 @@ paths:
         owner: LeapViewAPI.Access
         ui:
           action_id: principal.create
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
   /api/v1/principals/{principal}:
     delete:
       operationId: deletePrincipal
@@ -17533,7 +17544,7 @@ paths:
           type: principal
         ui:
           action_id: principal.delete
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
     get:
       operationId: getPrincipal
       summary: Get a principal
@@ -17808,7 +17819,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
     patch:
       operationId: updatePrincipal
       summary: Update a principal
@@ -18133,7 +18144,7 @@ paths:
           type: principal
         ui:
           action_id: principal.update
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
   /api/v1/principals/{principal}/avatar/{digest}:
     get:
       operationId: getPrincipalAvatar
@@ -18732,7 +18743,7 @@ paths:
           type: principal
         ui:
           action_id: principal.block
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
   /api/v1/principals/{principal}/enable:
     post:
       operationId: enablePrincipal
@@ -19053,7 +19064,7 @@ paths:
           type: principal
         ui:
           action_id: principal.unblock
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
   /api/v1/principals/{principal}/password-reset:
     post:
       operationId: resetPrincipalPassword
@@ -19356,7 +19367,7 @@ paths:
           type: principal
         ui:
           action_id: principal.password.reset
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
   /api/v1/principals/{principal}/sessions:
     get:
       operationId: listPrincipalSessions
@@ -19646,7 +19657,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
   /api/v1/principals/{principal}/sessions/{session}:
     delete:
       operationId: revokePrincipalSession
@@ -19931,7 +19942,7 @@ paths:
           type: principal
         ui:
           action_id: principal.session.revoke
-      x-leapview-object-scope: grant-management
+      x-leapview-object-scope: platform
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -20211,6 +20222,9 @@ paths:
       tags:
         - Projects
       x-apigen-operation-kind: query
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
   /api/v1/projects/{project}:
     get:
       operationId: getProject
@@ -20476,7 +20490,10 @@ paths:
       tags:
         - Projects
       x-apigen-operation-kind: query
-      x-leapview-object-scope: project-environment
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/audit-events:
     get:
       operationId: listAuditEvents
@@ -20821,6 +20838,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/authoring/catalog:
     get:
       operationId: listDashboardAuthoringCatalog
@@ -24119,6 +24137,7 @@ paths:
                   resourceId: example
                   resourceKind: project
       x-apigen-operation-kind: query
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidate-reviews/{candidate}:
     get:
       operationId: reviewProjectCandidate
@@ -24402,8 +24421,8 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: REVIEW_CANDIDATE
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidate-sessions/{candidateKey}/cancel:
     post:
       operationId: cancelProjectCandidateByKey
@@ -24745,11 +24764,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: AUTHOR_PROJECT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: AUTHOR_PROJECT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidate-sync/blobs/{digest}:
     put:
       operationId: uploadProjectCandidateSourceBlob
@@ -25088,11 +25107,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: AUTHOR_PROJECT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: AUTHOR_PROJECT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
       x-apigen-manual: true
   /api/v1/projects/{project}/candidate-sync/commit:
     post:
@@ -25449,11 +25468,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: AUTHOR_PROJECT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: AUTHOR_PROJECT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidate-sync/plan:
     post:
       operationId: planProjectCandidateSynchronization
@@ -25746,8 +25765,8 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: AUTHOR_PROJECT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates:
     post:
       operationId: startProjectCandidate
@@ -26101,11 +26120,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: AUTHOR_PROJECT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: AUTHOR_PROJECT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}:
     get:
       operationId: getProjectCandidate
@@ -26389,8 +26408,8 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: AUTHOR_PROJECT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}/artifact:
     put:
       operationId: replaceProjectCandidateArtifact
@@ -26741,11 +26760,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: AUTHOR_PROJECT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: AUTHOR_PROJECT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}/cancel:
     post:
       operationId: cancelProjectCandidate
@@ -27087,11 +27106,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: AUTHOR_PROJECT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: AUTHOR_PROJECT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}/publish:
     post:
       operationId: publishProjectCandidate
@@ -27521,11 +27540,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PUBLISH_RELEASE
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: PUBLISH_RELEASE
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}/retry:
     post:
       operationId: retryProjectCandidate
@@ -27867,11 +27886,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: AUTHOR_PROJECT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: AUTHOR_PROJECT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/connections:
     get:
       operationId: listManagedConnections
@@ -28157,7 +28176,6 @@ paths:
       tags:
         - Managed Data
       x-apigen-operation-kind: query
-      x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}:
     get:
       operationId: getManagedConnection
@@ -28432,7 +28450,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/active-revision:
     get:
       operationId: getActiveManagedDataRevision
@@ -28711,7 +28729,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/revisions:
     get:
       operationId: listManagedDataRevisions
@@ -29009,7 +29027,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/revisions/{revision}:
     get:
       operationId: getManagedDataRevision
@@ -29298,7 +29316,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions:
     get:
       operationId: listManagedDataUploadSessions
@@ -29623,7 +29641,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
     post:
       operationId: createManagedDataUploadSession
       summary: Create a managed-data upload session from a canonical manifest
@@ -30019,7 +30037,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}:
     get:
       operationId: getManagedDataUploadSession
@@ -30330,7 +30348,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/cancel:
     post:
       operationId: cancelManagedDataUploadSession
@@ -30718,7 +30736,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/events:
     get:
       operationId: listManagedDataUploadSessionEvents
@@ -31049,7 +31067,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/finalize:
     post:
       operationId: finalizeManagedDataUploadSession
@@ -31452,7 +31470,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads:
     post:
       operationId: createManagedDataS3MultipartUpload
@@ -31826,7 +31844,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/abort:
     post:
       operationId: abortManagedDataS3MultipartUpload
@@ -32195,7 +32213,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   ? /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/complete
   : post:
       operationId: completeManagedDataS3MultipartUpload
@@ -32579,7 +32597,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   ? /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/parts/{partNumber}/sign
   : post:
       operationId: signManagedDataS3MultipartPart
@@ -32898,7 +32916,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/dashboard-publications:
     get:
       operationId: listDashboardPublications
@@ -34769,6 +34787,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     post:
       operationId: createDataPolicy
       summary: Create a data policy
@@ -35080,7 +35099,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: data_policy.created
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: DATA_POLICY_INVALID
             kind: invalid
@@ -35091,6 +35110,11 @@ paths:
         target:
           parameter: project
           type: project
+        privilege: PROJECT_ADMIN
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/data-policies/{policy}:
     delete:
       operationId: deleteDataPolicy
@@ -35367,7 +35391,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: data_policy.deleted
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: DATA_POLICY_NOT_FOUND
             kind: not_found
@@ -35377,6 +35401,11 @@ paths:
         target:
           parameter: project
           type: project
+        privilege: PROJECT_ADMIN
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     get:
       operationId: getDataPolicy
       summary: Get a data policy
@@ -35650,6 +35679,10 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     patch:
       operationId: updateDataPolicy
       summary: Update a data policy
@@ -35960,7 +35993,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: data_policy.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: DATA_POLICY_INVALID
@@ -35975,6 +36008,11 @@ paths:
         target:
           parameter: project
           type: project
+        privilege: PROJECT_ADMIN
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments:
     get:
       operationId: listDeployments
@@ -36309,7 +36347,7 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: project
     post:
       operationId: createDeployment
       summary: Deploy a ready project release
@@ -36730,11 +36768,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: REQUEST_DEPLOYMENT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: REQUEST_DEPLOYMENT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}:
     get:
       operationId: getDeployment
@@ -37053,7 +37091,7 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/activate:
     post:
       operationId: activateDeployment
@@ -37469,11 +37507,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: ACTIVATE_DEPLOYMENT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: ACTIVATE_DEPLOYMENT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/approval-requests:
     post:
       operationId: requestDeploymentApproval
@@ -37822,11 +37860,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: REQUEST_DEPLOYMENT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: REQUEST_DEPLOYMENT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/approval-requests/{approval}/approve:
     post:
       operationId: approveDeployment
@@ -38186,11 +38224,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: APPROVE_DEPLOYMENT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: APPROVE_DEPLOYMENT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/approval-requests/{approval}/deny:
     post:
       operationId: denyDeploymentApproval
@@ -38550,11 +38588,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: APPROVE_DEPLOYMENT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: APPROVE_DEPLOYMENT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/approval-requests/{approval}/revoke:
     post:
       operationId: revokeDeploymentApproval
@@ -38914,11 +38952,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: APPROVE_DEPLOYMENT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: APPROVE_DEPLOYMENT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/cancel:
     post:
       operationId: cancelDeployment
@@ -39292,11 +39330,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: REQUEST_DEPLOYMENT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: REQUEST_DEPLOYMENT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/events:
     get:
       operationId: listDeploymentEvents
@@ -39614,7 +39652,7 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
-      x-leapview-object-scope: project-environment
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/retry:
     post:
       operationId: retryDeployment
@@ -40018,11 +40056,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: REQUEST_DEPLOYMENT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: REQUEST_DEPLOYMENT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/rollback:
     post:
       operationId: rollbackDeployment
@@ -40426,11 +40464,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: ROLLBACK_DEPLOYMENT
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: ROLLBACK_DEPLOYMENT
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/effective-capabilities:
     get:
       operationId: listEffectiveCapabilities
@@ -40725,6 +40763,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/grants:
     get:
       operationId: listGrants
@@ -41042,6 +41081,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     post:
       operationId: createGrant
       summary: Create a grant
@@ -41364,7 +41404,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: grant.created
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: GRANT_INVALID
             kind: invalid
@@ -41377,6 +41417,11 @@ paths:
           type: project
         ui:
           action_id: project.access.grant.create
+        privilege: PROJECT_ADMIN
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/grants/{grant}:
     delete:
       operationId: deleteGrant
@@ -41665,7 +41710,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: grant.deleted
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: GRANT_NOT_FOUND
             kind: not_found
@@ -41677,6 +41722,11 @@ paths:
           type: project
         ui:
           action_id: project.access.grant.delete
+        privilege: PROJECT_ADMIN
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     get:
       operationId: getGrant
       summary: Get a resource capability grant
@@ -41951,6 +42001,10 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     patch:
       operationId: updateGrant
       summary: Update a resource capability grant
@@ -42270,7 +42324,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: grant.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: GRANT_INVALID
@@ -42285,6 +42339,11 @@ paths:
         target:
           parameter: project
           type: project
+        privilege: PROJECT_ADMIN
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/ownership:
     post:
       operationId: transferOwnership
@@ -42583,7 +42642,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: ownership.transferred
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: OWNERSHIP_TRANSFER_INVALID
             kind: invalid
@@ -42594,6 +42653,11 @@ paths:
         target:
           parameter: project
           type: project
+        privilege: PROJECT_ADMIN
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/query-events:
     get:
       operationId: listQueryEvents
@@ -42983,6 +43047,1590 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
+  /api/v1/projects/{project}/refresh-runs:
+    get:
+      operationId: listRefreshRuns
+      summary: List refresh runs
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: !!float 1
+            maximum: !!float 200
+          example: 1
+          explode: false
+        - name: pageToken
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshRunListResponse'
+              example:
+                items:
+                  - createdAt: "2026-01-02T15:04:05Z"
+                    error: example
+                    finishedAt: "2026-01-02T15:04:05Z"
+                    id: example
+                    identity:
+                      environment: example
+                      generationId: example
+                      projectId: example
+                    pipelineId: example
+                    principalDisplayName: example
+                    principalId: example
+                    retryOf: example
+                    semanticModel: example
+                    startedAt: "2026-01-02T15:04:05Z"
+                    status: example
+                    trigger: example
+                page:
+                  nextCursor: example
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Refresh Runs
+      x-apigen-operation-kind: query
+    post:
+      operationId: createRefreshRun
+      summary: Create a refresh run
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '202':
+          description: The request has been accepted for processing, but processing has not yet completed.
+          headers:
+            location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshRunResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                error: example
+                finishedAt: "2026-01-02T15:04:05Z"
+                id: example
+                identity:
+                  environment: example
+                  generationId: example
+                  projectId: example
+                pipelineId: example
+                principalDisplayName: example
+                principalId: example
+                retryOf: example
+                semanticModel: example
+                startedAt: "2026-01-02T15:04:05Z"
+                status: example
+                trigger: example
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Refresh Runs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRunCreateRequest'
+            example:
+              pipelineId: example
+              retryOf: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: best-effort
+          payload:
+            fields:
+              - name: id
+                sensitivity: internal
+              - name: pipelineId
+                sensitivity: internal
+              - name: retryOf
+                sensitivity: internal
+              - name: semanticModel
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+              - name: trigger
+                sensitivity: public
+            retention: security
+            schema:
+              ref: RefreshQueuedAuditPayload
+            schema_version: !!float 1
+          required: true
+          success_action: refresh.queued
+        authz_mode: authenticated
+        execution:
+          cancellation: supported
+          events_operation: listRefreshRunEvents
+          guarantee: transactional
+          initial_event: refresh.queued
+          initial_state: queued
+          job_kind: refresh_pipeline
+          mode: async
+          resource_kind: refresh
+          status_operation: getRefreshRun
+        failures:
+          - code: REFRESH_RUN_CONFLICT
+            kind: conflict
+            public_detail: The refresh run conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_REFRESH_RUN
+            kind: invalid
+            public_detail: The refresh run request is invalid.
+            status_code: !!float 422
+          - code: REFRESH_PIPELINE_NOT_FOUND
+            kind: not_found
+            public_detail: Refresh pipeline not found.
+            status_code: !!float 404
+          - code: REFRESH_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Refresh service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Refresh
+        target:
+          parameter: project
+          type: project
+        ui:
+          action_id: refresh.run
+  /api/v1/projects/{project}/refresh-runs/{run}:
+    get:
+      operationId: getRefreshRun
+      summary: Get a refresh run
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: run
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshRunResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                error: example
+                finishedAt: "2026-01-02T15:04:05Z"
+                id: example
+                identity:
+                  environment: example
+                  generationId: example
+                  projectId: example
+                pipelineId: example
+                principalDisplayName: example
+                principalId: example
+                retryOf: example
+                semanticModel: example
+                startedAt: "2026-01-02T15:04:05Z"
+                status: example
+                trigger: example
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Refresh Runs
+      x-apigen-operation-kind: query
+  /api/v1/projects/{project}/refresh-runs/{run}/cancel:
+    post:
+      operationId: cancelRefreshRun
+      summary: Cancel a refresh run
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: run
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '202':
+          description: The request has been accepted for processing, but processing has not yet completed.
+          headers:
+            location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshRunResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                error: example
+                finishedAt: "2026-01-02T15:04:05Z"
+                id: example
+                identity:
+                  environment: example
+                  generationId: example
+                  projectId: example
+                pipelineId: example
+                principalDisplayName: example
+                principalId: example
+                retryOf: example
+                semanticModel: example
+                startedAt: "2026-01-02T15:04:05Z"
+                status: example
+                trigger: example
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Refresh Runs
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: best-effort
+          payload:
+            fields:
+              - name: id
+                sensitivity: internal
+              - name: pipelineId
+                sensitivity: internal
+              - name: status
+                sensitivity: public
+              - name: trigger
+                sensitivity: public
+            retention: security
+            schema:
+              ref: RefreshCancelledAuditPayload
+            schema_version: !!float 1
+          required: true
+          success_action: refresh.cancelled
+        authz_mode: authenticated
+        failures:
+          - code: REFRESH_RUN_NOT_CANCELLABLE
+            kind: not_cancellable
+            public_detail: Only queued refresh runs can be cancelled.
+            status_code: !!float 409
+          - code: REFRESH_RUN_NOT_FOUND
+            kind: not_found
+            public_detail: Refresh run not found.
+            status_code: !!float 404
+          - code: REFRESH_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Refresh service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Refresh
+        target:
+          parameter: project
+          type: project
+        ui:
+          action_id: refresh.cancel
+  /api/v1/projects/{project}/refresh-runs/{run}/events:
+    get:
+      operationId: listRefreshRunEvents
+      summary: List or stream refresh run events
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: run
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: accept
+          in: header
+          required: false
+          schema:
+            type: string
+          example: example
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+          example: example
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: !!float 1
+            maximum: !!float 200
+          example: 1
+          explode: false
+        - name: pageToken
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncEventListResponse'
+              example:
+                items:
+                  - createdAt: "2026-01-02T15:04:05Z"
+                    data:
+                      key: example
+                    error:
+                      code: example
+                      detail: example
+                    event: example
+                    id: example
+                    progress:
+                      current: 1
+                      message: example
+                      percent: !!float 1
+                      total: 1
+                    resourceId: example
+                    resourceType: example
+                page:
+                  nextCursor: example
+            text/event-stream:
+              schema:
+                type: string
+              example: example
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Refresh Runs
+      x-apigen-operation-kind: query
   /api/v1/projects/{project}/releases:
     get:
       operationId: listReleases
@@ -43329,8 +44977,8 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PUBLISH_RELEASE
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     post:
       operationId: createRelease
       summary: Create a draft project release
@@ -43766,11 +45414,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PUBLISH_RELEASE
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: PUBLISH_RELEASE
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/releases/{release}:
     get:
       operationId: getRelease
@@ -44101,8 +45749,8 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PUBLISH_RELEASE
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/releases/{release}/artifact:
     put:
       operationId: uploadReleaseArtifact
@@ -44446,11 +46094,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PUBLISH_RELEASE
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: PUBLISH_RELEASE
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
       x-apigen-manual: true
   /api/v1/projects/{project}/releases/{release}/events:
     get:
@@ -44771,8 +46419,8 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PUBLISH_RELEASE
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/releases/{release}/finalize:
     post:
       operationId: finalizeRelease
@@ -45170,11 +46818,11 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PUBLISH_RELEASE
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: PUBLISH_RELEASE
-      x-leapview-object-scope: project-environment
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/role-bindings:
     get:
       operationId: listRoleBindings
@@ -45487,6 +47135,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     post:
       operationId: createRoleBinding
       summary: Create a role binding
@@ -45815,6 +47464,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/role-bindings/{binding}:
     delete:
       operationId: deleteRoleBinding
@@ -46117,6 +47767,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     get:
       operationId: getRoleBinding
       summary: Get a project role binding
@@ -46391,6 +48042,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     patch:
       operationId: updateRoleBinding
       summary: Update a role binding
@@ -46718,6 +48370,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/roles:
     get:
       operationId: listProjectRoles
@@ -47004,6 +48657,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/targets/{target}/connection-bindings:
     get:
       operationId: listTargetConnectionBindings
@@ -47301,6 +48955,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
     post:
       operationId: createTargetConnectionBinding
       summary: Create a target connection binding
@@ -47693,6 +49348,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}:
     get:
       operationId: getTargetConnectionBinding
@@ -47997,6 +49653,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: connection
     put:
       operationId: updateTargetConnectionBinding
       summary: Update target connection binding metadata
@@ -48386,6 +50043,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/disable:
     post:
       operationId: disableTargetConnectionBinding
@@ -48755,6 +50413,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/enable:
     post:
       operationId: enableTargetConnectionBinding
@@ -49120,6 +50779,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/health:
     get:
       operationId: getTargetConnectionBindingHealth
@@ -49410,6 +51070,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_READ
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/plan:
     post:
       operationId: planTargetConnectionBindingChange
@@ -49720,6 +51381,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/refresh:
     post:
       operationId: refreshTargetConnectionBinding
@@ -50083,6 +51745,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/test:
     post:
       operationId: testTargetConnectionBinding
@@ -50447,1567 +52110,7 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_MANAGE
-  /api/v1/refresh-runs:
-    get:
-      operationId: listRefreshRuns
-      summary: List refresh runs
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
-            minimum: !!float 1
-            maximum: !!float 200
-          example: 1
-          explode: false
-        - name: pageToken
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 2048
-          example: example
-          explode: false
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RefreshRunListResponse'
-              example:
-                items:
-                  - createdAt: "2026-01-02T15:04:05Z"
-                    error: example
-                    finishedAt: "2026-01-02T15:04:05Z"
-                    id: example
-                    identity:
-                      environment: example
-                      generationId: example
-                      projectId: example
-                    pipelineId: example
-                    principalDisplayName: example
-                    principalId: example
-                    retryOf: example
-                    semanticModel: example
-                    startedAt: "2026-01-02T15:04:05Z"
-                    status: example
-                    trigger: example
-                page:
-                  nextCursor: example
-        '400':
-          description: The server could not understand the request due to invalid syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Refresh Runs
-      x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
-    post:
-      operationId: createRefreshRun
-      summary: Create a refresh run
-      parameters:
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-          example: example
-      responses:
-        '202':
-          description: The request has been accepted for processing, but processing has not yet completed.
-          headers:
-            location:
-              required: true
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RefreshRunResponse'
-              example:
-                createdAt: "2026-01-02T15:04:05Z"
-                error: example
-                finishedAt: "2026-01-02T15:04:05Z"
-                id: example
-                identity:
-                  environment: example
-                  generationId: example
-                  projectId: example
-                pipelineId: example
-                principalDisplayName: example
-                principalId: example
-                retryOf: example
-                semanticModel: example
-                startedAt: "2026-01-02T15:04:05Z"
-                status: example
-                trigger: example
-        '400':
-          description: The server could not understand the request due to invalid syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Refresh Runs
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RefreshRunCreateRequest'
-            example:
-              pipelineId: example
-              retryOf: example
-      x-apigen-operation-kind: command
-      x-apigen-command:
-        additional_exposures:
-          - ui
-        audit:
-          guarantee: best-effort
-          payload:
-            fields:
-              - name: id
-                sensitivity: internal
-              - name: pipelineId
-                sensitivity: internal
-              - name: retryOf
-                sensitivity: internal
-              - name: semanticModel
-                sensitivity: internal
-              - name: status
-                sensitivity: public
-              - name: trigger
-                sensitivity: public
-            retention: security
-            schema:
-              ref: RefreshQueuedAuditPayload
-            schema_version: !!float 1
-          required: true
-          success_action: refresh.queued
-        authz_mode: privilege
-        execution:
-          cancellation: supported
-          events_operation: listRefreshRunEvents
-          guarantee: transactional
-          initial_event: refresh.queued
-          initial_state: queued
-          job_kind: refresh_pipeline
-          mode: async
-          resource_kind: refresh
-          status_operation: getRefreshRun
-        failures:
-          - code: REFRESH_RUN_CONFLICT
-            kind: conflict
-            public_detail: The refresh run conflicts with its current state.
-            status_code: !!float 409
-          - code: REFRESH_RUN_FORBIDDEN
-            kind: forbidden
-            public_detail: The refresh run is not permitted.
-            status_code: !!float 403
-          - code: INVALID_REFRESH_RUN
-            kind: invalid
-            public_detail: The refresh run request is invalid.
-            status_code: !!float 422
-          - code: REFRESH_SERVICE_UNAVAILABLE
-            kind: unavailable
-            public_detail: Refresh service is unavailable.
-            status_code: !!float 503
-        idempotency: required
-        owner: LeapViewAPI.Refresh
-        ui:
-          action_id: refresh.run
-        privilege: RESOURCE_USE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_USE
-  /api/v1/refresh-runs/{run}:
-    get:
-      operationId: getRefreshRun
-      summary: Get a refresh run
-      parameters:
-        - name: run
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RefreshRunResponse'
-              example:
-                createdAt: "2026-01-02T15:04:05Z"
-                error: example
-                finishedAt: "2026-01-02T15:04:05Z"
-                id: example
-                identity:
-                  environment: example
-                  generationId: example
-                  projectId: example
-                pipelineId: example
-                principalDisplayName: example
-                principalId: example
-                retryOf: example
-                semanticModel: example
-                startedAt: "2026-01-02T15:04:05Z"
-                status: example
-                trigger: example
-        '400':
-          description: The server could not understand the request due to invalid syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Refresh Runs
-      x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
-  /api/v1/refresh-runs/{run}/cancel:
-    post:
-      operationId: cancelRefreshRun
-      summary: Cancel a refresh run
-      parameters:
-        - name: run
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-          example: example
-      responses:
-        '202':
-          description: The request has been accepted for processing, but processing has not yet completed.
-          headers:
-            location:
-              required: true
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RefreshRunResponse'
-              example:
-                createdAt: "2026-01-02T15:04:05Z"
-                error: example
-                finishedAt: "2026-01-02T15:04:05Z"
-                id: example
-                identity:
-                  environment: example
-                  generationId: example
-                  projectId: example
-                pipelineId: example
-                principalDisplayName: example
-                principalId: example
-                retryOf: example
-                semanticModel: example
-                startedAt: "2026-01-02T15:04:05Z"
-                status: example
-                trigger: example
-        '400':
-          description: The server could not understand the request due to invalid syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Refresh Runs
-      x-apigen-operation-kind: command
-      x-apigen-command:
-        additional_exposures:
-          - ui
-        audit:
-          guarantee: best-effort
-          payload:
-            fields:
-              - name: id
-                sensitivity: internal
-              - name: pipelineId
-                sensitivity: internal
-              - name: status
-                sensitivity: public
-              - name: trigger
-                sensitivity: public
-            retention: security
-            schema:
-              ref: RefreshCancelledAuditPayload
-            schema_version: !!float 1
-          required: true
-          success_action: refresh.cancelled
-        authz_mode: privilege
-        failures:
-          - code: REFRESH_RUN_FORBIDDEN
-            kind: forbidden
-            public_detail: The refresh run is not permitted.
-            status_code: !!float 403
-          - code: REFRESH_RUN_NOT_CANCELLABLE
-            kind: not_cancellable
-            public_detail: Only queued refresh runs can be cancelled.
-            status_code: !!float 409
-          - code: REFRESH_RUN_NOT_FOUND
-            kind: not_found
-            public_detail: Refresh run not found.
-            status_code: !!float 404
-          - code: REFRESH_SERVICE_UNAVAILABLE
-            kind: unavailable
-            public_detail: Refresh service is unavailable.
-            status_code: !!float 503
-        idempotency: required
-        owner: LeapViewAPI.Refresh
-        target:
-          parameter: run
-          type: run
-        ui:
-          action_id: refresh.cancel
-        privilege: RESOURCE_USE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_USE
-  /api/v1/refresh-runs/{run}/events:
-    get:
-      operationId: listRefreshRunEvents
-      summary: List or stream refresh run events
-      parameters:
-        - name: run
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-        - name: accept
-          in: header
-          required: false
-          schema:
-            type: string
-          example: example
-        - name: Last-Event-ID
-          in: header
-          required: false
-          schema:
-            type: string
-          example: example
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
-            minimum: !!float 1
-            maximum: !!float 200
-          example: 1
-          explode: false
-        - name: pageToken
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 2048
-          example: example
-          explode: false
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AsyncEventListResponse'
-              example:
-                items:
-                  - createdAt: "2026-01-02T15:04:05Z"
-                    data:
-                      key: example
-                    error:
-                      code: example
-                      detail: example
-                    event: example
-                    id: example
-                    progress:
-                      current: 1
-                      message: example
-                      percent: !!float 1
-                      total: 1
-                    resourceId: example
-                    resourceType: example
-                page:
-                  nextCursor: example
-            text/event-stream:
-              schema:
-                type: string
-              example: example
-        '400':
-          description: The server could not understand the request due to invalid syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Refresh Runs
-      x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
+      x-leapview-object-scope: connection
   /api/v1/search:
     get:
       operationId: search
@@ -52015,31 +52118,24 @@ paths:
       parameters:
         - name: q
           in: query
-          required: false
-          schema:
-            type: string
-          example: example
-          explode: false
-        - name: type
-          in: query
-          required: false
-          schema:
-            type: array
-            items:
-              $ref: '#/components/schemas/SearchResultType'
-          example:
-            - connection
-          explode: false
-        - name: contextDashboard
-          in: query
-          required: false
+          required: true
           schema:
             type: string
             minLength: 1
             maxLength: 200
           example: example
           explode: false
-        - name: contextPage
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/SearchKind'
+          example:
+            - project
+          explode: false
+        - name: domain
           in: query
           required: false
           schema:
@@ -52056,7 +52152,7 @@ paths:
             maximum: !!float 200
           example: 1
           explode: false
-        - name: pageToken
+        - name: cursor
           in: query
           required: false
           schema:
@@ -52074,21 +52170,17 @@ paths:
                 $ref: '#/components/schemas/SearchResponse'
               example:
                 items:
-                  - context:
-                      - current_page
-                    description: example
+                  - description: example
+                    displayName: example
+                    domain: example
                     href: example
-                    locations:
-                      - dashboardId: example
-                        dashboardName: example
-                        href: example
-                        pageId: example
-                        pageName: example
                     name: example
+                    owner: example
                     reference:
                       id: example
-                      type: connection
-                    visualType: example
+                      kind: project
+                    tags:
+                      - example
                 page:
                   nextCursor: example
         '400':
@@ -56255,6 +56347,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
     post:
       operationId: createServicePrincipal
       summary: Create a service principal
@@ -56559,6 +56652,7 @@ paths:
         owner: LeapViewAPI.Access
         ui:
           action_id: service-account.create
+      x-leapview-object-scope: platform
   /api/v1/service-principals/{servicePrincipal}:
     delete:
       operationId: deleteServicePrincipal
@@ -56837,6 +56931,7 @@ paths:
           type: servicePrincipal
         ui:
           action_id: service-account.delete
+      x-leapview-object-scope: platform
     get:
       operationId: getServicePrincipal
       summary: Get a service principal
@@ -57100,6 +57195,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
     patch:
       operationId: updateServicePrincipal
       summary: Update a service principal
@@ -57405,6 +57501,7 @@ paths:
         target:
           parameter: servicePrincipal
           type: servicePrincipal
+      x-leapview-object-scope: platform
   /api/v1/service-principals/{servicePrincipal}/secrets:
     get:
       operationId: listServicePrincipalSecrets
@@ -57690,6 +57787,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
     post:
       operationId: createServicePrincipalSecret
       summary: Create a service principal secret
@@ -58004,6 +58102,7 @@ paths:
           type: servicePrincipal
         ui:
           action_id: service-account.secret.create
+      x-leapview-object-scope: platform
   /api/v1/service-principals/{servicePrincipal}/secrets/{secret}:
     delete:
       operationId: revokeServicePrincipalSecret
@@ -58288,6 +58387,7 @@ paths:
           type: servicePrincipal
         ui:
           action_id: service-account.secret.revoke
+      x-leapview-object-scope: platform
     get:
       operationId: getServicePrincipalSecret
       summary: Get service-principal secret metadata
@@ -58556,6 +58656,7 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
 security:
   - BearerAuth: []
 components:
@@ -69022,54 +69123,33 @@ components:
               color: accent
               icon: circle
             value: !!float 1
-    SearchContextTag:
+    SearchKind:
       type: string
       enum:
-        - current_page
-        - current_dashboard
-      example: current_page
-    SearchLocation:
-      type: object
-      required:
-        - href
-      properties:
-        dashboardId:
-          type: string
-          example: example
-        dashboardName:
-          type: string
-          example: example
-        pageId:
-          type: string
-          example: example
-        pageName:
-          type: string
-          example: example
-        href:
-          type: string
-          example: example
-      example:
-        dashboardId: example
-        dashboardName: example
-        href: example
-        pageId: example
-        pageName: example
+        - project
+        - connection
+        - source
+        - model
+        - semantic_model
+        - pipeline
+        - dashboard
+      example: project
     SearchReference:
       type: object
       required:
-        - type
         - id
+        - kind
       properties:
-        type:
-          $ref: '#/components/schemas/SearchResultType'
         id:
           type: string
           minLength: 1
           maxLength: 200
           example: example
+        kind:
+          $ref: '#/components/schemas/SearchKind'
       example:
         id: example
-        type: connection
+        kind: project
     SearchResponse:
       type: object
       required:
@@ -69081,40 +69161,32 @@ components:
           items:
             $ref: '#/components/schemas/SearchResult'
           example:
-            - context:
-                - current_page
-              description: example
+            - description: example
+              displayName: example
+              domain: example
               href: example
-              locations:
-                - dashboardId: example
-                  dashboardName: example
-                  href: example
-                  pageId: example
-                  pageName: example
               name: example
+              owner: example
               reference:
                 id: example
-                type: connection
-              visualType: example
+                kind: project
+              tags:
+                - example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - context:
-              - current_page
-            description: example
+          - description: example
+            displayName: example
+            domain: example
             href: example
-            locations:
-              - dashboardId: example
-                dashboardName: example
-                href: example
-                pageId: example
-                pageName: example
             name: example
+            owner: example
             reference:
               id: example
-              type: connection
-            visualType: example
+              kind: project
+            tags:
+              - example
         page:
           nextCursor: example
     SearchResult:
@@ -69122,72 +69194,46 @@ components:
       required:
         - reference
         - name
-        - href
-        - locations
-        - context
+        - tags
       properties:
         reference:
           $ref: '#/components/schemas/SearchReference'
         name:
           type: string
           example: example
+        displayName:
+          type: string
+          example: example
         description:
           type: string
           example: example
-        visualType:
+        domain:
           type: string
           example: example
+        owner:
+          type: string
+          example: example
+        tags:
+          type: array
+          items:
+            type: string
+          example:
+            - example
         href:
           type: string
           example: example
-        locations:
-          type: array
-          items:
-            $ref: '#/components/schemas/SearchLocation'
-          example:
-            - dashboardId: example
-              dashboardName: example
-              href: example
-              pageId: example
-              pageName: example
-        context:
-          type: array
-          items:
-            $ref: '#/components/schemas/SearchContextTag'
-          example:
-            - current_page
       example:
-        context:
-          - current_page
         description: example
+        displayName: example
+        domain: example
         href: example
-        locations:
-          - dashboardId: example
-            dashboardName: example
-            href: example
-            pageId: example
-            pageName: example
         name: example
+        owner: example
         reference:
           id: example
-          type: connection
-        visualType: example
-    SearchResultType:
-      type: string
-      enum:
-        - connection
-        - source
-        - model_table
-        - semantic_model
-        - semantic_table
-        - field
-        - measure
-        - dashboard
-        - page
-        - visual
-        - filter
-        - refresh_pipeline
-      example: connection
+          kind: project
+        tags:
+          - example
     SecurableObjectResponse:
       type: object
       required:

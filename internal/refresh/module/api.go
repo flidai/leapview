@@ -113,19 +113,19 @@ func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) 
 	}
 }
 
-func (m *Module) CreateRefreshRun(w http.ResponseWriter, r *http.Request) {
-	m.handler.CreateRun(w, r)
+func (m *Module) CreateRefreshRun(w http.ResponseWriter, r *http.Request, project string) {
+	m.handler.CreateRun(w, r, project)
 }
 
-func (m *Module) ListRefreshRuns(w http.ResponseWriter, r *http.Request) {
-	m.handler.ListRuns(w, r)
+func (m *Module) ListRefreshRuns(w http.ResponseWriter, r *http.Request, project string) {
+	m.handler.ListRuns(w, r, project)
 }
 
-func (m *Module) GetRefreshRun(w http.ResponseWriter, r *http.Request, _ string) {
-	m.handler.GetRun(w, r)
+func (m *Module) GetRefreshRun(w http.ResponseWriter, r *http.Request, project, runID string) {
+	m.handler.GetRun(w, r, project, runID)
 }
 
-func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, runID string) {
+func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, project, runID string) {
 	operationID := refreshgen.GenCommandOperationCancelRefreshRun()
 	if m == nil || m.runs == nil {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
@@ -133,6 +133,10 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, runID 
 	}
 	identity, identityErr := m.handler.ServingIdentity(r)
 	if identityErr != nil {
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
+		return
+	}
+	if !m.handler.ProjectMatchesIdentity(project, identity) {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
@@ -152,7 +156,7 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, runID 
 		return
 	}
 	if !allowed {
-		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("forbidden", "Refresh run is not accessible"))
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
 	row, err := m.runs.CancelRun(r.Context(), identity, runID)
@@ -177,7 +181,7 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, runID 
 		writeRefreshCommandFailure(m, w, r, operationID, err)
 		return
 	}
-	w.Header().Set("Location", "/api/v1/refresh-runs/"+runID)
+	w.Header().Set("Location", "/api/v1/projects/"+identity.ProjectID.String()+"/refresh-runs/"+runID)
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
 }
 
@@ -185,13 +189,17 @@ func writeRefreshCommandFailure(_ *Module, w http.ResponseWriter, r *http.Reques
 	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, refreshgen.GetAPIGenCommandFailureContracts, err)
 }
 
-func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, runID string, limit *int32, pageToken *string) {
+func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, project, runID string, limit *int32, pageToken *string) {
 	if m == nil || m.runs == nil {
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "REFRESH_SERVICE_UNAVAILABLE", "Refresh service is unavailable", nil)
 		return
 	}
 	identity, identityErr := m.handler.ServingIdentity(r)
 	if identityErr != nil {
+		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
+		return
+	}
+	if !m.handler.ProjectMatchesIdentity(project, identity) {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return
 	}
@@ -207,11 +215,11 @@ func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, ru
 	}
 	allowed, err := m.authorize(r, identity, response.PipelineID, false)
 	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "REFRESH_AUTHORIZATION_FAILED", "Refresh authorization failed", nil)
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "REFRESH_AUTHORIZATION_UNAVAILABLE", "Refresh authorization is unavailable", nil)
 		return
 	}
 	if !allowed {
-		apitransport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Refresh run is not accessible", nil)
+		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return
 	}
 	if m.events == nil {
@@ -231,7 +239,7 @@ func (m *Module) authorize(r *http.Request, identity projectgraph.ServingIdentit
 		authorize = m.handler.AuthorizePipelineRun
 	}
 	if authorize == nil {
-		return true, nil
+		return false, errors.New("refresh authorization is unavailable")
 	}
 	return authorize(r, identity, pipelineID)
 }
