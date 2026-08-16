@@ -73,8 +73,12 @@ type ActivationInput struct {
 type Verification struct{ Digest string }
 
 func ValidateCreate(input CreateInput) error {
+	rawID, rawArtifact, rawRequest, rawActor, rawPrior := input.ID, input.ArtifactDigest, input.RequestDigest, input.CreatedBy, input.PriorGenerationID
 	input.ID, input.ArtifactDigest, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
 	input.PriorGenerationID = strings.TrimSpace(input.PriorGenerationID)
+	if rawID != input.ID || rawArtifact != input.ArtifactDigest || rawRequest != input.RequestDigest || rawActor != input.CreatedBy || rawPrior != input.PriorGenerationID {
+		return fmt.Errorf("deployment fields must be canonical")
+	}
 	if input.ID == "" || input.RequestDigest == "" || input.CreatedBy == "" {
 		return fmt.Errorf("deployment id, project, environment, generation, request digest, and actor are required")
 	}

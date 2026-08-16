@@ -10,7 +10,7 @@ SELECT * FROM serving_states WHERE id = ?;
 -- name: GetActiveServingState :one
 SELECT d.*
 FROM serving_states d
-JOIN project_active_serving_states active ON active.serving_state_id = d.id
+JOIN project_active_serving_states active ON active.generation_id = d.id
 WHERE active.project_id = ? AND active.environment = ?;
 
 -- name: ListActiveServingStateScopes :many
@@ -110,15 +110,15 @@ SET status = 'active', activated_at = CURRENT_TIMESTAMP, error = ''
 WHERE id = ?;
 
 -- name: InsertActiveServingState :execrows
-INSERT INTO project_active_serving_states (project_id, environment, serving_state_id, updated_at)
+INSERT INTO project_active_serving_states (project_id, environment, generation_id, updated_at)
 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
 ON CONFLICT(project_id, environment) DO NOTHING;
 
 -- name: CompareAndSwapActiveServingState :execrows
 UPDATE project_active_serving_states
-SET serving_state_id = sqlc.arg(serving_state_id), updated_at = CURRENT_TIMESTAMP
+SET generation_id = sqlc.arg(generation_id), updated_at = CURRENT_TIMESTAMP
 WHERE project_id = sqlc.arg(project_id) AND environment = sqlc.arg(environment)
-  AND serving_state_id = sqlc.arg(expected_active_id);
+  AND generation_id = sqlc.arg(expected_generation_id);
 
 -- name: MarkOtherServingStatesInactive :exec
 UPDATE serving_states

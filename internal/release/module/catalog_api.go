@@ -57,35 +57,6 @@ func (m *Module) GetProject(w http.ResponseWriter, r *http.Request, projectID st
 	apitransport.WriteJSON(w, http.StatusOK, item)
 }
 
-func (m *Module) ListProjectWorkspaces(w http.ResponseWriter, r *http.Request, projectID string, limit *int32, pageToken *string) {
-	if m == nil || m.catalog == nil {
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project not found", nil)
-		return
-	}
-	rows, err := m.catalog.ListProjectWorkspaces(r.Context(), projectID, m.environment)
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PROJECT_WORKSPACES_FAILED", "Project workspaces could not be loaded", nil)
-		return
-	}
-	items := make([]projectapi.ProjectWorkspaceResponse, 0, len(rows))
-	for _, row := range rows {
-		item := projectapi.ProjectWorkspaceResponse{ID: row.ID, Title: row.Title}
-		if row.Description != "" {
-			item.Description = &row.Description
-		}
-		if row.ActiveServingStateID != "" {
-			item.ActiveServingStateID = &row.ActiveServingStateID
-		}
-		items = append(items, item)
-	}
-	page, next, err := apitransport.KeysetPage(items, limit, pageToken, func(item projectapi.ProjectWorkspaceResponse) string { return item.ID })
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_CURSOR", err.Error(), nil)
-		return
-	}
-	apitransport.WriteJSON(w, http.StatusOK, projectapi.ProjectWorkspaceListResponse{Items: page, Page: projectapi.PageInfo{NextCursor: next}})
-}
-
 func (m *Module) ListManagedConnections(w http.ResponseWriter, r *http.Request, projectID string, limit *int32, pageToken *string) {
 	if m == nil || m.catalog == nil {
 		apitransport.WriteJSON(w, http.StatusOK, releaseapi.ManagedConnectionListResponse{Items: []releaseapi.ManagedConnectionResponse{}, Page: releaseapi.PageInfo{}})

@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/deployment"
 	platformdb "github.com/flidai/leapview/internal/deployment/internal/db"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func (r *Repository) StartCandidate(ctx context.Context, candidate deployment.Candidate, maxActivePerOwner int) (deployment.Candidate, bool, error) {
@@ -34,20 +35,18 @@ func (r *Repository) StartCandidate(ctx context.Context, candidate deployment.Ca
 	// commit before this transaction and be observed here, or wait until this
 	// candidate commits. This explicit serialization fence prevents a cutover
 	// from committing between the base read and candidate commit.
-	baseGeneration, baseErr := queries.GetActiveProjectCandidateBaseGeneration(ctx, platformdb.GetActiveProjectCandidateBaseGenerationParams{
-		ProjectID: candidate.ProjectID, Environment: candidate.Environment,
-	})
-	if errors.Is(baseErr, sql.ErrNoRows) {
-		baseGeneration = deployment.CandidateBaseGenerationEmpty
-	} else if baseErr != nil {
+	baseScope, baseErr := r.activeCandidateBaseScopeTx(ctx, queries, candidate.Scope.ProjectID, candidate.Scope.Environment)
+	if baseErr != nil {
 		return deployment.Candidate{}, false, baseErr
 	}
-	candidate.BaseGeneration = baseGeneration
+	candidate.Scope.ProjectID = baseScope.ProjectID
+	candidate.Scope.Environment = baseScope.Environment
+	candidate.Scope.BaseGenerationID = baseScope.BaseGenerationID
 	if r.candidateBaseReadHook != nil {
 		r.candidateBaseReadHook()
 	}
 	existing, err := queries.GetActiveProjectCandidateSession(ctx, platformdb.GetActiveProjectCandidateSessionParams{
-		TargetID: candidate.TargetID, ProjectID: candidate.ProjectID,
+		TargetID: candidate.TargetID, ProjectID: candidate.Scope.ProjectID.String(),
 		OwnerPrincipalID: candidate.OwnerID, CandidateKey: candidate.Key,
 	})
 	if err == nil {
@@ -62,7 +61,7 @@ func (r *Repository) StartCandidate(ctx context.Context, candidate deployment.Ca
 		// activation advanced while the client was offline, retire the stale
 		// row in this transaction before creating its replacement. This keeps
 		// the active-session uniqueness fence intact for concurrent starts.
-		if mapped.BaseGeneration != candidate.BaseGeneration {
+		if mapped.Scope.BaseGenerationID != candidate.Scope.BaseGenerationID {
 			changed, cancelErr := queries.CancelSupersededProjectCandidate(ctx, platformdb.CancelSupersededProjectCandidateParams{
 				CancelledAt: sql.NullString{String: now, Valid: true}, UpdatedAt: now, ID: mapped.ID,
 			})
@@ -101,18 +100,18 @@ func (r *Repository) StartCandidate(ctx context.Context, candidate deployment.Ca
 
 func (r *Repository) ActiveCandidate(
 	ctx context.Context,
-	targetID,
-	projectID,
+	targetID string,
+	projectID projectgraph.ResourceID,
 	ownerID,
 	key string,
 ) (deployment.Candidate, error) {
-	if r == nil || r.q == nil {
+	if r == nil || r.q == nil || targetID == "" || targetID != strings.TrimSpace(targetID) || projectID.Validate() != nil || projectID.String() != strings.TrimSpace(projectID.String()) || ownerID == "" || ownerID != strings.TrimSpace(ownerID) || key != strings.TrimSpace(key) {
 		return deployment.Candidate{}, deployment.ErrCandidateNotFound
 	}
 	row, err := r.q.GetActiveProjectCandidateByKey(
 		ctx,
 		platformdb.GetActiveProjectCandidateByKeyParams{
-			TargetID: targetID, ProjectID: projectID,
+			TargetID: targetID, ProjectID: projectID.String(),
 			OwnerPrincipalID: ownerID, CandidateKey: key,
 		},
 	)
@@ -126,10 +125,10 @@ func (r *Repository) ActiveCandidate(
 }
 
 func (r *Repository) CandidateByID(ctx context.Context, id string) (deployment.Candidate, error) {
-	if r == nil || r.q == nil || strings.TrimSpace(id) == "" {
+	if r == nil || r.q == nil || id == "" || id != strings.TrimSpace(id) {
 		return deployment.Candidate{}, deployment.ErrCandidateNotFound
 	}
-	row, err := r.q.GetProjectCandidate(ctx, strings.TrimSpace(id))
+	row, err := r.q.GetProjectCandidate(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return deployment.Candidate{}, deployment.ErrCandidateNotFound
 	}
@@ -139,20 +138,26 @@ func (r *Repository) CandidateByID(ctx context.Context, id string) (deployment.C
 	return mapCandidate(row)
 }
 
-func (r *Repository) ActiveCandidateBaseGeneration(ctx context.Context, projectID, environment string) (string, error) {
-	if r == nil || r.q == nil || strings.TrimSpace(projectID) == "" || strings.TrimSpace(environment) == "" {
-		return "", fmt.Errorf("candidate project and environment are required")
+func (r *Repository) ActiveCandidateBaseScope(ctx context.Context, projectID projectgraph.ResourceID, environment string) (deployment.CandidateScope, error) {
+	if r == nil || r.q == nil || projectID.Validate() != nil || environment == "" || environment != strings.TrimSpace(environment) {
+		return deployment.CandidateScope{}, fmt.Errorf("candidate project and environment are required")
 	}
-	generation, err := r.q.GetActiveProjectCandidateBaseGeneration(ctx, platformdb.GetActiveProjectCandidateBaseGenerationParams{
-		ProjectID: strings.TrimSpace(projectID), Environment: strings.TrimSpace(environment),
-	})
+	return r.activeCandidateBaseScopeTx(ctx, r.q, projectID, environment)
+}
+
+type candidateGenerationQuerier interface {
+	GetActiveProjectCandidateBaseGeneration(context.Context, platformdb.GetActiveProjectCandidateBaseGenerationParams) (string, error)
+}
+
+func (r *Repository) activeCandidateBaseScopeTx(ctx context.Context, q candidateGenerationQuerier, projectID projectgraph.ResourceID, environment string) (deployment.CandidateScope, error) {
+	generation, err := q.GetActiveProjectCandidateBaseGeneration(ctx, platformdb.GetActiveProjectCandidateBaseGenerationParams{ProjectID: projectID.String(), Environment: environment})
 	if errors.Is(err, sql.ErrNoRows) {
-		return deployment.CandidateBaseGenerationEmpty, nil
+		return deployment.CandidateScope{ProjectID: projectID, Environment: environment}, nil
 	}
 	if err != nil {
-		return "", err
+		return deployment.CandidateScope{}, err
 	}
-	return generation, nil
+	return deployment.CandidateScope{ProjectID: projectID, Environment: environment, BaseGenerationID: generation}, nil
 }
 
 func (r *Repository) SaveCandidate(ctx context.Context, candidate deployment.Candidate, expectedRevision int64) (deployment.Candidate, error) {
@@ -178,21 +183,21 @@ func (r *Repository) SaveCandidate(ctx context.Context, candidate deployment.Can
 }
 
 func (r *Repository) ExpireCandidates(ctx context.Context, targetID string, now time.Time) (int64, error) {
-	if r == nil || r.q == nil || strings.TrimSpace(targetID) == "" || now.IsZero() {
+	if r == nil || r.q == nil || targetID == "" || targetID != strings.TrimSpace(targetID) || now.IsZero() {
 		return 0, fmt.Errorf("candidate target and reconciliation time are required")
 	}
 	value := formatCandidateTime(now)
 	return r.q.ExpireProjectCandidates(ctx, platformdb.ExpireProjectCandidatesParams{
-		ExpiredAt: nullableCandidateTime(now), UpdatedAt: value, TargetID: strings.TrimSpace(targetID), ExpiresAt: value,
+		ExpiredAt: nullableCandidateTime(now), UpdatedAt: value, TargetID: targetID, ExpiresAt: value,
 	})
 }
 
 func candidateCreateParams(candidate deployment.Candidate) platformdb.CreateProjectCandidateParams {
 	return platformdb.CreateProjectCandidateParams{
-		ID: candidate.ID, ProjectID: candidate.ProjectID, TargetID: candidate.TargetID,
-		Environment: candidate.Environment, OwnerPrincipalID: candidate.OwnerID,
+		ID: candidate.ID, ProjectID: candidate.Scope.ProjectID.String(), TargetID: candidate.TargetID,
+		Environment: candidate.Scope.Environment, OwnerPrincipalID: candidate.OwnerID,
 		CandidateKey:   candidate.Key,
-		BaseGeneration: candidate.BaseGeneration, ArtifactDigest: candidate.ArtifactDigest,
+		BaseGeneration: candidate.Scope.BaseGenerationID, ArtifactDigest: candidate.ArtifactDigest,
 		ProvenanceDigest: candidate.ProvenanceDigest,
 		Status:           string(candidate.Status), FailureReason: candidate.FailureReason,
 		ExpiresAt: formatCandidateTime(candidate.ExpiresAt), CreatedAt: formatCandidateTime(candidate.CreatedAt),
@@ -203,6 +208,14 @@ func candidateCreateParams(candidate deployment.Candidate) platformdb.CreateProj
 }
 
 func mapCandidate(row platformdb.ProjectCandidate) (deployment.Candidate, error) {
+	projectID, err := projectgraph.NewResourceID(row.ProjectID)
+	if err != nil {
+		return deployment.Candidate{}, fmt.Errorf("parse candidate project: %w", err)
+	}
+	scope := deployment.CandidateScope{ProjectID: projectID, Environment: row.Environment, BaseGenerationID: row.BaseGeneration}
+	if err := scope.Validate(); err != nil {
+		return deployment.Candidate{}, fmt.Errorf("parse candidate scope: %w", err)
+	}
 	expiresAt, err := parseCandidateTime(row.ExpiresAt)
 	if err != nil {
 		return deployment.Candidate{}, fmt.Errorf("parse candidate expiry: %w", err)
@@ -228,9 +241,8 @@ func mapCandidate(row platformdb.ProjectCandidate) (deployment.Candidate, error)
 		return deployment.Candidate{}, fmt.Errorf("parse candidate expiration: %w", err)
 	}
 	candidate := deployment.Candidate{
-		ID: row.ID, ProjectID: row.ProjectID, Key: row.CandidateKey,
-		TargetID: row.TargetID, Environment: row.Environment,
-		OwnerID: row.OwnerPrincipalID, BaseGeneration: row.BaseGeneration, ArtifactDigest: row.ArtifactDigest,
+		ID: row.ID, Key: row.CandidateKey, TargetID: row.TargetID,
+		OwnerID: row.OwnerPrincipalID, Scope: scope, ArtifactDigest: row.ArtifactDigest,
 		ProvenanceDigest: row.ProvenanceDigest,
 		Status:           deployment.CandidateStatus(row.Status), FailureReason: row.FailureReason,
 		ExpiresAt: expiresAt, CreatedAt: createdAt, UpdatedAt: updatedAt, ReadyAt: readyAt,
@@ -243,10 +255,9 @@ func mapCandidate(row platformdb.ProjectCandidate) (deployment.Candidate, error)
 }
 
 func sameCandidateStart(existing, candidate deployment.Candidate) bool {
-	return existing.ProjectID == candidate.ProjectID && existing.TargetID == candidate.TargetID &&
-		existing.Environment == candidate.Environment && existing.OwnerID == candidate.OwnerID &&
+	return existing.Scope.ProjectID == candidate.Scope.ProjectID && existing.TargetID == candidate.TargetID &&
+		existing.Scope.Environment == candidate.Scope.Environment && existing.Scope.BaseGenerationID == candidate.Scope.BaseGenerationID && existing.OwnerID == candidate.OwnerID &&
 		existing.Key == candidate.Key &&
-		existing.BaseGeneration == candidate.BaseGeneration &&
 		existing.ArtifactDigest == candidate.ArtifactDigest
 }
 

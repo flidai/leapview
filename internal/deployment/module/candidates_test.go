@@ -21,6 +21,7 @@ import (
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/project"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/stretchr/testify/require"
 )
@@ -34,29 +35,17 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 	module.candidateSources = sources
 	artifacts := &candidateArtifactPreparerStub{result: release.CandidateArtifactSet{
 		Artifact: release.ProjectArtifactProvenance{
-			SourceDigest:    digest,
-			ProjectDigest:   "sha256:" + strings.Repeat("d", 64),
-			CompilerVersion: "compiler:test",
-			SchemaVersion:   2,
-			Workspaces: []release.WorkspaceArtifactProvenance{{
-				WorkspaceID:    "sales",
-				ArtifactDigest: "sha256:" + strings.Repeat("e", 64),
-			}},
+			SourceDigest: digest, ProjectDigest: "sha256:" + strings.Repeat("d", 64), ContentDigest: digest,
+			CompilerVersion: "compiler:test", SchemaVersion: 2,
 		},
 		AuthorizationFingerprint: "sha256:" + strings.Repeat("f", 64),
-		Workspaces: []release.CandidateArtifactWorkspace{{
-			WorkspaceID: "sales", ServingStateID: "state_sales",
-			ArtifactDigest: digest, DataRevision: "snapshot:1", DataMode: string(deployment.CandidateDataReuseSnapshot),
-		}},
+		Generation:               release.CandidateGenerationArtifact{Identity: testServingIdentity("state_sales"), ArtifactDigest: digest, DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseSnapshot},
 	}}
 	module.candidateArtifacts = artifacts
 	runtimes := &candidateRuntimePreparerStub{
 		requireAdmission: true,
 		receipt: deployment.CandidateRuntimeReceipt{
 			RuntimeVersion: "runtime:test",
-			Workspaces: []deployment.CandidateWorkspaceRuntimeReceipt{{
-				WorkspaceID: "sales",
-			}},
 		},
 	}
 	module.candidateRuntimes = runtimes
@@ -261,33 +250,12 @@ func TestCandidateSynchronizationNeverMarksReadyBeforeProvenanceIsRetained(t *te
 	digest := "sha256:" + strings.Repeat("a", 64)
 	module.candidateSources = &candidateSourceSynchronizerStub{}
 	module.candidateArtifacts = &candidateArtifactPreparerStub{
-		result: release.CandidateArtifactSet{
-			Artifact: release.ProjectArtifactProvenance{
-				SourceDigest:    digest,
-				ProjectDigest:   "sha256:" + strings.Repeat("b", 64),
-				CompilerVersion: "compiler:test",
-				SchemaVersion:   2,
-				Workspaces: []release.WorkspaceArtifactProvenance{{
-					WorkspaceID:    "sales",
-					ArtifactDigest: "sha256:" + strings.Repeat("c", 64),
-				}},
-			},
-			AuthorizationFingerprint: "sha256:" + strings.Repeat("d", 64),
-			Workspaces: []release.CandidateArtifactWorkspace{{
-				WorkspaceID: "sales", ServingStateID: "state_sales",
-				ArtifactDigest: "sha256:" + strings.Repeat("e", 64),
-				DataRevision:   "snapshot:1",
-				DataMode:       string(deployment.CandidateDataReuseSnapshot),
-			}},
-		},
+		result:    candidateArtifactSetForTest(digest, "state_sales", release.GenerationDataReuseSnapshot),
 		retainErr: release.ErrConflict,
 	}
 	module.candidateRuntimes = &candidateRuntimePreparerStub{
 		receipt: deployment.CandidateRuntimeReceipt{
 			RuntimeVersion: "runtime:test",
-			Workspaces: []deployment.CandidateWorkspaceRuntimeReceipt{{
-				WorkspaceID: "sales",
-			}},
 		},
 	}
 	body := `{"projectFile":"leapview.yaml","artifactDigest":"` + digest +
@@ -306,7 +274,7 @@ func TestCandidateSynchronizationNeverMarksReadyBeforeProvenanceIsRetained(t *te
 	}
 	current, err := module.candidates.Get(
 		t.Context(),
-		deployment.CandidateScope{
+		deployment.CandidateAccessScope{
 			ProjectID: "finance", CandidateID: "cand_opaque_1",
 			OwnerID: "principal_1",
 		},
@@ -323,34 +291,19 @@ func TestCandidateSynchronizationRejectsReadyCandidateWithInvalidProvenance(t *t
 	digest := "sha256:" + strings.Repeat("a", 64)
 	module.candidateSources = &candidateSourceSynchronizerStub{}
 	artifacts := &candidateArtifactPreparerStub{
-		result: release.CandidateArtifactSet{
-			Artifact: release.ProjectArtifactProvenance{
-				SourceDigest: digest, ProjectDigest: "sha256:" + strings.Repeat("b", 64),
-				CompilerVersion: "compiler:test", SchemaVersion: 2,
-				Workspaces: []release.WorkspaceArtifactProvenance{{
-					WorkspaceID: "sales", ArtifactDigest: "sha256:" + strings.Repeat("c", 64),
-				}},
-			},
-			AuthorizationFingerprint: "sha256:" + strings.Repeat("d", 64),
-			Workspaces: []release.CandidateArtifactWorkspace{{
-				WorkspaceID: "sales", ServingStateID: "state_sales",
-				ArtifactDigest: "sha256:" + strings.Repeat("e", 64),
-				DataRevision:   "snapshot:1", DataMode: string(deployment.CandidateDataReuseSnapshot),
-			}},
-		},
+		result:    candidateArtifactSetForTest(digest, "state_sales", release.GenerationDataReuseSnapshot),
 		lookupErr: release.ErrProvenanceInvalid,
 	}
 	module.candidateArtifacts = artifacts
 	runtimes := &candidateRuntimePreparerStub{receipt: deployment.CandidateRuntimeReceipt{
 		RuntimeVersion: "runtime:test",
-		Workspaces:     []deployment.CandidateWorkspaceRuntimeReceipt{{WorkspaceID: "sales"}},
 	}}
 	module.candidateRuntimes = runtimes
 	started, err := module.candidates.Start(t.Context(), deployment.StartCandidateRequest{
 		ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: digest,
 	})
 	require.NoError(t, err)
-	ready, err := module.candidates.MarkReady(t.Context(), deployment.CandidateScope{
+	ready, err := module.candidates.MarkReady(t.Context(), deployment.CandidateAccessScope{
 		ProjectID: "finance", CandidateID: started.Candidate.ID, OwnerID: "principal_1",
 	}, digest, "sha256:"+strings.Repeat("f", 64))
 	require.NoError(t, err)
@@ -388,30 +341,8 @@ func TestCandidateReleaseProvenanceRejectsMismatchedSourceIdentity(t *testing.T)
 	require.NoError(t, err)
 	_, err = candidateReleaseProvenance(
 		started.Candidate,
-		release.CandidateArtifactSet{
-			Artifact: release.ProjectArtifactProvenance{
-				SourceDigest:    "sha256:" + strings.Repeat("b", 64),
-				ProjectDigest:   "sha256:" + strings.Repeat("c", 64),
-				CompilerVersion: "compiler:test", SchemaVersion: 2,
-				Workspaces: []release.WorkspaceArtifactProvenance{{
-					WorkspaceID:    "sales",
-					ArtifactDigest: "sha256:" + strings.Repeat("d", 64),
-				}},
-			},
-			AuthorizationFingerprint: "sha256:" + strings.Repeat("e", 64),
-			Workspaces: []release.CandidateArtifactWorkspace{{
-				WorkspaceID: "sales", ServingStateID: "state_sales",
-				ArtifactDigest: "sha256:" + strings.Repeat("f", 64),
-				DataRevision:   "snapshot:1",
-				DataMode:       string(deployment.CandidateDataReuseSnapshot),
-			}},
-		},
-		deployment.CandidateRuntimeReceipt{
-			RuntimeVersion: "runtime:test",
-			Workspaces: []deployment.CandidateWorkspaceRuntimeReceipt{{
-				WorkspaceID: "sales",
-			}},
-		},
+		candidateArtifactSetForTest("sha256:"+strings.Repeat("b", 64), "state_sales", release.GenerationDataReuseSnapshot),
+		deployment.CandidateRuntimeReceipt{RuntimeVersion: "runtime:test"},
 		nil,
 	)
 	if !errors.Is(err, release.ErrProvenanceInvalid) {
@@ -427,39 +358,17 @@ func TestCandidateReleaseProvenanceCarriesAuthoredConnections(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	artifacts := candidateArtifactSetForTest(digest, "state_public", release.GenerationDataRefreshSources)
+	connectionID, _ := projectgraph.NewResourceID("public_http")
+	artifacts.Generation.AuthoredConnections = []release.CandidateAuthoredConnection{{ConnectionID: connectionID, ConnectorKind: "http"}}
 	provenance, err := candidateReleaseProvenance(
 		started.Candidate,
-		release.CandidateArtifactSet{
-			Artifact: release.ProjectArtifactProvenance{
-				SourceDigest: digest, ProjectDigest: "sha256:" + strings.Repeat("b", 64),
-				CompilerVersion: "compiler:test", SchemaVersion: 2,
-				Workspaces: []release.WorkspaceArtifactProvenance{{
-					WorkspaceID: "public", ArtifactDigest: "sha256:" + strings.Repeat("c", 64),
-				}},
-			},
-			AuthorizationFingerprint: "sha256:" + strings.Repeat("d", 64),
-			Workspaces: []release.CandidateArtifactWorkspace{{
-				WorkspaceID: "public", ServingStateID: "state_public",
-				ArtifactDigest: "sha256:" + strings.Repeat("e", 64),
-				DataRevision:   "sources:" + digest,
-				DataMode:       string(deployment.CandidateDataRefreshSources),
-				AuthoredConnections: []release.CandidateAuthoredConnection{{
-					LogicalConnectionID: "public_http", ConnectorKind: "http",
-				}},
-			}},
-		},
-		deployment.CandidateRuntimeReceipt{
-			RuntimeVersion: "runtime:test",
-			Workspaces: []deployment.CandidateWorkspaceRuntimeReceipt{{
-				WorkspaceID: "public",
-			}},
-		},
+		artifacts,
+		deployment.CandidateRuntimeReceipt{RuntimeVersion: "runtime:test"},
 		nil,
 	)
 	require.NoError(t, err)
-	require.Equal(t, []release.AuthoredConnectionEvidence{{
-		LogicalConnection: "public_http", ConnectorKind: "http",
-	}}, provenance.Plan.Workspaces[0].AuthoredConnections)
+	require.Equal(t, []release.AuthoredConnectionEvidence{{ConnectionID: "public_http", ConnectorKind: "http"}}, provenance.Plan.AuthoredConnections)
 }
 
 func TestCandidateSynchronizationPreservesReadyCandidateWhenPreparationFails(t *testing.T) {
@@ -469,7 +378,7 @@ func TestCandidateSynchronizationPreservesReadyCandidateWhenPreparationFails(t *
 		ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: firstDigest,
 	})
 	require.NoError(t, err)
-	ready, err := module.candidates.MarkReady(t.Context(), deployment.CandidateScope{
+	ready, err := module.candidates.MarkReady(t.Context(), deployment.CandidateAccessScope{
 		ProjectID: "finance", CandidateID: started.Candidate.ID, OwnerID: "principal_1",
 	}, firstDigest, "sha256:"+strings.Repeat("f", 64))
 	require.NoError(t, err)
@@ -494,7 +403,7 @@ func TestCandidateSynchronizationPreservesReadyCandidateWhenPreparationFails(t *
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("preparation failure = %d %s", response.Code, response.Body.String())
 	}
-	current, err := module.candidates.Get(t.Context(), deployment.CandidateScope{
+	current, err := module.candidates.Get(t.Context(), deployment.CandidateAccessScope{
 		ProjectID: "finance", CandidateID: ready.ID, OwnerID: "principal_1",
 	})
 	require.NoError(t, err)
@@ -650,7 +559,7 @@ func TestCandidatePreviewMapsLifecycleAndConcealsRuntimeDetails(t *testing.T) {
 				ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: digest,
 			})
 			require.NoError(t, err)
-			scope := deployment.CandidateScope{
+			scope := deployment.CandidateAccessScope{
 				ProjectID: "finance", CandidateID: started.Candidate.ID, OwnerID: "principal_1",
 			}
 			now = now.Add(30 * time.Second)
@@ -843,7 +752,7 @@ func (stub *candidateArtifactPreparerStub) PrepareCandidateArtifacts(
 
 func (stub *candidateArtifactPreparerStub) RetainCandidateProvenance(
 	_ context.Context,
-	_ string,
+	_ projectgraph.ResourceID,
 	provenance release.Provenance,
 ) (release.Provenance, error) {
 	if stub.retainErr != nil {
@@ -855,7 +764,7 @@ func (stub *candidateArtifactPreparerStub) RetainCandidateProvenance(
 
 func (stub *candidateArtifactPreparerStub) CandidateProvenance(
 	_ context.Context,
-	_ string,
+	_ projectgraph.ResourceID,
 	_ string,
 	revision int64,
 ) (release.Provenance, error) {
@@ -931,4 +840,20 @@ func standardContentDigest(t *testing.T, identity string) string {
 	decoded, err := hex.DecodeString(strings.TrimPrefix(identity, "sha256:"))
 	require.NoError(t, err)
 	return "sha-256=:" + base64.StdEncoding.EncodeToString(decoded) + ":"
+}
+
+func testServingIdentity(generation string) projectgraph.ServingIdentity {
+	identity, err := projectgraph.NewServingIdentity("finance", "prod", generation)
+	if err != nil {
+		panic(err)
+	}
+	return identity
+}
+
+func candidateArtifactSetForTest(sourceDigest, generation string, mode release.GenerationDataMode) release.CandidateArtifactSet {
+	return release.CandidateArtifactSet{
+		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: sourceDigest, ContentDigest: sourceDigest, CompilerVersion: "compiler:test", SchemaVersion: 2},
+		AuthorizationFingerprint: sourceDigest,
+		Generation:               release.CandidateGenerationArtifact{Identity: testServingIdentity(generation), ArtifactDigest: sourceDigest, DataRevision: "snapshot:1", DataMode: mode},
+	}
 }

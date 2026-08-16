@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/deployment"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -295,8 +296,9 @@ func TestCandidateRepositoryRejectsReadyCandidateWithoutReleaseProvenance(t *tes
 func candidateRecord(t *testing.T, now time.Time, id, project, owner, artifactDigest string) deployment.Candidate {
 	t.Helper()
 	candidate, err := deployment.NewCandidate(deployment.CandidateStartInput{
-		ID: id, ProjectID: project, TargetID: "lvinst_prod", Environment: "prod", OwnerID: owner,
-		BaseGeneration: "deployment_7", ArtifactDigest: artifactDigest, ExpiresAt: now.Add(time.Hour), Now: now,
+		ID: id, TargetID: "lvinst_prod", OwnerID: owner,
+		Scope:          deployment.CandidateScope{ProjectID: projectgraph.ResourceID(project), Environment: "prod", BaseGenerationID: "deployment_7"},
+		ArtifactDigest: artifactDigest, ExpiresAt: now.Add(time.Hour), Now: now,
 	})
 	require.NoError(t, err)
 	return candidate

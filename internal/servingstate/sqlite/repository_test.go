@@ -19,8 +19,31 @@ func TestRepositoryCreateRejectsMalformedProjectIdentity(t *testing.T) {
 	if _, err := repo.Create(t.Context(), servingstate.CreateInput{}); err == nil {
 		t.Fatal("Create() accepted empty project identity")
 	}
-	if _, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectgraph.ResourceID("project/id")}); err == nil {
-		t.Fatal("Create() accepted malformed project identity")
+	for _, projectID := range []projectgraph.ResourceID{"project/id", " project", "project "} {
+		if _, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID}); err == nil {
+			t.Fatalf("Create() accepted malformed project identity %q", projectID)
+		}
+	}
+}
+
+func TestRepositoryRejectsIdentityAliasesAtValidationAndActivationBoundaries(t *testing.T) {
+	_, repo := openRepo(t)
+	projectID := projectgraph.ResourceID("project")
+	created := createValidated(t, repo, projectID, servingstate.DefaultEnvironment)
+
+	validation := validValidation(projectID)
+	validation.ProjectID = projectgraph.ResourceID(" project")
+	if _, err := repo.SaveValidated(t.Context(), created.ID, validation, validArtifact(created.ID)); err == nil {
+		t.Fatal("SaveValidated accepted project identity alias")
+	}
+	if _, err := repo.Activate(t.Context(), projectgraph.ResourceID(" project"), servingstate.DefaultEnvironment, created.ID, ""); err == nil {
+		t.Fatal("Activate accepted project identity alias")
+	}
+	if _, err := repo.Activate(t.Context(), projectID, servingstate.Environment("dev "), created.ID, ""); err == nil {
+		t.Fatal("Activate accepted environment alias")
+	}
+	if _, _, err := repo.ActiveArtifact(t.Context(), projectgraph.ResourceID(" project"), servingstate.DefaultEnvironment); err == nil {
+		t.Fatal("ActiveArtifact accepted project identity alias")
 	}
 }
 
@@ -434,7 +457,7 @@ func TestRepositoryPointerForeignGenerationRejectedAndActiveUnique(t *testing.T)
 	if _, err := repo.Activate(t.Context(), projectID, "dev", first.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO project_active_serving_states(project_id, environment, serving_state_id) VALUES ('other','dev',?)`, first.ID); err == nil {
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO project_active_serving_states(project_id, environment, generation_id) VALUES ('other','dev',?)`, first.ID); err == nil {
 		t.Fatal("pointer accepted generation from another project")
 	}
 	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET status = 'active' WHERE id = ?`, second.ID); err == nil {

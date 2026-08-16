@@ -72,13 +72,13 @@ CREATE TRIGGER active_search_pointer_ai AFTER INSERT ON project_active_serving_s
   FROM assets asset
   JOIN serving_states state ON state.id = asset.serving_state_id
   WHERE state.project_id = new.project_id
-    AND asset.serving_state_id = new.serving_state_id
+    AND asset.serving_state_id = new.generation_id
     AND asset.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding');
 END;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE TRIGGER active_search_pointer_au AFTER UPDATE OF serving_state_id ON project_active_serving_states BEGIN
+CREATE TRIGGER active_search_pointer_au AFTER UPDATE OF generation_id ON project_active_serving_states BEGIN
   DELETE FROM active_search_documents
   WHERE project_id = new.project_id AND environment = new.environment;
 
@@ -94,7 +94,7 @@ CREATE TRIGGER active_search_pointer_au AFTER UPDATE OF serving_state_id ON proj
   FROM assets asset
   JOIN serving_states state ON state.id = asset.serving_state_id
   WHERE state.project_id = new.project_id
-    AND asset.serving_state_id = new.serving_state_id
+    AND asset.serving_state_id = new.generation_id
     AND asset.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding');
 END;
 -- +goose StatementEnd
@@ -114,7 +114,7 @@ WHEN new.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'wor
  AND EXISTS (
    SELECT 1 FROM project_active_serving_states active
    WHERE active.project_id = (SELECT project_id FROM serving_states WHERE id = new.serving_state_id)
-     AND active.serving_state_id = new.serving_state_id
+     AND active.generation_id = new.serving_state_id
  )
 BEGIN
   INSERT OR REPLACE INTO active_search_documents (
@@ -127,7 +127,7 @@ BEGIN
     new.title, new.description, new.payload_json
   FROM project_active_serving_states active
   WHERE active.project_id = (SELECT project_id FROM serving_states WHERE id = new.serving_state_id)
-    AND active.serving_state_id = new.serving_state_id;
+    AND active.generation_id = new.serving_state_id;
 END;
 -- +goose StatementEnd
 
@@ -146,7 +146,7 @@ CREATE TRIGGER active_search_asset_au AFTER UPDATE ON assets BEGIN
     new.title, new.description, new.payload_json
   FROM project_active_serving_states active
   WHERE active.project_id = (SELECT project_id FROM serving_states WHERE id = new.serving_state_id)
-    AND active.serving_state_id = new.serving_state_id
+    AND active.generation_id = new.serving_state_id
     AND new.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding');
 END;
 -- +goose StatementEnd
@@ -167,7 +167,7 @@ SELECT
   asset.logical_asset_id, asset.asset_type, asset.asset_key,
   asset.parent_logical_asset_id, asset.title, asset.description, asset.payload_json
 FROM project_active_serving_states active
-JOIN assets asset ON asset.serving_state_id = active.serving_state_id
+JOIN assets asset ON asset.serving_state_id = active.generation_id
 JOIN serving_states state ON state.id = asset.serving_state_id
 WHERE state.project_id = active.project_id
   AND asset.asset_type NOT IN ('page_item', 'relationship', 'workspace_group', 'workspace_role_binding');

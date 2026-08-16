@@ -279,9 +279,8 @@ func TestCandidateRuntimeServiceRejectsDataModeAndConnectionMismatchBeforeAcquis
 func candidateRuntimeTestCandidate(t *testing.T, now time.Time) Candidate {
 	t.Helper()
 	candidate, err := NewCandidate(CandidateStartInput{
-		ID: "cand_1", ProjectID: "project_1", TargetID: "target_1",
-		Environment: "prod", OwnerID: "author_1",
-		BaseGeneration: "deployment_1",
+		ID: "cand_1", TargetID: "target_1", OwnerID: "author_1",
+		Scope:          CandidateScope{ProjectID: "project_1", Environment: "prod", BaseGenerationID: "deployment_1"},
 		ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
 		ExpiresAt:      now.Add(time.Hour), Now: now,
 	})

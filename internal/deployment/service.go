@@ -152,7 +152,7 @@ func (s *Service) Activate(ctx context.Context, request ActivationRequest) (Depl
 		_ = s.repository.FailDeployment(ctx, row.ID, err)
 		return Deployment{}, err
 	}
-	prepared, err := s.runtime.Prepare(ctx, runtimehost.ServingStateCandidate{ServingStateID: row.ServingIdentity.GenerationID, ManagedData: resolution})
+	prepared, err := s.runtime.Prepare(ctx, runtimehost.ServingStateCandidate{Identity: row.ServingIdentity, ManagedData: resolution})
 	if err != nil {
 		_ = s.repository.FailDeployment(ctx, row.ID, err)
 		return Deployment{}, err

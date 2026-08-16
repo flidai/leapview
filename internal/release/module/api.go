@@ -83,7 +83,12 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 }
 
 func (m *Module) ListReleases(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
-	rows, err := m.service.List(r.Context(), project)
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeError(w, r, release.ErrInvalid)
+		return
+	}
+	rows, err := m.service.List(r.Context(), projectID)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -101,7 +106,12 @@ func (m *Module) ListReleases(w http.ResponseWriter, r *http.Request, project st
 }
 
 func (m *Module) GetRelease(w http.ResponseWriter, r *http.Request, project, releaseID string) {
-	row, err := m.service.Get(r.Context(), project, releaseID)
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeError(w, r, release.ErrInvalid)
+		return
+	}
+	row, err := m.service.Get(r.Context(), projectID, releaseID)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -186,7 +196,12 @@ func (m *Module) writeCommandFailure(w http.ResponseWriter, r *http.Request, ope
 }
 
 func (m *Module) ListReleaseEvents(w http.ResponseWriter, r *http.Request, project, releaseID string, limit *int32, pageToken *string) {
-	if _, err := m.service.Get(r.Context(), project, releaseID); err != nil {
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeError(w, r, release.ErrInvalid)
+		return
+	}
+	if _, err := m.service.Get(r.Context(), projectID, releaseID); err != nil {
 		writeError(w, r, err)
 		return
 	}

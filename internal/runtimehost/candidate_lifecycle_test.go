@@ -55,7 +55,7 @@ func TestCandidateOwnershipCompatibilityAndRetireDrain(t *testing.T) {
 	registry := candidateRegistry(t, &now, &lifecycleFactory{}, &candidateResolver{lifetime: managed}, nil)
 	defer registry.Close()
 	registration := candidateRegistration(now.Add(time.Hour))
-	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{Registration: registration, ServingStateID: "generation_1"}); err != nil {
+	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{Registration: registration, Identity: projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "prod", GenerationID: "generation_1"}}); err != nil {
 		t.Fatal(err)
 	}
 	wrong := registration
@@ -93,11 +93,11 @@ func TestCandidateExpiryAndCanonicalIdentity(t *testing.T) {
 	defer registry.Close()
 	registration := candidateRegistration(now.Add(time.Second))
 	registration.CandidateID = " candidate_1"
-	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{Registration: registration, ServingStateID: "generation_1"}); !errors.Is(err, ErrCandidateRuntimeInvalid) {
+	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{Registration: registration, Identity: projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "prod", GenerationID: "generation_1"}}); !errors.Is(err, ErrCandidateRuntimeInvalid) {
 		t.Fatalf("non-canonical candidate ID error = %v", err)
 	}
 	registration = candidateRegistration(now.Add(time.Second))
-	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{Registration: registration, ServingStateID: "generation_1"}); err != nil {
+	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{Registration: registration, Identity: projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "prod", GenerationID: "generation_1"}}); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Second)
@@ -122,7 +122,7 @@ func TestCandidateCloseWaitsForLeasesAndReportsCleanupFailure(t *testing.T) {
 	})
 	reported = make(chan CleanupFailure, 1)
 	registration := candidateRegistration(now.Add(time.Hour))
-	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{Registration: registration, ServingStateID: "generation_1"}); err != nil {
+	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{Registration: registration, Identity: projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "prod", GenerationID: "generation_1"}}); err != nil {
 		t.Fatal(err)
 	}
 	lease, err := registry.AcquireCandidate(t.Context(), CandidateLeaseRequest{CandidateID: registration.CandidateID, OwnerID: registration.OwnerID, ProjectID: registration.ProjectID, Compatibility: registration.Compatibility})

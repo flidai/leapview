@@ -14,6 +14,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -30,9 +31,9 @@ const (
 )
 
 type CandidateRepository interface {
-	ActiveCandidateBaseGeneration(context.Context, string, string) (string, error)
+	ActiveCandidateBaseScope(context.Context, projectgraph.ResourceID, string) (CandidateScope, error)
 	StartCandidate(context.Context, Candidate, int) (Candidate, bool, error)
-	ActiveCandidate(context.Context, string, string, string, string) (Candidate, error)
+	ActiveCandidate(context.Context, string, projectgraph.ResourceID, string, string) (Candidate, error)
 	CandidateByID(context.Context, string) (Candidate, error)
 	SaveCandidate(context.Context, Candidate, int64) (Candidate, error)
 	ExpireCandidates(context.Context, string, time.Time) (int64, error)
@@ -73,7 +74,7 @@ type CandidateService struct {
 }
 
 type StartCandidateRequest struct {
-	ProjectID      string
+	ProjectID      projectgraph.ResourceID
 	OwnerID        string
 	ArtifactDigest string
 	Key            string
@@ -85,17 +86,11 @@ type CandidateStartResult struct {
 	Resumed    bool
 }
 
-type CandidateScope struct {
-	ProjectID   string
-	CandidateID string
-	OwnerID     string
-	TargetID    string
-}
-
 type CandidateEvent struct {
 	Action       string
 	CandidateID  string
-	ProjectID    string
+	ProjectID    projectgraph.ResourceID
+	BaseIdentity *projectgraph.ServingIdentity
 	TargetID     string
 	PrincipalID  string
 	Status       CandidateStatus
@@ -109,8 +104,9 @@ func NewCandidateService(repository CandidateRepository, config CandidateService
 	if config.Audit == nil {
 		return nil, fmt.Errorf("%w: recorder is required", ErrCandidateAuditUnavailable)
 	}
-	config.TargetID = strings.TrimSpace(config.TargetID)
-	config.Environment = strings.TrimSpace(config.Environment)
+	if config.TargetID != strings.TrimSpace(config.TargetID) || config.Environment != strings.TrimSpace(config.Environment) {
+		return nil, fmt.Errorf("candidate target and environment must be canonical")
+	}
 	origin, err := canonicalCandidateOrigin(config.CanonicalOrigin)
 	if err != nil {
 		return nil, err
@@ -144,9 +140,10 @@ func NewCandidateService(repository CandidateRepository, config CandidateService
 
 func (service *CandidateService) Start(ctx context.Context, request StartCandidateRequest) (CandidateStartResult, error) {
 	now := service.now().UTC()
-	baseGeneration, err := service.repository.ActiveCandidateBaseGeneration(
-		ctx, strings.TrimSpace(request.ProjectID), service.environment,
-	)
+	if request.ProjectID.Validate() != nil || request.ProjectID.String() != strings.TrimSpace(request.ProjectID.String()) {
+		return CandidateStartResult{}, fmt.Errorf("%w: project id must be canonical", ErrCandidateInvalid)
+	}
+	baseScope, err := service.repository.ActiveCandidateBaseScope(ctx, request.ProjectID, service.environment)
 	if err != nil {
 		return CandidateStartResult{}, fmt.Errorf("resolve candidate base generation: %w", err)
 	}
@@ -155,8 +152,8 @@ func (service *CandidateService) Start(ctx context.Context, request StartCandida
 		return CandidateStartResult{}, fmt.Errorf("generate candidate id: %w", err)
 	}
 	candidate, err := NewCandidate(CandidateStartInput{
-		ID: id, ProjectID: request.ProjectID, TargetID: service.targetID, Environment: service.environment,
-		OwnerID: request.OwnerID, BaseGeneration: baseGeneration, ArtifactDigest: request.ArtifactDigest,
+		ID: id, TargetID: service.targetID,
+		OwnerID: request.OwnerID, Scope: CandidateScope{ProjectID: baseScope.ProjectID, Environment: baseScope.Environment, BaseGenerationID: baseScope.BaseGenerationID}, ArtifactDigest: request.ArtifactDigest,
 		Key: request.Key, ExpiresAt: now.Add(service.lifetime), Now: now,
 	})
 	if err != nil {
@@ -175,15 +172,18 @@ func (service *CandidateService) Start(ctx context.Context, request StartCandida
 
 func (service *CandidateService) CancelActive(
 	ctx context.Context,
-	projectID,
+	projectID projectgraph.ResourceID,
 	ownerID,
 	key string,
 ) (Candidate, error) {
+	if projectID.Validate() != nil || ownerID != strings.TrimSpace(ownerID) || key != strings.TrimSpace(key) {
+		return Candidate{}, ErrCandidateInvalid
+	}
 	candidate, err := service.repository.ActiveCandidate(
 		ctx,
 		service.targetID,
-		strings.TrimSpace(projectID),
-		strings.TrimSpace(ownerID),
+		projectID,
+		ownerID,
 		normalizeCandidateKey(key),
 	)
 	if err != nil {
@@ -192,15 +192,18 @@ func (service *CandidateService) CancelActive(
 	return service.Cancel(ctx, candidateScopeForService(candidate))
 }
 
-func candidateScopeForService(candidate Candidate) CandidateScope {
-	return CandidateScope{
-		ProjectID: candidate.ProjectID, CandidateID: candidate.ID,
+func candidateScopeForService(candidate Candidate) CandidateAccessScope {
+	return CandidateAccessScope{
+		ProjectID: candidate.Scope.ProjectID, CandidateID: candidate.ID,
 		OwnerID: candidate.OwnerID, TargetID: candidate.TargetID,
 	}
 }
 
-func (service *CandidateService) Get(ctx context.Context, scope CandidateScope) (Candidate, error) {
-	candidate, err := service.repository.CandidateByID(ctx, strings.TrimSpace(scope.CandidateID))
+func (service *CandidateService) Get(ctx context.Context, scope CandidateAccessScope) (Candidate, error) {
+	if scope.ProjectID.Validate() != nil || scope.CandidateID == "" || scope.CandidateID != strings.TrimSpace(scope.CandidateID) || scope.OwnerID != strings.TrimSpace(scope.OwnerID) {
+		return Candidate{}, ErrCandidateInvalid
+	}
+	candidate, err := service.repository.CandidateByID(ctx, scope.CandidateID)
 	if err != nil {
 		return Candidate{}, err
 	}
@@ -211,11 +214,14 @@ func (service *CandidateService) Get(ctx context.Context, scope CandidateScope) 
 }
 
 func (service *CandidateService) GetOwned(ctx context.Context, candidateID, ownerID string) (Candidate, error) {
-	candidate, err := service.repository.CandidateByID(ctx, strings.TrimSpace(candidateID))
+	if candidateID == "" || candidateID != strings.TrimSpace(candidateID) || ownerID != strings.TrimSpace(ownerID) {
+		return Candidate{}, ErrCandidateInvalid
+	}
+	candidate, err := service.repository.CandidateByID(ctx, candidateID)
 	if err != nil {
 		return Candidate{}, err
 	}
-	if candidate.TargetID != service.targetID || candidate.OwnerID != strings.TrimSpace(ownerID) {
+	if candidate.TargetID != service.targetID || candidate.OwnerID != ownerID {
 		return Candidate{}, ErrCandidateNotFound
 	}
 	return service.expireOnRead(ctx, candidate)
@@ -223,24 +229,27 @@ func (service *CandidateService) GetOwned(ctx context.Context, candidateID, owne
 
 func (service *CandidateService) Review(
 	ctx context.Context,
-	projectID,
+	projectID projectgraph.ResourceID,
 	candidateID string,
 ) (Candidate, error) {
+	if projectID.Validate() != nil || candidateID == "" || candidateID != strings.TrimSpace(candidateID) {
+		return Candidate{}, ErrCandidateInvalid
+	}
 	candidate, err := service.repository.CandidateByID(
 		ctx,
-		strings.TrimSpace(candidateID),
+		candidateID,
 	)
 	if err != nil {
 		return Candidate{}, err
 	}
 	if candidate.TargetID != service.targetID ||
-		candidate.ProjectID != strings.TrimSpace(projectID) {
+		candidate.Scope.ProjectID != projectID {
 		return Candidate{}, ErrCandidateNotFound
 	}
 	return service.expireOnRead(ctx, candidate)
 }
 
-func (service *CandidateService) ReplaceArtifact(ctx context.Context, scope CandidateScope, expectedDigest, nextDigest string) (Candidate, error) {
+func (service *CandidateService) ReplaceArtifact(ctx context.Context, scope CandidateAccessScope, expectedDigest, nextDigest string) (Candidate, error) {
 	return service.mutate(ctx, scope, CandidateAuditArtifactReplaced, func(candidate Candidate) (Candidate, error) {
 		now := service.now().UTC()
 		return candidate.ReplaceArtifact(expectedDigest, nextDigest, now, now.Add(service.lifetime))
@@ -249,7 +258,7 @@ func (service *CandidateService) ReplaceArtifact(ctx context.Context, scope Cand
 
 func (service *CandidateService) MarkReady(
 	ctx context.Context,
-	scope CandidateScope,
+	scope CandidateAccessScope,
 	artifactDigest,
 	provenanceDigest string,
 ) (Candidate, error) {
@@ -262,20 +271,20 @@ func (service *CandidateService) MarkReady(
 	})
 }
 
-func (service *CandidateService) MarkFailed(ctx context.Context, scope CandidateScope, artifactDigest, failureCode string) (Candidate, error) {
+func (service *CandidateService) MarkFailed(ctx context.Context, scope CandidateAccessScope, artifactDigest, failureCode string) (Candidate, error) {
 	return service.mutate(ctx, scope, CandidateAuditFailed, func(candidate Candidate) (Candidate, error) {
 		return candidate.MarkFailed(artifactDigest, failureCode, service.now().UTC())
 	})
 }
 
-func (service *CandidateService) Retry(ctx context.Context, scope CandidateScope) (Candidate, error) {
+func (service *CandidateService) Retry(ctx context.Context, scope CandidateAccessScope) (Candidate, error) {
 	return service.mutate(ctx, scope, CandidateAuditRetried, func(candidate Candidate) (Candidate, error) {
 		now := service.now().UTC()
 		return candidate.Retry(now, now.Add(service.lifetime))
 	})
 }
 
-func (service *CandidateService) Cancel(ctx context.Context, scope CandidateScope) (Candidate, error) {
+func (service *CandidateService) Cancel(ctx context.Context, scope CandidateAccessScope) (Candidate, error) {
 	candidate, err := service.mutate(ctx, scope, CandidateAuditCancelled, func(candidate Candidate) (Candidate, error) {
 		return candidate.Cancel(service.now().UTC())
 	})
@@ -298,12 +307,12 @@ func (service *CandidateService) Reconcile(ctx context.Context) (int64, error) {
 }
 
 func (service *CandidateService) PreviewURL(candidateID string) string {
-	return service.canonicalOrigin + "/candidates/" + url.PathEscape(strings.TrimSpace(candidateID))
+	return service.canonicalOrigin + "/candidates/" + url.PathEscape(candidateID)
 }
 
 func (service *CandidateService) mutate(
 	ctx context.Context,
-	scope CandidateScope,
+	scope CandidateAccessScope,
 	action string,
 	transition func(Candidate) (Candidate, error),
 ) (Candidate, error) {
@@ -326,14 +335,17 @@ func (service *CandidateService) mutate(
 	return saved, nil
 }
 
-func (service *CandidateService) owns(candidate Candidate, scope CandidateScope) bool {
-	targetID := strings.TrimSpace(scope.TargetID)
+func (service *CandidateService) owns(candidate Candidate, scope CandidateAccessScope) bool {
+	if scope.CandidateID != strings.TrimSpace(scope.CandidateID) || scope.OwnerID != strings.TrimSpace(scope.OwnerID) || scope.TargetID != strings.TrimSpace(scope.TargetID) || scope.ProjectID.Validate() != nil {
+		return false
+	}
+	targetID := scope.TargetID
 	if targetID == "" {
 		targetID = service.targetID
 	}
-	return strings.TrimSpace(scope.CandidateID) == candidate.ID &&
-		strings.TrimSpace(scope.ProjectID) == candidate.ProjectID &&
-		strings.TrimSpace(scope.OwnerID) == candidate.OwnerID &&
+	return scope.CandidateID == candidate.ID &&
+		scope.ProjectID == candidate.Scope.ProjectID &&
+		scope.OwnerID == candidate.OwnerID &&
 		targetID == service.targetID && candidate.TargetID == service.targetID
 }
 
@@ -370,15 +382,15 @@ func (service *CandidateService) record(ctx context.Context, operationID, action
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	metadata["environment"] = candidate.Environment
-	metadata["baseGeneration"] = candidate.BaseGeneration
-	metadata["projectId"] = candidate.ProjectID
+	metadata["environment"] = candidate.Scope.Environment
+	metadata["baseGeneration"] = candidate.Scope.BaseGenerationID
+	metadata["projectId"] = candidate.Scope.ProjectID.String()
 	metadata["candidateKey"] = candidate.Key
 	resumed, _ := metadata["resumed"].(bool)
 	payload := deploymentgen.GenSchemaCandidateAuditPayload{
-		OperationId: operationID, CandidateId: candidate.ID, ProjectId: candidate.ProjectID,
-		TargetId: candidate.TargetID, Environment: candidate.Environment,
-		BaseGeneration: candidate.BaseGeneration, CandidateKey: candidate.Key,
+		OperationId: operationID, CandidateId: candidate.ID, ProjectId: candidate.Scope.ProjectID.String(),
+		TargetId: candidate.TargetID, Environment: candidate.Scope.Environment,
+		BaseGeneration: candidate.Scope.BaseGenerationID, CandidateKey: candidate.Key,
 		Status: string(candidate.Status), Resumed: resumed,
 	}
 	var encoded string
@@ -406,8 +418,9 @@ func (service *CandidateService) record(ctx context.Context, operationID, action
 	if err != nil {
 		return err
 	}
+	baseIdentity, _ := candidate.Scope.BaseIdentity()
 	return service.audit(ctx, CandidateEvent{
-		Action: action, CandidateID: candidate.ID, ProjectID: candidate.ProjectID, TargetID: candidate.TargetID,
+		Action: action, CandidateID: candidate.ID, ProjectID: candidate.Scope.ProjectID, BaseIdentity: baseIdentity, TargetID: candidate.TargetID,
 		PrincipalID: candidate.OwnerID, Status: candidate.Status, MetadataJSON: string(encoded),
 	})
 }
@@ -433,7 +446,7 @@ func (service *CandidateService) recordBestEffort(
 	}
 	if !command {
 		if err := service.record(ctx, "", action, candidate, metadata); err != nil {
-			logger.ErrorContext(ctx, "candidate audit failed", "audit_action", action, "candidate_id", candidate.ID, "project_id", candidate.ProjectID, "principal_id", candidate.OwnerID, "error", err)
+			logger.ErrorContext(ctx, "candidate audit failed", "audit_action", action, "candidate_id", candidate.ID, "project_id", candidate.Scope.ProjectID.String(), "principal_id", candidate.OwnerID, "error", err)
 		}
 		return
 	}
@@ -452,7 +465,7 @@ func (service *CandidateService) recordBestEffort(
 		LogMessage: "candidate audit failed",
 		LogAttributes: []slog.Attr{
 			slog.String("candidate_id", candidate.ID),
-			slog.String("project_id", candidate.ProjectID),
+			slog.String("project_id", candidate.Scope.ProjectID.String()),
 			slog.String("principal_id", candidate.OwnerID),
 		},
 	})

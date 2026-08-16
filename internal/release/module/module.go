@@ -31,7 +31,6 @@ type Module struct {
 type Config struct {
 	Database          *sql.DB
 	States            ServingStateRepository
-	Workspaces        WorkspaceProvisioner
 	ManagedDataPins   release.ManagedDataPins
 	ManagedDataHook   validate.Hook
 	ArtifactDirectory string
@@ -43,16 +42,13 @@ type Config struct {
 type ServingStateRepository interface {
 	release.ServingStateRepository
 	validate.Repository
+	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
 	ActiveArtifact(
 		context.Context,
 		projectgraph.ResourceID,
 		servingstate.Environment,
 	) (servingstate.State, servingstate.Artifact, error)
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
-}
-
-type WorkspaceProvisioner interface {
-	release.WorkspaceRepository
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -79,7 +75,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	validator := validate.NewService(config.States, store, releasefilesystem.Validator{}, hooks...)
 	service, err := release.NewService(release.ServiceOptions{
-		Releases: releases, Finalization: finalization, States: config.States, Workspaces: config.Workspaces,
+		Releases: releases, Finalization: finalization,
 		Artifacts: store, Validator: validator, Pins: config.ManagedDataPins, Environment: config.Environment,
 		CandidateProvenance: candidateProvenance,
 	})
@@ -93,7 +89,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	module := &Module{
 		service: service,
 		candidateArtifacts: &candidateArtifactService{
-			states: config.States, workspaces: config.Workspaces,
+			states:    config.States,
 			artifacts: store, validator: validator,
 			environment: servingstate.NormalizeEnvironment(config.Environment),
 			pins:        config.ManagedDataPins,
@@ -130,7 +126,7 @@ func (m *Module) PrepareCandidateArtifacts(
 
 func (m *Module) RetainCandidateProvenance(
 	ctx context.Context,
-	projectID string,
+	projectID projectgraph.ResourceID,
 	provenance release.Provenance,
 ) (release.Provenance, error) {
 	if m == nil || m.service == nil {
@@ -141,7 +137,7 @@ func (m *Module) RetainCandidateProvenance(
 
 func (m *Module) CandidateProvenance(
 	ctx context.Context,
-	projectID,
+	projectID projectgraph.ResourceID,
 	candidateID string,
 	candidateRevision int64,
 ) (release.Provenance, error) {

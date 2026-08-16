@@ -7,8 +7,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/project"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -17,26 +19,30 @@ var (
 )
 
 type CandidateConnectionRequirement struct {
-	LogicalConnectionID string
-	ConnectorKind       string
+	ConnectionID  projectgraph.ResourceID
+	ConnectorKind string
 }
 
 type CandidateAuthoredConnection struct {
-	LogicalConnectionID string
-	ConnectorKind       string
+	ConnectionID  projectgraph.ResourceID
+	ConnectorKind string
 }
 
 type CandidateRestriction struct {
 	ID             string
-	WorkspaceID    string
-	ObjectID       string
+	ObjectID       projectgraph.ResourceID
+	ObjectKind     projectgraph.Kind
+	Subject        *access.SubjectRef
 	PolicyType     string
 	ExpressionJSON string
 }
 
-type CandidateArtifactWorkspace struct {
-	WorkspaceID         string
-	ServingStateID      string
+// CandidateGenerationArtifact contains the one project-generation artifact
+// prepared for a candidate. A candidate never carries a target/workspace
+// collection: the serving identity and generation artifact are the unit of
+// preparation and publication.
+type CandidateGenerationArtifact struct {
+	Identity            projectgraph.ServingIdentity
 	ArtifactDigest      string
 	DataRevision        string
 	DataMode            string
@@ -48,9 +54,8 @@ type CandidateArtifactWorkspace struct {
 
 type CandidateArtifactRequest struct {
 	CandidateID    string
-	ProjectID      string
+	Scope          projectgraph.CandidateScope
 	OwnerID        string
-	Environment    string
 	ArtifactDigest string
 	Source         project.CandidateSourceSnapshot
 }
@@ -58,31 +63,30 @@ type CandidateArtifactRequest struct {
 type CandidateArtifactSet struct {
 	Artifact                 ProjectArtifactProvenance
 	AuthorizationFingerprint string
-	Workspaces               []CandidateArtifactWorkspace
+	Generation               CandidateGenerationArtifact
 }
 
 type CandidateArtifactPreparer interface {
 	PrepareCandidateArtifacts(context.Context, CandidateArtifactRequest) (CandidateArtifactSet, error)
 	RetainCandidateProvenance(
 		context.Context,
-		string,
+		projectgraph.ResourceID,
 		Provenance,
 	) (Provenance, error)
 	CandidateProvenance(
 		context.Context,
-		string,
+		projectgraph.ResourceID,
 		string,
 		int64,
 	) (Provenance, error)
 }
 
 type PublishCandidateInput struct {
-	ProjectID         string
+	Scope             projectgraph.CandidateScope
 	CandidateID       string
 	CandidateRevision int64
 	ProvenanceDigest  string
 	TargetID          string
-	Environment       string
 	IdempotencyKey    string
 	CreatedBy         string
 }
@@ -94,12 +98,12 @@ func (s *Service) PublishCandidate(
 	ctx context.Context,
 	input PublishCandidateInput,
 ) (Release, error) {
-	if s == nil || input.ProjectID != strings.TrimSpace(input.ProjectID) || input.CandidateID != strings.TrimSpace(input.CandidateID) || input.ProvenanceDigest != strings.TrimSpace(input.ProvenanceDigest) || input.TargetID != strings.TrimSpace(input.TargetID) || input.Environment != strings.TrimSpace(input.Environment) || input.IdempotencyKey != strings.TrimSpace(input.IdempotencyKey) || input.CreatedBy != strings.TrimSpace(input.CreatedBy) || input.ProjectID == "" || input.CandidateID == "" || input.CandidateRevision < 1 || input.ProvenanceDigest == "" || input.TargetID == "" || input.Environment == "" || input.IdempotencyKey == "" || input.CreatedBy == "" {
+	if s == nil || input.Scope.Validate() != nil || input.CandidateID != strings.TrimSpace(input.CandidateID) || input.ProvenanceDigest != strings.TrimSpace(input.ProvenanceDigest) || input.TargetID != strings.TrimSpace(input.TargetID) || input.IdempotencyKey != strings.TrimSpace(input.IdempotencyKey) || input.CreatedBy != strings.TrimSpace(input.CreatedBy) || input.CandidateID == "" || input.CandidateRevision < 1 || input.ProvenanceDigest == "" || input.TargetID == "" || input.IdempotencyKey == "" || input.CreatedBy == "" {
 		return Release{}, ErrInvalid
 	}
 	provenance, err := s.CandidateProvenance(
 		ctx,
-		input.ProjectID,
+		input.Scope.ProjectID,
 		input.CandidateID,
 		input.CandidateRevision,
 	)
@@ -112,7 +116,7 @@ func (s *Service) PublishCandidate(
 		}
 		return Release{}, err
 	}
-	if provenance.Digest != input.ProvenanceDigest || provenance.Candidate.ID != input.CandidateID || provenance.Candidate.Revision != input.CandidateRevision || provenance.Candidate.OwnerID != input.CreatedBy || provenance.Plan.TargetID != input.TargetID || provenance.Plan.Identity.ProjectID.String() != input.ProjectID || provenance.Plan.Identity.Environment != input.Environment {
+	if provenance.Digest != input.ProvenanceDigest || provenance.Candidate.ID != input.CandidateID || provenance.Candidate.Revision != input.CandidateRevision || provenance.Candidate.OwnerID != input.CreatedBy || provenance.Plan.TargetID != input.TargetID || provenance.Plan.Identity.ProjectID != input.Scope.ProjectID || provenance.Plan.Identity.Environment != input.Scope.Environment {
 		return Release{}, fmt.Errorf(
 			"%w: candidate publication evidence drifted",
 			ErrConflict,
@@ -171,7 +175,7 @@ func (s *Service) PublishCandidate(
 		}
 		created, err = s.BeginFinalization(
 			ctx,
-			input.ProjectID,
+			input.Scope.ProjectID.String(),
 			created.ID,
 			jobs.WorkflowIntent{},
 		)
@@ -186,5 +190,5 @@ func (s *Service) PublishCandidate(
 			created.Status,
 		)
 	}
-	return s.ValidateFinalization(ctx, input.ProjectID, created.ID)
+	return s.ValidateFinalization(ctx, input.Scope.ProjectID.String(), created.ID)
 }

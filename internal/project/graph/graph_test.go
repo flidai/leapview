@@ -349,6 +349,28 @@ func TestServingIdentityCanBeValidatedBeforeArtifactBinding(t *testing.T) {
 	}
 }
 
+func TestCandidateScopeSupportsInitialAndExactBaseGenerations(t *testing.T) {
+	initial := CandidateScope{ProjectID: "project_demo", Environment: "production"}
+	base, err := initial.BaseIdentity()
+	if err != nil || base != nil {
+		t.Fatalf("initial BaseIdentity() = %#v, err=%v; want nil", base, err)
+	}
+	exact := CandidateScope{ProjectID: "project_demo", Environment: "production", BaseGenerationID: "generation_7"}
+	identity, err := exact.BaseIdentity()
+	if err != nil || identity == nil || identity.GenerationID != "generation_7" {
+		t.Fatalf("exact BaseIdentity() = %#v, err=%v", identity, err)
+	}
+	for _, invalid := range []CandidateScope{
+		{ProjectID: " project_demo", Environment: "production"},
+		{ProjectID: "project_demo", Environment: " production"},
+		{ProjectID: "project_demo", Environment: "production", BaseGenerationID: " generation_7"},
+	} {
+		if _, err := invalid.BaseIdentity(); err == nil {
+			t.Fatalf("BaseIdentity(%#v) succeeded", invalid)
+		}
+	}
+}
+
 func TestDecodeRejectsWorkspaceFieldsAndKinds(t *testing.T) {
 	workspaceField := `{"version":1,"resources":[{"id":"project_demo","kind":"project","name":"demo","workspace":"legacy"}],"edges":[]}`
 	if _, err := Decode([]byte(workspaceField)); err == nil {

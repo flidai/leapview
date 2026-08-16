@@ -321,6 +321,42 @@ type ServingIdentity struct {
 	GenerationID string     `json:"generationId"`
 }
 
+// CandidateScope is the canonical serving scope used while preparing a
+// private candidate. BaseGenerationID is optional for a first deployment;
+// an empty value means there is no base generation, never a fabricated ID.
+type CandidateScope struct {
+	ProjectID        ResourceID `json:"projectId"`
+	Environment      string     `json:"environment"`
+	BaseGenerationID string     `json:"baseGenerationId,omitempty"`
+}
+
+func (scope CandidateScope) Validate() error {
+	if scope.ProjectID.Validate() != nil || scope.ProjectID.String() != strings.TrimSpace(scope.ProjectID.String()) {
+		return fmt.Errorf("%w: candidate project id is invalid", ErrInvalidServingIdentity)
+	}
+	if scope.Environment == "" || scope.Environment != strings.TrimSpace(scope.Environment) || !resourceIDPattern.MatchString(scope.Environment) {
+		return fmt.Errorf("%w: candidate environment is invalid", ErrInvalidServingIdentity)
+	}
+	if scope.BaseGenerationID != "" && (scope.BaseGenerationID != strings.TrimSpace(scope.BaseGenerationID) || !resourceIDPattern.MatchString(scope.BaseGenerationID)) {
+		return fmt.Errorf("%w: candidate base generation is invalid", ErrInvalidServingIdentity)
+	}
+	return nil
+}
+
+func (scope CandidateScope) BaseIdentity() (*ServingIdentity, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if scope.BaseGenerationID == "" {
+		return nil, nil
+	}
+	identity, err := NewServingIdentity(scope.ProjectID, scope.Environment, scope.BaseGenerationID)
+	if err != nil {
+		return nil, err
+	}
+	return &identity, nil
+}
+
 // NewServingIdentity validates the complete immutable serving scope without
 // requiring a graph payload. Artifact binding separately verifies that the
 // identity's project ID matches the graph root.

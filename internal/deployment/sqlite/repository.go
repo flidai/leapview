@@ -158,9 +158,9 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 		return deployment.Deployment{}, fmt.Errorf("%w: candidate generation changed while activating", deployment.ErrConflict)
 	}
 	if row.PriorGenerationID == "" {
-		result, err = tx.ExecContext(ctx, `INSERT INTO project_active_serving_states(project_id,environment,serving_state_id,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)`, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment, row.ServingIdentity.GenerationID)
+		result, err = tx.ExecContext(ctx, `INSERT INTO project_active_serving_states(project_id,environment,generation_id,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)`, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment, row.ServingIdentity.GenerationID)
 	} else {
-		result, err = tx.ExecContext(ctx, `UPDATE project_active_serving_states SET serving_state_id=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND environment=? AND serving_state_id=?`, row.ServingIdentity.GenerationID, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment, row.PriorGenerationID)
+		result, err = tx.ExecContext(ctx, `UPDATE project_active_serving_states SET generation_id=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND environment=? AND generation_id=?`, row.ServingIdentity.GenerationID, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment, row.PriorGenerationID)
 	}
 	if err != nil {
 		return deployment.Deployment{}, err

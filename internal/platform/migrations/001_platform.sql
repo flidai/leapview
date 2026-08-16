@@ -35,10 +35,10 @@ CREATE TABLE IF NOT EXISTS serving_states (
 CREATE TABLE IF NOT EXISTS project_active_serving_states (
   project_id TEXT NOT NULL,
   environment TEXT NOT NULL,
-  serving_state_id TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(project_id, environment),
-  FOREIGN KEY(serving_state_id, project_id, environment)
+  FOREIGN KEY(generation_id, project_id, environment)
     REFERENCES serving_states(id, project_id, environment) ON DELETE CASCADE
 );
 

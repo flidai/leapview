@@ -11,6 +11,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -205,7 +206,7 @@ func TestCandidateServiceIsolatesAutomationKeysAndCancelsByKey(t *testing.T) {
 		cancelled.Status != CandidateCancelled {
 		t.Fatalf("CancelActive() = %#v, %v", cancelled, err)
 	}
-	remaining, err := service.Get(t.Context(), CandidateScope{
+	remaining, err := service.Get(t.Context(), CandidateAccessScope{
 		ProjectID: "finance", CandidateID: second.Candidate.ID,
 		OwnerID: "principal_1",
 	})
@@ -224,7 +225,7 @@ func TestCandidateServiceConcealsForeignCandidatesAndUsesOptimisticReplacement(t
 		ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: first,
 	})
 	require.NoError(t, err)
-	for name, scope := range map[string]CandidateScope{
+	for name, scope := range map[string]CandidateAccessScope{
 		"owner":   {ProjectID: "finance", CandidateID: started.Candidate.ID, OwnerID: "principal_2"},
 		"project": {ProjectID: "marketing", CandidateID: started.Candidate.ID, OwnerID: "principal_1"},
 		"target":  {ProjectID: "finance", CandidateID: started.Candidate.ID, OwnerID: "principal_1", TargetID: "lvinst_other"},
@@ -236,14 +237,14 @@ func TestCandidateServiceConcealsForeignCandidatesAndUsesOptimisticReplacement(t
 		})
 	}
 
-	updated, err := service.ReplaceArtifact(context.Background(), CandidateScope{
+	updated, err := service.ReplaceArtifact(context.Background(), CandidateAccessScope{
 		ProjectID: "finance", CandidateID: started.Candidate.ID, OwnerID: "principal_1",
 	}, first, second)
 	require.NoError(t, err)
 	if updated.ArtifactDigest != second || updated.Status != CandidatePreparing {
 		t.Fatalf("updated = %#v", updated)
 	}
-	if _, err := service.ReplaceArtifact(context.Background(), CandidateScope{
+	if _, err := service.ReplaceArtifact(context.Background(), CandidateAccessScope{
 		ProjectID: "finance", CandidateID: started.Candidate.ID, OwnerID: "principal_1",
 	}, first, second); !errors.Is(err, ErrCandidateConflict) {
 		t.Fatalf("stale replacement error = %v, want ErrCandidateConflict", err)
@@ -268,19 +269,19 @@ func TestCandidateServiceEnforcesQuotaCancelExpiryAndRestartDurability(t *testin
 	}
 
 	restarted := newCandidateTestService(t, repository, now.Add(10*time.Minute))
-	resumed, err := restarted.Get(context.Background(), CandidateScope{
+	resumed, err := restarted.Get(context.Background(), CandidateAccessScope{
 		ProjectID: "finance", CandidateID: first.Candidate.ID, OwnerID: "principal_1",
 	})
 	if err != nil || resumed.ID != first.Candidate.ID {
 		t.Fatalf("restart Get() = %#v, %v", resumed, err)
 	}
-	cancelled, err := restarted.Cancel(context.Background(), CandidateScope{
+	cancelled, err := restarted.Cancel(context.Background(), CandidateAccessScope{
 		ProjectID: "finance", CandidateID: first.Candidate.ID, OwnerID: "principal_1",
 	})
 	if err != nil || cancelled.Status != CandidateCancelled {
 		t.Fatalf("Cancel() = %#v, %v", cancelled, err)
 	}
-	replayed, err := restarted.Cancel(context.Background(), CandidateScope{
+	replayed, err := restarted.Cancel(context.Background(), CandidateAccessScope{
 		ProjectID: "finance", CandidateID: first.Candidate.ID, OwnerID: "principal_1",
 	})
 	if err != nil || replayed != cancelled {
@@ -299,7 +300,7 @@ func TestCandidateServiceEnforcesQuotaCancelExpiryAndRestartDurability(t *testin
 	if count, err := expiring.Reconcile(context.Background()); err != nil || count != 1 {
 		t.Fatalf("Reconcile() = %d, %v", count, err)
 	}
-	expired, err := expiring.Get(context.Background(), CandidateScope{
+	expired, err := expiring.Get(context.Background(), CandidateAccessScope{
 		ProjectID: "marketing", CandidateID: second.Candidate.ID, OwnerID: "principal_1",
 	})
 	if err != nil || expired.Status != CandidateExpired {
@@ -344,7 +345,7 @@ func TestCandidateServiceAuditsLifecycleWithoutArtifactDigest(t *testing.T) {
 		ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: digest,
 	})
 	require.NoError(t, err)
-	if _, err := service.Cancel(context.Background(), CandidateScope{
+	if _, err := service.Cancel(context.Background(), CandidateAccessScope{
 		ProjectID: "finance", CandidateID: started.Candidate.ID, OwnerID: "principal_1",
 	}); err != nil {
 		t.Fatal(err)
@@ -406,11 +407,11 @@ func newCandidateMemoryRepository() *candidateMemoryRepository {
 	}
 }
 
-func (repository *candidateMemoryRepository) ActiveCandidateBaseGeneration(_ context.Context, projectID, _ string) (string, error) {
-	if generation := repository.baseGenerations[projectID]; generation != "" {
-		return generation, nil
+func (repository *candidateMemoryRepository) ActiveCandidateBaseScope(_ context.Context, projectID projectgraph.ResourceID, environment string) (CandidateScope, error) {
+	if generation := repository.baseGenerations[projectID.String()]; generation != "" {
+		return CandidateScope{ProjectID: projectID, Environment: environment, BaseGenerationID: generation}, nil
 	}
-	return CandidateBaseGenerationEmpty, nil
+	return CandidateScope{ProjectID: projectID, Environment: environment}, nil
 }
 
 func (repository *candidateMemoryRepository) StartCandidate(_ context.Context, candidate Candidate, maxActivePerOwner int) (Candidate, bool, error) {
@@ -419,10 +420,10 @@ func (repository *candidateMemoryRepository) StartCandidate(_ context.Context, c
 		if existing.OwnerID == candidate.OwnerID && !existing.Terminal() {
 			active++
 		}
-		if existing.OwnerID == candidate.OwnerID && existing.ProjectID == candidate.ProjectID &&
+		if existing.OwnerID == candidate.OwnerID && existing.Scope.ProjectID == candidate.Scope.ProjectID &&
 			existing.TargetID == candidate.TargetID && existing.Key == candidate.Key &&
 			!existing.Terminal() {
-			if existing.BaseGeneration == candidate.BaseGeneration && existing.ArtifactDigest == candidate.ArtifactDigest {
+			if existing.Scope.BaseGenerationID == candidate.Scope.BaseGenerationID && existing.ArtifactDigest == candidate.ArtifactDigest {
 				return existing, true, nil
 			}
 			return Candidate{}, false, ErrCandidateConflict
@@ -438,12 +439,12 @@ func (repository *candidateMemoryRepository) StartCandidate(_ context.Context, c
 func (repository *candidateMemoryRepository) ActiveCandidate(
 	_ context.Context,
 	targetID,
-	projectID,
+	projectID projectgraph.ResourceID,
 	ownerID,
 	key string,
 ) (Candidate, error) {
 	for _, candidate := range repository.candidates {
-		if candidate.TargetID == targetID && candidate.ProjectID == projectID &&
+		if candidate.TargetID == targetID && candidate.Scope.ProjectID == projectID &&
 			candidate.OwnerID == ownerID && candidate.Key == key &&
 			!candidate.Terminal() {
 			return candidate, nil

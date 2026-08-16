@@ -7,6 +7,7 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -32,12 +33,10 @@ const (
 // project runtime. It never changes active serving-state pointers.
 type Candidate struct {
 	ID               string
-	ProjectID        string
 	Key              string
 	TargetID         string
-	Environment      string
 	OwnerID          string
-	BaseGeneration   string
+	Scope            CandidateScope
 	ArtifactDigest   string
 	ProvenanceDigest string
 	Status           CandidateStatus
@@ -53,25 +52,33 @@ type Candidate struct {
 
 type CandidateStartInput struct {
 	ID             string
-	ProjectID      string
 	Key            string
 	TargetID       string
-	Environment    string
 	OwnerID        string
-	BaseGeneration string
+	Scope          CandidateScope
 	ArtifactDigest string
 	ExpiresAt      time.Time
 	Now            time.Time
 }
 
+type CandidateScope = projectgraph.CandidateScope
+
+// CandidateAccessScope is the request-time ownership scope for a candidate.
+// It deliberately does not duplicate the candidate's serving scope aggregate.
+type CandidateAccessScope struct {
+	ProjectID   projectgraph.ResourceID
+	CandidateID string
+	OwnerID     string
+	TargetID    string
+}
+
 func (candidate Candidate) Validate() error {
-	if strings.TrimSpace(candidate.ID) == "" ||
-		strings.TrimSpace(candidate.ProjectID) == "" ||
+	if !canonicalCandidateLiteral(candidate.ID, false) ||
 		!canonicalCandidateKey(candidate.Key) ||
-		strings.TrimSpace(candidate.TargetID) == "" ||
-		strings.TrimSpace(candidate.Environment) == "" ||
-		strings.TrimSpace(candidate.OwnerID) == "" ||
-		strings.TrimSpace(candidate.BaseGeneration) == "" ||
+		!canonicalCandidateLiteral(candidate.TargetID, false) ||
+		!canonicalCandidateLiteral(candidate.OwnerID, false) ||
+		candidate.Scope.Validate() != nil ||
+		candidate.Scope.Environment == "" ||
 		!canonicalCandidateDigest(candidate.ArtifactDigest) ||
 		candidate.Revision < 1 ||
 		candidate.CreatedAt.IsZero() ||
@@ -81,7 +88,7 @@ func (candidate Candidate) Validate() error {
 	}
 	switch candidate.Status {
 	case CandidatePreparing, CandidateFailed, CandidateCancelled, CandidateExpired:
-		if strings.TrimSpace(candidate.ProvenanceDigest) != "" {
+		if !canonicalCandidateLiteral(candidate.ProvenanceDigest, true) {
 			return fmt.Errorf(
 				"%w: only a ready candidate may reference provenance",
 				ErrCandidateInvalid,
@@ -101,19 +108,20 @@ func (candidate Candidate) Validate() error {
 }
 
 func NewCandidate(input CandidateStartInput) (Candidate, error) {
-	input.ID = strings.TrimSpace(input.ID)
-	input.ProjectID = strings.TrimSpace(input.ProjectID)
+	if !canonicalCandidateLiteral(input.ID, false) ||
+		!canonicalCandidateLiteral(input.TargetID, false) ||
+		!canonicalCandidateLiteral(input.OwnerID, false) ||
+		input.Scope.Validate() != nil ||
+		input.Scope.Environment == "" ||
+		(input.Key != "" && !canonicalCandidateLiteral(input.Key, false)) ||
+		!canonicalCandidateLiteral(input.ArtifactDigest, false) {
+		return Candidate{}, fmt.Errorf("%w: candidate fields must be canonical", ErrCandidateInvalid)
+	}
 	input.Key = normalizeCandidateKey(input.Key)
-	input.TargetID = strings.TrimSpace(input.TargetID)
-	input.Environment = strings.TrimSpace(input.Environment)
-	input.OwnerID = strings.TrimSpace(input.OwnerID)
-	input.BaseGeneration = strings.TrimSpace(input.BaseGeneration)
-	input.ArtifactDigest = strings.TrimSpace(input.ArtifactDigest)
 	input.Now = input.Now.UTC()
 	input.ExpiresAt = input.ExpiresAt.UTC()
-	if input.ID == "" || input.ProjectID == "" || input.TargetID == "" || input.Environment == "" ||
-		input.OwnerID == "" || input.BaseGeneration == "" {
-		return Candidate{}, fmt.Errorf("%w: id, project, target, environment, owner, and base generation are required", ErrCandidateInvalid)
+	if input.ID == "" || input.TargetID == "" || input.OwnerID == "" {
+		return Candidate{}, fmt.Errorf("%w: id, project, target, owner, and base identity are required", ErrCandidateInvalid)
 	}
 	if !canonicalCandidateDigest(input.ArtifactDigest) {
 		return Candidate{}, fmt.Errorf("%w: artifact digest must be canonical sha256", ErrCandidateInvalid)
@@ -122,8 +130,8 @@ func NewCandidate(input CandidateStartInput) (Candidate, error) {
 		return Candidate{}, fmt.Errorf("%w: expiry must be after creation", ErrCandidateInvalid)
 	}
 	candidate := Candidate{
-		ID: input.ID, ProjectID: input.ProjectID, Key: input.Key, TargetID: input.TargetID,
-		Environment: input.Environment, OwnerID: input.OwnerID, BaseGeneration: input.BaseGeneration,
+		ID: input.ID, Key: input.Key, TargetID: input.TargetID,
+		OwnerID: input.OwnerID, Scope: input.Scope,
 		ArtifactDigest: input.ArtifactDigest, Status: CandidatePreparing,
 		ExpiresAt: input.ExpiresAt, CreatedAt: input.Now, UpdatedAt: input.Now, Revision: 1,
 	}
@@ -162,8 +170,9 @@ func (candidate Candidate) Terminal() bool {
 }
 
 func (candidate Candidate) ReplaceArtifact(expectedDigest, nextDigest string, now, expiresAt time.Time) (Candidate, error) {
-	expectedDigest = strings.TrimSpace(expectedDigest)
-	nextDigest = strings.TrimSpace(nextDigest)
+	if !canonicalCandidateLiteral(expectedDigest, false) || !canonicalCandidateLiteral(nextDigest, false) {
+		return Candidate{}, fmt.Errorf("%w: candidate digests must be canonical", ErrCandidateInvalid)
+	}
 	now = now.UTC()
 	expiresAt = expiresAt.UTC()
 	if candidate.Terminal() {
@@ -195,8 +204,9 @@ func (candidate Candidate) MarkReady(
 	provenanceDigest string,
 	now time.Time,
 ) (Candidate, error) {
-	artifactDigest = strings.TrimSpace(artifactDigest)
-	provenanceDigest = strings.TrimSpace(provenanceDigest)
+	if !canonicalCandidateLiteral(artifactDigest, false) || !canonicalCandidateLiteral(provenanceDigest, false) {
+		return Candidate{}, fmt.Errorf("%w: candidate digests must be canonical", ErrCandidateInvalid)
+	}
 	now = now.UTC()
 	if candidate.Terminal() {
 		return Candidate{}, fmt.Errorf("%w: candidate is %s", ErrCandidateConflict, candidate.Status)
@@ -230,8 +240,9 @@ func (candidate Candidate) MarkReady(
 }
 
 func (candidate Candidate) MarkFailed(artifactDigest, failureCode string, now time.Time) (Candidate, error) {
-	artifactDigest = strings.TrimSpace(artifactDigest)
-	failureCode = strings.TrimSpace(failureCode)
+	if !canonicalCandidateLiteral(artifactDigest, false) || !canonicalCandidateLiteral(failureCode, false) {
+		return Candidate{}, fmt.Errorf("%w: candidate transition fields must be canonical", ErrCandidateInvalid)
+	}
 	now = now.UTC()
 	if candidate.Terminal() {
 		return Candidate{}, fmt.Errorf("%w: candidate is %s", ErrCandidateConflict, candidate.Status)
@@ -314,7 +325,17 @@ func (candidate Candidate) advance(now time.Time) Candidate {
 }
 
 func canonicalCandidateDigest(value string) bool {
-	return digest.ValidateSHA256Identity(strings.TrimSpace(value)) == nil
+	return canonicalCandidateLiteral(value, false) && digest.ValidateSHA256Identity(value) == nil
+}
+
+// canonicalCandidateLiteral validates an identity literal without silently
+// repairing it. Transport adapters and domain transitions must both reject
+// aliases rather than turning them into a different identity.
+func canonicalCandidateLiteral(value string, allowEmpty bool) bool {
+	if value != strings.TrimSpace(value) {
+		return false
+	}
+	return allowEmpty || value != ""
 }
 
 func canonicalCandidateFailureCode(value string) bool {

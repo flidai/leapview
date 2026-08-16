@@ -4,7 +4,7 @@
 SELECT project_id, environment, digest, status FROM serving_states WHERE id = ?;
 
 -- name: GetActiveServingState :one
-SELECT serving_state_id FROM project_active_serving_states
+SELECT generation_id FROM project_active_serving_states
 WHERE project_id = ? AND environment = ?;
 
 -- name: CreateProjectDeployment :exec

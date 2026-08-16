@@ -215,7 +215,7 @@ func TestPublishProjectCandidatePromotesAndRequestsTheExactReadyCandidate(t *tes
 	targetRelease.Provenance = &provenance
 	ready, err := module.candidates.MarkReady(
 		t.Context(),
-		deployment.CandidateScope{
+		deployment.CandidateAccessScope{
 			ProjectID: "project", CandidateID: started.Candidate.ID,
 			OwnerID: "principal_1",
 		},
@@ -282,7 +282,7 @@ func TestPublishProjectCandidateRejectsStaleClientRevision(t *testing.T) {
 	require.NoError(t, err)
 	ready, err := module.candidates.MarkReady(
 		t.Context(),
-		deployment.CandidateScope{
+		deployment.CandidateAccessScope{
 			ProjectID: "project", CandidateID: started.Candidate.ID,
 			OwnerID: "principal_1",
 		},

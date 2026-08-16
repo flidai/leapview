@@ -28,22 +28,36 @@ func NewRepository(sqlDB *sql.DB) *Repository {
 }
 
 func requiredEnvironment(value string) (string, error) {
-	if strings.TrimSpace(value) == "" {
+	if value == "" || value != strings.TrimSpace(value) {
 		return "", fmt.Errorf("environment is required")
 	}
-	environment := servingstate.NormalizeEnvironment(servingstate.Environment(value))
+	environment := servingstate.Environment(value)
 	if err := servingstate.ValidateEnvironment(environment); err != nil {
 		return "", err
 	}
 	return string(environment), nil
 }
 
+func requiredServingStateID(value servingstate.ID) (string, error) {
+	raw := string(value)
+	if raw == "" || raw != strings.TrimSpace(raw) {
+		return "", fmt.Errorf("serving state id must be canonical")
+	}
+	return raw, nil
+}
+
 func (r *Repository) Create(ctx context.Context, input servingstate.CreateInput) (servingstate.State, error) {
-	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(input.ProjectID.String()))
+	if input.ProjectID.String() != strings.TrimSpace(input.ProjectID.String()) {
+		return servingstate.State{}, fmt.Errorf("project id must be canonical")
+	}
+	projectID, err := projectgraph.NewResourceID(input.ProjectID.String())
 	if err != nil {
 		return servingstate.State{}, fmt.Errorf("project id is required")
 	}
-	environment := servingstate.NormalizeEnvironment(input.Environment)
+	if string(input.Environment) != strings.TrimSpace(string(input.Environment)) {
+		return servingstate.State{}, fmt.Errorf("environment must be canonical")
+	}
+	environment := input.Environment
 	if err := servingstate.ValidateEnvironment(environment); err != nil {
 		return servingstate.State{}, err
 	}
@@ -65,6 +79,9 @@ func (r *Repository) Create(ctx context.Context, input servingstate.CreateInput)
 }
 
 func (r *Repository) ByID(ctx context.Context, id servingstate.ID) (servingstate.State, error) {
+	if id == "" || string(id) != strings.TrimSpace(string(id)) {
+		return servingstate.State{}, servingstate.ErrNotFound
+	}
 	row, err := r.q.GetServingState(ctx, string(id))
 	if err != nil {
 		return servingstate.State{}, mapNotFound(err)
@@ -76,10 +93,14 @@ func (r *Repository) MarkFailed(ctx context.Context, servingStateID servingstate
 	if cause == nil {
 		return nil
 	}
+	id, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return err
+	}
 	return r.q.UpdateServingStateStatus(ctx, platformdb.UpdateServingStateStatusParams{
 		Status: string(servingstate.StatusFailed),
 		Error:  cause.Error(),
-		ID:     string(servingStateID),
+		ID:     id,
 	})
 }
 
@@ -87,9 +108,13 @@ func (r *Repository) RecordDuckLakeSnapshot(ctx context.Context, servingStateID 
 	if snapshotID <= 0 {
 		return fmt.Errorf("ducklake snapshot id must be positive")
 	}
+	id, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return err
+	}
 	return r.q.UpdateServingStateDuckLakeSnapshot(ctx, platformdb.UpdateServingStateDuckLakeSnapshotParams{
 		DucklakeSnapshotID: snapshotID,
-		ID:                 string(servingStateID),
+		ID:                 id,
 	})
 }
 
@@ -126,8 +151,9 @@ func (r *Repository) ForeignEnvironmentDuckLakeSnapshots(ctx context.Context, en
 }
 
 func (r *Repository) CreateQuerySnapshotLease(ctx context.Context, input servingstate.SnapshotLeaseInput) (string, error) {
-	if input.ServingStateID == "" {
-		return "", fmt.Errorf("serving state id is required")
+	servingStateID, err := requiredServingStateID(input.ServingStateID)
+	if err != nil {
+		return "", err
 	}
 	if input.DuckLakeSnapshotID <= 0 {
 		return "", fmt.Errorf("ducklake snapshot id must be positive")
@@ -139,7 +165,7 @@ func (r *Repository) CreateQuerySnapshotLease(ctx context.Context, input serving
 	id := newID("lease")
 	if err := r.q.CreateQuerySnapshotLease(ctx, platformdb.CreateQuerySnapshotLeaseParams{
 		ID:                 id,
-		ServingStateID:     string(input.ServingStateID),
+		ServingStateID:     servingStateID,
 		DucklakeSnapshotID: input.DuckLakeSnapshotID,
 		OwnerID:            input.OwnerID,
 		ExpiresAt:          sqliteTimestamp(expiresAt),
@@ -150,16 +176,14 @@ func (r *Repository) CreateQuerySnapshotLease(ctx context.Context, input serving
 }
 
 func (r *Repository) ReleaseQuerySnapshotLease(ctx context.Context, id string) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
+	if id == "" || id != strings.TrimSpace(id) {
 		return nil
 	}
 	return r.q.ReleaseQuerySnapshotLease(ctx, id)
 }
 
 func (r *Repository) ExtendQuerySnapshotLease(ctx context.Context, id string, expiresAt time.Time) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
+	if id == "" || id != strings.TrimSpace(id) {
 		return nil
 	}
 	if expiresAt.IsZero() {
@@ -230,7 +254,15 @@ func (r *Repository) ReconcileRetention(ctx context.Context, environment string,
 }
 
 func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingstate.ID, validation servingstate.Validation, artifact servingstate.Artifact) (servingstate.State, error) {
-	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(validation.ProjectID.String()))
+	servingStateIDRaw, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return servingstate.State{}, err
+	}
+	projectLiteral := validation.ProjectID.String()
+	if projectLiteral != strings.TrimSpace(projectLiteral) {
+		return servingstate.State{}, fmt.Errorf("validated serving state project id must be canonical")
+	}
+	projectID, err := projectgraph.NewResourceID(projectLiteral)
 	if err != nil {
 		return servingstate.State{}, fmt.Errorf("validated serving state requires project id")
 	}
@@ -277,14 +309,14 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	current, err := q.GetServingState(ctx, string(servingStateID))
+	current, err := q.GetServingState(ctx, servingStateIDRaw)
 	if err != nil {
 		return servingstate.State{}, mapNotFound(err)
 	}
 	if current.ProjectID != projectID.String() {
 		return servingstate.State{}, fmt.Errorf("artifact project = %q, want %q", projectID, current.ProjectID)
 	}
-	identity, err := projectgraph.NewServingIdentity(projectID, current.Environment, string(servingStateID))
+	identity, err := projectgraph.NewServingIdentity(projectID, current.Environment, servingStateIDRaw)
 	if err != nil {
 		return servingstate.State{}, err
 	}
@@ -300,10 +332,10 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 	if artifact.ManifestJSON != validation.ManifestJSON {
 		return servingstate.State{}, fmt.Errorf("artifact manifest does not match validated manifest")
 	}
-	if strings.TrimSpace(artifact.ID) == "" || artifact.ServingStateID != servingStateID {
+	if artifact.ID == "" || artifact.ID != strings.TrimSpace(artifact.ID) || artifact.ServingStateID != servingStateID {
 		return servingstate.State{}, fmt.Errorf("artifact identity does not match serving state %s", servingStateID)
 	}
-	if strings.TrimSpace(artifact.Format) == "" || strings.TrimSpace(artifact.Path) == "" {
+	if artifact.Format == "" || artifact.Format != strings.TrimSpace(artifact.Format) || artifact.Path == "" || artifact.Path != strings.TrimSpace(artifact.Path) {
 		return servingstate.State{}, fmt.Errorf("validated serving state artifact format and path are required")
 	}
 	switch servingstate.Status(current.Status) {
@@ -323,10 +355,10 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 	if err := q.InsertServingStateArtifact(ctx, mapArtifactParams(artifact)); err != nil {
 		return servingstate.State{}, err
 	}
-	if err := q.ClearAssetEdgesForServingState(ctx, string(servingStateID)); err != nil {
+	if err := q.ClearAssetEdgesForServingState(ctx, servingStateIDRaw); err != nil {
 		return servingstate.State{}, err
 	}
-	if err := q.ClearAssetsForServingState(ctx, string(servingStateID)); err != nil {
+	if err := q.ClearAssetsForServingState(ctx, servingStateIDRaw); err != nil {
 		return servingstate.State{}, err
 	}
 	for _, resource := range validation.Graph.Resources() {
@@ -335,9 +367,9 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 			return servingstate.State{}, fmt.Errorf("encode resource %s: %w", resource.ID, err)
 		}
 		if err := q.InsertAsset(ctx, platformdb.InsertAssetParams{
-			SnapshotID:     assetSnapshotID(string(servingStateID), resource.ID.String()),
+			SnapshotID:     assetSnapshotID(servingStateIDRaw, resource.ID.String()),
 			LogicalAssetID: resource.ID.String(),
-			ServingStateID: string(servingStateID),
+			ServingStateID: servingStateIDRaw,
 			AssetType:      string(resource.Kind),
 			AssetKey:       resource.Name,
 			Title:          resource.Metadata.DisplayName,
@@ -352,8 +384,8 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 	}
 	for _, edge := range validation.Graph.Edges() {
 		if err := q.InsertAssetEdge(ctx, platformdb.InsertAssetEdgeParams{
-			ID:                 edgeID(string(servingStateID), edge.From.String(), edge.To.String(), edge.Relation),
-			ServingStateID:     string(servingStateID),
+			ID:                 edgeID(servingStateIDRaw, edge.From.String(), edge.To.String(), edge.Relation),
+			ServingStateID:     servingStateIDRaw,
 			FromLogicalAssetID: edge.From.String(),
 			ToLogicalAssetID:   edge.To.String(),
 			EdgeType:           edge.Relation,
@@ -369,7 +401,7 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 		DashboardAppearancesJson:  string(canonicalAppearancesJSON),
 		Digest:                    validation.Digest,
 		ManifestJson:              validation.ManifestJSON,
-		ID:                        string(servingStateID),
+		ID:                        servingStateIDRaw,
 	}); err != nil {
 		return servingstate.State{}, err
 	}
@@ -391,12 +423,26 @@ func (r *Repository) Activate(ctx context.Context, projectID projectgraph.Resour
 }
 
 func (r *Repository) activate(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment, servingStateID, expectedActiveID servingstate.ID) (servingstate.State, error) {
-	canonicalProjectID, err := projectgraph.NewResourceID(strings.TrimSpace(projectID.String()))
+	projectLiteral := projectID.String()
+	if projectLiteral != strings.TrimSpace(projectLiteral) {
+		return servingstate.State{}, fmt.Errorf("project id must be canonical")
+	}
+	canonicalProjectID, err := projectgraph.NewResourceID(projectLiteral)
 	if err != nil {
 		return servingstate.State{}, fmt.Errorf("project id is required")
 	}
-	environment = servingstate.NormalizeEnvironment(environment)
+	if string(environment) != strings.TrimSpace(string(environment)) {
+		return servingstate.State{}, fmt.Errorf("environment must be canonical")
+	}
 	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return servingstate.State{}, err
+	}
+	servingStateIDRaw, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return servingstate.State{}, err
+	}
+	expectedActiveIDRaw, err := requiredServingStateID(expectedActiveID)
+	if err != nil && expectedActiveID != "" {
 		return servingstate.State{}, err
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -405,7 +451,7 @@ func (r *Repository) activate(ctx context.Context, projectID projectgraph.Resour
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	row, err := q.GetServingState(ctx, string(servingStateID))
+	row, err := q.GetServingState(ctx, servingStateIDRaw)
 	if err != nil {
 		return servingstate.State{}, mapNotFound(err)
 	}
@@ -420,13 +466,13 @@ func (r *Repository) activate(ctx context.Context, projectID projectgraph.Resour
 		return servingstate.State{}, fmt.Errorf("serving state %s has status %q, want validated", servingStateID, current.Status)
 	}
 	var updated int64
-	if expectedActiveID == "" {
+	if expectedActiveIDRaw == "" {
 		updated, err = q.InsertActiveServingState(ctx, platformdb.InsertActiveServingStateParams{
-			ProjectID: canonicalProjectID.String(), Environment: string(environment), ServingStateID: string(servingStateID),
+			ProjectID: canonicalProjectID.String(), Environment: string(environment), GenerationID: string(servingStateID),
 		})
 	} else {
 		updated, err = q.CompareAndSwapActiveServingState(ctx, platformdb.CompareAndSwapActiveServingStateParams{
-			ServingStateID: string(servingStateID), ProjectID: canonicalProjectID.String(), Environment: string(environment), ExpectedActiveID: string(expectedActiveID),
+			GenerationID: servingStateIDRaw, ProjectID: canonicalProjectID.String(), Environment: string(environment), ExpectedGenerationID: expectedActiveIDRaw,
 		})
 	}
 	if err != nil {
@@ -438,11 +484,11 @@ func (r *Repository) activate(ctx context.Context, projectID projectgraph.Resour
 	if err := q.MarkOtherServingStatesDraining(ctx, platformdb.MarkOtherServingStatesDrainingParams{
 		ProjectID:   canonicalProjectID.String(),
 		Environment: string(environment),
-		ID:          string(servingStateID),
+		ID:          servingStateIDRaw,
 	}); err != nil {
 		return servingstate.State{}, err
 	}
-	if err := q.MarkServingStateActive(ctx, string(servingStateID)); err != nil {
+	if err := q.MarkServingStateActive(ctx, servingStateIDRaw); err != nil {
 		return servingstate.State{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -452,15 +498,21 @@ func (r *Repository) activate(ctx context.Context, projectID projectgraph.Resour
 }
 
 func (r *Repository) ActiveArtifact(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
-	canonicalProjectID, err := projectgraph.NewResourceID(strings.TrimSpace(projectID.String()))
+	projectLiteral := projectID.String()
+	if projectLiteral != strings.TrimSpace(projectLiteral) {
+		return servingstate.State{}, servingstate.Artifact{}, fmt.Errorf("project id must be canonical")
+	}
+	canonicalProjectID, err := projectgraph.NewResourceID(projectLiteral)
 	if err != nil {
 		return servingstate.State{}, servingstate.Artifact{}, fmt.Errorf("project id is required")
 	}
-	canonicalEnvironment := servingstate.NormalizeEnvironment(environment)
-	if err := servingstate.ValidateEnvironment(canonicalEnvironment); err != nil {
+	if string(environment) != strings.TrimSpace(string(environment)) {
+		return servingstate.State{}, servingstate.Artifact{}, fmt.Errorf("environment must be canonical")
+	}
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
 		return servingstate.State{}, servingstate.Artifact{}, err
 	}
-	row, err := r.q.GetActiveServingState(ctx, platformdb.GetActiveServingStateParams{ProjectID: canonicalProjectID.String(), Environment: string(canonicalEnvironment)})
+	row, err := r.q.GetActiveServingState(ctx, platformdb.GetActiveServingStateParams{ProjectID: canonicalProjectID.String(), Environment: string(environment)})
 	if err != nil {
 		return servingstate.State{}, servingstate.Artifact{}, mapNotFound(err)
 	}
@@ -484,7 +536,11 @@ func (r *Repository) ListActiveScopes(ctx context.Context) ([]servingstate.Activ
 }
 
 func (r *Repository) ArtifactByServingState(ctx context.Context, servingStateID servingstate.ID) (servingstate.Artifact, error) {
-	artifact, err := r.q.GetArtifactByServingState(ctx, string(servingStateID))
+	id, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return servingstate.Artifact{}, err
+	}
+	artifact, err := r.q.GetArtifactByServingState(ctx, id)
 	if err != nil {
 		return servingstate.Artifact{}, mapNotFound(err)
 	}

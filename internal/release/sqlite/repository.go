@@ -71,7 +71,7 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 	qtx := releasedb.New(tx)
 	err = qtx.CreateAPIRelease(ctx, releasedb.CreateAPIReleaseParams{ID: input.ID, ProjectID: input.ServingIdentity.ProjectID.String(), Environment: input.ServingIdentity.Environment, GenerationID: input.ServingIdentity.GenerationID, ProjectDigest: input.ProjectDigest, ArtifactDigest: input.ArtifactDigest, RequestDigest: input.RequestDigest, IdempotencyKey: input.IdempotencyKey, ProvenanceJson: string(provenanceBytes), CreatedBy: input.CreatedBy})
 	if err != nil {
-		existing, getErr := r.Get(ctx, input.ServingIdentity.ProjectID.String(), input.ID)
+		existing, getErr := r.Get(ctx, input.ServingIdentity.ProjectID, input.ID)
 		if getErr == nil {
 			if existing.RequestDigest != input.RequestDigest {
 				return release.Release{}, release.ErrConflict
@@ -88,14 +88,20 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 	if err := tx.Commit(); err != nil {
 		return release.Release{}, err
 	}
-	return r.Get(ctx, input.ServingIdentity.ProjectID.String(), input.ID)
+	return r.Get(ctx, input.ServingIdentity.ProjectID, input.ID)
 }
 
-func (r *Repository) Get(ctx context.Context, projectID, releaseID string) (release.Release, error) {
-	return getRelease(ctx, r.queries, strings.TrimSpace(projectID), strings.TrimSpace(releaseID))
+func (r *Repository) Get(ctx context.Context, projectID projectgraph.ResourceID, releaseID string) (release.Release, error) {
+	if projectID.Validate() != nil || releaseID == "" || releaseID != strings.TrimSpace(releaseID) {
+		return release.Release{}, release.ErrInvalid
+	}
+	return getRelease(ctx, r.queries, projectID.String(), releaseID)
 }
-func (r *Repository) List(ctx context.Context, projectID string) ([]release.Release, error) {
-	ids, err := r.queries.ListAPIReleaseIDs(ctx, strings.TrimSpace(projectID))
+func (r *Repository) List(ctx context.Context, projectID projectgraph.ResourceID) ([]release.Release, error) {
+	if projectID.Validate() != nil {
+		return nil, release.ErrInvalid
+	}
+	ids, err := r.queries.ListAPIReleaseIDs(ctx, projectID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -149,28 +155,31 @@ func (r *Repository) RecordArtifact(ctx context.Context, artifact release.Artifa
 	return nil
 }
 
-func (r *Repository) RetainCandidateProvenance(ctx context.Context, projectID string, p release.Provenance) (release.Provenance, error) {
-	if strings.TrimSpace(projectID) == "" {
+func (r *Repository) RetainCandidateProvenance(ctx context.Context, projectID projectgraph.ResourceID, p release.Provenance) (release.Provenance, error) {
+	if projectID.Validate() != nil {
 		return release.Provenance{}, release.ErrInvalid
 	}
 	if err := p.Validate(); err != nil {
 		return release.Provenance{}, err
 	}
-	if p.Plan.Identity.ProjectID.String() != strings.TrimSpace(projectID) {
+	if p.Plan.Identity.ProjectID != projectID {
 		return release.Provenance{}, release.ErrConflict
 	}
 	encoded, err := json.Marshal(p)
 	if err != nil {
 		return release.Provenance{}, err
 	}
-	_, err = r.queries.RetainCandidateProvenance(ctx, releasedb.RetainCandidateProvenanceParams{ProjectID: strings.TrimSpace(projectID), CandidateID: p.Candidate.ID, CandidateRevision: p.Candidate.Revision, ProvenanceDigest: p.Digest, ProvenanceJson: string(encoded)})
+	_, err = r.queries.RetainCandidateProvenance(ctx, releasedb.RetainCandidateProvenanceParams{ProjectID: projectID.String(), CandidateID: p.Candidate.ID, CandidateRevision: p.Candidate.Revision, ProvenanceDigest: p.Digest, ProvenanceJson: string(encoded)})
 	if err != nil {
 		return release.Provenance{}, err
 	}
 	return r.CandidateProvenance(ctx, projectID, p.Candidate.ID, p.Candidate.Revision)
 }
-func (r *Repository) CandidateProvenance(ctx context.Context, projectID, candidateID string, revision int64) (release.Provenance, error) {
-	raw, err := r.queries.GetCandidateProvenance(ctx, releasedb.GetCandidateProvenanceParams{ProjectID: strings.TrimSpace(projectID), CandidateID: strings.TrimSpace(candidateID), CandidateRevision: revision})
+func (r *Repository) CandidateProvenance(ctx context.Context, projectID projectgraph.ResourceID, candidateID string, revision int64) (release.Provenance, error) {
+	if projectID.Validate() != nil || candidateID == "" || candidateID != strings.TrimSpace(candidateID) {
+		return release.Provenance{}, release.ErrInvalid
+	}
+	raw, err := r.queries.GetCandidateProvenance(ctx, releasedb.GetCandidateProvenanceParams{ProjectID: projectID.String(), CandidateID: candidateID, CandidateRevision: revision})
 	if errors.Is(err, sql.ErrNoRows) {
 		return release.Provenance{}, release.ErrNotFound
 	}
@@ -222,7 +231,11 @@ func (r *Repository) BeginFinalization(ctx context.Context, projectID, releaseID
 	if err := tx.Commit(); err != nil {
 		return release.Release{}, err
 	}
-	return r.Get(ctx, projectID, releaseID)
+	project, err := projectgraph.NewResourceID(projectID)
+	if err != nil || releaseID == "" || releaseID != strings.TrimSpace(releaseID) {
+		return release.Release{}, release.ErrInvalid
+	}
+	return r.Get(ctx, project, releaseID)
 }
 func (r *Repository) CompleteFinalization(ctx context.Context, projectID, releaseID, actualDigest string) (release.Release, error) {
 	if digest.ValidateSHA256Identity(actualDigest) != nil {
@@ -329,8 +342,8 @@ func (r *Repository) LinkDeploymentTx(ctx context.Context, tx transaction.Transa
 }
 
 func linkDeployment(ctx context.Context, q queryer, projectID, deploymentID, releaseID, rollbackOf string) error {
-	projectID, deploymentID, releaseID, rollbackOf = strings.TrimSpace(projectID), strings.TrimSpace(deploymentID), strings.TrimSpace(releaseID), strings.TrimSpace(rollbackOf)
-	if projectID == "" || deploymentID == "" || releaseID == "" {
+	if projectID == "" || deploymentID == "" || releaseID == "" ||
+		projectID != strings.TrimSpace(projectID) || deploymentID != strings.TrimSpace(deploymentID) || releaseID != strings.TrimSpace(releaseID) || rollbackOf != strings.TrimSpace(rollbackOf) {
 		return release.ErrInvalid
 	}
 	if _, err := q.ExecContext(ctx, `INSERT INTO api_deployment_releases (deployment_id,project_id,release_id,rollback_of) VALUES (?,?,?,?) ON CONFLICT(deployment_id) DO NOTHING`, deploymentID, projectID, releaseID, nullableString(rollbackOf)); err != nil {
@@ -393,7 +406,6 @@ func getRelease(ctx context.Context, q *releasedb.Queries, projectID, releaseID 
 }
 
 func nullableString(value string) any {
-	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil
 	}

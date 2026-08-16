@@ -20,8 +20,8 @@ import (
 
 type Repository interface {
 	Create(context.Context, CreateInput) (Release, error)
-	Get(context.Context, string, string) (Release, error)
-	List(context.Context, string) ([]Release, error)
+	Get(context.Context, projectgraph.ResourceID, string) (Release, error)
+	List(context.Context, projectgraph.ResourceID) ([]Release, error)
 	RecordArtifact(context.Context, Artifact) error
 }
 
@@ -43,8 +43,8 @@ type PinValidator interface {
 	ValidateServingStatePins(context.Context, servingstate.ID, string, map[string]string) error
 }
 type CandidateProvenanceRepository interface {
-	RetainCandidateProvenance(context.Context, string, Provenance) (Provenance, error)
-	CandidateProvenance(context.Context, string, string, int64) (Provenance, error)
+	RetainCandidateProvenance(context.Context, projectgraph.ResourceID, Provenance) (Provenance, error)
+	CandidateProvenance(context.Context, projectgraph.ResourceID, string, int64) (Provenance, error)
 }
 
 type Service struct {
@@ -132,17 +132,27 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error
 	return s.releases.Create(ctx, input)
 }
 
-func (s *Service) Get(ctx context.Context, projectID, releaseID string) (Release, error) {
-	return s.releases.Get(ctx, strings.TrimSpace(projectID), strings.TrimSpace(releaseID))
+func (s *Service) Get(ctx context.Context, projectID projectgraph.ResourceID, releaseID string) (Release, error) {
+	if projectID.Validate() != nil || releaseID == "" || releaseID != strings.TrimSpace(releaseID) {
+		return Release{}, ErrInvalid
+	}
+	return s.releases.Get(ctx, projectID, releaseID)
 }
-func (s *Service) List(ctx context.Context, projectID string) ([]Release, error) {
-	return s.releases.List(ctx, strings.TrimSpace(projectID))
+func (s *Service) List(ctx context.Context, projectID projectgraph.ResourceID) ([]Release, error) {
+	if projectID.Validate() != nil {
+		return nil, ErrInvalid
+	}
+	return s.releases.List(ctx, projectID)
 }
 
 // UploadArtifact streams the immutable generation artifact and records the
 // resulting size only after the canonical digest verifier succeeds.
 func (s *Service) UploadArtifact(ctx context.Context, projectID, releaseID, contentDigest string, source io.Reader) (Artifact, error) {
-	current, err := s.releases.Get(ctx, projectID, releaseID)
+	project, err := canonicalProjectID(projectID)
+	if err != nil || releaseID == "" || releaseID != strings.TrimSpace(releaseID) {
+		return Artifact{}, ErrInvalid
+	}
+	current, err := s.releases.Get(ctx, project, releaseID)
 	if err != nil {
 		return Artifact{}, err
 	}
@@ -186,7 +196,11 @@ func (s *Service) BeginFinalization(ctx context.Context, projectID, releaseID st
 }
 
 func (s *Service) ValidateFinalization(ctx context.Context, projectID, releaseID string) (Release, error) {
-	current, err := s.releases.Get(ctx, projectID, releaseID)
+	project, err := canonicalProjectID(projectID)
+	if err != nil || releaseID == "" || releaseID != strings.TrimSpace(releaseID) {
+		return Release{}, ErrInvalid
+	}
+	current, err := s.releases.Get(ctx, project, releaseID)
 	if err != nil {
 		return Release{}, err
 	}
@@ -207,7 +221,7 @@ func (s *Service) ValidateFinalization(ctx context.Context, projectID, releaseID
 		return s.failFinalization(ctx, current, err)
 	}
 	identity := current.ServingIdentity
-	if state.ProjectID != identity.ProjectID || servingstate.NormalizeEnvironment(state.Environment) != servingstate.Environment(identity.Environment) || state.Digest != current.ArtifactDigest {
+	if state.ProjectID != identity.ProjectID || state.Environment != servingstate.Environment(identity.Environment) || state.Digest != current.ArtifactDigest {
 		return s.failFinalization(ctx, current, fmt.Errorf("%w: generation identity or artifact digest mismatch", ErrConflict))
 	}
 	if len(current.Manifest.Connections) > 0 && s.pins == nil {
@@ -233,20 +247,33 @@ func (s *Service) failFinalization(ctx context.Context, current Release, cause e
 	return failed, cause
 }
 
-func (s *Service) RetainCandidateProvenance(ctx context.Context, projectID string, provenance Provenance) (Provenance, error) {
+func (s *Service) RetainCandidateProvenance(ctx context.Context, projectID projectgraph.ResourceID, provenance Provenance) (Provenance, error) {
 	if s == nil || s.candidateProvenance == nil {
 		return Provenance{}, ErrCandidateArtifactUnavailable
 	}
 	if err := provenance.Validate(); err != nil {
 		return Provenance{}, err
 	}
-	return s.candidateProvenance.RetainCandidateProvenance(ctx, strings.TrimSpace(projectID), provenance)
+	if projectID.Validate() != nil {
+		return Provenance{}, ErrInvalid
+	}
+	return s.candidateProvenance.RetainCandidateProvenance(ctx, projectID, provenance)
 }
-func (s *Service) CandidateProvenance(ctx context.Context, projectID, candidateID string, revision int64) (Provenance, error) {
+func (s *Service) CandidateProvenance(ctx context.Context, projectID projectgraph.ResourceID, candidateID string, revision int64) (Provenance, error) {
 	if s == nil || s.candidateProvenance == nil {
 		return Provenance{}, ErrCandidateArtifactUnavailable
 	}
-	return s.candidateProvenance.CandidateProvenance(ctx, strings.TrimSpace(projectID), strings.TrimSpace(candidateID), revision)
+	if projectID.Validate() != nil || candidateID == "" || candidateID != strings.TrimSpace(candidateID) {
+		return Provenance{}, ErrInvalid
+	}
+	return s.candidateProvenance.CandidateProvenance(ctx, projectID, candidateID, revision)
+}
+
+func canonicalProjectID(value string) (projectgraph.ResourceID, error) {
+	if value == "" || value != strings.TrimSpace(value) {
+		return "", ErrInvalid
+	}
+	return projectgraph.NewResourceID(value)
 }
 
 func stableID(prefix string, values ...string) string {

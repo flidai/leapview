@@ -52,8 +52,8 @@ type PreparedVerification struct{ Digest string }
 type RuntimeVerifier interface{ Verify(context.Context) error }
 
 type ServingStateCandidate struct {
-	ServingStateID string
-	ManagedData    ManagedDataResolution
+	Identity    projectgraph.ServingIdentity
+	ManagedData ManagedDataResolution
 }
 
 func NewRegistryWithFactory(options RegistryOptions) *Registry {
@@ -118,12 +118,18 @@ func (r *Registry) PrepareServingStateCandidate(ctx context.Context, input Servi
 	if closed {
 		return nil, ErrRegistryClosed
 	}
-	state, err := r.manager.repo.ByID(ctx, servingstate.ID(input.ServingStateID))
+	if err := input.Identity.Validate(); err != nil {
+		return nil, fmt.Errorf("candidate serving identity is invalid: %w", err)
+	}
+	if input.Identity.ProjectID != r.ProjectID() || input.Identity.Environment != string(r.Environment()) {
+		return nil, fmt.Errorf("candidate serving identity is outside project environment")
+	}
+	state, err := r.manager.repo.ByID(ctx, servingstate.ID(input.Identity.GenerationID))
 	if err != nil {
 		return nil, err
 	}
-	if state.ProjectID != r.ProjectID() || servingstate.NormalizeEnvironment(state.Environment) != r.Environment() {
-		return nil, fmt.Errorf("serving state %s is outside project environment", input.ServingStateID)
+	if state.ProjectID != input.Identity.ProjectID || servingstate.NormalizeEnvironment(state.Environment) != servingstate.Environment(input.Identity.Environment) {
+		return nil, fmt.Errorf("serving state %s is outside project environment", input.Identity.GenerationID)
 	}
 	artifact, err := r.manager.repo.ArtifactByServingState(ctx, state.ID)
 	if err != nil {

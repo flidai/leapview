@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -30,7 +31,14 @@ type CandidateBindingVersion struct {
 	Revision                                    int64
 	ProviderVersion, EndpointConfigHash         string
 }
-type CandidateRestriction struct{ ID, ObjectID, PolicyType, ExpressionJSON string }
+type CandidateRestriction struct {
+	ID             string
+	ObjectID       projectgraph.ResourceID
+	ObjectKind     projectgraph.Kind
+	Subject        *access.SubjectRef
+	PolicyType     string
+	ExpressionJSON string
+}
 type CandidateDataMode string
 
 const (
@@ -60,9 +68,9 @@ type CandidateLeaseRequest struct {
 	Compatibility        CandidateCompatibility
 }
 type CandidatePreparation struct {
-	Registration   CandidateRegistration
-	ServingStateID string
-	Lifetime       RuntimeLifetime
+	Registration CandidateRegistration
+	Identity     projectgraph.ServingIdentity
+	Lifetime     RuntimeLifetime
 }
 
 type candidateRuntimeKey struct{ candidateID string }
@@ -122,11 +130,17 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 	if normalized.ProjectID != r.ProjectID() {
 		return nil, fmt.Errorf("%w: candidate project does not match runtime host", ErrCandidateRuntimeIncompatible)
 	}
-	state, err := r.manager.repo.ByID(ctx, servingstate.ID(input.ServingStateID))
+	if err := input.Identity.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: candidate serving identity is invalid: %v", ErrCandidateRuntimeInvalid, err)
+	}
+	if input.Identity.ProjectID != normalized.ProjectID || input.Identity.Environment != string(r.Environment()) {
+		return nil, fmt.Errorf("%w: candidate serving identity is outside project environment", ErrCandidateRuntimeIncompatible)
+	}
+	state, err := r.manager.repo.ByID(ctx, servingstate.ID(input.Identity.GenerationID))
 	if err != nil {
 		return nil, err
 	}
-	if state.ProjectID != r.ProjectID() || servingstate.NormalizeEnvironment(state.Environment) != r.Environment() {
+	if state.ProjectID != input.Identity.ProjectID || servingstate.NormalizeEnvironment(state.Environment) != servingstate.Environment(input.Identity.Environment) {
 		return nil, fmt.Errorf("%w: candidate serving state is outside project environment", ErrCandidateRuntimeIncompatible)
 	}
 	artifact, err := r.manager.repo.ArtifactByServingState(ctx, state.ID)
@@ -323,6 +337,9 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 		p := &restrictions[i]
 		if p.ID != strings.TrimSpace(p.ID) || p.ObjectID != strings.TrimSpace(p.ObjectID) || p.PolicyType != strings.TrimSpace(p.PolicyType) || p.ExpressionJSON != strings.TrimSpace(p.ExpressionJSON) || p.ID == "" || p.ObjectID == "" || p.ExpressionJSON == "" {
 			return CandidateCompatibility{}, fmt.Errorf("%w: candidate restriction identity and expression are required and canonical", ErrCandidateRuntimeInvalid)
+		}
+		if p.ObjectID.Validate() != nil || !p.ObjectKind.Valid() || p.Subject != nil && p.Subject.Validate() != nil {
+			return CandidateCompatibility{}, fmt.Errorf("%w: candidate restriction object or subject is invalid", ErrCandidateRuntimeInvalid)
 		}
 		if p.PolicyType != "row_filter" && p.PolicyType != "column_mask" {
 			return CandidateCompatibility{}, fmt.Errorf("%w: unsupported candidate restriction type %q", ErrCandidateRuntimeInvalid, p.PolicyType)
