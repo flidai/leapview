@@ -59,7 +59,7 @@ func TestAdminPublicationMutationPassesUIInvocationIdentity(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/admin/publications/command", nil)
 	r.Header.Set("X-Request-ID", "ui-request-1")
 	r.Header.Set(uicommand.HeaderOperationID, dashboardgen.GenUIActionSuspendDashboardPublication().OperationID())
-	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{WorkspaceID: "sales", Publication: "executive", Action: "suspend"})
+	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{ProjectID: "sales", Publication: "executive", Action: "suspend"})
 	if err != nil {
 		t.Fatal(err)
 	}

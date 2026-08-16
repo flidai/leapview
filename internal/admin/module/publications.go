@@ -22,17 +22,13 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 		return publication.ErrConflict
 	}
 	if !principal.DevBypass {
-		if credential, ok := m.credential(r); ok && !access.TokenAllows(credential.Token, command.WorkspaceID, access.PrivilegeManagePublications) {
-			return publication.ErrNotFound
+		credential, hasCredential := m.credential(r)
+		allowed, err := m.capabilityAllowed(r, principal.ID, access.CapabilityResourcePublish, credential, hasCredential)
+		if err != nil {
+			return err
 		}
-		if m.access != nil {
-			decision, err := m.access.Authorize(r.Context(), principal.ID, access.PrivilegeManagePublications, access.WorkspaceObject(command.WorkspaceID))
-			if err != nil {
-				return err
-			}
-			if !decision.Allowed {
-				return publication.ErrNotFound
-			}
+		if !allowed {
+			return publication.ErrNotFound
 		}
 	}
 	binding, ok := m.publicationCommands[strings.TrimSpace(command.Action)]
@@ -64,7 +60,7 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 		RequestID:      requestID,
 		CorrelationID:  correlationID,
 	}
-	_, err := m.publications.MutatePublicationWithInvocation(r.Context(), command.WorkspaceID, command.Publication, principal.ID, publication.Action(command.Action), invocation)
+	_, err := m.publications.MutatePublicationWithInvocation(r.Context(), command.ProjectID, command.Publication, principal.ID, publication.Action(command.Action), invocation)
 	return err
 }
 
@@ -96,25 +92,25 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 	if resolved, ok := m.credential(r); ok {
 		credential = &resolved
 	}
-	canManage := principal.DevBypass || m.access == nil
-	if !canManage && m.authorizeAnyWorkspace != nil {
-		canManage, err = m.authorizeAnyWorkspace(r.Context(), principal.ID, credential, access.PrivilegeManagePublications)
+	canManage := principal.DevBypass || (m.access == nil && m.currentEffectiveCapabilities == nil)
+	if !canManage && m.authorizeAnyProject != nil {
+		canManage, err = m.authorizeAnyProject(r.Context(), principal.ID, credential, access.CapabilityResourcePublish)
 		if err != nil {
 			return nil, false, err
 		}
 	}
 	out := make([]ui.AdminPublication, 0, len(rows))
 	for _, row := range rows {
-		allowed := principal.DevBypass || m.access == nil
+		allowed := principal.DevBypass || (m.access == nil && m.currentEffectiveCapabilities == nil)
 		if !allowed {
-			if credential != nil && !access.TokenAllows(credential.Token, row.WorkspaceID, access.PrivilegeManagePublications) {
-				continue
+			credentialValue := access.APICredential{}
+			if credential != nil {
+				credentialValue = *credential
 			}
-			decision, err := m.access.Authorize(r.Context(), principal.ID, access.PrivilegeManagePublications, access.WorkspaceObject(row.WorkspaceID))
+			allowed, err = m.capabilityAllowed(r, principal.ID, access.CapabilityResourcePublish, credentialValue, credential != nil)
 			if err != nil {
 				return nil, false, err
 			}
-			allowed = decision.Allowed
 		}
 		if !allowed {
 			continue
@@ -133,7 +129,7 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 			history = append(history, fmt.Sprintf("%s · %s · %s", event.CreatedAt, event.Type, actor))
 		}
 		out = append(out, ui.AdminPublication{
-			WorkspaceID: row.WorkspaceID, Name: row.Name, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
+			ProjectID: row.ProjectID.String(), Name: row.Name, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
 			Status: string(row.Status()), Origins: append([]string(nil), row.AllowedOrigins...), Generation: row.ServingStateID,
 			PublicURL: dto.PublicURL, EmbedURL: dto.EmbedURL, IFrameSnippet: dto.IFrameSnippet,
 			ConfiguredAt: row.ConfiguredAt, SuspendedAt: row.SuspendedAt, DisabledAt: row.DisabledAt, RotatedAt: row.RotatedAt,
@@ -141,6 +137,43 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 		})
 	}
 	return out, canManage, nil
+}
+
+func (m *Module) capabilityAllowed(r *http.Request, principalID string, required access.Capability, credential access.APICredential, hasCredential bool) (bool, error) {
+	if hasCredential && credential.Authoring != nil {
+		for _, capability := range credential.Authoring.Scope.Capabilities {
+			if capability == required {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	if m.currentEffectiveCapabilities == nil {
+		return m.access == nil, nil
+	}
+	effective, err := m.currentEffectiveCapabilities(r.Context(), principalID)
+	if err != nil {
+		return false, err
+	}
+	effectiveHas := false
+	for _, capability := range effective {
+		if capability == required {
+			effectiveHas = true
+			break
+		}
+	}
+	if !effectiveHas {
+		return false, nil
+	}
+	if !hasCredential || credential.Token.Capabilities == nil {
+		return true, nil
+	}
+	for _, capability := range credential.Token.Capabilities {
+		if capability == required {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *Module) principal(r *http.Request) (adminPrincipal, bool) {

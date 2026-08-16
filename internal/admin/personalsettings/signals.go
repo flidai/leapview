@@ -66,7 +66,7 @@ func authoringSessionSignal(value access.AuthoringSession) AuthoringSessionSigna
 	return AuthoringSessionSignal{
 		ID: value.ID, Kind: string(value.Kind), ClientID: value.ClientID,
 		TargetID: value.Scope.TargetID, ProjectID: value.Scope.ProjectID.String(),
-		Privileges: capabilities, CreatedAt: formatTime(value.CreatedAt),
+		Capabilities: capabilities, CreatedAt: formatTime(value.CreatedAt),
 		LastUsedAt: formatTime(value.LastUsedAt), ExpiresAt: formatTime(value.ExpiresAt),
 		RevokedAt: formatTime(value.RevokedAt),
 	}

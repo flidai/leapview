@@ -3,10 +3,9 @@ import { query, state } from 'lit/decorators.js'
 import { Camera, Plus, Search, Trash2, X } from 'lucide'
 import type {
   PersonalAuthoringSessionSignal,
+  PersonalCapabilityOptionSignal,
   PersonalSessionSignal,
   PersonalSettingsSignal,
-  PersonalTokenPrivilegeSignal,
-  PersonalTokenScopeSignal,
   PersonalTokenSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
@@ -18,7 +17,7 @@ const emptySettings: PersonalSettingsSignal = {
   active: 'profile',
   profile: { id: '', email: '', displayName: '', theme: 'system', identitySource: '', canEditDisplayName: false, hasLocalPassword: false },
   security: { localPasswordEnabled: false, sessions: [], authoringSessions: [] },
-  tokens: { items: [], scopes: [] },
+  tokens: { items: [], capabilities: [] },
 }
 
 class LeapViewPersonalSettings extends DatastarLit(LitElement) {
@@ -26,8 +25,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private currentPassword = ''
   @state() private newPassword = ''
   @state() private tokenName = ''
-  @state() private tokenScopeKey = ''
-  @state() private tokenPrivileges: string[] = []
+  @state() private tokenCapabilities: string[] = []
   @state() private tokenExpires = ''
   @state() private tokenCreatePending = false
   @state() private tokenPermissionMenuOpen = false
@@ -146,8 +144,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       this.handledNewToken = newToken
       this.tokenCreatePending = false
       this.tokenName = ''
-      this.tokenScopeKey = ''
-      this.tokenPrivileges = []
+      this.tokenCapabilities = []
       this.tokenExpires = ''
       this.closePermissionMenu()
     }
@@ -254,17 +251,13 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private renderAuthoringSession(session: PersonalAuthoringSessionSignal) {
-    return html`<div class="row"><div class="settings-field"><span class="settings-label">${session.clientId || session.kind}</span><span class="settings-description">${session.projectId || 'No project'} · ${session.privileges.join(', ') || 'Scoped access'} · Created ${formatDate(session.createdAt)}</span></div>${session.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeAuthoringSession(session.id)}>Revoke</button>`}</div>`
+    return html`<div class="row"><div class="settings-field"><span class="settings-label">${session.clientId || session.kind}</span><span class="settings-description">${session.projectId || 'No project'} · ${session.capabilities.join(', ') || 'Scoped access'} · Created ${formatDate(session.createdAt)}</span></div>${session.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeAuthoringSession(session.id)}>Revoke</button>`}</div>`
   }
 
   private renderTokens(tokens: PersonalSettingsSignal['tokens']) {
-    const scope = this.selectedTokenScope(tokens)
-    const selected = scope?.privileges.filter((privilege) => this.tokenPrivileges.includes(privilege.value)) ?? []
-    const filtered = this.filteredTokenPrivileges(scope)
-    const categories = groupTokenPrivileges(filtered)
-    const platformScopes = tokens.scopes.filter((option) => option.kind === 'platform')
-    const projectScopes = tokens.scopes.filter((option) => option.kind !== 'platform')
-    const canCreate = Boolean(this.tokenName.trim() && scope && selected.length && !this.tokenCreatePending)
+    const selected = tokens.capabilities.filter((capability) => this.tokenCapabilities.includes(capability.value))
+    const categories = groupTokenCapabilities(this.filteredTokenCapabilities(tokens.capabilities))
+    const canCreate = Boolean(this.tokenName.trim() && !this.tokenCreatePending)
     return html`
       <section aria-label="API tokens">
         <div class="card token-card">
@@ -283,15 +276,6 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                   <span class="settings-description">Defaults to the product token lifetime.</span>
                 </label>
               </div>
-              <label class="token-field" for="token-scope">
-                <span class="settings-label">Resource access</span>
-                <select id="token-scope" required .value=${this.tokenScopeKey} @change=${this.onTokenScopeChange}>
-                  <option value="">Choose a scope</option>
-                  ${platformScopes.length ? html`<optgroup label="Broad access">${platformScopes.map((option) => html`<option value=${tokenScopeKey(option)}>${option.label}</option>`)}</optgroup>` : nothing}
-                  ${projectScopes.length ? html`<optgroup label="Project access">${projectScopes.map((option) => html`<option value=${tokenScopeKey(option)}>${option.label}</option>`)}</optgroup>` : nothing}
-                </select>
-                <span class="settings-description scope-description">${scope?.description ?? 'The token will be limited to one project or product-administration scope.'}</span>
-              </label>
               <div class="permissions">
                 <div class="permissions-header">
                   <div class="settings-field">
@@ -299,10 +283,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                     <span class="settings-description">Choose the minimal permissions necessary for your needs.</span>
                   </div>
                   <div class="permission-picker">
-                    <button class="permission-trigger" type="button" aria-haspopup="dialog" aria-controls="token-permission-menu" aria-expanded=${String(this.tokenPermissionMenuOpen)} ?disabled=${!scope} @click=${this.togglePermissionMenu}>
+                    <button class="permission-trigger" type="button" aria-haspopup="dialog" aria-controls="token-permission-menu" aria-expanded=${String(this.tokenPermissionMenuOpen)} @click=${this.togglePermissionMenu}>
                       ${lucideIcon(Plus, { size: 16, strokeWidth: 2 })}<span>Add permissions</span>
                     </button>
-                    ${this.tokenPermissionMenuOpen && scope ? html`
+                    ${this.tokenPermissionMenuOpen ? html`
                       <div class="permission-backdrop" aria-hidden="true" @click=${() => this.closePermissionMenu(true)}></div>
                       <div id="token-permission-menu" class="permission-menu" role="dialog" aria-label="Add token permissions">
                         <div class="permission-menu-header">
@@ -313,12 +297,12 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                           </label>
                         </div>
                         <div class="permission-list">
-                          ${categories.length ? categories.map(([category, privileges]) => html`
+                          ${categories.length ? categories.map(([category, capabilities]) => html`
                             <div class="permission-category">${category}</div>
-                            ${privileges.map((privilege) => html`
+                            ${capabilities.map((capability) => html`
                               <label class="permission-option">
-                                <input type="checkbox" value=${privilege.value} .checked=${this.tokenPrivileges.includes(privilege.value)} @change=${() => this.toggleTokenPrivilege(privilege.value)}>
-                                <span class="settings-field"><span class="settings-label">${privilege.label}</span><span class="settings-description">${privilege.description}</span></span>
+                                <input type="checkbox" value=${capability.value} .checked=${this.tokenCapabilities.includes(capability.value)} @change=${() => this.toggleTokenCapability(capability.value)}>
+                                <span class="settings-field"><span class="settings-label">${capability.label}</span><span class="settings-description">${capability.description}</span></span>
                               </label>
                             `)}
                           `) : html`<div class="permission-empty">No permissions match your search.</div>`}
@@ -328,28 +312,27 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                   </div>
                 </div>
                 <div class="selected-permissions" aria-live="polite">
-                  ${selected.length ? selected.map((privilege) => html`
+                  ${selected.length ? selected.map((capability) => html`
                     <div class="selected-permission">
-                      <div class="settings-field"><span class="settings-label">${privilege.label}</span><span class="settings-description">${privilege.description}</span></div>
-                      <button class="permission-remove" type="button" aria-label="Remove ${privilege.label}" @click=${() => this.removeTokenPrivilege(privilege.value)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
+                      <div class="settings-field"><span class="settings-label">${capability.label}</span><span class="settings-description">${capability.description}</span></div>
+                      <button class="permission-remove" type="button" aria-label="Remove ${capability.label}" @click=${() => this.removeTokenCapability(capability.value)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
                     </div>
-                  `) : html`<div class="permission-empty">${scope ? 'No permissions selected.' : 'Choose resource access before adding permissions.'}</div>`}
+                  `) : html`<div class="permission-empty">No capabilities selected; the token follows current access dynamically.</div>`}
                 </div>
               </div>
               <div class="actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${this.tokenCreatePending ? 'Creating…' : 'Create token'}</button></div>
             </form>
           </div>
         </div>
-        <div class="card"><div class="row"><div class="settings-field"><h3>Personal API tokens</h3><span class="settings-description">Revoke credentials you no longer use.</span></div></div>${tokens.items.length ? tokens.items.map((token) => this.renderToken(token, tokens.scopes)) : html`<div class="row"><span class="muted">No personal API tokens.</span></div>`}</div>
+        <div class="card"><div class="row"><div class="settings-field"><h3>Personal API tokens</h3><span class="settings-description">Revoke credentials you no longer use.</span></div></div>${tokens.items.length ? tokens.items.map((token) => this.renderToken(token, tokens.capabilities)) : html`<div class="row"><span class="muted">No personal API tokens.</span></div>`}</div>
       </section>
     `
   }
 
-  private renderToken(token: PersonalTokenSignal, scopes: PersonalTokenScopeSignal[]) {
-    const scope = scopes.find((option) => option.projectId === token.projectId)
-    const options = new Map(scope?.privileges.map((privilege) => [privilege.value, privilege.label]) ?? [])
-    const privileges = token.privileges.map((privilege) => options.get(privilege) ?? humanizePrivilege(privilege))
-    return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${scope?.label || token.projectId || 'Legacy unrestricted scope'} · ${privileges.join(', ') || 'Inherited effective privileges'} · Created ${formatDate(token.createdAt)}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ''}</span></div>${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
+  private renderToken(token: PersonalTokenSignal, capabilities: PersonalCapabilityOptionSignal[]) {
+    const options = new Map(capabilities.map((capability) => [capability.value, capability.label]))
+    const labels = token.capabilities.map((capability) => options.get(capability) ?? humanizeCapability(capability))
+    return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${labels.join(', ') || 'Dynamically follows current access'} · Created ${formatDate(token.createdAt)}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ''}</span></div>${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
   }
 
   private saveProfile = (event: Event): void => { event.preventDefault(); this.send('lv-personal-profile-command', { action: 'save', displayName: this.profileName.trim() }) }
@@ -361,12 +344,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private changePassword = (event: Event): void => { event.preventDefault(); this.send('lv-personal-password-command', { currentPassword: this.currentPassword, newPassword: this.newPassword }); this.currentPassword = ''; this.newPassword = '' }
   private createToken = (event: Event): void => {
     event.preventDefault()
-    const scope = this.selectedTokenScope(this.settings.tokens)
-    if (!this.tokenName.trim() || !scope || !this.tokenPrivileges.length) return
-    this.send('lv-personal-token-command', {
-      action: 'create', name: this.tokenName.trim(), projectId: scope.projectId,
-      privileges: [...this.tokenPrivileges], expiresAt: localDateTimeToRFC3339(this.tokenExpires),
-    })
+    if (!this.tokenName.trim()) return
+    const command: Record<string, unknown> = { action: 'create', name: this.tokenName.trim(), expiresAt: localDateTimeToRFC3339(this.tokenExpires) }
+    if (this.tokenCapabilities.length) command.capabilities = [...this.tokenCapabilities]
+    this.send('lv-personal-token-command', command)
     this.tokenCreatePending = true
   }
   private revokeToken = (tokenId: string): void => { this.send('lv-personal-token-command', { action: 'revoke', tokenId }) }
@@ -467,19 +448,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private onNewPasswordInput = (event: Event): void => { this.newPassword = (event.currentTarget as HTMLInputElement).value }
   private onTokenNameInput = (event: Event): void => { this.tokenName = (event.currentTarget as HTMLInputElement).value }
   private onTokenExpiresInput = (event: Event): void => { this.tokenExpires = (event.currentTarget as HTMLInputElement).value }
-  private onTokenScopeChange = (event: Event): void => {
-    this.tokenScopeKey = (event.currentTarget as HTMLSelectElement).value
-    this.tokenPrivileges = []
-    this.closePermissionMenu()
-  }
-  private selectedTokenScope(tokens: PersonalSettingsSignal['tokens']): PersonalTokenScopeSignal | undefined {
-    return tokens.scopes.find((scope) => tokenScopeKey(scope) === this.tokenScopeKey)
-  }
-  private filteredTokenPrivileges(scope?: PersonalTokenScopeSignal): PersonalTokenPrivilegeSignal[] {
-    if (!scope) return []
+  private filteredTokenCapabilities(capabilities: PersonalCapabilityOptionSignal[]): PersonalCapabilityOptionSignal[] {
     const query = this.tokenPermissionSearch.trim().toLocaleLowerCase()
-    if (!query) return scope.privileges
-    return scope.privileges.filter((privilege) => `${privilege.label} ${privilege.description} ${privilege.category} ${privilege.value}`.toLocaleLowerCase().includes(query))
+    if (!query) return capabilities
+    return capabilities.filter((capability) => `${capability.label} ${capability.description} ${capability.category} ${capability.value}`.toLocaleLowerCase().includes(query))
   }
   private togglePermissionMenu = (): void => {
     this.tokenPermissionMenuOpen = !this.tokenPermissionMenuOpen
@@ -505,29 +477,25 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (returnFocus) void this.updateComplete.then(() => this.permissionTrigger?.focus())
   }
   private onTokenPermissionSearch = (event: Event): void => { this.tokenPermissionSearch = (event.currentTarget as HTMLInputElement).value }
-  private toggleTokenPrivilege(value: string): void {
-    this.tokenPrivileges = this.tokenPrivileges.includes(value)
-      ? this.tokenPrivileges.filter((privilege) => privilege !== value)
-      : [...this.tokenPrivileges, value]
+  private toggleTokenCapability(value: string): void {
+    this.tokenCapabilities = this.tokenCapabilities.includes(value)
+      ? this.tokenCapabilities.filter((capability) => capability !== value)
+      : [...this.tokenCapabilities, value]
   }
-  private removeTokenPrivilege(value: string): void { this.tokenPrivileges = this.tokenPrivileges.filter((privilege) => privilege !== value) }
+  private removeTokenCapability(value: string): void { this.tokenCapabilities = this.tokenCapabilities.filter((capability) => capability !== value) }
 }
 
-function tokenScopeKey(scope: PersonalTokenScopeSignal): string {
-  return scope.kind === 'platform' ? 'platform' : `project:${scope.projectId}`
-}
-
-function groupTokenPrivileges(privileges: PersonalTokenPrivilegeSignal[]): Array<[string, PersonalTokenPrivilegeSignal[]]> {
-  const groups = new Map<string, PersonalTokenPrivilegeSignal[]>()
-  for (const privilege of privileges) {
-    const values = groups.get(privilege.category) ?? []
-    values.push(privilege)
-    groups.set(privilege.category, values)
+function groupTokenCapabilities(capabilities: PersonalCapabilityOptionSignal[]): Array<[string, PersonalCapabilityOptionSignal[]]> {
+  const groups = new Map<string, PersonalCapabilityOptionSignal[]>()
+  for (const capability of capabilities) {
+    const values = groups.get(capability.category) ?? []
+    values.push(capability)
+    groups.set(capability.category, values)
   }
   return [...groups.entries()]
 }
 
-function humanizePrivilege(value: string): string {
+function humanizeCapability(value: string): string {
   return value.toLocaleLowerCase().split('_').filter(Boolean).map((part, index) => index === 0 ? `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}` : part).join(' ')
 }
 

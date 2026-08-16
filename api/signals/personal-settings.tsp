@@ -55,7 +55,7 @@ model PersonalAuthoringSessionSignal {
   `clientId`: string;
   `targetId`: string;
   `projectId`: string;
-  `privileges`: string[];
+  `capabilities`: string[];
   `createdAt`: string;
   `lastUsedAt`: string;
   `expiresAt`: string;

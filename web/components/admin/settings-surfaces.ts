@@ -308,8 +308,6 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   }
 
   private renderCreate(signal: AccessAdministrationSignal) {
-    const projects = signal.projects || []
-    const selectedProject = projects[0]?.id || ''
     return html`<dialog data-access-create-dialog aria-labelledby="create-group-title" @cancel=${this.cancelCreate} @click=${this.closeOnBackdrop}>
       <section class="modal">
         <header class="modal-header">
@@ -318,13 +316,10 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
         </header>
         <div class="modal-body">
           ${this.feedback()}
-          ${!projects.length ? html`<p class="notice">Create a project before creating a group.</p>` : html`
-            <form class="form" @submit=${(event: SubmitEvent) => this.createGroup(event)}>
-              <label>Project<select name="projectId" aria-label="Project" required><option value="">Select a project</option>${projects.map((project) => html`<option value=${project.id} ?selected=${project.id === selectedProject}>${project.name || project.id}</option>`)}</select></label>
-              <label>Group name<input name="displayName" required autocomplete="off" placeholder="Analytics team"></label>
-              <div class="modal-actions"><button type="button" @click=${this.requestCreateClose}>Cancel</button><button class="primary" type="submit" ?disabled=${signal.loading}>Create group</button></div>
-            </form>
-          `}
+          <form class="form" @submit=${(event: SubmitEvent) => this.createGroup(event)}>
+            <label>Group name<input name="displayName" required autocomplete="off" placeholder="Analytics team"></label>
+            <div class="modal-actions"><button type="button" @click=${this.requestCreateClose}>Cancel</button><button class="primary" type="submit" ?disabled=${signal.loading}>Create group</button></div>
+          </form>
         </div>
       </section>
     </dialog>`
@@ -333,7 +328,6 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   private renderDetail(signal: AccessAdministrationSignal, group: AccessGroupSignal) {
     const memberIDs = new Set(group.members.map((member) => member.id))
     const candidates = signal.principals.filter((principal) => principal.kind === 'user' && !memberIDs.has(principal.id))
-    const projects = new Map((signal.projects || []).map((project) => [project.id, project.name || project.id]))
     const provider = group.provider || 'external'
     const local = provider.toLowerCase() === 'local'
     const actions = group.capabilities.canUpdate || group.capabilities.canDelete ? html`
@@ -348,7 +342,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
     return html`${renderEntityDetail({
       label: 'Group administration', feedback: this.feedback(), backHref: '/admin/groups', backLabel: 'All groups',
       avatar: initialsForValue(group.name || group.id), title: group.name || group.id,
-      subtitle: group.projectId ? `${projects.get(group.projectId) || group.projectId} project` : group.externalId ? `External ID ${group.externalId}` : undefined,
+      subtitle: group.externalId ? `External ID ${group.externalId}` : undefined,
       badges: html`<span class="badge">${provider}</span><span class="badge status-active">${local ? 'Managed in LeapView' : 'Synchronized'}</span>`,
       actions, notice,
       sections: html`
@@ -356,7 +350,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
           <div class="section-heading"><h2 id="group-overview-title">Overview</h2></div>
           <dl class="facts">
             <div class="fact"><dt>Provider</dt><dd>${provider}</dd></div>
-            <div class="fact"><dt>Project</dt><dd>${group.projectId ? projects.get(group.projectId) || group.projectId : 'Global'}</dd></div>
+            <div class="fact"><dt>Scope</dt><dd>Global</dd></div>
             <div class="fact"><dt>Created</dt><dd>${formatAccessDate(group.createdAt)}</dd></div>
             <div class="fact"><dt>Member count</dt><dd>${group.members.length}</dd></div>
             <div class="fact"><dt>Group ID</dt><dd><code title=${group.id}>${group.id}</code></dd></div>
@@ -436,8 +430,8 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
     if (event.target === event.currentTarget) this.closeDetailDialog()
   }
 
-  private createGroup(event: SubmitEvent): void { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; this.emit({ action: 'create_group', projectId: formValue(form, 'projectId'), displayName: formValue(form, 'displayName') }) }
-  private updateGroup(event: SubmitEvent, group: AccessGroupSignal): void { event.preventDefault(); this.emit({ action: 'update_group', groupId: group.id, projectId: group.projectId, displayName: formValue(event.currentTarget as HTMLFormElement, 'displayName'), revision: group.revision }); this.closeDetailDialog() }
+  private createGroup(event: SubmitEvent): void { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; this.emit({ action: 'create_group', displayName: formValue(form, 'displayName') }) }
+  private updateGroup(event: SubmitEvent, group: AccessGroupSignal): void { event.preventDefault(); this.emit({ action: 'update_group', groupId: group.id, displayName: formValue(event.currentTarget as HTMLFormElement, 'displayName'), revision: group.revision }); this.closeDetailDialog() }
   private memberPickerItems(candidates: AccessPrincipalSignal[]): EntityMultiSelectItem[] {
     return candidates.map((principal) => ({ id: principal.id, label: principal.displayName || principal.email, detail: principal.displayName ? principal.email : '', kind: 'principal' }))
   }
@@ -445,11 +439,11 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   private addMembers(event: SubmitEvent, group: AccessGroupSignal): void {
     event.preventDefault()
     if (this.selectedMemberIds.length === 0) return
-    this.emit({ action: 'add_group_member', groupId: group.id, projectId: group.projectId, principalIds: [...this.selectedMemberIds] })
+    this.emit({ action: 'add_group_member', groupId: group.id, principalIds: [...this.selectedMemberIds] })
     this.closeDetailDialog()
   }
-  private removeMember(group: AccessGroupSignal, principalId: string, label: string): void { if (window.confirm(`Remove ${label} from ${group.name}?`)) this.emit({ action: 'remove_group_member', groupId: group.id, projectId: group.projectId, principalId }) }
-  private deleteGroup(group: AccessGroupSignal): void { if (window.confirm(`Delete ${group.name}? Access granted through this group will be removed.`)) this.emit({ action: 'delete_group', groupId: group.id, projectId: group.projectId }) }
+  private removeMember(group: AccessGroupSignal, principalId: string, label: string): void { if (window.confirm(`Remove ${label} from ${group.name}?`)) this.emit({ action: 'remove_group_member', groupId: group.id, principalId }) }
+  private deleteGroup(group: AccessGroupSignal): void { if (window.confirm(`Delete ${group.name}? Access granted through this group will be removed.`)) this.emit({ action: 'delete_group', groupId: group.id }) }
 }
 
 function identitySourceLabel(principal: AccessPrincipalSignal): string {
@@ -611,10 +605,10 @@ class LeapViewAuditLog extends DatastarLit(LitElement) {
   render() {
     const signal = this.audit
     const filters = signal.filters || {}
-    const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.emit({ action: 'filter', filters: { projectId: value('projectId'), principalId: value('principalId'), action: value('action'), targetType: value('targetType'), targetId: value('targetId'), from: value('from'), to: value('to') } }) }
+    const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.emit({ action: 'filter', filters: { projectId: value('projectId'), principalId: value('principalId'), action: value('action'), resourceKind: value('resourceKind'), resourceId: value('resourceId'), from: value('from'), to: value('to') } }) }
     return html`<section class="surface" aria-label="Audit log"><h2>Audit log</h2><p class="muted">Read-only product activity.</p>${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
-      <form class="toolbar" @submit=${submit}><label>Project<input name="projectId" value=${filters.projectId || ''}></label><label>Actor<input name="principalId" value=${filters.principalId || ''}></label><label>Action<input name="action" value=${filters.action || ''}></label><label>Target type<input name="targetType" value=${filters.targetType || ''}></label><button type="submit">Filter</button><button type="button" @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
-      ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Target</th><th>Status</th></tr></thead><tbody>${signal.items.map((event) => html`<tr><td>${event.createdAt}</td><td>${event.action}</td><td>${event.principalId || 'System'}</td><td>${event.targetType} / ${event.targetId}</td><td>${event.status || '—'}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">No audit events match these filters.</p>`}
+      <form class="toolbar" @submit=${submit}><label>Project<input name="projectId" value=${filters.projectId || ''}></label><label>Actor<input name="principalId" value=${filters.principalId || ''}></label><label>Action<input name="action" value=${filters.action || ''}></label><label>Resource kind<input name="resourceKind" value=${filters.resourceKind || ''}></label><label>Resource ID<input name="resourceId" value=${filters.resourceId || ''}></label><button type="submit">Filter</button><button type="button" @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
+      ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Resource</th><th>Capability</th><th>Status</th></tr></thead><tbody>${signal.items.map((event) => html`<tr><td>${event.createdAt}</td><td>${event.action}</td><td>${event.principalId || 'System'}</td><td>${event.resourceKind} / ${event.resourceId}</td><td>${event.capability || '—'}</td><td>${event.status || '—'}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">No audit events match these filters.</p>`}
       ${signal.hasMore ? html`<button @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>Load more</button>` : nothing}
     </section>`
   }

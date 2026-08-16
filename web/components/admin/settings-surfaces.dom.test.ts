@@ -143,11 +143,11 @@ test('principal administration exposes local controls and keeps external profile
           { id: 'local-1', kind: 'user', email: 'local@example.com', displayName: 'Local User', identitySource: 'local', hasLocalPassword: true, revision: 'rev-1', createdAt: '2026-08-01T10:00:00Z', updatedAt: '2026-08-02T11:00:00Z', lastSeenAt: '2026-08-03T12:00:00Z', groups: [{ id: 'group-1', name: 'Analysts', provider: 'local' }], capabilities: { canUpdateProfile: true, canResetPassword: true, canBlock: true, canUnblock: false, canDelete: true, canManageSessions: true } },
           { id: 'sso-1', kind: 'user', email: 'sso@example.com', displayName: 'SSO User', identitySource: 'external', identityProvider: 'okta', hasLocalPassword: false, groups: [], capabilities: { canUpdateProfile: false, canResetPassword: false, canBlock: true, canUnblock: false, canDelete: false, canManageSessions: true } },
         ],
-        groups: [], workspaces: [{ id: 'sales', name: 'Sales' }],
+        groups: [], projects: [{ id: 'sales', name: 'Sales' }],
         sessions: [{ id: 'session-1', kind: 'browser', createdAt: '2026-08-03T10:00:00Z', lastSeenAt: '2026-08-03T12:00:00Z', expiresAt: '2026-08-10T10:00:00Z' }],
         roleAssignments: [
-          { workspaceId: 'sales', role: 'viewer', sourceType: 'direct', sourceId: 'local-1', sourceName: 'Local User' },
-          { workspaceId: 'sales', role: 'editor', sourceType: 'group', sourceId: 'group-1', sourceName: 'Analysts' },
+          { projectId: 'sales', resourceKind: 'project', role: 'viewer', capabilities: [], sourceType: 'direct', sourceId: 'local-1', sourceName: 'Local User' },
+          { projectId: 'sales', resourceKind: 'project', role: 'editor', capabilities: [], sourceType: 'group', sourceId: 'group-1', sourceName: 'Analysts' },
         ],
         activity: [{ id: 'event-1', action: 'principal.updated', actorId: 'admin-1', actorName: 'Admin User', status: 'success', createdAt: '2026-08-02T11:00:00Z' }],
         selectedPrincipalId: 'local-1', loading: false,
@@ -275,9 +275,9 @@ test('local group detail moves rename and add member into focused modals', async
           { id: 'candidate-2', kind: 'user', email: 'second@example.com', displayName: 'Second Candidate', groups: [], capabilities: {} },
         ],
         sessions: [], selectedGroupId: 'group-1', loading: false,
-        workspaces: [{ id: 'sales', name: 'Sales' }],
+        projects: [{ id: 'sales', name: 'Sales' }],
         groups: [{
-          id: 'group-1', name: 'Analysts', provider: 'local', externalId: 'analysts', workspaceId: 'sales', revision: 'rev-1',
+          id: 'group-1', name: 'Analysts', provider: 'local', externalId: 'analysts', revision: 'rev-1',
           members: [{ id: 'member-1', email: 'member@example.com', displayName: 'Existing Member' }],
           capabilities: { canUpdate: true, canDelete: true, canManageMembers: true },
         }],
@@ -339,8 +339,8 @@ test('local group detail moves rename and add member into focused modals', async
     expect(result.renameOpen).toBe(false)
     expect(result.memberOpen).toBe(false)
     expect(result.commands).toEqual([
-      { action: 'update_group', groupId: 'group-1', workspaceId: 'sales', displayName: 'Revenue Analysts', revision: 'rev-1' },
-      { action: 'add_group_member', groupId: 'group-1', workspaceId: 'sales', principalIds: ['candidate-1', 'candidate-2'] },
+      { action: 'update_group', groupId: 'group-1', displayName: 'Revenue Analysts', revision: 'rev-1' },
+      { action: 'add_group_member', groupId: 'group-1', principalIds: ['candidate-1', 'candidate-2'] },
     ])
   } finally { await page.close() }
 })
@@ -354,7 +354,7 @@ test('group administration creates a local group in the selected workspace', asy
       const runtime = await import('/settings-surfaces.js') as any
       const state = {
         principals: [], groups: [], sessions: [], loading: false,
-        workspaces: [{ id: 'operations', name: 'Operations' }, { id: 'sales', name: 'Sales' }],
+        projects: [{ id: 'operations', name: 'Operations' }, { id: 'sales', name: 'Sales' }],
       }
       runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccess: state }, getPath: (path: string) => path === 'adminAccess' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
       const element = document.querySelector('lv-group-administration') as any
@@ -363,20 +363,17 @@ test('group administration creates a local group in the selected workspace', asy
       let detail: unknown = null
       element.addEventListener('lv-access-admin-command', (event: CustomEvent) => { detail = event.detail })
       const form = element.shadowRoot.querySelector('form') as HTMLFormElement
-      ;(form.elements.namedItem('workspaceId') as HTMLSelectElement).value = 'sales'
       ;(form.elements.namedItem('displayName') as HTMLInputElement).value = 'Revenue analysts'
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       return {
         detail,
         open: (element.shadowRoot.querySelector('dialog') as HTMLDialogElement).open,
-        workspaceLabel: (form.elements.namedItem('workspaceId') as HTMLSelectElement).getAttribute('aria-label'),
         disabled: (form.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })
     expect(result).toEqual({
-      detail: { action: 'create_group', workspaceId: 'sales', displayName: 'Revenue analysts' },
+      detail: { action: 'create_group', displayName: 'Revenue analysts' },
       open: true,
-      workspaceLabel: 'Workspace',
       disabled: false,
     })
   } finally { await page.close() }

@@ -131,7 +131,6 @@ model AccessGroupCapabilitiesSignal {
 
 model AccessGroupSignal {
   `id`: string;
-  `projectId`?: string;
   `name`: string;
   `provider`: string;
   `externalId`?: string;
@@ -144,7 +143,7 @@ model AccessGroupSignal {
 model AccessGroupReferenceSignal { `id`: string; `name`: string; `provider`: string; }
 model AccessPrincipalReferenceSignal { `id`: string; `email`: string; `displayName`: string; }
 model AccessSessionSignal { `id`: string; `kind`: string; `createdAt`?: string; `lastSeenAt`?: string; `expiresAt`?: string; }
-model AccessRoleAssignmentSignal { `projectId`: string; `role`: string; `sourceType`: string; `sourceId`: string; `sourceName`: string; }
+model AccessRoleAssignmentSignal { `projectId`: string; `resourceId`?: string; `resourceKind`?: string; `role`: string; `capabilities`: string[]; `sourceType`: string; `sourceId`: string; `sourceName`: string; }
 model AccessActivitySignal { `id`: string; `action`: string; `actorId`?: string; `actorName`?: string; `status`?: string; `createdAt`: string; }
 
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })
@@ -155,7 +154,6 @@ model AccessAdministrationCommand {
   `principalIds`?: string[];
   `groupId`?: string;
   `sessionId`?: string;
-  `projectId`?: string;
   `email`?: string;
   `displayName`?: string;
   `revision`?: string;
@@ -173,8 +171,8 @@ model AuditLogSignal {
   `error`?: string;
 }
 
-model AuditEventSignal { `id`: string; `projectId`?: string; `principalId`?: string; `action`: string; `targetType`: string; `targetId`: string; `privilege`?: string; `status`?: string; `requestId`?: string; `correlationId`?: string; `metadata`?: Record<unknown>; `createdAt`: string; }
-model AuditLogFilters { `projectId`?: string; `principalId`?: string; `action`?: string; `targetType`?: string; `targetId`?: string; `from`?: string; `to`?: string; }
+model AuditEventSignal { `id`: string; `projectId`?: string; `principalId`?: string; `action`: string; `resourceKind`: string; `resourceId`: string; `capability`?: string; `status`?: string; `requestId`?: string; `correlationId`?: string; `metadata`?: Record<unknown>; `createdAt`: string; }
+model AuditLogFilters { `projectId`?: string; `principalId`?: string; `action`?: string; `resourceKind`?: string; `resourceId`?: string; `from`?: string; `to`?: string; }
 
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "admin" })

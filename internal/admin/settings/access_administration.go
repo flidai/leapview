@@ -61,7 +61,6 @@ type AccessGroupCapabilitiesSignal struct {
 
 type AccessGroupSignal struct {
 	ID           string                           `json:"id"`
-	WorkspaceID  string                           `json:"workspaceId,omitempty"`
 	Name         string                           `json:"name"`
 	Provider     string                           `json:"provider"`
 	ExternalID   string                           `json:"externalId,omitempty"`
@@ -92,11 +91,14 @@ type AccessSessionSignal struct {
 }
 
 type AccessRoleAssignmentSignal struct {
-	WorkspaceID string `json:"workspaceId"`
-	Role        string `json:"role"`
-	SourceType  string `json:"sourceType"`
-	SourceID    string `json:"sourceId"`
-	SourceName  string `json:"sourceName"`
+	ProjectID    string   `json:"projectId"`
+	ResourceID   string   `json:"resourceId,omitempty"`
+	ResourceKind string   `json:"resourceKind,omitempty"`
+	Role         string   `json:"role"`
+	Capabilities []string `json:"capabilities"`
+	SourceType   string   `json:"sourceType"`
+	SourceID     string   `json:"sourceId"`
+	SourceName   string   `json:"sourceName"`
 }
 
 type AccessActivitySignal struct {
@@ -114,7 +116,6 @@ type AccessAdministrationCommand struct {
 	PrincipalIDs []string `json:"principalIds,omitempty"`
 	GroupID      string   `json:"groupId,omitempty"`
 	SessionID    string   `json:"sessionId,omitempty"`
-	WorkspaceID  string   `json:"workspaceId,omitempty"`
 	Email        string   `json:"email,omitempty"`
 	DisplayName  string   `json:"displayName,omitempty"`
 	Revision     string   `json:"revision,omitempty"`
@@ -134,7 +135,6 @@ func NormalizeAccessAdministrationCommand(command AccessAdministrationCommand) A
 	command.PrincipalIDs = normalizeAccessAdministrationIDs(command.PrincipalIDs)
 	command.GroupID = strings.TrimSpace(command.GroupID)
 	command.SessionID = strings.TrimSpace(command.SessionID)
-	command.WorkspaceID = strings.TrimSpace(command.WorkspaceID)
 	command.Email = access.NormalizeEmail(command.Email)
 	command.DisplayName = strings.TrimSpace(command.DisplayName)
 	command.Revision = strings.TrimSpace(command.Revision)
@@ -158,7 +158,12 @@ func normalizeAccessAdministrationIDs(values []string) []string {
 	return result
 }
 
-func LoadAccessAdministration(ctx context.Context, repository access.Repository, actorID, selectedPrincipalID, selectedGroupID string) (AccessAdministrationSignal, error) {
+// AuthorizationProjectionReader supplies role/resource assignments from the
+// active immutable authorization snapshot. Mutable identity storage must not
+// synthesize or persist these projections.
+type AuthorizationProjectionReader func(context.Context, string) ([]AccessRoleAssignmentSignal, error)
+
+func LoadAccessAdministration(ctx context.Context, repository access.Repository, actorID, selectedPrincipalID, selectedGroupID string, projectionReaders ...AuthorizationProjectionReader) (AccessAdministrationSignal, error) {
 	state := AccessAdministrationSignal{
 		Principals: []AccessPrincipalSignal{}, Groups: []AccessGroupSignal{}, Sessions: []AccessSessionSignal{},
 		RoleAssignments: []AccessRoleAssignmentSignal{}, Activity: []AccessActivitySignal{},
@@ -227,7 +232,7 @@ func LoadAccessAdministration(ctx context.Context, repository access.Repository,
 		revision, _ := access.GroupRevision(group)
 		local := accessGroupIsLocal(group)
 		state.Groups = append(state.Groups, AccessGroupSignal{
-			ID: group.ID, WorkspaceID: group.WorkspaceID, Name: group.Name, Provider: group.Provider, ExternalID: group.ExternalID,
+			ID: group.ID, Name: group.Name, Provider: group.Provider, ExternalID: group.ExternalID,
 			CreatedAt: group.CreatedAt, Revision: revision, Members: members,
 			Capabilities: AccessGroupCapabilitiesSignal{CanUpdate: local, CanDelete: local, CanManageMembers: local},
 		})
@@ -259,36 +264,19 @@ func LoadAccessAdministration(ctx context.Context, repository access.Repository,
 				break
 			}
 		}
-		bindings, bindingErr := repository.ListAllRoleBindings(ctx)
-		if bindingErr != nil {
-			return state, bindingErr
+		if len(projectionReaders) > 0 && projectionReaders[0] != nil {
+			assignments, projectionErr := projectionReaders[0](ctx, selected.ID)
+			if projectionErr != nil {
+				return state, projectionErr
+			}
+			for i := range assignments {
+				if assignments[i].Capabilities == nil {
+					assignments[i].Capabilities = []string{}
+				}
+			}
+			state.RoleAssignments = assignments
 		}
-		selectedGroups := make(map[string]AccessGroupReferenceSignal, len(selected.Groups))
-		for _, group := range selected.Groups {
-			selectedGroups[group.ID] = group
-		}
-		for _, binding := range bindings {
-			sourceType, sourceID, sourceName := "", "", ""
-			if binding.SubjectType == access.SubjectPrincipal && binding.SubjectID == selected.ID {
-				sourceType, sourceID, sourceName = "direct", selected.ID, firstAccessValue(selected.DisplayName, selected.Email, selected.ID)
-			} else if group, ok := selectedGroups[binding.SubjectID]; binding.SubjectType == access.SubjectGroup && ok {
-				sourceType, sourceID, sourceName = "group", group.ID, firstAccessValue(group.Name, group.ID)
-			}
-			if sourceType != "" {
-				state.RoleAssignments = append(state.RoleAssignments, AccessRoleAssignmentSignal{WorkspaceID: binding.WorkspaceID, Role: binding.Role, SourceType: sourceType, SourceID: sourceID, SourceName: sourceName})
-			}
-		}
-		sort.SliceStable(state.RoleAssignments, func(i, j int) bool {
-			left, right := state.RoleAssignments[i], state.RoleAssignments[j]
-			if left.WorkspaceID != right.WorkspaceID {
-				return left.WorkspaceID < right.WorkspaceID
-			}
-			if left.Role != right.Role {
-				return left.Role < right.Role
-			}
-			return left.SourceType < right.SourceType
-		})
-		events, activityErr := repository.ListAuditEvents(ctx, access.AuditEventFilter{TargetType: "principal", TargetID: selected.ID, Limit: 10})
+		events, activityErr := repository.ListAuditEvents(ctx, access.AuditEventFilter{ResourceKind: "principal", ResourceID: selected.ID, Limit: 10})
 		if activityErr != nil {
 			return state, activityErr
 		}
@@ -312,7 +300,7 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 	command = NormalizeAccessAdministrationCommand(command)
 	result := AccessAdministrationResult{SelectedPrincipalID: command.PrincipalID, SelectedGroupID: command.GroupID}
 	mutation := func(tx access.Repository) (access.AuditEventInput, error) {
-		event := access.AuditEventInput{PrincipalID: strings.TrimSpace(actorID), Privilege: access.PrivilegeManageGrants, Status: "success", MetadataJSON: `{}`}
+		event := access.AuditEventInput{PrincipalID: strings.TrimSpace(actorID), Capability: access.CapabilityProjectAdmin, Status: "success", MetadataJSON: `{}`}
 		var mutationErr error
 		switch command.Action {
 		case "create_principal":
@@ -322,7 +310,7 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 			created, err := tx.CreateLocalUser(ctx, access.LocalUserInput{Email: command.Email, DisplayName: command.DisplayName, MustChange: true})
 			mutationErr = err
 			result.SelectedPrincipalID, result.TemporaryPassword = created.Principal.ID, created.Password
-			event.Action, event.TargetType, event.TargetID = "principal.local_user.created", "principal", created.Principal.ID
+			event.Action, event.ResourceKind, event.ResourceID = "principal.local_user.created", "principal", created.Principal.ID
 			result.Message = "Local user created. Copy the temporary password now."
 		case "update_principal":
 			current, management, err := accessAdministrationPrincipal(ctx, tx, command.PrincipalID)
@@ -339,7 +327,7 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 				return event, err
 			}
 			_, mutationErr = tx.UpsertPrincipal(ctx, access.PrincipalInput{ID: current.ID, Kind: current.Kind, Email: current.Email, DisplayName: command.DisplayName})
-			event.Action, event.TargetType, event.TargetID = "principal.updated", "principal", current.ID
+			event.Action, event.ResourceKind, event.ResourceID = "principal.updated", "principal", current.ID
 			result.Message = "Principal updated."
 		case "delete_principal":
 			current, management, err := accessAdministrationPrincipal(ctx, tx, command.PrincipalID)
@@ -359,7 +347,7 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 				return event, errors.New("principal deletion is unavailable")
 			}
 			mutationErr = deleter.DeletePrincipal(ctx, current.ID)
-			event.Action, event.TargetType, event.TargetID = "principal.deleted", "principal", current.ID
+			event.Action, event.ResourceKind, event.ResourceID = "principal.deleted", "principal", current.ID
 			result.Deleted, result.SelectedPrincipalID, result.Message = true, "", "Principal deleted."
 		case "reset_password":
 			_, management, err := accessAdministrationPrincipal(ctx, tx, command.PrincipalID)
@@ -371,7 +359,7 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 			}
 			reset, err := tx.ResetLocalPassword(ctx, command.PrincipalID)
 			mutationErr, result.TemporaryPassword = err, reset.Password
-			event.Action, event.TargetType, event.TargetID = "principal.local_password.reset", "principal", command.PrincipalID
+			event.Action, event.ResourceKind, event.ResourceID = "principal.local_password.reset", "principal", command.PrincipalID
 			result.Message = "Password reset. Copy the temporary password now."
 		case "block_principal", "unblock_principal":
 			current, _, err := accessAdministrationPrincipal(ctx, tx, command.PrincipalID)
@@ -398,13 +386,13 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 				_, mutationErr = writer.EnablePrincipal(ctx, current.ID)
 				event.Action, result.Message = "principal.unblocked", "Principal unblocked."
 			}
-			event.TargetType, event.TargetID = "principal", current.ID
+			event.ResourceKind, event.ResourceID = "principal", current.ID
 		case "revoke_session":
 			if command.PrincipalID == "" || command.SessionID == "" {
 				return event, errors.New("principal and session are required")
 			}
 			mutationErr = tx.RevokeSessionForPrincipal(ctx, command.PrincipalID, command.SessionID)
-			event.Action, event.TargetType, event.TargetID = "principal.session.revoked", "session", command.SessionID
+			event.Action, event.ResourceKind, event.ResourceID = "principal.session.revoked", "session", command.SessionID
 			result.Message = "Session revoked."
 		case "revoke_all_sessions":
 			if command.PrincipalID == "" {
@@ -421,16 +409,15 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 					}
 				}
 			}
-			event.Action, event.TargetType, event.TargetID = "principal.sessions.revoked", "principal", command.PrincipalID
+			event.Action, event.ResourceKind, event.ResourceID = "principal.sessions.revoked", "principal", command.PrincipalID
 			result.Message = "All active sessions revoked."
 		case "create_group":
-			workspaceID := command.WorkspaceID
-			if workspaceID == "" || command.DisplayName == "" {
-				return event, errors.New("workspace and group name are required")
+			if command.DisplayName == "" {
+				return event, errors.New("group name is required")
 			}
-			group, err := tx.UpsertGroup(ctx, access.GroupInput{WorkspaceID: workspaceID, Name: command.DisplayName})
+			group, err := tx.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: command.DisplayName, Name: command.DisplayName})
 			mutationErr, result.SelectedGroupID = err, group.ID
-			event.Action, event.WorkspaceID, event.TargetType, event.TargetID = "group.created", workspaceID, "group", group.ID
+			event.Action, event.ResourceKind, event.ResourceID = "group.created", "group", group.ID
 			result.Message = "Group created."
 		case "update_group", "delete_group", "add_group_member", "remove_group_member":
 			group, err := accessAdministrationGroup(ctx, tx, command.GroupID)
@@ -440,7 +427,6 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 			if !accessGroupIsLocal(group) {
 				return event, fmt.Errorf("group is managed by %s", firstAccessValue(group.Provider, "its identity provider"))
 			}
-			event.WorkspaceID = group.WorkspaceID
 			switch command.Action {
 			case "update_group":
 				if command.DisplayName == "" {
@@ -449,12 +435,12 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 				if err := checkGroupRevision(group, command.Revision); err != nil {
 					return event, err
 				}
-				_, mutationErr = tx.UpsertGroup(ctx, access.GroupInput{ID: group.ID, WorkspaceID: group.WorkspaceID, Provider: group.Provider, ExternalID: group.ExternalID, Name: command.DisplayName})
-				event.Action, event.TargetType, event.TargetID = "group.updated", "group", group.ID
+				_, mutationErr = tx.UpsertGroup(ctx, access.GroupInput{ID: group.ID, Provider: group.Provider, ExternalID: group.ExternalID, Name: command.DisplayName})
+				event.Action, event.ResourceKind, event.ResourceID = "group.updated", "group", group.ID
 				result.Message = "Group updated."
 			case "delete_group":
-				mutationErr = tx.DeleteGroup(ctx, group.WorkspaceID, group.ID)
-				event.Action, event.TargetType, event.TargetID = "group.deleted", "group", group.ID
+				mutationErr = tx.DeleteGroup(ctx, group.ID)
+				event.Action, event.ResourceKind, event.ResourceID = "group.deleted", "group", group.ID
 				result.Deleted, result.SelectedGroupID, result.Message = true, "", "Group deleted."
 			case "add_group_member":
 				principalIDs := command.PrincipalIDs
@@ -465,23 +451,23 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 					return event, errors.New("principal is required")
 				}
 				for _, principalID := range principalIDs {
-					if err := tx.AddGroupMember(ctx, group.WorkspaceID, group.ID, principalID); err != nil {
+					if err := tx.AddGroupMember(ctx, group.ID, principalID); err != nil {
 						return event, err
 					}
 				}
 				if len(principalIDs) == 1 {
-					event.Action, event.TargetType, event.TargetID = "group.member_added", "group_member", group.ID+":"+principalIDs[0]
+					event.Action, event.ResourceKind, event.ResourceID = "group.member_added", "group_member", group.ID+":"+principalIDs[0]
 					result.Message = "Member added."
 				} else {
-					event.Action, event.TargetType, event.TargetID = "group.members_added", "group", group.ID
+					event.Action, event.ResourceKind, event.ResourceID = "group.members_added", "group", group.ID
 					result.Message = fmt.Sprintf("%d members added.", len(principalIDs))
 				}
 			case "remove_group_member":
 				if command.PrincipalID == "" {
 					return event, errors.New("principal is required")
 				}
-				mutationErr = tx.RemoveGroupMember(ctx, group.WorkspaceID, group.ID, command.PrincipalID)
-				event.Action, event.TargetType, event.TargetID = "group.member_removed", "group_member", group.ID+":"+command.PrincipalID
+				mutationErr = tx.RemoveGroupMember(ctx, group.ID, command.PrincipalID)
+				event.Action, event.ResourceKind, event.ResourceID = "group.member_removed", "group_member", group.ID+":"+command.PrincipalID
 				result.Message = "Member removed."
 			}
 		default:
@@ -559,7 +545,7 @@ func checkGroupRevision(group access.Group, presented string) error {
 }
 
 func accessGroupIsLocal(group access.Group) bool {
-	return strings.EqualFold(strings.TrimSpace(group.Provider), "local") && strings.TrimSpace(group.WorkspaceID) != ""
+	return strings.EqualFold(strings.TrimSpace(group.Provider), "local")
 }
 
 func accessPrincipalSortKey(principal AccessPrincipalSignal) string {

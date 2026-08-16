@@ -32,8 +32,12 @@ type Handler struct {
 	PublicationMutation func(*nethttp.Request, uisignals.AdminPublicationCommand) error
 	PersonalSettings    *personalsettings.Handler
 	ProductSettings     *productsettings.Handler
-	SettingsRepository  adminsettings.Repository
-	CurrentCredential   func(*nethttp.Request) (access.APICredential, bool)
+	SettingsRepository  interface {
+		access.Repository
+		adminsettings.ServiceAccountReader
+	}
+	AuthorizationProjection adminsettings.AuthorizationProjectionReader
+	CurrentCredential       func(*nethttp.Request) (access.APICredential, bool)
 }
 
 type publicationCommandSignals struct {

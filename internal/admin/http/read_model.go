@@ -33,9 +33,6 @@ type AccessReader interface {
 	ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error)
 	ListAllGroups(context.Context) ([]access.Group, error)
 	ListGroupMembersByGroup(context.Context, string) ([]access.GroupMember, error)
-	ListRoles(context.Context) ([]access.Role, error)
-	ListAllRoleBindings(context.Context) ([]access.RoleBinding, error)
-	Authorize(context.Context, string, access.Privilege, access.ObjectRef) (access.AuthorizationDecision, error)
 }
 
 type AvatarReader interface {
@@ -43,19 +40,20 @@ type AvatarReader interface {
 }
 
 type ReadModel struct {
-	Access              AccessReader
-	Avatars             AvatarReader
-	AgentDetails        AgentDetailsProvider
-	StorageService      storage.Service
-	QueryAuditReader    QueryAuditReaderProvider
-	CSRFToken           CSRFTokenProvider
-	CurrentPrincipal    CurrentPrincipalProvider
-	Publications        PublicationProvider
-	AgentConfigCommand  uicommand.Binding
-	PublicationCommands map[string]uicommand.Binding
-	ProductCommands     map[string]uicommand.Binding
-	AuthConfigured      bool
-	AccessConfigured    bool
+	Access                       AccessReader
+	Avatars                      AvatarReader
+	AgentDetails                 AgentDetailsProvider
+	StorageService               storage.Service
+	QueryAuditReader             QueryAuditReaderProvider
+	CSRFToken                    CSRFTokenProvider
+	CurrentPrincipal             CurrentPrincipalProvider
+	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	Publications                 PublicationProvider
+	AgentConfigCommand           uicommand.Binding
+	PublicationCommands          map[string]uicommand.Binding
+	ProductCommands              map[string]uicommand.Binding
+	AuthConfigured               bool
+	AccessConfigured             bool
 }
 
 func (m ReadModel) SettingsData(r *http.Request) (ui.AdminData, error) {
@@ -130,7 +128,6 @@ func (m ReadModel) populateAccessDirectory(r *http.Request, data *ui.AdminData, 
 	if repo == nil {
 		data.AccessConfigured = false
 		data.AccessStatusLabel = "Access store is not configured"
-		data.RoleCount = len(defaultRoleViews())
 		return nil
 	}
 	var principals []ui.AdminPrincipal
@@ -142,10 +139,6 @@ func (m ReadModel) populateAccessDirectory(r *http.Request, data *ui.AdminData, 
 		}
 	}
 	groups, err := repo.ListAllGroups(r.Context())
-	if err != nil {
-		return err
-	}
-	bindings, roles, err := m.roleBindingsAndRoles(r, repo)
 	if err != nil {
 		return err
 	}
@@ -162,14 +155,17 @@ func (m ReadModel) populateAccessDirectory(r *http.Request, data *ui.AdminData, 
 			})
 		}
 	}
-	data.RoleCount = len(roles)
-	data.BindingCount = len(bindings)
+	// Role/resource assignments are projected from the active immutable
+	// authorization snapshot by the settings detail surface. The mutable
+	// identity directory deliberately has no role/binding projection.
+	data.RoleCount = 0
+	data.BindingCount = 0
 	if includePrincipals {
-		data.Principals = buildAdminPrincipals(principals, bindings, groupsByID, membersByGroup)
+		data.Principals = buildAdminPrincipals(principals, nil, groupsByID, membersByGroup)
 		data.PrincipalCount = len(data.Principals)
 	}
 	if includeGroups {
-		data.Groups = buildAdminGroups(groups, bindings, membersByGroup)
+		data.Groups = buildAdminGroups(groups, nil, membersByGroup)
 		data.GroupCount = len(data.Groups)
 	}
 	return nil
@@ -197,7 +193,7 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		SystemPrompt: details.SystemPrompt,
 		CSRFToken:    m.csrfToken(r),
 		UpdatePath:   "/admin/agent/config",
-		CanWrite:     true,
+		CanWrite:     !m.AuthConfigured,
 	}
 	data.Revision, err = apigencommand.RevisionToken(details)
 	if err != nil {
@@ -220,15 +216,19 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 	if !ok || principal.DevBypass {
 		return data, nil
 	}
-	repo := m.Access
-	if repo == nil {
+	if m.CurrentEffectiveCapabilities == nil {
 		return data, nil
 	}
-	decision, err := repo.Authorize(r.Context(), principal.ID, access.PrivilegeManagePlatform, access.PlatformObject())
+	capabilities, err := m.CurrentEffectiveCapabilities(r.Context(), principal.ID)
 	if err != nil {
 		return data, err
 	}
-	data.CanWrite = decision.Allowed
+	for _, capability := range capabilities {
+		if capability == access.CapabilityProjectAdmin {
+			data.CanWrite = true
+			break
+		}
+	}
 	return data, nil
 }
 
@@ -287,11 +287,6 @@ func groupMembersData(r *http.Request, repo AccessReader, groupID string) []ui.A
 	return members
 }
 
-type roleView struct {
-	Name       string
-	Privileges []string
-}
-
 type adminRoleBindingView struct {
 	ID          string
 	SubjectType string
@@ -303,25 +298,6 @@ type adminRoleBindingView struct {
 	GroupName   string
 	Role        string
 	CreatedAt   string
-}
-
-func (m ReadModel) roleBindingsAndRoles(r *http.Request, repo AccessReader) ([]adminRoleBindingView, []roleView, error) {
-	if repo == nil {
-		return nil, defaultRoleViews(), nil
-	}
-	roleRows, err := repo.ListRoles(r.Context())
-	if err != nil {
-		return nil, nil, err
-	}
-	bindingRows, err := repo.ListAllRoleBindings(r.Context())
-	if err != nil {
-		return nil, nil, err
-	}
-	bindings := make([]adminRoleBindingView, 0, len(bindingRows))
-	for _, row := range bindingRows {
-		bindings = append(bindings, roleBindingView(row))
-	}
-	return bindings, roleViews(roleRows), nil
 }
 
 func (m ReadModel) QueryHistoryData(r *http.Request, filters uisignals.AdminQueryHistoryFilters, pageToken string, limit int) ui.AdminQueryHistoryData {
@@ -398,7 +374,7 @@ func buildAdminPrincipals(principals []ui.AdminPrincipal, bindings []adminRoleBi
 		out = append(out, principal)
 	}
 	for _, binding := range bindings {
-		if binding.SubjectType == string(access.SubjectPrincipal) && binding.PrincipalID != "" {
+		if binding.SubjectType == "principal" && binding.PrincipalID != "" {
 			if index, ok := byID[binding.PrincipalID]; ok {
 				out[index].DirectRoles = appendUnique(out[index].DirectRoles, binding.Role)
 			}
@@ -453,7 +429,7 @@ func buildAdminGroups(groups []access.Group, bindings []adminRoleBindingView, me
 		out = append(out, row)
 	}
 	for _, binding := range bindings {
-		if binding.SubjectType == string(access.SubjectGroup) && binding.GroupID != "" {
+		if binding.SubjectType == "group" && binding.GroupID != "" {
 			if group := byID[binding.GroupID]; group != nil {
 				group.Roles = appendUnique(group.Roles, binding.Role)
 			}
@@ -469,44 +445,6 @@ func buildAdminGroups(groups []access.Group, bindings []adminRoleBindingView, me
 		return out[i].Name < out[j].Name
 	})
 	return out
-}
-
-func defaultRoleViews() []roleView {
-	return roleViews(access.DefaultRoles())
-}
-
-func roleViews(rows []access.Role) []roleView {
-	roles := make([]roleView, 0, len(rows))
-	for _, row := range rows {
-		roles = append(roles, roleView{Name: row.Name, Privileges: privilegeStrings(row.Privileges)})
-	}
-	return roles
-}
-
-func privilegeStrings(values []access.Privilege) []string {
-	if values == nil {
-		return nil
-	}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		out = append(out, string(value))
-	}
-	return out
-}
-
-func roleBindingView(row access.RoleBinding) adminRoleBindingView {
-	return adminRoleBindingView{
-		ID:          row.ID,
-		SubjectType: string(row.SubjectType),
-		SubjectID:   row.SubjectID,
-		PrincipalID: row.PrincipalID,
-		GroupID:     row.GroupID,
-		Email:       row.Email,
-		DisplayName: firstNonEmpty(row.DisplayName, row.GroupName),
-		GroupName:   row.GroupName,
-		Role:        row.Role,
-		CreatedAt:   row.CreatedAt,
-	}
 }
 
 func appendUnique(values []string, value string) []string {

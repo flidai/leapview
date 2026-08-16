@@ -147,7 +147,7 @@ func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
 	if !state.Security.Sessions[1].Current || state.Security.Sessions[1].ClientLabel != "LeapView Desktop" {
 		t.Fatalf("sessions = %#v", state.Security.Sessions)
 	}
-	if len(state.Security.AuthoringSessions) != 1 || state.Security.AuthoringSessions[0].Privileges[0] != string(access.CapabilityResourcePublish) {
+	if len(state.Security.AuthoringSessions) != 1 || state.Security.AuthoringSessions[0].Capabilities[0] != string(access.CapabilityResourcePublish) {
 		t.Fatalf("authoring sessions = %#v", state.Security.AuthoringSessions)
 	}
 	if len(state.Tokens.Items) != 1 || state.Tokens.Items[0].ID != "token-1" {

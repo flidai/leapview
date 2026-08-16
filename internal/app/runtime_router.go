@@ -999,13 +999,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return platform.auth.APICredential(r)
 			},
-			AuthorizeAnyWorkspace: routes.accessModule.AuthorizeAnyWorkspace,
-			Publications:          routes.dashboardModule,
-			AgentConfigCommand:    routes.agentModule.UICommandBindings().UpdateConfig,
-			PublicationCommands:   routes.dashboardModule.PublicationCommandBindings(),
-			AuthConfigured:        platform.auth != nil,
-			LocalPasswordEnabled:  localPasswordEnabled,
-			AccessConfigured:      accessReader != nil,
+			CurrentEffectiveCapabilities: routes.accessModule.CurrentEffectiveCapabilities,
+			Publications:                 routes.dashboardModule,
+			AgentConfigCommand:           routes.agentModule.UICommandBindings().UpdateConfig,
+			PublicationCommands:          routes.dashboardModule.PublicationCommandBindings(),
+			AuthConfigured:               platform.auth != nil,
+			LocalPasswordEnabled:         localPasswordEnabled,
+			AccessConfigured:             accessReader != nil,
 			Storage: adminmodule.StorageConfig{
 				CatalogPath: storage.duckLakeCatalogPath, DataPath: storage.duckLakeDataPath,
 				Environment: policy.defaultEnvironment, ControlPlane: persistence.adminDatabase,

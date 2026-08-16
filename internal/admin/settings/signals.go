@@ -5,6 +5,7 @@
 package settings
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"strings"
@@ -69,12 +70,12 @@ type AuditLogSignal struct {
 
 type AuditEventSignal struct {
 	ID            string         `json:"id"`
-	WorkspaceID   string         `json:"workspaceId,omitempty"`
+	ProjectID     string         `json:"projectId,omitempty"`
 	PrincipalID   string         `json:"principalId,omitempty"`
 	Action        string         `json:"action"`
-	TargetType    string         `json:"targetType"`
-	TargetID      string         `json:"targetId"`
-	Privilege     string         `json:"privilege,omitempty"`
+	ResourceKind  string         `json:"resourceKind"`
+	ResourceID    string         `json:"resourceId"`
+	Capability    string         `json:"capability,omitempty"`
 	Status        string         `json:"status,omitempty"`
 	RequestID     string         `json:"requestId,omitempty"`
 	CorrelationID string         `json:"correlationId,omitempty"`
@@ -83,13 +84,13 @@ type AuditEventSignal struct {
 }
 
 type AuditLogFilters struct {
-	WorkspaceID string `json:"workspaceId"`
-	PrincipalID string `json:"principalId"`
-	Action      string `json:"action"`
-	TargetType  string `json:"targetType"`
-	TargetID    string `json:"targetId"`
-	From        string `json:"from"`
-	To          string `json:"to"`
+	ProjectID    string `json:"projectId"`
+	PrincipalID  string `json:"principalId"`
+	Action       string `json:"action"`
+	ResourceKind string `json:"resourceKind"`
+	ResourceID   string `json:"resourceId"`
+	From         string `json:"from"`
+	To           string `json:"to"`
 }
 
 type AuditLogCommand struct {
@@ -128,11 +129,11 @@ func NormalizeAuditLogCommand(command AuditLogCommand) AuditLogCommand {
 }
 
 func NormalizeAuditLogFilters(filters AuditLogFilters) AuditLogFilters {
-	filters.WorkspaceID = strings.TrimSpace(filters.WorkspaceID)
+	filters.ProjectID = strings.TrimSpace(filters.ProjectID)
 	filters.PrincipalID = strings.TrimSpace(filters.PrincipalID)
 	filters.Action = strings.TrimSpace(filters.Action)
-	filters.TargetType = strings.TrimSpace(filters.TargetType)
-	filters.TargetID = strings.TrimSpace(filters.TargetID)
+	filters.ResourceKind = strings.TrimSpace(filters.ResourceKind)
+	filters.ResourceID = strings.TrimSpace(filters.ResourceID)
 	filters.From = strings.TrimSpace(filters.From)
 	filters.To = strings.TrimSpace(filters.To)
 	return filters
@@ -163,7 +164,37 @@ func AuditEventSignalFromDomain(event access.AuditEvent) AuditEventSignal {
 	if strings.TrimSpace(event.MetadataJSON) != "" {
 		_ = json.Unmarshal([]byte(event.MetadataJSON), &metadata)
 	}
-	return AuditEventSignal{ID: event.ID, WorkspaceID: event.WorkspaceID, PrincipalID: event.PrincipalID,
-		Action: event.Action, TargetType: event.TargetType, TargetID: event.TargetID, Privilege: string(event.Privilege),
+	return AuditEventSignal{ID: event.ID, PrincipalID: event.PrincipalID,
+		Action: event.Action, ResourceKind: event.ResourceKind, ResourceID: event.ResourceID, Capability: string(event.Capability),
 		Status: event.Status, RequestID: event.RequestID, CorrelationID: event.CorrelationID, Metadata: metadata, CreatedAt: event.CreatedAt}
+}
+
+// LoadAuditLog reads the canonical access audit stream. ProjectID is retained
+// in the UI filter contract for future graph-scoped events; current identity
+// audit records are globally keyed by resource kind/id.
+func LoadAuditLog(ctx context.Context, repository access.Repository, filters AuditLogFilters, pageToken string, limit int) (AuditLogSignal, error) {
+	state := AuditLogSignal{Items: []AuditEventSignal{}, Filters: NormalizeAuditLogFilters(filters), NextCursor: "", LoadedCount: 0, Loading: false}
+	if repository == nil {
+		return state, nil
+	}
+	limit = normalizeLimit(limit)
+	rows, err := repository.ListAuditEvents(ctx, access.AuditEventFilter{
+		PrincipalID: strings.TrimSpace(filters.PrincipalID), Action: strings.TrimSpace(filters.Action),
+		ResourceKind: strings.TrimSpace(filters.ResourceKind), ResourceID: strings.TrimSpace(filters.ResourceID),
+		PageToken: strings.TrimSpace(pageToken), Limit: limit + 1,
+	})
+	if err != nil {
+		return state, err
+	}
+	state.HasMore = len(rows) > limit
+	if state.HasMore {
+		rows = rows[:limit]
+		last := rows[len(rows)-1]
+		state.NextCursor = AuditPageToken(last.CreatedAt, last.ID)
+	}
+	for _, row := range rows {
+		state.Items = append(state.Items, AuditEventSignalFromDomain(row))
+	}
+	state.LoadedCount = len(state.Items)
+	return state, nil
 }
