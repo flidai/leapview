@@ -38,7 +38,8 @@ func (source activeConnectionEvidenceSource) BindingEvidence(
 		return nil, err
 	}
 	if provenance.Plan.TargetID != strings.TrimSpace(source.targetID) ||
-		provenance.Plan.Environment != strings.TrimSpace(source.environment) {
+		provenance.Plan.Identity.ProjectID != identity.ProjectID ||
+		provenance.Plan.Identity.Environment != identity.Environment {
 		return nil, fmt.Errorf("%w: release target does not match runtime target", releasemodule.ErrProvenanceInvalid)
 	}
 	result := make([]analyticsmodule.ActiveRuntimeBindingEvidence, len(provenance.Plan.Bindings))
