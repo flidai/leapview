@@ -19,6 +19,10 @@ func (r platformAdminTestRepository) ListPrincipals(context.Context, access.Prin
 	return []access.Principal{}, nil
 }
 
+func (r platformAdminTestRepository) IsPlatformAdmin(context.Context, string) (bool, error) {
+	return r.admin, r.err
+}
+
 func TestPlatformAdminGuard(t *testing.T) {
 	request := func() *stdhttp.Request { return httptest.NewRequest(stdhttp.MethodGet, "/api/v1/principals", nil) }
 	tests := []struct {
@@ -56,5 +60,43 @@ func TestPlatformAdminGuard(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body=%s", response.Code, test.want, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestPlatformAdminGuardDurableRoleCredentialAttenuation(t *testing.T) {
+	credential := access.APICredential{}
+	handler := Handler{
+		Repository: func() (access.Repository, error) { return platformAdminTestRepository{}, nil },
+		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: "admin", Kind: access.PrincipalKindUser}, true
+		},
+		PlatformAdmin: func(context.Context, string) (bool, error) { return true, nil },
+		CurrentCredential: func(*stdhttp.Request) (access.APICredential, bool) {
+			return credential, credential.Authoring != nil || credential.Token.ID != ""
+		},
+	}
+	call := func() int {
+		response := httptest.NewRecorder()
+		handler.ListPrincipals(response, httptest.NewRequest(stdhttp.MethodGet, "/api/v1/principals", nil))
+		return response.Code
+	}
+	if got := call(); got != stdhttp.StatusOK {
+		t.Fatalf("session status = %d, want %d", got, stdhttp.StatusOK)
+	}
+	credential = access.APICredential{Authoring: &access.AuthoringSession{}}
+	if got := call(); got != stdhttp.StatusForbidden {
+		t.Fatalf("authoring status = %d, want %d", got, stdhttp.StatusForbidden)
+	}
+	credential = access.APICredential{Token: access.APIToken{ID: "empty", Capabilities: []access.Capability{}}}
+	if got := call(); got != stdhttp.StatusForbidden {
+		t.Fatalf("empty token status = %d, want %d", got, stdhttp.StatusForbidden)
+	}
+	credential = access.APICredential{Token: access.APIToken{ID: "narrow", Capabilities: []access.Capability{access.CapabilityResourceRead}}}
+	if got := call(); got != stdhttp.StatusForbidden {
+		t.Fatalf("narrow token status = %d, want %d", got, stdhttp.StatusForbidden)
+	}
+	credential = access.APICredential{Token: access.APIToken{ID: "admin", Capabilities: []access.Capability{access.CapabilityProjectAdmin}}}
+	if got := call(); got != stdhttp.StatusOK {
+		t.Fatalf("project admin token status = %d, want %d", got, stdhttp.StatusOK)
 	}
 }

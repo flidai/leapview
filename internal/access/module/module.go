@@ -105,6 +105,8 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		},
 	}
 	module.handler.RequestEffectiveCapabilities = module.RequestEffectiveCapabilities
+	module.handler.PlatformAdmin = module.IsPlatformAdmin
+	module.handler.RequestPlatformAdmin = module.RequestPlatformAdmin
 	return module, nil
 }
 
@@ -141,6 +143,68 @@ func (m *Module) CurrentProjectID(ctx context.Context) (projectgraph.ResourceID,
 		return "", fmt.Errorf("active project identity is unavailable")
 	}
 	return m.currentProjectID(ctx)
+}
+
+// IsPlatformAdmin evaluates only the durable, instance-wide platform role.
+// Project authorization snapshots are intentionally not consulted here: they
+// may be absent while identity administration remains available, and a
+// project PROJECT_ADMIN grant is not a platform role.
+func (m *Module) IsPlatformAdmin(ctx context.Context, principalID string) (bool, error) {
+	principalID = strings.TrimSpace(principalID)
+	if principalID == "" {
+		return false, nil
+	}
+	repository := m.repositoryValue()
+	if repository == nil {
+		return false, fmt.Errorf("access repository is unavailable")
+	}
+	reader, ok := repository.(access.PlatformAdminReader)
+	if !ok {
+		return false, fmt.Errorf("access repository does not support durable platform administration")
+	}
+	return reader.IsPlatformAdmin(ctx, principalID)
+}
+
+// RequestPlatformAdmin evaluates durable platform administration and then
+// applies request-credential attenuation. Credentials can reduce authority,
+// never grant the durable role: authoring credentials always deny, API tokens
+// with nil capabilities inherit, explicit empty capabilities deny, and an
+// explicit non-empty list must include PROJECT_ADMIN.
+func (m *Module) RequestPlatformAdmin(ctx context.Context, r *http.Request, principalID string) (bool, error) {
+	allowed, err := m.IsPlatformAdmin(ctx, principalID)
+	if err != nil || !allowed {
+		return allowed, err
+	}
+	credential, ok := m.requestCredential(r)
+	if !ok {
+		return true, nil
+	}
+	if credential.Principal.ID != "" && credential.Principal.ID != principalID {
+		return false, nil
+	}
+	if credential.Authoring != nil {
+		return false, nil
+	}
+	if credential.Token.ID == "" || credential.Token.Capabilities == nil {
+		return true, nil
+	}
+	if len(credential.Token.Capabilities) == 0 {
+		return false, nil
+	}
+	return containsCapability(credential.Token.Capabilities, access.CapabilityProjectAdmin), nil
+}
+
+func (m *Module) requestCredential(r *http.Request) (access.APICredential, bool) {
+	if r == nil {
+		return access.APICredential{}, false
+	}
+	if credential, ok := APICredentialFromContext(r.Context()); ok {
+		return credential, true
+	}
+	if m != nil && m.auth != nil {
+		return m.auth.APICredential(r)
+	}
+	return access.APICredential{}, false
 }
 
 // CurrentEffectiveCapabilities returns the active-generation capability

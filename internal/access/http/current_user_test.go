@@ -21,6 +21,10 @@ type currentUserRepository struct {
 	password   struct{ current, next string }
 }
 
+func (r *currentUserRepository) IsPlatformAdmin(context.Context, string) (bool, error) {
+	return true, nil
+}
+
 func (r *currentUserRepository) CreateAPITokenWithMetadata(_ context.Context, input access.APITokenInput) (string, access.APIToken, error) {
 	return "secret", access.APIToken{ID: "token_created", PrincipalID: input.PrincipalID, Name: input.Name, CreatedAt: "2026-08-10T12:00:00Z"}, nil
 }

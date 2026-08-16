@@ -345,3 +345,16 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 	}
 	return principal, nil
 }
+
+// IsPlatformAdmin evaluates the instance-wide durable role binding. This is
+// intentionally independent of project authorization snapshots: a serving
+// generation may be absent or may grant PROJECT_ADMIN without granting the
+// platform role.
+func (r *Repository) IsPlatformAdmin(ctx context.Context, principalID string) (bool, error) {
+	principalID = strings.TrimSpace(principalID)
+	if principalID == "" {
+		return false, nil
+	}
+	value, err := r.q.IsPlatformAdmin(ctx, principalID)
+	return value != 0, err
+}

@@ -411,6 +411,15 @@ type Repository interface {
 	ListAuditEvents(ctx context.Context, filter AuditEventFilter) ([]AuditEvent, error)
 }
 
+// PlatformAdminReader is the narrow durable identity query used by
+// instance-wide administration. It deliberately does not expose project
+// roles or serving-generation state: platform administration is granted only
+// by the durable platform_role_bindings table and the principal's current
+// enabled state.
+type PlatformAdminReader interface {
+	IsPlatformAdmin(context.Context, string) (bool, error)
+}
+
 // AuditedMutationRepository commits a privileged mutation and its audit event
 // as one unit. Production repositories should implement this so a successful
 // mutation can never exist without its corresponding audit record.

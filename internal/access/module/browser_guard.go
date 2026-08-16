@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 
@@ -56,10 +55,10 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// RequirePlatformAdmin authorizes instance-wide administration from the active
-// immutable capability projection. Missing projections and evaluation errors
-// fail closed with service-unavailable. Request credentials can only attenuate
-// that projection; they cannot grant platform authority.
+// RequirePlatformAdmin authorizes instance-wide administration from the
+// durable platform role binding. It deliberately does not require an active
+// serving generation. Request credentials can only attenuate that role; they
+// cannot grant platform authority.
 func (m *Module) RequirePlatformAdmin(next http.Handler) http.Handler {
 	if next == nil {
 		next = http.NotFoundHandler()
@@ -70,27 +69,12 @@ func (m *Module) RequirePlatformAdmin(next http.Handler) http.Handler {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
-		if principal.DevBypass {
-			next.ServeHTTP(w, r)
-			return
-		}
-		capabilities, err := m.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
+		allowed, err := m.RequestPlatformAdmin(r.Context(), r, principal.ID)
 		if err != nil {
-			if errors.Is(err, access.ErrForbidden) {
-				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-				return
-			}
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
-		admin := false
-		for _, capability := range capabilities {
-			if capability == access.CapabilityProjectAdmin {
-				admin = true
-				break
-			}
-		}
-		if !admin {
+		if !allowed {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}

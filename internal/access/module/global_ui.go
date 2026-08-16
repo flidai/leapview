@@ -24,22 +24,15 @@ func (m *Module) CSRFToken(r *http.Request) string {
 }
 
 func (m *Module) CurrentRoleLabel(r *http.Request) string {
-	if m == nil || m.auth == nil {
+	if m == nil {
 		return "Local"
 	}
-	principal, ok := m.auth.Principal(r)
+	principal, ok := m.CurrentPrincipal(r)
 	if !ok {
 		return "Signed out"
 	}
-	if principal.DevBypass {
+	if allowed, err := m.RequestPlatformAdmin(r.Context(), r, principal.ID); err == nil && allowed {
 		return "Platform admin"
-	}
-	if capabilities, err := m.RequestEffectiveCapabilities(r.Context(), r, principal.ID); err == nil {
-		for _, capability := range capabilities {
-			if capability == access.CapabilityProjectAdmin {
-				return "Platform admin"
-			}
-		}
 	}
 	return "Platform access"
 }
@@ -67,28 +60,15 @@ func (m *Module) CurrentTheme(r *http.Request) access.ThemeMode {
 }
 
 func (m *Module) AdminNavigationAccess(r *http.Request) AdminNavigationAccess {
-	if m == nil || m.auth == nil {
+	if m == nil {
 		return AdminNavigationAccess{}
 	}
-	principal, ok := m.auth.Principal(r)
+	principal, ok := m.CurrentPrincipal(r)
 	if !ok {
 		return AdminNavigationAccess{}
 	}
-	if principal.DevBypass {
-		return allAdminNavigationAccess()
-	}
-	capabilities, err := m.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
-	if err != nil {
-		return AdminNavigationAccess{}
-	}
-	admin := false
-	for _, capability := range capabilities {
-		if capability == access.CapabilityProjectAdmin {
-			admin = true
-			break
-		}
-	}
-	if !admin {
+	allowed, err := m.RequestPlatformAdmin(r.Context(), r, principal.ID)
+	if err != nil || !allowed {
 		return AdminNavigationAccess{}
 	}
 	return allAdminNavigationAccess()

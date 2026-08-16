@@ -45,6 +45,10 @@ func (r browserGuardRepository) ListGroupIDsForPrincipal(context.Context, string
 	return append([]string(nil), r.groups...), r.groupErr
 }
 
+func (r browserGuardRepository) IsPlatformAdmin(context.Context, string) (bool, error) {
+	return r.admin, r.err
+}
+
 func browserGuardModule(repo access.Repository, principal Principal, ok bool) *Module {
 	var projection func(context.Context, string) ([]access.Capability, error)
 	if guard, isGuard := repo.(browserGuardRepository); isGuard {
@@ -134,7 +138,7 @@ func TestRequirePlatformAdminFailsClosedWhenRoleCheckErrors(t *testing.T) {
 }
 
 func TestRequirePlatformAdminAllowsDevelopmentBypass(t *testing.T) {
-	module := browserGuardModule(nil, Principal{ID: "dev", DevBypass: true}, true)
+	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "dev", DevBypass: true}, true)
 	recorder := httptest.NewRecorder()
 	module.RequirePlatformAdmin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -155,13 +159,13 @@ func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocatio
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: principal.ID, Email: principal.Email, Role: access.PlatformRoleAdmin}); err != nil {
+		t.Fatal(err)
+	}
 	auth := NewAuth(repository, AuthConfig{})
 	module, err := newSurface(surfaceConfig{
 		Repository: func() (access.Repository, error) { return repository, nil },
 		Auth:       auth,
-		CurrentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
-			return []access.Capability{access.CapabilityProjectAdmin}, nil
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -198,4 +202,77 @@ func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocatio
 	if got := call(dynamicSecret); got != http.StatusUnauthorized {
 		t.Fatalf("revoked dynamic token status = %d, want 401", got)
 	}
+}
+
+func TestRequirePlatformAdminIgnoresProjectSnapshotWithoutDurableRole(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{ID: "project-admin-only", Email: "project-admin@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := newSurface(surfaceConfig{
+		Repository: func() (access.Repository, error) { return repository, nil },
+		CurrentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: principal.ID, Kind: access.PrincipalKindUser}, true
+		},
+		CurrentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
+			return []access.Capability{access.CapabilityProjectAdmin}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	module.RequirePlatformAdmin(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("project snapshot grant authorized platform administration")
+	})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/system", nil))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestRequestPlatformAdminCredentialAttenuation(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	principal, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: "attenuated-admin", Email: "attenuated@example.test", Role: access.PlatformRoleAdmin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := newSurface(surfaceConfig{
+		Repository: func() (access.Repository, error) { return repository, nil },
+		Auth:       NewAuth(repository, AuthConfig{}),
+		CurrentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: principal.ID, Kind: access.PrincipalKindUser}, true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(name string, credential access.APICredential, want bool) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/admin/system", nil)
+		r = r.WithContext(WithAPICredential(r.Context(), credential))
+		got, evalErr := module.RequestPlatformAdmin(r.Context(), r, principal.ID)
+		if evalErr != nil {
+			t.Fatalf("%s evaluation error: %v", name, evalErr)
+		}
+		if got != want {
+			t.Fatalf("%s allowed = %t, want %t", name, got, want)
+		}
+	}
+	check("session", access.APICredential{}, true)
+	check("authoring", access.APICredential{Authoring: &access.AuthoringSession{}}, false)
+	check("dynamic token", access.APICredential{Token: access.APIToken{ID: "dynamic"}}, true)
+	check("empty token", access.APICredential{Token: access.APIToken{ID: "empty", Capabilities: []access.Capability{}}}, false)
+	check("narrow token", access.APICredential{Token: access.APIToken{ID: "narrow", Capabilities: []access.Capability{access.CapabilityResourceRead}}}, false)
+	check("project admin token", access.APICredential{Token: access.APIToken{ID: "project", Capabilities: []access.Capability{access.CapabilityProjectAdmin}}}, true)
 }

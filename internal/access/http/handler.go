@@ -41,6 +41,8 @@ type PrincipalProvider func(*stdhttp.Request) (Principal, bool)
 type CredentialProvider func(*stdhttp.Request) (access.APICredential, bool)
 type SessionProvider func(*stdhttp.Request) (string, bool)
 type EffectiveCapabilitiesProvider func(context.Context, *stdhttp.Request, string) ([]access.Capability, error)
+type PlatformAdminProvider func(context.Context, string) (bool, error)
+type RequestPlatformAdminProvider func(context.Context, *stdhttp.Request, string) (bool, error)
 
 type AuthoringAuthentication interface {
 	InstanceID() string
@@ -62,9 +64,14 @@ type Handler struct {
 	CurrentSession               SessionProvider
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	RequestEffectiveCapabilities EffectiveCapabilitiesProvider
-	AuthoringAuth                AuthoringAuthentication
-	Avatar                       AvatarService
-	LocalPasswordEnabled         bool
+	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
+	// a narrow callback for non-module callers; RequestPlatformAdmin additionally
+	// applies request-credential attenuation.
+	PlatformAdmin        PlatformAdminProvider
+	RequestPlatformAdmin RequestPlatformAdminProvider
+	AuthoringAuth        AuthoringAuthentication
+	Avatar               AvatarService
+	LocalPasswordEnabled bool
 }
 
 func (h Handler) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -1487,21 +1494,63 @@ func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
 		return false
 	}
-	if h.CurrentEffectiveCapabilities == nil {
-		writeJSONError(w, errors.New("active authorization snapshot is unavailable"), stdhttp.StatusInternalServerError)
-		return false
+	var allowed bool
+	var err error
+	attenuated := false
+	if h.RequestPlatformAdmin != nil {
+		allowed, err = h.RequestPlatformAdmin(r.Context(), r, principal.ID)
+		attenuated = true
+	} else if h.PlatformAdmin != nil {
+		allowed, err = h.PlatformAdmin(r.Context(), principal.ID)
+	} else {
+		repository, repositoryErr := h.repository()
+		if repositoryErr != nil {
+			writeJSONError(w, repositoryErr, stdhttp.StatusInternalServerError)
+			return false
+		}
+		reader, readerOK := repository.(access.PlatformAdminReader)
+		if !readerOK {
+			writeJSONError(w, errors.New("access repository does not support durable platform administration"), stdhttp.StatusInternalServerError)
+			return false
+		}
+		allowed, err = reader.IsPlatformAdmin(r.Context(), principal.ID)
 	}
-	capabilities, err := h.CurrentEffectiveCapabilities(r.Context(), principal.ID)
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return false
 	}
+	if !allowed {
+		writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+		return false
+	}
+	if attenuated {
+		return true
+	}
+	if credential, ok := h.currentCredential(r); ok {
+		if credential.Principal.ID != "" && credential.Principal.ID != principal.ID {
+			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+			return false
+		}
+		if credential.Authoring != nil {
+			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+			return false
+		}
+		if credential.Token.ID != "" && credential.Token.Capabilities != nil {
+			if len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, access.CapabilityProjectAdmin) {
+				writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func containsCapability(capabilities []access.Capability, expected access.Capability) bool {
 	for _, capability := range capabilities {
-		if capability == access.CapabilityProjectAdmin {
+		if capability == expected {
 			return true
 		}
 	}
-	writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 	return false
 }
 func (h Handler) rejectAuthoringCredential(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {

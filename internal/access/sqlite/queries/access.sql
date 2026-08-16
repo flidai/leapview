@@ -118,6 +118,17 @@ INSERT INTO platform_role_bindings (id, role, principal_id)
 VALUES (?, ?, ?)
 ON CONFLICT(principal_id) DO UPDATE SET role = excluded.role;
 
+-- name: IsPlatformAdmin :one
+SELECT EXISTS (
+  SELECT 1
+  FROM platform_role_bindings rb
+  JOIN principals p ON p.id = rb.principal_id
+  WHERE rb.principal_id = sqlc.arg(principal_id)
+    AND rb.role = 'platform_admin'
+    AND p.disabled_at IS NULL
+    AND p.blocked_at IS NULL
+);
+
 -- name: CreateSession :exec
 INSERT INTO sessions (id, principal_id, token_fingerprint, token_verifier, expires_at)
 VALUES (?, ?, ?, ?, ?);

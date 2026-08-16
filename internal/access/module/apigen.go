@@ -64,8 +64,9 @@ type APIGenCommandTarget struct {
 }
 
 // APIGenAuthorizer applies the same browser and immutable-snapshot guards to
-// generated API operations. A runtime host is mandatory for capability
-// operations so authorization is evaluated against the active generation.
+// generated API operations. A runtime host is required only for project
+// resource capability operations; platform-scoped operations use the durable
+// platform-role evaluator and remain available without an active generation.
 type APIGenAuthorizer struct {
 	module     *Module
 	runtime    apigenRuntimeHost
@@ -82,9 +83,6 @@ func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[stri
 	if m == nil {
 		return nil, fmt.Errorf("access module is required")
 	}
-	if runtime == nil {
-		return nil, fmt.Errorf("runtime host is required")
-	}
 	authorizer := &APIGenAuthorizer{
 		module:     m,
 		runtime:    runtime,
@@ -100,8 +98,22 @@ func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[stri
 		if err := authorizer.validateOperation(operationID, contract); err != nil {
 			return nil, err
 		}
+		if runtime == nil && apiGenOperationNeedsRuntime(contract) {
+			return nil, fmt.Errorf("APIGen operation %q requires an active runtime host", operationID)
+		}
 	}
 	return authorizer, nil
+}
+
+func apiGenOperationNeedsRuntime(contract APIGenOperationContract) bool {
+	if !contract.Protected {
+		return false
+	}
+	scope, ok := apiGenScope(contract)
+	if !ok || scope == "platform" {
+		return false
+	}
+	return contract.AuthzMode == "privilege"
 }
 
 // AuthorizeReplay re-runs the generated operation policy without dispatching

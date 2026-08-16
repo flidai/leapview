@@ -530,6 +530,46 @@ func TestAPIGenPlatformScopeUsesPlatformRoleEvenWhenAuthenticated(t *testing.T) 
 	}
 }
 
+func TestAPIGenPlatformScopeDoesNotRequireActiveRuntime(t *testing.T) {
+	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "platform-admin"}, true)
+	contract := APIGenOperationContract{
+		OperationID: "platformStatus", Method: http.MethodGet, Path: "/api/v1/platform/status",
+		Protected: true, AuthzMode: "authenticated",
+		Extensions: map[string]any{apiGenObjectScopeExtension: "platform"},
+	}
+	authorizer, err := module.APIGenAuthorizer(nil, map[string]APIGenOperationContract{"platformStatus": contract}, APIGenResourceResolvers{})
+	if err != nil {
+		t.Fatalf("platform authorizer without runtime: %v", err)
+	}
+	protected, ok := authorizer.Protect("platformStatus", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if !ok || protected == nil {
+		t.Fatal("platform operation was not protected without runtime")
+	}
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, contract.Path, nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestAPIGenProjectPrivilegeRequiresRuntime(t *testing.T) {
+	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "platform-admin"}, true)
+	contract := APIGenOperationContract{
+		OperationID: "readDashboard", Method: http.MethodGet, Path: "/api/v1/dashboards/{dashboard}",
+		Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ"},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "dashboard"},
+	}
+	_, err := module.APIGenAuthorizer(nil, map[string]APIGenOperationContract{"readDashboard": contract}, APIGenResourceResolvers{
+		Dashboard: apigenResolver("dashboard", projectgraph.KindDashboard),
+	})
+	if err == nil {
+		t.Fatal("project resource authorizer unexpectedly accepted nil runtime")
+	}
+}
+
 func TestAPIGenAuthenticatedOperationUsesPrincipalAuthentication(t *testing.T) {
 	module := browserGuardModule(nil, Principal{ID: "principal"}, true)
 	authorizer := &APIGenAuthorizer{

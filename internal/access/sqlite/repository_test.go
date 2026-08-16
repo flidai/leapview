@@ -442,6 +442,35 @@ func TestRepositoryPersistsPlatformRoleIdentity(t *testing.T) {
 	}
 }
 
+func TestRepositoryIsPlatformAdminRequiresEnabledDurableRole(t *testing.T) {
+	ctx := context.Background()
+	_, repo := openAccessRepo(t, ctx)
+	principal, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{
+		PrincipalID: "durable-admin", Email: "durable-admin@example.com", Role: access.PlatformRoleAdmin,
+	})
+	if err != nil {
+		t.Fatalf("set platform role: %v", err)
+	}
+	if allowed, err := repo.IsPlatformAdmin(ctx, principal.ID); err != nil || !allowed {
+		t.Fatalf("enabled durable role = %t, err=%v; want true", allowed, err)
+	}
+	if _, err := repo.root.ExecContext(ctx, `UPDATE principals SET blocked_at = CURRENT_TIMESTAMP WHERE id = ?`, principal.ID); err != nil {
+		t.Fatalf("block principal: %v", err)
+	}
+	if allowed, err := repo.IsPlatformAdmin(ctx, principal.ID); err != nil || allowed {
+		t.Fatalf("blocked durable role = %t, err=%v; want false", allowed, err)
+	}
+	if _, err := repo.root.ExecContext(ctx, `UPDATE principals SET blocked_at = NULL, disabled_at = CURRENT_TIMESTAMP WHERE id = ?`, principal.ID); err != nil {
+		t.Fatalf("disable principal: %v", err)
+	}
+	if allowed, err := repo.IsPlatformAdmin(ctx, principal.ID); err != nil || allowed {
+		t.Fatalf("disabled durable role = %t, err=%v; want false", allowed, err)
+	}
+	if allowed, err := repo.IsPlatformAdmin(ctx, "missing"); err != nil || allowed {
+		t.Fatalf("missing durable role = %t, err=%v; want false", allowed, err)
+	}
+}
+
 func TestRepositorySeparatesSCIMGroupsFromLocallyManagedGroups(t *testing.T) {
 	ctx := context.Background()
 	_, repo := openAccessRepo(t, ctx)

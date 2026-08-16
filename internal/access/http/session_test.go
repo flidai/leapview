@@ -56,6 +56,10 @@ type sessionLifecycleRepository struct {
 	audit              access.AuditEventInput
 }
 
+func (r *sessionLifecycleRepository) IsPlatformAdmin(context.Context, string) (bool, error) {
+	return true, nil
+}
+
 func (r *sessionLifecycleRepository) ListSessions(_ context.Context, principalID string) ([]access.Session, error) {
 	r.listPrincipalID = principalID
 	return r.sessions, nil
