@@ -33,7 +33,6 @@ internal/platform/http/api/gen
 internal/project/api/gen
 internal/refresh/api/gen
 internal/release/api/gen
-internal/workspace/api/gen
 internal/app/config/config_gen.go
 internal/app/config/spec/names_gen.go
 internal/platform/db/db.go

@@ -34,7 +34,6 @@ internal/platform/http/api/gen/
 internal/project/api/gen/
 internal/refresh/api/gen/
 internal/release/api/gen/
-internal/workspace/api/gen/
 internal/platform/db/db.go
 internal/platform/db/models.go
 internal/platform/db/*.sql.go
