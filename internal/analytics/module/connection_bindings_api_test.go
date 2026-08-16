@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,7 +39,7 @@ func TestConnectionBindingAPICreatesOnlyNonSecretMetadata(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/sales/targets/target-1/environments/prod/connection-bindings", strings.NewReader(body))
 	recorder := httptest.NewRecorder()
 
-	handler.Create(recorder, request, "sales", "target-1", "prod")
+	handler.Create(recorder, request, "sales", "target-1")
 
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
@@ -62,7 +63,7 @@ func TestConnectionBindingAPINeverReturnsRawProviderErrors(t *testing.T) {
 		err: fmt.Errorf("source-secret from provider: %w", connectionbinding.ErrProviderUnavailable),
 		status: connectionbinding.BindingHealthStatus{
 			BindingID: binding.ID, TargetID: binding.TargetID,
-			LogicalConnection: binding.LogicalConnectionID, ConnectorKind: binding.ConnectorKind,
+			ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind,
 			Scope: binding.Scope, BindingRevision: binding.Revision,
 			Health: connectionbinding.HealthDegraded, DiagnosticCode: "PROVIDER_UNAVAILABLE",
 		},
@@ -77,7 +78,7 @@ func TestConnectionBindingAPINeverReturnsRawProviderErrors(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(nil))
 	recorder := httptest.NewRecorder()
 
-	handler.Test(recorder, request, "sales", "target-1", "prod", "warehouse")
+	handler.Test(recorder, request, "sales", "target-1", "warehouse")
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
@@ -125,8 +126,8 @@ func (repository *apiBindingRepository) Create(_ context.Context, binding connec
 func (repository *apiBindingRepository) Binding(
 	_ context.Context,
 	_ connectionbinding.BindingScope,
-	_ string,
-	_ connectionbinding.LogicalConnectionID,
+	_ connectionbinding.TargetID,
+	_ projectgraph.ResourceID,
 ) (connectionbinding.TargetBinding, error) {
 	if repository.binding.ID == "" {
 		return connectionbinding.TargetBinding{}, connectionbinding.ErrBindingNotFound
@@ -137,7 +138,7 @@ func (repository *apiBindingRepository) Binding(
 func (repository *apiBindingRepository) List(
 	context.Context,
 	connectionbinding.BindingScope,
-	string,
+	connectionbinding.TargetID,
 ) ([]connectionbinding.TargetBinding, error) {
 	if repository.binding.ID == "" {
 		return nil, nil
@@ -191,9 +192,9 @@ func (directory apiPoolDirectory) Pool(connectionbinding.TargetBinding) (connect
 func testAPIBinding(t *testing.T, now time.Time) connectionbinding.TargetBinding {
 	t.Helper()
 	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
-		ID: "binding_prod_warehouse", TargetID: "target-1", LogicalConnectionID: "warehouse",
+		ID: "binding_prod_warehouse", TargetID: "target-1", ConnectionID: "warehouse",
 		ConnectorKind: "postgres", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
-		Scope: connectionbinding.BindingScope{WorkspaceID: "sales", Environment: "prod"},
+		Scope: connectionbinding.BindingScope{ProjectID: "sales", Environment: "prod"},
 		Endpoint: connectionbinding.EndpointConfig{
 			Host: "warehouse.internal", Port: 5432, Database: "analytics", TLSMode: "verify-full",
 		},

@@ -9,7 +9,7 @@ import (
 )
 
 // EncodeConnectionRotationAuditMetadata applies the generated payload contract
-// for command-owned rotation events while preserving legacy background events.
+// for command-owned rotation events while preserving background events.
 func EncodeConnectionRotationAuditMetadata(event ConnectionRotationAuditEvent) (string, error) {
 	payload := analyticsgen.GenSchemaTargetConnectionRotationAuditPayload{
 		Operation:       string(event.Operation),
@@ -26,7 +26,7 @@ func EncodeConnectionRotationAuditMetadata(event ConnectionRotationAuditEvent) (
 		encoded, err := analyticsgen.EncodeGenTestTargetConnectionBindingAuditPayload(payload)
 		return addBindingMetadata(encoded, event.BindingID.String(), err)
 	default:
-		legacy, err := json.Marshal(map[string]any{
+		background, err := json.Marshal(map[string]any{
 			"operation": event.Operation, "outcome": event.Outcome,
 			"providerVersion": event.ProviderVersion, "diagnosticCode": event.Reason,
 			"targetId": event.TargetID,
@@ -34,7 +34,7 @@ func EncodeConnectionRotationAuditMetadata(event ConnectionRotationAuditEvent) (
 		if err != nil {
 			return "", fmt.Errorf("encode connection rotation audit metadata: %w", err)
 		}
-		return addBindingMetadata(string(legacy), event.BindingID.String(), nil)
+		return addBindingMetadata(string(background), event.BindingID.String(), nil)
 	}
 }
 

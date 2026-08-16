@@ -447,7 +447,7 @@ func (manager *PoolManager) HealthStatus() BindingHealthStatus {
 	binding := manager.binding
 	status := BindingHealthStatus{
 		BindingID: binding.ID, TargetID: binding.TargetID,
-		ConnectionID: binding.ConnectionID, LogicalConnection: binding.ConnectionID, ConnectorKind: binding.ConnectorKind,
+		ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind,
 		Scope: binding.Scope, BindingRevision: binding.Revision,
 		ValidatedVersion: binding.ValidatedVersion, Health: binding.Health, DiagnosticCode: binding.HealthReason,
 		LastAttemptAt: manager.lastRun, LastValidatedAt: binding.LastValidatedAt,

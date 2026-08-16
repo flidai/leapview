@@ -4,24 +4,12 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // BindingID identifies a durable target binding record. It is an operational
 // identity, not a project-graph resource.
 type BindingID string
 type TargetID string
-
-// LogicalConnectionID is retained as a source-compatibility alias for older
-// adapters. Runtime binding identity is now the project-graph ConnectionID;
-// new code should use ParseConnectionID directly.
-type LogicalConnectionID = projectgraph.ResourceID
-
-// ParseLogicalConnectionID is the deprecated spelling of ParseConnectionID.
-func ParseLogicalConnectionID(value string) (LogicalConnectionID, error) {
-	return ParseConnectionID(value)
-}
 
 func (id BindingID) String() string { return string(id) }
 func (id TargetID) String() string  { return string(id) }

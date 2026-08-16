@@ -8,6 +8,7 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 

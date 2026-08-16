@@ -10,11 +10,12 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectors"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type candidateRuntimeBindingKey struct {
 	candidateID string
-	projectID   string
+	projectID   projectgraph.ResourceID
 }
 
 type candidateRuntimeBindingEntry struct {
@@ -23,8 +24,8 @@ type candidateRuntimeBindingEntry struct {
 }
 
 type CandidateAuthoredConnection struct {
-	LogicalConnectionID string
-	ConnectorKind       string
+	ConnectionID  projectgraph.ResourceID
+	ConnectorKind string
 }
 
 type candidateRuntimeBindingRegistry struct {
@@ -34,7 +35,7 @@ type candidateRuntimeBindingRegistry struct {
 }
 
 // RuntimeBindingRegistration owns validated target pool leases for one
-// candidate project. Closing it removes future discovery and releases the
+// candidate runtime. Closing it removes future discovery and releases the
 // exact pool generations only after Runtime Host drains the candidate runtime.
 type RuntimeBindingRegistration struct {
 	once     sync.Once
@@ -46,13 +47,12 @@ type RuntimeBindingRegistration struct {
 
 func (module *Module) BindCandidateRuntime(
 	candidateID string,
-	projectID string,
+	projectID projectgraph.ResourceID,
 	leases *RuntimeBindingLeases,
 	authoredConnections []CandidateAuthoredConnection,
 ) (*RuntimeBindingRegistration, error) {
 	candidateID = strings.TrimSpace(candidateID)
-	projectID = strings.TrimSpace(projectID)
-	if module == nil || candidateID == "" || projectID == "" || leases == nil {
+	if module == nil || candidateID == "" || projectID.Validate() != nil || leases == nil {
 		return nil, fmt.Errorf(
 			"%w: candidate, project, and validated leases are required",
 			connectionbinding.ErrInvalidBinding,
@@ -134,14 +134,14 @@ func (registry *candidateRuntimeBindingRegistry) remove(
 
 func (module *Module) candidateRuntimeConnectionResolver(
 	candidateID string,
-	projectID string,
+	projectID projectgraph.ResourceID,
 ) (analyticsruntime.ConnectionResolver, bool) {
 	if module == nil {
 		return nil, false
 	}
 	return module.candidateRuntimeBindings.lookup(candidateRuntimeBindingKey{
 		candidateID: strings.TrimSpace(candidateID),
-		projectID:   strings.TrimSpace(projectID),
+		projectID:   projectID,
 	})
 }
 
@@ -200,7 +200,7 @@ func candidateAuthoredConnectionSet(
 	result := make(map[string]string, len(values))
 	for _, value := range values {
 		connectionID, err := connectionbinding.ParseConnectionID(
-			strings.TrimSpace(value.LogicalConnectionID),
+			strings.TrimSpace(value.ConnectionID.String()),
 		)
 		kind := strings.TrimSpace(value.ConnectorKind)
 		spec, exists := connectors.LookupConnection(kind)

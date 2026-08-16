@@ -66,10 +66,6 @@ const (
 type BindingScope struct {
 	ProjectID   projectgraph.ResourceID `json:"projectId"`
 	Environment string                  `json:"environment"`
-	// WorkspaceID is a deprecated source-compatibility field. It is never
-	// persisted or used as an execution identity; callers must provide
-	// ProjectID. Legacy adapters are normalized at domain boundaries.
-	WorkspaceID string `json:"-"`
 }
 
 type EndpointConfig struct {
@@ -105,12 +101,9 @@ func (reference CredentialReference) valid() bool {
 }
 
 type TargetBinding struct {
-	ID           BindingID
-	TargetID     TargetID
-	ConnectionID projectgraph.ResourceID
-	// LogicalConnectionID is retained only for legacy adapters. ConnectionID
-	// is the canonical project-graph identity.
-	LogicalConnectionID projectgraph.ResourceID `json:"-"`
+	ID                  BindingID
+	TargetID            TargetID
+	ConnectionID        projectgraph.ResourceID
 	ConnectorKind       string
 	AuthenticationMode  AuthenticationMode
 	Scope               BindingScope
@@ -130,7 +123,6 @@ type TargetBindingInput struct {
 	ID                  BindingID
 	TargetID            TargetID
 	ConnectionID        projectgraph.ResourceID
-	LogicalConnectionID projectgraph.ResourceID `json:"-"`
 	ConnectorKind       string
 	AuthenticationMode  AuthenticationMode
 	Scope               BindingScope
@@ -148,12 +140,6 @@ type TargetBindingConfiguration struct {
 }
 
 func NewTargetBinding(input TargetBindingInput) (TargetBinding, error) {
-	if input.ConnectionID == "" {
-		input.ConnectionID = input.LogicalConnectionID
-	}
-	if input.Scope.ProjectID == "" {
-		input.Scope.ProjectID = projectgraph.ResourceID(input.Scope.WorkspaceID)
-	}
 	if input.ID.String() != strings.TrimSpace(input.ID.String()) ||
 		input.ConnectionID.String() != strings.TrimSpace(input.ConnectionID.String()) ||
 		input.Scope.ProjectID.String() != strings.TrimSpace(input.Scope.ProjectID.String()) ||
@@ -207,25 +193,16 @@ func NewTargetBinding(input TargetBindingInput) (TargetBinding, error) {
 	if !input.Enabled {
 		health = HealthDisabled
 	}
-	binding := TargetBinding{
+	return TargetBinding{
 		ID: input.ID, TargetID: input.TargetID, ConnectionID: connectionID,
 		ConnectorKind: input.ConnectorKind, AuthenticationMode: input.AuthenticationMode,
 		Scope: input.Scope, Endpoint: cloneEndpoint(input.Endpoint),
 		CredentialReference: canonicalReference(input.CredentialReference),
 		Enabled:             input.Enabled, Health: health, CreatedAt: input.Now, UpdatedAt: input.Now, Revision: 1,
-	}
-	binding.LogicalConnectionID = binding.ConnectionID
-	binding.Scope.WorkspaceID = binding.Scope.ProjectID.String()
-	return binding, nil
+	}, nil
 }
 
 func (binding TargetBinding) Validate() error {
-	if binding.ConnectionID == "" {
-		binding.ConnectionID = binding.LogicalConnectionID
-	}
-	if binding.Scope.ProjectID == "" {
-		binding.Scope.ProjectID = projectgraph.ResourceID(binding.Scope.WorkspaceID)
-	}
 	connectionID, err := ParseConnectionID(binding.ConnectionID.String())
 	if err != nil || connectionID != binding.ConnectionID {
 		return fmt.Errorf("%w: connection identity is invalid", ErrInvalidBinding)
@@ -280,18 +257,16 @@ func (binding TargetBinding) Validate() error {
 }
 
 type Requirement struct {
-	ConnectionID        projectgraph.ResourceID
-	LogicalConnectionID projectgraph.ResourceID `json:"-"`
-	ConnectorKind       string
-	BindingRevision     int64
-	ValidatedVersion    string
+	ConnectionID     projectgraph.ResourceID
+	ConnectorKind    string
+	BindingRevision  int64
+	ValidatedVersion string
 }
 
 type BindingEvidence struct {
 	BindingID          BindingID               `json:"bindingId"`
 	TargetID           TargetID                `json:"targetId"`
 	ConnectionID       projectgraph.ResourceID `json:"connectionId"`
-	LogicalConnection  projectgraph.ResourceID `json:"-"`
 	ConnectorKind      string                  `json:"connectorKind"`
 	Scope              BindingScope            `json:"scope"`
 	BindingRevision    int64                   `json:"bindingRevision"`
@@ -311,7 +286,7 @@ type RuntimeBindingEvidence struct {
 
 func (binding TargetBinding) Evidence() BindingEvidence {
 	return BindingEvidence{
-		BindingID: binding.ID, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID, LogicalConnection: binding.ConnectionID,
+		BindingID: binding.ID, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 		ConnectorKind: binding.ConnectorKind, Scope: binding.Scope, BindingRevision: binding.Revision,
 		ValidatedVersion: binding.ValidatedVersion, EndpointConfigHash: endpointDigest(binding.Endpoint), Health: binding.Health,
 	}
@@ -323,9 +298,6 @@ func (binding TargetBinding) CompatibleEvidence(requirement Requirement, authori
 	}
 	if !binding.Enabled {
 		return BindingEvidence{}, ErrDisabledBinding
-	}
-	if requirement.ConnectionID == "" {
-		requirement.ConnectionID = requirement.LogicalConnectionID
 	}
 	if requirement.ConnectionID != binding.ConnectionID ||
 		strings.TrimSpace(requirement.ConnectorKind) != binding.ConnectorKind ||

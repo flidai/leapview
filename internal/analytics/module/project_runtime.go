@@ -8,6 +8,7 @@ import (
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type projectRuntimeFactory struct {
@@ -27,7 +28,7 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		var ok bool
 		connectionResolver, ok = f.module.candidateRuntimeConnectionResolver(
 			request.CandidateID,
-			request.ProjectID.String(),
+			request.ProjectID,
 		)
 		if !ok {
 			return nil, connectionbinding.ErrProviderUnavailable

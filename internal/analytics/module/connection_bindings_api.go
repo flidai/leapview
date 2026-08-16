@@ -15,7 +15,7 @@ import (
 )
 
 type ConnectionBindingAdministration interface {
-	List(context.Context, string, connectionbinding.BindingScope, string) ([]connectionbinding.TargetBinding, error)
+	List(context.Context, string, connectionbinding.BindingScope, connectionbinding.TargetID) ([]connectionbinding.TargetBinding, error)
 	Create(context.Context, string, connectionbinding.TargetBindingInput) (connectionbinding.TargetBinding, error)
 	Get(context.Context, string, connectionbinding.BindingKey) (connectionbinding.TargetBinding, error)
 	PlanConfigurationChange(context.Context, string, connectionbinding.BindingKey, connectionbinding.TargetBindingConfiguration) (connectionbinding.BindingChangePlan, error)
@@ -50,7 +50,7 @@ func (handler connectionBindingAPIHandler) List(
 		r.Context(),
 		principalID,
 		connectionbinding.BindingScope{ProjectID: projectgraph.ResourceID(project), Environment: handler.config.Environment},
-		target,
+		connectionbinding.TargetID(target),
 	)
 	if err != nil {
 		writeConnectionBindingError(w, r, err)

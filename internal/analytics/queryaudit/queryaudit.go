@@ -10,10 +10,7 @@ import (
 
 type EventInput struct {
 	// ProjectID is the immutable project identity carried by every query event.
-	// WorkspaceID remains only as a deprecated wire-compatibility field while
-	// older browser payloads are retired.
 	ProjectID        projectgraph.ResourceID
-	WorkspaceID      string
 	PrincipalID      string
 	Surface          string
 	Operation        string
@@ -49,8 +46,6 @@ type Event struct {
 type Filter struct {
 	ProjectID    projectgraph.ResourceID
 	ProjectIDs   []projectgraph.ResourceID
-	WorkspaceID  string
-	WorkspaceIDs []string
 	PrincipalID  string
 	PrincipalIDs []string
 	Surface      string
