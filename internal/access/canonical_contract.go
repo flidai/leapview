@@ -35,6 +35,8 @@ var (
 	ErrUnboundCanonicalGrant = errors.New("canonical grant is not bound to a project graph")
 	// ErrInvalidSubjectRef indicates a missing or unsupported subject identity.
 	ErrInvalidSubjectRef = errors.New("invalid canonical subject reference")
+	// ErrInvalidProjectRole indicates an unsupported project role name.
+	ErrInvalidProjectRole = errors.New("invalid canonical project role")
 )
 
 // ResourceRef is the canonical authorization and audit reference for one
@@ -277,6 +279,74 @@ func ValidateCapabilityForKind(kind graph.Kind, capability Capability) error {
 		return fmt.Errorf("%w: kind %q, capability %q", ErrCapabilityNotAllowed, kind, capability)
 	}
 	return nil
+}
+
+// ProjectRole is an explicit project-wide RBAC role. Roles are captured in a
+// serving authorization snapshot with their capability bundle; they are not
+// expanded into one grant per graph node.
+type ProjectRole string
+
+const (
+	ProjectRoleOwner       ProjectRole = "owner"
+	ProjectRoleAdmin       ProjectRole = "admin"
+	ProjectRoleDeployer    ProjectRole = "deployer"
+	ProjectRoleContributor ProjectRole = "contributor"
+	ProjectRoleEditor      ProjectRole = "editor"
+	ProjectRoleMember      ProjectRole = "member"
+	ProjectRoleViewer      ProjectRole = "viewer"
+)
+
+var projectRoleCapabilities = map[ProjectRole][]Capability{
+	ProjectRoleOwner:       {CapabilityProjectAdmin, CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
+	ProjectRoleAdmin:       {CapabilityProjectAdmin, CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
+	ProjectRoleDeployer:    {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourcePublish},
+	ProjectRoleContributor: {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit},
+	ProjectRoleEditor:      {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit},
+	ProjectRoleMember:      {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
+	ProjectRoleViewer:      {CapabilityResourceUse, CapabilityResourceRead},
+}
+
+var projectRoleOrder = []ProjectRole{
+	ProjectRoleOwner, ProjectRoleAdmin, ProjectRoleDeployer, ProjectRoleContributor,
+	ProjectRoleEditor, ProjectRoleMember, ProjectRoleViewer,
+}
+
+// ParseProjectRole validates a canonical project role name.
+func ParseProjectRole(value string) (ProjectRole, error) {
+	role := ProjectRole(strings.TrimSpace(value))
+	if _, ok := projectRoleCapabilities[role]; !ok {
+		return "", fmt.Errorf("%w %q", ErrInvalidProjectRole, value)
+	}
+	return role, nil
+}
+
+// ProjectRoleCapabilities returns the immutable role bundle in deterministic
+// capability order. Callers receive a defensive copy.
+func ProjectRoleCapabilities(role ProjectRole) []Capability {
+	return append([]Capability(nil), projectRoleCapabilities[role]...)
+}
+
+// CanonicalProjectRoles returns the supported project roles in contract order.
+func CanonicalProjectRoles() []ProjectRole { return append([]ProjectRole(nil), projectRoleOrder...) }
+
+func (role ProjectRole) Valid() bool {
+	_, ok := projectRoleCapabilities[role]
+	return ok
+}
+
+// PlatformRole is intentionally separate from project RBAC. Platform access
+// controls instance-wide administration and is never serialized into a
+// project-generation authorization snapshot.
+type PlatformRole string
+
+const PlatformRoleAdmin PlatformRole = "platform_admin"
+
+func ParsePlatformRole(value string) (PlatformRole, error) {
+	role := PlatformRole(strings.TrimSpace(value))
+	if role != PlatformRoleAdmin {
+		return "", fmt.Errorf("%w %q", ErrInvalidProjectRole, value)
+	}
+	return role, nil
 }
 
 // SubjectKind identifies the explicit subject class used by canonical grants.

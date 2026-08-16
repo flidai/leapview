@@ -84,7 +84,7 @@ func projectAccessRoleBinding(name string, spec projectRoleBindingSpec) manifest
 }
 
 func projectAccessGrant(name string, spec projectGrantSpec) manifest.Grant {
-	return manifest.Grant{ID: name, Name: name, Object: manifest.SecurableRef{Kind: strings.TrimSpace(spec.Object.Kind), ID: strings.TrimSpace(spec.Object.ID)}, Subject: manifest.Subject{Kind: strings.TrimSpace(spec.Subject.Kind), PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID), Email: strings.TrimSpace(spec.Subject.Email), DisplayName: strings.TrimSpace(spec.Subject.DisplayName), Group: strings.TrimSpace(spec.Subject.Group), Publication: strings.TrimSpace(spec.Subject.Publication)}, Capability: firstNonEmpty(spec.Capability, spec.Privilege)}
+	return manifest.Grant{ID: name, Name: name, Object: manifest.SecurableRef{Kind: strings.TrimSpace(spec.Object.Kind), ID: strings.TrimSpace(spec.Object.ID)}, Subject: manifest.Subject{Kind: strings.TrimSpace(spec.Subject.Kind), PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID), Email: strings.TrimSpace(spec.Subject.Email), DisplayName: strings.TrimSpace(spec.Subject.DisplayName), Group: strings.TrimSpace(spec.Subject.Group), Publication: strings.TrimSpace(spec.Subject.Publication)}, Capability: strings.TrimSpace(spec.Capability)}
 }
 
 func projectAccessDataPolicy(name string, spec projectDataPolicySpec) (manifest.DataPolicy, error) {

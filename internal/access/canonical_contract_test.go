@@ -192,6 +192,33 @@ func TestCanonicalCapabilityMatrixEnforcesKinds(t *testing.T) {
 	}
 }
 
+func TestProjectRolesExposeCapturedCanonicalCapabilityBundles(t *testing.T) {
+	for _, role := range CanonicalProjectRoles() {
+		parsed, err := ParseProjectRole(string(role))
+		if err != nil || parsed != role {
+			t.Fatalf("ParseProjectRole(%q) = %q, %v", role, parsed, err)
+		}
+		bundle := ProjectRoleCapabilities(role)
+		if len(bundle) == 0 {
+			t.Fatalf("role %q has empty capability bundle", role)
+		}
+		original := append([]Capability(nil), bundle...)
+		bundle[0] = Capability("RESOURCE_PUBLISH")
+		if got := ProjectRoleCapabilities(role); !reflect.DeepEqual(got, original) {
+			t.Fatalf("role %q capability bundle leaked caller mutation: %#v", role, got)
+		}
+	}
+	if _, err := ParseProjectRole("unknown"); !errors.Is(err, ErrInvalidProjectRole) {
+		t.Fatalf("invalid role error = %v", err)
+	}
+	if _, err := ParseProjectRole("platform_admin"); !errors.Is(err, ErrInvalidProjectRole) {
+		t.Fatalf("platform role crossed project boundary: %v", err)
+	}
+	if role, err := ParsePlatformRole("platform_admin"); err != nil || role != PlatformRoleAdmin {
+		t.Fatalf("ParsePlatformRole() = %q, %v", role, err)
+	}
+}
+
 func TestCanonicalValidationRejectsInvalidInputs(t *testing.T) {
 	project := canonicalTestProject(t)
 	if _, err := NewResourceRef("models/orders", graph.KindModel); !errors.Is(err, graph.ErrInvalidResourceID) {

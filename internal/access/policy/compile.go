@@ -23,6 +23,56 @@ type Compiled struct {
 	sourceHash [sha256.Size]byte
 }
 
+// Clone returns a detached copy of the compiled policy. Compiled policies are
+// retained by immutable authorization snapshots, but their exported filter
+// trees contain pointers and slices; returning those values directly would let
+// a caller mutate the installed snapshot through a getter. Keep the source
+// hash as well so Clone preserves the same cache/validation semantics without
+// requiring recompilation.
+func (compiled Compiled) Clone() Compiled {
+	clone := Compiled{Type: compiled.Type, sourceHash: compiled.sourceHash}
+	if compiled.RowFilter != nil {
+		row := RowFilter{AllowAll: compiled.RowFilter.AllowAll, Filters: cloneFilters(compiled.RowFilter.Filters)}
+		clone.RowFilter = &row
+	}
+	if compiled.ColumnMask != nil {
+		mask := ColumnMask{Fields: append([]string(nil), compiled.ColumnMask.Fields...), Mask: compiled.ColumnMask.Mask}
+		clone.ColumnMask = &mask
+	}
+	return clone
+}
+
+func cloneFilters(input []Filter) []Filter {
+	if input == nil {
+		return nil
+	}
+	output := make([]Filter, len(input))
+	for i, filter := range input {
+		output[i] = Filter{
+			Field: filter.Field, Fact: filter.Fact, Operator: filter.Operator,
+			Values: append([]any(nil), filter.Values...),
+			Groups: cloneFilterGroups(filter.Groups),
+		}
+		if filter.Spatial != nil {
+			spatial := *filter.Spatial
+			spatial.Points = append([]SpatialPoint(nil), filter.Spatial.Points...)
+			output[i].Spatial = &spatial
+		}
+	}
+	return output
+}
+
+func cloneFilterGroups(input []FilterGroup) []FilterGroup {
+	if input == nil {
+		return nil
+	}
+	output := make([]FilterGroup, len(input))
+	for i, group := range input {
+		output[i] = FilterGroup{Filters: cloneFilters(group.Filters)}
+	}
+	return output
+}
+
 type RowFilter struct {
 	AllowAll bool
 	Filters  []Filter

@@ -151,7 +151,6 @@ type projectRoleBindingSubjectSpec struct {
 type projectGrantSpec struct {
 	Object     projectResourceRefSpec        `yaml:"object"`
 	Subject    projectRoleBindingSubjectSpec `yaml:"subject"`
-	Privilege  string                        `yaml:"privilege"`
 	Capability string                        `yaml:"capability"`
 }
 

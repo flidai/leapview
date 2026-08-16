@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accesspolicy "github.com/flidai/leapview/internal/access/policy"
 	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +39,10 @@ func testGrant(t *testing.T, project graph.ProjectGraph) access.CanonicalGrant {
 
 func TestAuthorizationSnapshotRoundTripAndDigest(t *testing.T) {
 	project := testGraph(t)
-	snapshot, err := NewAuthorizationSnapshot(testIdentity(), project, []Grant{{ID: "grant_1", Name: "reader", Canonical: testGrant(t, project)}}, nil)
+	snapshot, err := NewAuthorizationSnapshotWithRoleBindings(testIdentity(), project, []RoleBinding{{
+		ID: "binding_1", Name: "viewer", Subject: mustSubject(t, access.SubjectKindPrincipal, "alice"), Role: access.ProjectRoleViewer,
+		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer),
+	}}, []Grant{{ID: "grant_1", Name: "reader", Canonical: testGrant(t, project)}}, nil)
 	require.NoError(t, err)
 	encoded, err := json.Marshal(snapshot)
 	require.NoError(t, err)
@@ -46,9 +50,18 @@ func TestAuthorizationSnapshotRoundTripAndDigest(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, snapshot.Identity(), decoded.Identity())
 	require.Equal(t, snapshot.Grants()[0].Canonical.GrantKey(), decoded.Grants()[0].Canonical.GrantKey())
+	require.Len(t, decoded.RoleBindings(), 1)
+	require.Equal(t, access.ProjectRoleViewer, decoded.RoleBindings()[0].Role)
 	digest, err := snapshot.Digest()
 	require.NoError(t, err)
 	require.NotEmpty(t, digest)
+}
+
+func mustSubject(t *testing.T, kind access.SubjectKind, id string) access.SubjectRef {
+	t.Helper()
+	subject, err := access.NewSubjectRef(kind, id)
+	require.NoError(t, err)
+	return subject
 }
 
 func TestAuthorizationSnapshotRejectsWorkspaceDomainAndPathFields(t *testing.T) {
@@ -137,4 +150,74 @@ func TestAuthorizationSnapshotMarshalRejectsPostConstructionMutation(t *testing.
 	grants[0].Canonical = access.CanonicalGrant{}
 	_, err = json.Marshal(snapshot)
 	require.NoError(t, err)
+}
+
+func TestAuthorizationSnapshotPolicyGetterDeepCopiesCompiledTree(t *testing.T) {
+	project := testGraph(t)
+	resource, err := access.NewResourceRef("model_orders", graph.KindModel)
+	require.NoError(t, err)
+	compiled, err := accesspolicy.Compile("policy_1", accesspolicy.TypeRowFilter, `{"filters":[{"groups":[{"filters":[{"field":"tenant_id","operator":"in","values":["acme"]}]}]}]}`)
+	require.NoError(t, err)
+	snapshot, err := NewAuthorizationSnapshot(testIdentity(), project, nil, []DataPolicy{{
+		ID: "policy_1", Resource: resource, PolicyType: accesspolicy.TypeRowFilter,
+		ExpressionJSON: `{"filters":[{"groups":[{"filters":[{"field":"tenant_id","operator":"in","values":["acme"]}]}]}]}`,
+		Compiled:       compiled,
+	}})
+	require.NoError(t, err)
+	policies := snapshot.DataPolicies()
+	require.Len(t, policies, 1)
+	policies[0].Compiled.RowFilter.Filters[0].Groups[0].Filters[0].Values[0] = "mutated"
+	policies[0].Compiled.RowFilter.Filters[0].Groups[0].Filters = append(policies[0].Compiled.RowFilter.Filters[0].Groups[0].Filters, accesspolicy.Filter{Field: "other"})
+	second := snapshot.DataPolicies()
+	require.Len(t, second[0].Compiled.RowFilter.Filters[0].Groups[0].Filters, 1)
+	require.Equal(t, "acme", second[0].Compiled.RowFilter.Filters[0].Groups[0].Filters[0].Values[0])
+}
+
+func TestAuthorizationSnapshotAllowsExactKindCapabilityAndSubjectOnly(t *testing.T) {
+	project := testGraph(t)
+	grant := testGrant(t, project)
+	snapshot, err := NewAuthorizationSnapshot(testIdentity(), project, []Grant{{ID: "grant_1", Canonical: grant}}, nil)
+	require.NoError(t, err)
+	subject := grant.Subject()
+	resource := grant.Resource()
+	allowed, err := snapshot.Allows(subject, resource, access.CapabilityResourceRead)
+	require.NoError(t, err)
+	require.True(t, allowed)
+	denied, err := snapshot.Allows(subject, resource, access.CapabilityResourceEdit)
+	require.NoError(t, err)
+	require.False(t, denied)
+	modelRef, err := access.NewResourceRef("model_orders", graph.KindModel)
+	require.NoError(t, err)
+	denied, err = snapshot.Allows(subject, modelRef, access.CapabilityResourceRead)
+	require.NoError(t, err)
+	require.False(t, denied)
+	group, err := access.NewSubjectRef(access.SubjectKindGroup, "alice")
+	require.NoError(t, err)
+	denied, err = snapshot.Allows(group, resource, access.CapabilityResourceRead)
+	require.NoError(t, err)
+	require.False(t, denied)
+}
+
+func TestAuthorizationSnapshotRoleBindingCapturesDefensiveCapabilityBundle(t *testing.T) {
+	project := testGraph(t)
+	bundle := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
+	snapshot, err := NewAuthorizationSnapshotWithRoleBindings(testIdentity(), project, []RoleBinding{{
+		ID: "binding_admin", Subject: mustSubject(t, access.SubjectKindPrincipal, "alice"), Role: access.ProjectRoleAdmin, Capabilities: bundle,
+	}}, nil, nil)
+	require.NoError(t, err)
+	bundle[0] = access.CapabilityResourceUse
+	bindings := snapshot.RoleBindings()
+	require.Equal(t, access.CapabilityProjectAdmin, bindings[0].Capabilities[0])
+	bindings[0].Capabilities[0] = access.CapabilityResourceUse
+	require.Equal(t, access.CapabilityProjectAdmin, snapshot.RoleBindings()[0].Capabilities[0])
+}
+
+func TestAuthorizationSnapshotRejectsRoleBundleDrift(t *testing.T) {
+	project := testGraph(t)
+	bundle := access.ProjectRoleCapabilities(access.ProjectRoleViewer)
+	bundle = append(bundle, access.CapabilityResourceEdit)
+	_, err := NewAuthorizationSnapshotWithRoleBindings(testIdentity(), project, []RoleBinding{{
+		ID: "binding_viewer", Subject: mustSubject(t, access.SubjectKindPrincipal, "alice"), Role: access.ProjectRoleViewer, Capabilities: bundle,
+	}}, nil, nil)
+	require.Error(t, err)
 }

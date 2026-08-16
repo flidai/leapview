@@ -490,7 +490,7 @@ func validateFlatProject(project Project) error {
 }
 
 func validateFlatAccess(project Project, resolver resourceResolver) error {
-	validRoles := map[string]struct{}{"owner": {}, "admin": {}, "deployer": {}, "contributor": {}, "editor": {}, "member": {}, "viewer": {}, "platform_admin": {}}
+	validRoles := map[string]struct{}{"owner": {}, "admin": {}, "deployer": {}, "contributor": {}, "editor": {}, "member": {}, "viewer": {}}
 	for name, group := range project.Access.Groups {
 		for index, member := range group.Members {
 			if strings.TrimSpace(member.PrincipalID) == "" && strings.TrimSpace(member.Email) == "" {

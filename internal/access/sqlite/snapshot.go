@@ -2,9 +2,11 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/platform/transaction"
 )
@@ -52,6 +54,23 @@ WHERE project_id = ? AND environment = ? AND generation_id = ?`,
 		}
 		return nil
 	}
+	for _, item := range snapshot.RoleBindings() {
+		capabilities := make([]string, 0, len(item.Capabilities))
+		for _, capability := range item.Capabilities {
+			capabilities = append(capabilities, capability.String())
+		}
+		encoded, err := json.Marshal(capabilities)
+		if err != nil {
+			return fmt.Errorf("encode role binding %q capabilities: %w", item.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO authorization_role_bindings
+ (id, project_id, environment, generation_id, subject_kind, subject_id, role, capabilities_json, name)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.ID, identity.ProjectID.String(), identity.Environment, identity.GenerationID,
+			string(item.Subject.Kind), item.Subject.ID, string(item.Role), string(encoded), item.Name); err != nil {
+			return err
+		}
+	}
 	for _, item := range snapshot.Grants() {
 		canonical := item.Canonical
 		if _, err := tx.ExecContext(ctx, `
@@ -93,4 +112,32 @@ func (r *Repository) InstallAuthorizationSnapshot(ctx context.Context, snapshot 
 		return err
 	}
 	return tx.Commit()
+}
+
+// RecordCanonicalAuditEvent persists an event for the exact installed
+// project/environment/generation snapshot. Global identity audit events use
+// the separate global recorder and never fill this scope from a route value.
+func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access.CanonicalAuditEvent) error {
+	if r == nil || r.root == nil {
+		return errors.New("access repository database is required")
+	}
+	if err := event.Validate(); err != nil {
+		return err
+	}
+	id, err := newID("audit")
+	if err != nil {
+		return err
+	}
+	metadata := event.MetadataJSON
+	if metadata == "" {
+		metadata = "{}"
+	}
+	_, err = r.root.ExecContext(ctx, `
+INSERT INTO authorization_audit_events
+ (id, project_id, environment, generation_id, principal_id, action, resource_id, resource_kind, capability, status, request_id, correlation_id, metadata_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, event.Identity.ProjectID.String(), event.Identity.Environment, event.Identity.GenerationID,
+		event.PrincipalID, event.Action, event.Resource.ID().String(), string(event.Resource.Kind()), event.Capability.String(),
+		event.Status, event.RequestID, event.CorrelationID, metadata)
+	return err
 }
