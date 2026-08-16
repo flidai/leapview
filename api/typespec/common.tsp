@@ -8,6 +8,31 @@ namespace LeapViewAPI.Protocol;
 @pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 scalar ResourceId extends string;
 
+enum ResourceKind {
+  project;
+  connection;
+  sourceKind: "source";
+  modelKind: "model";
+  semanticModel: "semantic_model";
+  pipelineKind: "pipeline";
+  dashboardKind: "dashboard";
+}
+
+@minLength(1)
+@maxLength(64)
+@pattern("^[A-Za-z][A-Za-z0-9_.:-]*$")
+scalar AuditTargetKind extends string;
+
+enum Capability {
+  projectAdmin: "PROJECT_ADMIN";
+  resourceUse: "RESOURCE_USE";
+  resourceRead: "RESOURCE_READ";
+  resourceEdit: "RESOURCE_EDIT";
+  resourceManage: "RESOURCE_MANAGE";
+  resourceShare: "RESOURCE_SHARE";
+  resourcePublish: "RESOURCE_PUBLISH";
+}
+
 @minValue(1)
 @maxValue(200)
 scalar ListLimit extends int32;

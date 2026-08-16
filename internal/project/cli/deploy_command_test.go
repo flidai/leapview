@@ -32,7 +32,7 @@ func (operations *deployOperations) Deploy(_ context.Context, options DeployOpti
 
 func TestDeployCommandLeavesManagedPinsToTargetCandidatePreparation(t *testing.T) {
 	operations := &deployOperations{}
-	command := DeployCommand(context.Background(), deployClient{}, operations, "")
+	command := DeployCommand(context.Background(), deployClient{}, operations)
 	command.SetArgs([]string{
 		"--target", "https://example.test", "--token", "secret",
 		"--environment", "prod",

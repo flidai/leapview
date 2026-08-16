@@ -42,7 +42,6 @@ func TestCommandOwnsDashboardVisualQuery(t *testing.T) {
 	command := Command(context.Background(), client)
 	command.SetArgs([]string{
 		"visual-data", "executive", "overview", "orders",
-		"--workspace", "sales",
 		"--target", "https://example.test", "--token", "secret",
 		"--count", "7", "--filter-state-json", `{"version":"typed_v1"}`,
 	})
@@ -56,7 +55,7 @@ func TestCommandOwnsDashboardVisualQuery(t *testing.T) {
 	if request.OperationID != dashboardgen.GenOperationQueryDashboardVisualData {
 		t.Fatalf("operation = %q", request.OperationID)
 	}
-	if request.PathParams["workspace"] != "sales" || request.PathParams["dashboard"] != "executive" ||
+	if request.PathParams["dashboard"] != "executive" ||
 		request.PathParams["page"] != "overview" || request.PathParams["visual"] != "orders" {
 		t.Fatalf("path params = %#v", request.PathParams)
 	}
@@ -69,10 +68,10 @@ func TestCommandOwnsDashboardVisualQuery(t *testing.T) {
 	}
 }
 
-func TestCommandRequiresWorkspace(t *testing.T) {
+func TestCommandRejectsRemovedWorkspaceFlag(t *testing.T) {
 	command := Command(context.Background(), &fakeClient{})
-	command.SetArgs([]string{"list"})
+	command.SetArgs([]string{"list", "--workspace", "sales"})
 	if err := command.Execute(); err == nil {
-		t.Fatal("dashboard command accepted missing workspace")
+		t.Fatal("dashboard command accepted removed --workspace flag")
 	}
 }

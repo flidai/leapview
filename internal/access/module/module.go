@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -17,30 +18,32 @@ import (
 )
 
 type Module struct {
-	handler       accesshttp.Handler
-	auth          *Auth
-	repository    func() (access.Repository, error)
-	oauth         *mcpoauth.Service
-	oauthResource mcpoauth.ResourceServer
-	desktopAuth   *desktopauth.Service
-	authoringAuth *access.AuthoringAuthService
-	logger        *slog.Logger
-	presentation  webpage.Presentation
-	assets        staticasset.Resolver
+	handler                      accesshttp.Handler
+	auth                         *Auth
+	repository                   func() (access.Repository, error)
+	oauth                        *mcpoauth.Service
+	oauthResource                mcpoauth.ResourceServer
+	desktopAuth                  *desktopauth.Service
+	authoringAuth                *access.AuthoringAuthService
+	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	logger                       *slog.Logger
+	presentation                 webpage.Presentation
+	assets                       staticasset.Resolver
 }
 
 type surfaceConfig struct {
-	Repository        func() (access.Repository, error)
-	CurrentPrincipal  func(*http.Request) (Principal, bool)
-	CurrentCredential func(*http.Request) (access.APICredential, bool)
-	Auth              *Auth
-	Logger            *slog.Logger
-	OAuth             *mcpoauth.Service
-	OAuthResource     mcpoauth.ResourceServer
-	AuthoringAuth     *access.AuthoringAuthService
-	Avatar            *avatar.Service
-	Presentation      webpage.Presentation
-	Assets            staticasset.Resolver
+	Repository                   func() (access.Repository, error)
+	CurrentPrincipal             func(*http.Request) (Principal, bool)
+	CurrentCredential            func(*http.Request) (access.APICredential, bool)
+	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	Auth                         *Auth
+	Logger                       *slog.Logger
+	OAuth                        *mcpoauth.Service
+	OAuthResource                mcpoauth.ResourceServer
+	AuthoringAuth                *access.AuthoringAuthService
+	Avatar                       *avatar.Service
+	Presentation                 webpage.Presentation
+	Assets                       staticasset.Resolver
 }
 
 func newSurface(config surfaceConfig) (*Module, error) {
@@ -87,21 +90,62 @@ func newSurface(config surfaceConfig) (*Module, error) {
 	}
 	return &Module{auth: config.Auth, repository: config.Repository, logger: logger,
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
-		presentation: config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
+		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
 			Repository: config.Repository, CurrentPrincipal: currentPrincipal,
 			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
-			AuthoringAuth: config.AuthoringAuth,
-			Avatar:        avatarService, LocalPasswordEnabled: localPasswordEnabled,
+			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			AuthoringAuth:                config.AuthoringAuth,
+			Avatar:                       avatarService, LocalPasswordEnabled: localPasswordEnabled,
 		}}, nil
 }
 
 func (m *Module) HTTP() accesshttp.Handler { return m.handler }
+
+// SetCurrentEffectiveCapabilities installs the active-generation projection
+// used by the current-user capability endpoint. It is intentionally an
+// explicit setter because the serving snapshot is created after the access
+// module during application composition.
+func (m *Module) SetCurrentEffectiveCapabilities(fn func(context.Context, string) ([]access.Capability, error)) {
+	if m == nil {
+		return
+	}
+	m.currentEffectiveCapabilities = fn
+	m.handler.CurrentEffectiveCapabilities = fn
+}
+
+// CurrentEffectiveCapabilities returns the active-generation capability
+// projection. A missing callback fails closed instead of consulting mutable
+// access storage or inventing a role-derived answer.
+func (m *Module) CurrentEffectiveCapabilities(ctx context.Context, principalID string) ([]access.Capability, error) {
+	if m == nil || m.currentEffectiveCapabilities == nil {
+		return nil, fmt.Errorf("active authorization snapshot is unavailable")
+	}
+	return m.currentEffectiveCapabilities(ctx, principalID)
+}
 
 func (m *Module) Auth() *Auth {
 	if m == nil {
 		return nil
 	}
 	return m.auth
+}
+
+// IsPlatformAdmin exposes the immutable instance-wide administrator check to
+// sibling capability handlers that use authenticated transport contracts.
+func (m *Module) IsPlatformAdmin(ctx context.Context, principalID string) (bool, error) {
+	if m == nil || m.repository == nil {
+		return false, fmt.Errorf("access repository is unavailable")
+	}
+	repository, err := m.repository()
+	if err != nil {
+		return false, err
+	}
+	checker, ok := repository.(access.PlatformRoleReader)
+	if !ok {
+		return false, fmt.Errorf("platform role checker is unavailable")
+	}
+	return checker.IsPlatformAdmin(ctx, principalID)
 }
 
 func (m *Module) CurrentPrincipal(r *http.Request) (Principal, bool) {

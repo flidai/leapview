@@ -18,6 +18,9 @@ func NewAPIGenDispatcher(handler Handler) *APIGenDispatcher {
 func (d *APIGenDispatcher) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	d.handler.GetCurrentPrincipal(w, r)
 }
+func (d *APIGenDispatcher) ListCurrentEffectiveCapabilities(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	d.handler.ListCurrentEffectiveCapabilities(w, r)
+}
 func (d *APIGenDispatcher) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenUpdateCurrentPrincipalHeaders) {
 	d.handler.UpdateCurrentPrincipal(w, r)
 }

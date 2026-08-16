@@ -79,7 +79,7 @@ model CandidateSourceBlobResponse {
 
 model CandidateResponse {
   id: string;
-  projectId: string;
+  projectId: ResourceId;
   candidateKey: string;
   targetId: string;
   environment: string;
@@ -107,7 +107,7 @@ model DeploymentApprovalDecisionRequest {
 
 model DeploymentApprovalResponse {
   id: string;
-  projectId: string;
+  projectId: ResourceId;
   deploymentId: string;
   environment: string;
   requestDigest: string;
@@ -148,7 +148,7 @@ model DeploymentVerification {
 
 model DeploymentResponse {
   id: string;
-  projectId: string;
+  projectId: ResourceId;
   releaseId: string;
   environment: string;
   generationId: string;
@@ -177,7 +177,7 @@ model DeploymentQueuedAuditPayload {
   @apigen.auditInternal
   deploymentId: string;
   @apigen.auditInternal
-  projectId: string;
+  projectId: ResourceId;
   @apigen.auditInternal
   releaseId: string;
   @apigen.auditPublic
@@ -217,7 +217,7 @@ model CandidateAuditPayload {
   @apigen.auditInternal
   candidateId: string;
   @apigen.auditInternal
-  projectId: string;
+  projectId: ResourceId;
   @apigen.auditInternal
   targetId: string;
   @apigen.auditInternal
@@ -426,9 +426,9 @@ model SeparationOfDutyRequiredFailure {}
 interface Deployments {
   @summary("List project deployments")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "project-environment")
-  listDeployments(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeploymentListResponse> | CommonErrors;
+  listDeployments(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeploymentListResponse> | CommonErrors;
 
   @summary("Deploy a ready project release")
   @post
@@ -461,21 +461,21 @@ interface Deployments {
     ],
   })
   @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  createDeployment(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentCreateRequest): AcceptedJson<DeploymentResponse> | CommonErrors;
+  createDeployment(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentCreateRequest): AcceptedJson<DeploymentResponse> | CommonErrors;
 
   @summary("Get a project deployment")
   @route("/{deployment}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "project-environment")
-  getDeployment(@path project: string, @path deployment: string): OkJson<DeploymentResponse> | CommonErrors;
+  getDeployment(@path project: ResourceId, @path deployment: string): OkJson<DeploymentResponse> | CommonErrors;
 
   @summary("List or stream deployment events")
   @route("/{deployment}/events")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "project-environment")
-  listDeploymentEvents(@path project: string, @path deployment: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
+  listDeploymentEvents(@path project: ResourceId, @path deployment: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 
   @summary("Cancel a deployment before cutover")
   @route("/{deployment}/cancel")
@@ -493,7 +493,7 @@ interface Deployments {
     ],
   })
   @apigen.auditPayload(DeploymentCancelledAuditPayload)
-  cancelDeployment(@path @apigen.target project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
+  cancelDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
 
   @summary("Retry a terminal publication request without changing its immutable release")
   @route("/{deployment}/retry")
@@ -523,7 +523,7 @@ interface Deployments {
     ],
   })
   @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  retryDeployment(@path @apigen.target project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
+  retryDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
 
   @summary("Roll back by creating a deployment of the prior release")
   @route("/{deployment}/rollback")
@@ -553,7 +553,7 @@ interface Deployments {
     ],
   })
   @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  rollbackDeployment(@path @apigen.target project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
+  rollbackDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
 
   @summary("Request approval for an immutable deployment plan")
   @route("/{deployment}/approval-requests")
@@ -574,7 +574,7 @@ interface Deployments {
     ],
   })
   @apigen.auditPayload(DeploymentApprovalRequestedAuditPayload)
-  requestDeploymentApproval(@path @apigen.target project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): CreatedJson<DeploymentApprovalResponse> | CommonErrors;
+  requestDeploymentApproval(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): CreatedJson<DeploymentApprovalResponse> | CommonErrors;
 
   @summary("Approve an immutable deployment plan")
   @route("/{deployment}/approval-requests/{approval}/approve")
@@ -595,7 +595,7 @@ interface Deployments {
     ],
   })
   @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload)
-  approveDeployment(@path @apigen.target project: string, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
+  approveDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
 
   @summary("Deny an immutable deployment plan")
   @route("/{deployment}/approval-requests/{approval}/deny")
@@ -616,7 +616,7 @@ interface Deployments {
     ],
   })
   @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload)
-  denyDeploymentApproval(@path @apigen.target project: string, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
+  denyDeploymentApproval(@path @apigen.target project: ResourceId, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
 
   @summary("Revoke a pending or approved deployment decision")
   @route("/{deployment}/approval-requests/{approval}/revoke")
@@ -637,7 +637,7 @@ interface Deployments {
     ],
   })
   @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload)
-  revokeDeploymentApproval(@path @apigen.target project: string, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
+  revokeDeploymentApproval(@path @apigen.target project: ResourceId, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
 
   @summary("Activate an approved immutable deployment plan")
   @route("/{deployment}/activate")
@@ -670,7 +670,7 @@ interface Deployments {
     ],
   })
   @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  activateDeployment(@path @apigen.target project: string, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
+  activateDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
 }
 
 @route("/projects/{project}/candidates")
@@ -690,14 +690,14 @@ interface ProjectCandidates {
     auditAction: "candidate.started",
   })
   @apigen.auditPayload(CandidateAuditPayload)
-  startProjectCandidate(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateStartRequest): CreatedJson<CandidateResponse> | CommonErrors;
+  startProjectCandidate(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateStartRequest): CreatedJson<CandidateResponse> | CommonErrors;
 
   @summary("Get an owned private project candidate")
   @route("/{candidate}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "AUTHOR_PROJECT" })
   @extension("x-leapview-object-scope", "project-environment")
-  getProjectCandidate(@path project: string, @path candidate: string): OkJson<CandidateResponse> | CommonErrors;
+  getProjectCandidate(@path project: ResourceId, @path candidate: string): OkJson<CandidateResponse> | CommonErrors;
 
   @summary("Replace a private candidate artifact with optimistic concurrency")
   @route("/{candidate}/artifact")
@@ -712,7 +712,7 @@ interface ProjectCandidates {
     auditAction: "candidate.artifact_replaced",
   })
   @apigen.auditPayload(CandidateAuditPayload)
-  replaceProjectCandidateArtifact(@path @apigen.target project: string, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateArtifactRequest): OkJson<CandidateResponse> | CommonErrors;
+  replaceProjectCandidateArtifact(@path @apigen.target project: ResourceId, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateArtifactRequest): OkJson<CandidateResponse> | CommonErrors;
 
   @summary("Retry preparation of a failed private candidate")
   @route("/{candidate}/retry")
@@ -727,7 +727,7 @@ interface ProjectCandidates {
     auditAction: "candidate.retried",
   })
   @apigen.auditPayload(CandidateAuditPayload)
-  retryProjectCandidate(@path @apigen.target project: string, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
+  retryProjectCandidate(@path @apigen.target project: ResourceId, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
 
   @summary("Cancel an owned private project candidate")
   @route("/{candidate}/cancel")
@@ -742,7 +742,7 @@ interface ProjectCandidates {
     auditAction: "candidate.cancelled",
   })
   @apigen.auditPayload(CandidateAuditPayload)
-  cancelProjectCandidate(@path @apigen.target project: string, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
+  cancelProjectCandidate(@path @apigen.target project: ResourceId, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
 
   @summary("Publish the exact ready candidate through target policy")
   @route("/{candidate}/publish")
@@ -776,7 +776,7 @@ interface ProjectCandidates {
     ],
   })
   @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  publishProjectCandidate(@path @apigen.target project: string, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidatePublishRequest): AcceptedJson<DeploymentResponse> | CommonErrors;
+  publishProjectCandidate(@path @apigen.target project: ResourceId, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidatePublishRequest): AcceptedJson<DeploymentResponse> | CommonErrors;
 }
 
 @tag("Deployments")
@@ -785,7 +785,7 @@ interface ProjectCandidates {
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "REVIEW_CANDIDATE" })
 @extension("x-leapview-object-scope", "project-environment")
-op reviewProjectCandidate(@path project: string, @path candidate: string): OkJson<CandidateResponse> | CommonErrors;
+op reviewProjectCandidate(@path project: ResourceId, @path candidate: string): OkJson<CandidateResponse> | CommonErrors;
 
 @tag("Deployments")
 @summary("Cancel the current principal's active candidate by stable authoring key")
@@ -802,7 +802,7 @@ op reviewProjectCandidate(@path project: string, @path candidate: string): OkJso
   guarantee: "best-effort",
 })
 @apigen.auditPayload(CandidateAuditPayload)
-op cancelProjectCandidateByKey(@path @apigen.target project: string, @path candidateKey: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
+op cancelProjectCandidateByKey(@path @apigen.target project: ResourceId, @path candidateKey: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
 
 @route("/projects/{project}/candidate-sync")
 @tag("Deployments")
@@ -816,7 +816,7 @@ interface CandidateSynchronization {
   @extension("x-leapview-object-scope", "project-environment")
   @apigen.query
   planProjectCandidateSynchronization(
-    @path project: string,
+    @path project: ResourceId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
     @body body: CandidateSynchronizationRequest,
   ): OkJson<CandidateSynchronizationPlanResponse> | CommonErrors;
@@ -835,7 +835,7 @@ interface CandidateSynchronization {
   })
   @apigen.auditPayload(CandidateSourceBlobAuditPayload)
   @apigen.manual
-  uploadProjectCandidateSourceBlob(@path @apigen.target project: string, @path digest: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<CandidateSourceBlobResponse> | CommonErrors;
+  uploadProjectCandidateSourceBlob(@path @apigen.target project: ResourceId, @path digest: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<CandidateSourceBlobResponse> | CommonErrors;
 
   @summary("Atomically commit a complete source snapshot to the current author's private candidate")
   @route("/commit")
@@ -849,5 +849,5 @@ interface CandidateSynchronization {
     auditAction: "candidate.ready",
   })
   @apigen.auditPayload(CandidateAuditPayload)
-  commitProjectCandidateSynchronization(@path project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateSynchronizationRequest): OkJson<CandidateResponse> | CommonErrors;
+  commitProjectCandidateSynchronization(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateSynchronizationRequest): OkJson<CandidateResponse> | CommonErrors;
 }

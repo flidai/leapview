@@ -10,25 +10,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/flidai/leapview/internal/platform/cliapi"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/schema"
 	"github.com/spf13/cobra"
 )
 
 type options struct {
-	remote       cliapi.RemoteOptions
 	catalog      string
 	jsonOutput   bool
 	schemaFormat string
 	schemaOut    string
-}
-
-// ActiveProjectGraphLoader supplies the deployed Project state that Project
-// planning compares with locally compiled configuration.
-type ActiveProjectGraphLoader interface {
-	LoadActiveProjectGraph(context.Context, cliapi.Credentials) (projectgraph.ProjectGraph, error)
 }
 
 // ValidateCommand constructs the local project validation command.
@@ -56,7 +47,7 @@ func ValidateCommand(ctx context.Context) *cobra.Command {
 }
 
 // PlanCommand constructs the local or active-state project plan command.
-func PlanCommand(ctx context.Context, loader ActiveProjectGraphLoader) *cobra.Command {
+func PlanCommand(ctx context.Context, _ ...any) *cobra.Command {
 	opts := &options{}
 	cmd := &cobra.Command{
 		Use:   "plan [project]",
@@ -71,12 +62,10 @@ func PlanCommand(ctx context.Context, loader ActiveProjectGraphLoader) *cobra.Co
 				}
 				opts.catalog = args[0]
 			}
-			return runPlan(ctx, loader, opts, cmd.OutOrStdout())
+			return runPlan(ctx, opts, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&opts.catalog, "project", filepath.Join("dashboards", "leapview.yaml"), "project path")
-	cmd.Flags().StringVar(&opts.remote.Target, "target", "", "LeapView server URL for active deployment diff")
-	cmd.Flags().StringVar(&opts.remote.Token, "token", "", "API token")
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "emit JSON plan")
 	return cmd
 }
@@ -131,18 +120,8 @@ func runValidate(ctx context.Context, opts *options, out io.Writer) error {
 	return fmt.Errorf("validation failed")
 }
 
-func runPlan(ctx context.Context, loader ActiveProjectGraphLoader, opts *options, out io.Writer) error {
-	var plan projectcompiler.ProjectPlan
-	var err error
-	if opts.remote.Target != "" {
-		active, err := fetchActiveProjectGraph(ctx, loader, opts)
-		if err != nil {
-			return err
-		}
-		plan, err = projectcompiler.PlanProjectAgainstGraph(opts.catalog, active)
-	} else {
-		plan, err = projectcompiler.PlanProject(opts.catalog)
-	}
+func runPlan(ctx context.Context, opts *options, out io.Writer) error {
+	plan, err := projectcompiler.PlanProject(opts.catalog)
 	if err != nil {
 		return err
 	}
@@ -184,17 +163,13 @@ func renderProjectPlan(out io.Writer, plan projectcompiler.ProjectPlan) error {
 		}
 		for _, change := range plan.DependencyChanges {
 			fmt.Fprintf(out, "    %s dependency %s -> %s (%s)", change.Action, change.From, change.To, change.Type)
+			if change.Breaking {
+				fmt.Fprint(out, " [breaking]")
+			}
 			fmt.Fprintln(out)
 		}
 	}
 	return nil
-}
-
-func fetchActiveProjectGraph(ctx context.Context, loader ActiveProjectGraphLoader, opts *options) (projectgraph.ProjectGraph, error) {
-	if loader == nil {
-		return projectgraph.ProjectGraph{}, fmt.Errorf("Project active project graph loader is required")
-	}
-	return loader.LoadActiveProjectGraph(ctx, opts.remote.Credentials())
 }
 
 func planChangeAnnotations(change projectcompiler.ProjectPlanChange) string {
@@ -205,11 +180,14 @@ func planChangeAnnotations(change projectcompiler.ProjectPlanChange) string {
 	if change.MaterializationImpact {
 		parts = append(parts, "refresh")
 	}
+	if change.AccessImpact {
+		parts = append(parts, "access")
+	}
 	return strings.Join(parts, ",")
 }
 
 func validateProject(ctx context.Context, projectPath string) []configschema.Diagnostic {
-	if _, err := projectcompiler.Compile(projectPath); err != nil {
+	if _, err := projectcompiler.CompileProject(projectPath); err != nil {
 		return configschema.Diagnostics(err)
 	}
 	if err := ctx.Err(); err != nil {

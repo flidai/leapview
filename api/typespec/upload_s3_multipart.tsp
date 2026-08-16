@@ -13,10 +13,10 @@ model ManagedDataS3MultipartAuditPayload {
   owner: string;
 
   @apigen.auditInternal
-  projectId: string;
+  projectId: ResourceId;
 
   @apigen.auditInternal
-  connectionId: string;
+  connectionId: ResourceId;
 
   @apigen.auditPublic
   surface: string;
@@ -108,8 +108,8 @@ interface ManagedDataS3MultipartUploads {
   @apigen.failsWith(ManagedDataUploadInternalFailure)
   @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.created" })
   createManagedDataS3MultipartUpload(
-    @path @apigen.target project: ManagedDataProjectId,
-    @path connection: ManagedDataConnectionId,
+    @path project: ResourceId,
+    @path @apigen.target connection: ResourceId,
     @path uploadSession: ManagedDataUploadSessionId,
     @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
     @body body: ManagedDataS3MultipartCreateRequest,
@@ -123,8 +123,8 @@ interface ManagedDataS3MultipartUploads {
   @apigen.query
   @extension("x-leapview-object-scope", "project-environment")
   signManagedDataS3MultipartPart(
-    @path project: ManagedDataProjectId,
-    @path connection: ManagedDataConnectionId,
+    @path project: ResourceId,
+    @path @apigen.target connection: ResourceId,
     @path uploadSession: ManagedDataUploadSessionId,
     @path multipartUpload: ManagedDataMultipartUploadId,
     @path partNumber: ManagedDataS3PartNumber,
@@ -148,8 +148,8 @@ interface ManagedDataS3MultipartUploads {
   @apigen.failsWith(ManagedDataUploadInternalFailure)
   @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.completed" })
   completeManagedDataS3MultipartUpload(
-    @path @apigen.target project: ManagedDataProjectId,
-    @path connection: ManagedDataConnectionId,
+    @path project: ResourceId,
+    @path @apigen.target connection: ResourceId,
     @path uploadSession: ManagedDataUploadSessionId,
     @path multipartUpload: ManagedDataMultipartUploadId,
     @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
@@ -171,8 +171,8 @@ interface ManagedDataS3MultipartUploads {
   @apigen.failsWith(ManagedDataUploadInternalFailure)
   @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.aborted" })
   abortManagedDataS3MultipartUpload(
-    @path @apigen.target project: ManagedDataProjectId,
-    @path connection: ManagedDataConnectionId,
+    @path project: ResourceId,
+    @path @apigen.target connection: ResourceId,
     @path uploadSession: ManagedDataUploadSessionId,
     @path multipartUpload: ManagedDataMultipartUploadId,
     @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,

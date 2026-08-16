@@ -4,13 +4,8 @@ import (
 	"context"
 
 	dashboardcli "github.com/flidai/leapview/internal/dashboard/cli"
-	workspacecli "github.com/flidai/leapview/internal/workspace/cli"
 	"github.com/spf13/cobra"
 )
-
-func workspacesCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
-	return workspacecli.WorkspacesCommand(ctx, capabilityAPIClient{})
-}
 
 func dashboardsCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 	return dashboardcli.Command(ctx, capabilityAPIClient{})

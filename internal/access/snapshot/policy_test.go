@@ -88,6 +88,49 @@ func TestAuthorizationSnapshotRejectsWrongKindAndUnboundGraph(t *testing.T) {
 	}
 }
 
+func TestAuthorizationSnapshotEffectiveCapabilitiesProjectsDirectAndGroupGrants(t *testing.T) {
+	project := testGraph(t)
+	dashboard, err := access.NewResourceRef("dashboard_main", graph.KindDashboard)
+	require.NoError(t, err)
+	model, err := access.NewResourceRef("model_orders", graph.KindModel)
+	require.NoError(t, err)
+	alice := mustSubject(t, access.SubjectKindPrincipal, "alice")
+	sales := mustSubject(t, access.SubjectKindGroup, "sales")
+	dashboardGrant, err := access.NewCanonicalGrant(project, alice, dashboard, access.CapabilityResourceRead)
+	require.NoError(t, err)
+	modelGrant, err := access.NewCanonicalGrant(project, sales, model, access.CapabilityResourceUse)
+	require.NoError(t, err)
+	snapshot, err := NewAuthorizationSnapshot(testIdentity(), project, []Grant{
+		{ID: "grant_dashboard", Canonical: dashboardGrant},
+		{ID: "grant_model", Canonical: modelGrant},
+	}, nil)
+	require.NoError(t, err)
+
+	capabilities, err := snapshot.EffectiveCapabilities([]access.SubjectRef{alice})
+	require.NoError(t, err)
+	require.Equal(t, []access.Capability{access.CapabilityResourceRead}, capabilities)
+
+	capabilities, err = snapshot.EffectiveCapabilities([]access.SubjectRef{alice, sales})
+	require.NoError(t, err)
+	require.Equal(t, []access.Capability{access.CapabilityResourceUse, access.CapabilityResourceRead}, capabilities)
+
+	capabilities, err = snapshot.EffectiveCapabilities([]access.SubjectRef{mustSubject(t, access.SubjectKindPrincipal, "nobody")})
+	require.NoError(t, err)
+	require.Empty(t, capabilities)
+}
+
+func TestAuthorizationSnapshotEffectiveCapabilitiesFailsClosed(t *testing.T) {
+	_, err := (AuthorizationSnapshot{}).EffectiveCapabilities(nil)
+	require.Error(t, err)
+
+	project := testGraph(t)
+	snapshot, err := NewAuthorizationSnapshot(testIdentity(), project, nil, nil)
+	require.NoError(t, err)
+	invalid := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: ""}
+	_, err = snapshot.EffectiveCapabilities([]access.SubjectRef{invalid})
+	require.Error(t, err)
+}
+
 func TestAuthorizationSnapshotRejectsDuplicateAndTrailingJSON(t *testing.T) {
 	project := testGraph(t)
 	duplicate := []byte(`{"identity":{"projectId":"project_demo","environment":"production","generationId":"generation_1"},"identity":{"projectId":"project_demo","environment":"production","generationId":"generation_1"}}`)

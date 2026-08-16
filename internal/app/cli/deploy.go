@@ -53,7 +53,6 @@ func deployCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 				publisher:   projectPublishOperations{client: client},
 			},
 		},
-		opts.workspaceID,
 	)
 }
 

@@ -868,13 +868,11 @@ paths:
             fields:
               - name: operationId
                 sensitivity: internal
-              - name: projectId
+              - name: resourceId
                 sensitivity: internal
-              - name: surface
+              - name: resourceKind
                 sensitivity: public
-              - name: targetId
-                sensitivity: internal
-              - name: targetType
+              - name: surface
                 sensitivity: public
             retention: security
             schema:
@@ -1178,9 +1176,6 @@ paths:
       tags:
         - Agent
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
     post:
       operationId: createAgentConversation
       summary: Create an agent conversation
@@ -1470,13 +1465,11 @@ paths:
             fields:
               - name: operationId
                 sensitivity: internal
-              - name: projectId
+              - name: resourceId
                 sensitivity: internal
-              - name: surface
+              - name: resourceKind
                 sensitivity: public
-              - name: targetId
-                sensitivity: internal
-              - name: targetType
+              - name: surface
                 sensitivity: public
             retention: security
             schema:
@@ -1484,7 +1477,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: agent.conversation.created
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: AGENT_SERVICE_UNAVAILABLE
             kind: unavailable
@@ -1494,10 +1487,6 @@ paths:
         owner: LeapViewAPI.Agent
         ui:
           action_id: agent.conversation.create
-        privilege: RESOURCE_USE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_USE
   /api/v1/agent/conversations/{conversation}:
     delete:
       operationId: archiveAgentConversation
@@ -1756,13 +1745,11 @@ paths:
             fields:
               - name: operationId
                 sensitivity: internal
-              - name: projectId
+              - name: resourceId
                 sensitivity: internal
-              - name: surface
+              - name: resourceKind
                 sensitivity: public
-              - name: targetId
-                sensitivity: internal
-              - name: targetType
+              - name: surface
                 sensitivity: public
             retention: security
             schema:
@@ -1770,7 +1757,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: agent.conversation.archived
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: AGENT_CONVERSATION_NOT_FOUND
             kind: not_found
@@ -1780,10 +1767,6 @@ paths:
         target:
           parameter: conversation
           type: conversation
-        privilege: RESOURCE_USE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_USE
     get:
       operationId: getAgentConversation
       summary: Get an agent conversation
@@ -2049,9 +2032,6 @@ paths:
       tags:
         - Agent
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
     patch:
       operationId: updateAgentConversation
       summary: Update an agent conversation
@@ -2338,13 +2318,11 @@ paths:
             fields:
               - name: operationId
                 sensitivity: internal
-              - name: projectId
+              - name: resourceId
                 sensitivity: internal
-              - name: surface
+              - name: resourceKind
                 sensitivity: public
-              - name: targetId
-                sensitivity: internal
-              - name: targetType
+              - name: surface
                 sensitivity: public
             retention: security
             schema:
@@ -2352,7 +2330,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: agent.conversation.updated
-        authz_mode: privilege
+        authz_mode: authenticated
         concurrency: if-match
         failures:
           - code: INVALID_AGENT_CONVERSATION
@@ -2367,10 +2345,6 @@ paths:
         target:
           parameter: conversation
           type: conversation
-        privilege: RESOURCE_USE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_USE
   /api/v1/agent/conversations/{conversation}/messages:
     get:
       operationId: listAgentMessages
@@ -2660,9 +2634,6 @@ paths:
       tags:
         - Agent
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
   /api/v1/agent/conversations/{conversation}/runs:
     get:
       operationId: listAgentRuns
@@ -2951,9 +2922,6 @@ paths:
       tags:
         - Agent
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
     post:
       operationId: createAgentRun
       summary: Create an asynchronous agent run
@@ -3250,13 +3218,11 @@ paths:
             fields:
               - name: operationId
                 sensitivity: internal
-              - name: projectId
+              - name: resourceId
                 sensitivity: internal
-              - name: surface
+              - name: resourceKind
                 sensitivity: public
-              - name: targetId
-                sensitivity: internal
-              - name: targetType
+              - name: surface
                 sensitivity: public
             retention: security
             schema:
@@ -3264,7 +3230,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: agent.run.created
-        authz_mode: privilege
+        authz_mode: authenticated
         execution:
           cancellation: supported
           events_operation: listAgentEvents
@@ -3299,10 +3265,6 @@ paths:
           type: conversation
         ui:
           action_id: agent.run.create
-        privilege: RESOURCE_USE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_USE
   /api/v1/agent/conversations/{conversation}/runs/{run}:
     get:
       operationId: getAgentRun
@@ -3575,9 +3537,6 @@ paths:
       tags:
         - Agent
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
   /api/v1/agent/conversations/{conversation}/runs/{run}/cancel:
     post:
       operationId: cancelAgentRun
@@ -3871,13 +3830,11 @@ paths:
             fields:
               - name: operationId
                 sensitivity: internal
-              - name: projectId
+              - name: resourceId
                 sensitivity: internal
-              - name: surface
+              - name: resourceKind
                 sensitivity: public
-              - name: targetId
-                sensitivity: internal
-              - name: targetType
+              - name: surface
                 sensitivity: public
             retention: security
             schema:
@@ -3885,7 +3842,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: agent.run.cancelled
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: AGENT_RUN_NOT_CANCELLABLE
             kind: not_cancellable
@@ -3904,10 +3861,6 @@ paths:
         target:
           parameter: conversation
           type: conversation
-        privilege: RESOURCE_USE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_USE
   /api/v1/agent/conversations/{conversation}/runs/{run}/events:
     get:
       operationId: listAgentEvents
@@ -4223,9 +4176,6 @@ paths:
       tags:
         - Agent
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
   /api/v1/audit-events:
     get:
       operationId: listPlatformAuditEvents
@@ -4254,18 +4204,22 @@ paths:
             type: string
           example: example
           explode: false
-        - name: targetType
+        - name: resourceKind
           in: query
           required: false
           schema:
             type: string
+            minLength: 1
+            maxLength: 64
           example: example
           explode: false
-        - name: targetId
+        - name: resourceId
           in: query
           required: false
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
           explode: false
         - name: from
@@ -4313,6 +4267,7 @@ paths:
               example:
                 items:
                   - action: example
+                    capability: PROJECT_ADMIN
                     correlationId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     id: example
@@ -4321,10 +4276,9 @@ paths:
                     principalId: example
                     projectId: example
                     requestId: example
+                    resourceId: example
+                    resourceKind: example
                     status: example
-                    targetId: example
-                    targetType: example
-                    privilege: example
                 page:
                   nextCursor: example
         '400':
@@ -4564,9 +4518,6 @@ paths:
       tags:
         - Audit
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
       x-leapview-object-scope: platform
   /api/v1/capabilities:
     get:
@@ -5118,9 +5069,6 @@ paths:
       tags:
         - BI
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
   /api/v1/dashboards/{dashboard}:
     get:
       operationId: getDashboard
@@ -5401,9 +5349,6 @@ paths:
       tags:
         - BI
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/appearance:
     put:
@@ -6637,7 +6582,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_USE
+        privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/query:
     post:
@@ -6984,7 +6929,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_USE
+        privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/visuals/{visual}:
     get:
@@ -7657,7 +7602,7 @@ paths:
           - query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_USE
+        privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
       x-leapview-response-trailers:
         - X-Next-Cursor
@@ -13309,13 +13254,13 @@ paths:
                 $ref: '#/components/schemas/APITokenListResponse'
               example:
                 items:
-                  - createdAt: "2026-01-02T15:04:05Z"
+                  - capabilities:
+                      - PROJECT_ADMIN
+                    createdAt: "2026-01-02T15:04:05Z"
                     expiresAt: "2026-01-02T15:04:05Z"
                     id: example
                     lastUsedAt: "2026-01-02T15:04:05Z"
                     name: example
-                    privileges:
-                      - example
                     revokedAt: "2026-01-02T15:04:05Z"
                 page:
                   nextCursor: example
@@ -13583,13 +13528,13 @@ paths:
                 $ref: '#/components/schemas/APITokenCreateResponse'
               example:
                 apiToken:
+                  capabilities:
+                    - PROJECT_ADMIN
                   createdAt: "2026-01-02T15:04:05Z"
                   expiresAt: "2026-01-02T15:04:05Z"
                   id: example
                   lastUsedAt: "2026-01-02T15:04:05Z"
                   name: example
-                  privileges:
-                    - example
                   revokedAt: "2026-01-02T15:04:05Z"
                 token: example
         '400':
@@ -13835,10 +13780,10 @@ paths:
             schema:
               $ref: '#/components/schemas/APITokenCreateRequest'
             example:
+              capabilities:
+                - PROJECT_ADMIN
               expiresAt: "2026-01-02T15:04:05Z"
               name: example
-              privileges:
-                - example
       x-apigen-operation-kind: command
       x-apigen-command:
         additional_exposures:
@@ -14183,7 +14128,7 @@ paths:
               example:
                 items:
                   - capabilities:
-                      - example
+                      - PROJECT_ADMIN
                     clientId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     current: true
@@ -15301,31 +15246,21 @@ paths:
         ui:
           action_id: current-user.avatar.upload
       x-leapview-object-scope: principal
-  /api/v1/me/effective-privileges:
+  /api/v1/me/effective-capabilities:
     get:
-      operationId: listCurrentEffectivePrivileges
-      summary: List current effective privileges
-      parameters:
-        - name: project
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-          example: example
-          explode: false
+      operationId: listCurrentEffectiveCapabilities
+      summary: List current effective capabilities
+      parameters: []
       responses:
         '200':
           description: The request has succeeded.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EffectivePrivilegesResponse'
+                $ref: '#/components/schemas/EffectiveCapabilitiesResponse'
               example:
                 capabilities:
-                  - example
-                projectId: example
+                  - PROJECT_ADMIN
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -15563,9 +15498,6 @@ paths:
       tags:
         - Current User
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_USE
       x-leapview-object-scope: principal
   /api/v1/me/password:
     post:
@@ -20279,9 +20211,6 @@ paths:
       tags:
         - Projects
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
   /api/v1/projects/{project}:
     get:
       operationId: getProject
@@ -20547,9 +20476,6 @@ paths:
       tags:
         - Projects
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
       x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/audit-events:
     get:
@@ -20578,18 +20504,22 @@ paths:
             type: string
           example: example
           explode: false
-        - name: targetType
+        - name: resourceKind
           in: query
           required: false
           schema:
             type: string
+            minLength: 1
+            maxLength: 64
           example: example
           explode: false
-        - name: targetId
+        - name: resourceId
           in: query
           required: false
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
           explode: false
         - name: from
@@ -20637,6 +20567,7 @@ paths:
               example:
                 items:
                   - action: example
+                    capability: PROJECT_ADMIN
                     correlationId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     id: example
@@ -20645,10 +20576,9 @@ paths:
                     principalId: example
                     projectId: example
                     requestId: example
+                    resourceId: example
+                    resourceKind: example
                     status: example
-                    targetId: example
-                    targetType: example
-                    privilege: example
                 page:
                   nextCursor: example
         '400':
@@ -20890,7 +20820,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_READ
+        privilege: PROJECT_ADMIN
   /api/v1/projects/{project}/authoring/catalog:
     get:
       operationId: listDashboardAuthoringCatalog
@@ -21179,9 +21109,6 @@ paths:
       tags:
         - Dashboard Authoring
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
   /api/v1/projects/{project}/authoring/commands:
     post:
       operationId: executeDashboardAuthoringCommand
@@ -21510,7 +21437,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: dashboard_authoring.command_executed
-        authz_mode: privilege
+        authz_mode: authenticated
         failures: []
         idempotency: required
         owner: LeapViewAPI.Dashboard
@@ -21519,10 +21446,6 @@ paths:
           type: project
         ui:
           action_id: dashboard.builder.command
-        privilege: RESOURCE_EDIT
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_EDIT
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}:
     get:
       operationId: getDashboardAuthoringDashboard
@@ -23307,17 +23230,13 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: dashboard_authoring.draft_created
-        authz_mode: privilege
+        authz_mode: authenticated
         failures: []
         idempotency: required
         owner: LeapViewAPI.Dashboard
         target:
           parameter: project
           type: project
-        privilege: RESOURCE_EDIT
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_EDIT
   /api/v1/projects/{project}/authoring/forks:
     post:
       operationId: forkDashboardAuthoringDraft
@@ -23606,7 +23525,6 @@ paths:
               source:
                 dashboardId: example
                 kind: example
-                projectId: example
               title: example
       x-apigen-operation-kind: command
       x-apigen-command:
@@ -23630,17 +23548,13 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: dashboard_authoring.draft_forked
-        authz_mode: privilege
+        authz_mode: authenticated
         failures: []
         idempotency: required
         owner: LeapViewAPI.Dashboard
         target:
           parameter: project
           type: project
-        privilege: RESOURCE_EDIT
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_EDIT
   /api/v1/projects/{project}/authoring/sources/{kind}/{dashboard}/export:
     get:
       operationId: exportDashboardAuthoringSource
@@ -23946,7 +23860,7 @@ paths:
               example:
                 decisions:
                   - allowed: true
-                    capability: example
+                    capability: PROJECT_ADMIN
                     grantId: example
                     grantResourceId: example
                     inherited: true
@@ -23954,7 +23868,7 @@ paths:
                     platform: true
                     reason: example
                     resourceId: example
-                    resourceKind: example
+                    resourceKind: project
                     subjectId: example
                     subjectType: example
         '400':
@@ -24201,13 +24115,10 @@ paths:
               $ref: '#/components/schemas/AuthorizationBatchCheckRequest'
             example:
               checks:
-                - capability: example
+                - capability: PROJECT_ADMIN
                   resourceId: example
-                  resourceKind: example
+                  resourceKind: project
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_USE
   /api/v1/projects/{project}/candidate-reviews/{candidate}:
     get:
       operationId: reviewProjectCandidate
@@ -24218,6 +24129,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: candidate
           in: path
@@ -24501,6 +24414,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: candidateKey
           in: path
@@ -24845,6 +24760,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: digest
           in: path
@@ -25187,6 +25104,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: Idempotency-Key
           in: header
@@ -25546,6 +25465,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: Idempotency-Key
           in: header
@@ -25837,6 +25758,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: Idempotency-Key
           in: header
@@ -26193,6 +26116,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: candidate
           in: path
@@ -26476,6 +26401,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: candidate
           in: path
@@ -26829,6 +26756,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: candidate
           in: path
@@ -27173,6 +27102,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: candidate
           in: path
@@ -27605,6 +27536,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: candidate
           in: path
@@ -27949,6 +27882,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: limit
           in: query
@@ -28222,9 +28157,6 @@ paths:
       tags:
         - Managed Data
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
       x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}:
     get:
@@ -28236,12 +28168,16 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: connection
           in: path
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
       responses:
         '200':
@@ -28516,7 +28452,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
       responses:
         '200':
@@ -28795,7 +28731,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: limit
           in: query
@@ -29093,7 +29029,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: revision
           in: path
@@ -29382,7 +29318,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: limit
           in: query
@@ -29686,7 +29622,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_EDIT
+        privilege: RESOURCE_READ
       x-leapview-object-scope: project-environment
     post:
       operationId: createManagedDataUploadSession
@@ -29706,7 +29642,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: Idempotency-Key
           in: header
@@ -30077,8 +30013,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
@@ -30103,7 +30039,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: uploadSession
           in: path
@@ -30393,7 +30329,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_EDIT
+        privilege: RESOURCE_READ
       x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/cancel:
     post:
@@ -30414,7 +30350,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: uploadSession
           in: path
@@ -30776,8 +30712,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
@@ -30802,7 +30738,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: uploadSession
           in: path
@@ -31112,7 +31048,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_EDIT
+        privilege: RESOURCE_READ
       x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/finalize:
     post:
@@ -31133,7 +31069,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: uploadSession
           in: path
@@ -31510,8 +31446,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
@@ -31536,7 +31472,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: uploadSession
           in: path
@@ -31884,8 +31820,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
@@ -31910,7 +31846,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: uploadSession
           in: path
@@ -32253,8 +32189,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
@@ -32279,7 +32215,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: uploadSession
           in: path
@@ -32637,8 +32573,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.ManagedData
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
@@ -32664,7 +32600,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 200
           example: example
         - name: uploadSession
           in: path
@@ -33241,9 +33177,6 @@ paths:
       tags:
         - Publications
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_PUBLISH
   /api/v1/projects/{project}/dashboard-publications/{publication}:
     get:
       operationId: getDashboardPublication
@@ -33527,9 +33460,6 @@ paths:
       tags:
         - Publications
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_PUBLISH
   /api/v1/projects/{project}/dashboard-publications/{publication}/resume:
     post:
       operationId: resumeDashboardPublication
@@ -33840,7 +33770,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: dashboard_publication.resumed
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: AUDIT_UNAVAILABLE
             kind: audit_unavailable
@@ -33861,10 +33791,6 @@ paths:
           type: project
         ui:
           action_id: dashboard.publication.resume
-        privilege: RESOURCE_PUBLISH
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_PUBLISH
   /api/v1/projects/{project}/dashboard-publications/{publication}/rotate:
     post:
       operationId: rotateDashboardPublication
@@ -34175,7 +34101,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: dashboard_publication.public_id_rotated
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: AUDIT_UNAVAILABLE
             kind: audit_unavailable
@@ -34196,10 +34122,6 @@ paths:
           type: project
         ui:
           action_id: dashboard.publication.rotate
-        privilege: RESOURCE_PUBLISH
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_PUBLISH
   /api/v1/projects/{project}/dashboard-publications/{publication}/suspend:
     post:
       operationId: suspendDashboardPublication
@@ -34510,7 +34432,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: dashboard_publication.suspended
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: AUDIT_UNAVAILABLE
             kind: audit_unavailable
@@ -34531,10 +34453,6 @@ paths:
           type: project
         ui:
           action_id: dashboard.publication.suspend
-        privilege: RESOURCE_PUBLISH
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_PUBLISH
   /api/v1/projects/{project}/data-policies:
     get:
       operationId: listDataPolicies
@@ -34552,8 +34470,8 @@ paths:
           in: query
           required: false
           schema:
-            type: string
-          example: example
+            $ref: '#/components/schemas/ResourceKind'
+          example: project
           explode: false
         - name: resourceId
           in: query
@@ -34605,7 +34523,7 @@ paths:
                     id: example
                     policyType: example
                     resourceId: example
-                    resourceKind: example
+                    resourceKind: project
                     subjectId: example
                     subjectType: example
                     updatedAt: "2026-01-02T15:04:05Z"
@@ -34850,7 +34768,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_MANAGE
+        privilege: PROJECT_ADMIN
     post:
       operationId: createDataPolicy
       summary: Create a data policy
@@ -34890,7 +34808,7 @@ paths:
                 id: example
                 policyType: example
                 resourceId: example
-                resourceKind: example
+                resourceKind: project
                 subjectId: example
                 subjectType: example
                 updatedAt: "2026-01-02T15:04:05Z"
@@ -35141,7 +35059,7 @@ paths:
                 key: example
               policyType: example
               resourceId: example
-              resourceKind: example
+              resourceKind: project
               subjectId: example
               subjectType: example
       x-apigen-operation-kind: command
@@ -35162,7 +35080,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: data_policy.created
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: DATA_POLICY_INVALID
             kind: invalid
@@ -35173,10 +35091,6 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: RESOURCE_MANAGE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_MANAGE
   /api/v1/projects/{project}/data-policies/{policy}:
     delete:
       operationId: deleteDataPolicy
@@ -35453,7 +35367,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: data_policy.deleted
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: DATA_POLICY_NOT_FOUND
             kind: not_found
@@ -35463,10 +35377,6 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: RESOURCE_MANAGE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_MANAGE
     get:
       operationId: getDataPolicy
       summary: Get a data policy
@@ -35499,7 +35409,7 @@ paths:
                 id: example
                 policyType: example
                 resourceId: example
-                resourceKind: example
+                resourceKind: project
                 subjectId: example
                 subjectType: example
                 updatedAt: "2026-01-02T15:04:05Z"
@@ -35740,9 +35650,6 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_MANAGE
     patch:
       operationId: updateDataPolicy
       summary: Update a data policy
@@ -35781,7 +35688,7 @@ paths:
                 id: example
                 policyType: example
                 resourceId: example
-                resourceKind: example
+                resourceKind: project
                 subjectId: example
                 subjectType: example
                 updatedAt: "2026-01-02T15:04:05Z"
@@ -36032,7 +35939,7 @@ paths:
                 key: example
               policyType: example
               resourceId: example
-              resourceKind: example
+              resourceKind: project
               subjectId: example
               subjectType: example
       x-apigen-operation-kind: command
@@ -36053,7 +35960,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: data_policy.updated
-        authz_mode: privilege
+        authz_mode: authenticated
         concurrency: if-match
         failures:
           - code: DATA_POLICY_INVALID
@@ -36068,10 +35975,6 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: RESOURCE_MANAGE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_MANAGE
   /api/v1/projects/{project}/deployments:
     get:
       operationId: listDeployments
@@ -36082,6 +35985,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: limit
           in: query
@@ -36404,9 +36309,6 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
       x-leapview-object-scope: project-environment
     post:
       operationId: createDeployment
@@ -36417,6 +36319,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: Idempotency-Key
           in: header
@@ -36841,6 +36745,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -37147,9 +37053,6 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
       x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/deployments/{deployment}/activate:
     post:
@@ -37161,6 +37064,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -37579,6 +37484,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -37930,6 +37837,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -38292,6 +38201,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -38654,6 +38565,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -39016,6 +38929,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -39392,6 +39307,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -39697,9 +39614,6 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
       x-leapview-object-scope: project-environment
   /api/v1/projects/{project}/deployments/{deployment}/retry:
     post:
@@ -39711,6 +39625,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -40117,6 +40033,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: deployment
           in: path
@@ -40513,10 +40431,10 @@ paths:
         mode: privilege
         privilege: ROLLBACK_DEPLOYMENT
       x-leapview-object-scope: project-environment
-  /api/v1/projects/{project}/effective-privileges:
+  /api/v1/projects/{project}/effective-capabilities:
     get:
-      operationId: listEffectivePrivileges
-      summary: List effective privileges
+      operationId: listEffectiveCapabilities
+      summary: List effective capabilities
       parameters:
         - name: project
           in: path
@@ -40530,8 +40448,8 @@ paths:
           in: query
           required: false
           schema:
-            type: string
-          example: example
+            $ref: '#/components/schemas/ResourceKind'
+          example: project
           explode: false
         - name: resourceId
           in: query
@@ -40548,13 +40466,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EffectivePrivilegeListResponse'
+                $ref: '#/components/schemas/EffectiveCapabilityListResponse'
               example:
                 capabilities:
-                  - example
+                  - PROJECT_ADMIN
                 effectiveGrants:
                   - allowed: true
-                    capability: example
+                    capability: PROJECT_ADMIN
                     grantId: example
                     grantResourceId: example
                     inherited: true
@@ -40562,11 +40480,11 @@ paths:
                     platform: true
                     reason: example
                     resourceId: example
-                    resourceKind: example
+                    resourceKind: project
                     subjectId: example
                     subjectType: example
                 resourceId: example
-                resourceKind: example
+                resourceKind: project
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -40806,7 +40724,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_USE
+        privilege: PROJECT_ADMIN
   /api/v1/projects/{project}/grants:
     get:
       operationId: listGrants
@@ -40824,8 +40742,8 @@ paths:
           in: query
           required: false
           schema:
-            type: string
-          example: example
+            $ref: '#/components/schemas/ResourceKind'
+          example: project
           explode: false
         - name: resourceId
           in: query
@@ -40871,15 +40789,15 @@ paths:
                 $ref: '#/components/schemas/GrantListResponse'
               example:
                 items:
-                  - capability: example
+                  - capability: PROJECT_ADMIN
                     createdAt: "2026-01-02T15:04:05Z"
                     id: example
                     inherited: true
                     parentId: example
                     parentResourceId: example
-                    parentResourceKind: example
+                    parentResourceKind: project
                     resourceId: example
-                    resourceKind: example
+                    resourceKind: project
                     subjectId: example
                     subjectType: example
                 page:
@@ -41123,7 +41041,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_MANAGE
+        privilege: PROJECT_ADMIN
     post:
       operationId: createGrant
       summary: Create a grant
@@ -41157,15 +41075,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/GrantResponse'
               example:
-                capability: example
+                capability: PROJECT_ADMIN
                 createdAt: "2026-01-02T15:04:05Z"
                 id: example
                 inherited: true
                 parentId: example
                 parentResourceId: example
-                parentResourceKind: example
+                parentResourceKind: project
                 resourceId: example
-                resourceKind: example
+                resourceKind: project
                 subjectId: example
                 subjectType: example
         '400':
@@ -41411,9 +41329,9 @@ paths:
             schema:
               $ref: '#/components/schemas/GrantRequest'
             example:
-              capability: example
+              capability: PROJECT_ADMIN
               resourceId: example
-              resourceKind: example
+              resourceKind: project
               subjectId: example
               subjectType: example
       x-apigen-operation-kind: command
@@ -41446,7 +41364,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: grant.created
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: GRANT_INVALID
             kind: invalid
@@ -41459,10 +41377,6 @@ paths:
           type: project
         ui:
           action_id: project.access.grant.create
-        privilege: RESOURCE_MANAGE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_MANAGE
   /api/v1/projects/{project}/grants/{grant}:
     delete:
       operationId: deleteGrant
@@ -41751,7 +41665,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: grant.deleted
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: GRANT_NOT_FOUND
             kind: not_found
@@ -41763,13 +41677,9 @@ paths:
           type: project
         ui:
           action_id: project.access.grant.delete
-        privilege: RESOURCE_MANAGE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_MANAGE
     get:
       operationId: getGrant
-      summary: Get an object privilege grant
+      summary: Get a resource capability grant
       parameters:
         - name: project
           in: path
@@ -41793,15 +41703,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/GrantResponse'
               example:
-                capability: example
+                capability: PROJECT_ADMIN
                 createdAt: "2026-01-02T15:04:05Z"
                 id: example
                 inherited: true
                 parentId: example
                 parentResourceId: example
-                parentResourceKind: example
+                parentResourceKind: project
                 resourceId: example
-                resourceKind: example
+                resourceKind: project
                 subjectId: example
                 subjectType: example
         '400':
@@ -42041,12 +41951,9 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_MANAGE
     patch:
       operationId: updateGrant
-      summary: Update an object privilege grant
+      summary: Update a resource capability grant
       parameters:
         - name: project
           in: path
@@ -42076,15 +41983,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/GrantResponse'
               example:
-                capability: example
+                capability: PROJECT_ADMIN
                 createdAt: "2026-01-02T15:04:05Z"
                 id: example
                 inherited: true
                 parentId: example
                 parentResourceId: example
-                parentResourceKind: example
+                parentResourceKind: project
                 resourceId: example
-                resourceKind: example
+                resourceKind: project
                 subjectId: example
                 subjectType: example
         '400':
@@ -42330,9 +42237,9 @@ paths:
             schema:
               $ref: '#/components/schemas/GrantRequest'
             example:
-              capability: example
+              capability: PROJECT_ADMIN
               resourceId: example
-              resourceKind: example
+              resourceKind: project
               subjectId: example
               subjectType: example
       x-apigen-operation-kind: command
@@ -42363,7 +42270,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: grant.updated
-        authz_mode: privilege
+        authz_mode: authenticated
         concurrency: if-match
         failures:
           - code: GRANT_INVALID
@@ -42378,10 +42285,6 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: RESOURCE_MANAGE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_MANAGE
   /api/v1/projects/{project}/ownership:
     post:
       operationId: transferOwnership
@@ -42416,7 +42319,7 @@ paths:
                 id: example
                 ownerPrincipalId: example
                 parentId: example
-                resourceKind: example
+                resourceKind: project
                 updatedAt: "2026-01-02T15:04:05Z"
         '400':
           description: The server could not understand the request due to invalid syntax.
@@ -42663,7 +42566,7 @@ paths:
             example:
               ownerPrincipalId: example
               resourceId: example
-              resourceKind: example
+              resourceKind: project
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
@@ -42680,7 +42583,7 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: ownership.transferred
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: OWNERSHIP_TRANSFER_INVALID
             kind: invalid
@@ -42691,10 +42594,6 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: RESOURCE_MANAGE
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_MANAGE
   /api/v1/projects/{project}/query-events:
     get:
       operationId: listQueryEvents
@@ -42745,11 +42644,22 @@ paths:
             maxLength: 200
           example: example
           explode: false
-        - name: target
+        - name: resourceKind
           in: query
           required: false
           schema:
             type: string
+            minLength: 1
+            maxLength: 64
+          example: example
+          explode: false
+        - name: resourceId
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
           example: example
           explode: false
         - name: status
@@ -42817,8 +42727,6 @@ paths:
                     error: example
                     id: example
                     modelId: example
-                    objectId: example
-                    objectType: example
                     operation: example
                     planText: example
                     principalId: example
@@ -42827,11 +42735,12 @@ paths:
                       key: example
                     queryKind: example
                     requestId: example
+                    resourceId: example
+                    resourceKind: example
                     rowsReturned: 1
                     sql: example
                     status: example
                     surface: example
-                    target: example
                 page:
                   nextCursor: example
         '400':
@@ -43073,7 +42982,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_READ
+        privilege: PROJECT_ADMIN
   /api/v1/projects/{project}/releases:
     get:
       operationId: listReleases
@@ -43084,6 +42993,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: limit
           in: query
@@ -43429,6 +43340,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: Idempotency-Key
           in: header
@@ -43868,6 +43781,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: release
           in: path
@@ -44198,6 +44113,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: release
           in: path
@@ -44545,6 +44462,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: release
           in: path
@@ -44864,6 +44783,8 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
           example: example
         - name: release
           in: path
@@ -46839,7 +46760,7 @@ paths:
               example:
                 items:
                   - capabilities:
-                      - example
+                      - PROJECT_ADMIN
                     name: example
                 page:
                   nextCursor: example
@@ -47082,7 +47003,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_MANAGE
+        privilege: PROJECT_ADMIN
   /api/v1/projects/{project}/targets/{target}/connection-bindings:
     get:
       operationId: listTargetConnectionBindings
@@ -47379,7 +47300,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: RESOURCE_MANAGE
+        privilege: PROJECT_ADMIN
     post:
       operationId: createTargetConnectionBinding
       summary: Create a target connection binding
@@ -47768,10 +47689,10 @@ paths:
           type: project
         ui:
           action_id: connection.binding.configure
-        privilege: RESOURCE_MANAGE
+        privilege: PROJECT_ADMIN
       x-authz:
         mode: privilege
-        privilege: RESOURCE_MANAGE
+        privilege: PROJECT_ADMIN
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}:
     get:
       operationId: getTargetConnectionBinding
@@ -48457,8 +48378,8 @@ paths:
             status_code: !!float 403
         owner: LeapViewAPI.Analytics
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         ui:
           action_id: connection.binding.update
         privilege: RESOURCE_MANAGE
@@ -48826,8 +48747,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.Analytics
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         ui:
           action_id: connection.binding.disable
         privilege: RESOURCE_MANAGE
@@ -49191,8 +49112,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.Analytics
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         ui:
           action_id: connection.binding.enable
         privilege: RESOURCE_MANAGE
@@ -50154,8 +50075,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.Analytics
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         ui:
           action_id: connection.binding.refresh
         privilege: RESOURCE_MANAGE
@@ -50518,8 +50439,8 @@ paths:
         idempotency: required
         owner: LeapViewAPI.Analytics
         target:
-          parameter: project
-          type: project
+          parameter: connection
+          type: connection
         ui:
           action_id: connection.binding.test
         privilege: RESOURCE_MANAGE
@@ -52099,15 +52020,6 @@ paths:
             type: string
           example: example
           explode: false
-        - name: project
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-          example: example
-          explode: false
         - name: type
           in: query
           required: false
@@ -52175,7 +52087,6 @@ paths:
                     name: example
                     reference:
                       id: example
-                      projectId: example
                       type: connection
                     visualType: example
                 page:
@@ -52417,9 +52328,6 @@ paths:
       tags:
         - Search
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
   /api/v1/semantic-models:
     get:
       operationId: listSemanticModels
@@ -52695,9 +52603,6 @@ paths:
       tags:
         - BI
       x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: RESOURCE_READ
   /api/v1/semantic-models/{model}:
     get:
       operationId: getSemanticModel
@@ -58667,12 +58572,12 @@ components:
         capabilities:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/Capability'
           example:
-            - example
+            - PROJECT_ADMIN
       example:
         capabilities:
-          - example
+          - PROJECT_ADMIN
         name: example
     APITokenCreateRequest:
       type: object
@@ -58682,22 +58587,22 @@ components:
         name:
           type: string
           example: example
-        privileges:
+        capabilities:
           type: array
           items:
-            type: string
-          description: Omit to keep the token dynamically constrained by the principal's effective privileges at request time. An explicit list must be a subset of the principal's current effective privileges.
+            $ref: '#/components/schemas/Capability'
+          description: Omit to keep the token dynamically constrained by the principal's effective capabilities at request time. An explicit list must be a subset of the principal's current effective capabilities.
           example:
-            - example
+            - PROJECT_ADMIN
         expiresAt:
           type: string
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
+        capabilities:
+          - PROJECT_ADMIN
         expiresAt: "2026-01-02T15:04:05Z"
         name: example
-        privileges:
-          - example
     APITokenCreateResponse:
       type: object
       required:
@@ -58711,13 +58616,13 @@ components:
           $ref: '#/components/schemas/APITokenResponse'
       example:
         apiToken:
+          capabilities:
+            - PROJECT_ADMIN
           createdAt: "2026-01-02T15:04:05Z"
           expiresAt: "2026-01-02T15:04:05Z"
           id: example
           lastUsedAt: "2026-01-02T15:04:05Z"
           name: example
-          privileges:
-            - example
           revokedAt: "2026-01-02T15:04:05Z"
         token: example
     APITokenListResponse:
@@ -58731,25 +58636,25 @@ components:
           items:
             $ref: '#/components/schemas/APITokenResponse'
           example:
-            - createdAt: "2026-01-02T15:04:05Z"
+            - capabilities:
+                - PROJECT_ADMIN
+              createdAt: "2026-01-02T15:04:05Z"
               expiresAt: "2026-01-02T15:04:05Z"
               id: example
               lastUsedAt: "2026-01-02T15:04:05Z"
               name: example
-              privileges:
-                - example
               revokedAt: "2026-01-02T15:04:05Z"
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - createdAt: "2026-01-02T15:04:05Z"
+          - capabilities:
+              - PROJECT_ADMIN
+            createdAt: "2026-01-02T15:04:05Z"
             expiresAt: "2026-01-02T15:04:05Z"
             id: example
             lastUsedAt: "2026-01-02T15:04:05Z"
             name: example
-            privileges:
-              - example
             revokedAt: "2026-01-02T15:04:05Z"
         page:
           nextCursor: example
@@ -58766,13 +58671,13 @@ components:
         name:
           type: string
           example: example
-        privileges:
+        capabilities:
           type: array
           items:
-            type: string
-          description: Present when the token has an explicit privilege allowlist. When omitted, the principal's effective privileges are evaluated dynamically at request time.
+            $ref: '#/components/schemas/Capability'
+          description: Present when the token has an explicit capability allowlist. When omitted, the principal's effective capabilities are evaluated dynamically at request time.
           example:
-            - example
+            - PROJECT_ADMIN
         expiresAt:
           type: string
           format: date-time
@@ -58790,46 +58695,43 @@ components:
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
+        capabilities:
+          - PROJECT_ADMIN
         createdAt: "2026-01-02T15:04:05Z"
         expiresAt: "2026-01-02T15:04:05Z"
         id: example
         lastUsedAt: "2026-01-02T15:04:05Z"
         name: example
-        privileges:
-          - example
         revokedAt: "2026-01-02T15:04:05Z"
     AgentCommandAuditPayload:
       type: object
       required:
         - operationId
-        - projectId
-        - targetType
-        - targetId
+        - resourceKind
+        - resourceId
         - surface
       properties:
         operationId:
           type: string
           example: example
-        projectId:
+        resourceKind:
+          type: string
+          minLength: 1
+          maxLength: 64
+          example: example
+        resourceId:
           type: string
           minLength: 1
           maxLength: 200
-          example: example
-        targetType:
-          type: string
-          example: example
-        targetId:
-          type: string
           example: example
         surface:
           type: string
           example: example
       example:
         operationId: example
-        projectId: example
+        resourceId: example
+        resourceKind: example
         surface: example
-        targetId: example
-        targetType: example
     AgentConfigResponse:
       type: object
       required:
@@ -59303,6 +59205,7 @@ components:
             $ref: '#/components/schemas/AuditEventResponse'
           example:
             - action: example
+              capability: PROJECT_ADMIN
               correlationId: example
               createdAt: "2026-01-02T15:04:05Z"
               id: example
@@ -59311,15 +59214,15 @@ components:
               principalId: example
               projectId: example
               requestId: example
+              resourceId: example
+              resourceKind: example
               status: example
-              targetId: example
-              targetType: example
-              privilege: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
           - action: example
+            capability: PROJECT_ADMIN
             correlationId: example
             createdAt: "2026-01-02T15:04:05Z"
             id: example
@@ -59328,10 +59231,9 @@ components:
             principalId: example
             projectId: example
             requestId: example
+            resourceId: example
+            resourceKind: example
             status: example
-            targetId: example
-            targetType: example
-            privilege: example
         page:
           nextCursor: example
     AuditEventResponse:
@@ -59339,8 +59241,8 @@ components:
       required:
         - id
         - action
-        - targetType
-        - targetId
+        - resourceKind
+        - resourceId
         - metadata
         - createdAt
       properties:
@@ -59358,15 +59260,18 @@ components:
         action:
           type: string
           example: example
-        targetType:
+        resourceKind:
           type: string
+          minLength: 1
+          maxLength: 64
           example: example
-        targetId:
+        resourceId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
-        privilege:
-          type: string
-          example: example
+        capability:
+          $ref: '#/components/schemas/Capability'
         status:
           type: string
           example: example
@@ -59387,6 +59292,7 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         action: example
+        capability: PROJECT_ADMIN
         correlationId: example
         createdAt: "2026-01-02T15:04:05Z"
         id: example
@@ -59395,10 +59301,9 @@ components:
         principalId: example
         projectId: example
         requestId: example
+        resourceId: example
+        resourceKind: example
         status: example
-        targetId: example
-        targetType: example
-        privilege: example
     AuthenticationMode:
       type: string
       enum:
@@ -59416,7 +59321,7 @@ components:
             $ref: '#/components/schemas/AuthoringSessionResponse'
           example:
             - capabilities:
-                - example
+                - PROJECT_ADMIN
               clientId: example
               createdAt: "2026-01-02T15:04:05Z"
               current: true
@@ -59432,7 +59337,7 @@ components:
       example:
         items:
           - capabilities:
-              - example
+              - PROJECT_ADMIN
             clientId: example
             createdAt: "2026-01-02T15:04:05Z"
             current: true
@@ -59481,9 +59386,9 @@ components:
         capabilities:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/Capability'
           example:
-            - example
+            - PROJECT_ADMIN
         createdAt:
           type: string
           format: date-time
@@ -59502,7 +59407,7 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         capabilities:
-          - example
+          - PROJECT_ADMIN
         clientId: example
         createdAt: "2026-01-02T15:04:05Z"
         current: true
@@ -59539,12 +59444,12 @@ components:
         capabilities:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/Capability'
           example:
-            - example
+            - PROJECT_ADMIN
       example:
         capabilities:
-          - example
+          - PROJECT_ADMIN
         clientId: example
         kind: example
         projectId: example
@@ -59559,14 +59464,14 @@ components:
           items:
             $ref: '#/components/schemas/AuthorizationCheckRequest'
           example:
-            - capability: example
+            - capability: PROJECT_ADMIN
               resourceId: example
-              resourceKind: example
+              resourceKind: project
       example:
         checks:
-          - capability: example
+          - capability: PROJECT_ADMIN
             resourceId: example
-            resourceKind: example
+            resourceKind: project
     AuthorizationBatchCheckResponse:
       type: object
       required:
@@ -59578,7 +59483,7 @@ components:
             $ref: '#/components/schemas/AuthorizationDecisionResponse'
           example:
             - allowed: true
-              capability: example
+              capability: PROJECT_ADMIN
               grantId: example
               grantResourceId: example
               inherited: true
@@ -59586,13 +59491,13 @@ components:
               platform: true
               reason: example
               resourceId: example
-              resourceKind: example
+              resourceKind: project
               subjectId: example
               subjectType: example
       example:
         decisions:
           - allowed: true
-            capability: example
+            capability: PROJECT_ADMIN
             grantId: example
             grantResourceId: example
             inherited: true
@@ -59600,7 +59505,7 @@ components:
             platform: true
             reason: example
             resourceId: example
-            resourceKind: example
+            resourceKind: project
             subjectId: example
             subjectType: example
     AuthorizationCheckRequest:
@@ -59611,20 +59516,18 @@ components:
         - resourceId
       properties:
         capability:
-          type: string
-          example: example
+          $ref: '#/components/schemas/Capability'
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         resourceId:
           type: string
           minLength: 1
           maxLength: 200
           example: example
       example:
-        capability: example
+        capability: PROJECT_ADMIN
         resourceId: example
-        resourceKind: example
+        resourceKind: project
     AuthorizationDecisionResponse:
       type: object
       required:
@@ -59639,14 +59542,12 @@ components:
           type: boolean
           example: true
         capability:
-          type: string
-          example: example
+          $ref: '#/components/schemas/Capability'
         reason:
           type: string
           example: example
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         resourceId:
           type: string
           minLength: 1
@@ -59677,7 +59578,7 @@ components:
           example: true
       example:
         allowed: true
-        capability: example
+        capability: PROJECT_ADMIN
         grantId: example
         grantResourceId: example
         inherited: true
@@ -59685,7 +59586,7 @@ components:
         platform: true
         reason: example
         resourceId: example
-        resourceKind: example
+        resourceKind: project
         subjectId: example
         subjectType: example
     AvatarResponse:
@@ -59775,6 +59676,8 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         targetId:
           type: string
@@ -59848,6 +59751,8 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         candidateKey:
           type: string
@@ -60159,6 +60064,17 @@ components:
               schemaVersion: 1
               version: example
           schemaVersion: 1
+    Capability:
+      type: string
+      enum:
+        - PROJECT_ADMIN
+        - RESOURCE_USE
+        - RESOURCE_READ
+        - RESOURCE_EDIT
+        - RESOURCE_MANAGE
+        - RESOURCE_SHARE
+        - RESOURCE_PUBLISH
+      example: PROJECT_ADMIN
     CartesianVisualizationPresentation:
       type: object
       allOf:
@@ -60876,6 +60792,8 @@ components:
           example: example
         dashboardId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         draftId:
           type: string
@@ -61057,7 +60975,6 @@ components:
         source:
           dashboardId: example
           kind: example
-          projectId: example
         title: example
     DashboardAuthoringMutationResponse:
       type: object
@@ -61338,7 +61255,8 @@ components:
           type: string
           enum:
             - private
-            - shared
+            - restricted
+            - organization-visible
           example: example
       example:
         visibility: example
@@ -61346,18 +61264,13 @@ components:
       type: object
       required:
         - kind
-        - projectId
         - dashboardId
       properties:
         kind:
           type: string
           enum:
             - project
-          example: example
-        projectId:
-          type: string
-          minLength: 1
-          maxLength: 200
+            - instance
           example: example
         dashboardId:
           type: string
@@ -61367,7 +61280,6 @@ components:
       example:
         dashboardId: example
         kind: example
-        projectId: example
     DashboardAuthoringSummary:
       type: object
       required:
@@ -61405,6 +61317,7 @@ components:
           type: string
           enum:
             - project
+            - instance
           example: example
         origin:
           type: string
@@ -61424,7 +61337,8 @@ components:
           type: string
           enum:
             - private
-            - shared
+            - restricted
+            - organization-visible
           example: example
         owner:
           type: string
@@ -63239,15 +63153,14 @@ components:
           maxLength: 200
           example: example
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         policyType:
           type: string
           example: example
       example:
         policyType: example
         resourceId: example
-        resourceKind: example
+        resourceKind: project
     DataPolicyListResponse:
       type: object
       required:
@@ -63265,7 +63178,7 @@ components:
               id: example
               policyType: example
               resourceId: example
-              resourceKind: example
+              resourceKind: project
               subjectId: example
               subjectType: example
               updatedAt: "2026-01-02T15:04:05Z"
@@ -63279,7 +63192,7 @@ components:
             id: example
             policyType: example
             resourceId: example
-            resourceKind: example
+            resourceKind: project
             subjectId: example
             subjectType: example
             updatedAt: "2026-01-02T15:04:05Z"
@@ -63294,8 +63207,7 @@ components:
         - expression
       properties:
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         resourceId:
           type: string
           minLength: 1
@@ -63320,7 +63232,7 @@ components:
           key: example
         policyType: example
         resourceId: example
-        resourceKind: example
+        resourceKind: project
         subjectId: example
         subjectType: example
     DataPolicyResponse:
@@ -63343,8 +63255,7 @@ components:
           maxLength: 200
           example: example
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         subjectType:
           type: string
           example: example
@@ -63374,7 +63285,7 @@ components:
         id: example
         policyType: example
         resourceId: example
-        resourceKind: example
+        resourceKind: project
         subjectId: example
         subjectType: example
         updatedAt: "2026-01-02T15:04:05Z"
@@ -63445,6 +63356,8 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         deploymentId:
           type: string
@@ -63758,6 +63671,8 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         releaseId:
           type: string
@@ -63790,6 +63705,8 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         releaseId:
           type: string
@@ -63957,15 +63874,15 @@ components:
         capabilities:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/Capability'
           example:
-            - example
+            - PROJECT_ADMIN
         decision:
           type: string
           example: example
       example:
         capabilities:
-          - example
+          - PROJECT_ADMIN
         clientId: example
         decision: example
         projectId: example
@@ -63989,7 +63906,21 @@ components:
       example:
         kind: example
         unit: example
-    EffectivePrivilegeListResponse:
+    EffectiveCapabilitiesResponse:
+      type: object
+      required:
+        - capabilities
+      properties:
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Capability'
+          example:
+            - PROJECT_ADMIN
+      example:
+        capabilities:
+          - PROJECT_ADMIN
+    EffectiveCapabilityListResponse:
       type: object
       required:
         - resourceId
@@ -64003,21 +63934,20 @@ components:
           maxLength: 200
           example: example
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         capabilities:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/Capability'
           example:
-            - example
+            - PROJECT_ADMIN
         effectiveGrants:
           type: array
           items:
             $ref: '#/components/schemas/AuthorizationDecisionResponse'
           example:
             - allowed: true
-              capability: example
+              capability: PROJECT_ADMIN
               grantId: example
               grantResourceId: example
               inherited: true
@@ -64025,15 +63955,15 @@ components:
               platform: true
               reason: example
               resourceId: example
-              resourceKind: example
+              resourceKind: project
               subjectId: example
               subjectType: example
       example:
         capabilities:
-          - example
+          - PROJECT_ADMIN
         effectiveGrants:
           - allowed: true
-            capability: example
+            capability: PROJECT_ADMIN
             grantId: example
             grantResourceId: example
             inherited: true
@@ -64041,32 +63971,11 @@ components:
             platform: true
             reason: example
             resourceId: example
-            resourceKind: example
+            resourceKind: project
             subjectId: example
             subjectType: example
         resourceId: example
-        resourceKind: example
-    EffectivePrivilegesResponse:
-      type: object
-      required:
-        - projectId
-        - capabilities
-      properties:
-        projectId:
-          type: string
-          minLength: 1
-          maxLength: 200
-          example: example
-        capabilities:
-          type: array
-          items:
-            type: string
-          example:
-            - example
-      example:
-        capabilities:
-          - example
-        projectId: example
+        resourceKind: project
     FieldVisualizationConditionalRule:
       type: object
       allOf:
@@ -64356,8 +64265,7 @@ components:
           maxLength: 200
           example: example
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         environment:
           type: string
           example: example
@@ -64368,17 +64276,16 @@ components:
           type: string
           example: example
         capability:
-          type: string
-          example: example
+          $ref: '#/components/schemas/Capability'
         surface:
           type: string
           example: example
       example:
-        capability: example
+        capability: PROJECT_ADMIN
         environment: example
         operationId: example
         resourceId: example
-        resourceKind: example
+        resourceKind: project
         subjectId: example
         subjectType: example
         surface: example
@@ -64393,30 +64300,30 @@ components:
           items:
             $ref: '#/components/schemas/GrantResponse'
           example:
-            - capability: example
+            - capability: PROJECT_ADMIN
               createdAt: "2026-01-02T15:04:05Z"
               id: example
               inherited: true
               parentId: example
               parentResourceId: example
-              parentResourceKind: example
+              parentResourceKind: project
               resourceId: example
-              resourceKind: example
+              resourceKind: project
               subjectId: example
               subjectType: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - capability: example
+          - capability: PROJECT_ADMIN
             createdAt: "2026-01-02T15:04:05Z"
             id: example
             inherited: true
             parentId: example
             parentResourceId: example
-            parentResourceKind: example
+            parentResourceKind: project
             resourceId: example
-            resourceKind: example
+            resourceKind: project
             subjectId: example
             subjectType: example
         page:
@@ -64431,8 +64338,7 @@ components:
         - capability
       properties:
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         resourceId:
           type: string
           minLength: 1
@@ -64445,12 +64351,11 @@ components:
           type: string
           example: example
         capability:
-          type: string
-          example: example
+          $ref: '#/components/schemas/Capability'
       example:
-        capability: example
+        capability: PROJECT_ADMIN
         resourceId: example
-        resourceKind: example
+        resourceKind: project
         subjectId: example
         subjectType: example
     GrantResponse:
@@ -64473,8 +64378,7 @@ components:
           maxLength: 200
           example: example
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         subjectType:
           type: string
           example: example
@@ -64482,8 +64386,7 @@ components:
           type: string
           example: example
         capability:
-          type: string
-          example: example
+          $ref: '#/components/schemas/Capability'
         inherited:
           type: boolean
           example: true
@@ -64491,8 +64394,7 @@ components:
           type: string
           example: example
         parentResourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         parentResourceId:
           type: string
           minLength: 1
@@ -64503,15 +64405,15 @@ components:
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
-        capability: example
+        capability: PROJECT_ADMIN
         createdAt: "2026-01-02T15:04:05Z"
         id: example
         inherited: true
         parentId: example
         parentResourceId: example
-        parentResourceKind: example
+        parentResourceKind: project
         resourceId: example
-        resourceKind: example
+        resourceKind: project
         subjectId: example
         subjectType: example
     GridVisualizationPresentation:
@@ -65095,9 +64997,13 @@ components:
       properties:
         id:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         title:
           type: string
@@ -65153,9 +65059,13 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         connectionId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         surface:
           type: string
@@ -65452,9 +65362,13 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         connectionId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         surface:
           type: string
@@ -65824,7 +65738,7 @@ components:
         connection:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 200
           example: example
         revisionId:
           type: string
@@ -66083,11 +65997,10 @@ components:
           type: string
           example: example
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
       example:
         ownerPrincipalId: example
-        resourceKind: example
+        resourceKind: project
     OwnershipTransferRequest:
       type: object
       required:
@@ -66096,8 +66009,7 @@ components:
         - ownerPrincipalId
       properties:
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         resourceId:
           type: string
           minLength: 1
@@ -66109,7 +66021,7 @@ components:
       example:
         ownerPrincipalId: example
         resourceId: example
-        resourceKind: example
+        resourceKind: project
     PageInfo:
       type: object
       properties:
@@ -67547,8 +67459,6 @@ components:
               error: example
               id: example
               modelId: example
-              objectId: example
-              objectType: example
               operation: example
               planText: example
               principalId: example
@@ -67557,11 +67467,12 @@ components:
                 key: example
               queryKind: example
               requestId: example
+              resourceId: example
+              resourceKind: example
               rowsReturned: 1
               sql: example
               status: example
               surface: example
-              target: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
@@ -67573,8 +67484,6 @@ components:
             error: example
             id: example
             modelId: example
-            objectId: example
-            objectType: example
             operation: example
             planText: example
             principalId: example
@@ -67583,11 +67492,12 @@ components:
               key: example
             queryKind: example
             requestId: example
+            resourceId: example
+            resourceKind: example
             rowsReturned: 1
             sql: example
             status: example
             surface: example
-            target: example
         page:
           nextCursor: example
     QueryEventResponse:
@@ -67599,9 +67509,8 @@ components:
         - operation
         - queryKind
         - modelId
-        - target
-        - objectType
-        - objectId
+        - resourceKind
+        - resourceId
         - requestId
         - correlationId
         - status
@@ -67633,15 +67542,18 @@ components:
           example: example
         modelId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
-        target:
+        resourceKind:
           type: string
+          minLength: 1
+          maxLength: 64
           example: example
-        objectType:
+        resourceId:
           type: string
-          example: example
-        objectId:
-          type: string
+          minLength: 1
+          maxLength: 200
           example: example
         requestId:
           type: string
@@ -67690,8 +67602,6 @@ components:
         error: example
         id: example
         modelId: example
-        objectId: example
-        objectType: example
         operation: example
         planText: example
         principalId: example
@@ -67700,11 +67610,12 @@ components:
           key: example
         queryKind: example
         requestId: example
+        resourceId: example
+        resourceKind: example
         rowsReturned: 1
         sql: example
         status: example
         surface: example
-        target: example
     QueryFieldRef:
       type: object
       required:
@@ -68264,6 +68175,8 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         projectDigest:
           type: string
@@ -68663,6 +68576,8 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         environment:
           type: string
@@ -68782,6 +68697,8 @@ components:
       properties:
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         environment:
           type: string
@@ -68839,6 +68756,8 @@ components:
           example: example
         projectId:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
         status:
           type: string
@@ -68848,6 +68767,17 @@ components:
         projectId: example
         releaseId: example
         status: example
+    ResourceKind:
+      type: string
+      enum:
+        - project
+        - connection
+        - source
+        - model
+        - semantic_model
+        - pipeline
+        - dashboard
+      example: project
     RoleBindingAuditPayload:
       type: object
       required:
@@ -69019,14 +68949,14 @@ components:
             $ref: '#/components/schemas/RoleResponse'
           example:
             - capabilities:
-                - example
+                - PROJECT_ADMIN
               name: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
           - capabilities:
-              - example
+              - PROJECT_ADMIN
             name: example
         page:
           nextCursor: example
@@ -69042,12 +68972,12 @@ components:
         capabilities:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/Capability'
           example:
-            - example
+            - PROJECT_ADMIN
       example:
         capabilities:
-          - example
+          - PROJECT_ADMIN
         name: example
     RulesVisualizationConditionalRule:
       type: object
@@ -69127,23 +69057,18 @@ components:
     SearchReference:
       type: object
       required:
-        - projectId
         - type
         - id
       properties:
-        projectId:
-          type: string
-          minLength: 1
-          maxLength: 200
-          example: example
         type:
           $ref: '#/components/schemas/SearchResultType'
         id:
           type: string
+          minLength: 1
+          maxLength: 200
           example: example
       example:
         id: example
-        projectId: example
         type: connection
     SearchResponse:
       type: object
@@ -69169,7 +69094,6 @@ components:
               name: example
               reference:
                 id: example
-                projectId: example
                 type: connection
               visualType: example
         page:
@@ -69189,7 +69113,6 @@ components:
             name: example
             reference:
               id: example
-              projectId: example
               type: connection
             visualType: example
         page:
@@ -69247,7 +69170,6 @@ components:
         name: example
         reference:
           id: example
-          projectId: example
           type: connection
         visualType: example
     SearchResultType:
@@ -69280,8 +69202,7 @@ components:
           maxLength: 200
           example: example
         resourceKind:
-          type: string
-          example: example
+          $ref: '#/components/schemas/ResourceKind'
         parentId:
           type: string
           minLength: 1
@@ -69307,7 +69228,7 @@ components:
         id: example
         ownerPrincipalId: example
         parentId: example
-        resourceKind: example
+        resourceKind: project
         updatedAt: "2026-01-02T15:04:05Z"
     SemanticDatasetListResponse:
       type: object

@@ -17,7 +17,7 @@ model ReleaseConnectionPin {
 }
 
 model ReleaseServingIdentity {
-  projectId: string;
+  projectId: ResourceId;
   environment: string;
   generationId: string;
 }
@@ -104,7 +104,7 @@ model ReleaseCreateRequest {
 
 model ReleaseResponse {
   id: string;
-  projectId: string;
+  projectId: ResourceId;
   environment: string;
   generationId: string;
   projectDigest: string;
@@ -140,7 +140,7 @@ model ReleaseCreatedAuditPayload {
   @apigen.auditInternal
   releaseId: string;
   @apigen.auditInternal
-  projectId: string;
+  projectId: ResourceId;
   @apigen.auditInternal
   projectDigest: string;
   @apigen.auditInternal
@@ -170,7 +170,7 @@ model ReleaseValidatingAuditPayload {
   @apigen.auditInternal
   releaseId: string;
   @apigen.auditInternal
-  projectId: string;
+  projectId: ResourceId;
   @apigen.auditInternal
   status: string;
 }
@@ -191,7 +191,7 @@ interface Releases {
   @summary("List project releases")
   @get
   @extension("x-leapview-object-scope", "project-environment")
-  listReleases(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ReleaseListResponse> | CommonErrors;
+  listReleases(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ReleaseListResponse> | CommonErrors;
 
   @summary("Create a draft project release")
   @post
@@ -203,13 +203,13 @@ interface Releases {
     failures: #[#{ kind: "invalid", statusCode: 422, code: "INVALID_RELEASE", publicDetail: "The release request is invalid." }],
   })
   @apigen.auditPayload(ReleaseCreatedAuditPayload)
-  createRelease(@path @apigen.target project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ReleaseCreateRequest): CreatedJson<ReleaseResponse> | CommonErrors;
+  createRelease(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ReleaseCreateRequest): CreatedJson<ReleaseResponse> | CommonErrors;
 
   @summary("Get a project release")
   @route("/{release}")
   @get
   @extension("x-leapview-object-scope", "project-environment")
-  getRelease(@path project: string, @path release: string): OkJson<ReleaseResponse> | CommonErrors;
+  getRelease(@path project: ResourceId, @path release: string): OkJson<ReleaseResponse> | CommonErrors;
 
   @summary("Upload an immutable project-generation artifact")
   @route("/{release}/artifact")
@@ -228,7 +228,7 @@ interface Releases {
   })
   @apigen.auditPayload(ReleaseArtifactUploadedAuditPayload)
   @apigen.manual
-  uploadReleaseArtifact(@path @apigen.target project: string, @path release: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<ReleaseArtifactResponse> | CommonErrors;
+  uploadReleaseArtifact(@path @apigen.target project: ResourceId, @path release: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<ReleaseArtifactResponse> | CommonErrors;
 
   @summary("Finalize and validate a release")
   @route("/{release}/finalize")
@@ -254,11 +254,11 @@ interface Releases {
     ],
   })
   @apigen.auditPayload(ReleaseValidatingAuditPayload)
-  finalizeRelease(@path @apigen.target project: string, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
+  finalizeRelease(@path @apigen.target project: ResourceId, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
 
   @summary("List or stream release events")
   @route("/{release}/events")
   @get
   @extension("x-leapview-object-scope", "project-environment")
-  listReleaseEvents(@path project: string, @path release: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
+  listReleaseEvents(@path project: ResourceId, @path release: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 }

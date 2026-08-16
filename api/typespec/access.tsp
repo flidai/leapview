@@ -93,7 +93,7 @@ model ServicePrincipalSecretListResponse {
 
 model RoleResponse {
   name: string;
-  capabilities: string[];
+  capabilities: Capability[];
 }
 
 model RoleListResponse {
@@ -334,7 +334,7 @@ model DeviceAuthorizationDecidedAuditPayload {
   @apigen.auditInternal
   projectId: ResourceId;
   @apigen.auditPublic
-  capabilities: string[];
+  capabilities: Capability[];
   @apigen.auditPublic
   decision: string;
 }
@@ -350,7 +350,7 @@ model AuthoringSessionRevokedAuditPayload {
   @apigen.auditInternal
   projectId: ResourceId;
   @apigen.auditPublic
-  capabilities: string[];
+  capabilities: Capability[];
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
@@ -358,7 +358,7 @@ model APITokenAuditPayload {
   @apigen.auditInternal
   name: string;
   @apigen.auditPublic
-  capabilities: string[];
+  capabilities: Capability[];
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
@@ -456,7 +456,7 @@ model GrantAuditPayload {
   @apigen.auditInternal
   resourceId: ResourceId;
   @apigen.auditPublic
-  resourceKind: string;
+  resourceKind: ResourceKind;
   @apigen.auditPublic
   environment: string;
   @apigen.auditPii
@@ -464,7 +464,7 @@ model GrantAuditPayload {
   @apigen.auditPublic
   subjectType: string;
   @apigen.auditPublic
-  capability: string;
+  capability: Capability;
   @apigen.auditPublic
   surface: string;
 }
@@ -474,7 +474,7 @@ model OwnershipTransferAuditPayload {
   @apigen.auditPii
   ownerPrincipalId: string;
   @apigen.auditPublic
-  resourceKind: string;
+  resourceKind: ResourceKind;
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
@@ -482,7 +482,7 @@ model DataPolicyAuditPayload {
   @apigen.auditInternal
   resourceId: ResourceId;
   @apigen.auditPublic
-  resourceKind: string;
+  resourceKind: ResourceKind;
   @apigen.auditPublic
   policyType: string;
 }
@@ -504,23 +504,23 @@ model RoleBindingListResponse {
 }
 
 model GrantRequest {
-  resourceKind: string;
+  resourceKind: ResourceKind;
   resourceId: ResourceId;
   subjectType: string;
   subjectId: string;
-  capability: string;
+  capability: Capability;
 }
 
 model GrantResponse {
   id: string;
   resourceId: ResourceId;
-  resourceKind: string;
+  resourceKind: ResourceKind;
   subjectType: string;
   subjectId: string;
-  capability: string;
+  capability: Capability;
   inherited?: boolean;
   parentId?: string;
-  parentResourceKind?: string;
+  parentResourceKind?: ResourceKind;
   parentResourceId?: ResourceId;
   createdAt: utcDateTime;
 }
@@ -531,7 +531,7 @@ model GrantListResponse {
 }
 
 model DataPolicyRequest {
-  resourceKind: string;
+  resourceKind: ResourceKind;
   resourceId: ResourceId;
   subjectType?: string;
   subjectId?: string;
@@ -542,7 +542,7 @@ model DataPolicyRequest {
 model DataPolicyResponse {
   id: string;
   resourceId: ResourceId;
-  resourceKind: string;
+  resourceKind: ResourceKind;
   subjectType?: string;
   subjectId?: string;
   policyType: string;
@@ -556,22 +556,22 @@ model DataPolicyListResponse {
   page: PageInfo;
 }
 
-model EffectivePrivilegeListResponse {
+model EffectiveCapabilityListResponse {
   resourceId: ResourceId;
-  resourceKind: string;
-  capabilities: string[];
+  resourceKind: ResourceKind;
+  capabilities: Capability[];
   effectiveGrants: AuthorizationDecisionResponse[];
 }
 
 model OwnershipTransferRequest {
-  resourceKind: string;
+  resourceKind: ResourceKind;
   resourceId: ResourceId;
   ownerPrincipalId: string;
 }
 
 model SecurableObjectResponse {
   id: ResourceId;
-  resourceKind: string;
+  resourceKind: ResourceKind;
   parentId?: ResourceId;
   ownerPrincipalId?: string;
   displayName?: string;
@@ -582,9 +582,9 @@ model SecurableObjectResponse {
 model AuthorizationDecisionResponse {
 
   allowed?: boolean;
-  capability: string;
+  capability: Capability;
   reason: string;
-  resourceKind: string;
+  resourceKind: ResourceKind;
   resourceId?: ResourceId;
   grantId?: string;
   grantResourceId?: ResourceId;
@@ -596,8 +596,8 @@ model AuthorizationDecisionResponse {
 }
 
 model AuthorizationCheckRequest {
-  capability: string;
-  resourceKind: string;
+  capability: Capability;
+  resourceKind: ResourceKind;
   resourceId: ResourceId;
 }
 
@@ -621,7 +621,7 @@ model AuthoringSessionResponse {
   clientId: string;
   targetId: string;
   projectId: ResourceId;
-  capabilities: string[];
+  capabilities: Capability[];
   createdAt: utcDateTime;
   lastUsedAt?: utcDateTime;
   expiresAt: utcDateTime;
@@ -1024,17 +1024,17 @@ alias ListProjectRolesOK = OkJson<RoleListResponse>;
 @summary("List project roles")
 @route("/projects/{project}/roles")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
 op listProjectRoles(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRolesOK | CommonErrors;
 
-alias ListEffectivePrivilegesOK = OkJson<EffectivePrivilegeListResponse>;
+alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 
 @tag("Access")
-@summary("List effective privileges")
-@route("/projects/{project}/effective-privileges")
+@summary("List effective capabilities")
+@route("/projects/{project}/effective-capabilities")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
-op listEffectivePrivileges(@path project: ResourceId, @query resourceKind?: string, @query resourceId?: ResourceId): ListEffectivePrivilegesOK | CommonErrors;
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+op listEffectiveCapabilities(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId): ListEffectiveCapabilitiesOK | CommonErrors;
 
 alias ListGrantsOK = OkJson<GrantListResponse>;
 alias CreateGrantCreated = CreatedJson<GrantResponse>;
@@ -1045,12 +1045,12 @@ alias CreateGrantCreated = CreatedJson<GrantResponse>;
 interface Grants {
   @summary("List grants")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
-  listGrants(@path project: ResourceId, @query resourceKind?: string, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListGrantsOK | CommonErrors;
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  listGrants(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListGrantsOK | CommonErrors;
 
   @summary("Create a grant")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("project.access.grant.create")
   @apigen.command(#{
     auditAction: "grant.created",
@@ -1061,16 +1061,16 @@ interface Grants {
   @apigen.auditPayload(GrantAuditPayload)
   createGrant(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GrantRequest): CreateGrantCreated | CommonErrors;
 
-  @summary("Get an object privilege grant")
+  @summary("Get a resource capability grant")
   @route("/{grant}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "authenticated" })
   getGrant(@path project: ResourceId, @path grant: string): OkJson<GrantResponse> | CommonErrors;
 
-  @summary("Update an object privilege grant")
+  @summary("Update a resource capability grant")
   @route("/{grant}")
   @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{
     auditAction: "grant.updated",
     failures: #[
@@ -1084,7 +1084,7 @@ interface Grants {
   @summary("Delete a grant")
   @route("/{grant}")
   @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("project.access.grant.delete")
   @apigen.command(#{ auditAction: "grant.deleted" })
   @apigen.failsWith(GrantNotFoundFailure)
@@ -1098,7 +1098,7 @@ alias TransferOwnershipOK = OkJson<SecurableObjectResponse>;
 @summary("Transfer object ownership")
 @route("/projects/{project}/ownership")
 @post
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.command(#{ auditAction: "ownership.transferred", guarantee: "transactional" })
 @apigen.failsWith(OwnershipTransferInvalidFailure)
 @apigen.auditPayload(OwnershipTransferAuditPayload)
@@ -1113,12 +1113,12 @@ alias CreateDataPolicyCreated = CreatedJson<DataPolicyResponse>;
 interface DataPolicies {
   @summary("List data policies")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
-  listDataPolicies(@path project: ResourceId, @query resourceKind?: string, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListDataPoliciesOK | CommonErrors;
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  listDataPolicies(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListDataPoliciesOK | CommonErrors;
 
   @summary("Create a data policy")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{
     auditAction: "data_policy.created",
     failures: #[
@@ -1131,13 +1131,13 @@ interface DataPolicies {
   @summary("Get a data policy")
   @route("/{policy}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "authenticated" })
   getDataPolicy(@path project: ResourceId, @path policy: string): OkJson<DataPolicyResponse> | CommonErrors;
 
   @summary("Update a data policy")
   @route("/{policy}")
   @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{
     auditAction: "data_policy.updated",
     failures: #[
@@ -1151,7 +1151,7 @@ interface DataPolicies {
   @summary("Delete a data policy")
   @route("/{policy}")
   @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{ auditAction: "data_policy.deleted" })
   @apigen.failsWith(DataPolicyNotFoundFailure)
   @apigen.auditPayload(DataPolicyAuditPayload)
@@ -1162,6 +1162,6 @@ interface DataPolicies {
 @summary("Check multiple authorization decisions")
 @route("/projects/{project}/authorization-checks")
 @post
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.query
 op checkAuthorizationBatch(@path project: ResourceId, @body body: AuthorizationBatchCheckRequest): OkJson<AuthorizationBatchCheckResponse> | CommonErrors;

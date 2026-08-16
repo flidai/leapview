@@ -54,22 +54,25 @@ model DashboardPublicationNotConfiguredFailure {}
 @tag("Publications")
 @doc("Project-wide dashboard publication discovery and lifecycle commands. Publication mutations complete synchronously and return the updated publication; they do not create durable asynchronous executions.")
 @route("/projects/{project}/dashboard-publications")
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
 interface DashboardPublications {
   @summary("List project dashboard publications")
   @get
+  @apigen.authz(#{ mode: "authenticated" })
   listDashboardPublications(@path project: ResourceId): OkJson<DashboardPublicationListResponse> | CommonErrors;
 
   @summary("Get a dashboard publication")
   @route("/{publication}")
   @get
+  @apigen.authz(#{ mode: "authenticated" })
   getDashboardPublication(@path project: ResourceId, @path publication: string): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Suspend a dashboard publication immediately")
   @route("/{publication}/suspend")
   @post
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("dashboard.publication.suspend")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
@@ -82,6 +85,7 @@ interface DashboardPublications {
   @summary("Resume a configured dashboard publication")
   @route("/{publication}/resume")
   @post
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("dashboard.publication.resume")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
@@ -94,6 +98,7 @@ interface DashboardPublications {
   @summary("Rotate a dashboard publication public ID")
   @route("/{publication}/rotate")
   @post
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("dashboard.publication.rotate")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)

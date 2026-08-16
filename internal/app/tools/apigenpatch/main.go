@@ -54,12 +54,6 @@ func applySearchPolicy(source []byte) ([]byte, error) {
 	}
 	var err error
 	search, err = replaceGeneratedPolicy(search,
-		"AddQuery(query, \"project\", request.Params.Project, false)",
-		"AddQuery(query, \"project\", request.Params.Project, true)")
-	if err != nil {
-		return nil, err
-	}
-	search, err = replaceGeneratedPolicy(search,
 		"AddQuery(query, \"type\", request.Params.Type, false)",
 		"AddQuery(query, \"type\", request.Params.Type, true)")
 	if err != nil {

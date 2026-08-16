@@ -4,23 +4,22 @@ using LeapViewAPI.Protocol;
 
 namespace LeapViewAPI.Access;
 
-model EffectivePrivilegesResponse {
-  projectId: ResourceId;
-  capabilities: string[];
+model EffectiveCapabilitiesResponse {
+  capabilities: Capability[];
 }
 
 model APITokenCreateRequest {
   name: string;
-  @doc("Omit to keep the token dynamically constrained by the principal's effective privileges at request time. An explicit list must be a subset of the principal's current effective privileges.")
-  privileges?: string[];
+  @doc("Omit to keep the token dynamically constrained by the principal's effective capabilities at request time. An explicit list must be a subset of the principal's current effective capabilities.")
+  capabilities?: Capability[];
   expiresAt?: utcDateTime;
 }
 
 model APITokenResponse {
   id: string;
   name: string;
-  @doc("Present when the token has an explicit privilege allowlist. When omitted, the principal's effective privileges are evaluated dynamically at request time.")
-  privileges?: string[];
+  @doc("Present when the token has an explicit capability allowlist. When omitted, the principal's effective capabilities are evaluated dynamically at request time.")
+  capabilities?: Capability[];
   expiresAt?: utcDateTime;
   revokedAt?: utcDateTime;
   createdAt: utcDateTime;
@@ -262,15 +261,15 @@ interface CurrentAPITokens {
   revokeCurrentAPIToken(@path @apigen.target token: string): EmptyResponse | CommonErrors;
 }
 
-alias ListCurrentEffectivePrivilegesOK = OkJson<EffectivePrivilegesResponse>;
+alias ListCurrentEffectiveCapabilitiesOK = OkJson<EffectiveCapabilitiesResponse>;
 
 @tag("Current User")
-@summary("List current effective privileges")
-@route("/me/effective-privileges")
+@summary("List current effective capabilities")
+@route("/me/effective-capabilities")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
+@apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "principal")
-op listCurrentEffectivePrivileges(@query project?: ResourceId): ListCurrentEffectivePrivilegesOK | CommonErrors;
+op listCurrentEffectiveCapabilities(): ListCurrentEffectiveCapabilitiesOK | CommonErrors;
 
 alias ListCurrentSessionsOK = OkJson<SessionListResponse>;
 

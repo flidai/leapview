@@ -23,13 +23,13 @@ model ProjectListResponse {
 @summary("List materialized projects")
 @route("/projects")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "authenticated" })
 op listProjects(@query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ProjectListResponse> | CommonErrors;
 
 @tag("Projects")
 @summary("Get a materialized project")
 @route("/projects/{project}")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "project-environment")
 op getProject(@path project: ResourceId): OkJson<ProjectResponse> | CommonErrors;

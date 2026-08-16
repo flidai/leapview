@@ -19,15 +19,16 @@ import (
 )
 
 type Config struct {
-	Database     *sql.DB
-	Auth         AuthConfig
-	ExistingAuth *Auth
-	PublicURL    string
-	InstanceID   string
-	MCPIssuerURL string
-	Presentation webpage.Presentation
-	Assets       staticasset.Resolver
-	AvatarBlobs  avatar.BlobStore
+	Database                     *sql.DB
+	Auth                         AuthConfig
+	ExistingAuth                 *Auth
+	PublicURL                    string
+	InstanceID                   string
+	MCPIssuerURL                 string
+	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	Presentation                 webpage.Presentation
+	Assets                       staticasset.Resolver
+	AvatarBlobs                  avatar.BlobStore
 }
 
 func newRepository(database *sql.DB) access.Repository { return accesssqlite.NewRepository(database) }
@@ -36,7 +37,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Database == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
-			Auth: auth, Presentation: config.Presentation, Assets: config.Assets,
+			Auth: auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			Presentation: config.Presentation, Assets: config.Assets,
 		}
 		if auth != nil {
 			surface.CurrentPrincipal = auth.Principal
@@ -89,12 +91,13 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		auth.authoringAuth = authoringAuth
 	}
 	surface := surfaceConfig{
-		Repository:    func() (access.Repository, error) { return repository, nil },
-		Auth:          auth,
-		AuthoringAuth: authoringAuth,
-		Avatar:        avatarService,
-		Presentation:  config.Presentation,
-		Assets:        config.Assets,
+		Repository:                   func() (access.Repository, error) { return repository, nil },
+		Auth:                         auth,
+		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		AuthoringAuth:                authoringAuth,
+		Avatar:                       avatarService,
+		Presentation:                 config.Presentation,
+		Assets:                       config.Assets,
 	}
 	if auth != nil {
 		surface.CurrentPrincipal = func(r *http.Request) (Principal, bool) {

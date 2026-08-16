@@ -43,6 +43,7 @@ type Settings interface {
 type Options struct {
 	Service                *agent.Service
 	Settings               Settings
+	PlatformAdmin          func(context.Context, string) (bool, error)
 	CurrentPrincipal       func(*stdhttp.Request) (Principal, bool)
 	CurrentCredential      func(*stdhttp.Request) (access.APICredential, bool)
 	Broker                 *pagestream.Broker
@@ -579,6 +580,9 @@ func (h *Handler) GetAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h *Handler) GetAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	details, err := h.AdminDetails(r.Context())
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -607,12 +611,41 @@ func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 }
 
 func (h *Handler) UpdateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	var input api.AdminAgentConfigPatchRequest
 	if err := decodeAgentJSON(r, &input); err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
 		return
 	}
 	h.updateAgentConfig(w, r, input.SystemPrompt)
+}
+
+func (h *Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
+	if h.options.CurrentPrincipal == nil {
+		writeJSONError(w, fmt.Errorf("agent configuration requires authentication"), stdhttp.StatusUnauthorized)
+		return false
+	}
+	principal, ok := h.options.CurrentPrincipal(r)
+	if !ok {
+		writeJSONError(w, fmt.Errorf("agent configuration requires an authenticated principal"), stdhttp.StatusUnauthorized)
+		return false
+	}
+	if h.options.PlatformAdmin == nil {
+		writeJSONError(w, fmt.Errorf("platform role checker is unavailable"), stdhttp.StatusInternalServerError)
+		return false
+	}
+	admin, err := h.options.PlatformAdmin(r.Context(), principal.ID)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return false
+	}
+	if !admin {
+		writeJSONError(w, access.ErrForbidden, stdhttp.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, systemPrompt string) {

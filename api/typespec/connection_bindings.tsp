@@ -183,7 +183,7 @@ model TargetConnectionBindingHealthResponse {
 interface TargetConnectionBindings {
   @summary("List target connection bindings")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
   listTargetConnectionBindings(
     @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
@@ -191,7 +191,7 @@ interface TargetConnectionBindings {
 
   @summary("Create a target connection binding")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
   @apigen.failsWith(ConnectionBindingNotFoundFailure)
@@ -218,7 +218,7 @@ interface TargetConnectionBindings {
   getTargetConnectionBinding(
     @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path connection: LogicalConnectionId,
+    @path @apigen.target connection: LogicalConnectionId,
   ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
 
   @summary("Plan a dependency-aware target connection change")
@@ -230,7 +230,7 @@ interface TargetConnectionBindings {
   planTargetConnectionBindingChange(
     @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path connection: LogicalConnectionId,
+    @path @apigen.target connection: LogicalConnectionId,
     @body body: TargetConnectionBindingPlanRequest,
   ): OkJson<TargetConnectionBindingChangePlanResponse> | CommonErrors;
 
@@ -252,9 +252,9 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
   updateTargetConnectionBinding(
-    @path @apigen.target project: ResourceId,
+    @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path connection: LogicalConnectionId,
+    @path @apigen.target connection: LogicalConnectionId,
     @body body: TargetConnectionBindingUpdateRequest,
   ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
 
@@ -277,9 +277,9 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionRotationAuditPayload)
   testTargetConnectionBinding(
-    @path @apigen.target project: ResourceId,
+    @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path connection: LogicalConnectionId,
+    @path @apigen.target connection: LogicalConnectionId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
   ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
 
@@ -301,9 +301,9 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionRotationAuditPayload)
   refreshTargetConnectionBinding(
-    @path @apigen.target project: ResourceId,
+    @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path connection: LogicalConnectionId,
+    @path @apigen.target connection: LogicalConnectionId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
   ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
 
@@ -323,9 +323,9 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
   enableTargetConnectionBinding(
-    @path @apigen.target project: ResourceId,
+    @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path connection: LogicalConnectionId,
+    @path @apigen.target connection: LogicalConnectionId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
   ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
 
@@ -346,9 +346,9 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
   disableTargetConnectionBinding(
-    @path @apigen.target project: ResourceId,
+    @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path connection: LogicalConnectionId,
+    @path @apigen.target connection: LogicalConnectionId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
   ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
 
@@ -359,6 +359,6 @@ interface TargetConnectionBindings {
   getTargetConnectionBindingHealth(
     @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path connection: LogicalConnectionId,
+    @path @apigen.target connection: LogicalConnectionId,
   ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
 }

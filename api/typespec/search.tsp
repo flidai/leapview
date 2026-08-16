@@ -25,9 +25,8 @@ enum SearchContextTag {
 }
 
 model SearchReference {
-  projectId: ResourceId;
   type: SearchResultType;
-  id: string;
+  id: ResourceId;
 }
 
 model SearchLocation {
@@ -59,11 +58,10 @@ alias SearchOK = OkJson<SearchResponse>;
 @summary("Search accessible product objects")
 @route("/search")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.cli(#{ command: #["search"], args: #[#{ source: "query", name: "q", displayName: "query" }], output: #{ mode: "raw" } })
 op search(
   @query q?: string,
-  @query project?: ResourceId,
   @query type?: SearchResultType[],
   @query contextDashboard?: ResourceId,
   @query contextPage?: string,

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -15,7 +14,6 @@ import (
 type options struct {
 	remote          cliapi.RemoteOptions
 	pagination      cliapi.PaginationOptions
-	workspaceID     string
 	count           int
 	filterStateJSON string
 }
@@ -24,11 +22,9 @@ type options struct {
 func Command(ctx context.Context, client cliapi.Client) *cobra.Command {
 	values := &options{}
 	parent := &cobra.Command{Use: "dashboards", Short: "Inspect dashboards"}
-	parent.PersistentFlags().StringVar(&values.workspaceID, "workspace", "", "workspace id")
 
 	list := requestCommand(ctx, client, values, "list", "List dashboards", 0, func(ctx context.Context, api *dashboardgen.GenClient, _ []string) (dashboardgen.GenSchemaDashboardListResponse, error) {
 		response, err := api.ListDashboards(ctx, dashboardgen.GenListDashboardsClientRequest{
-			Workspace: values.workspaceID,
 			Params: dashboardgen.GenListDashboardsClientParams{
 				Limit:     values.pagination.LimitPtr(),
 				PageToken: optionalString(values.pagination.PageToken),
@@ -40,25 +36,25 @@ func Command(ctx context.Context, client cliapi.Client) *cobra.Command {
 
 	describe := requestCommand(ctx, client, values, "describe <dashboard>", "Describe a dashboard", 1, func(ctx context.Context, api *dashboardgen.GenClient, args []string) (dashboardgen.GenSchemaDashboardManifestResponse, error) {
 		response, err := api.GetDashboard(ctx, dashboardgen.GenGetDashboardClientRequest{
-			Workspace: values.workspaceID, Dashboard: args[0],
+			Dashboard: args[0],
 		})
 		return response.Body, err
 	})
 	page := requestCommand(ctx, client, values, "page <dashboard> <page>", "Describe a dashboard page", 2, func(ctx context.Context, api *dashboardgen.GenClient, args []string) (dashboardgen.GenSchemaDashboardPageResponse, error) {
 		response, err := api.GetDashboardPage(ctx, dashboardgen.GenGetDashboardPageClientRequest{
-			Workspace: values.workspaceID, Dashboard: args[0], Page: args[1],
+			Dashboard: args[0], Page: args[1],
 		})
 		return response.Body, err
 	})
 	visual := requestCommand(ctx, client, values, "visual <dashboard> <page> <visual>", "Describe a dashboard visual", 3, func(ctx context.Context, api *dashboardgen.GenClient, args []string) (dashboardgen.GenSchemaDashboardVisualDescribeResponse, error) {
 		response, err := api.GetDashboardVisual(ctx, dashboardgen.GenGetDashboardVisualClientRequest{
-			Workspace: values.workspaceID, Dashboard: args[0], Page: args[1], Visual: args[2],
+			Dashboard: args[0], Page: args[1], Visual: args[2],
 		})
 		return response.Body, err
 	})
 	filter := requestCommand(ctx, client, values, "filter <dashboard> <page> <filter>", "Describe a compiled dashboard filter binding", 3, func(ctx context.Context, api *dashboardgen.GenClient, args []string) (dashboardgen.GenSchemaDashboardFilterDescribeResponse, error) {
 		response, err := api.GetDashboardFilter(ctx, dashboardgen.GenGetDashboardFilterClientRequest{
-			Workspace: values.workspaceID, Dashboard: args[0], Page: args[1], Filter: args[2],
+			Dashboard: args[0], Page: args[1], Filter: args[2],
 		})
 		return response.Body, err
 	})
@@ -68,7 +64,7 @@ func Command(ctx context.Context, client cliapi.Client) *cobra.Command {
 			return dashboardgen.GenSchemaVisualizationEnvelope{}, err
 		}
 		response, err := api.QueryDashboardVisualData(ctx, dashboardgen.GenQueryDashboardVisualDataClientRequest{
-			Workspace: values.workspaceID, Dashboard: args[0], Page: args[1], Visual: args[2], Body: body,
+			Dashboard: args[0], Page: args[1], Visual: args[2], Body: body,
 		})
 		return response.Body, err
 	})
@@ -81,7 +77,7 @@ func Command(ctx context.Context, client cliapi.Client) *cobra.Command {
 			return dashboardgen.GenSchemaDashboardPageQueryResponse{}, err
 		}
 		response, err := api.QueryDashboardPage(ctx, dashboardgen.GenQueryDashboardPageClientRequest{
-			Workspace: values.workspaceID, Dashboard: args[0], Page: args[1], Body: body,
+			Dashboard: args[0], Page: args[1], Body: body,
 		})
 		return response.Body, err
 	})
@@ -93,7 +89,7 @@ func Command(ctx context.Context, client cliapi.Client) *cobra.Command {
 			return dashboardgen.GenSchemaDashboardFilterOptionListResponse{}, err
 		}
 		response, err := api.ListDashboardFilterValues(ctx, dashboardgen.GenListDashboardFilterValuesClientRequest{
-			Workspace: values.workspaceID, Dashboard: args[0], Page: args[1], Filter: args[2], Body: body,
+			Dashboard: args[0], Page: args[1], Filter: args[2], Body: body,
 			Params: dashboardgen.GenListDashboardFilterValuesClientParams{
 				Limit:     values.pagination.LimitPtr(),
 				PageToken: optionalString(values.pagination.PageToken),
@@ -121,9 +117,6 @@ func requestCommand[T any](
 		Use:   use,
 		Short: short,
 		RunE: func(command *cobra.Command, args []string) error {
-			if err := requireWorkspace(values.workspaceID); err != nil {
-				return err
-			}
 			if err := values.pagination.Validate(command); err != nil {
 				return err
 			}
@@ -143,13 +136,6 @@ func requestCommand[T any](
 	}
 	values.remote.AddFlags(command)
 	return command
-}
-
-func requireWorkspace(workspaceID string) error {
-	if strings.TrimSpace(workspaceID) == "" {
-		return fmt.Errorf("--workspace is required")
-	}
-	return nil
 }
 
 func dashboardClient(ctx context.Context, client cliapi.Client, credentials cliapi.Credentials) (*dashboardgen.GenClient, error) {

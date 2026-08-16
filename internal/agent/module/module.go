@@ -152,6 +152,7 @@ type Settings interface {
 
 type HTTPConfig struct {
 	Settings           Settings
+	PlatformAdmin      func(context.Context, string) (bool, error)
 	CurrentPrincipal   func(*http.Request) (Principal, bool)
 	CurrentCredential  func(*http.Request) (access.APICredential, bool)
 	Broker             *pagestream.Broker
@@ -261,6 +262,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	m.handler = agenthttp.NewHandler(agenthttp.Options{
 		Service: service, Settings: config.HTTP.Settings,
+		PlatformAdmin: config.HTTP.PlatformAdmin,
 		CurrentPrincipal: currentPrincipal, CurrentCredential: config.HTTP.CurrentCredential,
 		Broker: config.HTTP.Broker, CSRFToken: config.HTTP.CSRFToken,
 		CurrentRoleLabel: config.HTTP.CurrentRoleLabel, Layout: config.HTTP.Layout, ChatSignal: m.chatSignal,

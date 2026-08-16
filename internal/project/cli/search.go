@@ -1,4 +1,3 @@
-// Package cli owns command-line adapters for the Workspace capability.
 package cli
 
 import (
@@ -10,57 +9,18 @@ import (
 	"text/tabwriter"
 
 	"github.com/flidai/leapview/internal/platform/cliapi"
-	workspacegen "github.com/flidai/leapview/internal/workspace/api/gen"
+	projectgen "github.com/flidai/leapview/internal/project/api/gen"
 	"github.com/spf13/cobra"
 )
-
-type listOptions struct {
-	remote     cliapi.RemoteOptions
-	pagination cliapi.PaginationOptions
-}
-
-// WorkspacesCommand constructs the workspace inspection command.
-func WorkspacesCommand(ctx context.Context, client cliapi.Client) *cobra.Command {
-	options := &listOptions{}
-	parent := &cobra.Command{Use: "workspaces", Short: "Inspect workspaces"}
-	list := &cobra.Command{
-		Use:   "list",
-		Short: "List workspaces",
-		RunE: func(command *cobra.Command, _ []string) error {
-			if err := options.pagination.Validate(command); err != nil {
-				return err
-			}
-			api, err := workspaceClient(ctx, client, options.remote.Credentials())
-			if err != nil {
-				return err
-			}
-			response, err := api.ListWorkspaces(ctx, workspacegen.GenListWorkspacesClientRequest{
-				Params: workspacegen.GenListWorkspacesClientParams{
-					Limit:     options.pagination.LimitPtr(),
-					PageToken: optionalString(options.pagination.PageToken),
-				},
-			})
-			if err != nil {
-				return err
-			}
-			return json.NewEncoder(command.OutOrStdout()).Encode(response.Body)
-		},
-	}
-	options.remote.AddFlags(list)
-	options.pagination.AddFlags(list)
-	parent.AddCommand(list)
-	return parent
-}
 
 type searchOptions struct {
 	remote     cliapi.RemoteOptions
 	pagination cliapi.PaginationOptions
-	workspaces []string
 	types      []string
 	jsonOutput bool
 }
 
-// SearchCommand constructs the workspace-owned product search command.
+// SearchCommand constructs the project-wide product search command.
 func SearchCommand(ctx context.Context, client cliapi.Client) *cobra.Command {
 	options := &searchOptions{}
 	command := &cobra.Command{
@@ -75,7 +35,6 @@ func SearchCommand(ctx context.Context, client cliapi.Client) *cobra.Command {
 		},
 	}
 	options.remote.AddFlags(command)
-	command.Flags().StringArrayVar(&options.workspaces, "workspace", nil, "workspace filter; repeatable")
 	options.pagination.AddFlags(command)
 	command.Flags().StringArrayVar(&options.types, "type", nil, "result type filter; repeatable or comma-separated")
 	command.Flags().BoolVar(&options.jsonOutput, "json", false, "print JSON response")
@@ -83,20 +42,18 @@ func SearchCommand(ctx context.Context, client cliapi.Client) *cobra.Command {
 }
 
 func runSearch(ctx context.Context, client cliapi.Client, options *searchOptions, queryText string, out io.Writer) error {
-	api, err := workspaceClient(ctx, client, options.remote.Credentials())
+	api, err := projectClient(ctx, client, options.remote.Credentials())
 	if err != nil {
 		return err
 	}
-	workspaceFilters := splitValues(options.workspaces)
 	typeValues := splitValues(options.types)
-	typeFilters := make([]workspacegen.GenSchemaSearchResultType, len(typeValues))
+	typeFilters := make([]projectgen.GenSchemaSearchResultType, len(typeValues))
 	for index, value := range typeValues {
-		typeFilters[index] = workspacegen.GenSchemaSearchResultType(value)
+		typeFilters[index] = projectgen.GenSchemaSearchResultType(value)
 	}
-	response, err := api.Search(ctx, workspacegen.GenSearchClientRequest{
-		Params: workspacegen.GenSearchClientParams{
+	response, err := api.Search(ctx, projectgen.GenSearchClientRequest{
+		Params: projectgen.GenSearchClientParams{
 			Q:         &queryText,
-			Workspace: optionalSlice(workspaceFilters),
 			Type:      optionalSlice(typeFilters),
 			Limit:     options.pagination.LimitPtr(),
 			PageToken: optionalString(options.pagination.PageToken),
@@ -111,15 +68,15 @@ func runSearch(ctx context.Context, client cliapi.Client, options *searchOptions
 	return renderSearchResults(out, response.Body)
 }
 
-func workspaceClient(ctx context.Context, client cliapi.Client, credentials cliapi.Credentials) (*workspacegen.GenClient, error) {
+func projectClient(ctx context.Context, client cliapi.Client, credentials cliapi.Credentials) (*projectgen.GenClient, error) {
 	if client == nil {
-		return nil, fmt.Errorf("workspace CLI API client is required")
+		return nil, fmt.Errorf("project CLI API client is required")
 	}
 	transport, err := client.Transport(ctx, credentials)
 	if err != nil {
 		return nil, err
 	}
-	return workspacegen.NewGenClient(transport), nil
+	return projectgen.NewGenClient(transport), nil
 }
 
 func splitValues(values []string) []string {
@@ -134,15 +91,15 @@ func splitValues(values []string) []string {
 	return result
 }
 
-func renderSearchResults(out io.Writer, response workspacegen.GenSchemaSearchResponse) error {
+func renderSearchResults(out io.Writer, response projectgen.GenSchemaSearchResponse) error {
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "WORKSPACE\tTYPE\tNAME\tDESCRIPTION\tID")
+	fmt.Fprintln(writer, "TYPE\tNAME\tDESCRIPTION\tID")
 	for _, item := range response.Items {
 		description := ""
 		if item.Description != nil {
 			description = *item.Description
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", item.Reference.WorkspaceId, item.Reference.Type, item.Name, description, item.Reference.Id)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", item.Reference.Type, item.Name, description, item.Reference.Id)
 	}
 	if response.Page.NextCursor != nil && *response.Page.NextCursor != "" {
 		fmt.Fprintf(writer, "PAGE\tNEXT\t%s\t\t\n", *response.Page.NextCursor)

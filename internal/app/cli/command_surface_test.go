@@ -65,6 +65,12 @@ func TestRootHelpExposesCanonicalDeploymentLifecycle(t *testing.T) {
 	if found, _, err := command.Find([]string{"deploy"}); err != nil || found == command {
 		t.Fatalf("root command does not resolve atomic deploy path: command=%v err=%v", found, err)
 	}
+	if found, _, err := command.Find([]string{"search"}); err != nil || found == command {
+		t.Fatalf("root command does not resolve project-wide search: command=%v err=%v", found, err)
+	}
+	if found, _, err := command.Find([]string{"workspaces"}); err == nil || found != nil {
+		t.Fatalf("removed workspace command is still registered: command=%v err=%v", found, err)
+	}
 }
 
 func TestVersionReportsDevelopmentIdentityAsJSON(t *testing.T) {

@@ -64,11 +64,10 @@ func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliap
 			Origin: target, InstanceID: instance.Id, ProjectID: cfg.WorkloadProject,
 			ClientID: cfg.WorkloadClientID, ClientSecret: cfg.WorkloadClientSecret,
 			Privileges: []string{
-				"USE_WORKSPACE",
-				"VIEW_ITEM",
-				"AUTHOR_PROJECT",
-				"PUBLISH_RELEASE",
-				"REQUEST_DEPLOYMENT",
+				"RESOURCE_USE",
+				"RESOURCE_READ",
+				"RESOURCE_EDIT",
+				"RESOURCE_PUBLISH",
 			},
 			Lifetime: 15 * time.Minute,
 		}, nil)

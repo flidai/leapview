@@ -93,7 +93,7 @@ func TestAPICommandCallUsesGeneratedContract(t *testing.T) {
 	defer server.Close()
 
 	output := captureStdout(t, func() {
-		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token", workspaceID: "test"})
+		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
 		cmd.SetArgs([]string{
 			"call", "createAgentRun",
 			"--target", server.URL,
@@ -168,7 +168,7 @@ func TestAPICommandCallDefaultsJSONBodyFileContentTypeFromGeneratedContract(t *t
 	defer server.Close()
 
 	captureStdout(t, func() {
-		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token", workspaceID: "test"})
+		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
 		cmd.SetArgs([]string{
 			"call", "createAgentRun",
 			"--target", server.URL,
@@ -191,7 +191,7 @@ func TestAPICommandCallDefaultsBinaryBodyFileContentTypeFromGeneratedContract(t 
 		if r.Method != http.MethodPut {
 			t.Fatalf("method = %s", r.Method)
 		}
-		if r.URL.Path != "/api/v1/projects/project/releases/release_1/workspaces/test/artifact" {
+		if r.URL.Path != "/api/v1/projects/project/releases/release_1/artifact" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
 		if got := r.Header.Get("Content-Type"); got != "application/octet-stream" {
@@ -202,7 +202,7 @@ func TestAPICommandCallDefaultsBinaryBodyFileContentTypeFromGeneratedContract(t 
 	defer server.Close()
 
 	captureStdout(t, func() {
-		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token", workspaceID: "test"})
+		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
 		cmd.SetArgs([]string{
 			"call", "uploadReleaseArtifact",
 			"--target", server.URL,
@@ -218,7 +218,7 @@ func TestAPICommandCallDefaultsBinaryBodyFileContentTypeFromGeneratedContract(t 
 }
 
 func TestAPICommandRejectsMissingPathParameter(t *testing.T) {
-	cmd := apiCommand(context.Background(), &rootOptions{target: "https://leapview.example", token: "token", workspaceID: "test"})
+	cmd := apiCommand(context.Background(), &rootOptions{target: "https://leapview.example", token: "token"})
 	cmd.SetArgs([]string{"call", "getAgentRun", "--target", "https://leapview.example", "--token", "token", "--path", "conversation=conv_1"})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "run") {
 		t.Fatalf("err = %v, want missing run path parameter", err)

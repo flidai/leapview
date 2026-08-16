@@ -13,7 +13,6 @@ func TestSearchClientTransportPolicy(t *testing.T) {
 	}
 	source := string(data)
 	for _, want := range []string{
-		"AddQuery(query, \"project\", request.Params.Project, true)",
 		"AddQuery(query, \"type\", request.Params.Type, true)",
 		"limit must be between 1 and 200",
 	} {

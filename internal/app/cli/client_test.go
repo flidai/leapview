@@ -178,14 +178,14 @@ func TestCapabilityAPIClientExchangesEphemeralWorkloadIdentity(t *testing.T) {
 				r.Form.Get("client_id") != "sp-ci" ||
 				r.Form.Get("client_secret") != "service-secret" ||
 				r.Form.Get("project_id") != "analytics" ||
-				r.Form.Get("scope") != "USE_WORKSPACE VIEW_ITEM AUTHOR_PROJECT PUBLISH_RELEASE REQUEST_DEPLOYMENT" ||
+				r.Form.Get("scope") != "RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH" ||
 				r.Form.Get("lifetime_seconds") != "900" {
 				t.Fatalf("workload form = %v", r.Form)
 			}
 			_, _ = w.Write([]byte(`{
 				"access_token":"ephemeral-access","token_type":"Bearer","expires_in":900,
 				"session_id":"session-1","session_kind":"workload","target_id":"lvinst_prod",
-				"project_id":"analytics","scope":"USE_WORKSPACE VIEW_ITEM AUTHOR_PROJECT PUBLISH_RELEASE REQUEST_DEPLOYMENT"
+				"project_id":"analytics","scope":"RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH"
 			}`))
 		default:
 			t.Fatalf("unexpected path %q", r.URL.Path)

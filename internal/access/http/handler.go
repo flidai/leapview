@@ -54,13 +54,14 @@ type AuthoringAuthentication interface {
 }
 
 type Handler struct {
-	Repository           RepositoryProvider
-	CurrentPrincipal     PrincipalProvider
-	CurrentCredential    CredentialProvider
-	CurrentSession       SessionProvider
-	AuthoringAuth        AuthoringAuthentication
-	Avatar               AvatarService
-	LocalPasswordEnabled bool
+	Repository                   RepositoryProvider
+	CurrentPrincipal             PrincipalProvider
+	CurrentCredential            CredentialProvider
+	CurrentSession               SessionProvider
+	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	AuthoringAuth                AuthoringAuthentication
+	Avatar                       AvatarService
+	LocalPasswordEnabled         bool
 }
 
 func (h Handler) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -76,6 +77,31 @@ func (h Handler) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Reques
 	}
 	w.Header().Set("ETag", resourceETag(response))
 	writeJSON(w, stdhttp.StatusOK, response)
+}
+
+// ListCurrentEffectiveCapabilities projects the active immutable authorization
+// snapshot for the authenticated principal. The callback is deliberately
+// required: falling back to a mutable repository or a hard-coded role list
+// would make token capability decisions stale or bypass generation binding.
+func (h Handler) ListCurrentEffectiveCapabilities(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	principal, ok := h.currentPrincipal(r)
+	if !ok {
+		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
+		return
+	}
+	if h.CurrentEffectiveCapabilities == nil {
+		writeJSONError(w, errors.New("active authorization snapshot is unavailable"), stdhttp.StatusInternalServerError)
+		return
+	}
+	capabilities, err := h.CurrentEffectiveCapabilities(r.Context(), principal.ID)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	if capabilities == nil {
+		capabilities = []access.Capability{}
+	}
+	writeJSON(w, stdhttp.StatusOK, map[string]any{"capabilities": capabilities})
 }
 
 func (h Handler) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {

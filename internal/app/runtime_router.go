@@ -1063,6 +1063,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			HTTP: agentmodule.HTTPConfig{
 				Settings: persistence.agentSettings, Broker: runtime.broker,
+				PlatformAdmin:    routes.accessModule.IsPlatformAdmin,
 				CSRFToken:        routes.accessModule.CSRFToken,
 				CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,
 				Layout: func(r *http.Request) webpage.Provider {

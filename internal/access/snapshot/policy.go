@@ -96,6 +96,60 @@ func (s AuthorizationSnapshot) Allows(subject access.SubjectRef, resource access
 	return false, nil
 }
 
+// EffectiveCapabilities returns the canonical capabilities that are currently
+// effective for the supplied identity subjects in this immutable snapshot.
+// Subjects normally contain the authenticated principal followed by the
+// groups resolved by the identity layer. Resource grants are evaluated
+// against the bound project graph; no mutable repository or role template is
+// consulted. The result is deduplicated and returned in canonical contract
+// order so callers can safely use it as a token allowlist.
+func (s AuthorizationSnapshot) EffectiveCapabilities(subjects []access.SubjectRef) ([]access.Capability, error) {
+	if err := s.ValidateBound(); err != nil {
+		return nil, err
+	}
+	validatedSubjects := make([]access.SubjectRef, 0, len(subjects))
+	seenSubjects := make(map[access.SubjectRef]struct{}, len(subjects))
+	for _, subject := range subjects {
+		if err := subject.Validate(); err != nil {
+			return nil, err
+		}
+		if _, seen := seenSubjects[subject]; seen {
+			continue
+		}
+		seenSubjects[subject] = struct{}{}
+		validatedSubjects = append(validatedSubjects, subject)
+	}
+	if len(validatedSubjects) == 0 {
+		return []access.Capability{}, nil
+	}
+	allowed := make(map[access.Capability]struct{})
+	for _, graphResource := range s.project.Resources() {
+		resource, err := access.NewResourceRef(graphResource.ID, graphResource.Kind)
+		if err != nil {
+			return nil, err
+		}
+		for _, capability := range access.CapabilitiesForKind(graphResource.Kind) {
+			for _, subject := range validatedSubjects {
+				ok, err := s.Allows(subject, resource, capability)
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					allowed[capability] = struct{}{}
+					break
+				}
+			}
+		}
+	}
+	result := make([]access.Capability, 0, len(allowed))
+	for _, capability := range access.CanonicalCapabilities() {
+		if _, ok := allowed[capability]; ok {
+			result = append(result, capability)
+		}
+	}
+	return result, nil
+}
+
 type snapshotWire struct {
 	Identity     graph.ServingIdentity `json:"identity"`
 	RoleBindings []roleBindingWire     `json:"roleBindings,omitempty"`

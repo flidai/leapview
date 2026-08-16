@@ -25,8 +25,9 @@ model DashboardAuthoringPublicationEvidence {
 }
 
 model DashboardAuthoringSourceRef {
-  kind: "project";
-  projectId: ResourceId;
+  // The route's project identifies project-managed sources; instance sources
+  // use the same dashboard identity without an optional project selector.
+  kind: "project" | "instance";
   dashboardId: ResourceId;
 }
 
@@ -59,7 +60,7 @@ model DashboardAuthoringProvenance {
 model DashboardAuthoringEmptyPayload {}
 
 model DashboardAuthoringSetVisibilityIntent {
-  visibility: "private" | "shared";
+  visibility: "private" | "restricted" | "organization-visible";
 }
 
 model DashboardAuthoringAddPageIntent {
@@ -102,10 +103,10 @@ model DashboardAuthoringSummary {
   title: string;
   description?: string;
   semanticModel: ResourceId;
-  source: "project";
+  source: "project" | "instance";
   origin: "ui" | "file" | "agent";
   status: "draft" | "published" | "archived";
-  visibility: "private" | "shared";
+  visibility: "private" | "restricted" | "organization-visible";
   owner?: string;
   tags?: string[];
   servingStateId?: string;
@@ -174,7 +175,7 @@ model DashboardAuthoringCommandAuditPayload {
   @apigen.auditInternal
   projectId: ResourceId;
   @apigen.auditInternal
-  dashboardId: string;
+  dashboardId: ResourceId;
   @apigen.auditInternal
   draftId: string;
   @apigen.auditPublic
@@ -190,7 +191,7 @@ interface DashboardAuthoring {
   @summary("List governed dashboard authoring identities")
   @route("/catalog")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "authenticated" })
   listDashboardAuthoringCatalog(@path project: ResourceId): OkJson<DashboardAuthoringCatalogResponse> | CommonErrors;
 
   @summary("Get one governed dashboard authoring identity")
@@ -224,14 +225,14 @@ interface DashboardAuthoring {
   @summary("Create a named dashboard draft")
   @route("/drafts")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_created", guarantee: "best-effort", failures: #[] })
   createDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringCreateRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
   @summary("Execute one dashboard authoring command")
   @route("/commands")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("dashboard.builder.command")
   @apigen.command(#{ auditAction: "dashboard_authoring.command_executed", guarantee: "best-effort", failures: #[] })
   executeDashboardAuthoringCommand(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringCommandRequest): OkJson<DashboardAuthoringMutationResponse> | CommonErrors;
@@ -239,7 +240,7 @@ interface DashboardAuthoring {
   @summary("Fork a dashboard source into a new draft")
   @route("/forks")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_forked", guarantee: "best-effort", failures: #[] })
   forkDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringForkRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
