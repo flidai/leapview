@@ -22,7 +22,6 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
-	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
@@ -140,7 +139,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
-	projectClaimRepository := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
+	projectClaimRepository, err := deploymentmodule.NewBootstrapPersistence(store.SQLDB())
+	if err != nil {
+		return fail(err)
+	}
 	// Every authorization callback reads the claim afresh. The runtime host
 	// uses this same reader during startup, while bootstrap decisions must not
 	// rely on a stale memoized claim after a concurrent first operation.
@@ -657,7 +659,7 @@ func protectedPublishingTarget(production, evaluation bool) bool {
 	return production && !evaluation
 }
 
-func readClaimedProject(repository deployment.ProjectClaimRepository, environment servingstatemodule.Environment) func(context.Context) (projectgraph.ResourceID, bool, error) {
+func readClaimedProject(repository deploymentmodule.ProjectClaimReader, environment servingstatemodule.Environment) func(context.Context) (projectgraph.ResourceID, bool, error) {
 	return func(ctx context.Context) (projectgraph.ResourceID, bool, error) {
 		if repository == nil {
 			return "", false, errors.New("project claim repository is required")

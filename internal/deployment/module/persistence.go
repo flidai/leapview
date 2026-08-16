@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
@@ -11,6 +12,16 @@ import (
 )
 
 type ActivationHooks struct {
+}
+
+// NewBootstrapPersistence constructs the durable bootstrap policy and project
+// claim ports owned by the deployment module. Callers receive contracts only;
+// the SQLite adapter never crosses the module boundary.
+func NewBootstrapPersistence(database *sql.DB) (BootstrapPersistence, error) {
+	if database == nil {
+		return nil, errors.New("deployment database is required")
+	}
+	return deploymentsqlite.NewRepositoryWithHooks(database, deploymentsqlite.ActivationHooks{}), nil
 }
 
 func newPersistence(

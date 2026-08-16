@@ -37,7 +37,7 @@ type Module struct {
 	currentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
 	authorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
 	authorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
-	bootstrapPolicies         deployment.BootstrapActivationPolicyRepository
+	bootstrapPolicies         BootstrapPolicyStore
 	authorizeBootstrap        func(context.Context, deployment.BootstrapActivationPolicy) error
 }
 
@@ -82,6 +82,27 @@ func (admit CandidatePreparationAdmitterFunc) AcquireCandidatePreparation(
 	ctx context.Context,
 ) (CandidatePreparationLease, error) {
 	return admit(ctx)
+}
+
+// BootstrapPolicyStore is the module-owned contract for the durable,
+// one-shot first-activation policy. The persistence adapter remains private to
+// this module; composition may provide a store without depending on SQLite.
+type BootstrapPolicyStore interface {
+	ArmBootstrapActivation(context.Context, deployment.BootstrapActivationPolicy) (deployment.BootstrapActivationPolicy, error)
+	BootstrapActivationPolicy(context.Context, string) (deployment.BootstrapActivationPolicy, error)
+}
+
+// ProjectClaimReader is the read-only module contract used to bind process
+// startup and bootstrap authorization to the durable instance claim.
+type ProjectClaimReader interface {
+	GetProjectClaim(context.Context) (deployment.ProjectClaim, error)
+}
+
+// BootstrapPersistence combines the bootstrap policy and project-claim ports
+// exposed by the module-owned persistence factory.
+type BootstrapPersistence interface {
+	BootstrapPolicyStore
+	ProjectClaimReader
 }
 
 // CandidateSourceBlobAuditEvent is the transport-neutral audit record emitted
@@ -152,7 +173,7 @@ type Config struct {
 	// It is intentionally separate from approvals and active-generation
 	// snapshots; composition supplies the access-role/credential and
 	// no-active-generation revalidator.
-	BootstrapPolicies  deployment.BootstrapActivationPolicyRepository
+	BootstrapPolicies  BootstrapPolicyStore
 	AuthorizeBootstrap func(context.Context, deployment.BootstrapActivationPolicy) error
 	// AfterActivated runs after runtime publication and durable activation.
 	// It is observational and cannot influence activation.
@@ -180,7 +201,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var candidates *deployment.CandidateService
 	var approvals *deployment.ApprovalService
 	var candidateRuntimes *deployment.CandidateRuntimeService
-	var durableBootstrapPolicies deployment.BootstrapActivationPolicyRepository
+	var durableBootstrapPolicies BootstrapPolicyStore
 	if config.Database != nil {
 		if config.States == nil || config.Runtime == nil || config.ManagedData == nil {
 			return nil, errors.New("deployment states, runtime, and managed data are required")
@@ -194,7 +215,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			config.API.Releases,
 			config.API.Workflow,
 		)
-		if policyStore, ok := repository.(deployment.BootstrapActivationPolicyRepository); ok {
+		if policyStore, ok := repository.(BootstrapPolicyStore); ok {
 			durableBootstrapPolicies = policyStore
 		}
 		service, err := deployment.New(repository, activation, config.States, config.Runtime, config.ManagedData)

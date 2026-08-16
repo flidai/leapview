@@ -1216,7 +1216,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		return fmt.Errorf("build APIGen authorizer: %w", err)
 	}
 	if bootstrapPolicies := moduleWorkflow.deploymentConfig.BootstrapPolicies; bootstrapPolicies != nil {
-		claimReader, ok := bootstrapPolicies.(deployment.ProjectClaimRepository)
+		claimReader, ok := bootstrapPolicies.(deploymentmodule.ProjectClaimReader)
 		if !ok {
 			return fmt.Errorf("bootstrap policy store does not expose the durable project claim")
 		}
@@ -1465,7 +1465,7 @@ func bootstrapAPIGenDecision(
 	ctx context.Context,
 	runtimeHost *runtimehostmodule.Module,
 	states servingStateRepository,
-	claims deployment.ProjectClaimRepository,
+	claims deploymentmodule.ProjectClaimReader,
 	environment, operationID string,
 	projectID projectgraph.ResourceID,
 ) (accessmodule.APIGenBootstrapDecision, error) {
