@@ -61,6 +61,7 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 
 	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
 		TargetID:    "minio-integration",
+		ProjectID:   "project:commerce",
 		Environment: "test",
 		TargetClass: connectionbinding.TargetDevelopment,
 		Kind:        connectionbinding.ResolverEnvironment,

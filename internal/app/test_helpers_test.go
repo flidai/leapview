@@ -20,7 +20,9 @@ import (
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projecthttp "github.com/flidai/leapview/internal/project/http"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
@@ -81,6 +83,8 @@ type assemblyConfig struct {
 	QueryAudit              *analyticsmodule.QueryAuditSurface
 	Product                 *adminmodule.ProductService
 	ProductStatus           adminmodule.ProductStatus
+	ProjectCatalog          *projectcatalog.Service
+	ProjectGraph            projecthttp.GraphReader
 }
 
 // appTestHarness is the test-only composition adapter used by app-package tests.
@@ -185,6 +189,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			AccessModule: options.AccessModule, Agent: options.Agent,
 			ManagedDataModule: options.ManagedDataModule, AnalyticsModule: options.AnalyticsModule, Authoring: options.Authoring,
 			DashboardAssets: options.DashboardAssets, Product: options.Product, ProductStatus: options.ProductStatus,
+			ProjectCatalog: options.ProjectCatalog, ProjectGraph: options.ProjectGraph,
 		},
 		workflowAssemblyInputs{
 			AgentSettings: options.AgentSettings, ManagedDataValidation: options.ManagedDataValidation,

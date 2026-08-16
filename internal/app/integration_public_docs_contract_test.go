@@ -43,7 +43,6 @@ func TestPublicDocsAndScriptsDoNotAdvertiseRemovedCaCSurfaces(t *testing.T) {
 
 	script := readRepoFile(t, root, filepath.Join("scripts", "agent_e2e.sh"))
 	for _, want := range []string{
-		"sales workspace",
 		"--project dashboards/leapview.yaml",
 		`"$BIN" dev --once`,
 		`"$BIN" publish`,

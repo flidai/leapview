@@ -354,8 +354,8 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
-		{ProjectID: projectgraph.ResourceID("project:test"), PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select orders"},
-		{ProjectID: projectgraph.ResourceID("project:test"), PrincipalID: owner.ID, Surface: "agent", Operation: "agent_query", QueryKind: "semantic_rows", ModelID: "operations", Target: "reviews", Status: "error", SQL: "select reviews"},
+		{ProjectID: projectgraph.ResourceID("project:sales"), PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select orders"},
+		{ProjectID: projectgraph.ResourceID("project:operations"), PrincipalID: owner.ID, Surface: "agent", Operation: "agent_query", QueryKind: "semantic_rows", ModelID: "operations", Target: "reviews", Status: "error", SQL: "select reviews"},
 	} {
 		if err := repo.RecordQueryEvent(ctx, event); err != nil {
 			t.Fatalf("record query event: %v", err)
@@ -365,7 +365,7 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 	updates, unsubscribe := server.runtime.broker.Subscribe("admin-queries:test-client")
 	defer unsubscribe()
 
-	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"reset","limit":50,"filters":{"projects":["sales"],"surfaces":["api"],"statuses":["success"],"search":"orders"}}}`)
+	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"reset","limit":50,"filters":{"projects":["project:sales"],"surfaces":["api"],"statuses":["success"],"search":"orders"}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -382,13 +382,13 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 		if !ok {
 			t.Fatalf("patch missing adminQueryHistory: %#v", patch)
 		}
-		if len(history.Table.Rows) != 1 || history.Table.Rows[0]["runtime"] != "sales" || history.Table.Rows[0]["target"] != "orders" {
+		if len(history.Table.Rows) != 1 || history.Table.Rows[0]["runtime"] != "project:sales" || history.Table.Rows[0]["target"] != "orders" {
 			t.Fatalf("filtered reset rows = %#v", history.Table.Rows)
 		}
 		projects := uisignals.ValueOrZero(history.Filters.Projects)
 		surfaces := uisignals.ValueOrZero(history.Filters.Surfaces)
 		statuses := uisignals.ValueOrZero(history.Filters.Statuses)
-		if len(projects) != 1 || projects[0] != "sales" || len(surfaces) != 1 || surfaces[0] != "api" || len(statuses) != 1 || statuses[0] != "success" || uisignals.ValueOrZero(history.Filters.Search) != "orders" {
+		if len(projects) != 1 || projects[0] != "project:sales" || len(surfaces) != 1 || surfaces[0] != "api" || len(statuses) != 1 || statuses[0] != "success" || uisignals.ValueOrZero(history.Filters.Search) != "orders" {
 			t.Fatalf("filters were not preserved: %#v", history.Filters)
 		}
 		filterMenus := uisignals.ValueOrZero(history.FilterMenus)
@@ -413,8 +413,8 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
-		{ProjectID: projectgraph.ResourceID("project:test"), PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select orders"},
-		{ProjectID: projectgraph.ResourceID("project:test"), PrincipalID: owner.ID, Surface: "agent", Operation: "agent_query", QueryKind: "semantic_rows", ModelID: "operations", Target: "reviews", Status: "error", SQL: "select reviews"},
+		{ProjectID: projectgraph.ResourceID("project:sales"), PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select orders"},
+		{ProjectID: projectgraph.ResourceID("project:operations"), PrincipalID: owner.ID, Surface: "agent", Operation: "agent_query", QueryKind: "semantic_rows", ModelID: "operations", Target: "reviews", Status: "error", SQL: "select reviews"},
 	} {
 		if err := repo.RecordQueryEvent(ctx, event); err != nil {
 			t.Fatalf("record query event: %v", err)
@@ -424,7 +424,7 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 	updates, unsubscribe := server.runtime.broker.Subscribe("admin-queries:test-client")
 	defer unsubscribe()
 
-	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Workspace"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"oper"}}}`)
+	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Project"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"oper"}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -443,7 +443,7 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 		}
 		projectMenu := queryHistoryMenuForTest(uisignals.ValueOrZero(history.FilterMenus), "project")
 		projectOptions := uisignals.ValueOrZero(projectMenu.Options)
-		if uisignals.ValueOrZero(projectMenu.Search) != "oper" || len(projectOptions) != 1 || projectOptions[0].Value != "operations" {
+		if uisignals.ValueOrZero(projectMenu.Search) != "oper" || len(projectOptions) != 1 || projectOptions[0].Value != "project:operations" {
 			t.Fatalf("project menu = %#v", projectMenu)
 		}
 		if len(history.Table.Rows) != 0 {

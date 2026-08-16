@@ -9,6 +9,8 @@ import (
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
@@ -52,6 +54,23 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		options.RuntimeHost = host
 		options.ProjectID = testProjectID
 		options.DefaultEnvironment = string(environment)
+	}
+	if options.ProjectGraph == nil {
+		if graph, ok := options.ServingStateRepo.(interface {
+			ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (servingstate.AssetGraph, bool, error)
+		}); ok {
+			options.ProjectGraph = graph
+		}
+	}
+	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
+		catalog, err := projectcatalog.NewService(
+			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
+			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
+		)
+		if err != nil {
+			panic(err)
+		}
+		options.ProjectCatalog = catalog
 	}
 	if options.QueryAudit == nil && (options.AnalyticsModule == nil || options.AnalyticsModule.QueryAuditReader() == nil) {
 		options.QueryAudit = analyticsmodule.BuildQueryAuditSurface(store.SQLDB())
