@@ -12,7 +12,7 @@ type PoolManagerBuilder func(TargetBinding) (*PoolManager, error)
 
 type ValidatedPoolLease interface {
 	Pool() RuntimePool
-	Evidence() BindingEvidence
+	Evidence() RuntimeBindingEvidence
 	Release()
 }
 

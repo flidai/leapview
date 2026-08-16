@@ -39,7 +39,7 @@ var (
 // symbolic connection name is resolved by the active project graph before a
 // binding is created and is never persisted as an execution key.
 func ParseConnectionID(value string) (projectgraph.ResourceID, error) {
-	id, err := projectgraph.NewResourceID(strings.TrimSpace(value))
+	id, err := projectgraph.NewResourceID(value)
 	if err != nil {
 		return "", fmt.Errorf("%w: connection id is invalid", ErrInvalidBinding)
 	}
@@ -98,7 +98,7 @@ func (reference CredentialReference) valid() bool {
 
 type TargetBinding struct {
 	ID                  BindingID
-	TargetID            string
+	TargetID            TargetID
 	ConnectionID        projectgraph.ResourceID
 	ConnectorKind       string
 	AuthenticationMode  AuthenticationMode
@@ -117,7 +117,7 @@ type TargetBinding struct {
 
 type TargetBindingInput struct {
 	ID                  BindingID
-	TargetID            string
+	TargetID            TargetID
 	ConnectionID        projectgraph.ResourceID
 	ConnectorKind       string
 	AuthenticationMode  AuthenticationMode
@@ -146,12 +146,14 @@ func NewTargetBinding(input TargetBindingInput) (TargetBinding, error) {
 		return TargetBinding{}, err
 	}
 	input.ID = BindingID(input.ID.String())
-	input.TargetID = strings.TrimSpace(input.TargetID)
+	if _, err := ParseTargetID(input.TargetID.String()); err != nil {
+		return TargetBinding{}, err
+	}
 	input.ConnectorKind = strings.TrimSpace(input.ConnectorKind)
 	input.Scope.ProjectID = projectgraph.ResourceID(input.Scope.ProjectID.String())
 	input.Scope.Environment = strings.TrimSpace(input.Scope.Environment)
 	input.Now = input.Now.UTC()
-	if _, err := ParseBindingID(input.ID.String()); err != nil || !identifierPattern.MatchString(input.TargetID) ||
+	if _, err := ParseBindingID(input.ID.String()); err != nil ||
 		!identifierPattern.MatchString(input.ConnectorKind) || !input.Scope.ProjectID.Valid() ||
 		!identifierPattern.MatchString(input.Scope.Environment) || input.Now.IsZero() {
 		return TargetBinding{}, fmt.Errorf("%w: binding identity, target, connector, scope, environment, and creation time are required", ErrInvalidBinding)
@@ -192,7 +194,7 @@ func (binding TargetBinding) Validate() error {
 	if err != nil || connectionID != binding.ConnectionID {
 		return fmt.Errorf("%w: connection identity is invalid", ErrInvalidBinding)
 	}
-	if _, err := ParseBindingID(binding.ID.String()); err != nil || !identifierPattern.MatchString(binding.TargetID) ||
+	if _, err := ParseBindingID(binding.ID.String()); err != nil ||
 		!identifierPattern.MatchString(binding.ConnectorKind) || !binding.Scope.ProjectID.Valid() ||
 		!identifierPattern.MatchString(binding.Scope.Environment) {
 		return fmt.Errorf("%w: binding identity, target, connector, scope, and environment are required", ErrInvalidBinding)
@@ -249,16 +251,24 @@ type Requirement struct {
 }
 
 type BindingEvidence struct {
-	BindingID          BindingID                    `json:"bindingId"`
-	TargetID           string                       `json:"targetId"`
-	ConnectionID       projectgraph.ResourceID      `json:"connectionId"`
-	Identity           projectgraph.ServingIdentity `json:"identity"`
-	ConnectorKind      string                       `json:"connectorKind"`
-	Scope              BindingScope                 `json:"scope"`
-	BindingRevision    int64                        `json:"bindingRevision"`
-	ValidatedVersion   string                       `json:"validatedVersion,omitempty"`
-	EndpointConfigHash string                       `json:"endpointConfigHash"`
-	Health             BindingHealth                `json:"health"`
+	BindingID          BindingID               `json:"bindingId"`
+	TargetID           string                  `json:"targetId"`
+	ConnectionID       projectgraph.ResourceID `json:"connectionId"`
+	ConnectorKind      string                  `json:"connectorKind"`
+	Scope              BindingScope            `json:"scope"`
+	BindingRevision    int64                   `json:"bindingRevision"`
+	ValidatedVersion   string                  `json:"validatedVersion,omitempty"`
+	EndpointConfigHash string                  `json:"endpointConfigHash"`
+	Health             BindingHealth           `json:"health"`
+}
+
+// RuntimeBindingEvidence adds the exact immutable serving generation to
+// persistent binding evidence. It can only be produced after runtime
+// acquisition validates the identity against the binding's project and
+// environment scope.
+type RuntimeBindingEvidence struct {
+	BindingEvidence
+	Identity projectgraph.ServingIdentity `json:"identity"`
 }
 
 func (binding TargetBinding) Evidence() BindingEvidence {

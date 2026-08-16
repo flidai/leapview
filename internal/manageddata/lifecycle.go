@@ -69,7 +69,10 @@ func NormalizeEnvironment(value string) (Environment, error) {
 }
 
 func ValidateCollectionID(value string) error {
-	if _, err := projectgraph.NewResourceID(strings.TrimSpace(value)); err != nil {
+	if value != strings.TrimSpace(value) {
+		return fmt.Errorf("collection id must be canonical")
+	}
+	if _, err := projectgraph.NewResourceID(value); err != nil {
 		return fmt.Errorf("collection id: %w", err)
 	}
 	return nil

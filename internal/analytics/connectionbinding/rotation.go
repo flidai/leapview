@@ -360,7 +360,7 @@ func (manager *PoolManager) Lease() (*PoolLease, error) {
 		return nil, ErrProviderUnavailable
 	}
 	manager.active.leases++
-	evidence := manager.binding.Evidence()
+	evidence := RuntimeBindingEvidence{BindingEvidence: manager.binding.Evidence()}
 	evidence.BindingRevision = manager.active.bindingRevision
 	evidence.ValidatedVersion = manager.active.version
 	return &PoolLease{
@@ -466,7 +466,7 @@ type PoolLease struct {
 	once       sync.Once
 	manager    *PoolManager
 	generation *poolGeneration
-	evidence   BindingEvidence
+	evidence   RuntimeBindingEvidence
 }
 
 func (lease *PoolLease) Pool() RuntimePool {
@@ -476,9 +476,9 @@ func (lease *PoolLease) Pool() RuntimePool {
 	return lease.generation.pool
 }
 
-func (lease *PoolLease) Evidence() BindingEvidence {
+func (lease *PoolLease) Evidence() RuntimeBindingEvidence {
 	if lease == nil {
-		return BindingEvidence{}
+		return RuntimeBindingEvidence{}
 	}
 	return lease.evidence
 }

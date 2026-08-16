@@ -36,7 +36,7 @@ type RuntimeBindingLeases struct {
 	once     sync.Once
 	mu       sync.RWMutex
 	leases   []ValidatedPoolLease
-	evidence []BindingEvidence
+	evidence []RuntimeBindingEvidence
 }
 
 func NewRuntimeBindingLeaser(config RuntimeBindingLeaserConfig) (*RuntimeBindingLeaser, error) {
@@ -78,7 +78,7 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 	}
 	result := &RuntimeBindingLeases{
 		leases:   make([]ValidatedPoolLease, 0, len(requirements)),
-		evidence: make([]BindingEvidence, 0, len(requirements)),
+		evidence: make([]RuntimeBindingEvidence, 0, len(requirements)),
 	}
 	defer func() {
 		if resultErr != nil {
@@ -90,7 +90,7 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 			ctx,
 			BindingScope{ProjectID: request.Identity.ProjectID, Environment: request.Identity.Environment},
 			request.TargetID,
-			requirement.LogicalConnectionID,
+			requirement.ConnectionID,
 		)
 		if err != nil {
 			return nil, err
@@ -120,13 +120,13 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 	return result, nil
 }
 
-func (leases *RuntimeBindingLeases) Evidence() []BindingEvidence {
+func (leases *RuntimeBindingLeases) Evidence() []RuntimeBindingEvidence {
 	if leases == nil {
 		return nil
 	}
 	leases.mu.RLock()
 	defer leases.mu.RUnlock()
-	return append([]BindingEvidence(nil), leases.evidence...)
+	return append([]RuntimeBindingEvidence(nil), leases.evidence...)
 }
 
 // UsePool exposes one admitted pool generation to an in-process Analytics
@@ -138,7 +138,7 @@ func (leases *RuntimeBindingLeases) UsePool(
 	if leases == nil || consumer == nil {
 		return ErrBindingNotFound
 	}
-	normalized, err := ParseConnectionID(strings.TrimSpace(connectionID.String()))
+	normalized, err := ParseConnectionID(connectionID.String())
 	if err != nil {
 		return ErrBindingNotFound
 	}
@@ -180,9 +180,7 @@ func (leases *RuntimeBindingLeases) Close() error {
 func normalizeRuntimeRequirements(requirements []Requirement) ([]Requirement, error) {
 	normalized := append([]Requirement(nil), requirements...)
 	for index := range normalized {
-		connectionID, err := ParseConnectionID(
-			strings.TrimSpace(normalized[index].ConnectionID.String()),
-		)
+		connectionID, err := ParseConnectionID(normalized[index].ConnectionID.String())
 		if err != nil {
 			return nil, err
 		}
@@ -214,7 +212,7 @@ func normalizeRuntimeRequirements(requirements []Requirement) ([]Requirement, er
 func validateRuntimeBindingEvidence(
 	binding TargetBinding,
 	requirement Requirement,
-	evidence BindingEvidence,
+	evidence RuntimeBindingEvidence,
 ) error {
 	if evidence.BindingID != binding.ID ||
 		evidence.TargetID != binding.TargetID ||
