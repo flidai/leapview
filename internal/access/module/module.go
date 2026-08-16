@@ -132,23 +132,6 @@ func (m *Module) Auth() *Auth {
 	return m.auth
 }
 
-// IsPlatformAdmin exposes the immutable instance-wide administrator check to
-// sibling capability handlers that use authenticated transport contracts.
-func (m *Module) IsPlatformAdmin(ctx context.Context, principalID string) (bool, error) {
-	if m == nil || m.repository == nil {
-		return false, fmt.Errorf("access repository is unavailable")
-	}
-	repository, err := m.repository()
-	if err != nil {
-		return false, err
-	}
-	checker, ok := repository.(access.PlatformRoleReader)
-	if !ok {
-		return false, fmt.Errorf("platform role checker is unavailable")
-	}
-	return checker.IsPlatformAdmin(ctx, principalID)
-}
-
 func (m *Module) CurrentPrincipal(r *http.Request) (Principal, bool) {
 	if m == nil {
 		return Principal{}, false
@@ -160,6 +143,31 @@ func (m *Module) CurrentPrincipal(r *http.Request) (Principal, bool) {
 		return LocalDeveloperPrincipal(), true
 	}
 	return m.auth.Principal(r)
+}
+
+// RequestEffectiveCapabilities evaluates the active immutable authorization
+// projection and attenuates it with any bearer or authoring credential on the
+// request. Stored credentials never add authority: omitted token capabilities
+// inherit the active projection, while an explicit empty list denies all.
+func (m *Module) RequestEffectiveCapabilities(ctx context.Context, r *http.Request, principalID string) ([]access.Capability, error) {
+	capabilities, err := m.CurrentEffectiveCapabilities(ctx, principalID)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil || m.auth == nil || r == nil {
+		return capabilities, nil
+	}
+	credential, ok := m.auth.APICredential(r)
+	if !ok {
+		return capabilities, nil
+	}
+	if credential.Authoring != nil {
+		capabilities = access.IntersectTokenCapabilities(credential.Authoring.Scope.Capabilities, capabilities)
+	}
+	if credential.Token.ID != "" {
+		capabilities = access.IntersectTokenCapabilities(credential.Token.Capabilities, capabilities)
+	}
+	return capabilities, nil
 }
 
 func (m *Module) CurrentCredentialEvidence(

@@ -63,10 +63,6 @@ type revisionRaceRepository struct {
 	bumpOnTransaction bool
 }
 
-func (r *revisionRaceRepository) IsPlatformAdmin(context.Context, string) (bool, error) {
-	return true, nil
-}
-
 func (r *revisionRaceRepository) RunAuditedMutation(ctx context.Context, mutation func(access.Repository) (access.AuditEventInput, error)) error {
 	if r.bumpOnTransaction {
 		r.principal.UpdatedAt = "2026-08-10T12:30:00Z"

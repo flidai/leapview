@@ -15,10 +15,6 @@ type platformAdminTestRepository struct {
 	err   error
 }
 
-func (r platformAdminTestRepository) IsPlatformAdmin(context.Context, string) (bool, error) {
-	return r.admin, r.err
-}
-
 func (r platformAdminTestRepository) ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error) {
 	return []access.Principal{}, nil
 }
@@ -42,11 +38,10 @@ func TestPlatformAdminGuard(t *testing.T) {
 			handler := Handler{
 				Repository: func() (access.Repository, error) { return test.repository, nil },
 				CurrentEffectiveCapabilities: func(ctx context.Context, principalID string) ([]access.Capability, error) {
-					admin, err := test.repository.IsPlatformAdmin(ctx, principalID)
-					if err != nil {
-						return nil, err
+					if test.repository.err != nil {
+						return nil, test.repository.err
 					}
-					if admin {
+					if test.repository.admin {
 						return []access.Capability{access.CapabilityProjectAdmin}, nil
 					}
 					return nil, nil

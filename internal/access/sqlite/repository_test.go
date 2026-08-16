@@ -408,7 +408,7 @@ func TestRepositoryLocalPasswordRejectsDisabledPrincipal(t *testing.T) {
 	}
 }
 
-func TestRepositoryChecksPlatformAdminIdentity(t *testing.T) {
+func TestRepositoryPersistsPlatformRoleIdentity(t *testing.T) {
 	ctx := context.Background()
 	_, repo := openAccessRepo(t, ctx)
 
@@ -421,24 +421,24 @@ func TestRepositoryChecksPlatformAdminIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set platform role: %v", err)
 	}
-	allowed, err := repo.IsPlatformAdmin(ctx, principal.ID)
-	if err != nil {
-		t.Fatalf("check platform admin: %v", err)
+	var role string
+	if err := repo.root.QueryRowContext(ctx, `SELECT role FROM platform_role_bindings WHERE principal_id = ?`, principal.ID).Scan(&role); err != nil {
+		t.Fatalf("read platform role: %v", err)
 	}
-	if !allowed {
-		t.Fatal("platform admin role was not recognized")
+	if role != string(access.PlatformRoleAdmin) {
+		t.Fatalf("platform role = %q, want %q", role, access.PlatformRoleAdmin)
 	}
 
 	limited, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{ID: "limited", Email: "limited@example.com", DisplayName: "Limited"})
 	if err != nil {
 		t.Fatalf("upsert limited principal: %v", err)
 	}
-	allowed, err = repo.IsPlatformAdmin(ctx, limited.ID)
-	if err != nil {
-		t.Fatalf("check limited platform role: %v", err)
+	var count int
+	if err := repo.root.QueryRowContext(ctx, `SELECT COUNT(*) FROM platform_role_bindings WHERE principal_id = ?`, limited.ID).Scan(&count); err != nil {
+		t.Fatalf("read limited platform role: %v", err)
 	}
-	if allowed {
-		t.Fatal("principal without platform role unexpectedly recognized as admin")
+	if count != 0 {
+		t.Fatal("principal without platform role unexpectedly has a platform role binding")
 	}
 }
 
@@ -603,11 +603,11 @@ func TestRepositoryResolveExternalPrincipalAttachesBootstrappedEmail(t *testing.
 	if principal.ID != access.PrincipalIDForEmail("owner@example.com") {
 		t.Fatalf("principal id = %q, want bootstrapped email principal", principal.ID)
 	}
-	allowed, err := repo.IsPlatformAdmin(ctx, principal.ID)
-	if err != nil {
-		t.Fatalf("check platform role: %v", err)
+	var role string
+	if err := repo.root.QueryRowContext(ctx, `SELECT role FROM platform_role_bindings WHERE principal_id = ?`, principal.ID).Scan(&role); err != nil {
+		t.Fatalf("read platform role: %v", err)
 	}
-	if !allowed {
+	if role != string(access.PlatformRoleAdmin) {
 		t.Fatal("attached Azure identity did not retain platform admin role")
 	}
 
@@ -639,11 +639,11 @@ func TestRepositoryBootstrapAdminIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup bootstrap principal: %v", err)
 	}
-	allowed, err := repo.IsPlatformAdmin(ctx, admin.ID)
-	if err != nil {
-		t.Fatalf("check bootstrap role: %v", err)
+	var role string
+	if err := repo.root.QueryRowContext(ctx, `SELECT role FROM platform_role_bindings WHERE principal_id = ?`, admin.ID).Scan(&role); err != nil {
+		t.Fatalf("read bootstrap role: %v", err)
 	}
-	if !allowed {
+	if role != string(access.PlatformRoleAdmin) {
 		t.Fatal("bootstrap admin role missing after repeated initialization")
 	}
 }
@@ -661,11 +661,11 @@ func TestRepositoryResolveExternalPrincipalWithoutEmailCreatesUnprivilegedPrinci
 	if err != nil {
 		t.Fatalf("resolve external principal: %v", err)
 	}
-	allowed, err := repo.IsPlatformAdmin(ctx, principal.ID)
-	if err != nil {
-		t.Fatalf("check platform role: %v", err)
+	var count int
+	if err := repo.root.QueryRowContext(ctx, `SELECT COUNT(*) FROM platform_role_bindings WHERE principal_id = ?`, principal.ID).Scan(&count); err != nil {
+		t.Fatalf("read platform role: %v", err)
 	}
-	if allowed {
+	if count != 0 {
 		t.Fatal("new external principal unexpectedly has platform admin role")
 	}
 }

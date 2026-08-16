@@ -557,11 +557,4 @@ FROM oauth_authoring_sessions
 WHERE principal_id = sqlc.arg(principal_id)
 ORDER BY created_at DESC, id;
 
--- name: IsPlatformAdmin :one
-SELECT EXISTS(
-  SELECT 1
-  FROM platform_role_bindings
-  WHERE principal_id = sqlc.arg(principal_id)
-    AND role = 'platform_admin'
-) AS is_admin;
 -- Canonical/global identity, authentication, and session persistence queries.

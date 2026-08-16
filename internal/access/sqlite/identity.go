@@ -345,17 +345,3 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 	}
 	return principal, nil
 }
-
-// IsPlatformAdmin reports the immutable instance-wide administrator role. The
-// check is intentionally backed directly by platform_role_bindings so HTTP
-// administration cannot inherit project authorization state.
-func (r *Repository) IsPlatformAdmin(ctx context.Context, principalID string) (bool, error) {
-	if principalID == "" || principalID != strings.TrimSpace(principalID) {
-		return false, fmt.Errorf("canonical principal id is required")
-	}
-	row, err := r.q.IsPlatformAdmin(ctx, principalID)
-	if err != nil {
-		return false, err
-	}
-	return row != 0, nil
-}

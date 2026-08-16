@@ -55,11 +55,10 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// RequirePlatformAdmin authorizes instance-wide administration using the
-// canonical PlatformRoleReader. Missing repositories, missing role readers,
-// and checker errors all fail closed with service-unavailable. A non-admin is
-// forbidden. Development bypass is the one intentional exception and remains
-// an authenticated principal.
+// RequirePlatformAdmin authorizes instance-wide administration from the active
+// immutable capability projection. Missing projections and evaluation errors
+// fail closed with service-unavailable. Request credentials can only attenuate
+// that projection; they cannot grant platform authority.
 func (m *Module) RequirePlatformAdmin(next http.Handler) http.Handler {
 	if next == nil {
 		next = http.NotFoundHandler()
@@ -74,20 +73,17 @@ func (m *Module) RequirePlatformAdmin(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		repository := m.repositoryValue()
-		if repository == nil {
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
-		}
-		checker, ok := any(repository).(access.PlatformRoleReader)
-		if !ok || checker == nil {
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
-		}
-		admin, err := checker.IsPlatformAdmin(r.Context(), principal.ID)
+		capabilities, err := m.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
+		}
+		admin := false
+		for _, capability := range capabilities {
+			if capability == access.CapabilityProjectAdmin {
+				admin = true
+				break
+			}
 		}
 		if !admin {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)

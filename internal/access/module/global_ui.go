@@ -34,11 +34,11 @@ func (m *Module) CurrentRoleLabel(r *http.Request) string {
 	if principal.DevBypass {
 		return "Platform admin"
 	}
-	checker, ok := m.repositoryValue().(access.PlatformRoleReader)
-	if ok {
-		admin, err := checker.IsPlatformAdmin(r.Context(), principal.ID)
-		if err == nil && admin {
-			return "Platform admin"
+	if capabilities, err := m.RequestEffectiveCapabilities(r.Context(), r, principal.ID); err == nil {
+		for _, capability := range capabilities {
+			if capability == access.CapabilityProjectAdmin {
+				return "Platform admin"
+			}
 		}
 	}
 	return "Platform access"
@@ -77,13 +77,18 @@ func (m *Module) AdminNavigationAccess(r *http.Request) AdminNavigationAccess {
 	if principal.DevBypass {
 		return allAdminNavigationAccess()
 	}
-	repository := m.repositoryValue()
-	checker, ok := repository.(access.PlatformRoleReader)
-	if !ok {
+	capabilities, err := m.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
+	if err != nil {
 		return AdminNavigationAccess{}
 	}
-	admin, err := checker.IsPlatformAdmin(r.Context(), principal.ID)
-	if err != nil || !admin {
+	admin := false
+	for _, capability := range capabilities {
+		if capability == access.CapabilityProjectAdmin {
+			admin = true
+			break
+		}
+	}
+	if !admin {
 		return AdminNavigationAccess{}
 	}
 	return allAdminNavigationAccess()
