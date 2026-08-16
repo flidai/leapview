@@ -46,7 +46,7 @@ spec:
   subject:
     kind: group
     group: analysts
-  privilege: RESOURCE_READ
+  capability: RESOURCE_READ
 ```
 
 Choose the narrowest object and privilege that supports the task. Avoid accumulating one-off direct user grants; they are harder to review and can survive team changes.

@@ -44,7 +44,7 @@ func TestFriendlyListCommandsPassPaginationQuery(t *testing.T) {
 		{
 			name:    "search",
 			command: searchCommand,
-			args:    []string{"orders", "--type", "visual"},
+			args:    []string{"orders", "--kind", "dashboard"},
 			path:    "/api/v1/search",
 		},
 	} {
@@ -56,15 +56,19 @@ func TestFriendlyListCommandsPassPaginationQuery(t *testing.T) {
 				if got := r.URL.Query().Get("limit"); got != "7" {
 					t.Fatalf("limit = %q", got)
 				}
-				if got := r.URL.Query().Get("pageToken"); got != "cursor" {
-					t.Fatalf("pageToken = %q", got)
+				cursorKey := "pageToken"
+				if tc.name == "search" {
+					cursorKey = "cursor"
+				}
+				if got := r.URL.Query().Get(cursorKey); got != "cursor" {
+					t.Fatalf("%s = %q", cursorKey, got)
 				}
 				if tc.name == "search" {
 					if got := r.URL.Query().Get("q"); got != "orders" {
 						t.Fatalf("q=%q", got)
 					}
-					if got := r.URL.Query().Get("type"); got != "visual" {
-						t.Fatalf("type=%q", got)
+					if got := r.URL.Query().Get("kind"); got != "dashboard" {
+						t.Fatalf("kind=%q", got)
 					}
 				}
 				writeCLIJSON(t, w, map[string]any{
@@ -98,7 +102,7 @@ func TestSearchCommandRendersConciseRows(t *testing.T) {
 		}
 		writeCLIJSON(t, w, map[string]any{
 			"items": []map[string]any{{
-			"reference":   map[string]any{"type": "visual", "id": "executive-sales.orders"},
+				"reference":   map[string]any{"kind": "dashboard", "id": "dashboard:executive"},
 				"name":        "Orders",
 				"description": "Orders visual on Overview.",
 			}},
@@ -114,7 +118,7 @@ func TestSearchCommandRendersConciseRows(t *testing.T) {
 			t.Fatalf("run search: %v", err)
 		}
 	})
-	for _, want := range []string{"TYPE", "NAME", "DESCRIPTION", "ID", "visual", "Orders", "Orders visual on Overview."} {
+	for _, want := range []string{"KIND", "NAME", "DESCRIPTION", "ID", "DASHBOARD", "Orders", "Orders visual on Overview."} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("search output missing %q:\n%s", want, output)
 		}
@@ -235,7 +239,7 @@ func TestDashboardDataCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			opts := &rootOptions{}
 			cmd := dashboardsCommand(context.Background(), opts)
 			args := append([]string{}, tc.args...)
-		args = append(args, "--target", server.URL, "--token", "token")
+			args = append(args, "--target", server.URL, "--token", "token")
 			cmd.SetArgs(args)
 			captureStdout(t, func() {
 				if err := cmd.Execute(); err != nil {
@@ -349,7 +353,7 @@ func TestSemanticModelDatasetCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			opts := &rootOptions{}
 			cmd := semanticModelsCommand(context.Background(), opts)
 			args := append([]string{}, tc.args...)
-		args = append(args, "--target", server.URL, "--token", "token")
+			args = append(args, "--target", server.URL, "--token", "token")
 			cmd.SetArgs(args)
 			captureStdout(t, func() {
 				if err := cmd.Execute(); err != nil {
