@@ -109,7 +109,7 @@ WITH eligible AS (
          ROW_NUMBER() OVER (
            PARTITION BY j.principal_id
            ORDER BY COALESCE(NULLIF(j.queued_at, ''), j.created_at) ASC, j.id ASC
-         ) AS project_position,
+         ) AS principal_position,
          COALESCE(NULLIF(j.queued_at, ''), j.created_at) AS queue_position
   FROM refresh_jobs j
   JOIN refresh_job_runs r ON r.job_id = j.id
@@ -126,7 +126,7 @@ WITH eligible AS (
 SELECT id, project_id, environment, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, payload_json,
        run_id, target_type, target_id, target_revision, trigger_type, attempt_count, lease_owner, lease_revision
 FROM eligible
-WHERE project_position = 1
+WHERE principal_position = 1
 ORDER BY queue_position ASC, id ASC
 LIMIT sqlc.arg(result_limit);
 

@@ -19,8 +19,11 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/runtimeview"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	"github.com/flidai/leapview/internal/manageddata/storage/filesystem"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
+
+var testIdentity = projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "state-1"}
 
 func TestResolveManagedDataJoinsAndMaterializesMultipleBindingsDeterministically(t *testing.T) {
 	ordersManifest, ordersBlobs := testManifest(map[string]string{"orders/part-1.csv": "order_id\n1\n"})
@@ -28,12 +31,12 @@ func TestResolveManagedDataJoinsAndMaterializesMultipleBindingsDeterministically
 	blobs := mergeBlobs(ordersBlobs, customerBlobs)
 	repo := &fakeRepository{
 		bindings: []manageddata.ServingStateBinding{
-			{ServingStateID: "state-1", CollectionID: "customers", RevisionID: "customers-r1", Environment: "prod"},
-			{ServingStateID: "state-1", CollectionID: "orders", RevisionID: "orders-r1", Environment: "prod"},
+			{Identity: testIdentity, CollectionID: "customers", RevisionID: "customers-r1"},
+			{Identity: testIdentity, CollectionID: "orders", RevisionID: "orders-r1"},
 		},
 		collections: map[string]manageddata.Collection{
-			"orders":    {ID: "orders", ProjectID: "sales", ConnectionName: "orders", Status: manageddata.CollectionStatusActive},
-			"customers": {ID: "customers", ProjectID: "crm", ConnectionName: "customers", Status: manageddata.CollectionStatusActive},
+			"orders":    {ID: "orders", ProjectID: "project_sales", ConnectionID: "orders", Status: manageddata.CollectionStatusActive},
+			"customers": {ID: "customers", ProjectID: "project_sales", ConnectionID: "customers", Status: manageddata.CollectionStatusActive},
 		},
 		revisions: map[string]manageddata.Revision{
 			"orders-r1":    testRevision("orders-r1", "orders", ordersManifest, manageddata.RevisionStatusReady),
@@ -46,14 +49,14 @@ func TestResolveManagedDataJoinsAndMaterializesMultipleBindingsDeterministically
 	}
 	resolver := testResolver(t, repo, &memoryBlobStore{blobs: blobs})
 
-	got, err := resolver.ResolveManagedData(t.Context(), servingstate.ID("state-1"))
+	got, err := resolver.ResolveManagedData(t.Context(), testIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = got.Lifetime.Release() })
 	wantRevisionID := aggregateForTest([]aggregateForTestInput{
-		{project: "crm", connection: "customers", digest: customersManifest.RevisionID()},
-		{project: "sales", connection: "orders", digest: ordersManifest.RevisionID()},
+		{project: "project_sales", connection: "customers", digest: customersManifest.RevisionID()},
+		{project: "project_sales", connection: "orders", digest: ordersManifest.RevisionID()},
 	})
 	if got.RevisionID != wantRevisionID {
 		t.Fatalf("RevisionID = %q, want %q", got.RevisionID, wantRevisionID)
@@ -65,7 +68,7 @@ func TestResolveManagedDataJoinsAndMaterializesMultipleBindingsDeterministically
 	assertFileContent(t, got.Roots["customers"], "customers.csv", "customer_id\n1\n")
 
 	repo.bindings[0], repo.bindings[1] = repo.bindings[1], repo.bindings[0]
-	reordered, err := resolver.ResolveManagedData(t.Context(), "state-1")
+	reordered, err := resolver.ResolveManagedData(t.Context(), testIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,8 +87,8 @@ func TestResolveRejectsInvalidRelationshipsEnvironmentAndReadiness(t *testing.T)
 	manifest, blobs := testManifest(map[string]string{"data.csv": "data"})
 	valid := func() *fakeRepository {
 		return &fakeRepository{
-			bindings:    []manageddata.ServingStateBinding{{ServingStateID: "state-1", CollectionID: "collection-1", RevisionID: "revision-1", Environment: "prod"}},
-			collections: map[string]manageddata.Collection{"collection-1": {ID: "collection-1", ProjectID: "project-1", ConnectionName: "warehouse"}},
+			bindings:    []manageddata.ServingStateBinding{{Identity: testIdentity, CollectionID: "collection-1", RevisionID: "revision-1"}},
+			collections: map[string]manageddata.Collection{"collection-1": {ID: "collection-1", ProjectID: "project_sales", ConnectionID: "warehouse"}},
 			revisions:   map[string]manageddata.Revision{"revision-1": testRevision("revision-1", "collection-1", manifest, manageddata.RevisionStatusReady)},
 			files:       map[string][]manageddata.RevisionFile{"revision-1": testRevisionFiles("revision-1", manifest)},
 		}
@@ -95,12 +98,14 @@ func TestResolveRejectsInvalidRelationshipsEnvironmentAndReadiness(t *testing.T)
 		mutate func(*fakeRepository)
 		want   error
 	}{
-		{name: "wrong serving state", mutate: func(repo *fakeRepository) { repo.bindings[0].ServingStateID = "state-2" }, want: ErrInvalidMetadata},
-		{name: "noncanonical environment", mutate: func(repo *fakeRepository) { repo.bindings[0].Environment = " prod " }, want: ErrInvalidMetadata},
+		{name: "wrong serving state", mutate: func(repo *fakeRepository) { repo.bindings[0].Identity.GenerationID = "state-2" }, want: ErrInvalidMetadata},
+		{name: "noncanonical environment", mutate: func(repo *fakeRepository) { repo.bindings[0].Identity.Environment = " prod " }, want: ErrInvalidMetadata},
 		{name: "environment differs from serving state", mutate: func(repo *fakeRepository) { repo.stateEnvironment = "dev" }, want: ErrInvalidMetadata},
 		{name: "mixed environments", mutate: func(repo *fakeRepository) {
-			repo.bindings = append(repo.bindings, manageddata.ServingStateBinding{ServingStateID: "state-1", CollectionID: "collection-2", RevisionID: "revision-2", Environment: "dev"})
-			repo.collections["collection-2"] = manageddata.Collection{ID: "collection-2", ProjectID: "project-1", ConnectionName: "second"}
+			identity := testIdentity
+			identity.Environment = "dev"
+			repo.bindings = append(repo.bindings, manageddata.ServingStateBinding{Identity: identity, CollectionID: "collection-2", RevisionID: "revision-2"})
+			repo.collections["collection-2"] = manageddata.Collection{ID: "collection-2", ProjectID: "project_sales", ConnectionID: "second"}
 			repo.revisions["revision-2"] = testRevision("revision-2", "collection-2", manifest, manageddata.RevisionStatusReady)
 			repo.files["revision-2"] = testRevisionFiles("revision-2", manifest)
 		}, want: ErrInvalidMetadata},
@@ -126,7 +131,7 @@ func TestResolveRejectsInvalidRelationshipsEnvironmentAndReadiness(t *testing.T)
 			repo := valid()
 			test.mutate(repo)
 			resolver := testResolver(t, repo, &memoryBlobStore{blobs: blobs})
-			_, err := resolver.ResolveManagedData(t.Context(), "state-1")
+			_, err := resolver.ResolveManagedData(t.Context(), testIdentity)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("ResolveManagedData() error = %v, want %v", err, test.want)
 			}
@@ -138,8 +143,8 @@ func TestResolveRejectsManifestAndRevisionFileMetadataDisagreement(t *testing.T)
 	manifest, blobs := testManifest(map[string]string{"data.csv": "data"})
 	valid := func() *fakeRepository {
 		return &fakeRepository{
-			bindings:    []manageddata.ServingStateBinding{{ServingStateID: "state-1", CollectionID: "collection-1", RevisionID: "revision-1", Environment: "prod"}},
-			collections: map[string]manageddata.Collection{"collection-1": {ID: "collection-1", ProjectID: "project-1", ConnectionName: "warehouse"}},
+			bindings:    []manageddata.ServingStateBinding{{Identity: testIdentity, CollectionID: "collection-1", RevisionID: "revision-1"}},
+			collections: map[string]manageddata.Collection{"collection-1": {ID: "collection-1", ProjectID: "project_sales", ConnectionID: "warehouse"}},
 			revisions:   map[string]manageddata.Revision{"revision-1": testRevision("revision-1", "collection-1", manifest, manageddata.RevisionStatusReady)},
 			files:       map[string][]manageddata.RevisionFile{"revision-1": testRevisionFiles("revision-1", manifest)},
 		}
@@ -196,7 +201,7 @@ func TestResolveRejectsManifestAndRevisionFileMetadataDisagreement(t *testing.T)
 			repo := valid()
 			test.mutate(repo)
 			resolver := testResolver(t, repo, &memoryBlobStore{blobs: blobs})
-			_, err := resolver.ResolveManagedData(t.Context(), "state-1")
+			_, err := resolver.ResolveManagedData(t.Context(), testIdentity)
 			if !errors.Is(err, ErrInvalidMetadata) {
 				t.Fatalf("ResolveManagedData() error = %v, want %v", err, ErrInvalidMetadata)
 			}
@@ -209,16 +214,16 @@ func TestResolveRejectsManifestAndRevisionFileMetadataDisagreement(t *testing.T)
 	}
 }
 
-func TestResolveRejectsDuplicateConnectionNameAmbiguity(t *testing.T) {
+func TestResolveRejectsDuplicateConnectionIDAmbiguity(t *testing.T) {
 	manifest, blobs := testManifest(map[string]string{"data.csv": "data"})
 	repo := &fakeRepository{
 		bindings: []manageddata.ServingStateBinding{
-			{ServingStateID: "state-1", CollectionID: "first", RevisionID: "first-r1", Environment: "prod"},
-			{ServingStateID: "state-1", CollectionID: "second", RevisionID: "second-r1", Environment: "prod"},
+			{Identity: testIdentity, CollectionID: "first", RevisionID: "first-r1"},
+			{Identity: testIdentity, CollectionID: "second", RevisionID: "second-r1"},
 		},
 		collections: map[string]manageddata.Collection{
-			"first":  {ID: "first", ProjectID: "project-a", ConnectionName: "warehouse"},
-			"second": {ID: "second", ProjectID: "project-b", ConnectionName: "warehouse"},
+			"first":  {ID: "first", ProjectID: "project_sales", ConnectionID: "warehouse"},
+			"second": {ID: "second", ProjectID: "project_sales", ConnectionID: "warehouse"},
 		},
 		revisions: map[string]manageddata.Revision{
 			"first-r1":  testRevision("first-r1", "first", manifest, manageddata.RevisionStatusReady),
@@ -230,7 +235,7 @@ func TestResolveRejectsDuplicateConnectionNameAmbiguity(t *testing.T) {
 		},
 	}
 	resolver := testResolver(t, repo, &memoryBlobStore{blobs: blobs})
-	_, err := resolver.ResolveManagedData(t.Context(), "state-1")
+	_, err := resolver.ResolveManagedData(t.Context(), testIdentity)
 	if !errors.Is(err, ErrAmbiguousConnection) {
 		t.Fatalf("ResolveManagedData() error = %v, want %v", err, ErrAmbiguousConnection)
 	}
@@ -238,7 +243,7 @@ func TestResolveRejectsDuplicateConnectionNameAmbiguity(t *testing.T) {
 
 func TestResolveSanitizesRepositoryErrors(t *testing.T) {
 	resolver := testResolver(t, &fakeRepository{listErr: errors.New("database failed at s3://private/key?secret=value")}, &memoryBlobStore{})
-	_, err := resolver.ResolveManagedData(t.Context(), "state-1")
+	_, err := resolver.ResolveManagedData(t.Context(), testIdentity)
 	if !errors.Is(err, ErrRepository) {
 		t.Fatalf("ResolveManagedData() error = %v, want %v", err, ErrRepository)
 	}
@@ -250,13 +255,13 @@ func TestResolveSanitizesRepositoryErrors(t *testing.T) {
 func TestResolveSanitizesMaterializationErrors(t *testing.T) {
 	manifest, _ := testManifest(map[string]string{"data.csv": "data"})
 	repo := &fakeRepository{
-		bindings:    []manageddata.ServingStateBinding{{ServingStateID: "state-1", CollectionID: "collection-1", RevisionID: "revision-1", Environment: "prod"}},
-		collections: map[string]manageddata.Collection{"collection-1": {ID: "collection-1", ProjectID: "project-1", ConnectionName: "warehouse"}},
+		bindings:    []manageddata.ServingStateBinding{{Identity: testIdentity, CollectionID: "collection-1", RevisionID: "revision-1"}},
+		collections: map[string]manageddata.Collection{"collection-1": {ID: "collection-1", ProjectID: "project_sales", ConnectionID: "warehouse"}},
 		revisions:   map[string]manageddata.Revision{"revision-1": testRevision("revision-1", "collection-1", manifest, manageddata.RevisionStatusReady)},
 		files:       map[string][]manageddata.RevisionFile{"revision-1": testRevisionFiles("revision-1", manifest)},
 	}
 	resolver := testResolver(t, repo, &memoryBlobStore{openErr: errors.New("read s3://private/key?secret=value")})
-	_, err := resolver.ResolveManagedData(t.Context(), "state-1")
+	_, err := resolver.ResolveManagedData(t.Context(), testIdentity)
 	if !errors.Is(err, ErrMaterialization) {
 		t.Fatalf("ResolveManagedData() error = %v, want %v", err, ErrMaterialization)
 	}
@@ -270,12 +275,12 @@ func TestResolveUsesRevisionMaterializerAndReleasesPartialResolution(t *testing.
 	secondManifest, _ := testManifest(map[string]string{"second.csv": "second"})
 	repo := &fakeRepository{
 		bindings: []manageddata.ServingStateBinding{
-			{ServingStateID: "state-1", CollectionID: "first", RevisionID: "first-r1", Environment: "prod"},
-			{ServingStateID: "state-1", CollectionID: "second", RevisionID: "second-r1", Environment: "prod"},
+			{Identity: testIdentity, CollectionID: "first", RevisionID: "first-r1"},
+			{Identity: testIdentity, CollectionID: "second", RevisionID: "second-r1"},
 		},
 		collections: map[string]manageddata.Collection{
-			"first":  {ID: "first", ProjectID: "project", ConnectionName: "first"},
-			"second": {ID: "second", ProjectID: "project", ConnectionName: "second"},
+			"first":  {ID: "first", ProjectID: "project_sales", ConnectionID: "first"},
+			"second": {ID: "second", ProjectID: "project_sales", ConnectionID: "second"},
 		},
 		revisions: map[string]manageddata.Revision{
 			"first-r1":  testRevision("first-r1", "first", firstManifest, manageddata.RevisionStatusReady),
@@ -291,7 +296,7 @@ func TestResolveUsesRevisionMaterializerAndReleasesPartialResolution(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolver.ResolveManagedData(t.Context(), "state-1")
+	_, err = resolver.ResolveManagedData(t.Context(), testIdentity)
 	if !errors.Is(err, ErrMaterialization) {
 		t.Fatalf("ResolveManagedData() error = %v, want %v", err, ErrMaterialization)
 	}
@@ -321,8 +326,8 @@ func TestResolveWithFilesystemBlobStoreAndRuntimeViewIsConcurrentAndIdempotent(t
 	}
 	t.Cleanup(func() { makeTestTreeWritable(runtimeRoot) })
 	repo := &fakeRepository{
-		bindings:    []manageddata.ServingStateBinding{{ServingStateID: "state-1", CollectionID: "collection-1", RevisionID: "revision-1", Environment: "prod"}},
-		collections: map[string]manageddata.Collection{"collection-1": {ID: "collection-1", ProjectID: "project-1", ConnectionName: "warehouse"}},
+		bindings:    []manageddata.ServingStateBinding{{Identity: testIdentity, CollectionID: "collection-1", RevisionID: "revision-1"}},
+		collections: map[string]manageddata.Collection{"collection-1": {ID: "collection-1", ProjectID: "project_sales", ConnectionID: "warehouse"}},
 		revisions:   map[string]manageddata.Revision{"revision-1": testRevision("revision-1", "collection-1", manifest, manageddata.RevisionStatusReady)},
 		files:       map[string][]manageddata.RevisionFile{"revision-1": testRevisionFiles("revision-1", manifest)},
 	}
@@ -339,7 +344,7 @@ func TestResolveWithFilesystemBlobStoreAndRuntimeViewIsConcurrentAndIdempotent(t
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			resolution, resolveErr := resolver.ResolveManagedData(context.Background(), "state-1")
+			resolution, resolveErr := resolver.ResolveManagedData(context.Background(), testIdentity)
 			if resolveErr != nil {
 				errorsFound <- resolveErr
 				return
@@ -407,31 +412,31 @@ func (l *recordingRevisionLease) Release() error {
 	return nil
 }
 
-func (r *fakeRepository) ListServingStateBindings(context.Context, string) ([]manageddata.ServingStateBinding, error) {
+func (r *fakeRepository) ListServingStateBindings(context.Context, projectgraph.ServingIdentity) ([]manageddata.ServingStateBinding, error) {
 	if r.listErr != nil {
 		return nil, r.listErr
 	}
 	return append([]manageddata.ServingStateBinding(nil), r.bindings...), nil
 }
 
-func (r *fakeRepository) CollectionByID(_ context.Context, id string) (manageddata.Collection, error) {
-	collection, ok := r.collections[id]
+func (r *fakeRepository) CollectionByID(_ context.Context, id projectgraph.ResourceID) (manageddata.Collection, error) {
+	collection, ok := r.collections[id.String()]
 	if !ok {
 		return manageddata.Collection{}, manageddata.ErrNotFound
 	}
 	return collection, nil
 }
 
-func (r *fakeRepository) RevisionByID(_ context.Context, id string) (manageddata.Revision, error) {
-	revision, ok := r.revisions[id]
+func (r *fakeRepository) RevisionByID(_ context.Context, id manageddata.RevisionID) (manageddata.Revision, error) {
+	revision, ok := r.revisions[id.String()]
 	if !ok {
 		return manageddata.Revision{}, manageddata.ErrNotFound
 	}
 	return revision, nil
 }
 
-func (r *fakeRepository) ListRevisionFiles(_ context.Context, revisionID string) ([]manageddata.RevisionFile, error) {
-	files, ok := r.files[revisionID]
+func (r *fakeRepository) ListRevisionFiles(_ context.Context, revisionID manageddata.RevisionID) ([]manageddata.RevisionFile, error) {
+	files, ok := r.files[revisionID.String()]
 	if !ok {
 		return nil, manageddata.ErrNotFound
 	}
@@ -450,7 +455,7 @@ func (r *fakeRepository) ByID(_ context.Context, id servingstate.ID) (servingsta
 	if environment == "" {
 		environment = "prod"
 	}
-	return servingstate.State{ID: stateID, Environment: environment}, nil
+	return servingstate.State{ID: stateID, ProjectID: testIdentity.ProjectID, Environment: environment}, nil
 }
 
 type memoryBlobStore struct {
@@ -545,7 +550,7 @@ func testRevision(id, collectionID string, manifest manageddata.Manifest, status
 		size += file.Size
 	}
 	return manageddata.Revision{
-		ID: id, CollectionID: collectionID, Digest: manifest.RevisionID(), Status: status,
+		ID: manageddata.RevisionID(id), CollectionID: projectgraph.ResourceID(collectionID), Digest: manifest.RevisionID(), Status: status,
 		ManifestJSON: string(canonical), FileCount: int64(len(manifest.Files)), SizeBytes: size,
 	}
 }
@@ -554,7 +559,7 @@ func testRevisionFiles(revisionID string, manifest manageddata.Manifest) []manag
 	files := make([]manageddata.RevisionFile, 0, len(manifest.Files))
 	for _, file := range manifest.Files {
 		files = append(files, manageddata.RevisionFile{
-			RevisionID: revisionID,
+			RevisionID: manageddata.RevisionID(revisionID),
 			StoredFile: manageddata.StoredFile{File: file, StorageKey: "opaque-storage-key"},
 		})
 	}

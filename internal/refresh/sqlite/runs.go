@@ -183,6 +183,13 @@ func (r *SQLRunRepository) ListExecutableJobs(ctx context.Context, identity proj
 		if err := json.Unmarshal([]byte(row.GroupIdsJson), &groupIDs); err != nil {
 			return nil, fmt.Errorf("invalid persisted refresh job group ids for %s: %w", row.ID, err)
 		}
+		canonicalGroups, marshalErr := json.Marshal(groupIDs)
+		if marshalErr != nil || string(canonicalGroups) != row.GroupIdsJson || groupIDs == nil {
+			return nil, fmt.Errorf("invalid persisted refresh job group ids for %s", row.ID)
+		}
+		if err := refreshrun.ValidateGroupIDs(groupIDs); err != nil {
+			return nil, fmt.Errorf("invalid persisted refresh job group ids for %s: %w", row.ID, err)
+		}
 		jobs = append(jobs, refreshrun.JobRecord{
 			ID: row.ID, Identity: rowIdentity, PipelineID: pipelineID, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID), PrincipalID: row.PrincipalID,
 			GroupIDs: groupIDs, EstimatedMemoryBytes: row.EstimatedMemoryBytes,

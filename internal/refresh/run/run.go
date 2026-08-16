@@ -179,7 +179,7 @@ func (input RunInput) Validate() error {
 	if input.TargetRevision < 0 {
 		return errors.New("refresh target revision must not be negative")
 	}
-	if err := validateGroupIDs(input.GroupIDs); err != nil {
+	if err := ValidateGroupIDs(input.GroupIDs); err != nil {
 		return err
 	}
 	if input.EstimatedMemoryBytes <= 0 {
@@ -238,7 +238,7 @@ func (job JobRecord) Validate() error {
 	if job.TargetRevision < 0 || job.LeaseRevision < 0 {
 		return errors.New("refresh job revisions must not be negative")
 	}
-	if err := validateGroupIDs(job.GroupIDs); err != nil {
+	if err := ValidateGroupIDs(job.GroupIDs); err != nil {
 		return err
 	}
 	if job.EstimatedMemoryBytes <= 0 {
@@ -247,7 +247,7 @@ func (job JobRecord) Validate() error {
 	return nil
 }
 
-func validateGroupIDs(groups []string) error {
+func ValidateGroupIDs(groups []string) error {
 	seen := make(map[string]struct{}, len(groups))
 	for _, group := range groups {
 		if err := validateOperational(group, "group id", true); err != nil {
@@ -255,6 +255,12 @@ func validateGroupIDs(groups []string) error {
 		}
 		if _, exists := seen[group]; exists {
 			return errors.New("refresh group ids must be unique")
+		}
+		if len(seen) > 0 {
+			previous := groups[len(seen)-1]
+			if group <= previous {
+				return errors.New("refresh group ids must be sorted canonically")
+			}
 		}
 		seen[group] = struct{}{}
 	}

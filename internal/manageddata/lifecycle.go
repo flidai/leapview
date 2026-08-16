@@ -61,7 +61,9 @@ func (s UploadStatus) CanTransitionTo(target string) bool {
 type Environment string
 
 func NormalizeEnvironment(value string) (Environment, error) {
-	value = strings.TrimSpace(value)
+	if value != strings.TrimSpace(value) {
+		return "", fmt.Errorf("environment must be canonical")
+	}
 	if err := validateSlug("environment", value); err != nil {
 		return "", err
 	}

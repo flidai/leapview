@@ -21,6 +21,9 @@ func TestRunInputRejectsIdentityAndOperationalAliases(t *testing.T) {
 		"pipeline id":          func(input *RunInput) { input.PipelineID = " pipeline_sales" },
 		"parent run":           func(input *RunInput) { input.ParentRunID = " parent" },
 		"target revision":      func(input *RunInput) { input.TargetRevision = -1 },
+		"unsorted groups":      func(input *RunInput) { input.GroupIDs = []string{"team-z", "team-a"} },
+		"duplicate groups":     func(input *RunInput) { input.GroupIDs = []string{"team-a", "team-a"} },
+		"memory estimate":      func(input *RunInput) { input.EstimatedMemoryBytes = 0 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := base
@@ -68,5 +71,16 @@ func TestRunInputKeepsModelTargetDistinctFromPipeline(t *testing.T) {
 	input.TargetType = "invented_target"
 	if err := input.Validate(); err == nil {
 		t.Fatal("Validate() = nil for invented target type")
+	}
+}
+
+func TestValidateGroupIDsRequiresCanonicalArrayOrder(t *testing.T) {
+	for _, groups := range [][]string{{"team-z", "team-a"}, {"team-a", "team-a"}, {" team-a"}} {
+		if err := ValidateGroupIDs(groups); err == nil {
+			t.Fatalf("ValidateGroupIDs(%q) = nil", groups)
+		}
+	}
+	if err := ValidateGroupIDs([]string{"team-a", "team-z"}); err != nil {
+		t.Fatalf("ValidateGroupIDs(sorted) = %v", err)
 	}
 }
