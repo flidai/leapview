@@ -138,6 +138,7 @@ CREATE TABLE dashboard_authoring_revalidation_attempts (
   project_id TEXT NOT NULL,
   dashboard_id TEXT NOT NULL,
   generation_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL CHECK (length(trim(attempt_id)) > 0),
   generation_identity_json TEXT NOT NULL CHECK (length(trim(generation_identity_json)) > 0),
   graph_digest TEXT NOT NULL CHECK (length(graph_digest) = 71 AND substr(graph_digest, 1, 7) = 'sha256:' AND substr(graph_digest, 8) NOT GLOB '*[^0-9a-f]*'),
   dependency_ids_json TEXT NOT NULL CHECK (length(trim(dependency_ids_json)) > 0),
@@ -152,7 +153,7 @@ CREATE TABLE dashboard_authoring_revalidation_attempts (
   compiled_semantic_model_id TEXT,
   compiled_semantic_identity_json TEXT,
   attempted_at TEXT NOT NULL,
-  PRIMARY KEY (project_id, dashboard_id, generation_id),
+  PRIMARY KEY (project_id, dashboard_id, generation_id, attempt_id),
   FOREIGN KEY (project_id, dashboard_id)
     REFERENCES dashboard_authoring_dashboards(project_id, dashboard_id)
     ON DELETE CASCADE,
@@ -182,8 +183,8 @@ DROP INDEX dashboard_authoring_revalidation_project_idx;
 DROP INDEX dashboard_authoring_revisions_project_idx;
 DROP INDEX dashboard_authoring_dashboards_project_idx;
 DROP TABLE dashboard_authoring_commands;
-DROP TABLE dashboard_authoring_published;
 DROP TABLE dashboard_authoring_revalidation_attempts;
+DROP TABLE dashboard_authoring_published;
 DROP TABLE dashboard_authoring_compiled_revisions;
 DROP TABLE dashboard_authoring_drafts;
 DROP TABLE dashboard_authoring_revisions;

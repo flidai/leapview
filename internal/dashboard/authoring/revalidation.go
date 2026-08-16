@@ -2,6 +2,8 @@ package authoring
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -16,6 +18,33 @@ var (
 	ErrGenerationSuperseded = errors.New("dashboard revalidation generation was superseded")
 	ErrRevalidationConflict = errors.New("dashboard revalidation evidence compare-and-swap conflict")
 )
+
+// NewRevalidationAttemptID returns an opaque identifier for one immutable
+// revalidation attempt. Attempts are intentionally distinct even when a
+// caller retries the same dashboard and generation with the same clock
+// value.
+func NewRevalidationAttemptID() (string, error) {
+	var entropy [16]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return "", fmt.Errorf("generate revalidation attempt ID: %w", err)
+	}
+	return "attempt_" + hex.EncodeToString(entropy[:]), nil
+}
+
+func ValidateRevalidationAttemptID(value string) error {
+	if value != strings.TrimSpace(value) {
+		return fmt.Errorf("revalidation attempt ID must be canonical attempt_<32 lowercase hex> token")
+	}
+	if len(value) != len("attempt_")+32 || !strings.HasPrefix(value, "attempt_") {
+		return fmt.Errorf("revalidation attempt ID must be canonical attempt_<32 lowercase hex> token")
+	}
+	for _, r := range value[len("attempt_"):] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return fmt.Errorf("revalidation attempt ID must be canonical attempt_<32 lowercase hex> token")
+		}
+	}
+	return nil
+}
 
 // RevalidationGeneration is the immutable graph and authorization snapshot
 // that a generation activation made visible. ChangedIDs are canonical graph
@@ -52,6 +81,7 @@ func (g RevalidationGeneration) Validate() error {
 }
 
 type RevalidationCommit struct {
+	AttemptID        string
 	Generation       RevalidationGeneration
 	Dashboard        DashboardLifecycle
 	AuthoredRevision Revision
@@ -62,6 +92,7 @@ type RevalidationCommit struct {
 }
 
 type RevalidationFailureInput struct {
+	AttemptID        string
 	Generation       RevalidationGeneration
 	Dashboard        DashboardLifecycle
 	AuthoredRevision Revision
@@ -188,7 +219,11 @@ func (r *GenerationRevalidator) GenerationActivated(ctx context.Context, generat
 		if attemptedAt.IsZero() {
 			attemptedAt = time.Now().UTC()
 		}
-		commitErr := r.store.CommitRevalidation(ctx, RevalidationCommit{Generation: generation, Dashboard: lifecycle, AuthoredRevision: revision, PriorCompilation: lifecycle.Published.Compilation, Compilation: compiled, DependencyIDs: dependencies, AttemptedAt: attemptedAt})
+		attemptID, attemptErr := NewRevalidationAttemptID()
+		if attemptErr != nil {
+			return results, attemptErr
+		}
+		commitErr := r.store.CommitRevalidation(ctx, RevalidationCommit{AttemptID: attemptID, Generation: generation, Dashboard: lifecycle, AuthoredRevision: revision, PriorCompilation: lifecycle.Published.Compilation, Compilation: compiled, DependencyIDs: dependencies, AttemptedAt: attemptedAt})
 		if errors.Is(commitErr, ErrGenerationSuperseded) {
 			result.Status, result.Err = RevalidationSuperseded, commitErr
 		} else if commitErr != nil {
@@ -236,8 +271,13 @@ func (r *GenerationRevalidator) recordFailure(ctx context.Context, generation Re
 		failedAt = time.Now().UTC()
 	}
 	failure := RevalidationFailure{Identity: generation.Identity, DependencyIDs: dependencies, Code: code, Message: strings.TrimSpace(cause.Error()), FailedAt: failedAt}
-	input := RevalidationFailureInput{Generation: generation, Dashboard: lifecycle, AuthoredRevision: revision, PriorCompilation: lifecycle.Published.Compilation, DependencyIDs: dependencies, Failure: failure}
+	attemptID, attemptErr := NewRevalidationAttemptID()
 	result := RevalidationResult{DashboardID: lifecycle.ID, Status: RevalidationFailed, Dependencies: dependencies, Failure: &failure, Err: cause}
+	if attemptErr != nil {
+		result.Err = errors.Join(result.Err, attemptErr)
+		return result
+	}
+	input := RevalidationFailureInput{AttemptID: attemptID, Generation: generation, Dashboard: lifecycle, AuthoredRevision: revision, PriorCompilation: lifecycle.Published.Compilation, DependencyIDs: dependencies, Failure: failure}
 	if err := r.store.RecordRevalidationFailure(ctx, input); err != nil {
 		result.Err = errors.Join(cause, err)
 	}

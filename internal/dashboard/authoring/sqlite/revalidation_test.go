@@ -55,7 +55,7 @@ func TestRevalidationSQLiteCASAndFailureEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commit := authoring.RevalidationCommit{Generation: generation, Dashboard: current, AuthoredRevision: revision, PriorCompilation: current.Published.Compilation, Compilation: compiled, DependencyIDs: graph.Dependencies("dashboard"), AttemptedAt: compiled.CompiledAt}
+	commit := authoring.RevalidationCommit{AttemptID: "attempt_00000000000000000000000000000001", Generation: generation, Dashboard: current, AuthoredRevision: revision, PriorCompilation: current.Published.Compilation, Compilation: compiled, DependencyIDs: graph.Dependencies("dashboard"), AttemptedAt: compiled.CompiledAt}
 	if err := repo.CommitRevalidation(ctx, commit); err != nil {
 		t.Fatal(err)
 	}
@@ -67,13 +67,35 @@ func TestRevalidationSQLiteCASAndFailureEvidence(t *testing.T) {
 		t.Fatalf("second CAS = %v, want conflict", err)
 	}
 	failed := authoring.RevalidationFailure{Identity: generation.Identity, DependencyIDs: graph.Dependencies("dashboard"), Code: "INVALID_DEPENDENCY", Message: "semantic model column removed", FailedAt: time.Date(2026, 8, 16, 2, 0, 0, 0, time.UTC)}
-	if err := repo.RecordRevalidationFailure(ctx, authoring.RevalidationFailureInput{Generation: generation, Dashboard: current, AuthoredRevision: revision, PriorCompilation: compiled.Token(), DependencyIDs: failed.DependencyIDs, Failure: failed}); !errors.Is(err, authoring.ErrRevalidationConflict) {
-		t.Fatalf("duplicate failure = %v, want immutable conflict", err)
+	if err := repo.RecordRevalidationFailure(ctx, authoring.RevalidationFailureInput{AttemptID: "attempt_00000000000000000000000000000002", Generation: generation, Dashboard: current, AuthoredRevision: revision, PriorCompilation: compiled.Token(), DependencyIDs: failed.DependencyIDs, Failure: failed}); err != nil {
+		t.Fatalf("retry failure = %v", err)
 	}
-	// The duplicate failure is expected because the successful attempt already
-	// occupies the generation key; the published evidence remains intact.
+	// A failed retry occupies its own immutable attempt key; the published
+	// evidence remains intact while actionable failure state is retained.
 	if got, err := repo.GetPublishedCompilation(ctx, "project", "dashboard"); err != nil || got.SemanticIdentity != generation.Identity {
 		t.Fatalf("published evidence after failure attempt=%#v err=%v", got, err)
+	}
+	failedLifecycle, err := repo.Get(ctx, "project", "dashboard")
+	if err != nil || failedLifecycle.Revalidation == nil || failedLifecycle.Revalidation.Code != "INVALID_DEPENDENCY" {
+		t.Fatalf("retry failure state=%#v err=%v", failedLifecycle.Revalidation, err)
+	}
+	// A subsequent successful retry in the same generation gets another
+	// immutable attempt row and clears the failure projection without changing
+	// the authored revision or serving identity contract.
+	retryCompiled, err := authoring.NewCompiledRevision("project", "dashboard", revision.Token(), compiled.Definition, generation.Identity, time.Date(2026, 8, 16, 2, 30, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryLifecycle, err := repo.Get(ctx, "project", "dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitRevalidation(ctx, authoring.RevalidationCommit{AttemptID: "attempt_00000000000000000000000000000003", Generation: generation, Dashboard: retryLifecycle, AuthoredRevision: revision, PriorCompilation: retryLifecycle.Published.Compilation, Compilation: retryCompiled, DependencyIDs: graph.Dependencies("dashboard"), AttemptedAt: retryCompiled.CompiledAt}); err != nil {
+		t.Fatalf("successful retry = %v", err)
+	}
+	cleared, err := repo.Get(ctx, "project", "dashboard")
+	if err != nil || cleared.Revalidation != nil {
+		t.Fatalf("newer success did not clear failure: %#v err=%v", cleared.Revalidation, err)
 	}
 	// A database failure after the immutable insert boundary rolls the whole
 	// transaction back: neither a new compiled row nor a pointer advance may
@@ -107,7 +129,7 @@ func TestRevalidationSQLiteCASAndFailureEvidence(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(ctx, `CREATE TRIGGER fail_revalidation BEFORE INSERT ON dashboard_authoring_revalidation_attempts WHEN NEW.generation_id = 'generation-3' BEGIN SELECT RAISE(ABORT, 'forced revalidation failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	rollbackErr := repo.CommitRevalidation(ctx, authoring.RevalidationCommit{Generation: nextGeneration, Dashboard: nextCurrent, AuthoredRevision: revision, PriorCompilation: nextCurrent.Published.Compilation, Compilation: nextCompiled, DependencyIDs: graph.Dependencies("dashboard"), AttemptedAt: nextCompiled.CompiledAt})
+	rollbackErr := repo.CommitRevalidation(ctx, authoring.RevalidationCommit{AttemptID: "attempt_00000000000000000000000000000004", Generation: nextGeneration, Dashboard: nextCurrent, AuthoredRevision: revision, PriorCompilation: nextCurrent.Published.Compilation, Compilation: nextCompiled, DependencyIDs: graph.Dependencies("dashboard"), AttemptedAt: nextCompiled.CompiledAt})
 	if _, err := store.SQLDB().ExecContext(ctx, `DROP TRIGGER fail_revalidation`); err != nil {
 		t.Fatal(err)
 	}
@@ -122,10 +144,10 @@ func TestRevalidationSQLiteCASAndFailureEvidence(t *testing.T) {
 		t.Fatalf("rollback left attempt rows=%d err=%v", attempts, err)
 	}
 	failure := authoring.RevalidationFailure{Identity: nextGeneration.Identity, DependencyIDs: graph.Dependencies("dashboard"), Code: "INVALID_DEPENDENCY", Message: "semantic model removed", FailedAt: time.Date(2026, 8, 16, 4, 0, 0, 0, time.UTC)}
-	if err := repo.RecordRevalidationFailure(ctx, authoring.RevalidationFailureInput{Generation: nextGeneration, Dashboard: nextCurrent, AuthoredRevision: revision, PriorCompilation: nextCurrent.Published.Compilation, DependencyIDs: failure.DependencyIDs, Failure: failure}); err != nil {
+	if err := repo.RecordRevalidationFailure(ctx, authoring.RevalidationFailureInput{AttemptID: "attempt_00000000000000000000000000000005", Generation: nextGeneration, Dashboard: nextCurrent, AuthoredRevision: revision, PriorCompilation: nextCurrent.Published.Compilation, DependencyIDs: failure.DependencyIDs, Failure: failure}); err != nil {
 		t.Fatal(err)
 	}
-	failedLifecycle, err := repo.Get(ctx, "project", "dashboard")
+	failedLifecycle, err = repo.Get(ctx, "project", "dashboard")
 	if err != nil || failedLifecycle.Revalidation == nil || failedLifecycle.Revalidation.Code != "INVALID_DEPENDENCY" {
 		t.Fatalf("failure state=%#v err=%v", failedLifecycle.Revalidation, err)
 	}
@@ -163,12 +185,17 @@ func TestRevalidationSQLiteConcurrentCASOnlyOneAdvances(t *testing.T) {
 	generation, _ := revalidationGeneration(t)
 	current, _ := repo.Get(ctx, "project", "dashboard")
 	compiled, _ := authoring.NewCompiledRevision("project", "dashboard", revision.Token(), old.Definition, generation.Identity, time.Date(2026, 8, 16, 1, 0, 0, 0, time.UTC))
-	commit := authoring.RevalidationCommit{Generation: generation, Dashboard: current, AuthoredRevision: revision, PriorCompilation: current.Published.Compilation, Compilation: compiled, DependencyIDs: generation.Graph.Dependencies("dashboard"), AttemptedAt: compiled.CompiledAt}
+	commit := authoring.RevalidationCommit{AttemptID: "attempt_00000000000000000000000000000006", Generation: generation, Dashboard: current, AuthoredRevision: revision, PriorCompilation: current.Published.Compilation, Compilation: compiled, DependencyIDs: generation.Graph.Dependencies("dashboard"), AttemptedAt: compiled.CompiledAt}
+	commits := []authoring.RevalidationCommit{commit, commit}
+	commits[1].AttemptID = "attempt_00000000000000000000000000000007"
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
-	for i := 0; i < 2; i++ {
+	for i := range commits {
 		wg.Add(1)
-		go func() { defer wg.Done(); results <- repo.CommitRevalidation(ctx, commit) }()
+		go func(input authoring.RevalidationCommit) {
+			defer wg.Done()
+			results <- repo.CommitRevalidation(ctx, input)
+		}(commits[i])
 	}
 	wg.Wait()
 	close(results)

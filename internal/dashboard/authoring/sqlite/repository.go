@@ -239,7 +239,10 @@ func (r *Repository) CommitRevalidation(ctx context.Context, input authoring.Rev
 	if storedDefinition != string(definitionJSON) {
 		return authoring.ErrRevalidationConflict
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO dashboard_authoring_revalidation_attempts (project_id, dashboard_id, generation_id, generation_identity_json, graph_digest, dependency_ids_json, authored_revision_id, authored_revision_number, authored_content_hash, prior_compiled_identity_json, status, compiled_definition_hash, compiled_semantic_model_id, compiled_semantic_identity_json, attempted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?)`, input.Dashboard.ProjectID.String(), input.Dashboard.ID.String(), input.Generation.Identity.GenerationID, identityJSON, input.Generation.Graph.Digest(), string(depsJSON), input.AuthoredRevision.ID.String(), input.AuthoredRevision.Number, input.AuthoredRevision.ContentHash, priorIdentityJSON, input.Compilation.DefinitionHash, input.Compilation.SemanticModelID.String(), compiledIdentityJSON, formatTime(input.AttemptedAt))
+	_, err = tx.ExecContext(ctx, `INSERT INTO dashboard_authoring_revalidation_attempts (project_id, dashboard_id, generation_id, attempt_id, generation_identity_json, graph_digest, dependency_ids_json, authored_revision_id, authored_revision_number, authored_content_hash, prior_compiled_identity_json, status, compiled_definition_hash, compiled_semantic_model_id, compiled_semantic_identity_json, attempted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?)`, input.Dashboard.ProjectID.String(), input.Dashboard.ID.String(), input.Generation.Identity.GenerationID, input.AttemptID, identityJSON, input.Generation.Graph.Digest(), string(depsJSON), input.AuthoredRevision.ID.String(), input.AuthoredRevision.Number, input.AuthoredRevision.ContentHash, priorIdentityJSON, input.Compilation.DefinitionHash, input.Compilation.SemanticModelID.String(), compiledIdentityJSON, formatTime(input.AttemptedAt))
+	if isConstraint(err) {
+		return authoring.ErrRevalidationConflict
+	}
 	if err != nil {
 		return err
 	}
@@ -254,8 +257,8 @@ func (r *Repository) CommitRevalidation(ctx context.Context, input authoring.Rev
 }
 
 // RecordRevalidationFailure appends immutable failure evidence without
-// changing published rows. Repeated writes for one generation are conflicts,
-// preserving the first actionable diagnostic for forensic inspection.
+// changing published rows. Each retry supplies a new opaque attempt ID, so
+// every diagnostic remains available for forensic inspection.
 func (r *Repository) RecordRevalidationFailure(ctx context.Context, input authoring.RevalidationFailureInput) error {
 	if err := validateRevalidationFailureInput(input); err != nil {
 		return err
@@ -285,7 +288,7 @@ func (r *Repository) RecordRevalidationFailure(ctx context.Context, input author
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO dashboard_authoring_revalidation_attempts (project_id, dashboard_id, generation_id, generation_identity_json, graph_digest, dependency_ids_json, authored_revision_id, authored_revision_number, authored_content_hash, prior_compiled_identity_json, status, error_code, error_message, attempted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, ?)`, input.Dashboard.ProjectID.String(), input.Dashboard.ID.String(), input.Generation.Identity.GenerationID, identityJSON, input.Generation.Graph.Digest(), string(depsJSON), input.AuthoredRevision.ID.String(), input.AuthoredRevision.Number, input.AuthoredRevision.ContentHash, priorIdentityJSON, input.Failure.Code, input.Failure.Message, formatTime(input.Failure.FailedAt))
+	_, err = tx.ExecContext(ctx, `INSERT INTO dashboard_authoring_revalidation_attempts (project_id, dashboard_id, generation_id, attempt_id, generation_identity_json, graph_digest, dependency_ids_json, authored_revision_id, authored_revision_number, authored_content_hash, prior_compiled_identity_json, status, error_code, error_message, attempted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, ?)`, input.Dashboard.ProjectID.String(), input.Dashboard.ID.String(), input.Generation.Identity.GenerationID, input.AttemptID, identityJSON, input.Generation.Graph.Digest(), string(depsJSON), input.AuthoredRevision.ID.String(), input.AuthoredRevision.Number, input.AuthoredRevision.ContentHash, priorIdentityJSON, input.Failure.Code, input.Failure.Message, formatTime(input.Failure.FailedAt))
 	if isConstraint(err) {
 		return authoring.ErrRevalidationConflict
 	}
@@ -296,6 +299,9 @@ func (r *Repository) RecordRevalidationFailure(ctx context.Context, input author
 }
 
 func validateRevalidationCommit(input authoring.RevalidationCommit) error {
+	if err := authoring.ValidateRevalidationAttemptID(input.AttemptID); err != nil {
+		return fmt.Errorf("%w: %v", authoring.ErrInvalidAuthoring, err)
+	}
 	if err := input.Generation.Validate(); err != nil {
 		return err
 	}
@@ -318,6 +324,9 @@ func validateRevalidationCommit(input authoring.RevalidationCommit) error {
 }
 
 func validateRevalidationFailureInput(input authoring.RevalidationFailureInput) error {
+	if err := authoring.ValidateRevalidationAttemptID(input.AttemptID); err != nil {
+		return fmt.Errorf("%w: %v", authoring.ErrInvalidAuthoring, err)
+	}
 	if err := input.Generation.Validate(); err != nil {
 		return err
 	}
@@ -953,7 +962,7 @@ func (r *Repository) latestRevalidationFailure(ctx context.Context, projectID st
 	var status, identityJSON, dependencyJSON, attemptedAt string
 	var code, message sql.NullString
 	var generationID string
-	err := r.db.QueryRowContext(ctx, `SELECT status, generation_id, generation_identity_json, dependency_ids_json, error_code, error_message, attempted_at FROM dashboard_authoring_revalidation_attempts WHERE project_id = ? AND dashboard_id = ? ORDER BY attempted_at DESC, generation_id DESC LIMIT 1`, projectID, dashboardID.String()).Scan(&status, &generationID, &identityJSON, &dependencyJSON, &code, &message, &attemptedAt)
+	err := r.db.QueryRowContext(ctx, `SELECT status, generation_id, generation_identity_json, dependency_ids_json, error_code, error_message, attempted_at FROM dashboard_authoring_revalidation_attempts WHERE project_id = ? AND dashboard_id = ? ORDER BY rowid DESC LIMIT 1`, projectID, dashboardID.String()).Scan(&status, &generationID, &identityJSON, &dependencyJSON, &code, &message, &attemptedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return authoring.RevalidationFailure{}, false, nil
 	}

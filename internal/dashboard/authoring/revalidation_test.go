@@ -190,4 +190,19 @@ func TestGenerationRevalidatorDependencySelectionDoesNotTouchUnrelated(t *testin
 	}
 }
 
+func TestRevalidationAttemptIDCanonicalValidation(t *testing.T) {
+	id, err := NewRevalidationAttemptID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRevalidationAttemptID(id); err != nil {
+		t.Fatalf("generated attempt ID %q rejected: %v", id, err)
+	}
+	for _, invalid := range []string{"", "attempt-short", "attempt_0000000000000000000000000000000G", "attempt_00000000000000000000000000000001 "} {
+		if err := ValidateRevalidationAttemptID(invalid); err == nil {
+			t.Fatalf("ValidateRevalidationAttemptID(%q) unexpectedly succeeded", invalid)
+		}
+	}
+}
+
 func (s *revalidationStore) String() string { return fmt.Sprintf("%#v", s.lifecycle) }
