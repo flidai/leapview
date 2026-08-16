@@ -177,6 +177,10 @@ func TestCanonicalSemanticAndPhysicalAuthorization(t *testing.T) {
 	if _, _, err := physicalOnly.GovernDataQuery(context.Background(), unknownPhysical); err == nil {
 		t.Fatal("query with an unbound physical dependency was authorized")
 	}
+	unknownPhysical.Target = " orders "
+	if _, _, err := physicalOnly.GovernDataQuery(context.Background(), unknownPhysical); err == nil {
+		t.Fatal("query with a padded symbolic table name was authorized")
+	}
 }
 
 func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {

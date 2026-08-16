@@ -1291,8 +1291,10 @@ func (index projectResourceIndex) byID(id string, kind projectgraph.Kind) (acces
 }
 
 func (index projectResourceIndex) byName(name string, kind projectgraph.Kind) (access.ResourceRef, bool) {
-	name = strings.TrimSpace(name)
-	if name == "" {
+	// Symbolic references use the graph's declared name grammar. Do not
+	// normalize whitespace here: a padded value is not the same executable
+	// table name and must fail closed rather than becoming an implicit alias.
+	if name == "" || strings.TrimSpace(name) != name {
 		return access.ResourceRef{}, false
 	}
 	resource, ok := index.names[name]
