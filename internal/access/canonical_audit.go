@@ -13,7 +13,7 @@ import (
 
 // CanonicalAuditEvent is the project-generation audit contract. It carries
 // the immutable serving identity and exact ResourceRef used for authorization;
-// it has no workspace, path, parent, or route-derived scope. Global identity
+// it has no container, path, parent, or route-derived scope. Global identity
 // and platform events remain represented by the global audit contract and do
 // not use this type.
 type CanonicalAuditEvent struct {
@@ -99,7 +99,7 @@ func (event CanonicalAuditEvent) ValidateAgainst(project graph.ProjectGraph) err
 
 // CanonicalAuditRecorder persists project-generation audit records. It is
 // deliberately separate from the global identity audit recorder so callers
-// cannot accidentally fill a project scope from a route or workspace value.
+// cannot accidentally fill a project scope from a route-derived value.
 type CanonicalAuditRecorder interface {
 	RecordCanonicalAuditEvent(context.Context, CanonicalAuditEvent) error
 }

@@ -1,6 +1,6 @@
 // Package api contains the stable HTTP contract for project-generation
 // releases. A release identifies one immutable serving generation; it does
-// not embed per-workspace manifests or target collections.
+// not embed partial graph manifests or target collections.
 package api
 
 type PageInfo struct {

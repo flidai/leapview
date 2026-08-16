@@ -12,7 +12,7 @@ import (
 
 // DashboardPublicationCapability is installed by trusted publication handlers.
 // ProjectID and every dependency ID are canonical graph identities; no
-// workspace/path metadata is accepted as an authorization boundary.
+// container or path metadata is accepted as an authorization boundary.
 type DashboardPublicationCapability struct {
 	ProjectID          projectgraph.ResourceID
 	Publication        string

@@ -55,7 +55,7 @@ type Job struct {
 }
 
 // SystemPrincipalID is used for internal work that has no end-user actor.
-// It is deliberately a stable canonical identity rather than a workspace
+// It is deliberately a stable canonical identity rather than a content
 // sentinel or an inferred/fallback value.
 const SystemPrincipalID = "system:durable-jobs"
 

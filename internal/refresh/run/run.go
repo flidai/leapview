@@ -139,7 +139,7 @@ type RunPage struct {
 }
 
 // Validate enforces the immutable serving scope carried by a queued run. The
-// generation is part of the identity and is never inferred from a workspace
+// generation is part of the identity and is never inferred from a container
 // or a mutable serving-state alias.
 func (input RunInput) Validate() error {
 	if err := input.Identity.Validate(); err != nil {

@@ -322,7 +322,7 @@ func adminLayoutContext(active string) webpage.Context {
 		pageID = "storage"
 	}
 	return webpage.Context{
-		Active: "admin", SectionTitle: "Workspace", PageTitle: "Published assets",
+		Active: "admin", SectionTitle: "Project", PageTitle: "Published assets",
 		PageID: pageID, Compact: true,
 	}
 }

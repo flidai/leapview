@@ -67,7 +67,7 @@ type Trigger func(context.Context, Occurrence) (string, error)
 
 // ValidateScope checks that a schedule record is bound to one immutable
 // project/environment/generation scope.  A serving generation is never
-// inferred from a legacy workspace or serving-state identifier.
+// inferred from a removed container or serving-state identifier.
 func ValidateScope(identity projectgraph.ServingIdentity) error {
 	if identity.ProjectID == "" || identity.Environment == "" {
 		return errors.New("refresh serving identity project and environment are required")

@@ -529,8 +529,8 @@ type DashboardLifecycle struct {
 	Revalidation     *RevalidationFailure `json:"revalidation,omitempty"`
 }
 
-// UnmarshalJSON keeps the persisted lifecycle contract closed. In
-// particular, legacy workspace-scoped payloads must not silently decode into
+// UnmarshalJSON keeps the persisted lifecycle contract closed. In particular,
+// removed container-scoped payloads must not silently decode into
 // a project lifecycle while dropping their scope selector.
 func (d *DashboardLifecycle) UnmarshalJSON(data []byte) error {
 	type lifecycleAlias DashboardLifecycle

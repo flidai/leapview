@@ -31,7 +31,7 @@ type Manifest struct {
 }
 
 // Release is one immutable project artifact bound to one exact serving
-// identity. A release never contains workspace sets or target selectors.
+// identity. A release never contains partial graph sets or target selectors.
 type Release struct {
 	ID                 string
 	ServingIdentity    projectgraph.ServingIdentity

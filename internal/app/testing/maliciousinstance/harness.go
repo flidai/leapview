@@ -300,7 +300,7 @@ func (h *Harness) serveAttackPage(w http.ResponseWriter, id string) {
         case "scheme.deep-link-injection":
           window.location.href = "leapview-desktop://open?origin=" +
             encodeURIComponent(new URL(externalTarget).origin) +
-            "&path=" + encodeURIComponent("/workspaces");
+            "&path=" + encodeURIComponent("/dashboards/sales");
           break;
         case "permission.camera": await navigator.mediaDevices.getUserMedia({video:true}); break;
         case "permission.microphone": await navigator.mediaDevices.getUserMedia({audio:true}); break;

@@ -14,7 +14,7 @@ import (
 
 // CandidateConnectionRequirement and CandidateAuthoredConnection are
 // project-level connection evidence. They are intentionally not nested in a
-// workspace/target collection.
+// partial target collection.
 type CandidateConnectionRequirement struct {
 	ConnectionID  projectgraph.ResourceID
 	ConnectorKind string

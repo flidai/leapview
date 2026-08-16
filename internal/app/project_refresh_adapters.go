@@ -12,7 +12,7 @@ import (
 )
 
 // projectRefreshService binds refresh execution to the active project
-// serving-state repository. It deliberately has no workspace/read-model
+// serving-state repository. It deliberately has no container read-model
 // adapter: refresh/run owns project graph identity and generation validation.
 func projectRefreshService(persistence persistenceInputs, workflow workflowInputs, dashboards func() *dashboardmodule.Module) (refreshrun.Service, error) {
 	repo, err := resolveServingStateRepository(persistence)

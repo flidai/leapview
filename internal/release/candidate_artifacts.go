@@ -38,7 +38,7 @@ type CandidateRestriction struct {
 }
 
 // CandidateGenerationArtifact contains the one project-generation artifact
-// prepared for a candidate. A candidate never carries a target/workspace
+// prepared for a candidate. A candidate never carries a partial target
 // collection: the serving identity and generation artifact are the unit of
 // preparation and publication.
 type CandidateGenerationArtifact struct {

@@ -16,7 +16,7 @@ import (
 )
 
 // Registry is retained as the process-local composition object, but owns one
-// manager only.  There is no workspace/target map and no partial graph swap.
+// manager only. There is no container map and no partial graph swap.
 type RegistryOptions struct {
 	Repo                        ServingStateRepository
 	ProjectID                   projectgraph.ResourceID
@@ -277,7 +277,7 @@ func (r *Registry) Close() error {
 }
 
 // Candidate runtime methods remain project-scoped.  They intentionally do
-// not expose workspace/target selectors.
+// not expose project or target selectors.
 func (r *Registry) RegisterPreparedCandidate(reg CandidateRegistration, candidate servingstate.PreparedRuntime) error {
 	return r.registerPreparedCandidate(reg, candidate)
 }

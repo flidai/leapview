@@ -61,7 +61,7 @@ const (
 )
 
 // ProjectArtifactProvenance identifies one complete project artifact. There
-// is no workspace collection: a generation digest covers the whole graph.
+// is no partial graph collection: a generation digest covers the whole graph.
 type ProjectArtifactProvenance struct {
 	SourceDigest    string `json:"sourceDigest"`
 	ProjectDigest   string `json:"projectDigest"`

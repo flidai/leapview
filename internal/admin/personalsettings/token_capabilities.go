@@ -9,7 +9,7 @@ type capabilityDescriptor struct {
 }
 
 // capabilityOptionsSignal presents the canonical project/resource actions as
-// one flat list. The browser may group by category, but no workspace/project
+// one flat list. The browser may group by category, but no nested container
 // selector is part of the token contract.
 func capabilityOptionsSignal(effective []access.Capability) []CapabilityOptionSignal {
 	allowed := make(map[access.Capability]struct{}, len(effective))

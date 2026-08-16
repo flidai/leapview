@@ -40,7 +40,7 @@ type DevelopEdgeRecord struct {
 
 // DevelopGraphReader exposes the active serving graph for the server-bound
 // project.  It is intentionally a narrow canonical read port and does not
-// reintroduce the removed workspace repository/read-model abstraction.
+// reintroduce the removed container repository/read-model abstraction.
 type DevelopGraphReader interface {
 	ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (DevelopAssetGraph, bool, error)
 }
