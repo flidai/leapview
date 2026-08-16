@@ -203,6 +203,9 @@ func (m *Module) RequestEffectiveCapabilities(ctx context.Context, r *http.Reque
 		capabilities = access.IntersectTokenCapabilities(credential.Authoring.Scope.Capabilities, capabilities)
 	}
 	if credential.Token.ID != "" {
+		if credential.Token.Capabilities != nil && len(credential.Token.Capabilities) == 0 {
+			return nil, access.ErrForbidden
+		}
 		capabilities = access.IntersectTokenCapabilities(credential.Token.Capabilities, capabilities)
 	}
 	return capabilities, nil

@@ -20,8 +20,8 @@ func TestDispatcherMarksUnsupportedJobFailed(t *testing.T) {
 	queue := &fakeQueueRepository{jobs: []JobRecord{dispatcherJob("unknown")}}
 
 	Dispatcher{
-		Runs:     queue,
-		Identity: dispatcherIdentity,
+		Runs:            queue,
+		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) { return dispatcherIdentity, nil },
 		Admitter: func() workload.Admitter {
 			controller, err := workload.New(workload.Config{MaxRunning: 1, MaximumQueued: 1, Classes: map[workload.Class]workload.Policy{workload.Refresh: {MaximumRunning: 1, MaximumQueued: 1}}})
 			if err != nil {
@@ -53,7 +53,7 @@ func TestDispatcherAdmissionRejectionLeavesDurableJobRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	Dispatcher{Runs: queue, Admitter: controller, Identity: dispatcherIdentity, Owner: "test-owner", LeaseTimeout: time.Minute}.Run(context.Background())
+	Dispatcher{Runs: queue, Admitter: controller, ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) { return dispatcherIdentity, nil }, Owner: "test-owner", LeaseTimeout: time.Minute}.Run(context.Background())
 	held.Release()
 	if len(queue.jobs) != 1 || queue.claimOwner != "" {
 		t.Fatalf("rejected job was claimed: %#v", queue)
@@ -73,7 +73,7 @@ func TestDispatcherReleasesRefreshPermitBeforeRunFinished(t *testing.T) {
 	}
 	runningAtCallback := -1
 	Dispatcher{
-		Runs: queue, Admitter: controller, Identity: dispatcherIdentity, Owner: "test-owner", LeaseTimeout: time.Minute,
+		Runs: queue, Admitter: controller, ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) { return dispatcherIdentity, nil }, Owner: "test-owner", LeaseTimeout: time.Minute,
 		RunFinished: func(context.Context, JobRecord) { runningAtCallback = controller.Stats().Running },
 	}.Run(context.Background())
 	if runningAtCallback != 0 {

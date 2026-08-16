@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -75,6 +76,10 @@ func (m *Module) RequirePlatformAdmin(next http.Handler) http.Handler {
 		}
 		capabilities, err := m.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
 		if err != nil {
+			if errors.Is(err, access.ErrForbidden) {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}

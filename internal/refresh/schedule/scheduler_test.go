@@ -56,7 +56,9 @@ func TestSchedulerContinuesAfterOnePipelineCannotBeQueued(t *testing.T) {
 	scheduler := Scheduler{
 		Repository: repository,
 		Clock:      fixedClock{now: now},
-		Identity:   projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},
+		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) {
+			return projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}, nil
+		},
 		Trigger: func(_ context.Context, occurrence Occurrence) (string, error) {
 			if occurrence.PipelineID == "pipeline_broken" {
 				return "", errors.New("queue unavailable")
@@ -82,7 +84,9 @@ func TestSchedulerUsesInjectedClockAndAttachesCreatedRun(t *testing.T) {
 	scheduler := Scheduler{
 		Repository: repository,
 		Clock:      fixedClock{now: now},
-		Identity:   projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},
+		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) {
+			return projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}, nil
+		},
 		Trigger: func(_ context.Context, occurrence Occurrence) (string, error) {
 			triggered++
 			return "run_1", nil

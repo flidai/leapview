@@ -102,10 +102,10 @@ func (definition Definition) Validate() error {
 }
 
 type Scheduler struct {
-	Repository Repository
-	Clock      Clock
-	Trigger    Trigger
-	Identity   projectgraph.ServingIdentity
+	Repository      Repository
+	Clock           Clock
+	Trigger         Trigger
+	ResolveIdentity func(context.Context) (projectgraph.ServingIdentity, error)
 }
 
 func (scheduler Scheduler) DispatchDue(ctx context.Context) error {
@@ -113,7 +113,23 @@ func (scheduler Scheduler) DispatchDue(ctx context.Context) error {
 	if clock == nil {
 		clock = RealClock{}
 	}
-	occurrences, err := scheduler.Repository.ClaimDue(ctx, scheduler.Identity, clock.Now())
+	if scheduler.Repository == nil {
+		return errors.New("refresh scheduler repository is required")
+	}
+	if scheduler.ResolveIdentity == nil {
+		return errors.New("refresh scheduler identity resolver is required")
+	}
+	identity, err := scheduler.ResolveIdentity(ctx)
+	if err != nil {
+		return err
+	}
+	if err := ValidateScope(identity); err != nil {
+		return err
+	}
+	if scheduler.Trigger == nil {
+		return errors.New("refresh scheduler trigger is required")
+	}
+	occurrences, err := scheduler.Repository.ClaimDue(ctx, identity, clock.Now())
 	if err != nil {
 		return err
 	}

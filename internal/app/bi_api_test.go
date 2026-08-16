@@ -25,6 +25,20 @@ func newPublicAPIRequest(method, target string, body io.Reader) *http.Request {
 	return req
 }
 
+func servingSnapshotRequest(t *testing.T, server *appTestHarness, req *http.Request) *http.Request {
+	t.Helper()
+	if server == nil || server.runtime.runtimeHostModule == nil {
+		t.Fatal("test runtime host is unavailable")
+	}
+	lease, err := server.runtime.runtimeHostModule.Acquire(req.Context())
+	if err != nil {
+		t.Fatalf("acquire test serving identity: %v", err)
+	}
+	req.Header.Set("X-Serving-Snapshot", lease.Identity().GenerationID)
+	lease.Release()
+	return req
+}
+
 func dashboardAPISetFilterBody(t *testing.T, pageID, bindingID string, values ...string) string {
 	t.Helper()
 	typed := make([]dashboardfilter.Value, len(values))
@@ -56,7 +70,7 @@ func TestBIAPIListResponsesUseStandardEnvelope(t *testing.T) {
 		{path: "/api/v1/dashboards?limit=1", name: "dashboards"},
 		{path: "/api/v1/semantic-models?limit=1", name: "semantic models"},
 	} {
-		req := newPublicAPIRequest(http.MethodGet, tc.path, nil)
+		req := servingSnapshotRequest(t, server, newPublicAPIRequest(http.MethodGet, tc.path, nil))
 		req.Header.Set("Accept", "application/json")
 		rec := httptest.NewRecorder()
 		server.Routes().ServeHTTP(rec, req)
@@ -89,7 +103,7 @@ func TestBIAPIListResponsesUseStandardEnvelope(t *testing.T) {
 		{path: "/api/v1/dashboards/executive-sales", want: `"detail_tools"`},
 		{path: "/api/v1/semantic-models/test", want: `"model_tables"`},
 	} {
-		req := newPublicAPIRequest(http.MethodGet, tc.path, nil)
+		req := servingSnapshotRequest(t, server, newPublicAPIRequest(http.MethodGet, tc.path, nil))
 		req.Header.Set("Accept", "application/json")
 		rec := httptest.NewRecorder()
 		server.Routes().ServeHTTP(rec, req)
@@ -406,7 +420,7 @@ func TestBIAPISemanticDatasetSurface(t *testing.T) {
 			if tc.body == "" {
 				body = strings.NewReader(`{}`)
 			}
-			req := newPublicAPIRequest(tc.method, tc.path, body)
+			req := servingSnapshotRequest(t, server, newPublicAPIRequest(tc.method, tc.path, body))
 			req.Header.Set("Accept", "application/json")
 			if tc.method == http.MethodPost {
 				req.Header.Set("Content-Type", "application/json")

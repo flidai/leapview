@@ -28,17 +28,20 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	if workflow.refreshMaterializer != nil {
 		service.Materializer = workflow.refreshMaterializer
 	}
-	var refreshIdentity projectgraph.ServingIdentity
-	if runtime.runtimeHostModule != nil {
-		lease, leaseErr := runtime.runtimeHostModule.Acquire(ctx)
-		if leaseErr != nil {
-			if database != nil {
-				return fmt.Errorf("resolve refresh serving identity: %w", leaseErr)
-			}
-		} else if lease != nil {
-			refreshIdentity = lease.Identity()
-			lease.Release()
+	resolveRefreshIdentity := func(ctx context.Context) (projectgraph.ServingIdentity, error) {
+		if runtime.runtimeHostModule == nil {
+			return projectgraph.ServingIdentity{}, fmt.Errorf("active project runtime is unavailable")
 		}
+		lease, err := runtime.runtimeHostModule.Acquire(ctx)
+		if err != nil {
+			return projectgraph.ServingIdentity{}, err
+		}
+		defer lease.Release()
+		identity := lease.Identity()
+		if err := identity.Validate(); err != nil {
+			return projectgraph.ServingIdentity{}, fmt.Errorf("active runtime serving identity is invalid: %w", err)
+		}
+		return identity, nil
 	}
 	config := refreshmodule.Config{
 		Database: database, Service: service,
@@ -75,7 +78,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 			},
 		},
 		Admission: workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,
-		Clock: workflow.refreshPipelineClock, Identity: refreshIdentity,
+		Clock: workflow.refreshPipelineClock, ResolveIdentity: resolveRefreshIdentity,
 		EnableDispatcher: workflow.enableRefreshDispatcher,
 		EnableScheduler:  false,
 		Logger:           platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,

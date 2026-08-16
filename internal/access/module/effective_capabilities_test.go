@@ -43,6 +43,27 @@ func TestRequestEffectiveCapabilitiesRejectsCrossProjectAuthoringCredential(t *t
 	}
 }
 
+func TestRequestEffectiveCapabilitiesRejectsExplicitEmptyAPIToken(t *testing.T) {
+	module, err := newSurface(surfaceConfig{
+		Auth: &Auth{},
+		CurrentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
+			return []access.Capability{access.CapabilityResourceRead}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-capabilities", nil)
+	request = request.WithContext(WithAPICredential(request.Context(), access.APICredential{
+		Token: access.APIToken{ID: "token-empty", Capabilities: []access.Capability{}},
+	}))
+
+	_, err = module.RequestEffectiveCapabilities(request.Context(), request, "principal-1")
+	if !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("explicit empty API token error = %v, want ErrForbidden", err)
+	}
+}
+
 func TestListCurrentEffectiveCapabilitiesAttenuatesAuthoringCredential(t *testing.T) {
 	module, err := newSurface(surfaceConfig{
 		Auth: &Auth{},

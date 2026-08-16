@@ -235,6 +235,10 @@ func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolv
 		}
 		effective, err := a.module.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
 		if err != nil {
+			if errors.Is(err, access.ErrForbidden) {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}

@@ -47,7 +47,7 @@ type Config struct {
 	ManagedData         runtimehost.ManagedDataResolver
 	Admission           workload.Admitter
 	LeaseTimeout        time.Duration
-	Identity            projectgraph.ServingIdentity
+	ResolveIdentity     func(context.Context) (projectgraph.ServingIdentity, error)
 	WorkloadStats       func() workload.Stats
 	RunFinished         func(context.Context, refreshrun.RunRecord)
 	Events              EventStore
@@ -179,15 +179,21 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	m.service.DataVersions = m.schedules
 	m.service.Publication = refreshsqlite.NewPublicationUnitOfWork(config.Database, config.ApplyAccessSnapshot)
 	if m.dispatcher == nil && config.EnableDispatcher {
+		if config.ResolveIdentity == nil {
+			return nil, errors.New("refresh dispatcher identity resolver is required")
+		}
 		m.dispatcher = refreshrun.Dispatcher{
 			Runs: m.runs, Service: m.service, Admitter: config.Admission,
-			LeaseTimeout: config.LeaseTimeout, Logger: logger, Identity: config.Identity,
+			LeaseTimeout: config.LeaseTimeout, Logger: logger, ResolveIdentity: config.ResolveIdentity,
 			WorkloadStats: config.WorkloadStats, RunFinished: m.runFinished(config.RunFinished),
 		}
 	}
 	if m.scheduler == nil && config.EnableScheduler {
+		if config.ResolveIdentity == nil {
+			return nil, errors.New("refresh scheduler identity resolver is required")
+		}
 		m.scheduler = refreshschedule.Scheduler{
-			Repository: m.schedules, Clock: config.Clock, Identity: config.Identity,
+			Repository: m.schedules, Clock: config.Clock, ResolveIdentity: config.ResolveIdentity,
 			Trigger: func(ctx context.Context, occurrence refreshschedule.Occurrence) (string, error) {
 				result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 					Identity: occurrence.Identity, PrincipalID: "scheduler", EstimatedMemoryBytes: 1,

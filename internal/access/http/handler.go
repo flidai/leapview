@@ -98,6 +98,10 @@ func (h Handler) ListCurrentEffectiveCapabilities(w stdhttp.ResponseWriter, r *s
 	}
 	capabilities, err := h.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
 	if err != nil {
+		if errors.Is(err, access.ErrForbidden) {
+			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+			return
+		}
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}

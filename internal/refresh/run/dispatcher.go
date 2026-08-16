@@ -20,15 +20,15 @@ type QueueRepository interface {
 }
 
 type Dispatcher struct {
-	Runs          QueueRepository
-	Service       Service
-	Admitter      workload.Admitter
-	LeaseTimeout  time.Duration
-	Logger        *slog.Logger
-	Owner         string
-	Identity      projectgraph.ServingIdentity
-	WorkloadStats func() workload.Stats
-	RunFinished   func(context.Context, JobRecord)
+	Runs            QueueRepository
+	Service         Service
+	Admitter        workload.Admitter
+	LeaseTimeout    time.Duration
+	Logger          *slog.Logger
+	Owner           string
+	ResolveIdentity func(context.Context) (projectgraph.ServingIdentity, error)
+	WorkloadStats   func() workload.Stats
+	RunFinished     func(context.Context, JobRecord)
 }
 
 func (d Dispatcher) Run(ctx context.Context) {
@@ -38,7 +38,20 @@ func (d Dispatcher) Run(ctx context.Context) {
 	if d.Admitter == nil {
 		d.Admitter, _ = workload.New(workload.DefaultConfig())
 	}
-	scope, err := ReadScopeForIdentity(d.Identity)
+	if d.ResolveIdentity == nil {
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "refresh dispatcher identity resolver is unavailable")
+		}
+		return
+	}
+	identity, err := d.ResolveIdentity(ctx)
+	if err != nil {
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "resolve refresh dispatcher identity failed", "error", err)
+		}
+		return
+	}
+	scope, err := ReadScopeForIdentity(identity)
 	if err != nil {
 		if d.Logger != nil {
 			d.Logger.WarnContext(ctx, "invalid refresh dispatcher identity", "error", err)

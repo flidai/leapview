@@ -19,6 +19,8 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	agenttools "github.com/flidai/leapview/internal/agent/tools"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	apiapigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
@@ -858,7 +860,17 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			BuildVersion:       platform.buildIdentity.Version,
 			APIGenOperations:   agentAPIGenOperations(),
 			DashboardAuthoring: routes.dashboardAuthoring,
-			RunWorkloadClass:   string(workloadmodule.BackgroundClass), ProjectID: runtime.projectID,
+			ResolveResource: func(ctx context.Context, scope agenttools.Scope, id projectgraph.ResourceID, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, error) {
+				if routes.projectCatalog == nil {
+					return "", projectcatalog.ErrUnavailable
+				}
+				resolved, err := routes.projectCatalog.Resolve(ctx, scope.PrincipalID, projectcatalog.Ref{ID: id, Kind: kind}, capability)
+				if err != nil {
+					return "", err
+				}
+				return resolved.Ref.ID, nil
+			},
+			RunWorkloadClass: string(workloadmodule.BackgroundClass), ProjectID: runtime.projectID,
 			DashboardMetrics: func(projectID string) (QueryMetrics, bool) {
 				requested, err := projectgraph.NewResourceID(projectID)
 				if err != nil || requested != runtime.projectID || runtime.metrics == nil {
@@ -870,28 +882,34 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Documentation: documentation,
 			Catalog:       agentmodule.BuildCatalog(agentmodule.CatalogConfig{ProjectCatalog: routes.projectCatalog}),
 			QueryMetadata: func(ctx context.Context, projectID, modelID string) agentmodule.VisualQueryMetadata {
-				var metadata agentmodule.VisualQueryMetadata
-				if routes.refreshModule == nil {
-					return metadata
-				}
-				version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, policy.defaultEnvironment, modelID)
-				if err != nil || !ok {
-					return metadata
-				}
-				metadata.ServingSnapshot = strings.TrimSpace(version.ServingStateID)
-				if metadata.ServingSnapshot == "" {
+				if runtime.runtimeHostModule == nil {
 					return agentmodule.VisualQueryMetadata{}
 				}
-				status := "stale"
-				if version.ServingStateID == metadata.ServingSnapshot {
-					status = "current"
+				lease, err := runtime.runtimeHostModule.Acquire(ctx)
+				if err != nil || lease == nil {
+					return agentmodule.VisualQueryMetadata{}
 				}
-				metadata.Freshness = &agentmodule.QueryFreshness{
-					LastSuccessfulRefreshAt: version.RefreshedAt.UTC().Format(time.RFC3339),
-					SnapshotID:              strconv.FormatInt(version.SnapshotID, 10),
-					ServingStateID:          version.ServingStateID,
-					Source:                  version.Source,
-					Status:                  status,
+				identity := lease.Identity()
+				metadata := agentmodule.VisualQueryMetadata{ServingSnapshot: strings.TrimSpace(identity.GenerationID)}
+				lease.Release()
+				if metadata.ServingSnapshot == "" || identity.ProjectID.String() != strings.TrimSpace(projectID) {
+					return agentmodule.VisualQueryMetadata{}
+				}
+				if routes.refreshModule != nil {
+					version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, policy.defaultEnvironment, modelID)
+					if err == nil && ok {
+						status := "stale"
+						if strings.TrimSpace(version.ServingStateID) == metadata.ServingSnapshot {
+							status = "current"
+						}
+						metadata.Freshness = &agentmodule.QueryFreshness{
+							LastSuccessfulRefreshAt: version.RefreshedAt.UTC().Format(time.RFC3339),
+							SnapshotID:              strconv.FormatInt(version.SnapshotID, 10),
+							ServingStateID:          version.ServingStateID,
+							Source:                  version.Source,
+							Status:                  status,
+						}
+					}
 				}
 				return metadata
 			},
@@ -968,6 +986,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					principal = accessmodule.LocalDeveloperPrincipal()
 				}
 				ctx = accessmodule.WithPrincipal(ctx, principal)
+				if projectID, err := projectgraph.NewResourceID(scope.ProjectID); err == nil {
+					ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
+						ProjectID: projectID, Surface: dataquery.SurfaceAgent, Operation: dataquery.OperationAgentQuery,
+						PrincipalID: scope.PrincipalID,
+					})
+				}
 				return ctx
 			},
 			HTTP: agentmodule.HTTPConfig{
