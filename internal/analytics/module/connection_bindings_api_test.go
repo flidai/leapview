@@ -21,6 +21,7 @@ func TestConnectionBindingAPICreatesOnlyNonSecretMetadata(t *testing.T) {
 	administration := newTestConnectionAdministration(t, repository, nil, now)
 	handler := connectionBindingAPIHandler{config: ConnectionBindingAPIGenConfig{
 		Administration: administration,
+		Environment:    "prod",
 		CurrentPrincipal: func(*http.Request) (string, bool) {
 			return "operator-1", true
 		},
@@ -36,7 +37,7 @@ func TestConnectionBindingAPICreatesOnlyNonSecretMetadata(t *testing.T) {
 		},
 		"enabled":true
 	}`
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/sales/targets/target-1/environments/prod/connection-bindings", strings.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/sales/targets/target-1/connection-bindings", strings.NewReader(body))
 	recorder := httptest.NewRecorder()
 
 	handler.Create(recorder, request, "sales", "target-1")
@@ -71,6 +72,7 @@ func TestConnectionBindingAPINeverReturnsRawProviderErrors(t *testing.T) {
 	administration := newTestConnectionAdministration(t, repository, pool, now)
 	handler := connectionBindingAPIHandler{config: ConnectionBindingAPIGenConfig{
 		Administration: administration,
+		Environment:    "prod",
 		CurrentPrincipal: func(*http.Request) (string, bool) {
 			return "operator-1", true
 		},

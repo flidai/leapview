@@ -17,25 +17,29 @@ func TestConnectionBindingOperationClassifications(t *testing.T) {
 		idempotency string
 		uiAction    string
 	}{
-		"createTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingCreated), privilege: "MANAGE_CONNECTION_METADATA", idempotency: "required", uiAction: "connection.binding.configure"},
-		"updateTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingUpdated), privilege: "MANAGE_CONNECTION_METADATA", uiAction: "connection.binding.update"},
-		"testTargetConnectionBinding":    {auditAction: string(connectionbinding.RefreshTest), privilege: "TEST_CONNECTION", idempotency: "required", uiAction: "connection.binding.test"},
-		"refreshTargetConnectionBinding": {auditAction: string(connectionbinding.RefreshRequested), privilege: "TEST_CONNECTION", idempotency: "required", uiAction: "connection.binding.refresh"},
-		"enableTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingEnabled), privilege: "MANAGE_CONNECTION_METADATA", idempotency: "required", uiAction: "connection.binding.enable"},
-		"disableTargetConnectionBinding": {auditAction: string(connectionbinding.AuditBindingDisabled), privilege: "MANAGE_CONNECTION_METADATA", idempotency: "required", uiAction: "connection.binding.disable"},
+		"createTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingCreated), privilege: "PROJECT_ADMIN", idempotency: "required", uiAction: "connection.binding.configure"},
+		"updateTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingUpdated), privilege: "RESOURCE_MANAGE", uiAction: "connection.binding.update"},
+		"testTargetConnectionBinding":    {auditAction: string(connectionbinding.RefreshTest), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.test"},
+		"refreshTargetConnectionBinding": {auditAction: string(connectionbinding.RefreshRequested), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.refresh"},
+		"enableTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingEnabled), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.enable"},
+		"disableTargetConnectionBinding": {auditAction: string(connectionbinding.AuditBindingDisabled), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.disable"},
 	}
 	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]
 		if !ok || contract.Command == nil {
 			t.Fatalf("command contract %q = %#v", operationID, contract)
 		}
+		wantTargetParameter, wantTargetType := "connection", "connection"
+		if operationID == "createTargetConnectionBinding" {
+			wantTargetParameter, wantTargetType = "project", "project"
+		}
 		if analyticsGeneratedOperationKind(contract) != "command" ||
 			contract.Command.Owner != "LeapViewAPI.Analytics" ||
 			contract.Command.Audit.SuccessAction != expected.auditAction ||
 			!contract.Command.Audit.Required ||
 			contract.Command.Target == nil ||
-			contract.Command.Target.Parameter != "workspace" ||
-			contract.Command.Target.Type != "workspace" ||
+			contract.Command.Target.Parameter != wantTargetParameter ||
+			contract.Command.Target.Type != wantTargetType ||
 			contract.Command.Privilege != expected.privilege ||
 			contract.Command.Idempotency != expected.idempotency ||
 			contract.Command.UI == nil ||

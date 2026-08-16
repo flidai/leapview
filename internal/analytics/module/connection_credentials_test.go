@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,7 +20,7 @@ func TestBuildDevelopmentTargetResolverAllowsOnlyDedicatedConnectionVariables(t 
 		"DATABASE_URL":                      "must-not-be-readable",
 	}
 	resolver, err := buildDevelopmentTargetResolver(
-		"lvinst_local",
+		projectgraph.ResourceID("sales"),
 		"lvinst_local",
 		"dev",
 		[]string{
@@ -34,7 +35,7 @@ func TestBuildDevelopmentTargetResolverAllowsOnlyDedicatedConnectionVariables(t 
 	)
 	require.NoError(t, err)
 	snapshot, err := resolver.Resolve(context.Background(), connectionbinding.CredentialReference{
-		ProjectID: "lvinst_local", Environment: "dev",
+		ProjectID: projectgraph.ResourceID("sales"), Environment: "dev",
 		SecretPath: "/", SecretKey: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
 	})
 	require.NoError(t, err)
@@ -43,7 +44,7 @@ func TestBuildDevelopmentTargetResolverAllowsOnlyDedicatedConnectionVariables(t 
 	}
 	snapshot.Destroy()
 	_, err = resolver.Resolve(context.Background(), connectionbinding.CredentialReference{
-		ProjectID: "lvinst_local", Environment: "dev",
+		ProjectID: projectgraph.ResourceID("sales"), Environment: "dev",
 		SecretPath: "/", SecretKey: "DATABASE_URL",
 	})
 	if !errors.Is(err, connectionbinding.ErrCredentialDenied) {

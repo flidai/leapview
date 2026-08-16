@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResolverRequiresExplicitDevelopmentSelectionAndAllowedVariable(t *testing.T) {
 	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-		TargetID: "local-target", Environment: "dev", TargetClass: connectionbinding.TargetDevelopment,
+		TargetID: "local-target", ProjectID: projectgraph.ResourceID("sales"), Environment: "dev", TargetClass: connectionbinding.TargetDevelopment,
 		Kind: connectionbinding.ResolverEnvironment,
 	})
 	require.NoError(t, err)
@@ -30,7 +31,7 @@ func TestResolverRequiresExplicitDevelopmentSelectionAndAllowedVariable(t *testi
 	})
 	require.NoError(t, err)
 	snapshot, err := resolver.Resolve(context.Background(), connectionbinding.CredentialReference{
-		ProjectID: "local-target", Environment: "dev", SecretPath: "/", SecretKey: "LEAPVIEW_DEV_WAREHOUSE",
+		ProjectID: projectgraph.ResourceID("sales"), Environment: "dev", SecretPath: "/", SecretKey: "LEAPVIEW_DEV_WAREHOUSE",
 	})
 	require.NoError(t, err)
 	defer snapshot.Destroy()
@@ -41,7 +42,7 @@ func TestResolverRequiresExplicitDevelopmentSelectionAndAllowedVariable(t *testi
 
 func TestResolverRejectsProductionSelectionAndOutOfScopeReferenceBeforeLookup(t *testing.T) {
 	production, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-		TargetID: "target-prod", Environment: "prod", TargetClass: connectionbinding.TargetProduction,
+		TargetID: "target-prod", ProjectID: projectgraph.ResourceID("sales"), Environment: "prod", TargetClass: connectionbinding.TargetProduction,
 		Kind: connectionbinding.ResolverInfisical,
 	})
 	require.NoError(t, err)
@@ -52,7 +53,7 @@ func TestResolverRejectsProductionSelectionAndOutOfScopeReferenceBeforeLookup(t 
 	}
 
 	development, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-		TargetID: "local-target", Environment: "dev", TargetClass: connectionbinding.TargetDevelopment,
+		TargetID: "local-target", ProjectID: projectgraph.ResourceID("sales"), Environment: "dev", TargetClass: connectionbinding.TargetDevelopment,
 		Kind: connectionbinding.ResolverEnvironment,
 	})
 	require.NoError(t, err)
@@ -67,7 +68,7 @@ func TestResolverRejectsProductionSelectionAndOutOfScopeReferenceBeforeLookup(t 
 	})
 	require.NoError(t, err)
 	if _, err := resolver.Resolve(context.Background(), connectionbinding.CredentialReference{
-		ProjectID: "other-target", Environment: "dev", SecretPath: "/", SecretKey: "LEAPVIEW_DEV_WAREHOUSE",
+		ProjectID: projectgraph.ResourceID("other-project"), Environment: "dev", SecretPath: "/", SecretKey: "LEAPVIEW_DEV_WAREHOUSE",
 	}); !errors.Is(err, connectionbinding.ErrCredentialDenied) {
 		t.Fatalf("Resolve(out of scope) error = %v", err)
 	}

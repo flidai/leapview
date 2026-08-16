@@ -273,7 +273,7 @@ func TestConnectionAdministrationUsesExplicitEnvironmentResolverOnlyForDevelopme
 	binding.TargetID = "lvinst_local"
 	binding.Scope.Environment = "dev"
 	binding.CredentialReference = connectionbinding.CredentialReference{
-		ProjectID: "lvinst_local", Environment: "dev",
+		ProjectID: projectgraph.ResourceID("sales"), Environment: "dev",
 		SecretPath: "/", SecretKey: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
 	}
 	repository := &moduleBindingCatalog{binding: binding}
