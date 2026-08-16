@@ -1403,10 +1403,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const dataset = explorer.explore.datasets.find((candidate) => candidate.id === datasetId)
     const href = `/explore?mode=explore&model=${encodeURIComponent(modelId)}&dataset=${encodeURIComponent(datasetId)}`
     return [{
-      reference: { projectId, type: 'dataset', id: `${modelId}/${datasetId}` },
+      reference: { kind: 'dataset', id: `${modelId}/${datasetId}` },
       name: dataset?.title ?? datasetId,
       description: dataset?.description,
-      project: { id: projectId, name: projectId },
       hierarchy: [projectId, modelId], href, locations: [], context: ['active_project_generation'],
     }]
   }

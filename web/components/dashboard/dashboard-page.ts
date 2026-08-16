@@ -1250,8 +1250,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const visualType = component.visual ? this.visuals[component.visual]?.spec.kind ?? '' : ''
 		const currentPage = this.renderSnapshot?.page ?? this.page
 		const askReference = currentPage ? this.agentReference(component, currentPage) : undefined
-		const referenced = askReference ? this.agentReferences.some((reference) => reference.reference.projectId === askReference.reference.projectId
-			&& reference.reference.type === askReference.reference.type && reference.reference.id === askReference.reference.id) : false
+		const referenced = askReference ? this.agentReferences.some((reference) => reference.reference.kind === askReference.reference.kind
+			&& reference.reference.id === askReference.reference.id) : false
     return html`
               <lv-dashboard-visual-frame
                 data-canvas-visual
@@ -1400,11 +1400,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 		const projectId = runtime.projectId ?? ''
 		const href = `/dashboards/${encodeURIComponent(page.dashboardId)}/pages/${encodeURIComponent(page.pageId)}`
 		return {
-			reference: { projectId, type: 'visual', id: `${page.dashboardId}.${component.visual}` },
-			name: component.title || visual.spec.title || component.visual,
-			visualType: visualizationType(visual),
-			project: { id: projectId, name: projectId },
-			hierarchy: [projectId, this.agentContext?.dashboardTitle ?? page.dashboardTitle, page.pageTitle].filter(Boolean),
+				reference: { kind: 'visual', id: `${page.dashboardId}.${component.visual}` },
+				name: component.title || visual.spec.title || component.visual,
+				visualType: visualizationType(visual),
+				hierarchy: [projectId, this.agentContext?.dashboardTitle ?? page.dashboardTitle, page.pageTitle].filter(Boolean),
 			href,
 			locations: [{ dashboardId: page.dashboardId, dashboardName: this.agentContext?.dashboardTitle, pageId: page.pageId, pageName: page.pageTitle, href }],
 			context: ['current_page', 'current_dashboard', 'current_project'],
