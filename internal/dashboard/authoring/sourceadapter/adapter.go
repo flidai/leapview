@@ -113,7 +113,7 @@ type Lease = projectruntime.Lease
 // AcquireRuntime acquires one active runtime lease for a source project.
 // The callback keeps this package independent of registry topology while
 // retaining the lease's lifetime and generation guarantees.
-type AcquireRuntime func(context.Context, graph.ResourceID) (projectruntime.Lease, error)
+type AcquireRuntime func(context.Context) (projectruntime.Lease, error)
 
 // Options wires application-owned capabilities. Repository and Authorizer
 // are required for all operations. AcquireRuntime is required only for
@@ -297,7 +297,7 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 	if a.acquireRuntime == nil {
 		return Source{}, fmt.Errorf("project dashboard runtime provider is required")
 	}
-	lease, err := a.acquireRuntime(ctx, ref.ProjectID)
+	lease, err := a.acquireRuntime(ctx)
 	if err != nil {
 		return Source{}, err
 	}

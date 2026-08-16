@@ -108,7 +108,7 @@ func (a *Application) validateAssignedField(ctx context.Context, project string,
 		return fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, componentVisual)
 	}
 
-	lease, err := a.acquireRuntime(ctx, project)
+	lease, err := a.acquireRuntime(ctx)
 	if err != nil {
 		return err
 	}

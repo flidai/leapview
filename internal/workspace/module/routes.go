@@ -31,8 +31,6 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	// The project graph is the sole browser resource namespace. Workspace
 	// collection/object routes are intentionally gone; Develop entry points
 	// resolve the singleton runtime and address stable resource IDs directly.
-	r.Get("/models", protectAnyWorkspace(access.PrivilegeViewItem, h.WorkspaceCatalog))
-	r.Get("/semantic-models", protectAnyWorkspace(access.PrivilegeViewItem, h.WorkspaceCatalog))
 	r.Get("/connections", protectAnyWorkspace(access.PrivilegeViewItem, h.Connections))
 	r.Post("/connections/search", protectAnyWorkspace(access.PrivilegeViewItem, h.ConnectionsSearch))
 	if h.ConnectionAdministration != nil {

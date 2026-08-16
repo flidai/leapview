@@ -22,6 +22,7 @@ import (
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -32,15 +33,15 @@ var dashboardBuilderCommandBinding = dashboardgen.GenUIActionExecuteDashboardAut
 // DashboardBuilder serves the governed draft builder document shell. The
 // application boundary authorizes before loading the draft revision.
 func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) {
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace"))
+	projectID := h.ProjectID.String()
 	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
 	actorID := h.currentActor(r)
-	if workspaceID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
+	if projectID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
 		writeBuilderError(w, r, access.ErrForbidden)
 		return
 	}
 	builder, err := h.Authoring.Builder(r.Context(), builderview.Request{
-		WorkspaceID: workspaceID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+		ProjectID: projectID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		SelectedPageID: strings.TrimSpace(r.URL.Query().Get("page")), SelectedVisualID: strings.TrimSpace(r.URL.Query().Get("visual")),
 	})
 	if err != nil {
@@ -61,11 +62,11 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		providers = []webpage.Provider{h.Layout(r)}
 	}
 	if err := ui.DashboardBuilderPage(envelope, csrfToken, ui.DashboardBuilderActionBindings{
-		BackHref:       "/workspaces/" + url.PathEscape(workspaceID),
-		PreviewHref:    dashboardBuilderPreviewPath(workspaceID, dashboardID, builder),
-		ExportYAMLHref: dashboardBuilderBasePath(workspaceID, dashboardID) + "/export.yaml",
-		PageBaseHref:   dashboardBuilderBasePath(workspaceID, dashboardID) + "/edit",
-		CommandPath:    dashboardBuilderBasePath(workspaceID, dashboardID) + "/draft/command",
+		BackHref:       "/dashboards/" + url.PathEscape(dashboardID),
+		PreviewHref:    dashboardBuilderPreviewPath(dashboardID, builder),
+		ExportYAMLHref: dashboardBuilderBasePath(dashboardID) + "/export.yaml",
+		PageBaseHref:   dashboardBuilderBasePath(dashboardID) + "/edit",
+		CommandPath:    dashboardBuilderBasePath(dashboardID) + "/draft/command",
 		CommandBinding: dashboardBuilderCommandBinding,
 	}, providers...).Render(w); err != nil {
 		nethttp.Error(w, "dashboard builder unavailable", nethttp.StatusInternalServerError)
@@ -76,15 +77,15 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 // Datastar page stream. It intentionally does not accept a client-selected
 // revision; the application resolves the current authorized draft.
 func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
-	workspaceID := strings.TrimSpace(r.URL.Query().Get("workspace"))
+	projectID := h.ProjectID.String()
 	dashboardID := strings.TrimSpace(r.URL.Query().Get("dashboard"))
 	actorID := h.currentActor(r)
-	if workspaceID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
+	if projectID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
 		writeBuilderError(w, r, access.ErrForbidden)
 		return
 	}
 	builder, err := h.Authoring.Builder(r.Context(), builderview.Request{
-		WorkspaceID: workspaceID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+		ProjectID: projectID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		SelectedPageID: strings.TrimSpace(r.URL.Query().Get("page")), SelectedVisualID: strings.TrimSpace(r.URL.Query().Get("visual")),
 	})
 	if err != nil {
@@ -96,7 +97,7 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	clientID := pagestream.EnsureClientID(w, r)
-	streamID := "dashboard_builder:" + clientID + ":" + workspaceID + ":" + dashboardID
+	streamID := "dashboard_builder:" + clientID + ":" + projectID + ":" + dashboardID
 	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(h.traceStore(), streamID, "dashboard_builder.bootstrap"))
 	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(h.dashboardBuilderEnvelopeWithPreview(r.Context(), actorID, builder))); err != nil {
 		return
@@ -125,9 +126,9 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	input := signals.BuilderCommand
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace"))
+	projectID := h.ProjectID.String()
 	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
-	if workspaceID == "" || dashboardID == "" || (input.WorkspaceID != "" && input.WorkspaceID != workspaceID) || (input.DashboardID != "" && input.DashboardID != dashboardID) {
+	if projectID == "" || dashboardID == "" || (input.WorkspaceID != "" && input.WorkspaceID != projectID) || (input.DashboardID != "" && input.DashboardID != dashboardID) {
 		nethttp.Error(w, "dashboard builder command scope is invalid", nethttp.StatusBadRequest)
 		return
 	}
@@ -136,15 +137,15 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, access.ErrForbidden)
 		return
 	}
-	command, err := input.authoringCommand(r, actorID, workspaceID, dashboardID)
+	command, err := input.authoringCommand(r, actorID, projectID, dashboardID)
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
 	}
 	if command.IsBuilderIntent() {
-		_, err = h.Authoring.ExecuteIntent(r.Context(), application.IntentRequest{WorkspaceID: workspaceID, ActorID: actorID, Command: command})
+		_, err = h.Authoring.ExecuteIntent(r.Context(), application.IntentRequest{ProjectID: projectID, ActorID: actorID, Command: command})
 	} else {
-		_, err = h.Authoring.Execute(r.Context(), workspaceID, command)
+		_, err = h.Authoring.Execute(r.Context(), projectID, command)
 	}
 	if err != nil {
 		writeBuilderError(w, r, err)
@@ -154,7 +155,7 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	// repository-authoritative revision and save state, including idempotent
 	// replays.
 	builder, err := h.Authoring.Builder(r.Context(), builderview.Request{
-		WorkspaceID: workspaceID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+		ProjectID: projectID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		SelectedPageID: input.PageID, SelectedVisualID: input.VisualID,
 	})
 	if err != nil {
@@ -174,11 +175,11 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 // DashboardBuilderPreview renders one exact draft revision as JSON. No
 // revision is defaulted: callers must identify the token they preview.
 func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Request) {
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace"))
+	projectID := h.ProjectID.String()
 	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
 	actorID := h.currentActor(r)
 	revision, err := revisionFromQuery(r.URL.Query())
-	if err != nil || workspaceID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
+	if err != nil || projectID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
 		if err == nil {
 			err = access.ErrForbidden
 		}
@@ -186,7 +187,7 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	result, err := h.Authoring.Preview(h.analyticalContext(r.Context()), preview.PreviewRequest{
-		WorkspaceID: workspaceID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+		ProjectID: projectID, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		DraftID:          authoring.DraftID(strings.TrimSpace(r.URL.Query().Get("draft"))),
 		ExpectedRevision: revision, PageID: strings.TrimSpace(r.URL.Query().Get("page")),
 	})
@@ -200,15 +201,15 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 // DashboardBuilderExportYAML downloads canonical authored YAML through the
 // source adapter. Export authorization remains inside Application.ExportYAML.
 func (h Handler) DashboardBuilderExportYAML(w nethttp.ResponseWriter, r *nethttp.Request) {
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace"))
+	projectID := h.ProjectID.String()
 	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
 	actorID := h.currentActor(r)
-	if workspaceID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
+	if projectID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
 		writeBuilderError(w, r, access.ErrForbidden)
 		return
 	}
 	request := sourceadapter.ExportRequest{
-		Source:  sourceadapter.SourceRef{Kind: sourceadapter.SourceWorkspace, WorkspaceID: workspaceID, DashboardID: authoring.DashboardID(dashboardID)},
+		Source:  sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: projectgraph.ResourceID(projectID), DashboardID: authoring.DashboardID(dashboardID)},
 		ActorID: actorID,
 	}
 	var yaml []byte
@@ -345,7 +346,7 @@ func dashboardBuilderEnvelope(builder uisignals.DashboardBuilderSignal) uisignal
 func (h Handler) dashboardBuilderEnvelopeWithPreview(ctx context.Context, actorID string, builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderEnvelope {
 	envelope := dashboardBuilderEnvelope(builder)
 	result, err := h.Authoring.Preview(h.analyticalContext(ctx), preview.PreviewRequest{
-		WorkspaceID: strings.TrimSpace(builder.WorkspaceID), ActorID: strings.TrimSpace(actorID),
+		ProjectID: projectgraph.ResourceID(h.ProjectID.String()), ActorID: strings.TrimSpace(actorID),
 		DashboardID: authoring.DashboardID(strings.TrimSpace(builder.DashboardID)),
 		DraftID:     authoring.DraftID(strings.TrimSpace(builder.DraftID)),
 		ExpectedRevision: authoring.RevisionToken{
@@ -421,29 +422,29 @@ func dashboardBuilderPreviewVisuals(builder uisignals.DashboardBuilderSignal, re
 // URL, but every streamed projection must replace it after a mutation so a
 // preview cannot target an older revision.
 func dashboardBuilderWithPreviewHref(builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderSignal {
-	if strings.TrimSpace(builder.WorkspaceID) == "" || strings.TrimSpace(builder.DashboardID) == "" ||
+	if strings.TrimSpace(builder.DashboardID) == "" ||
 		strings.TrimSpace(builder.DraftID) == "" || strings.TrimSpace(builder.Revision.ID) == "" ||
 		builder.Revision.Number <= 0 || strings.TrimSpace(builder.Revision.ContentHash) == "" {
 		builder.Preview.Href = nil
 		return builder
 	}
-	href := dashboardBuilderPreviewPath(builder.WorkspaceID, builder.DashboardID, builder)
+	href := dashboardBuilderPreviewPath(builder.DashboardID, builder)
 	builder.Preview.Href = &href
 	return builder
 }
 
-func dashboardBuilderBasePath(workspaceID, dashboardID string) string {
-	return "/workspaces/" + url.PathEscape(workspaceID) + "/dashboards/" + url.PathEscape(dashboardID)
+func dashboardBuilderBasePath(dashboardID string) string {
+	return "/dashboards/" + url.PathEscape(dashboardID)
 }
 
-func dashboardBuilderPreviewPath(workspaceID, dashboardID string, builder uisignals.DashboardBuilderSignal) string {
+func dashboardBuilderPreviewPath(dashboardID string, builder uisignals.DashboardBuilderSignal) string {
 	values := url.Values{}
 	values.Set("page", firstBuilderPage(builder))
 	values.Set("draft", builder.DraftID)
 	values.Set("revisionId", builder.Revision.ID)
 	values.Set("revisionNumber", strconv.FormatInt(builder.Revision.Number, 10))
 	values.Set("revisionContentHash", builder.Revision.ContentHash)
-	return dashboardBuilderBasePath(workspaceID, dashboardID) + "/preview?" + values.Encode()
+	return dashboardBuilderBasePath(dashboardID) + "/preview?" + values.Encode()
 }
 
 func firstBuilderPage(builder uisignals.DashboardBuilderSignal) string {

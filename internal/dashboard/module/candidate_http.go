@@ -14,13 +14,14 @@ import (
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardui "github.com/flidai/leapview/internal/dashboard/ui"
 	"github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type CandidateHTTPConfig struct {
 	Metrics                  Metrics
 	CandidateID              string
 	OwnerPrincipalID         string
-	WorkspaceID              string
+	ProjectID                projectgraph.ResourceID
 	ArtifactDigest           string
 	AuthorizationFingerprint string
 	RouteBasePath            string
@@ -29,8 +30,8 @@ type CandidateHTTPConfig struct {
 
 type CandidateRestriction struct {
 	ID             string
-	WorkspaceID    string
-	ObjectID       string
+	Resource       access.ResourceRef
+	Subject        *access.SubjectRef
 	PolicyType     string
 	ExpressionJSON string
 }
@@ -44,13 +45,15 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 	}
 	config.CandidateID = strings.TrimSpace(config.CandidateID)
 	config.OwnerPrincipalID = strings.TrimSpace(config.OwnerPrincipalID)
-	config.WorkspaceID = strings.TrimSpace(config.WorkspaceID)
+	if err := config.ProjectID.Validate(); err != nil {
+		return HTTP{}, fmt.Errorf("candidate project identity is invalid: %w", err)
+	}
 	config.ArtifactDigest = strings.TrimSpace(config.ArtifactDigest)
 	config.AuthorizationFingerprint = strings.TrimSpace(config.AuthorizationFingerprint)
 	config.RouteBasePath = strings.TrimSuffix(strings.TrimSpace(config.RouteBasePath), "/")
 	if config.CandidateID == "" || config.OwnerPrincipalID == "" ||
-		config.WorkspaceID == "" || config.RouteBasePath == "" {
-		return HTTP{}, fmt.Errorf("candidate dashboard identity, owner, workspace, and route are required")
+		config.ProjectID == "" || config.RouteBasePath == "" {
+		return HTTP{}, fmt.Errorf("candidate dashboard identity, owner, project, and route are required")
 	}
 	if err := digest.ValidateSHA256Identity(config.ArtifactDigest); err != nil {
 		return HTTP{}, fmt.Errorf("candidate artifact digest is invalid: %w", err)
@@ -60,20 +63,27 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 	}
 	compiledRestrictions := make([]access.DataPolicy, len(config.Restrictions))
 	for index, restriction := range config.Restrictions {
+		if err := restriction.Resource.Validate(); err != nil {
+			return HTTP{}, fmt.Errorf("candidate restriction %q resource is invalid: %w", restriction.ID, err)
+		}
+		if restriction.Subject != nil {
+			if err := restriction.Subject.Validate(); err != nil {
+				return HTTP{}, fmt.Errorf("candidate restriction %q subject is invalid: %w", restriction.ID, err)
+			}
+		}
 		compiled, err := accesspolicy.Compile(restriction.ID, restriction.PolicyType, restriction.ExpressionJSON)
 		if err != nil {
 			return HTTP{}, fmt.Errorf("compile candidate restriction: %w", err)
 		}
 		compiledRestrictions[index] = access.DataPolicy{
-			ID: restriction.ID, WorkspaceID: restriction.WorkspaceID,
-			ObjectID: restriction.ObjectID, PolicyType: restriction.PolicyType,
+			ID: restriction.ID, Resource: restriction.Resource, Subject: restriction.Subject,
+			PolicyType:     restriction.PolicyType,
 			ExpressionJSON: restriction.ExpressionJSON, Compiled: compiled,
 		}
 	}
 
 	handler := m.handler
 	handler.Metrics = config.Metrics
-	handler.MetricsForWorkspace = nil
 	handler.RouteScope = dashboardui.RouteScope{BasePath: config.RouteBasePath}
 	handler.StreamNamespace = "candidate:" + config.CandidateID
 	handler.AgentBootstrap = nil
@@ -84,7 +94,7 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 		}
 		return queryauthz.WithCandidateQueryCapability(ctx, queryauthz.CandidateQueryCapability{
 			CandidateID: config.CandidateID, OwnerPrincipalID: config.OwnerPrincipalID,
-			WorkspaceID: config.WorkspaceID, PolicyDigest: config.AuthorizationFingerprint,
+			ProjectID: config.ProjectID, PolicyDigest: config.AuthorizationFingerprint,
 			Restrictions: append([]access.DataPolicy(nil), compiledRestrictions...),
 		})
 	}
@@ -104,7 +114,7 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 			principalOrClient = pagestream.ClientIDFromRequest(r, clientID)
 		}
 		return dashboardsession.Key{
-			WorkspaceOrPublication: "candidate:" + config.CandidateID + ":" + config.WorkspaceID,
+			WorkspaceOrPublication: "candidate:" + config.CandidateID + ":" + config.ProjectID.String(),
 			PrincipalOrClient:      principalOrClient,
 			DashboardID:            report.ID,
 			ServingStateID:         "candidate:" + config.CandidateID + ":" + config.ArtifactDigest,

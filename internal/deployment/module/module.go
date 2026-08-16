@@ -140,10 +140,13 @@ type Config struct {
 	CurrentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
 	AuthorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
 	AuthorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
-	Protected                 bool
-	Jobs                      JobConfig
-	API                       APIConfig
-	PublicationAuthorization  PublicationAuthorizationConfig
+	// AfterActivated runs after runtime publication and durable activation.
+	// It is observational and cannot influence activation.
+	AfterActivated           func(context.Context, deployment.Deployment)
+	Protected                bool
+	Jobs                     JobConfig
+	API                      APIConfig
+	PublicationAuthorization PublicationAuthorizationConfig
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -177,6 +180,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if err != nil {
 			return nil, err
 		}
+		service.SetAfterActivated(config.AfterActivated)
 		if config.CandidateConnections != nil || config.CandidateRuntime != nil {
 			if config.CandidateAdmission == nil {
 				return nil, errors.New(

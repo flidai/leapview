@@ -44,6 +44,20 @@ func TestActivateSupportsDeploymentWithoutManagedConnections(t *testing.T) {
 	require.Empty(t, runtime.candidates[0].ManagedData.Roots)
 }
 
+func TestActivateObserverFailureDoesNotRollBackActivation(t *testing.T) {
+	repo := &fakeRepository{deployment: testDeployment("deployment_observer", "project", "generation_2", StatusPending)}
+	runtime := &fakeRuntime{prepared: &fakePrepared{}}
+	service := mustService(t, repo, &fakeServingStates{}, runtime, &fakeResolver{})
+	observed := false
+	service.SetAfterActivated(func(context.Context, Deployment) { observed = true })
+
+	got, err := service.Activate(t.Context(), ActivationRequest{Scope: Scope{ProjectID: "project", DeploymentID: "deployment_observer"}, ActorID: "principal_activator"})
+	require.NoError(t, err)
+	require.Equal(t, StatusActive, got.Status)
+	require.True(t, runtime.committed)
+	require.True(t, observed)
+}
+
 func TestActivatePreparationFailureLeavesDeploymentPending(t *testing.T) {
 	wantErr := errors.New("duckdb preparation failed")
 	repo := &fakeRepository{deployment: testDeployment("deployment_1", "project", "generation_2", StatusPending)}

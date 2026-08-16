@@ -41,6 +41,39 @@ func TestListGroupMembersPreservesServicePrincipalKind(t *testing.T) {
 	}
 }
 
+func TestListGroupIDsForPrincipalUsesExactIndexedMembership(t *testing.T) {
+	ctx := context.Background()
+	_, repo := openAccessRepo(t, ctx)
+	principal, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{ID: "group-subject", Email: "group-subject@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: "first", Name: "First"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: "second", Name: "Second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddGroupMember(ctx, second.ID, principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddGroupMember(ctx, first.ID, principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ListGroupIDsForPrincipal(ctx, principal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != first.ID || got[1] != second.ID {
+		t.Fatalf("group IDs = %#v, want sorted exact memberships", got)
+	}
+	if _, err := repo.ListGroupIDsForPrincipal(ctx, " "+principal.ID); err == nil {
+		t.Fatal("whitespace principal ID accepted")
+	}
+}
+
 func TestAdversarialDuplicateLocalCreateDoesNotRotateCredential(t *testing.T) {
 	ctx := context.Background()
 	_, repo := openAccessRepo(t, ctx)

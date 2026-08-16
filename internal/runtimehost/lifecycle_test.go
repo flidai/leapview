@@ -81,6 +81,15 @@ type lifecycleRepo struct {
 	noActive       bool
 }
 
+type unboundLifecycleRepo struct {
+	*lifecycleRepo
+	scopes []servingstate.ActiveScope
+}
+
+func (r *unboundLifecycleRepo) ListActiveScopes(context.Context) ([]servingstate.ActiveScope, error) {
+	return append([]servingstate.ActiveScope(nil), r.scopes...), nil
+}
+
 func (r *lifecycleRepo) ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
 	if r.noActive {
 		return servingstate.State{}, servingstate.Artifact{}, servingstate.ErrNotFound
@@ -186,6 +195,124 @@ func (a *lifecycleAuth) InstallAuthorizationSnapshot(_ context.Context, snapshot
 	a.generation = servingstate.ID(snapshot.Identity().GenerationID)
 	a.snapshot = snapshot
 	return a.err
+}
+
+func TestUnboundRuntimeAllowsFreshStartAndBindsFirstActivation(t *testing.T) {
+	repo := &unboundLifecycleRepo{lifecycleRepo: &lifecycleRepo{noActive: true}}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, Environment: "prod", Factory: &lifecycleFactory{}, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+	if err := registry.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := registry.ProjectID(); got != "" {
+		t.Fatalf("fresh runtime project = %q, want unbound", got)
+	}
+	repo.noActive = false
+	repo.state = servingstate.State{ID: "generation_first", ProjectID: "project_first", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	repo.artifact = servingstate.Artifact{ID: "artifact_first", ServingStateID: "generation_first", Digest: repo.state.Digest}
+	prepared, err := registry.PrepareServingState(t.Context(), string(repo.state.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(prepared, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got := registry.ProjectID(); got != "project_first" {
+		t.Fatalf("bound runtime project = %q, want project_first", got)
+	}
+}
+
+func TestUnboundRuntimeFailedFirstActivationStaysUnbound(t *testing.T) {
+	repo := &unboundLifecycleRepo{lifecycleRepo: &lifecycleRepo{
+		state:    servingstate.State{ID: "generation_failed", ProjectID: "project_failed", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		artifact: servingstate.Artifact{ID: "artifact_failed", ServingStateID: "generation_failed", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	}}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, Environment: "prod", Factory: &lifecycleFactory{}, Authorization: &lifecycleAuth{err: errors.New("install failed")}})
+	defer registry.Close()
+	prepared, err := registry.PrepareServingState(t.Context(), "generation_failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(prepared, func() error { return nil }); err == nil {
+		t.Fatal("failed activation succeeded")
+	}
+	if got := registry.ProjectID(); got != "" {
+		t.Fatalf("failed activation bound runtime to %q", got)
+	}
+}
+
+func TestUnboundRuntimeMetadataActivationFailureStaysUnbound(t *testing.T) {
+	repo := &unboundLifecycleRepo{lifecycleRepo: &lifecycleRepo{
+		state:    servingstate.State{ID: "generation_callback", ProjectID: "project_callback", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		artifact: servingstate.Artifact{ID: "artifact_callback", ServingStateID: "generation_callback", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	}}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, Environment: "prod", Factory: &lifecycleFactory{}, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+	prepared, err := registry.PrepareServingState(t.Context(), "generation_callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(prepared, func() error { return errors.New("metadata activation failed") }); err == nil {
+		t.Fatal("metadata activation failure was ignored")
+	}
+	if got := registry.ProjectID(); got != "" {
+		t.Fatalf("metadata failure bound runtime to %q", got)
+	}
+}
+
+func TestBoundRuntimeRejectsSecondProject(t *testing.T) {
+	repo := &unboundLifecycleRepo{lifecycleRepo: &lifecycleRepo{}}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, Environment: "prod", Factory: &lifecycleFactory{}, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+	repo.state = servingstate.State{ID: "generation_one", ProjectID: "project_one", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	repo.artifact = servingstate.Artifact{ID: "artifact_one", ServingStateID: "generation_one", Digest: repo.state.Digest}
+	prepared, err := registry.PrepareServingState(t.Context(), "generation_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(prepared, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	repo.state = servingstate.State{ID: "generation_two", ProjectID: "project_two", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	repo.artifact = servingstate.Artifact{ID: "artifact_two", ServingStateID: "generation_two", Digest: repo.state.Digest}
+	if _, err := registry.PrepareServingState(t.Context(), "generation_two"); err == nil {
+		t.Fatal("second project preparation succeeded")
+	}
+}
+
+func TestConcurrentFirstActivationBindsOnlyOneProject(t *testing.T) {
+	digestA := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	digestB := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	repo := &unboundLifecycleRepo{lifecycleRepo: &lifecycleRepo{
+		states: map[servingstate.ID]servingstate.State{
+			"generation_a": {ID: "generation_a", ProjectID: "project_a", Environment: "prod", Status: servingstate.StatusValidated, Digest: digestA},
+			"generation_b": {ID: "generation_b", ProjectID: "project_b", Environment: "prod", Status: servingstate.StatusValidated, Digest: digestB},
+		},
+		artifacts: map[servingstate.ID]servingstate.Artifact{
+			"generation_a": {ID: "artifact_a", ServingStateID: "generation_a", Digest: digestA},
+			"generation_b": {ID: "artifact_b", ServingStateID: "generation_b", Digest: digestB},
+		},
+	}}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, Environment: "prod", Factory: &lifecycleFactory{}, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+	preparedA, err := registry.PrepareServingState(t.Context(), "generation_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedB, err := registry.PrepareServingState(t.Context(), "generation_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	go func() { results <- registry.ActivatePrepared(preparedA, func() error { return nil }) }()
+	go func() { results <- registry.ActivatePrepared(preparedB, func() error { return nil }) }()
+	first, second := <-results, <-results
+	if (first == nil) == (second == nil) {
+		t.Fatalf("concurrent activation results = %v, %v; want exactly one success", first, second)
+	}
+	if got := registry.ProjectID(); got != "project_a" && got != "project_b" {
+		t.Fatalf("concurrent activation bound runtime to %q", got)
+	}
 }
 
 func TestProjectEnvironmentLifecyclePublishesAndDrains(t *testing.T) {

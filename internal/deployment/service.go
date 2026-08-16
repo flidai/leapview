@@ -78,11 +78,22 @@ func (p registryPrepared) DuckLakeSnapshotID() int64 { return p.prepared.DuckLak
 func (p registryPrepared) Close() error              { return p.prepared.Close() }
 
 type Service struct {
-	repository Repository
-	activation ActivationUnitOfWork
-	states     ServingStateRepository
-	runtime    Runtime
-	resolver   ManagedDataResolver
+	repository     Repository
+	activation     ActivationUnitOfWork
+	states         ServingStateRepository
+	runtime        Runtime
+	resolver       ManagedDataResolver
+	afterActivated func(context.Context, Deployment)
+}
+
+// SetAfterActivated installs a non-transactional observer invoked only after
+// runtime publication and durable deployment activation have succeeded. An
+// observer cannot influence Activate, so post-activation maintenance can
+// never roll back a visible generation.
+func (s *Service) SetAfterActivated(observer func(context.Context, Deployment)) {
+	if s != nil {
+		s.afterActivated = observer
+	}
 }
 
 func New(repository Repository, activation ActivationUnitOfWork, states ServingStateRepository, runtime Runtime, resolver ManagedDataResolver) (*Service, error) {
@@ -185,6 +196,9 @@ func (s *Service) Activate(ctx context.Context, request ActivationRequest) (Depl
 		return e
 	}); err != nil {
 		return Deployment{}, err
+	}
+	if s.afterActivated != nil {
+		s.afterActivated(ctx, activated)
 	}
 	return activated, nil
 }

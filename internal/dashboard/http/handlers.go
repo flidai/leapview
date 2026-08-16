@@ -32,6 +32,7 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -117,11 +118,10 @@ type SessionKeyFactory func(
 ) dashboardsession.Key
 
 type Handler struct {
-	Metrics                 Metrics
+	Metrics Metrics
 	// ProjectID is the stable graph project resource selected by app
 	// composition. It is deliberately not taken from a route segment.
-	ProjectID              string
-	MetricsForWorkspace     func(workspaceID string) (Metrics, bool)
+	ProjectID               projectgraph.ResourceID
 	AnalyticalContext       func(context.Context) context.Context
 	Broker                  SignalBroker
 	Coordinators            *dashboardstream.Registry
@@ -133,7 +133,7 @@ type Handler struct {
 	CurrentPrincipalID      func(r *nethttp.Request) string
 	CurrentUsagePrincipal   func(r *nethttp.Request) (string, bool)
 	RecordDashboardView     func(context.Context, usage.View) error
-	AuthorizeListObject     func(ctx context.Context, principalID string, object access.ObjectRef) (bool, error)
+	AuthorizeListResource   func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error)
 	CSRFToken               func(r *nethttp.Request) string
 	Layout                  func(r *nethttp.Request) webpage.Provider
 	Presentation            reportui.Presentation
@@ -174,7 +174,7 @@ func (h Handler) dashboardSessionKey(r *nethttp.Request, definition dashboarddef
 		}
 	}
 	return dashboardsession.Key{
-		WorkspaceOrPublication: h.ProjectID,
+		WorkspaceOrPublication: h.ProjectID.String(),
 		PrincipalOrClient:      principalOrClient,
 		DashboardID:            definition.ID,
 		ServingStateID:         definition.DefaultFilterState().DefaultsRevision,
@@ -196,14 +196,17 @@ func (h Handler) analyticalStreamContext(ctx context.Context, streamID string) c
 	return dataquery.WithMetadata(ctx, metadata)
 }
 
-func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID, projectID string, rows []api.DashboardSummary) ([]api.DashboardSummary, error) {
-	if h.AuthorizeListObject == nil {
+func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID string, rows []api.DashboardSummary) ([]api.DashboardSummary, error) {
+	if h.AuthorizeListResource == nil {
 		return rows, nil
 	}
 	out := make([]api.DashboardSummary, 0, len(rows))
 	for _, row := range rows {
-		object := access.ItemObject(access.SecurableDashboard, projectID, row.ID)
-		allowed, err := h.AuthorizeListObject(ctx, principalID, object)
+		resource, err := access.NewResourceRef(projectgraph.ResourceID(row.ID), projectgraph.KindDashboard)
+		if err != nil {
+			return nil, err
+		}
+		allowed, err := h.AuthorizeListResource(ctx, principalID, resource, access.CapabilityResourceRead)
 		if err != nil {
 			return nil, err
 		}
@@ -214,10 +217,16 @@ func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID, pr
 	return out, nil
 }
 
-func DashboardObjectRefs(r *nethttp.Request, projectID string) []access.ObjectRef {
-	objects := []access.ObjectRef{}
+func DashboardObjectRefs(r *nethttp.Request, _ projectgraph.ResourceID) []access.ResourceRef {
+	objects := []access.ResourceRef{}
 	if dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard")); dashboardID != "" {
-		objects = append(objects, access.ItemObject(access.SecurableDashboard, projectID, dashboardID))
+		resourceID, err := projectgraph.NewResourceID(dashboardID)
+		if err != nil {
+			return nil
+		}
+		if resource, err := access.NewResourceRef(resourceID, projectgraph.KindDashboard); err == nil {
+			objects = append(objects, resource)
+		}
 	}
 	return objects
 }
@@ -286,15 +295,6 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 	}
 }
 
-func (h Handler) metricsForRequest(r *nethttp.Request) (Metrics, bool) {
-	if h.Metrics == nil {
-		return nil, false
-	}
-	// Canonical project routes resolve against the one composed runtime. A
-	// workspace query/route is intentionally not accepted as an alternate
-	// selector; callers that need a candidate use the candidate route scope.
-	if chi.URLParam(r, "workspace") != "" || strings.TrimSpace(r.URL.Query().Get("workspace")) != "" {
-		return nil, false
-	}
-	return h.Metrics, true
+func (h Handler) metricsForRequest(_ *nethttp.Request) (Metrics, bool) {
+	return h.Metrics, h.Metrics != nil
 }

@@ -163,7 +163,7 @@ func productAreas() []Area {
 
 func areaForActive(active string) string {
 	switch strings.TrimSpace(active) {
-	case "data", "models", "semantic-models", "connections", "pipelines", "develop":
+	case "data", "connections", "pipelines", "develop":
 		return "develop"
 	default:
 		return "insights"
@@ -191,8 +191,6 @@ func insightsNavigation() []Item {
 func developNavigation() []Item {
 	return []Item{
 		{ID: "data", Label: "Data", Href: "/data", Icon: "database", Meta: optional("Sources and physical data")},
-		{ID: "models", Label: "Models", Href: "/models", Icon: "cache", Meta: optional("Reusable transformations")},
-		{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "cache", Meta: optional("Governed query surfaces")},
 		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow", Meta: optional("Refresh monitoring")},
 		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data", Meta: optional("Data sources")},
 	}

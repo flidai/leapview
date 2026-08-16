@@ -295,7 +295,7 @@ func newIntegrationAuthoringApplication(t *testing.T, store *platform.Store, run
 	t.Helper()
 	repository := authoringsqlite.NewRepository(store.SQLDB())
 	authorizer := integrationAuthoringAuthorizer{}
-	acquireRuntime := func(context.Context, string) (runtimehost.Lease, error) {
+	acquireRuntime := func(context.Context) (runtimehost.Lease, error) {
 		return &integrationAuthoringLease{runtime: runtime, servingID: "integration-serving-state"}, nil
 	}
 	compiler, err := authoringcompileradapter.New(authoringcompileradapter.Options{AcquireRuntime: acquireRuntime})

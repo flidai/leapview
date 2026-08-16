@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -33,7 +36,7 @@ func NewFactory(config FactoryConfig) runtimehost.RuntimeFactory {
 	}
 }
 
-func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.Runtime, error) {
+func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
 	duckDBDir := runtimeFirstNonEmpty(input.DuckDBDir, f.duckDBDir)
 	runtimeDir := runtimeFirstNonEmpty(input.RuntimeDir, f.runtimeDir)
 	targetDir := filepath.Join(
@@ -50,23 +53,36 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 		return nil, err
 	}
 	duckDir := filepath.Join(duckDBDir, string(servingstate.NormalizeEnvironment(input.State.Environment)))
-	compiled, _, err := projectbundle.LoadCompiledWorkspaceArtifact(targetDir)
+	compiled, _, err := projectbundle.LoadCompiledProjectArtifact(targetDir)
 	if err != nil {
 		return nil, err
 	}
-	if compiled.WorkspaceID != string(input.State.WorkspaceID) {
-		return nil, fmt.Errorf("compiled artifact workspace = %q, want %q", compiled.WorkspaceID, input.State.WorkspaceID)
+	if compiled.ProjectID != input.State.ProjectID {
+		return nil, fmt.Errorf("compiled artifact project = %q, want %q", compiled.ProjectID, input.State.ProjectID)
 	}
 	if err := bindManagedDataRoots(compiled.Manifest, input.ManagedData.Roots); err != nil {
 		return nil, err
+	}
+	identity, err := projectgraph.NewServingIdentity(input.State.ProjectID, string(servingstate.NormalizeEnvironment(input.State.Environment)), string(input.State.ID))
+	if err != nil {
+		return nil, err
+	}
+	policy := projectmanifest.AccessPolicy{}
+	if value := input.State.AccessPolicyJSON; value != "" {
+		if err := json.Unmarshal([]byte(value), &policy); err != nil {
+			return nil, fmt.Errorf("decode serving authorization policy: %w", err)
+		}
+	}
+	authorization, err := projectmanifest.CompileAuthorizationSnapshot(identity, compiled.Graph, policy)
+	if err != nil {
+		return nil, fmt.Errorf("compile serving authorization snapshot: %w", err)
 	}
 	if f.dashboardRuntime == nil {
 		return nil, fmt.Errorf("dashboard runtime builder is required")
 	}
 	runtimeInput := dashboardruntimefactory.Input{
 		Directory: duckDir, SnapshotID: input.State.DuckLakeSnapshotID,
-		ServingStateID: string(input.State.ID), WorkspaceID: string(input.State.WorkspaceID),
-		Environment: string(servingstate.NormalizeEnvironment(input.State.Environment)), SemanticModelDigest: input.State.Digest,
+		Identity: identity, SemanticModelDigest: input.State.Digest,
 		ArtifactDigest: input.Artifact.Digest, SourceDataDigest: input.ManagedData.RevisionID,
 		Definition: projectartifact.DashboardProjection(compiled.Manifest),
 	}
@@ -98,8 +114,9 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 		return nil, fmt.Errorf("authored dashboard sources: %w", err)
 	}
 	return dashboardRuntimeWithGraph{
-		Service: service, workspaceID: string(input.State.WorkspaceID),
-		servingStateID: string(input.State.ID), graph: compiled.Graph,
+		Service: service, projectID: input.State.ProjectID,
+		servingStateID:  string(input.State.ID),
+		authorization:   authorization,
 		authoredSources: authoredSources,
 	}, nil
 }

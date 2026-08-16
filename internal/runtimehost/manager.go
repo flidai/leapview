@@ -30,6 +30,10 @@ type ServingStateRepository interface {
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
 }
 
+type activeScopeRepository interface {
+	ListActiveScopes(context.Context) ([]servingstate.ActiveScope, error)
+}
+
 type SnapshotLeaseRepository interface {
 	CreateQuerySnapshotLease(context.Context, servingstate.SnapshotLeaseInput) (string, error)
 	ReleaseQuerySnapshotLease(context.Context, string) error
@@ -237,6 +241,8 @@ func (m *Manager) ProjectID() projectgraph.ResourceID {
 	if m == nil {
 		return ""
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.projectID
 }
 func (m *Manager) Environment() servingstate.Environment {
@@ -271,14 +277,18 @@ func (m *Manager) setLeaseRenewalError(id string, err error) {
 }
 
 func (m *Manager) Reload(ctx context.Context) error {
-	current, artifact, err := m.repo.ActiveArtifact(ctx, m.projectID, m.environment)
+	if m.ProjectID() == "" {
+		return m.reloadUnbound(ctx)
+	}
+	projectID := m.ProjectID()
+	current, artifact, err := m.repo.ActiveArtifact(ctx, projectID, m.environment)
 	if errors.Is(err, servingstate.ErrNotFound) {
 		// A no-active read is only authoritative while serialized with
 		// activation. Re-check under the cutover lock before retiring anything;
 		// if another actor published meanwhile, let the normal active path load
 		// that exact generation.
 		m.cutoverMu.Lock()
-		_, _, confirmErr := m.repo.ActiveArtifact(ctx, m.projectID, m.environment)
+		_, _, confirmErr := m.repo.ActiveArtifact(ctx, projectID, m.environment)
 		if confirmErr == nil {
 			m.cutoverMu.Unlock()
 			return m.Reload(ctx)
@@ -321,6 +331,65 @@ func (m *Manager) Reload(ctx context.Context) error {
 	return m.activatePreparedContext(ctx, prepared, func() error { return nil })
 }
 
+// reloadUnbound discovers the first active project for this process's fixed
+// environment. A fresh installation legitimately has no active scope yet;
+// in that case the host remains unbound until the first exact generation is
+// activated. Multiple active projects are rejected instead of selecting one.
+func (m *Manager) reloadUnbound(ctx context.Context) error {
+	repo, ok := m.repo.(activeScopeRepository)
+	if !ok {
+		return errors.New("unbound runtime host requires active-scope discovery")
+	}
+	m.cutoverMu.Lock()
+	scopes, err := repo.ListActiveScopes(ctx)
+	if err != nil {
+		m.cutoverMu.Unlock()
+		return err
+	}
+	var projectID projectgraph.ResourceID
+	for _, scope := range scopes {
+		if scope.Environment != m.environment {
+			continue
+		}
+		if err := scope.ProjectID.Validate(); err != nil {
+			m.cutoverMu.Unlock()
+			return fmt.Errorf("active serving scope project is invalid: %w", err)
+		}
+		if projectID == "" {
+			projectID = scope.ProjectID
+			continue
+		}
+		if scope.ProjectID != projectID {
+			m.cutoverMu.Unlock()
+			return fmt.Errorf("active serving scopes span multiple projects: %q and %q", projectID, scope.ProjectID)
+		}
+	}
+	if projectID != "" {
+		m.mu.Lock()
+		if m.projectID == "" {
+			m.projectID = projectID
+		} else if m.projectID != projectID {
+			existingProjectID := m.projectID
+			m.mu.Unlock()
+			m.cutoverMu.Unlock()
+			return fmt.Errorf("runtime host project changed from %q to %q", existingProjectID, projectID)
+		}
+		m.mu.Unlock()
+	}
+	if projectID == "" {
+		m.mu.Lock()
+		current := m.current
+		m.current = nil
+		retired := m.retireLocked(current)
+		m.mu.Unlock()
+		m.cutoverMu.Unlock()
+		m.cleanupRetired(retired)
+		return nil
+	}
+	m.cutoverMu.Unlock()
+	return m.Reload(ctx)
+}
+
 func (m *Manager) PrepareServingState(ctx context.Context, id string) (*Prepared, error) {
 	state, err := m.repo.ByID(ctx, servingstate.ID(id))
 	if err != nil {
@@ -337,8 +406,9 @@ func (m *Manager) PrepareServingState(ctx context.Context, id string) (*Prepared
 }
 
 func (m *Manager) validateGeneration(state servingstate.State, artifact servingstate.Artifact) error {
-	if state.ProjectID != m.projectID {
-		return fmt.Errorf("serving state %s project = %q, want %q", state.ID, state.ProjectID, m.projectID)
+	boundProjectID := m.ProjectID()
+	if boundProjectID != "" && state.ProjectID != boundProjectID {
+		return fmt.Errorf("serving state %s project = %q, want %q", state.ID, state.ProjectID, boundProjectID)
 	}
 	if servingstate.Environment(state.Environment) != m.environment {
 		return fmt.Errorf("serving state %s environment = %q, want %q", state.ID, state.Environment, m.environment)
@@ -451,6 +521,7 @@ func (m *Manager) activatePreparedContext(ctx context.Context, candidate *Prepar
 	defer m.cutoverMu.Unlock()
 	m.mu.RLock()
 	currentID := servingstate.ID("")
+	boundProjectID := m.projectID
 	if m.current != nil {
 		currentID = m.current.servingStateID
 	}
@@ -458,7 +529,13 @@ func (m *Manager) activatePreparedContext(ctx context.Context, candidate *Prepar
 	if currentID != sealed.baseActiveID {
 		return errors.Join(errors.New("prepared runtime is stale"), sealed.abort())
 	}
-	expectedIdentity, err := projectgraph.NewServingIdentity(m.projectID, string(m.environment), string(sealed.servingStateID))
+	if boundProjectID != "" && sealed.authorization.Identity().ProjectID != boundProjectID {
+		return errors.Join(fmt.Errorf("prepared runtime project = %q, want %q", sealed.authorization.Identity().ProjectID, boundProjectID), sealed.abort())
+	}
+	if boundProjectID == "" {
+		boundProjectID = sealed.authorization.Identity().ProjectID
+	}
+	expectedIdentity, err := projectgraph.NewServingIdentity(boundProjectID, string(m.environment), string(sealed.servingStateID))
 	if err != nil || sealed.authorization.Identity() != expectedIdentity {
 		if err == nil {
 			err = fmt.Errorf("authorization snapshot identity = %#v, want %#v", sealed.authorization.Identity(), expectedIdentity)
@@ -480,6 +557,14 @@ func (m *Manager) activatePreparedContext(ctx context.Context, candidate *Prepar
 	if err := activate(); err != nil {
 		return errors.Join(err, sealed.abort())
 	}
+	// Cutover serialization proves the project binding cannot change between
+	// the validated read above and this commit. There is deliberately no
+	// fallible path after the durable activation callback succeeds.
+	m.mu.Lock()
+	if m.projectID == "" {
+		m.projectID = boundProjectID
+	}
+	m.mu.Unlock()
 	retired := sealed.publish()
 	m.cleanupRetired(retired)
 	return nil
@@ -534,7 +619,7 @@ func (s *sealedPrepared) publish() *managedRuntime {
 		s.finish(preparedStatePublished)
 		return nil
 	}
-	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID}
+	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, authorization: s.authorization, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID}
 	s.manager.mu.Lock()
 	old := s.manager.current
 	s.manager.current = next
@@ -554,7 +639,7 @@ func (s *sealedPrepared) consumeCandidate() (*managedRuntime, error) {
 		}
 		return nil, errors.New("candidate preparation must own an isolated runtime")
 	}
-	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID}
+	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, authorization: s.authorization, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID}
 	s.runtime = nil
 	s.managedData = nil
 	s.snapshotLease = nil
@@ -681,6 +766,7 @@ func (m *Manager) release(runtime *managedRuntime) {
 
 type managedRuntime struct {
 	identity                projectgraph.ServingIdentity
+	authorization           accesssnapshot.AuthorizationSnapshot
 	servingStateID          servingstate.ID
 	digest, managedRevision string
 	runtime                 Runtime
@@ -767,7 +853,7 @@ func (m *Manager) runCleanupWorker() {
 		results := m.closeManagedResources(runtime)
 		for _, result := range results {
 			if result.err != nil && m.onCleanupFailure != nil {
-				m.onCleanupFailure(CleanupFailure{ProjectID: m.projectID, ServingStateID: runtime.servingStateID, DuckLakeSnapshotID: runtime.snapshotID, Resource: result.resource, Err: result.err})
+				m.onCleanupFailure(CleanupFailure{ProjectID: m.ProjectID(), ServingStateID: runtime.servingStateID, DuckLakeSnapshotID: runtime.snapshotID, Resource: result.resource, Err: result.err})
 			}
 		}
 		m.mu.Lock()
@@ -866,6 +952,12 @@ func (l *runtimeLease) Runtime() Runtime {
 		return nil
 	}
 	return l.managed.runtime
+}
+func (l *runtimeLease) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
+	if l == nil || l.managed == nil {
+		return accesssnapshot.AuthorizationSnapshot{}
+	}
+	return l.managed.authorization
 }
 func (l *runtimeLease) Identity() projectgraph.ServingIdentity {
 	if l == nil || l.managed == nil {
@@ -990,7 +1082,7 @@ func releaseSnapshotLease(repo SnapshotLeaseRepository, id string) error {
 func (m *Manager) releaseSnapshotLease(task snapshotLeaseReleaseTask) error {
 	err := releaseSnapshotLease(task.repo, task.leaseID)
 	if err != nil && m.onCleanupFailure != nil {
-		m.onCleanupFailure(CleanupFailure{ProjectID: m.projectID, ServingStateID: task.servingStateID, DuckLakeSnapshotID: task.snapshotID, Resource: CleanupResourceSnapshotLease, Err: err})
+		m.onCleanupFailure(CleanupFailure{ProjectID: m.ProjectID(), ServingStateID: task.servingStateID, DuckLakeSnapshotID: task.snapshotID, Resource: CleanupResourceSnapshotLease, Err: err})
 	}
 	return err
 }

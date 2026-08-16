@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
@@ -18,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
+	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform"
@@ -26,6 +28,7 @@ import (
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
@@ -254,19 +257,19 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err := retention.Run(ctx, false); err != nil {
 		return fail(err)
 	}
-	workspaceIDValues, err := workspaceDirectory.WorkspaceIDs(ctx)
+	activeScopes, err := servingStateRepo.ListActiveScopes(ctx)
 	if err != nil {
 		return fail(err)
 	}
-	workspaceIDs := make([]servingstatemodule.WorkspaceID, 0, len(workspaceIDValues))
-	for _, workspaceID := range workspaceIDValues {
-		workspaceIDs = append(workspaceIDs, servingstatemodule.WorkspaceID(workspaceID))
+	projectID, err := singletonProjectID(activeScopes)
+	if err != nil {
+		return fail(err)
 	}
 	runtimeHostModule, err := runtimehostmodule.Build(ctx, runtimehostmodule.Config{
-		States:       servingStateRepo,
-		WorkspaceIDs: workspaceIDs,
-		Environment:  environment,
-		ManagedData:  managedDataResolver,
+		States:      servingStateRepo,
+		ProjectID:   projectID,
+		Environment: environment,
+		ManagedData: managedDataResolver,
 		OnDrained: func(_ servingstatemodule.ID, _ int64, protected []int64) {
 			go func() {
 				if err := retention.RunWithProtected(context.Background(), false, protected); err != nil {
@@ -286,17 +289,23 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	cleanup.Push("runtime-host", func(context.Context) error { return runtimeHostModule.Close() })
-	authoringAcquireRuntime := func(ctx context.Context, workspaceID string) (runtimehostmodule.Lease, error) {
-		return runtimeHostModule.ProviderForWorkspace(servingstatemodule.WorkspaceID(workspaceID)).Acquire(ctx)
+	authoringAcquireRuntime := func(ctx context.Context) (runtimehostmodule.Lease, error) {
+		return runtimeHostModule.Acquire(ctx)
 	}
 	authoringApplication, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
-		Database:        store.SQLDB(),
-		AuthorizeObject: accessModule.AuthorizeObject,
+		Database: store.SQLDB(),
+		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+			return authorizeProjectResources(ctx, accessModule, runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
+		},
 		AcquireRuntime:  authoringAcquireRuntime,
 		ExportDashboard: projectmodule.ExportDashboard,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("build dashboard authoring module: %w", err))
+	}
+	generationRevalidator, err := authoringApplication.NewGenerationRevalidator(time.Now)
+	if err != nil {
+		return fail(fmt.Errorf("build dashboard generation revalidator: %w", err))
 	}
 	deploymentRuntime, err := deploymentmodule.NewRuntime(runtimeHostModule)
 	if err != nil {
@@ -419,6 +428,24 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		CandidateArtifacts:       releaseModule,
 		CandidateSourceBlobAudit: candidateSourceBlobAuditRecorder(accessModule),
 		RuntimeVersion:           identity.Version + ":" + identity.Revision,
+		AfterActivated: func(ctx context.Context, activated deployment.Deployment) {
+			generation, generationErr := activatedRevalidationGeneration(
+				ctx, servingStateRepo, runtimeHostModule, activated.ServingIdentity, activated.PriorGenerationID,
+			)
+			if generationErr != nil {
+				slog.Default().Warn("dashboard generation revalidation could not load activated generation", "project", activated.ServingIdentity.ProjectID, "generation", activated.ServingIdentity.GenerationID, "error", generationErr)
+				return
+			}
+			results, revalidationErr := generationRevalidator.GenerationActivated(ctx, generation)
+			for _, result := range results {
+				if result.Err != nil {
+					slog.Default().Warn("dashboard generation revalidation failed", "project", generation.Identity.ProjectID, "generation", generation.Identity.GenerationID, "dashboard", result.DashboardID, "error", result.Err)
+				}
+			}
+			if revalidationErr != nil {
+				slog.Default().Warn("dashboard generation revalidation failed", "project", generation.Identity.ProjectID, "generation", generation.Identity.GenerationID, "error", revalidationErr)
+			}
+		},
 		ActivationHooks: deploymentmodule.ActivationHooks{
 			ApplyAccessSnapshot: accessmodule.ApplySnapshot,
 			ReconcilePublications: func(ctx context.Context, tx transaction.Transaction, input deploymentmodule.PublicationActivationInput) error {
@@ -433,10 +460,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			},
 		},
 	}
-	runtimeMetrics := dashboardmodule.NewDynamicRuntimeMetrics(dashboardmodule.DynamicRuntimeMetricsOptions{
-		ProviderFactory: func(workspaceID string) runtimehostmodule.Provider {
-			return runtimeHostModule.ProviderForWorkspace(servingstatemodule.WorkspaceID(workspaceID))
-		},
+	runtimeMetrics := dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{
+		Provider: runtimeHostModule.Provider(), ProjectID: projectID.String(),
 		PublishedCompilationReader: authoringApplication.PublishedCompilationReader(),
 	})
 	auth := accessModule.Auth()
@@ -465,6 +490,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DeploymentConfig:      deploymentConfig,
 		},
 		runtimeAssemblyInputs{
+			ProjectID:           projectID,
 			DuckLakeCatalogPath: duckLakeCatalogPath, DuckLakeDataPath: cfg.DuckLakeDataDir(),
 			DefaultEnvironment: string(environment), SCIMBearerToken: cfg.SCIMBearerToken,
 			MetricsBearerToken: cfg.MetricsBearerToken, AllowedHosts: allowedHosts, Assets: assets,
@@ -505,6 +531,23 @@ func firstConfigured(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func singletonProjectID(scopes []servingstatemodule.ActiveScope) (projectgraph.ResourceID, error) {
+	var projectID projectgraph.ResourceID
+	for _, scope := range scopes {
+		if err := scope.ProjectID.Validate(); err != nil {
+			return "", fmt.Errorf("active serving project identity is invalid: %w", err)
+		}
+		if projectID == "" {
+			projectID = scope.ProjectID
+			continue
+		}
+		if scope.ProjectID != projectID {
+			return "", fmt.Errorf("active serving scopes span multiple projects: %q and %q", projectID, scope.ProjectID)
+		}
+	}
+	return projectID, nil
 }
 
 func configuredListenURL(addr string) string {

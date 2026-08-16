@@ -32,6 +32,7 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/go-chi/chi/v5"
 )
@@ -84,14 +85,14 @@ type Config struct {
 
 type HTTPConfig struct {
 	Metrics               queryruntime.Metrics
-	MetricsForWorkspace   func(string) (queryruntime.Metrics, bool)
+	ProjectID             projectgraph.ResourceID
 	Admission             workload.Admitter
 	Broker                SignalBroker
 	Logger                *slog.Logger
 	Telemetry             DashboardTelemetry
 	CurrentPrincipalID    func(*http.Request) string
 	CurrentUsagePrincipal func(*http.Request) (string, bool)
-	AuthorizeListObject   func(context.Context, string, access.ObjectRef) (bool, error)
+	AuthorizeListResource func(context.Context, string, access.ResourceRef, access.Capability) (bool, error)
 	CSRFToken             func(*http.Request) string
 	Layout                func(*http.Request) webpage.Provider
 	Environment           func(*http.Request) string
@@ -182,13 +183,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if usageNow == nil {
 		usageNow = time.Now
 	}
-	metricsForHTTP := func(workspaceID string) (dashboardhttp.Metrics, bool) {
-		if config.HTTP.MetricsForWorkspace == nil {
-			return nil, false
-		}
-		metrics, ok := config.HTTP.MetricsForWorkspace(workspaceID)
-		return metrics, ok
-	}
 	metricsForSemantic := func(workspaceID string) (semanticapi.Metrics, bool) {
 		if config.Semantic.MetricsForWorkspace == nil {
 			return nil, false
@@ -198,7 +192,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	telemetry := config.HTTP.Telemetry
 	handler := dashboardhttp.Handler{
-		Metrics: config.HTTP.Metrics, MetricsForWorkspace: metricsForHTTP,
+		Metrics:   config.HTTP.Metrics,
+		ProjectID: config.HTTP.ProjectID,
 		Authoring: config.Authoring,
 		AnalyticalContext: func(ctx context.Context) context.Context {
 			return workload.WithAdmitter(ctx, config.HTTP.Admission)
@@ -228,7 +223,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		SessionStore:       sessionStore,
 		OptionCursorSecret: optionCursorSecret,
 		OptionCache:        dashboardfilter.NewOptionCache(4096),
-		CurrentPrincipalID: config.HTTP.CurrentPrincipalID, AuthorizeListObject: config.HTTP.AuthorizeListObject,
+		CurrentPrincipalID: config.HTTP.CurrentPrincipalID, AuthorizeListResource: config.HTTP.AuthorizeListResource,
 		CurrentUsagePrincipal: config.HTTP.CurrentUsagePrincipal,
 		CSRFToken:             config.HTTP.CSRFToken, Layout: config.HTTP.Layout,
 		Presentation: config.HTTP.Presentation,

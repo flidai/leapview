@@ -357,7 +357,7 @@ func testProtocolAuthoringApplication(t *testing.T, store *platform.Store) *auth
 	}
 	app, err := authoringapplication.New(authoringapplication.Options{
 		Authoring: service, Repository: repository, Authorizer: authorizer,
-		AcquireRuntime: func(context.Context, string) (runtimehost.Lease, error) {
+		AcquireRuntime: func(context.Context) (runtimehost.Lease, error) {
 			return nil, errors.New("runtime unavailable")
 		},
 	})

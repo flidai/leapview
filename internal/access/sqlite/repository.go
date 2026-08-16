@@ -61,6 +61,17 @@ func (r *Repository) InsertPlatformSettingIfMissing(ctx context.Context, key, va
 	return rows == 1, err
 }
 
+// ListGroupIDsForPrincipal returns the indexed group memberships for one
+// principal. Authorization callers need only the IDs, so this deliberately
+// avoids loading every group and its members.
+func (r *Repository) ListGroupIDsForPrincipal(ctx context.Context, principalID string) ([]string, error) {
+	validated, err := access.NewSubjectRef(access.SubjectKindPrincipal, principalID)
+	if err != nil {
+		return nil, err
+	}
+	return r.q.ListGroupIDsForPrincipal(ctx, validated.ID)
+}
+
 func (r *Repository) RunAuditedMutation(ctx context.Context, mutation func(access.Repository) (access.AuditEventInput, error)) error {
 	return r.RunAuditedMutationBatch(ctx, func(repo access.Repository) ([]access.AuditEventInput, error) {
 		input, err := mutation(repo)

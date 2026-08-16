@@ -158,6 +158,48 @@ func (m *Module) repositoryValue() access.Repository {
 	return repository
 }
 
+// AuthorizationSubjects resolves the complete subject set used by canonical
+// resource authorization. The principal is always included; group membership
+// is fetched by the repository's indexed principal lookup rather than by
+// enumerating all groups. A missing resolver is an authorization failure, not
+// an invitation to silently fall back to principal-only access.
+func (m *Module) AuthorizationSubjects(ctx context.Context, principalID string) ([]access.SubjectRef, error) {
+	repository := m.repositoryValue()
+	if repository == nil {
+		return nil, fmt.Errorf("access repository is unavailable")
+	}
+	resolver, ok := repository.(principalGroupResolver)
+	if !ok {
+		return nil, fmt.Errorf("access repository does not support principal group resolution")
+	}
+	return authorizationSubjects(ctx, principalID, resolver)
+}
+
+type principalGroupResolver interface {
+	ListGroupIDsForPrincipal(context.Context, string) ([]string, error)
+}
+
+func authorizationSubjects(ctx context.Context, principalID string, resolver principalGroupResolver) ([]access.SubjectRef, error) {
+	principal, err := access.NewSubjectRef(access.SubjectKindPrincipal, principalID)
+	if err != nil {
+		return nil, err
+	}
+	groupIDs, err := resolver.ListGroupIDsForPrincipal(ctx, principal.ID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve principal groups: %w", err)
+	}
+	subjects := make([]access.SubjectRef, 1, 1+len(groupIDs))
+	subjects[0] = principal
+	for _, groupID := range groupIDs {
+		group, err := access.NewSubjectRef(access.SubjectKindGroup, groupID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve principal group %q: %w", groupID, err)
+		}
+		subjects = append(subjects, group)
+	}
+	return subjects, nil
+}
+
 func (m *Module) SeedLocalDeveloperPlatformAdmin(ctx context.Context) error {
 	if m == nil {
 		return nil

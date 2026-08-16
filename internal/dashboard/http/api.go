@@ -30,16 +30,11 @@ func (h Handler) ListDashboards(w nethttp.ResponseWriter, r *nethttp.Request) {
 	for _, row := range catalog.Dashboards {
 		out = append(out, dashboardSummaryDTO(row))
 	}
-	workspaceID := chi.URLParam(r, "workspace")
-	if strings.TrimSpace(workspaceID) == "" {
-		writeJSONError(w, fmt.Errorf("workspace ID is required"), nethttp.StatusBadRequest)
-		return
-	}
 	principalID := ""
 	if h.CurrentPrincipalID != nil {
 		principalID = h.CurrentPrincipalID(r)
 	}
-	out, err := h.filterAuthorizedDashboards(r.Context(), principalID, workspaceID, out)
+	out, err := h.filterAuthorizedDashboards(r.Context(), principalID, out)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusInternalServerError)
 		return

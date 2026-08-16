@@ -252,7 +252,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 }
 
 func NewRuntimeMetrics(provider runtimehost.Provider, workspaceID string) QueryMetrics {
-	return dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, WorkspaceID: workspaceID})
+	return dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: workspaceID})
 }
 
 func NewDynamicRuntimeMetrics(factory func(string) runtimehost.Provider) QueryMetrics {

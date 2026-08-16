@@ -108,6 +108,18 @@ func (m *Module) VerifyPrepared(ctx context.Context, prepared *runtimehost.Prepa
 	return m.registry.VerifyPrepared(ctx, prepared)
 }
 func (m *Module) Provider() runtimehost.Provider { return m.registry.Provider() }
+func (m *Module) ProjectID() projectgraph.ResourceID {
+	if m == nil || m.registry == nil {
+		return ""
+	}
+	return m.registry.ProjectID()
+}
+func (m *Module) Environment() servingstate.Environment {
+	if m == nil || m.registry == nil {
+		return ""
+	}
+	return m.registry.Environment()
+}
 func (m *Module) Acquire(ctx context.Context) (runtimehost.Lease, error) {
 	return m.registry.Acquire(ctx)
 }

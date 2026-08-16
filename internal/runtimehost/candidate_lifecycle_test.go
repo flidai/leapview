@@ -49,6 +49,18 @@ func candidateRegistry(t *testing.T, now *time.Time, factory *lifecycleFactory, 
 	return NewRegistryWithFactory(RegistryOptions{Repo: repo, ProjectID: projectgraph.ResourceID("project_demo"), Environment: "prod", Factory: factory, ManagedData: resolver, Authorization: &lifecycleAuth{}, OnCleanupFailure: cleanup, Now: func() time.Time { return *now }, CleanupDrainTimeout: time.Second})
 }
 
+func TestCandidateAcquisitionRequiresBoundProject(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &unboundLifecycleRepo{lifecycleRepo: &lifecycleRepo{noActive: true}}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, Environment: "prod", Factory: &lifecycleFactory{}, Authorization: &lifecycleAuth{}, Now: func() time.Time { return now }})
+	defer registry.Close()
+	registration := candidateRegistration(now.Add(time.Hour))
+	_, err := registry.AcquireCandidate(t.Context(), CandidateLeaseRequest{CandidateID: registration.CandidateID, OwnerID: registration.OwnerID, ProjectID: registration.ProjectID, Compatibility: registration.Compatibility})
+	if !errors.Is(err, ErrCandidateRuntimeIncompatible) {
+		t.Fatalf("unbound candidate acquisition error = %v, want incompatible", err)
+	}
+}
+
 func TestCandidateOwnershipCompatibilityAndRetireDrain(t *testing.T) {
 	now := time.Now().UTC()
 	managed := &candidateManagedData{}

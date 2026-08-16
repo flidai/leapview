@@ -64,13 +64,10 @@ func (m *Module) ResolvePublicDashboard(ctx context.Context, publicID string) (R
 	if err != nil {
 		return ResolvedPublicDashboard{}, publication.ErrNotFound
 	}
-	if m.handler.MetricsForWorkspace == nil {
+	if m.handler.Metrics == nil {
 		return ResolvedPublicDashboard{}, publication.ErrNotFound
 	}
-	metrics, ok := m.handler.MetricsForWorkspace(row.WorkspaceID)
-	if !ok || metrics == nil {
-		return ResolvedPublicDashboard{}, publication.ErrNotFound
-	}
+	metrics := m.handler.Metrics
 	resolvedDashboard, err := dashboardhttp.ResolveDashboard(metrics, row.Dashboard)
 	if err != nil {
 		return ResolvedPublicDashboard{}, publication.ErrNotFound
@@ -221,9 +218,6 @@ func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboard
 	handler := m.HTTP()
 	handler.Metrics = resolved.Metrics
 	handler.Broker = m.publicBroker
-	handler.MetricsForWorkspace = func(workspaceID string) (dashboardhttp.Metrics, bool) {
-		return resolved.Metrics, workspaceID == resolved.Publication.WorkspaceID
-	}
 	handler.CSRFToken = nil
 	handler.Layout = nil
 	handler.SessionKey = func(_ *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) dashboardsession.Key {

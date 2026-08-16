@@ -23,7 +23,7 @@ import (
 
 type runtimeMetrics struct {
 	provider                   runtimehost.Provider
-	workspaceID                string
+	projectID                  string
 	publishedCompilationReader dashboardresolver.PublishedCompilationReader
 }
 
@@ -34,7 +34,7 @@ type Catalog = dashboard.Catalog
 type dashboardRefreshRuntimeKey struct{}
 
 type dashboardRefreshRuntime struct {
-	workspaceID    string
+	projectID      string
 	runtime        runtimehost.Runtime
 	servingStateID string
 	resolutions    *dashboardRefreshResolutionCache
@@ -126,21 +126,21 @@ func SupportsNativeArrow(metrics Metrics) bool {
 
 type RuntimeMetricsOptions struct {
 	Provider                   runtimehost.Provider
-	WorkspaceID                string
+	ProjectID                  string
 	PublishedCompilationReader dashboardresolver.PublishedCompilationReader
 }
 
 func NewRuntimeMetrics(options RuntimeMetricsOptions) Metrics {
 	return runtimeMetrics{
 		provider:                   options.Provider,
-		workspaceID:                strings.TrimSpace(options.WorkspaceID),
+		projectID:                  strings.TrimSpace(options.ProjectID),
 		publishedCompilationReader: options.PublishedCompilationReader,
 	}
 }
 
 // Resolver exposes the project/deployment dashboard source through the shared
-// resolver boundary. The workspace is fixed when this metrics value is
-// composed; lookup callers provide only a dashboard ID.
+// resolver boundary. The project is fixed when this metrics value is composed;
+// lookup callers provide only a dashboard ID.
 func (m runtimeMetrics) Resolver() dashboardresolver.Resolver {
 	return runtimeMetricsResolver{metrics: m}
 }
@@ -172,16 +172,16 @@ func (m runtimeMetrics) resolveOnRuntime(runtime runtimehost.Runtime, servingSta
 	if !ok {
 		return dashboardresolver.Resolved{}, fmt.Errorf("active runtime does not provide dashboard resolver")
 	}
-	project := dashboardresolver.NewProject(port.Resolver(), m.workspaceID, dashboardresolver.SourceMetadata{ServingStateID: strings.TrimSpace(servingStateID)})
+	project := dashboardresolver.NewProject(port.Resolver(), m.projectID, dashboardresolver.SourceMetadata{ServingStateID: strings.TrimSpace(servingStateID)})
 	var published dashboardresolver.Resolver
 	if m.publishedCompilationReader != nil {
 		published = dashboardresolver.NewPublished(
-			dashboardresolver.NewPublishedCompilationResolver(m.workspaceID, strings.TrimSpace(servingStateID), m.publishedCompilationReader, port),
-			m.workspaceID,
+			dashboardresolver.NewPublishedCompilationResolver(m.projectID, strings.TrimSpace(servingStateID), m.publishedCompilationReader, port),
+			m.projectID,
 			dashboardresolver.SourceMetadata{},
 		)
 	}
-	composite, err := dashboardresolver.NewComposite(m.workspaceID, project, published)
+	composite, err := dashboardresolver.NewComposite(m.projectID, project, published)
 	if err != nil {
 		return dashboardresolver.Resolved{}, err
 	}
@@ -225,7 +225,7 @@ func (m *dynamicRuntimeMetrics) MetricsForWorkspace(workspaceID string) (Metrics
 	if provider == nil {
 		return nil, false
 	}
-	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, WorkspaceID: workspaceID, PublishedCompilationReader: m.publishedCompilationReader})
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: workspaceID, PublishedCompilationReader: m.publishedCompilationReader})
 	m.metrics[workspaceID] = metrics
 	return metrics, true
 }
@@ -239,12 +239,12 @@ func (m *dynamicRuntimeMetrics) unboundMetrics() Metrics {
 func (m runtimeMetrics) Catalog() dashboard.Catalog {
 	runtime, release, err := m.active(context.Background())
 	if err != nil {
-		title := strings.TrimSpace(m.workspaceID)
+		title := strings.TrimSpace(m.projectID)
 		if title == "" {
 			title = "Workspace"
 		}
 		return dashboard.Catalog{
-			Workspace: dashboard.CatalogWorkspace{ID: m.workspaceID, Title: title, Description: "No active serving state."},
+			Workspace: dashboard.CatalogWorkspace{ID: m.projectID, Title: title, Description: "No active serving state."},
 		}
 	}
 	defer release()
@@ -463,7 +463,7 @@ func (m runtimeMetrics) WithDashboardRefreshLease(ctx context.Context, run func(
 	if run == nil {
 		return fmt.Errorf("dashboard refresh lease callback is required")
 	}
-	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && pinned.workspaceID == m.workspaceID && pinned.runtime != nil {
+	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && pinned.projectID == m.projectID && pinned.runtime != nil {
 		return run(ctx)
 	}
 	runtime, release, servingStateID, err := m.activeWithState(ctx)
@@ -472,7 +472,7 @@ func (m runtimeMetrics) WithDashboardRefreshLease(ctx context.Context, run func(
 	}
 	defer release()
 	ctx = context.WithValue(ctx, dashboardRefreshRuntimeKey{}, dashboardRefreshRuntime{
-		workspaceID: m.workspaceID, runtime: runtime, servingStateID: servingStateID,
+		projectID: m.projectID, runtime: runtime, servingStateID: servingStateID,
 		resolutions: &dashboardRefreshResolutionCache{values: map[string]dashboardresolver.Resolved{}, errors: map[string]error{}},
 	})
 	return run(ctx)
@@ -484,7 +484,7 @@ func (m runtimeMetrics) activeForDashboardRefresh(ctx context.Context) (runtimeh
 }
 
 func (m runtimeMetrics) activeResolvedForDashboardRefreshRaw(ctx context.Context) (runtimehost.Runtime, func(), string, error) {
-	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && pinned.workspaceID == m.workspaceID && pinned.runtime != nil {
+	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && pinned.projectID == m.projectID && pinned.runtime != nil {
 		return pinned.runtime, func() {}, pinned.servingStateID, nil
 	}
 	return m.activeWithState(ctx)
@@ -648,7 +648,7 @@ func (m runtimeMetrics) activeResolved(ctx context.Context, dashboardID string) 
 }
 
 func (m runtimeMetrics) activeResolvedForDashboardRefresh(ctx context.Context, dashboardID string) (runtimehost.Runtime, func(), dashboardresolver.Resolved, error) {
-	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && pinned.workspaceID == m.workspaceID && pinned.runtime != nil && pinned.resolutions != nil {
+	if pinned, ok := ctx.Value(dashboardRefreshRuntimeKey{}).(dashboardRefreshRuntime); ok && pinned.projectID == m.projectID && pinned.runtime != nil && pinned.resolutions != nil {
 		id := strings.TrimSpace(dashboardID)
 		pinned.resolutions.mu.Lock()
 		defer pinned.resolutions.mu.Unlock()

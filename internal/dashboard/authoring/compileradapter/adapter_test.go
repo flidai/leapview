@@ -34,8 +34,8 @@ func newFixture(t *testing.T) fixture {
 	lease := &fakeLease{runtime: runtime, identity: identity}
 	var gotProject string
 	adapter, err := compileradapter.New(compileradapter.Options{
-		AcquireRuntime: func(_ context.Context, projectID projectgraph.ResourceID) (projectruntime.Lease, error) {
-			gotProject = projectID.String()
+		AcquireRuntime: func(_ context.Context) (projectruntime.Lease, error) {
+			gotProject = "project"
 			return lease, nil
 		},
 	})
@@ -68,8 +68,8 @@ func testModel() *semanticmodel.Model {
 func TestCompileUsesOneProjectLeaseAndReturnsExactState(t *testing.T) {
 	fixture := newFixture(t)
 	var gotProject string
-	fixture.adapter, _ = compileradapter.New(compileradapter.Options{AcquireRuntime: func(_ context.Context, projectID projectgraph.ResourceID) (projectruntime.Lease, error) {
-		gotProject = projectID.String()
+	fixture.adapter, _ = compileradapter.New(compileradapter.Options{AcquireRuntime: func(_ context.Context) (projectruntime.Lease, error) {
+		gotProject = "project"
 		return fixture.lease, nil
 	}})
 	result, err := fixture.adapter.Compile(context.Background(), "project", "sales_model", fixture.doc)

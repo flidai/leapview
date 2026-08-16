@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
@@ -17,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -27,6 +29,7 @@ type Options struct {
 	Authoring       *authoringservice.Service
 	Repository      authoring.Repository
 	Authorizer      authoringservice.Authorizer
+	Compiler        authoringservice.Compiler
 	AcquireRuntime  sourceadapter.AcquireRuntime
 	ExportDashboard authoring.DashboardExporter
 }
@@ -37,6 +40,7 @@ type Options struct {
 // provider.
 type Application struct {
 	authoring      *authoringservice.Service
+	compiler       authoringservice.Compiler
 	sources        *sourceadapter.Adapter
 	repository     authoring.Repository
 	authorizer     authoringservice.Authorizer
@@ -45,7 +49,7 @@ type Application struct {
 
 // New validates the composition ports and builds the source adapter once.
 // The runtime callback is guarded at this boundary so every composed
-// operation receives a non-empty project, runtime, and serving-state lease.
+// operation receives a non-empty runtime and serving-state lease.
 func New(options Options) (*Application, error) {
 	if options.Authoring == nil {
 		return nil, fmt.Errorf("dashboard authoring service is required")
@@ -73,11 +77,27 @@ func New(options Options) (*Application, error) {
 	}
 	return &Application{
 		authoring:      options.Authoring,
+		compiler:       options.Compiler,
 		sources:        sources,
 		repository:     options.Repository,
 		authorizer:     options.Authorizer,
 		acquireRuntime: acquireRuntime,
 	}, nil
+}
+
+// NewGenerationRevalidator binds the durable authoring repository and the
+// runtime-backed compiler to the generation revalidation service. The
+// resulting observer is intentionally post-activation; it records evidence
+// without participating in the activation transaction.
+func (a *Application) NewGenerationRevalidator(now func() time.Time) (*authoring.GenerationRevalidator, error) {
+	if a == nil || a.repository == nil || a.compiler == nil {
+		return nil, fmt.Errorf("dashboard generation revalidation dependencies are not configured")
+	}
+	store, ok := a.repository.(authoring.RevalidationStore)
+	if !ok {
+		return nil, fmt.Errorf("dashboard authoring repository does not support generation revalidation")
+	}
+	return authoring.NewGenerationRevalidator(store, revalidationCompiler{compiler: a.compiler, now: now}, now)
 }
 
 // Create creates one dashboard draft through the transactional authoring
@@ -270,12 +290,8 @@ func projectID(value string) (string, error) {
 // callback owns acquisition; downstream services own release after a valid
 // lease is returned. Invalid leases are released here exactly once.
 func guardedAcquire(acquire sourceadapter.AcquireRuntime) sourceadapter.AcquireRuntime {
-	return func(ctx context.Context, requestedProject string) (runtimehost.Lease, error) {
-		project, err := projectID(requestedProject)
-		if err != nil {
-			return nil, err
-		}
-		lease, err := acquire(ctx, project)
+	return func(ctx context.Context) (runtimehost.Lease, error) {
+		lease, err := acquire(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +325,47 @@ func (p projectProvider) Acquire(ctx context.Context) (runtimehost.Lease, error)
 	if p.acquire == nil {
 		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
 	}
-	return p.acquire(ctx, p.projectID)
+	lease, err := p.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	project, err := projectgraph.NewResourceID(p.projectID)
+	if err != nil {
+		lease.Release()
+		return nil, err
+	}
+	if lease.Identity().ProjectID != project {
+		lease.Release()
+		return nil, fmt.Errorf("dashboard authoring runtime project %q does not match requested project %q", lease.Identity().ProjectID, project)
+	}
+	return lease, nil
 }
 
 var _ runtimehost.Provider = projectProvider{}
+
+type revalidationCompiler struct {
+	compiler authoringservice.Compiler
+	now      func() time.Time
+}
+
+func (c revalidationCompiler) Compile(ctx context.Context, generation authoring.RevalidationGeneration, revision authoring.Revision) (authoring.CompiledRevision, error) {
+	if c.compiler == nil {
+		return authoring.CompiledRevision{}, fmt.Errorf("dashboard authoring compiler is not configured")
+	}
+	if err := generation.Validate(); err != nil {
+		return authoring.CompiledRevision{}, err
+	}
+	semanticModelID := revision.Document.SemanticModel
+	compiled, err := c.compiler.Compile(ctx, generation.Identity.ProjectID, semanticModelID, revision.Document)
+	if err != nil {
+		return authoring.CompiledRevision{}, err
+	}
+	if compiled.SemanticIdentity != generation.Identity {
+		return authoring.CompiledRevision{}, fmt.Errorf("recompiled dashboard serving identity %#v does not match activated generation %#v", compiled.SemanticIdentity, generation.Identity)
+	}
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	return authoring.NewCompiledRevision(generation.Identity.ProjectID, revision.Document.ID, revision.Token(), compiled.Definition, generation.Identity, now().UTC())
+}

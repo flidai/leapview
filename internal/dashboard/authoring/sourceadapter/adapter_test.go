@@ -253,11 +253,8 @@ func TestLoadProjectUsesOneActiveLeaseAndHasNoFakeRevision(t *testing.T) {
 	acquires := 0
 	authorizer := &fakeAuthorizer{}
 	identity, _ := projectgraph.NewServingIdentity("project", "production", "serving-project-1")
-	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(_ context.Context, project projectgraph.ResourceID) (projectruntime.Lease, error) {
+	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(_ context.Context) (projectruntime.Lease, error) {
 		acquires++
-		if project != "project" {
-			t.Fatalf("runtime project = %q", project)
-		}
 		return &fakeLease{runtime: runtime, identity: identity, released: &released}, nil
 	})
 
@@ -284,7 +281,7 @@ func TestMissingProjectSourceIsTypedUnavailableAndAuthPrecedesDisclosure(t *test
 	released := 0
 	authorizer := &fakeAuthorizer{}
 	identity, _ := projectgraph.NewServingIdentity("project", "production", "missing-state")
-	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(context.Context, projectgraph.ResourceID) (projectruntime.Lease, error) {
+	adapter := newAdapter(t, &fakeRepository{}, authorizer, func(context.Context) (projectruntime.Lease, error) {
 		return &fakeLease{runtime: runtime, identity: identity, released: &released}, nil
 	})
 	_, err := adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "missing"}, "actor")
@@ -311,7 +308,7 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 	authoringService := newAuthoringService(t, repository, authorizer)
 	released := 0
 	identity, _ := projectgraph.NewServingIdentity("project", "production", "project-state")
-	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context, projectgraph.ResourceID) (projectruntime.Lease, error) {
+	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context) (projectruntime.Lease, error) {
 		return &fakeLease{runtime: runtime, identity: identity, released: &released}, nil
 	})
 
@@ -352,7 +349,7 @@ func TestProjectForkReplaySkipsUnavailableSourceLoad(t *testing.T) {
 	authoringService := newAuthoringService(t, repository, authorizer)
 	released := 0
 	identity, _ := projectgraph.NewServingIdentity("project", "production", "project-state")
-	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context, projectgraph.ResourceID) (projectruntime.Lease, error) {
+	adapter := newAdapterWithService(t, repository, authorizer, authoringService, func(context.Context) (projectruntime.Lease, error) {
 		return &fakeLease{runtime: runtime, identity: identity, released: &released}, nil
 	})
 	request := sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project", Origin: authoring.OriginAgent, ConversationID: "conversation", ToolCallID: "tool", IdempotencyKey: "retry-project"}

@@ -23,7 +23,7 @@ func TestRuntimeMetricsResolverPublishedSuccessUsesOneLease(t *testing.T) {
 	compiled := moduleCompiledRevision(t, "workspace", "published", "state-1")
 	provider := &resolverTestProvider{runtime: &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 
 	resolved, err := metrics.(interface {
@@ -44,7 +44,7 @@ func TestRuntimeMetricsResolverStalePublishedDoesNotFallbackToProject(t *testing
 	compiled := moduleCompiledRevision(t, "workspace", "same", "old-state")
 	provider := &resolverTestProvider{runtime: &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 
 	_, err := metrics.(interface {
@@ -62,7 +62,7 @@ func TestRuntimeMetricsResolverSameIDCollisionIsAmbiguous(t *testing.T) {
 	compiled := moduleCompiledRevision(t, "workspace", "same", "state-1")
 	provider := &resolverTestProvider{runtime: &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 	_, err := metrics.(interface {
 		Resolver() dashboardresolver.Resolver
@@ -75,7 +75,7 @@ func TestRuntimeMetricsResolverSameIDCollisionIsAmbiguous(t *testing.T) {
 func TestRuntimeMetricsResolverPinsRuntimeProviderAcrossResolve(t *testing.T) {
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
-	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, WorkspaceID: "workspace"})
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: "workspace"})
 	resolver := metrics.(interface {
 		Resolver() dashboardresolver.Resolver
 	}).Resolver()
@@ -96,7 +96,7 @@ func TestRuntimeMetricsPublishedQueryExecutesExactCompiledDefinitionOnOneLease(t
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 	if _, err := metrics.QueryDashboardPage(context.Background(), "published", "overview", dashboard.Filters{}); err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestRuntimeMetricsPublishedVisualizationExecutesExactCompiledDefinition(t *
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 	if _, err := metrics.QueryVisualization(context.Background(), "published", "overview", dashboard.Filters{}, "visual"); err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestRuntimeMetricsPublishedVisualizationExecutesExactCompiledDefinition(t *
 func TestRuntimeMetricsProjectQueryKeepsNativeRuntimePath(t *testing.T) {
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
-	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, WorkspaceID: "workspace"})
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: "workspace"})
 	if _, err := metrics.QueryDashboardPage(context.Background(), "project", "overview", dashboard.Filters{}); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestRuntimeMetricsPublishedStaleAndCollisionNeverExecute(t *testing.T) {
 			runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 			provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
 			metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-				Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+				Provider: provider, ProjectID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 			})
 			patch, err := metrics.QueryDashboardPage(context.Background(), test.dashID, "overview", dashboard.Filters{})
 			if err != nil {
@@ -177,7 +177,7 @@ func TestRuntimeMetricsRefreshPinsPublishedDefinitionAndLease(t *testing.T) {
 	reader := &countingModuleCompilationReader{compiled: first}
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
-	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: reader})
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: "workspace", PublishedCompilationReader: reader})
 	err := metrics.(interface {
 		WithDashboardRefreshLease(context.Context, func(context.Context) error) error
 	}).WithDashboardRefreshLease(context.Background(), func(ctx context.Context) error {

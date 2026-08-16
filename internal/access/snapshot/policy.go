@@ -223,6 +223,11 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 // Identity returns the immutable serving identity by value.
 func (s AuthorizationSnapshot) Identity() graph.ServingIdentity { return s.identity }
 
+// Project returns the immutable project graph bound to this snapshot. The
+// graph is a value with defensive-copy accessors, so callers cannot replace or
+// mutate the snapshot's authoritative binding.
+func (s AuthorizationSnapshot) Project() graph.ProjectGraph { return s.project }
+
 // Grants returns a defensive copy of the validated grant list.
 func (s AuthorizationSnapshot) Grants() []Grant { return cloneGrants(s.grants) }
 

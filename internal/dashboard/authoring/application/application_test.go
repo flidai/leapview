@@ -32,7 +32,7 @@ func TestNewRequiresCompositionPorts(t *testing.T) {
 		Authoring:       newAuthoringService(t, newRepository(), &fakeAuthorizer{}),
 		Repository:      newRepository(),
 		Authorizer:      &fakeAuthorizer{},
-		AcquireRuntime:  func(context.Context, string) (runtimehost.Lease, error) { return nil, nil },
+		AcquireRuntime:  func(context.Context) (runtimehost.Lease, error) { return nil, nil },
 		ExportDashboard: projectcompiler.ExportDashboard,
 	}
 	tests := []struct {
@@ -58,7 +58,7 @@ func TestNewRequiresCompositionPorts(t *testing.T) {
 func TestCreateAndExecuteDelegateToTransactionalService(t *testing.T) {
 	repository := newRepository()
 	authorizer := &fakeAuthorizer{}
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 
@@ -93,7 +93,8 @@ func TestCatalogOperationsUseRequestedProjectAndOneLeaseEach(t *testing.T) {
 	authorizer := &fakeAuthorizer{}
 	var acquired []string
 	var leases []*fakeLease
-	app := newApplication(t, repository, authorizer, func(_ context.Context, project string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(_ context.Context) (runtimehost.Lease, error) {
+		project := "project"
 		acquired = append(acquired, project)
 		lease := &fakeLease{runtime: &catalogRuntime{catalog: dashboardcatalog.Catalog{
 			Project:    dashboardcatalog.Project{ID: project},
@@ -130,7 +131,8 @@ func TestPreviewUsesRequestedProjectAndOneLease(t *testing.T) {
 	authorizer := &fakeAuthorizer{}
 	var acquired string
 	lease := &fakeLease{runtime: &previewRuntime{model: previewModel()}, servingState: "serving-sales"}
-	app := newApplication(t, repository, authorizer, func(_ context.Context, project string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(_ context.Context) (runtimehost.Lease, error) {
+		project := "project"
 		acquired = project
 		return lease, nil
 	})
@@ -162,7 +164,8 @@ func TestProjectExportNormalizesSourceProjectAndDoesNotCrossProject(t *testing.T
 	}
 	var acquired []string
 	var leases []*fakeLease
-	app := newApplication(t, repository, authorizer, func(_ context.Context, project string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(_ context.Context) (runtimehost.Lease, error) {
+		project := "project"
 		acquired = append(acquired, project)
 		lease := &fakeLease{runtime: &sourceRuntime{source: sources[project]}, servingState: servingstate.ID("state-" + project)}
 		leases = append(leases, lease)
@@ -199,7 +202,7 @@ func TestDraftExportNormalizesProjectAndUsesCurrentLifecycleDraft(t *testing.T) 
 	repository.revisions[draft.ID] = draft
 	repository.lifecycles[lifecycle.ID] = lifecycle
 	authorizer := &fakeAuthorizer{}
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 
@@ -217,7 +220,7 @@ func TestDraftExportNormalizesProjectAndUsesCurrentLifecycleDraft(t *testing.T) 
 func TestProjectForkRejectsCrossProjectTarget(t *testing.T) {
 	repository := newRepository()
 	authorizer := &fakeAuthorizer{}
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 	_, err := app.Fork(context.Background(), sourceadapter.ForkRequest{
@@ -233,7 +236,7 @@ func TestExecuteIntentRejectsGenericPayloadAndKeepsNonFieldIntentsLeaseFree(t *t
 	repository, lifecycle, revision := previewRepository(t)
 	authorizer := &recordingAuthorizer{}
 	acquired := 0
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) {
 		acquired++
 		return nil, errors.New("unexpected runtime acquisition")
 	})
@@ -255,7 +258,7 @@ func TestExecuteIntentAuthorizesBeforeDraftRevisionAndRuntimeReads(t *testing.T)
 	repository, lifecycle, revision := previewRepository(t)
 	authorizer := &recordingAuthorizer{err: access.ErrForbidden}
 	acquired := 0
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) {
 		acquired++
 		return nil, errors.New("runtime should not be acquired")
 	})
@@ -272,7 +275,7 @@ func TestExecuteIntentAssignFieldUsesOneLeaseAndGovernedRole(t *testing.T) {
 	repository, lifecycle, revision := previewRepository(t)
 	authorizer := &recordingAuthorizer{}
 	lease := &fakeLease{runtime: &previewRuntime{model: previewModel()}, servingState: "state-sales"}
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMeasure})
 	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command}); err != nil {
 		t.Fatal(err)
@@ -321,7 +324,7 @@ func TestExecuteIntentAssignFieldInfersTableAndCompilesTableVisual(t *testing.T)
 		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
 	}}
 	lease := &fakeLease{runtime: &previewRuntime{model: model}, servingState: "state-sales"}
-	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-customers-field", &authoring.AssignFieldPayload{
 		PageID: "overview", VisualID: "orders", FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
 	})
@@ -368,7 +371,7 @@ func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
 	}}
 	lease := &fakeLease{runtime: &previewRuntime{model: model}, servingState: "state-sales"}
-	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 
 	pageResult, err := app.ExecuteIntent(context.Background(), application.IntentRequest{
 		ProjectID: "project", ActorID: "actor",
@@ -423,7 +426,7 @@ func TestExecuteIntentAssignFieldDoesNotRewriteExistingFactForAnotherGovernedTab
 		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
 	}}
 	lease := &fakeLease{runtime: &previewRuntime{model: model}, servingState: "state-sales"}
-	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return lease, nil })
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-cross-table-field", &authoring.AssignFieldPayload{
 		PageID: "overview", VisualID: "orders", FieldID: "customers.customer_id", Role: authoring.FieldRoleDimension,
 	})

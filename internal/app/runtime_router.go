@@ -38,8 +38,8 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
-	projecthttp "github.com/flidai/leapview/internal/project/http"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projecthttp "github.com/flidai/leapview/internal/project/http"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -347,7 +347,7 @@ func buildApplicationSurfaces(
 		if provider == nil || strings.TrimSpace(workspaceID) == "" {
 			return nil
 		}
-		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, WorkspaceID: workspaceID})
+		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: workspaceID})
 		candidate = dashboardmodule.WithAdmission(candidate, controller)
 		if dataAuthorization != nil && (data.AccessRepo != nil || workflow.Auth != nil || capabilities.AccessModule != nil) {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
@@ -792,11 +792,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Authoring:   routes.dashboardAuthoring,
 			RecordAudit: routes.accessModule.RecordAudit,
 			HTTP: dashboardmodule.HTTPConfig{
-				Metrics: runtime.metrics,
-				ProjectID: runtime.projectID.String(),
-				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-					return metricsForWorkspace(runtime.metrics, workspaceID)
-				},
+				Metrics:   runtime.metrics,
+				ProjectID: runtime.projectID,
 				Admission: workloadController(&runtime.workloads), Broker: runtime.broker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
 				CurrentPrincipalID: func(r *http.Request) string {
@@ -812,9 +809,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 						return "", false
 					}
 					return principal.ID, true
-				},
-				AuthorizeListObject: func(ctx context.Context, principalID string, object accessmodule.ObjectRef) (bool, error) {
-					return authorizeListObject(routes.accessModule, platform.auth != nil, ctx, principalID, object)
 				},
 				CSRFToken: routes.accessModule.CSRFToken,
 				Layout: func(r *http.Request) webpage.Provider {

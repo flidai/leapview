@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -127,7 +128,11 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 	if err != nil {
 		return nil, err
 	}
-	if normalized.ProjectID != r.ProjectID() {
+	boundProjectID := r.ProjectID()
+	if boundProjectID == "" {
+		return nil, fmt.Errorf("%w: runtime host project is not bound", ErrCandidateRuntimeIncompatible)
+	}
+	if normalized.ProjectID != boundProjectID {
 		return nil, fmt.Errorf("%w: candidate project does not match runtime host", ErrCandidateRuntimeIncompatible)
 	}
 	if err := input.Identity.Validate(); err != nil {
@@ -564,6 +569,12 @@ func (l *candidateRuntimeLease) Runtime() Runtime {
 		return nil
 	}
 	return l.generation.managed.runtime
+}
+func (l *candidateRuntimeLease) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
+	if l == nil || l.generation == nil || l.generation.managed == nil {
+		return accesssnapshot.AuthorizationSnapshot{}
+	}
+	return l.generation.managed.authorization
 }
 func (l *candidateRuntimeLease) Identity() projectgraph.ServingIdentity {
 	if l == nil || l.generation == nil {

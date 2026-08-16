@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
@@ -16,6 +17,7 @@ import (
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	workspacemodule "github.com/flidai/leapview/internal/workspace/module"
 	"github.com/go-chi/chi/v5"
 )
@@ -70,7 +72,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	mux.Group(func(r chi.Router) {
 		r.Use(csrf)
 		r.With(policy.rateLimits.Updates()).Get("/updates", runtime.pageStreams.ServeHTTP)
-		r.Get("/", routes.accessModule.ProtectAnyWorkspace(accessmodule.PrivilegeViewItem, projectHome(runtime)))
+		r.Get("/", routes.accessModule.Protect(accessmodule.PrivilegeViewItem, projectHome(runtime)))
 		r.Get("/candidates/{candidate}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
 			candidatePreview(candidates, w, request)
 		}))
@@ -105,6 +107,9 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		})
 		routes.dashboardModule.MountAuthenticated(r, dashboardmodule.RouteGuard{
 			Protect: routes.accessModule.Protect, ProtectWithObjects: routes.accessModule.ProtectWithObjects,
+			ProtectWithResources: func(capability access.Capability, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
+				return protectProjectResources(routes.accessModule, runtime.runtimeHostModule, capability, resolve, next)
+			},
 		})
 		routes.accessModule.MountAuthenticatedBrowser(r)
 	})

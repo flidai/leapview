@@ -408,6 +408,8 @@ SELECT id, provider, external_id, name, created_at FROM groups ORDER BY name, id
 SELECT id, provider, external_id, name, created_at FROM groups WHERE lower(name) LIKE '%' || lower(sqlc.arg(search)) || '%' OR lower(id) LIKE '%' || lower(sqlc.arg(search)) || '%' OR lower(external_id) LIKE '%' || lower(sqlc.arg(search)) || '%' ORDER BY lower(name), id LIMIT sqlc.arg(result_limit);
 -- name: ListGroupMembersByGroup :many
 SELECT gm.group_id, gm.principal_id, p.kind, p.email, p.display_name, gm.created_at FROM group_members gm JOIN principals p ON p.id = gm.principal_id WHERE gm.group_id = sqlc.arg(group_id) ORDER BY p.email, p.display_name, gm.principal_id;
+-- name: ListGroupIDsForPrincipal :many
+SELECT group_id FROM group_members WHERE principal_id = sqlc.arg(principal_id) ORDER BY group_id;
 -- name: CreateDeviceAuthorization :exec
 INSERT INTO oauth_device_authorizations (
   id, client_id, device_code_hash, user_code_hash, target_id, project_id,

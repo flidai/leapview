@@ -40,7 +40,7 @@ type Lease = projectruntime.Lease
 // AcquireRuntime acquires one active runtime lease for a project. Keeping
 // acquisition as a callback leaves registry topology outside the authoring
 // package while preserving the lease's generation and lifetime guarantees.
-type AcquireRuntime func(context.Context, graph.ResourceID) (projectruntime.Lease, error)
+type AcquireRuntime func(context.Context) (projectruntime.Lease, error)
 
 // Options wires the runtime capability used by the adapter.
 type Options struct {
@@ -89,7 +89,7 @@ func (a *Adapter) Compile(ctx context.Context, projectID, semanticModelID graph.
 		return authoringservice.Compilation{}, err
 	}
 
-	lease, err := a.acquireRuntime(ctx, projectID)
+	lease, err := a.acquireRuntime(ctx)
 	if err != nil {
 		return authoringservice.Compilation{}, err
 	}

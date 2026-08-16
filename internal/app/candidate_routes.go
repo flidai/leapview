@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
@@ -49,20 +50,12 @@ func candidatePreview(deps candidateRouteDependencies, w http.ResponseWriter, r 
 		return
 	}
 	view, err := deps.runtimeHost.ResolveOwnedCandidate(candidate.ID, principalID)
-	if err != nil || len(view.Workspaces) == 0 || deps.candidateMetrics == nil {
+	if err != nil || view.Provider == nil || deps.candidateMetrics == nil {
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	// A candidate is one project graph, so its preview has one runtime and one
-	// dashboard namespace. Refuse ambiguous legacy multi-workspace candidates
-	// instead of selecting or fabricating a workspace identity.
-	if len(view.Workspaces) != 1 {
-		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	workspace := view.Workspaces[0]
-	workspaceID := string(workspace.WorkspaceID)
-	metrics := deps.candidateMetrics(workspace.Provider, workspaceID)
+	projectID := view.ProjectID
+	metrics := deps.candidateMetrics(view.Provider, projectID.String())
 	if metrics == nil {
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return
@@ -151,26 +144,29 @@ func resolveCandidateDashboardHTTP(
 		http.Error(w, http.StatusText(status), status)
 		return dashboardmodule.HTTP{}, false
 	}
-	if len(view.Workspaces) != 1 {
+	if view.Provider == nil {
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return dashboardmodule.HTTP{}, false
 	}
-	workspace := view.Workspaces[0]
-	workspaceID := string(workspace.WorkspaceID)
+	projectID := view.ProjectID
 	{
-		metrics := deps.candidateMetrics(workspace.Provider, workspaceID)
-		restrictions := make([]dashboardmodule.CandidateRestriction, len(workspace.Restrictions))
-		for index, restriction := range workspace.Restrictions {
+		metrics := deps.candidateMetrics(view.Provider, projectID.String())
+		restrictions := make([]dashboardmodule.CandidateRestriction, len(view.Restrictions))
+		for index, restriction := range view.Restrictions {
+			resource, err := access.NewResourceRef(restriction.ObjectID, restriction.ObjectKind)
+			if err != nil {
+				http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
+				return dashboardmodule.HTTP{}, false
+			}
 			restrictions[index] = dashboardmodule.CandidateRestriction{
-				ID: restriction.ID, WorkspaceID: restriction.WorkspaceID,
-				ObjectID: restriction.ObjectID, PolicyType: restriction.PolicyType,
+				ID: restriction.ID, Resource: resource, Subject: restriction.Subject, PolicyType: restriction.PolicyType,
 				ExpressionJSON: restriction.ExpressionJSON,
 			}
 		}
 		handler, err := deps.dashboards.CandidateHTTP(dashboardmodule.CandidateHTTPConfig{
 			Metrics: metrics, CandidateID: candidate.ID, OwnerPrincipalID: principalID,
-			WorkspaceID: workspaceID, ArtifactDigest: candidate.ArtifactDigest,
-			AuthorizationFingerprint: workspace.AuthorizationFingerprint,
+			ProjectID: projectID, ArtifactDigest: candidate.ArtifactDigest,
+			AuthorizationFingerprint: view.AuthorizationFingerprint,
 			RouteBasePath:            candidateRouteBase(candidate.ID),
 			Restrictions:             restrictions,
 		})

@@ -121,7 +121,7 @@ func (r *Registry) PrepareServingStateCandidate(ctx context.Context, input Servi
 	if err := input.Identity.Validate(); err != nil {
 		return nil, fmt.Errorf("candidate serving identity is invalid: %w", err)
 	}
-	if input.Identity.ProjectID != r.ProjectID() || input.Identity.Environment != string(r.Environment()) {
+	if (r.ProjectID() != "" && input.Identity.ProjectID != r.ProjectID()) || input.Identity.Environment != string(r.Environment()) {
 		return nil, fmt.Errorf("candidate serving identity is outside project environment")
 	}
 	state, err := r.manager.repo.ByID(ctx, servingstate.ID(input.Identity.GenerationID))
@@ -290,7 +290,11 @@ func (r *Registry) AcquireCandidate(ctx context.Context, request CandidateLeaseR
 	if err != nil {
 		return nil, err
 	}
-	if normalized.ProjectID != r.ProjectID() {
+	boundProjectID := r.ProjectID()
+	if boundProjectID == "" {
+		return nil, fmt.Errorf("%w: runtime host project is not bound", ErrCandidateRuntimeIncompatible)
+	}
+	if normalized.ProjectID != boundProjectID {
 		return nil, fmt.Errorf("%w: candidate project does not match runtime host", ErrCandidateRuntimeIncompatible)
 	}
 	g, retired, err := r.candidates.acquire(normalized.CandidateID, normalized.OwnerID, normalized.ProjectID, fingerprint)

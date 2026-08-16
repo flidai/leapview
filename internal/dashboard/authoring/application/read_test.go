@@ -18,7 +18,7 @@ import (
 func TestDraftDeniedBeforeRevisionLookup(t *testing.T) {
 	repository, lifecycle, _ := previewRepository(t)
 	authorizer := &recordingAuthorizer{err: access.ErrForbidden}
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 
@@ -34,7 +34,7 @@ func TestDraftDeniedBeforeRevisionLookup(t *testing.T) {
 func TestRevisionDeniedBeforeRevisionLookup(t *testing.T) {
 	repository, lifecycle, revision := previewRepository(t)
 	authorizer := &recordingAuthorizer{err: access.ErrForbidden}
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 
@@ -52,7 +52,7 @@ func TestRevisionDeniedBeforeRevisionLookup(t *testing.T) {
 
 func TestRevisionRequiresExactCurrentDraftPointer(t *testing.T) {
 	repository, lifecycle, revision := previewRepository(t)
-	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return nil, nil })
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return nil, nil })
 
 	for _, test := range []struct {
 		name      string
@@ -108,7 +108,7 @@ func TestRevisionRequiresExactPublishedPointerForView(t *testing.T) {
 		t.Fatalf("published fixture invalid: %v", err)
 	}
 	repository.lifecycles[lifecycle.ID] = published
-	authApp := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return nil, nil })
+	authApp := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return nil, nil })
 
 	_, err := authApp.Revision(context.Background(), application.RevisionRequest{
 		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
@@ -132,7 +132,7 @@ func TestArchivedRevisionDoesNotDiscloseRetainedPointer(t *testing.T) {
 	archived := lifecycle
 	archived.Status = authoring.LifecycleStatusArchived
 	repository.lifecycles[lifecycle.ID] = archived
-	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return nil, nil })
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return nil, nil })
 
 	_, err := app.Revision(context.Background(), application.RevisionRequest{
 		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
