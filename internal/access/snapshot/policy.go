@@ -20,6 +20,11 @@ import (
 	"github.com/flidai/leapview/internal/project/graph"
 )
 
+// SubjectRef is re-exported from the snapshot contract so runtime consumers
+// can carry immutable authorization subjects without importing the broader
+// mutable Access capability package.
+type SubjectRef = access.SubjectRef
+
 type AuthorizationSnapshot struct {
 	identity     graph.ServingIdentity
 	roleBindings []RoleBinding

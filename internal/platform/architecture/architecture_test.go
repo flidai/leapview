@@ -1558,10 +1558,9 @@ func TestCapabilityModulesRequireDeclaredPublicContractEdges(t *testing.T) {
 
 func TestApplicationImportsProductCapabilitiesOnlyThroughModules(t *testing.T) {
 	// Project is intentionally compile-time-first and has no synthetic runtime
-	// module. Its generated HTTP adapter is therefore a valid composition edge.
-	compositionAdapters := map[string]bool{
-		"internal/project/http": true,
-	}
+	// module. Its generated HTTP adapter and the closed set of process-level
+	// contract ports are valid composition edges; arbitrary capability packages
+	// remain rejected below.
 	for _, file := range productionGoFiles(t) {
 		if file.pkgDir != "internal/app" {
 			continue
@@ -1575,7 +1574,7 @@ func TestApplicationImportsProductCapabilitiesOnlyThroughModules(t *testing.T) {
 			if !ok || target.Capability == "platform" || target.Capability == "composition" {
 				continue
 			}
-			if target.Layer != LayerModule && !compositionAdapters[packagePath] {
+			if target.Layer != LayerModule && packagePath != "internal/project/http" && !IsCompositionContractImport(packagePath) {
 				t.Errorf("%s imports product package %s instead of its module surface", file.path, packagePath)
 			}
 		}

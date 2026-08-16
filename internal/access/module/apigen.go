@@ -10,7 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/runtimehost"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -75,7 +75,7 @@ type APIGenAuthorizer struct {
 
 type apigenRuntimeHost interface {
 	ProjectID() projectgraph.ResourceID
-	Acquire(context.Context) (runtimehost.Lease, error)
+	Acquire(context.Context) (projectruntime.Lease, error)
 }
 
 func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[string]APIGenOperationContract, resolvers APIGenResourceResolvers) (*APIGenAuthorizer, error) {

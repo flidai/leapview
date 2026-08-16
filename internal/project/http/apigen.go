@@ -6,6 +6,7 @@ import (
 	stdhttp "net/http"
 
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectgen "github.com/flidai/leapview/internal/project/api/gen"
 )
 
@@ -14,11 +15,21 @@ import (
 // capability into a synthetic runtime module.
 type Handler interface {
 	GetProject(stdhttp.ResponseWriter, *stdhttp.Request, string)
-	Search(stdhttp.ResponseWriter, *stdhttp.Request, projectgen.GenSearchParams)
+	Search(stdhttp.ResponseWriter, *stdhttp.Request, projectapi.SearchParams)
 }
 
 func (d *APIGenDispatcher) Search(w stdhttp.ResponseWriter, r *stdhttp.Request, params projectgen.GenSearchParams) {
-	d.handler.Search(w, r, params)
+	var kindPointer *[]projectapi.SearchKind
+	if params.Kind != nil {
+		kinds := make([]projectapi.SearchKind, len(*params.Kind))
+		for index, kind := range *params.Kind {
+			kinds[index] = projectapi.SearchKind(kind)
+		}
+		kindPointer = &kinds
+	}
+	d.handler.Search(w, r, projectapi.SearchParams{
+		Q: params.Q, Kind: kindPointer, Domain: params.Domain, Limit: params.Limit, Cursor: params.Cursor,
+	})
 }
 
 type APIGenDispatcher struct {

@@ -15,7 +15,7 @@ import (
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
-	projectapi "github.com/flidai/leapview/internal/project/api/gen"
+	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -34,7 +34,7 @@ type PageParams = releaseapi.PageParams
 // Search dispatches through the active-lease project catalog. The catalog is
 // authorization-filtered and snapshot-bound; release does not maintain a
 // second index or accept a project selector from the request.
-func (m *Module) Search(w http.ResponseWriter, r *http.Request, params projectapi.GenSearchParams) {
+func (m *Module) Search(w http.ResponseWriter, r *http.Request, params projectapi.SearchParams) {
 	if m == nil || m.searchCatalog == nil {
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "SEARCH_UNAVAILABLE", "Project search is unavailable", nil)
 		return
@@ -69,14 +69,37 @@ func (m *Module) Search(w http.ResponseWriter, r *http.Request, params projectap
 		apitransport.WriteProblem(w, r, status, code, detail, nil)
 		return
 	}
-	items := make([]projectapi.SearchResult, 0, len(page.Items))
+	items := make([]searchResultResponse, 0, len(page.Items))
 	for _, item := range page.Items {
 		items = append(items, searchResult(item))
 	}
-	apitransport.WriteJSON(w, http.StatusOK, projectapi.SearchResponse{
+	apitransport.WriteJSON(w, http.StatusOK, searchResponse{
 		Items: items,
-		Page:  projectapi.GenSchemaPageInfo{NextCursor: searchStringPointer(page.NextCursor)},
+		Page:  searchPageInfo{NextCursor: searchStringPointer(page.NextCursor)},
 	})
+}
+
+type searchResponse struct {
+	Items []searchResultResponse `json:"items"`
+	Page  searchPageInfo         `json:"page"`
+}
+
+type searchPageInfo struct {
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
+type searchResultResponse struct {
+	Description *string `json:"description,omitempty"`
+	DisplayName *string `json:"displayName,omitempty"`
+	Domain      *string `json:"domain,omitempty"`
+	Href        *string `json:"href,omitempty"`
+	Name        string  `json:"name"`
+	Owner       *string `json:"owner,omitempty"`
+	Reference   struct {
+		ID   string `json:"id"`
+		Kind string `json:"kind"`
+	} `json:"reference"`
+	Tags []string `json:"tags"`
 }
 
 var publicSearchKinds = []projectgraph.Kind{
@@ -136,10 +159,13 @@ func searchErrorStatus(err error) (int, string) {
 	}
 }
 
-func searchResult(item projectcatalog.Result) projectapi.SearchResult {
-	return projectapi.SearchResult{
-		Reference: projectapi.SearchReference{Id: item.Ref.ID.String(), Kind: projectapi.SearchKind(item.Ref.Kind)},
-		Name:      item.Name, DisplayName: searchOptionalString(item.DisplayName), Description: searchOptionalString(item.Description),
+func searchResult(item projectcatalog.Result) searchResultResponse {
+	return searchResultResponse{
+		Reference: struct {
+			ID   string `json:"id"`
+			Kind string `json:"kind"`
+		}{ID: item.Ref.ID.String(), Kind: string(item.Ref.Kind)},
+		Name: item.Name, DisplayName: searchOptionalString(item.DisplayName), Description: searchOptionalString(item.Description),
 		Domain: searchOptionalString(item.Domain), Owner: searchOptionalString(item.Owner), Tags: append([]string(nil), item.Tags...),
 	}
 }

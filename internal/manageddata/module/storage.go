@@ -16,6 +16,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/apiadapter"
 	"github.com/flidai/leapview/internal/manageddata/binding"
@@ -97,6 +98,11 @@ type Principal struct {
 	ID string
 }
 
+// ConnectionAuthorizer is the module-owned authorization port. The HTTP
+// adapter receives a converted copy at construction time, keeping transport
+// types out of the module configuration contract.
+type ConnectionAuthorizer func(context.Context, string, string, string, access.Capability) (bool, error)
+
 type Config struct {
 	Database            *sql.DB
 	Disabled            bool
@@ -105,7 +111,7 @@ type Config struct {
 	MaxJSONBodyBytes    int64
 	Environment         string
 	CurrentPrincipal    func(*http.Request) (Principal, bool)
-	AuthorizeConnection manageddatahttp.ConnectionAuthorizer
+	AuthorizeConnection ConnectionAuthorizer
 	Jobs                JobStore
 	Workflow            jobs.WorkflowRecorder
 	ServingStates       ServingStateReader
@@ -155,10 +161,10 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		return manageddatahttp.Principal{ID: principal.ID}, ok
 	}
 	if cfg.Disabled {
-		module := &Module{jobs: cfg.Jobs, currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: cfg.AuthorizeConnection, maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker), finalizeExecution: finalizeExecution}
+		module := &Module{jobs: cfg.Jobs, currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection), maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker), finalizeExecution: finalizeExecution}
 		module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 			CurrentPrincipal: currentPrincipal, MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
-			Environment: cfg.Environment, AuthorizeConnection: cfg.AuthorizeConnection,
+			Environment: cfg.Environment, AuthorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection),
 			RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 		})
 		return module, nil
@@ -219,13 +225,13 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 			collector: collector, runtime: runtimeCollector,
 		},
 		jobs: cfg.Jobs, workflow: cfg.Workflow, bindings: bindings, runtimeResolver: runtimeResolver,
-		currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: cfg.AuthorizeConnection,
+		currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection),
 		metadata: metadataReader{repository: repository}, finalizeExecution: finalizeExecution,
 	}
 	module.resolveTusTarget = newTusTargetResolver(services.tusEngine, repository)
 	module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 		Repository: apiRepository, Uploads: uploads, Multipart: multipart,
-		CurrentPrincipal: currentPrincipal, AuthorizeConnection: cfg.AuthorizeConnection, Environment: cfg.Environment,
+		CurrentPrincipal: currentPrincipal, AuthorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection), Environment: cfg.Environment,
 		BeginFinalize: module.beginFinalize, RecordUploadCreated: module.recordUploadCreated,
 		AbortUpload: module.abortUpload, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 	})
@@ -350,9 +356,9 @@ func (m *Module) HTTP() *manageddatahttp.Handler {
 	return m.handler
 }
 
-func (m *Module) SetAuthorizeConnection(authorizer manageddatahttp.ConnectionAuthorizer) {
+func (m *Module) SetAuthorizeConnection(authorizer ConnectionAuthorizer) {
 	if m != nil && m.handler != nil {
-		m.handler.SetAuthorizeConnection(authorizer)
+		m.handler.SetAuthorizeConnection(manageddatahttp.ConnectionAuthorizer(authorizer))
 	}
 }
 

@@ -37,7 +37,7 @@ var PublicContractPrefixes = map[string][]string{
 	"analytics":    {"internal/analytics/model", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery"},
 	"dashboard":    {"internal/dashboard", "internal/dashboard/api", "internal/dashboard/appearance", "internal/dashboard/authoring", "internal/dashboard/catalog", "internal/dashboard/compiler", "internal/dashboard/definition", "internal/dashboard/filter", "internal/dashboard/layoutcontract", "internal/dashboard/publication", "internal/dashboard/report", "internal/dashboard/reportmodel", "internal/dashboard/queryruntime", "internal/dashboard/resolver", "internal/dashboard/ui/signals", "internal/dashboard/visualization/definition", "internal/dashboard/visualization/format", "internal/dashboard/visualization/geometry", "internal/dashboard/visualization/ir", "internal/dashboard/visualization/mapasset", "internal/dashboard/visualization/runtime"},
 	"manageddata":  {"internal/manageddata", "internal/manageddata/binding", "internal/manageddata/runtimebinding"},
-	"project":      {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/artifact", "internal/project/bundle", "internal/project/compiler"},
+	"project":      {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/artifact", "internal/project/bundle", "internal/project/catalog", "internal/project/compiler", "internal/project/manifest", "internal/project/runtime"},
 	"release":      {"internal/release"},
 	"deployment":   {"internal/deployment"},
 	"servingstate": {"internal/servingstate", "internal/servingstate/validate", "internal/servingstate/retention"},
@@ -75,7 +75,45 @@ var WorkloadImportPrefixes = []string{
 // before capability dependency edges so a consumer cannot import the owning
 // capability's broader implementation packages by accident.
 var SharedContractPrefixes = map[string][]string{
-	"access": {"internal/project/graph"},
+	// Resource identity is the one project contract shared by every runtime
+	// capability. Keep the declarations exact: a consumer may import the
+	// canonical graph package, never an arbitrary project implementation
+	// subtree.
+	"access":       {"internal/project/graph", "internal/project/runtime"},
+	"admin":        {"internal/project/graph"},
+	"agent":        {"internal/project/graph"},
+	"analytics":    {"internal/project/graph"},
+	"dashboard":    {"internal/project/graph", "internal/project/runtime"},
+	"deployment":   {"internal/dashboard/publication", "internal/project/graph"},
+	"manageddata":  {"internal/access", "internal/project/graph"},
+	"refresh":      {"internal/project/graph", "internal/project/manifest"},
+	"release":      {"internal/access/snapshot", "internal/project/graph"},
+	"runtimehost":  {"internal/access/snapshot", "internal/project/graph", "internal/project/runtime"},
+	"servingstate": {"internal/project/graph", "internal/project/manifest"},
+}
+
+// CompositionContractPrefixes is the closed set of capability contracts that
+// process composition may wire directly alongside module surfaces. These are
+// exact package paths, not capability roots or adapter subtrees.
+var CompositionContractPrefixes = map[string]struct{}{
+	"internal/access":                      {},
+	"internal/access/snapshot":             {},
+	"internal/analytics/connectionbinding": {},
+	"internal/dashboard/authoring":         {},
+	"internal/deployment":                  {},
+	"internal/manageddata":                 {},
+	"internal/manageddata/control":         {},
+	"internal/project/bundle":              {},
+	"internal/project/catalog":             {},
+	"internal/project/graph":               {},
+	"internal/refresh/run":                 {},
+	"internal/runtimehost":                 {},
+	"internal/servingstate":                {},
+}
+
+func IsCompositionContractImport(packagePath string) bool {
+	_, ok := CompositionContractPrefixes[packagePath]
+	return ok
 }
 
 // IsSharedContractImport reports whether packagePath is one of the explicitly
@@ -177,6 +215,9 @@ var PackageRules = []PackageRule{
 	{Prefix: "desktop/native/windowspolicy", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "pkg/agent", Capability: "agent", Layer: LayerContract},
 	{Prefix: "internal/project/graph", Capability: "project", Layer: LayerContract},
+	{Prefix: "internal/project/catalog", Capability: "project", Layer: LayerContract},
+	{Prefix: "internal/project/manifest", Capability: "project", Layer: LayerContract},
+	{Prefix: "internal/project/runtime", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/project/compiler", Capability: "project", Layer: LayerUseCase},
 	{Prefix: "internal/project/artifact", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/analytics/runtime", Capability: "analytics", Layer: LayerContract},

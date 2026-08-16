@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectgen "github.com/flidai/leapview/internal/project/api/gen"
 )
 
@@ -34,5 +35,5 @@ func (h *recordingProjectHandler) GetProject(_ stdhttp.ResponseWriter, _ *stdhtt
 	h.project = project
 }
 
-func (*recordingProjectHandler) Search(stdhttp.ResponseWriter, *stdhttp.Request, projectgen.GenSearchParams) {
+func (*recordingProjectHandler) Search(stdhttp.ResponseWriter, *stdhttp.Request, projectapi.SearchParams) {
 }

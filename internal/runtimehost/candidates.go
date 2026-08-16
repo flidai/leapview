@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -36,7 +35,7 @@ type CandidateRestriction struct {
 	ID             string
 	ObjectID       projectgraph.ResourceID
 	ObjectKind     projectgraph.Kind
-	Subject        *access.SubjectRef
+	Subject        *accesssnapshot.SubjectRef
 	PolicyType     string
 	ExpressionJSON string
 }

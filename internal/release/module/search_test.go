@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	projectapi "github.com/flidai/leapview/internal/project/api/gen"
+	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
@@ -34,7 +34,7 @@ func TestSearchUsesActiveCatalogAndMapsStableResults(t *testing.T) {
 	module := &Module{searchCatalog: fake, api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) {
 		return Principal{ID: "principal-1"}, true
 	}}}
-	params := projectapi.GenSearchParams{Q: "sales"}
+	params := projectapi.SearchParams{Q: "sales"}
 	response := httptest.NewRecorder()
 	module.Search(response, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=sales", nil), params)
 	if response.Code != http.StatusOK {
@@ -54,14 +54,14 @@ func TestSearchFailsClosedForAuthenticationCatalogAndInvalidKinds(t *testing.T) 
 	tests := []struct {
 		name   string
 		module *Module
-		params projectapi.GenSearchParams
+		params projectapi.SearchParams
 		status int
 		want   string
 	}{
-		{name: "unauthenticated", module: &Module{searchCatalog: &searchCatalogFake{}, api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{}, false }}}, params: projectapi.GenSearchParams{Q: "sales"}, status: http.StatusUnauthorized, want: "AUTHENTICATION_REQUIRED"},
-		{name: "catalog unavailable", module: &Module{searchCatalog: &searchCatalogFake{err: projectcatalog.ErrUnavailable}, api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-1"}, true }}}, params: projectapi.GenSearchParams{Q: "sales"}, status: http.StatusServiceUnavailable, want: "Project search is temporarily unavailable"},
-		{name: "invalid kind", module: &Module{searchCatalog: &searchCatalogFake{}, api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-1"}, true }}}, params: projectapi.GenSearchParams{Q: "sales", Kind: &[]projectapi.SearchKind{"visual"}}, status: http.StatusBadRequest, want: "INVALID_SEARCH_KIND"},
-		{name: "invalid cursor", module: &Module{searchCatalog: &searchCatalogFake{err: projectcatalog.ErrInvalidCursor}, api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-1"}, true }}}, params: projectapi.GenSearchParams{Q: "sales"}, status: http.StatusBadRequest, want: "INVALID_SEARCH_REQUEST"},
+		{name: "unauthenticated", module: &Module{searchCatalog: &searchCatalogFake{}, api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{}, false }}}, params: projectapi.SearchParams{Q: "sales"}, status: http.StatusUnauthorized, want: "AUTHENTICATION_REQUIRED"},
+		{name: "catalog unavailable", module: &Module{searchCatalog: &searchCatalogFake{err: projectcatalog.ErrUnavailable}, api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-1"}, true }}}, params: projectapi.SearchParams{Q: "sales"}, status: http.StatusServiceUnavailable, want: "Project search is temporarily unavailable"},
+		{name: "invalid kind", module: &Module{searchCatalog: &searchCatalogFake{}, api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-1"}, true }}}, params: projectapi.SearchParams{Q: "sales", Kind: &[]projectapi.SearchKind{"visual"}}, status: http.StatusBadRequest, want: "INVALID_SEARCH_KIND"},
+		{name: "invalid cursor", module: &Module{searchCatalog: &searchCatalogFake{err: projectcatalog.ErrInvalidCursor}, api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-1"}, true }}}, params: projectapi.SearchParams{Q: "sales"}, status: http.StatusBadRequest, want: "INVALID_SEARCH_REQUEST"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
