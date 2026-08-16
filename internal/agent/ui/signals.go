@@ -125,7 +125,7 @@ func chatInitialSignals(projectID, view string, state ChatViewState) map[string]
 		"runtime": RouteRuntimeSignal{Kind: RouteChat, ProjectID: Optional(projectID)},
 		"agent":   state.Agent,
 		"agentContext": AgentContextSignal{
-			Surface: "chat", ProjectID: projectID,
+			Surface: "chat",
 			Filters: DashboardFilterState{
 				AppliedControls: map[string]signalcontracts.DashboardAppliedFilterState{},
 				DraftControls:   map[string]signalcontracts.DashboardFilterExpression{},

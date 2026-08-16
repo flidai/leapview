@@ -245,8 +245,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		return agenthttp.Principal{ID: principal.ID, DevAuthBypass: principal.DevAuthBypass}, ok
 	}
 	m.handler = agenthttp.NewHandler(agenthttp.Options{
-		Service: service, Settings: config.HTTP.Settings,
-		PlatformAdmin: config.HTTP.PlatformAdmin,
+		Service: service, ActiveProjectID: m.projectID.String(), Settings: config.HTTP.Settings,
+		PlatformAdmin:    config.HTTP.PlatformAdmin,
 		CurrentPrincipal: currentPrincipal, CurrentCredential: config.HTTP.CurrentCredential,
 		Broker: config.HTTP.Broker, CSRFToken: config.HTTP.CSRFToken,
 		CurrentRoleLabel: config.HTTP.CurrentRoleLabel, Layout: config.HTTP.Layout, ChatSignal: m.chatSignal,

@@ -23,6 +23,9 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 	if len(candidate.References) > agent.MaxTurnReferences {
 		return agent.TurnContext{}, fmt.Errorf("at most %d references can be attached", agent.MaxTurnReferences)
 	}
+	if _, err := m.activeProjectID(); err != nil {
+		return agent.TurnContext{}, err
+	}
 	switch strings.ToLower(strings.TrimSpace(candidate.Surface)) {
 	case "dashboard":
 		return m.resolveDashboardTurnContext(r.Context(), scope, candidate)
@@ -35,13 +38,8 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 		if strings.TrimSpace(scope.PrincipalID) == "" {
 			return agent.TurnContext{}, errors.New("catalog principal is unavailable")
 		}
-		projectID := strings.TrimSpace(candidate.ProjectID)
-		if projectID == "" && m.projectID != "" {
-			projectID = m.projectID.String()
-		}
-		if projectID == "" {
-			return agent.TurnContext{}, errors.New("chat context requires a project")
-		}
+		projectID, _ := m.activeProjectID()
+		scope.ProjectID = projectID
 		references := make([]agent.TurnReference, 0, len(candidate.References))
 		for _, reference := range candidate.References {
 			kind, err := projectgraph.ParseKind(strings.TrimSpace(reference.Reference.Kind))
@@ -60,18 +58,21 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 			}
 			references = append(references, TurnReferenceFromCatalog(item.Item, projectID))
 		}
-		return agent.TurnContext{Surface: "chat", ProjectID: projectID, References: references}, nil
+		return agent.TurnContext{Surface: "chat", References: references}, nil
 	default:
 		return agent.TurnContext{}, errors.New("unsupported agent context surface")
 	}
 }
 
 func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
-	projectID := strings.TrimSpace(candidate.ProjectID)
+	projectID, err := m.activeProjectID()
+	if err != nil {
+		return agent.TurnContext{}, err
+	}
 	modelID := strings.TrimSpace(candidate.ModelID)
 	datasetID := strings.TrimSpace(candidate.DatasetID)
-	if projectID == "" || modelID == "" || datasetID == "" {
-		return agent.TurnContext{}, errors.New("data context requires project, semantic model, and dataset")
+	if modelID == "" || datasetID == "" {
+		return agent.TurnContext{}, errors.New("data context requires semantic model and dataset")
 	}
 	scope.ProjectID = projectID
 	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceUse) {
@@ -100,7 +101,7 @@ func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, 
 		return agent.TurnContext{}, err
 	}
 	return agent.TurnContext{
-		Surface: "data", ProjectID: projectID, ModelID: resolvedModel.String(), DatasetID: datasetID,
+		Surface: "data", ModelID: resolvedModel.String(), DatasetID: datasetID,
 		Exploration: exploration,
 	}, nil
 }
@@ -162,11 +163,14 @@ func validateDataExploration(model interface {
 }
 
 func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
-	projectID := strings.TrimSpace(candidate.ProjectID)
+	projectID, err := m.activeProjectID()
+	if err != nil {
+		return agent.TurnContext{}, err
+	}
 	dashboardID := strings.TrimSpace(candidate.DashboardID)
 	pageID := strings.TrimSpace(candidate.PageID)
-	if projectID == "" || dashboardID == "" || pageID == "" {
-		return agent.TurnContext{}, errors.New("dashboard context requires project, dashboard, and page")
+	if dashboardID == "" || pageID == "" {
+		return agent.TurnContext{}, errors.New("dashboard context requires dashboard and page")
 	}
 	scope.ProjectID = projectID
 	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceRead) {
@@ -209,7 +213,6 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 	}
 	return agent.TurnContext{
 		Surface:        "dashboard",
-		ProjectID:      projectID,
 		DashboardID:    report.ID,
 		DashboardTitle: report.Title,
 		PageID:         page.ID,
@@ -224,6 +227,13 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 	}, nil
 }
 
+func (m *Module) activeProjectID() (string, error) {
+	if m == nil || m.projectID == "" {
+		return "", errors.New("active project runtime is required")
+	}
+	return m.projectID.String(), nil
+}
+
 func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, raw string, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, error) {
 	id, err := projectgraph.NewResourceID(strings.TrimSpace(raw))
 	if err != nil {
@@ -232,8 +242,12 @@ func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, 
 	if m.resolveResource == nil {
 		return "", errors.New("authorized project catalog is not configured")
 	}
+	projectID, err := m.activeProjectID()
+	if err != nil {
+		return "", err
+	}
 	return m.resolveResource(ctx, agenttools.Scope{
-		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+		ProjectID: projectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential:    agenttools.CredentialScope{ProjectID: scope.Credential.ProjectID, Privileges: append([]string(nil), scope.Credential.Privileges...), Restricted: scope.Credential.Restricted},
 	}, id, kind, capability)

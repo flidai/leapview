@@ -29,6 +29,7 @@ import (
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
@@ -37,6 +38,40 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 )
+
+// projectCatalogLeaseProvider narrows the runtime-host provider to the
+// catalog lease contract while preserving the exact active lease object. No
+// graph or authorization snapshot is cached here.
+type projectCatalogLeaseProvider struct {
+	provider runtimehostmodule.Provider
+}
+
+type projectCatalogSubjectResolver struct {
+	resolve func(context.Context, string) ([]access.SubjectRef, error)
+}
+
+func (r projectCatalogSubjectResolver) AuthorizationSubjects(ctx context.Context, principalID string) ([]access.SubjectRef, error) {
+	if r.resolve == nil {
+		return nil, projectcatalog.ErrUnavailable
+	}
+	return r.resolve(ctx, principalID)
+}
+
+func (p projectCatalogLeaseProvider) Acquire(ctx context.Context) (projectcatalog.Lease, error) {
+	if p.provider == nil {
+		return nil, projectcatalog.ErrUnavailable
+	}
+	lease, err := p.provider.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	catalogLease, ok := lease.(projectcatalog.Lease)
+	if !ok {
+		lease.Release()
+		return nil, fmt.Errorf("runtime lease does not expose catalog authorization snapshot")
+	}
+	return catalogLease, nil
+}
 
 // assemble constructs the complete process exactly once. CLI and other process
 // entrypoints provide configuration but never construct capability adapters.
@@ -297,6 +332,14 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	projectCatalog, err := projectcatalog.NewService(
+		projectCatalogLeaseProvider{provider: runtimeHostModule.Provider()},
+		projectCatalogSubjectResolver{resolve: accessModule.AuthorizationSubjects},
+	)
+	if err != nil {
+		return fail(fmt.Errorf("build project catalog: %w", err))
+	}
+	releaseModule.SetProjectSearchCatalog(projectCatalog)
 	accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
 		subjects, err := accessModule.AuthorizationSubjects(ctx, principalID)
 		if err != nil {
@@ -521,8 +564,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			AnalyticsModule: analyticsModule, DashboardAssets: dashboardAssets,
 			ReleaseModule: releaseModule, JobModule: jobModule,
 			AccessModule: accessModule, ManagedDataModule: managedDataModule,
-			Authoring: authoringApplication,
-			Product:   productService, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), identity),
+			ProjectCatalog: projectCatalog,
+			Authoring:      authoringApplication,
+			Product:        productService, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), identity),
 		},
 		workflowAssemblyInputs{
 			AgentSettings: store,

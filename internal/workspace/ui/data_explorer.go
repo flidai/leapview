@@ -87,7 +87,7 @@ func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer ui
 	modelID := uisignals.ValueOrZero(command.ModelID)
 	datasetID := uisignals.ValueOrZero(command.DatasetID)
 	return uisignals.AgentContextSignal{
-		Surface: "data", ProjectID: page.Context.ProjectID, ModelID: modelID, DatasetID: &datasetID,
+		Surface: "data", ModelID: modelID, DatasetID: &datasetID,
 		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "",
 		Exploration: &uisignals.DataExploreAgentContextSignal{
 			Dimensions: append([]string(nil), command.Dimensions...), Measures: append([]string(nil), command.Measures...),

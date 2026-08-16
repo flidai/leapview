@@ -3,14 +3,12 @@ package module
 import (
 	"net/http"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/go-chi/chi/v5"
 )
 
 type RouteGuard struct {
-	Protect         func(access.Capability, http.HandlerFunc) http.HandlerFunc
-	ProtectGlobal   func(access.Capability, http.HandlerFunc) http.HandlerFunc
-	ProtectPlatform func(access.Capability, http.HandlerFunc) http.HandlerFunc
+	Authenticate         func(http.Handler) http.Handler
+	RequirePlatformAdmin func(http.Handler) http.Handler
 }
 
 func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
@@ -18,13 +16,29 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 		return
 	}
 	h := m.handler
-	r.Get("/chats", guard.ProtectGlobal(access.CapabilityResourceUse, h.Chat))
-	r.Get("/chats/new", guard.ProtectGlobal(access.CapabilityResourceUse, h.ChatNew))
-	r.Get("/chats/references/search", guard.ProtectGlobal(access.CapabilityResourceRead, h.ChatReferenceSearch))
-	r.Get("/chats/restore", guard.ProtectGlobal(access.CapabilityResourceUse, h.ChatRestore))
-	r.Get("/chats/{conversation}", guard.ProtectGlobal(access.CapabilityResourceUse, h.ChatConversation))
-	r.Post("/chats/turns", guard.ProtectGlobal(access.CapabilityResourceUse, h.ChatTurn))
-	r.Patch("/admin/agent/config", guard.ProtectPlatform(access.CapabilityProjectAdmin, h.UpdateAdminConfig))
+	authenticated := func(next http.HandlerFunc) http.HandlerFunc {
+		if guard.Authenticate == nil {
+			return unavailable
+		}
+		return guard.Authenticate(http.HandlerFunc(next)).ServeHTTP
+	}
+	platformAdmin := func(next http.HandlerFunc) http.HandlerFunc {
+		if guard.RequirePlatformAdmin == nil {
+			return unavailable
+		}
+		return guard.RequirePlatformAdmin(http.HandlerFunc(next)).ServeHTTP
+	}
+	r.Get("/chats", authenticated(h.Chat))
+	r.Get("/chats/new", authenticated(h.ChatNew))
+	r.Get("/chats/references/search", authenticated(h.ChatReferenceSearch))
+	r.Get("/chats/restore", authenticated(h.ChatRestore))
+	r.Get("/chats/{conversation}", authenticated(h.ChatConversation))
+	r.Post("/chats/turns", authenticated(h.ChatTurn))
+	r.Patch("/admin/agent/config", platformAdmin(h.UpdateAdminConfig))
+}
+
+func unavailable(w http.ResponseWriter, _ *http.Request) {
+	http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 }
 
 func (m *Module) MountMCP(r chi.Router) {

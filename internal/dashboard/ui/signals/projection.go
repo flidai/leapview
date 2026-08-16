@@ -46,7 +46,6 @@ func DashboardInitialEnvelope(clientID, streamInstanceID string, catalog dashboa
 		},
 		AgentContext: AgentContextSignal{
 			Surface:        "dashboard",
-			ProjectID:      catalog.Workspace.ID,
 			DashboardID:    report.ID,
 			DashboardTitle: report.Title,
 			PageID:         activePage.ID,

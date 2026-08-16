@@ -30,7 +30,6 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
-	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
@@ -40,6 +39,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
@@ -201,6 +201,7 @@ type capabilityAssemblyInputs struct {
 	DashboardAssets   dashboardmodule.Assets
 	Product           *adminmodule.ProductService
 	ProductStatus     adminmodule.ProductStatus
+	ProjectCatalog    *projectcatalog.Service
 }
 
 type workflowAssemblyInputs struct {
@@ -711,8 +712,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return metricsForWorkspace(runtime.metrics, workspaceID)
 			},
 			RootMetrics: runtime.metrics,
-			AgentBootstrap: func(r *http.Request, workspaceID string) workspacemodule.DataExplorerAgentBootstrap {
-				state := routes.agentModule.DashboardBootstrap(r, workspaceID)
+			AgentBootstrap: func(r *http.Request, _ string) workspacemodule.DataExplorerAgentBootstrap {
+				state := routes.agentModule.DashboardBootstrap(r)
 				return workspacemodule.DataExplorerAgentBootstrap{Agent: state.Agent, Visuals: state.Visuals}
 			},
 			AgentCommands: workspacemodule.DataExplorerAgentCommandBindings{
@@ -893,8 +894,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 						Status:                  status,
 					}, true
 				},
-				AgentBootstrap: func(r *http.Request, workspaceID string) dashboardmodule.AgentBootstrap {
-					return dashboardAgentBootstrap(routes.agentModule.DashboardBootstrap(r, workspaceID))
+				AgentBootstrap: func(r *http.Request, _ string) dashboardmodule.AgentBootstrap {
+					return dashboardAgentBootstrap(routes.agentModule.DashboardBootstrap(r))
 				},
 				AgentCommands: dashboardmodule.AgentCommandBindings{
 					CreateConversation: agentUICommands.CreateConversation,
@@ -983,18 +984,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			SkipContextAuthorization: platform.auth == nil,
 			RecordAudit:              routes.accessModule.RecordAudit,
 			Documentation:            documentation,
-			Catalog: agentmodule.BuildCatalog(agentmodule.CatalogConfig{
-				Search: routes.workspaceModule, Environment: policy.defaultEnvironment,
-				Workspaces: persistence.workspaceReadModel, RootMetrics: runtime.metrics,
-				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-					return metricsForWorkspace(runtime.metrics, workspaceID)
-				},
-				AuthorizeAnyObject: routes.accessModule.AuthorizeAnyObject,
-				RecordAudit:        routes.accessModule.RecordAudit,
-				SkipAuthorization:  platform.auth == nil,
-				SignCursor:         cursorsigning.Sign,
-				VerifyCursor:       cursorsigning.Verify,
-			}),
+			Catalog:                  agentmodule.BuildCatalog(agentmodule.CatalogConfig{ProjectCatalog: capabilities.ProjectCatalog}),
 			QueryMetadata: func(ctx context.Context, workspaceID, modelID string) agentmodule.VisualQueryMetadata {
 				metadata := agentmodule.VisualQueryMetadata{ServingSnapshot: "unversioned"}
 				if routes.workspaceModule != nil {

@@ -48,9 +48,6 @@ func TestChatReferenceSearchUsesGlobalScopeAndEchoesRequestIdentity(t *testing.T
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 	}
-	if searchedContext.ProjectID != "" {
-		t.Fatalf("searched project = %q, want global scope", searchedContext.ProjectID)
-	}
 	if searchedLimit != maxChatReferenceSearchResults {
 		t.Fatalf("searched limit = %d, want %d", searchedLimit, maxChatReferenceSearchResults)
 	}

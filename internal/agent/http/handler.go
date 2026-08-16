@@ -41,7 +41,10 @@ type Settings interface {
 }
 
 type Options struct {
-	Service                *agent.Service
+	Service *agent.Service
+	// ActiveProjectID is supplied by composition from the serving lease. It is
+	// never read from request paths or signal payloads.
+	ActiveProjectID        string
 	Settings               Settings
 	PlatformAdmin          func(context.Context, string) (bool, error)
 	CurrentPrincipal       func(*stdhttp.Request) (Principal, bool)
@@ -64,9 +67,8 @@ type Options struct {
 	APIGenToolContracts    map[string]agenttool.Contract
 }
 
-func (h *Handler) DashboardBootstrap(r *stdhttp.Request, projectID string) ui.ChatViewState {
+func (h *Handler) DashboardBootstrap(r *stdhttp.Request) ui.ChatViewState {
 	scope := h.chatScope(r)
-	scope.ProjectID = strings.TrimSpace(projectID)
 	return h.chatSignal(r.Context(), scope, "", "", false)
 }
 

@@ -621,7 +621,6 @@ model AgentReferenceSearchSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard" })
 model AgentContextSignal {
   `surface`: string;
-  `projectId`: string;
   `dashboardId`: string;
   `dashboardTitle`: string;
   `pageId`: string;

@@ -8,8 +8,7 @@ import (
 
 func TestTurnContextItemsIncludeResolvedResourceReferences(t *testing.T) {
 	items := turnContextItems(&TurnContext{
-		Surface:   "chat",
-		ProjectID: "sales",
+		Surface: "chat",
 		References: []TurnReference{{
 			Reference: TurnReferenceKey{Kind: "measure", ID: "orders.order_count"},
 			Name:      "Order count",
@@ -44,14 +43,14 @@ func TestTurnContextNormalizationKeepsSameReferenceIDAcrossKinds(t *testing.T) {
 		},
 	}).normalized()
 
-	if got := len(normalized.References); got != 2 {
+	if got := len(normalized.References); got != 1 {
 		t.Fatalf("normalized references = %#v, want one deduplicated reference", normalized.References)
 	}
 }
 
 func TestTurnContextItemsIncludeBoundedDataExploration(t *testing.T) {
 	items := turnContextItems(&TurnContext{
-		Surface: "data", ProjectID: " sales ", ModelID: " commerce ", DatasetID: " orders ",
+		Surface: "data", ModelID: " commerce ", DatasetID: " orders ",
 		Exploration: &DataExploration{
 			Dimensions: []string{"orders.status", "orders.status", ""}, Measures: []string{"order_count"},
 			Filters: []DataExplorationFilter{{Field: " orders.status ", Operator: " EQUALS ", Values: []string{"delivered"}}},
@@ -62,7 +61,7 @@ func TestTurnContextItemsIncludeBoundedDataExploration(t *testing.T) {
 		t.Fatalf("context items = %#v", items)
 	}
 	resolved := items[0].Value.(TurnContext)
-	if resolved.ProjectID != "sales" || resolved.ModelID != "commerce" || resolved.DatasetID != "orders" {
+	if resolved.ModelID != "commerce" || resolved.DatasetID != "orders" {
 		t.Fatalf("resolved identity = %#v", resolved)
 	}
 	if resolved.Exploration == nil || resolved.Exploration.Limit != 1000 || len(resolved.Exploration.Dimensions) != 1 {
@@ -70,5 +69,12 @@ func TestTurnContextItemsIncludeBoundedDataExploration(t *testing.T) {
 	}
 	if resolved.Exploration.Filters[0].Operator != "equals" || resolved.Exploration.Sort[0].Direction != "desc" {
 		t.Fatalf("normalized exploration = %#v", resolved.Exploration)
+	}
+}
+
+func TestTurnContextRejectsClientProjectSelector(t *testing.T) {
+	var context TurnContext
+	if err := json.Unmarshal([]byte(`{"surface":"dashboard","projectId":"other-project","dashboardId":"sales","pageId":"overview"}`), &context); err == nil {
+		t.Fatal("client project selector was accepted")
 	}
 }

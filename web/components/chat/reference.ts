@@ -121,8 +121,7 @@ export function referenceHierarchy(reference: AgentReferenceSignal): string[] {
 
 export function isOnPageReference(reference: AgentReferenceSignal, context: AgentContextSignal | null): boolean {
   if (reference.context.includes('current_page')) return true
-  return Boolean(context?.projectId && context.dashboardId && context.pageId
-    && reference.reference.projectId === context.projectId
+  return Boolean(context?.dashboardId && context.pageId
     && reference.locations.some((location) => location.dashboardId === context.dashboardId && location.pageId === context.pageId))
 }
 

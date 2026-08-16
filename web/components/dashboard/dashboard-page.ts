@@ -1396,7 +1396,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 		if (component.kind !== 'visual' || !component.visual) return undefined
 		const visual = this.visuals[component.visual]
 		if (!visual) return undefined
-		const projectId = this.agentContext?.projectId ?? ''
+		const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' })
+		const projectId = runtime.projectId ?? ''
 		const href = `/dashboards/${encodeURIComponent(page.dashboardId)}/pages/${encodeURIComponent(page.pageId)}`
 		return {
 			reference: { projectId, type: 'visual', id: `${page.dashboardId}.${component.visual}` },

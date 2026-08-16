@@ -11,6 +11,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releasefilesystem "github.com/flidai/leapview/internal/release/filesystem"
@@ -23,6 +24,7 @@ type Module struct {
 	service            *release.Service
 	candidateArtifacts *candidateArtifactService
 	catalog            release.CatalogRepository
+	searchCatalog      projectcatalogSearcher
 	deployments        release.DeploymentLinkage
 	servingProvenance  release.ServingStateProvenanceRepository
 	environment        string
@@ -52,6 +54,10 @@ type ServingStateRepository interface {
 		servingstate.Environment,
 	) (servingstate.State, servingstate.Artifact, error)
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
+}
+
+type projectcatalogSearcher interface {
+	Search(context.Context, projectcatalog.SearchRequest) (projectcatalog.Page, error)
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -105,7 +111,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			pins:        config.ManagedDataPins, provenance: servingProvenance,
 		},
 		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
-		environment: string(environment), api: config.API, logger: logger,
+		searchCatalog: config.API.ProjectSearchCatalog,
+		environment:   string(environment), api: config.API, logger: logger,
 		finalizeExecution: finalizeExecution,
 	}
 	if err := validateFinalizeJobHandlers(finalizeExecution, module.JobHandlers()); err != nil {

@@ -21,9 +21,9 @@ func (m *Module) ChromeSignal(r *http.Request) ChatSignal {
 	return m.ChatSignalWith(r.Context(), scope, "", nil, agent.ChatArtifactSignals{}, "", false).Agent
 }
 
-func (m *Module) DashboardBootstrap(r *http.Request, projectID string) ChatViewState {
+func (m *Module) DashboardBootstrap(r *http.Request) ChatViewState {
 	if m == nil || m.handler == nil {
 		return ChatViewState{}
 	}
-	return m.handler.DashboardBootstrap(r, projectID)
+	return m.handler.DashboardBootstrap(r)
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
@@ -15,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	projectapi "github.com/flidai/leapview/internal/project/api/gen"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releaseapi "github.com/flidai/leapview/internal/release/api"
@@ -29,10 +31,131 @@ type Principal struct {
 
 type PageParams = releaseapi.PageParams
 
-// Search remains a project-surface dispatch seam while the search index is
-// owned by application composition. Release does not expose workspace search.
-func (m *Module) Search(w http.ResponseWriter, r *http.Request, _ projectapi.GenSearchParams) {
-	apitransport.WriteProblem(w, r, http.StatusNotImplemented, "SEARCH_UNAVAILABLE", "Project search is unavailable", nil)
+// Search dispatches through the active-lease project catalog. The catalog is
+// authorization-filtered and snapshot-bound; release does not maintain a
+// second index or accept a project selector from the request.
+func (m *Module) Search(w http.ResponseWriter, r *http.Request, params projectapi.GenSearchParams) {
+	if m == nil || m.searchCatalog == nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "SEARCH_UNAVAILABLE", "Project search is unavailable", nil)
+		return
+	}
+	principal, ok := m.currentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
+	kinds, err := searchKinds(params.Kind)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_SEARCH_KIND", err.Error(), nil)
+		return
+	}
+	request := projectcatalog.SearchRequest{
+		PrincipalID: principal.ID, Query: strings.TrimSpace(params.Q), Kinds: kinds,
+		Limit: searchLimit(params.Limit), Cursor: searchCursor(params.Cursor),
+	}
+	if params.Domain != nil {
+		request.Domain = strings.TrimSpace(*params.Domain)
+	}
+	page, err := m.searchCatalog.Search(r.Context(), request)
+	if err != nil {
+		status, code := searchErrorStatus(err)
+		detail := err.Error()
+		if status == http.StatusServiceUnavailable {
+			if m.logger != nil {
+				m.logger.WarnContext(r.Context(), "project catalog search unavailable", "error", err)
+			}
+			detail = "Project search is temporarily unavailable"
+		}
+		apitransport.WriteProblem(w, r, status, code, detail, nil)
+		return
+	}
+	items := make([]projectapi.SearchResult, 0, len(page.Items))
+	for _, item := range page.Items {
+		items = append(items, searchResult(item))
+	}
+	apitransport.WriteJSON(w, http.StatusOK, projectapi.SearchResponse{
+		Items: items,
+		Page:  projectapi.GenSchemaPageInfo{NextCursor: searchStringPointer(page.NextCursor)},
+	})
+}
+
+var publicSearchKinds = []projectgraph.Kind{
+	projectgraph.KindProject, projectgraph.KindConnection, projectgraph.KindSource,
+	projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline,
+	projectgraph.KindDashboard,
+}
+
+func searchKinds(values *[]projectapi.SearchKind) ([]projectgraph.Kind, error) {
+	if values == nil || len(*values) == 0 {
+		return append([]projectgraph.Kind(nil), publicSearchKinds...), nil
+	}
+	allowed := make([]projectgraph.Kind, 0, len(*values))
+	for _, value := range *values {
+		kind, err := projectgraph.ParseKind(string(value))
+		if err != nil || !containsSearchKind(kind) {
+			return nil, fmt.Errorf("unsupported search kind %q", value)
+		}
+		allowed = append(allowed, kind)
+	}
+	return allowed, nil
+}
+
+func containsSearchKind(want projectgraph.Kind) bool {
+	for _, kind := range publicSearchKinds {
+		if kind == want {
+			return true
+		}
+	}
+	return false
+}
+
+func searchLimit(value *int32) int {
+	if value == nil {
+		return 0
+	}
+	return int(*value)
+}
+
+func searchCursor(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func searchErrorStatus(err error) (int, string) {
+	switch {
+	case errors.Is(err, projectcatalog.ErrInvalidRequest), errors.Is(err, projectcatalog.ErrInvalidCursor):
+		return http.StatusBadRequest, "INVALID_SEARCH_REQUEST"
+	case errors.Is(err, projectcatalog.ErrUnavailable), errors.Is(err, projectcatalog.ErrSnapshotChanged):
+		return http.StatusServiceUnavailable, "SEARCH_UNAVAILABLE"
+	default:
+		// Authorization and lease errors fail closed without exposing internal
+		// details through a successful or ambiguous response.
+		return http.StatusServiceUnavailable, "SEARCH_UNAVAILABLE"
+	}
+}
+
+func searchResult(item projectcatalog.Result) projectapi.SearchResult {
+	return projectapi.SearchResult{
+		Reference: projectapi.SearchReference{Id: item.Ref.ID.String(), Kind: projectapi.SearchKind(item.Ref.Kind)},
+		Name:      item.Name, DisplayName: searchOptionalString(item.DisplayName), Description: searchOptionalString(item.Description),
+		Domain: searchOptionalString(item.Domain), Owner: searchOptionalString(item.Owner), Tags: append([]string(nil), item.Tags...),
+	}
+}
+
+func searchOptionalString(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return &value
+}
+
+func searchStringPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 type JobStore interface {
@@ -42,10 +165,20 @@ type JobStore interface {
 }
 
 type APIConfig struct {
-	CurrentPrincipal    func(*http.Request) (Principal, bool)
-	AuthorizeConnection func(context.Context, string, string, string, access.Capability) (bool, error)
-	Jobs                JobStore
-	Workflow            jobs.WorkflowRecorder
+	CurrentPrincipal     func(*http.Request) (Principal, bool)
+	ProjectSearchCatalog projectcatalogSearcher
+	AuthorizeConnection  func(context.Context, string, string, string, access.Capability) (bool, error)
+	Jobs                 JobStore
+	Workflow             jobs.WorkflowRecorder
+}
+
+// SetProjectSearchCatalog binds the one active-lease catalog assembled by application
+// composition. Keeping the setter separate lets release persistence be built
+// before the runtime host while still sharing the exact same catalog service.
+func (m *Module) SetProjectSearchCatalog(catalog projectcatalogSearcher) {
+	if m != nil {
+		m.searchCatalog = catalog
+	}
 }
 
 func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {

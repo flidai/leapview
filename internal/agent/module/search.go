@@ -18,7 +18,7 @@ var catalogReferenceKinds = []agenttools.CatalogType{
 	"project", "connection", "source", "model", "semantic_model", "pipeline", "dashboard",
 }
 
-func (m *Module) SearchReferences(r *http.Request, turnContext agent.TurnContext, query string, limit int) ([]ui.AgentReferenceSignal, error) {
+func (m *Module) SearchReferences(r *http.Request, _ agent.TurnContext, query string, limit int) ([]ui.AgentReferenceSignal, error) {
 	if m == nil || m.catalog == nil {
 		return nil, errors.New("catalog is not configured")
 	}
@@ -31,9 +31,9 @@ func (m *Module) SearchReferences(r *http.Request, turnContext agent.TurnContext
 	if principalID == "" {
 		return nil, errors.New("catalog principal is unavailable")
 	}
-	projectID := strings.TrimSpace(turnContext.ProjectID)
-	if projectID == "" && m.projectID != "" {
-		projectID = m.projectID.String()
+	projectID, err := m.activeProjectID()
+	if err != nil {
+		return nil, err
 	}
 	page, err := m.catalog.Search(r.Context(), agenttools.Scope{ProjectID: projectID, PrincipalID: principalID}, agenttools.CatalogSearchRequest{
 		Query: strings.TrimSpace(query), Kinds: catalogReferenceKinds, Limit: limit,

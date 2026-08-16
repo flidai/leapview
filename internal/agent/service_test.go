@@ -212,7 +212,6 @@ func TestServicePromptPersistsResolvedTurnContextWhileKeepingVisibleTextClean(t 
 		Input:          "Why did this decline?",
 		Context: &TurnContext{
 			Surface:        "dashboard",
-			ProjectID:      "sales",
 			DashboardID:    "executive-sales",
 			DashboardTitle: "Executive Sales",
 			PageID:         "overview",

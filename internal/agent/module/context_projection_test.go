@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type contextCatalog struct {
@@ -62,11 +63,11 @@ func TestResolveDashboardTurnReferencesUsesCompiledMetadata(t *testing.T) {
 }
 
 func TestResolveChatTurnContextUsesAuthorizedCatalogMetadata(t *testing.T) {
-	module := &Module{catalog: contextCatalog{items: map[string]agenttools.CatalogItem{
+	module := &Module{projectID: projectgraph.ResourceID("project_demo"), catalog: contextCatalog{items: map[string]agenttools.CatalogItem{
 		"dashboard_sales": {Ref: agenttools.CatalogRef{ID: "dashboard_sales", Kind: "dashboard"}, Name: "Sales dashboard"},
 	}}}
 	resolved, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/chats/new", nil), agent.Scope{PrincipalID: "principal_1"}, agent.TurnContext{
-		Surface: "chat", ProjectID: "project_demo",
+		Surface:    "chat",
 		References: []agent.TurnReference{{Reference: agent.TurnReferenceKey{Kind: "dashboard", ID: "dashboard_sales"}, Name: "untrusted"}},
 	})
 	if err != nil {
@@ -78,9 +79,9 @@ func TestResolveChatTurnContextUsesAuthorizedCatalogMetadata(t *testing.T) {
 }
 
 func TestResolveChatTurnContextRejectsUnknownReference(t *testing.T) {
-	module := &Module{catalog: contextCatalog{items: map[string]agenttools.CatalogItem{}}}
+	module := &Module{projectID: projectgraph.ResourceID("project_demo"), catalog: contextCatalog{items: map[string]agenttools.CatalogItem{}}}
 	_, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/chats/new", nil), agent.Scope{PrincipalID: "principal_1"}, agent.TurnContext{
-		Surface: "chat", ProjectID: "project_demo",
+		Surface:    "chat",
 		References: []agent.TurnReference{{Reference: agent.TurnReferenceKey{Kind: "dashboard", ID: "missing"}}},
 	})
 	if err == nil {
@@ -95,5 +96,25 @@ func TestContextCredentialUsesCanonicalCapability(t *testing.T) {
 	}
 	if contextCredentialAllowsCapability(scope, access.CapabilityResourceEdit) {
 		t.Fatal("ungranted capability was accepted")
+	}
+}
+
+func TestResolveContextResourceUsesServerBoundProject(t *testing.T) {
+	called := false
+	module := &Module{
+		projectID: projectgraph.ResourceID("active_project"),
+		resolveResource: func(_ context.Context, scope agenttools.Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+			called = true
+			if scope.ProjectID != "active_project" {
+				t.Fatalf("resolver project = %q, want active_project", scope.ProjectID)
+			}
+			return id, nil
+		},
+	}
+	if _, err := module.resolveContextResource(context.Background(), agent.Scope{ProjectID: "client_project", PrincipalID: "principal"}, "semantic_sales", projectgraph.KindSemanticModel, access.CapabilityResourceUse); err != nil {
+		t.Fatalf("resolve context resource: %v", err)
+	}
+	if !called {
+		t.Fatal("resolver was not called")
 	}
 }

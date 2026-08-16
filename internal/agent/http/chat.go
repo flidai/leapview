@@ -142,9 +142,6 @@ func (h *Handler) ChatTurn(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
 	}
-	if turnContext != nil {
-		scope.ProjectID = turnContext.ProjectID
-	}
 	activeConversationID := strings.TrimSpace(signals.Agent.ActiveConversationID)
 	if activeConversationID == "" {
 		h.startDraftChatTurn(w, r, service, scope, clientID, input, turnContext, embedded)
@@ -372,7 +369,7 @@ func (h *Handler) chatScope(r *nethttp.Request) agent.Scope {
 			devBypass = principal.DevAuthBypass
 		}
 	}
-	scope := agent.Scope{PrincipalID: principalID, DevAuthBypass: devBypass}
+	scope := agent.Scope{ProjectID: strings.TrimSpace(h.options.ActiveProjectID), PrincipalID: principalID, DevAuthBypass: devBypass}
 	if h.options.CurrentCredential != nil {
 		if credential, ok := h.options.CurrentCredential(r); ok {
 			scope.Credential = agentCredentialScope(credential)
