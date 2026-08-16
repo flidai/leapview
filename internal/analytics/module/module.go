@@ -17,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticssqlite "github.com/flidai/leapview/internal/analytics/sqlite"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	storagemaintenance "github.com/flidai/leapview/internal/servingstate/retention"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -33,6 +34,7 @@ type Config struct {
 	TargetCredentials     TargetCredentialConfig
 	CredentialMode        CredentialMode
 	CredentialTargetID    string
+	CredentialProjectID   projectgraph.ResourceID
 	CredentialEnvironment string
 	RootDir               string
 	CatalogPath           string
@@ -122,6 +124,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	if config.CredentialMode == CredentialModeDevelopmentEnvironment {
 		development, err := buildProcessDevelopmentTargetResolver(
+			config.CredentialProjectID,
 			config.CredentialTargetID,
 			config.CredentialEnvironment,
 		)
@@ -289,7 +292,7 @@ func (m *Module) ensureConnectionPools(
 			}
 			resolver, err := connectionbinding.SelectResolver(
 				connectionbinding.ResolverSelection{
-					TargetID: binding.TargetID, Environment: binding.Scope.Environment,
+					TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment,
 					TargetClass: m.targetClass, Kind: m.connectionResolverKind(),
 				},
 				m.targetResolvers,
@@ -329,7 +332,7 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 		return analyticsduckdb.NonSecretCredentialResolver{}, nil
 	case CredentialModeDevelopmentEnvironment:
 		selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-			TargetID: connectionbinding.TargetID(config.CredentialTargetID), Environment: config.CredentialEnvironment,
+			TargetID: connectionbinding.TargetID(config.CredentialTargetID), ProjectID: config.CredentialProjectID, Environment: config.CredentialEnvironment,
 			TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,
 		})
 		if err != nil {

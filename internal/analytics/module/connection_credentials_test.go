@@ -20,6 +20,7 @@ func TestBuildDevelopmentTargetResolverAllowsOnlyDedicatedConnectionVariables(t 
 	}
 	resolver, err := buildDevelopmentTargetResolver(
 		"lvinst_local",
+		"lvinst_local",
 		"dev",
 		[]string{
 			"LEAPVIEW_DEV_CONNECTION_WAREHOUSE=redacted",
@@ -63,7 +64,7 @@ func TestBuildTargetResolversComposesOnlyTheConfiguredInfisicalAuthority(t *test
 	}
 	module := &Module{targetResolvers: resolvers}
 	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-		TargetID: "target-prod", Environment: "prod",
+		TargetID: "target-prod", ProjectID: "project-1", Environment: "prod",
 		TargetClass: connectionbinding.TargetProduction, Kind: connectionbinding.ResolverInfisical,
 	})
 	require.NoError(t, err)

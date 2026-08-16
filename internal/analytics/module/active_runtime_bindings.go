@@ -91,7 +91,7 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
 	resolver, err := connectionbinding.SelectResolver(connectionbinding.ResolverSelection{
-		TargetID: binding.TargetID, Environment: binding.Scope.Environment,
+		TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment,
 		TargetClass: r.module.targetClass, Kind: r.module.connectionResolverKind(),
 	}, r.module.targetResolvers)
 	if err != nil {

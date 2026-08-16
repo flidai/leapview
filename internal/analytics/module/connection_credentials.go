@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsenvironment "github.com/flidai/leapview/internal/analytics/environment"
 	"github.com/flidai/leapview/internal/analytics/infisical"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const developmentConnectionVariablePrefix = "LEAPVIEW_DEV_CONNECTION_"
@@ -70,15 +71,17 @@ func buildTargetResolvers(config TargetCredentialConfig) (connectionbinding.Reso
 }
 
 func buildProcessDevelopmentTargetResolver(
+	projectID projectgraph.ResourceID,
 	targetID string,
 	environment string,
 ) (connectionbinding.CredentialResolver, error) {
 	return buildDevelopmentTargetResolver(
-		targetID, environment, os.Environ(), os.LookupEnv, time.Now,
+		projectID, targetID, environment, os.Environ(), os.LookupEnv, time.Now,
 	)
 }
 
 func buildDevelopmentTargetResolver(
+	projectID projectgraph.ResourceID,
 	targetID string,
 	environment string,
 	environ []string,
@@ -102,7 +105,7 @@ func buildDevelopmentTargetResolver(
 	}
 	sort.Strings(allowed)
 	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-		TargetID: connectionbinding.TargetID(targetID), Environment: environment,
+		TargetID: connectionbinding.TargetID(targetID), ProjectID: projectID, Environment: environment,
 		TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,
 	})
 	if err != nil {
