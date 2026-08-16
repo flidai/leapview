@@ -20,8 +20,7 @@ type SessionSignal = uisignals.PersonalSessionSignal
 type AuthoringSessionSignal = uisignals.PersonalAuthoringSessionSignal
 type TokensSignal = uisignals.PersonalTokensSignal
 type TokenSignal = uisignals.PersonalTokenSignal
-type TokenScopeSignal = uisignals.PersonalTokenScopeSignal
-type TokenPrivilegeSignal = uisignals.PersonalTokenPrivilegeSignal
+type CapabilityOptionSignal = uisignals.PersonalCapabilityOptionSignal
 type ProfileCommand = uisignals.PersonalProfileCommand
 type ThemeCommand = uisignals.PersonalThemeCommand
 type PasswordCommand = uisignals.PersonalPasswordCommand
@@ -60,27 +59,26 @@ func sessionSignal(value access.Session, currentSessionID string) SessionSignal 
 }
 
 func authoringSessionSignal(value access.AuthoringSession) AuthoringSessionSignal {
-	privileges := make([]string, 0, len(value.Scope.Privileges))
-	for _, privilege := range value.Scope.Privileges {
-		privileges = append(privileges, string(privilege))
+	capabilities := make([]string, 0, len(value.Scope.Capabilities))
+	for _, capability := range value.Scope.Capabilities {
+		capabilities = append(capabilities, string(capability))
 	}
 	return AuthoringSessionSignal{
 		ID: value.ID, Kind: string(value.Kind), ClientID: value.ClientID,
-		TargetID: value.Scope.TargetID, ProjectID: value.Scope.ProjectID,
-		Privileges: privileges, CreatedAt: formatTime(value.CreatedAt),
+		TargetID: value.Scope.TargetID, ProjectID: value.Scope.ProjectID.String(),
+		Privileges: capabilities, CreatedAt: formatTime(value.CreatedAt),
 		LastUsedAt: formatTime(value.LastUsedAt), ExpiresAt: formatTime(value.ExpiresAt),
 		RevokedAt: formatTime(value.RevokedAt),
 	}
 }
 
 func tokenSignal(value access.APIToken) TokenSignal {
-	privileges := make([]string, 0, len(value.Privileges))
-	for _, privilege := range value.Privileges {
-		privileges = append(privileges, string(privilege))
+	capabilities := make([]string, 0, len(value.Capabilities))
+	for _, capability := range value.Capabilities {
+		capabilities = append(capabilities, string(capability))
 	}
 	return TokenSignal{
-		ID: value.ID, Name: value.Name, WorkspaceID: value.WorkspaceID,
-		Privileges: privileges, CreatedAt: value.CreatedAt, LastUsedAt: value.LastUsedAt,
+		ID: value.ID, Name: value.Name, Capabilities: capabilities, CreatedAt: value.CreatedAt, LastUsedAt: value.LastUsedAt,
 		ExpiresAt: value.ExpiresAt, RevokedAt: value.RevokedAt,
 	}
 }

@@ -245,21 +245,23 @@ type SCIMGroupFilter struct {
 }
 
 type APITokenInput struct {
-	PrincipalID string
-	Name        string
-	ExpiresAt   time.Time
+	PrincipalID  string
+	Name         string
+	Capabilities []Capability
+	ExpiresAt    time.Time
 }
 
 const APITokenNameInitialPublisher = "initial-publisher"
 
 type APIToken struct {
-	ID          string
-	PrincipalID string
-	Name        string
-	ExpiresAt   string
-	CreatedAt   string
-	LastUsedAt  string
-	RevokedAt   string
+	ID           string
+	PrincipalID  string
+	Name         string
+	Capabilities []Capability
+	ExpiresAt    string
+	CreatedAt    string
+	LastUsedAt   string
+	RevokedAt    string
 }
 
 type APICredential struct {

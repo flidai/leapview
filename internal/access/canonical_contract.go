@@ -206,6 +206,64 @@ func (capability Capability) Validate() error {
 // String returns the wire representation of a capability.
 func (capability Capability) String() string { return string(capability) }
 
+// ValidateTokenCapabilities validates an API-token attenuation request against
+// the principal's current effective capabilities. A nil request is the
+// dynamic form: the token carries no allowlist and each authorization decision
+// must use the principal's effective capabilities at that time. A non-nil
+// request is an explicit least-privilege allowlist and every capability must be
+// present in the current effective set.
+func ValidateTokenCapabilities(requested, effective []Capability) error {
+	if requested == nil {
+		return nil
+	}
+	allowed := make(map[Capability]struct{}, len(effective))
+	for _, capability := range effective {
+		if err := capability.Validate(); err != nil {
+			return err
+		}
+		allowed[capability] = struct{}{}
+	}
+	seen := make(map[Capability]struct{}, len(requested))
+	for _, capability := range requested {
+		if err := capability.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seen[capability]; duplicate {
+			return fmt.Errorf("%w: duplicate API token capability %q", ErrInvalidCapability, capability)
+		}
+		seen[capability] = struct{}{}
+		if _, ok := allowed[capability]; !ok {
+			return fmt.Errorf("%w: API token capability %q exceeds effective access", ErrCapabilityNotAllowed, capability)
+		}
+	}
+	return nil
+}
+
+// IntersectTokenCapabilities applies a stored API-token allowlist to the
+// principal's effective capabilities. A nil allowlist is intentionally
+// dynamic and therefore returns a defensive copy of effective. Explicit
+// allowlists are intersected as defense in depth even after creation-time
+// subset validation.
+func IntersectTokenCapabilities(token, effective []Capability) []Capability {
+	if len(effective) == 0 {
+		return []Capability{}
+	}
+	if token == nil {
+		return append([]Capability(nil), effective...)
+	}
+	allowed := make(map[Capability]struct{}, len(token))
+	for _, capability := range token {
+		allowed[capability] = struct{}{}
+	}
+	result := make([]Capability, 0, len(effective))
+	for _, capability := range effective {
+		if _, ok := allowed[capability]; ok {
+			result = append(result, capability)
+		}
+	}
+	return result
+}
+
 // MarshalText rejects invalid capability values and supports the canonical
 // text representation in encoders using encoding.TextMarshaler.
 func (capability Capability) MarshalText() ([]byte, error) {

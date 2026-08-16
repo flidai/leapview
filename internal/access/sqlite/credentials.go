@@ -3,11 +3,13 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	"github.com/flidai/leapview/internal/access"
-	platformdb "github.com/flidai/leapview/internal/access/internal/db"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/access"
+	platformdb "github.com/flidai/leapview/internal/access/internal/db"
 )
 
 func (r *Repository) CreateSession(ctx context.Context, principalID string, ttl time.Duration) (string, error) {
@@ -152,6 +154,10 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 	if strings.TrimSpace(input.Name) == "" {
 		return "", access.APIToken{}, fmt.Errorf("token name is required")
 	}
+	capabilitiesJSON, err := marshalTokenCapabilities(input.Capabilities)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
 	token, err := newSecret()
 	if err != nil {
 		return "", access.APIToken{}, err
@@ -181,6 +187,7 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 		Name:             input.Name,
 		TokenFingerprint: fingerprint,
 		TokenVerifier:    verifier,
+		CapabilitiesJson: capabilitiesJSON,
 		ExpiresAt:        expiresAt,
 	}); err != nil {
 		return "", access.APIToken{}, err
@@ -194,7 +201,30 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 			return token, mapAPIToken(row), nil
 		}
 	}
-	return token, access.APIToken{ID: id, PrincipalID: input.PrincipalID, Name: input.Name, ExpiresAt: nullString(expiresAt)}, nil
+	return token, access.APIToken{ID: id, PrincipalID: input.PrincipalID, Name: input.Name, Capabilities: cloneTokenCapabilities(input.Capabilities), ExpiresAt: nullString(expiresAt)}, nil
+}
+
+func cloneTokenCapabilities(capabilities []access.Capability) []access.Capability {
+	if capabilities == nil {
+		return nil
+	}
+	cloned := make([]access.Capability, len(capabilities))
+	copy(cloned, capabilities)
+	return cloned
+}
+
+func marshalTokenCapabilities(capabilities []access.Capability) (sql.NullString, error) {
+	if err := access.ValidateTokenCapabilities(capabilities, access.CanonicalCapabilities()); err != nil {
+		return sql.NullString{}, fmt.Errorf("invalid API token capabilities: %w", err)
+	}
+	if capabilities == nil {
+		return sql.NullString{}, nil
+	}
+	encoded, err := json.Marshal(capabilities)
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("encode API token capabilities: %w", err)
+	}
+	return sql.NullString{String: string(encoded), Valid: true}, nil
 }
 
 func (r *Repository) PrincipalForAPIToken(ctx context.Context, token string) (access.Principal, error) {

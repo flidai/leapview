@@ -237,7 +237,7 @@ SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
 WHERE id = sqlc.arg(id) AND revoked_at IS NULL;
 
 -- name: CreateAPIToken :exec
-INSERT INTO api_tokens (id, principal_id, name, token_fingerprint, token_verifier, expires_at) VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO api_tokens (id, principal_id, name, token_fingerprint, token_verifier, capabilities_json, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?);
 -- name: GetAPITokenByFingerprint :one
 SELECT * FROM api_tokens
 WHERE token_fingerprint = ?

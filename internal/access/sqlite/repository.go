@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -167,15 +168,47 @@ func mapListedSession(row platformdb.ListSessionsByPrincipalRow) access.Session 
 }
 
 func mapAPIToken(row platformdb.ApiToken) access.APIToken {
+	capabilities := decodeTokenCapabilities(row.CapabilitiesJson)
 	return access.APIToken{
-		ID:          row.ID,
-		PrincipalID: row.PrincipalID,
-		Name:        row.Name,
-		ExpiresAt:   nullString(row.ExpiresAt),
-		CreatedAt:   row.CreatedAt,
-		LastUsedAt:  nullString(row.LastUsedAt),
-		RevokedAt:   nullString(row.RevokedAt),
+		ID:           row.ID,
+		PrincipalID:  row.PrincipalID,
+		Name:         row.Name,
+		Capabilities: capabilities,
+		ExpiresAt:    nullString(row.ExpiresAt),
+		CreatedAt:    row.CreatedAt,
+		LastUsedAt:   nullString(row.LastUsedAt),
+		RevokedAt:    nullString(row.RevokedAt),
 	}
+}
+
+// decodeTokenCapabilities fails closed for malformed persisted data. A nil
+// SQL value (the dynamic form) remains nil; malformed or invalid values become
+// a non-nil empty allowlist, which cannot authorize any capability.
+func decodeTokenCapabilities(value sql.NullString) []access.Capability {
+	if !value.Valid {
+		return nil
+	}
+	if strings.TrimSpace(value.String) == "" || strings.TrimSpace(value.String) == "null" {
+		return []access.Capability{}
+	}
+	var raw []string
+	if err := json.Unmarshal([]byte(value.String), &raw); err != nil {
+		return []access.Capability{}
+	}
+	capabilities := make([]access.Capability, 0, len(raw))
+	seen := make(map[access.Capability]struct{}, len(raw))
+	for _, item := range raw {
+		capability, err := access.ParseCapability(item)
+		if err != nil {
+			return []access.Capability{}
+		}
+		if _, duplicate := seen[capability]; duplicate {
+			return []access.Capability{}
+		}
+		seen[capability] = struct{}{}
+		capabilities = append(capabilities, capability)
+	}
+	return capabilities
 }
 
 func nullString(value sql.NullString) string {

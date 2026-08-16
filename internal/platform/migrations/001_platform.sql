@@ -145,6 +145,10 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   name TEXT NOT NULL,
   token_fingerprint TEXT NOT NULL UNIQUE,
   token_verifier TEXT NOT NULL,
+  -- NULL means the token is dynamically constrained by the principal's
+  -- effective project capabilities. A JSON array is an explicit attenuation
+  -- allowlist and must be a subset at issuance time.
+  capabilities_json TEXT CHECK(capabilities_json IS NULL OR (json_valid(capabilities_json) AND json_type(capabilities_json) = 'array')),
   expires_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_used_at TEXT

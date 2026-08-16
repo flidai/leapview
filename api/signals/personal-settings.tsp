@@ -66,23 +66,13 @@ model PersonalAuthoringSessionSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model PersonalTokensSignal {
   `items`: PersonalTokenSignal[];
-  `scopes`: PersonalTokenScopeSignal[];
+  `capabilities`: PersonalCapabilityOptionSignal[];
   `newToken`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "personal-settings", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
-model PersonalTokenScopeSignal {
-  `kind`: string;
-  `projectId`: string;
-  `label`: string;
-  `description`: string;
-  `privileges`: PersonalTokenPrivilegeSignal[];
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "personal-settings", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
-model PersonalTokenPrivilegeSignal {
+model PersonalCapabilityOptionSignal {
   `value`: string;
   `label`: string;
   `description`: string;
@@ -94,8 +84,7 @@ model PersonalTokenPrivilegeSignal {
 model PersonalTokenSignal {
   `id`: string;
   `name`: string;
-  `projectId`: string;
-  `privileges`: string[];
+  `capabilities`: string[];
   `createdAt`: string;
   `lastUsedAt`: string;
   `expiresAt`: string;
@@ -143,7 +132,6 @@ model PersonalTokenCommand {
   `action`: string;
   `tokenId`: string;
   `name`: string;
-  `projectId`: string;
-  `privileges`: string[];
+  `capabilities`: string[];
   `expiresAt`: string;
 }

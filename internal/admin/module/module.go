@@ -84,32 +84,33 @@ type StorageConfig struct {
 }
 
 type Config struct {
-	Access                AccessReader
-	AgentDetails          func(context.Context) (api.AdminAgentResponse, error)
-	QueryAuditReader      QueryAuditReaderProvider
-	CSRFToken             func(*http.Request) string
-	CurrentPrincipal      func(*http.Request) (Principal, bool)
-	CurrentCredential     func(*http.Request) (access.APICredential, bool)
-	AuthorizeAnyWorkspace func(context.Context, string, *access.APICredential, access.Privilege) (bool, error)
-	Publications          PublicationService
-	AgentConfigCommand    uicommand.Binding
-	PublicationCommands   map[string]uicommand.Binding
-	AuthConfigured        bool
-	LocalPasswordEnabled  bool
-	AccessConfigured      bool
-	Storage               StorageConfig
-	Layout                func(*http.Request) webpage.Provider
-	EnsureClientID        func(http.ResponseWriter, *http.Request)
-	Broker                *pagestream.Broker
-	Product               *product.Service
-	ProductCommands       product.CommandExecutor
-	ProductUICommands     productsettings.CommandContract
-	ProductCommandFailure product.CommandFailureWriter
-	ProductStatus         product.Status
-	SettingsAccess        SettingsAccess
-	PersonalAvatar        PersonalAvatar
-	AuthoringSessions     AuthoringSessions
-	CurrentSession        func(*http.Request) (string, bool)
+	Access                       AccessReader
+	AgentDetails                 func(context.Context) (api.AdminAgentResponse, error)
+	QueryAuditReader             QueryAuditReaderProvider
+	CSRFToken                    func(*http.Request) string
+	CurrentPrincipal             func(*http.Request) (Principal, bool)
+	CurrentCredential            func(*http.Request) (access.APICredential, bool)
+	AuthorizeAnyWorkspace        func(context.Context, string, *access.APICredential, access.Privilege) (bool, error)
+	Publications                 PublicationService
+	AgentConfigCommand           uicommand.Binding
+	PublicationCommands          map[string]uicommand.Binding
+	AuthConfigured               bool
+	LocalPasswordEnabled         bool
+	AccessConfigured             bool
+	Storage                      StorageConfig
+	Layout                       func(*http.Request) webpage.Provider
+	EnsureClientID               func(http.ResponseWriter, *http.Request)
+	Broker                       *pagestream.Broker
+	Product                      *product.Service
+	ProductCommands              product.CommandExecutor
+	ProductUICommands            productsettings.CommandContract
+	ProductCommandFailure        product.CommandFailureWriter
+	ProductStatus                product.Status
+	SettingsAccess               SettingsAccess
+	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	PersonalAvatar               PersonalAvatar
+	AuthoringSessions            AuthoringSessions
+	CurrentSession               func(*http.Request) (string, bool)
 }
 
 type Module struct {
@@ -165,7 +166,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			Repository: config.SettingsAccess, IdentityManagement: config.SettingsAccess,
 			Preferences: config.SettingsAccess,
 			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
-			LocalPasswordEnabled: config.LocalPasswordEnabled,
+			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			LocalPasswordEnabled:         config.LocalPasswordEnabled,
 		}
 		m.handler.PersonalSettings = &personalsettings.Handler{
 			Service: personalService, CurrentSession: config.CurrentSession,

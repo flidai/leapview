@@ -325,8 +325,9 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	var input struct {
-		Name      string `json:"name"`
-		ExpiresAt string `json:"expiresAt"`
+		Name         string   `json:"name"`
+		Capabilities []string `json:"capabilities"`
+		ExpiresAt    string   `json:"expiresAt"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
@@ -346,11 +347,36 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
+	var capabilities []access.Capability
+	if input.Capabilities != nil {
+		capabilities = make([]access.Capability, 0, len(input.Capabilities))
+		for _, raw := range input.Capabilities {
+			capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
+			if parseErr != nil {
+				writeJSONError(w, parseErr, stdhttp.StatusBadRequest)
+				return
+			}
+			capabilities = append(capabilities, capability)
+		}
+		if h.CurrentEffectiveCapabilities == nil {
+			writeJSONError(w, fmt.Errorf("effective project capabilities are unavailable"), stdhttp.StatusBadRequest)
+			return
+		}
+		effective, effectiveErr := h.CurrentEffectiveCapabilities(r.Context(), principal.ID)
+		if effectiveErr != nil {
+			writeJSONError(w, effectiveErr, stdhttp.StatusBadRequest)
+			return
+		}
+		if validateErr := access.ValidateTokenCapabilities(capabilities, effective); validateErr != nil {
+			writeJSONError(w, validateErr, stdhttp.StatusBadRequest)
+			return
+		}
+	}
 	var secret string
 	var token access.APIToken
 	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
-		secret, token, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: input.Name, ExpiresAt: expires})
+		secret, token, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: input.Name, Capabilities: capabilities, ExpiresAt: expires})
 		return auditInput(r, "api_token.created", principal.ID, "api_token", token.ID, "", "success", nil), mutationErr
 	})
 	if err != nil {
@@ -1613,7 +1639,15 @@ func groupAuditMetadata(row access.Group) map[string]any {
 	return map[string]any{"provider": row.Provider, "externalId": row.ExternalID, "displayName": row.Name}
 }
 func apiTokenDTO(row access.APIToken) map[string]any {
-	return map[string]any{"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "expiresAt": emptyToNil(row.ExpiresAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt)}
+	out := map[string]any{"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "expiresAt": emptyToNil(row.ExpiresAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt)}
+	if row.Capabilities != nil {
+		values := make([]string, 0, len(row.Capabilities))
+		for _, capability := range row.Capabilities {
+			values = append(values, string(capability))
+		}
+		out["capabilities"] = values
+	}
+	return out
 }
 func servicePrincipalSecretDTO(row access.ServicePrincipalSecret, raw string) map[string]any {
 	out := map[string]any{"id": row.ID, "servicePrincipalId": row.ServicePrincipalID, "name": row.Name, "expiresAt": row.ExpiresAt, "createdAt": row.CreatedAt, "revokedAt": emptyToNil(row.RevokedAt)}
