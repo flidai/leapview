@@ -93,15 +93,15 @@ SELECT id FROM api_releases WHERE project_id = ? ORDER BY created_at DESC, id DE
 SELECT id FROM project_deployments WHERE project_id = ? AND status = 'active' ORDER BY activated_at DESC LIMIT 1;
 
 -- name: ListAPIProjectConnections :many
-SELECT c.connection_name, c.name, c.description, COALESCE(rev.digest, '') AS active_revision_id
+SELECT c.connection_id, c.name, c.description, COALESCE(rev.id, '') AS active_revision_id
 FROM managed_data_collections c
 LEFT JOIN managed_data_environment_pointers ptr ON ptr.collection_id = c.id AND ptr.environment = ?
 LEFT JOIN managed_data_revisions rev ON rev.id = ptr.revision_id
-WHERE c.project_id = ? AND c.status = 'active' ORDER BY c.connection_name;
+WHERE c.project_id = ? AND c.status = 'active' ORDER BY c.connection_id;
 
 -- name: GetAPIProjectConnection :one
-SELECT c.name, c.description, COALESCE(rev.digest, '') AS active_revision_id
+SELECT c.name, c.description, COALESCE(rev.id, '') AS active_revision_id
 FROM managed_data_collections c
 LEFT JOIN managed_data_environment_pointers ptr ON ptr.collection_id = c.id AND ptr.environment = ?
 LEFT JOIN managed_data_revisions rev ON rev.id = ptr.revision_id
-WHERE c.project_id = ? AND c.connection_name = ? AND c.status = 'active';
+WHERE c.project_id = ? AND c.connection_id = ? AND c.status = 'active';

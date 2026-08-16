@@ -35,8 +35,8 @@ func (m *Module) AuthorizePublicationDeployment(ctx context.Context, actor, envi
 }
 
 func authorizePublicationDeployment(ctx context.Context, actor, environment, generationID string, config PublicationAuthorizationConfig) error {
-	normalizedEnvironment := servingstate.NormalizeEnvironment(servingstate.Environment(environment))
-	if normalizedEnvironment != servingstate.Environment("prod") {
+	environmentValue := servingstate.Environment(environment)
+	if environmentValue != servingstate.Environment("prod") {
 		return nil
 	}
 	projectID := ""
@@ -67,7 +67,7 @@ func authorizePublicationDeployment(ctx context.Context, actor, environment, gen
 		ctx,
 		actor,
 		access.PrivilegeManagePublications,
-		access.ProjectEnvironmentObject(projectID, string(normalizedEnvironment)),
+		access.ProjectEnvironmentObject(projectID, string(environmentValue)),
 	)
 	if err != nil {
 		return err

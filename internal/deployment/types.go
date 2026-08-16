@@ -74,9 +74,7 @@ type Verification struct{ Digest string }
 
 func ValidateCreate(input CreateInput) error {
 	rawID, rawArtifact, rawRequest, rawActor, rawPrior := input.ID, input.ArtifactDigest, input.RequestDigest, input.CreatedBy, input.PriorGenerationID
-	input.ID, input.ArtifactDigest, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
-	input.PriorGenerationID = strings.TrimSpace(input.PriorGenerationID)
-	if rawID != input.ID || rawArtifact != input.ArtifactDigest || rawRequest != input.RequestDigest || rawActor != input.CreatedBy || rawPrior != input.PriorGenerationID {
+	if rawID != strings.TrimSpace(rawID) || rawArtifact != strings.TrimSpace(rawArtifact) || rawRequest != strings.TrimSpace(rawRequest) || rawActor != strings.TrimSpace(rawActor) || rawPrior != strings.TrimSpace(rawPrior) {
 		return fmt.Errorf("deployment fields must be canonical")
 	}
 	if input.ID == "" || input.RequestDigest == "" || input.CreatedBy == "" {
@@ -106,8 +104,7 @@ func ValidateCreate(input CreateInput) error {
 
 func ValidateActivation(input ActivationInput) error {
 	rawDeployment, rawArtifact, rawPrior, rawPrincipal, rawVerification := input.DeploymentID, input.ArtifactDigest, input.PriorGenerationID, input.ActivationPrincipal, input.VerificationDigest
-	input.DeploymentID, input.ArtifactDigest, input.PriorGenerationID, input.ActivationPrincipal, input.VerificationDigest = strings.TrimSpace(input.DeploymentID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.PriorGenerationID), strings.TrimSpace(input.ActivationPrincipal), strings.TrimSpace(input.VerificationDigest)
-	if rawDeployment != input.DeploymentID || rawArtifact != input.ArtifactDigest || rawPrior != input.PriorGenerationID || rawPrincipal != input.ActivationPrincipal || rawVerification != input.VerificationDigest {
+	if rawDeployment != strings.TrimSpace(rawDeployment) || rawArtifact != strings.TrimSpace(rawArtifact) || rawPrior != strings.TrimSpace(rawPrior) || rawPrincipal != strings.TrimSpace(rawPrincipal) || rawVerification != strings.TrimSpace(rawVerification) {
 		return fmt.Errorf("deployment fields must be canonical")
 	}
 	if input.DeploymentID == "" || input.ArtifactDigest == "" || input.ActivationPrincipal == "" || digest.ValidateSHA256Identity(input.VerificationDigest) != nil {

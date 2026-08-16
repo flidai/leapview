@@ -128,7 +128,7 @@ func (r *Registry) PrepareServingStateCandidate(ctx context.Context, input Servi
 	if err != nil {
 		return nil, err
 	}
-	if state.ProjectID != input.Identity.ProjectID || servingstate.NormalizeEnvironment(state.Environment) != servingstate.Environment(input.Identity.Environment) {
+	if state.ProjectID != input.Identity.ProjectID || servingstate.Environment(state.Environment) != servingstate.Environment(input.Identity.Environment) {
 		return nil, fmt.Errorf("serving state %s is outside project environment", input.Identity.GenerationID)
 	}
 	artifact, err := r.manager.repo.ArtifactByServingState(ctx, state.ID)

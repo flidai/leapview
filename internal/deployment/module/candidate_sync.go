@@ -60,10 +60,10 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 	if !ok {
 		return
 	}
-	identity = strings.TrimSpace(identity)
 	if contentType != "application/octet-stream" ||
+		identity != strings.TrimSpace(identity) || contentDigest != strings.TrimSpace(contentDigest) ||
 		digest.ValidateSHA256Identity(identity) != nil ||
-		strings.TrimSpace(contentDigest) != candidateSourceContentDigest(identity) {
+		contentDigest != candidateSourceContentDigest(identity) {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), apigenfailure.New("source_blob_invalid", "Candidate source blob headers do not match the canonical content identity"))
 		return
 	}
@@ -391,8 +391,7 @@ func candidateReleaseProvenance(
 	receipt deployment.CandidateRuntimeReceipt,
 	sourceRevision *project.CandidateSourceRevision,
 ) (release.Provenance, error) {
-	if strings.TrimSpace(artifacts.Artifact.SourceDigest) !=
-		strings.TrimSpace(candidate.ArtifactDigest) {
+	if artifacts.Artifact.SourceDigest != candidate.ArtifactDigest {
 		return release.Provenance{}, release.ErrProvenanceInvalid
 	}
 	bindings := make([]release.BindingEvidence, len(receipt.Bindings))
@@ -514,10 +513,12 @@ func tentativeCandidate(
 		request.ExpectedArtifactDigest = candidate.ArtifactDigest
 	}
 	if candidate.Status != deployment.CandidateReady ||
-		candidate.ArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) {
+		request.ExpectedArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) ||
+		request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) ||
+		candidate.ArtifactDigest != request.ExpectedArtifactDigest {
 		return deployment.Candidate{}, deployment.ErrCandidateConflict
 	}
-	candidate.ArtifactDigest = strings.TrimSpace(request.ArtifactDigest)
+	candidate.ArtifactDigest = request.ArtifactDigest
 	candidate.ProvenanceDigest = ""
 	candidate.Status = deployment.CandidatePreparing
 	candidate.FailureReason = ""
@@ -632,8 +633,17 @@ func (m *Module) validateExpectedCandidate(
 	request deployment.CandidateSynchronizationRequest,
 	operationID *deploymentgen.GenCommandOperationID,
 ) bool {
-	hasID := strings.TrimSpace(request.ExpectedCandidateID) != ""
-	hasDigest := strings.TrimSpace(request.ExpectedArtifactDigest) != ""
+	if request.ExpectedCandidateID != strings.TrimSpace(request.ExpectedCandidateID) || request.ExpectedArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) || request.CandidateKey != strings.TrimSpace(request.CandidateKey) {
+		err := fmt.Errorf("%w: expected candidate fields must be canonical", deployment.ErrCandidateInvalid)
+		if operationID == nil {
+			writeCandidateAPIError(w, r, err)
+		} else {
+			m.writeCandidateCommandFailure(w, r, *operationID, err)
+		}
+		return false
+	}
+	hasID := request.ExpectedCandidateID != ""
+	hasDigest := request.ExpectedArtifactDigest != ""
 	if hasID != hasDigest {
 		err := fmt.Errorf(
 			"%w: expected candidate identity and digest must be supplied together",
@@ -660,7 +670,7 @@ func (m *Module) validateExpectedCandidate(
 		}
 		return false
 	}
-	if candidate.ArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) {
+	if candidate.ArtifactDigest != request.ExpectedArtifactDigest {
 		if operationID == nil {
 			writeCandidateAPIError(w, r, deployment.ErrCandidateConflict)
 		} else {
@@ -668,7 +678,7 @@ func (m *Module) validateExpectedCandidate(
 		}
 		return false
 	}
-	candidateKey := strings.TrimSpace(request.CandidateKey)
+	candidateKey := request.CandidateKey
 	if candidateKey == "" {
 		candidateKey = "default"
 	}
@@ -688,7 +698,10 @@ func deploymentCommandOperation(operationID deploymentgen.GenCommandOperationID)
 }
 
 func candidateSourceContentDigest(identity string) string {
-	decoded, err := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(identity), "sha256:"))
+	if identity != strings.TrimSpace(identity) {
+		return ""
+	}
+	decoded, err := hex.DecodeString(strings.TrimPrefix(identity, "sha256:"))
 	if err != nil || len(decoded) != 32 {
 		return ""
 	}

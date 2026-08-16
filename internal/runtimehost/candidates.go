@@ -140,7 +140,7 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 	if err != nil {
 		return nil, err
 	}
-	if state.ProjectID != input.Identity.ProjectID || servingstate.NormalizeEnvironment(state.Environment) != servingstate.Environment(input.Identity.Environment) {
+	if state.ProjectID != input.Identity.ProjectID || servingstate.Environment(state.Environment) != servingstate.Environment(input.Identity.Environment) {
 		return nil, fmt.Errorf("%w: candidate serving state is outside project environment", ErrCandidateRuntimeIncompatible)
 	}
 	artifact, err := r.manager.repo.ArtifactByServingState(ctx, state.ID)

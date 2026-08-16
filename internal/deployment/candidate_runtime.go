@@ -110,8 +110,7 @@ type CandidateRuntimeReceipt struct {
 }
 
 func NewCandidateRuntimeService(config CandidateRuntimeServiceConfig) (*CandidateRuntimeService, error) {
-	config.RuntimeVersion = strings.TrimSpace(config.RuntimeVersion)
-	if config.Connections == nil || config.Runtime == nil || config.RuntimeVersion == "" {
+	if config.RuntimeVersion != strings.TrimSpace(config.RuntimeVersion) || config.Connections == nil || config.Runtime == nil || config.RuntimeVersion == "" {
 		return nil, fmt.Errorf("%w: connection leaser, runtime host, and runtime version are required", ErrCandidateInvalid)
 	}
 	return &CandidateRuntimeService{connections: config.Connections, runtime: config.Runtime, runtimeVersion: config.RuntimeVersion}, nil
@@ -122,8 +121,7 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 		return CandidateRuntimeReceipt{}, ErrCandidateUnavailable
 	}
 	rawAuthorization := request.AuthorizationFingerprint
-	request.AuthorizationFingerprint = strings.TrimSpace(request.AuthorizationFingerprint)
-	if rawAuthorization != request.AuthorizationFingerprint {
+	if rawAuthorization != strings.TrimSpace(rawAuthorization) {
 		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 	}
 	candidate := request.Candidate
@@ -132,9 +130,7 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 	}
 	rawArtifact, rawDataRevision := generation.ArtifactDigest, generation.DataRevision
-	generation.ArtifactDigest = strings.TrimSpace(generation.ArtifactDigest)
-	generation.DataRevision = strings.TrimSpace(generation.DataRevision)
-	if rawArtifact != generation.ArtifactDigest || rawDataRevision != generation.DataRevision {
+	if rawArtifact != strings.TrimSpace(rawArtifact) || rawDataRevision != strings.TrimSpace(rawDataRevision) {
 		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 	}
 	if generation.Identity.Validate() != nil || generation.ArtifactDigest == "" || generation.DataRevision == "" || platformdigest.ValidateSHA256Identity(generation.ArtifactDigest) != nil {
@@ -210,7 +206,6 @@ func normalizeCandidateManagedConnections(values []string) ([]string, error) {
 		if values[i] != strings.TrimSpace(values[i]) {
 			return nil, ErrCandidateInvalid
 		}
-		values[i] = strings.TrimSpace(values[i])
 	}
 	sort.Strings(values)
 	for i, value := range values {

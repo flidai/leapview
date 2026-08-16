@@ -70,7 +70,13 @@ func NewService(options ServiceOptions) (*Service, error) {
 	if options.Releases == nil || options.Finalization == nil || options.Artifacts == nil || options.Validator == nil {
 		return nil, fmt.Errorf("release repository, finalization unit of work, artifact store, and validator are required")
 	}
-	return &Service{releases: options.Releases, finalization: options.Finalization, artifacts: options.Artifacts, validator: options.Validator, pins: options.Pins, candidateProvenance: options.CandidateProvenance, environment: servingstate.NormalizeEnvironment(options.Environment)}, nil
+	if options.Environment == "" || string(options.Environment) != strings.TrimSpace(string(options.Environment)) {
+		return nil, fmt.Errorf("release environment must be canonical")
+	}
+	if err := servingstate.ValidateEnvironment(options.Environment); err != nil {
+		return nil, err
+	}
+	return &Service{releases: options.Releases, finalization: options.Finalization, artifacts: options.Artifacts, validator: options.Validator, pins: options.Pins, candidateProvenance: options.CandidateProvenance, environment: options.Environment}, nil
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error) {

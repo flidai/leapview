@@ -227,7 +227,8 @@ func NewManagerWithFactory(options ManagerOptions) *Manager {
 	if shutdown <= 0 {
 		shutdown = 5 * time.Second
 	}
-	m := &Manager{repo: options.Repo, projectID: options.ProjectID, environment: servingstate.NormalizeEnvironment(options.Environment), factory: options.Factory, managedData: options.ManagedData, authorization: options.Authorization, onDrained: options.OnDrained, leaseTTL: normalizedLeaseTTL(options.LeaseTTL), leaseOwner: firstNonEmpty(options.LeaseOwner, "runtimehost"), logger: logger, onLeaseRenewalFailure: options.OnLeaseRenewalFailure, onCleanupFailure: options.OnCleanupFailure, leaseRenewalErrors: map[string]error{}, cleanupDrainTimeout: normalizedCleanupDrainTimeout(options.CleanupDrainTimeout), releaseShutdownTimeout: shutdown}
+	environment := options.Environment
+	m := &Manager{repo: options.Repo, projectID: options.ProjectID, environment: environment, factory: options.Factory, managedData: options.ManagedData, authorization: options.Authorization, onDrained: options.OnDrained, leaseTTL: normalizedLeaseTTL(options.LeaseTTL), leaseOwner: firstNonEmpty(options.LeaseOwner, "runtimehost"), logger: logger, onLeaseRenewalFailure: options.OnLeaseRenewalFailure, onCleanupFailure: options.OnCleanupFailure, leaseRenewalErrors: map[string]error{}, cleanupDrainTimeout: normalizedCleanupDrainTimeout(options.CleanupDrainTimeout), releaseShutdownTimeout: shutdown}
 	m.releaseQueue = newSnapshotLeaseReleaseQueue(capacity, m.releaseSnapshotLease)
 	return m
 }
@@ -339,7 +340,7 @@ func (m *Manager) validateGeneration(state servingstate.State, artifact servings
 	if state.ProjectID != m.projectID {
 		return fmt.Errorf("serving state %s project = %q, want %q", state.ID, state.ProjectID, m.projectID)
 	}
-	if servingstate.NormalizeEnvironment(state.Environment) != m.environment {
+	if servingstate.Environment(state.Environment) != m.environment {
 		return fmt.Errorf("serving state %s environment = %q, want %q", state.ID, state.Environment, m.environment)
 	}
 	if !state.CanActivate() {
@@ -396,7 +397,7 @@ func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servin
 	if runtime == nil {
 		return nil, errors.Join(errors.New("runtime factory returned nil"), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}
-	expectedIdentity, err := projectgraph.NewServingIdentity(state.ProjectID, string(servingstate.NormalizeEnvironment(state.Environment)), string(state.ID))
+	expectedIdentity, err := projectgraph.NewServingIdentity(state.ProjectID, string(servingstate.Environment(state.Environment)), string(state.ID))
 	if err != nil {
 		return nil, errors.Join(err, closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}

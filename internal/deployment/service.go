@@ -94,8 +94,7 @@ func New(repository Repository, activation ActivationUnitOfWork, states ServingS
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Deployment, error) {
 	rawID, rawDigest, rawCreatedBy := input.ID, input.RequestDigest, input.CreatedBy
-	input.ID, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
-	if rawID != input.ID || rawDigest != input.RequestDigest || rawCreatedBy != input.CreatedBy {
+	if rawID != strings.TrimSpace(rawID) || rawDigest != strings.TrimSpace(rawDigest) || rawCreatedBy != strings.TrimSpace(rawCreatedBy) {
 		return Deployment{}, fmt.Errorf("deployment identity fields must be canonical")
 	}
 	if err := ValidateCreate(input); err != nil {

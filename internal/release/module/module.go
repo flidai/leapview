@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/platform/jobs"
@@ -52,6 +54,13 @@ type ServingStateRepository interface {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	environment := config.Environment
+	if string(environment) != strings.TrimSpace(string(environment)) {
+		return nil, fmt.Errorf("release environment must be canonical")
+	}
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return nil, err
+	}
 	finalizeExecution, err := loadFinalizeExecutionContract()
 	if err != nil {
 		return nil, err
@@ -76,7 +85,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	validator := validate.NewService(config.States, store, releasefilesystem.Validator{}, hooks...)
 	service, err := release.NewService(release.ServiceOptions{
 		Releases: releases, Finalization: finalization,
-		Artifacts: store, Validator: validator, Pins: config.ManagedDataPins, Environment: config.Environment,
+		Artifacts: store, Validator: validator, Pins: config.ManagedDataPins, Environment: environment,
 		CandidateProvenance: candidateProvenance,
 	})
 	if err != nil {
@@ -91,11 +100,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		candidateArtifacts: &candidateArtifactService{
 			states:    config.States,
 			artifacts: store, validator: validator,
-			environment: servingstate.NormalizeEnvironment(config.Environment),
-			pins:        config.ManagedDataPins,
+			environment: environment,
+			pins:        config.ManagedDataPins, provenance: servingProvenance,
 		},
 		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
-		environment: string(config.Environment), api: config.API, logger: logger,
+		environment: string(environment), api: config.API, logger: logger,
 		finalizeExecution: finalizeExecution,
 	}
 	if err := validateFinalizeJobHandlers(finalizeExecution, module.JobHandlers()); err != nil {

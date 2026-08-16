@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"strings"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/flidai/leapview/internal/servingstate"
 )
 
 func (r *Repository) ListProjects(ctx context.Context) ([]release.ProjectRecord, error) {
@@ -30,8 +32,11 @@ UNION ALL SELECT project_id, created_at, updated_at FROM managed_data_collection
 }
 
 func (r *Repository) GetProject(ctx context.Context, projectID string) (release.ProjectRecord, error) {
+	if projectID == "" || projectID != strings.TrimSpace(projectID) || projectgraph.ResourceID(projectID).Validate() != nil {
+		return release.ProjectRecord{}, release.ErrInvalid
+	}
 	var item release.ProjectRecord
-	item.ID = strings.TrimSpace(projectID)
+	item.ID = projectID
 	err := r.db.QueryRowContext(ctx, `SELECT CAST(COALESCE(MIN(created_at), '') AS TEXT), CAST(COALESCE(MAX(updated_at), '') AS TEXT) FROM (
 SELECT created_at, COALESCE(finalized_at, created_at) AS updated_at FROM api_releases WHERE project_id = ?
 UNION ALL SELECT created_at, updated_at FROM managed_data_collections WHERE project_id = ?
@@ -49,9 +54,12 @@ func (r *Repository) populateProjectPointers(ctx context.Context, item *release.
 }
 
 func (r *Repository) ListConnections(ctx context.Context, projectID, environment string) ([]release.ConnectionRecord, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT c.connection_name,c.name,c.description,COALESCE(rev.digest,'')
+	if err := validateCatalogScope(projectID, environment); err != nil {
+		return nil, err
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT c.connection_id,c.name,c.description,COALESCE(rev.id,'')
 FROM managed_data_collections c LEFT JOIN managed_data_environment_pointers ptr ON ptr.collection_id=c.id AND ptr.environment=?
-LEFT JOIN managed_data_revisions rev ON rev.id=ptr.revision_id WHERE c.project_id=? AND c.status='active' ORDER BY c.connection_name`, environment, projectID)
+LEFT JOIN managed_data_revisions rev ON rev.id=ptr.revision_id WHERE c.project_id=? AND c.status='active' ORDER BY c.connection_id`, environment, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -68,8 +76,24 @@ LEFT JOIN managed_data_revisions rev ON rev.id=ptr.revision_id WHERE c.project_i
 }
 
 func (r *Repository) GetConnection(ctx context.Context, projectID, connectionID, environment string) (release.ConnectionRecord, error) {
+	if err := validateCatalogScope(projectID, environment); err != nil {
+		return release.ConnectionRecord{}, err
+	}
+	if connectionID == "" || connectionID != strings.TrimSpace(connectionID) || projectgraph.ResourceID(connectionID).Validate() != nil {
+		return release.ConnectionRecord{}, release.ErrInvalid
+	}
 	var item release.ConnectionRecord
 	item.ID = connectionID
-	err := r.db.QueryRowContext(ctx, `SELECT c.name,c.description,COALESCE(rev.digest,'') FROM managed_data_collections c LEFT JOIN managed_data_environment_pointers ptr ON ptr.collection_id=c.id AND ptr.environment=? LEFT JOIN managed_data_revisions rev ON rev.id=ptr.revision_id WHERE c.project_id=? AND c.connection_name=? AND c.status='active'`, environment, projectID, connectionID).Scan(&item.Title, &item.Description, &item.ActiveRevisionID)
+	err := r.db.QueryRowContext(ctx, `SELECT c.name,c.description,COALESCE(rev.id,'') FROM managed_data_collections c LEFT JOIN managed_data_environment_pointers ptr ON ptr.collection_id=c.id AND ptr.environment=? LEFT JOIN managed_data_revisions rev ON rev.id=ptr.revision_id WHERE c.project_id=? AND c.connection_id=? AND c.status='active'`, environment, projectID, connectionID).Scan(&item.Title, &item.Description, &item.ActiveRevisionID)
 	return item, err
+}
+
+func validateCatalogScope(projectID, environment string) error {
+	if projectID == "" || projectID != strings.TrimSpace(projectID) || projectgraph.ResourceID(projectID).Validate() != nil {
+		return release.ErrInvalid
+	}
+	if environment == "" || environment != strings.TrimSpace(environment) || servingstate.ValidateEnvironment(servingstate.Environment(environment)) != nil {
+		return release.ErrInvalid
+	}
+	return nil
 }

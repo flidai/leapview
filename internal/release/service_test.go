@@ -13,244 +13,105 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUploadArtifactReplaysAlreadyRecordedContent(t *testing.T) {
-	content := []byte("compiled workspace artifact")
-	sum := sha256.Sum256(content)
-	digest := fmt.Sprintf("%x", sum[:])
+	content := []byte("compiled project artifact")
+	digest := sha256.Sum256(content)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_1"}
 	repo := &serviceTestReleaseRepository{current: Release{
-		ID: "release-1", ProjectID: "project-a", Status: StatusDraft,
-		Artifacts: []Artifact{{
-			ReleaseID: "release-1", WorkspaceID: "sales", ServingStateID: "state-1",
-			ExpectedDigest: digest, SizeBytes: int64(len(content)), UploadedAt: "2026-07-27T19:00:00Z",
-		}},
+		ID: "release_1", ServingIdentity: identity, Status: StatusDraft,
+		ArtifactDigest:     "sha256:" + fmt.Sprintf("%x", digest[:]),
+		ArtifactUploadedAt: "2026-07-27T19:00:00Z", ActualDigest: "sha256:" + fmt.Sprintf("%x", digest[:]),
+		ArtifactSizeBytes: int64(len(content)),
 	}}
-	artifacts := &serviceTestArtifactStore{}
-	service := &Service{releases: repo, artifacts: artifacts}
+	store := &serviceTestArtifactStore{}
+	service := &Service{releases: repo, artifacts: store}
 
-	got, err := service.UploadArtifact(
-		t.Context(),
-		"project-a",
-		"release-1",
-		"sales",
-		"sha-256=:"+base64Digest(content)+":",
-		bytes.NewReader(content),
-	)
-	if err != nil {
-		t.Fatalf("UploadArtifact() error = %v", err)
-	}
-	if got.SizeBytes != int64(len(content)) {
-		t.Fatalf("UploadArtifact() = %#v, saved %q", got, artifacts.saved)
-	}
-	if artifacts.saveCalls != 0 {
-		t.Fatalf("idempotent replay rewrote the retained upload %d times", artifacts.saveCalls)
-	}
-	if repo.recorded {
-		t.Fatal("idempotent replay attempted to record the artifact twice")
-	}
+	got, err := service.UploadArtifact(t.Context(), "project_a", "release_1", wireDigest(content), bytes.NewReader(content))
+	require.NoError(t, err)
+	require.Equal(t, int64(len(content)), got.SizeBytes)
+	require.Equal(t, 0, store.saveCalls)
+	require.False(t, repo.recorded)
 }
 
 func TestUploadArtifactRejectsDifferentContentAfterArtifactWasRecorded(t *testing.T) {
 	original := []byte("original artifact")
 	replacement := []byte("different artifact")
-	sum := sha256.Sum256(original)
-	repo := &serviceTestReleaseRepository{current: Release{
-		ID: "release-1", ProjectID: "project-a", Status: StatusDraft,
-		Artifacts: []Artifact{{
-			ReleaseID: "release-1", WorkspaceID: "sales", ServingStateID: "state-1",
-			ExpectedDigest: fmt.Sprintf("%x", sum[:]), SizeBytes: int64(len(original)), UploadedAt: "2026-07-27T19:00:00Z",
-		}},
-	}}
+	digest := sha256.Sum256(original)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_1"}
+	repo := &serviceTestReleaseRepository{current: Release{ID: "release_1", ServingIdentity: identity, Status: StatusDraft, ArtifactDigest: "sha256:" + fmt.Sprintf("%x", digest[:]), ArtifactUploadedAt: "2026-07-27T19:00:00Z"}}
 	service := &Service{releases: repo, artifacts: &serviceTestArtifactStore{}}
-
-	_, err := service.UploadArtifact(
-		t.Context(),
-		"project-a",
-		"release-1",
-		"sales",
-		"sha-256=:"+base64Digest(replacement)+":",
-		bytes.NewReader(replacement),
-	)
-	if !errors.Is(err, ErrDigest) {
-		t.Fatalf("UploadArtifact() error = %v, want ErrDigest", err)
-	}
+	_, err := service.UploadArtifact(t.Context(), "project_a", "release_1", wireDigest(replacement), bytes.NewReader(replacement))
+	require.ErrorIs(t, err, ErrDigest)
 }
 
 func TestUploadArtifactRejectsMalformedExpectedDigestWithoutSaving(t *testing.T) {
-	repo := &serviceTestReleaseRepository{current: Release{
-		ID: "release-1", ProjectID: "project-a", Status: StatusDraft,
-		Artifacts: []Artifact{{
-			ReleaseID: "release-1", WorkspaceID: "sales", ServingStateID: "state-1",
-			ExpectedDigest: "not-a-sha256-digest",
-		}},
-	}}
-	artifacts := &serviceTestArtifactStore{}
-	service := &Service{releases: repo, artifacts: artifacts}
-
-	_, err := service.UploadArtifact(
-		t.Context(),
-		"project-a",
-		"release-1",
-		"sales",
-		"sha-256=:invalid:",
-		strings.NewReader("artifact"),
-	)
-	if !errors.Is(err, ErrInvalid) {
-		t.Fatalf("UploadArtifact() error = %v, want ErrInvalid", err)
-	}
-	if artifacts.saveCalls != 0 {
-		t.Fatalf("malformed expected digest saved %d uploads", artifacts.saveCalls)
-	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_1"}
+	store := &serviceTestArtifactStore{}
+	repo := &serviceTestReleaseRepository{current: Release{ID: "release_1", ServingIdentity: identity, Status: StatusDraft, ArtifactDigest: "not-a-sha256-digest"}}
+	service := &Service{releases: repo, artifacts: store}
+	_, err := service.UploadArtifact(t.Context(), "project_a", "release_1", "sha-256=:invalid:", strings.NewReader("artifact"))
+	require.ErrorIs(t, err, ErrInvalid)
+	require.Equal(t, 0, store.saveCalls)
 }
 
 func TestValidateFinalizationRequiresEveryArtifactToMatchReleaseConnectionPins(t *testing.T) {
 	pinErr := errors.New("artifact pins disagree with release manifest")
+	identity := projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_1"}
 	repo := &serviceTestReleaseRepository{current: Release{
-		ID: "release-1", ProjectID: "project-a", ProjectDigest: "sha256:project", Status: StatusValidating,
-		Manifest:  Manifest{Connections: []ConnectionPin{{ConnectionID: "orders", RevisionID: "sha256:orders"}}},
-		Artifacts: []Artifact{{WorkspaceID: "sales", ServingStateID: "state-1", ExpectedDigest: "sha256:artifact"}},
+		ID: "release_1", ServingIdentity: identity, ProjectDigest: "sha256:" + strings.Repeat("a", 64), ArtifactDigest: "sha256:" + strings.Repeat("b", 64), ActualDigest: "sha256:" + strings.Repeat("b", 64), ArtifactUploadedAt: "uploaded", Status: StatusValidating,
+		Manifest: Manifest{Connections: []ConnectionPin{{ConnectionID: "orders", RevisionID: "sha256:" + strings.Repeat("c", 64)}}},
 	}}
 	pins := &serviceTestPinValidator{err: pinErr}
-	service := &Service{
-		releases:     repo,
-		finalization: repo,
-		validator: serviceTestArtifactValidator{state: servingstate.State{
-			ID: "state-1", ProjectID: "project-a", ProjectDigest: "sha256:project", Digest: "sha256:artifact",
-		}},
-		pins: pins,
-	}
-
-	got, err := service.ValidateFinalization(t.Context(), "project-a", "release-1")
-	if !errors.Is(err, pinErr) || got.Status != StatusFailed {
-		t.Fatalf("ValidateFinalization() = status %q, error %v", got.Status, err)
-	}
-	if repo.completed {
-		t.Fatal("release became ready despite mismatched managed-data pins")
-	}
-	want := map[string]string{"orders": "sha256:orders"}
-	if pins.stateID != "state-1" || pins.projectID != "project-a" || !reflect.DeepEqual(pins.expected, want) {
-		t.Fatalf("pin validation = state %q project %q pins %#v, want state-1 project-a %#v", pins.stateID, pins.projectID, pins.expected, want)
-	}
+	service := &Service{releases: repo, finalization: repo, validator: serviceTestArtifactValidator{state: servingstate.State{ID: "generation_1", ProjectID: "project_a", Environment: "dev", Digest: repo.current.ArtifactDigest}}, pins: pins}
+	got, err := service.ValidateFinalization(t.Context(), "project_a", "release_1")
+	require.ErrorIs(t, err, pinErr)
+	require.Equal(t, StatusFailed, got.Status)
+	require.False(t, repo.completed)
+	require.Equal(t, map[string]string{"orders": "sha256:" + strings.Repeat("c", 64)}, pins.expected)
 }
 
 func TestValidateFinalizationReplaysReadyRelease(t *testing.T) {
-	repo := &serviceTestReleaseRepository{current: Release{
-		ID: "release-1", ProjectID: "project-a", Status: StatusReady,
-	}}
+	repo := &serviceTestReleaseRepository{current: Release{ID: "release_1", ServingIdentity: projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_1"}, Status: StatusReady}}
 	service := &Service{releases: repo, finalization: repo}
-
-	got, err := service.ValidateFinalization(t.Context(), "project-a", "release-1")
-	if err != nil || got.Status != StatusReady {
-		t.Fatalf("ValidateFinalization() replay = status %q, error %v", got.Status, err)
-	}
-	if repo.completed {
-		t.Fatal("ready release replay attempted finalization again")
-	}
+	got, err := service.ValidateFinalization(t.Context(), "project_a", "release_1")
+	require.NoError(t, err)
+	require.Equal(t, StatusReady, got.Status)
+	require.False(t, repo.completed)
 }
 
 func TestPublishCandidatePromotesExactRetainedProvenanceWithoutRebuilding(t *testing.T) {
-	provenance, err := NewProvenance(ProvenanceInput{
-		Artifact: ProjectArtifactProvenance{
-			SourceDigest:    "sha256:" + strings.Repeat("1", 64),
-			ProjectDigest:   "sha256:" + strings.Repeat("2", 64),
-			CompilerVersion: "leapview:test", SchemaVersion: 3,
-			Workspaces: []WorkspaceArtifactProvenance{{
-				WorkspaceID:    "sales",
-				ArtifactDigest: "sha256:" + strings.Repeat("3", 64),
-			}},
-		},
-		Candidate: CandidateProvenance{
-			ID: "candidate_1", Revision: 4, OwnerID: "publisher",
-		},
-		Plan: TargetPlanProvenance{
-			TargetID: "lvinst_dev", Environment: "dev",
-			BaseGeneration: "deployment_7", RuntimeVersion: "runtime:test",
-			PolicyDigest: "sha256:" + strings.Repeat("4", 64),
-			Workspaces: []TargetWorkspacePlan{{
-				WorkspaceID: "sales", ServingStateID: "state_candidate",
-				ArtifactDigest: "sha256:" + strings.Repeat("5", 64),
-				DataRevision:   "snapshot:17", DataMode: TargetDataReuseSnapshot,
-				ManagedDataPins: []ManagedDataPin{{
-					ConnectionID: "olist",
-					RevisionID:   "sha256:" + strings.Repeat("6", 64),
-				}},
-			}},
-		},
-	})
+	provenance := candidateServiceTestProvenance(t)
+	repo := &serviceTestReleaseRepository{}
+	service := &Service{releases: repo, finalization: repo, validator: serviceTestArtifactValidator{state: servingstate.State{ID: "generation_candidate", ProjectID: "project_a", Environment: "dev", Digest: provenance.Artifact.ContentDigest}}, pins: &serviceTestPinValidator{}, candidateProvenance: serviceTestCandidateProvenanceRepository{provenance: provenance}}
+	published, err := service.PublishCandidate(t.Context(), PublishCandidateInput{Scope: projectgraph.CandidateScope{ProjectID: "project_a", Environment: "dev", BaseGenerationID: "generation_0"}, CandidateID: provenance.Candidate.ID, CandidateRevision: provenance.Candidate.Revision, ProvenanceDigest: provenance.Digest, TargetID: provenance.Plan.TargetID, IdempotencyKey: "publish_1", CreatedBy: provenance.Candidate.OwnerID})
 	require.NoError(t, err)
-	repository := &serviceTestReleaseRepository{}
-	service := &Service{
-		releases: repository, finalization: repository,
-		validator: serviceTestArtifactValidator{state: servingstate.State{
-			ID: "state_candidate", ProjectID: "commerce",
-			ProjectDigest: provenance.Artifact.SourceDigest,
-			Digest:        strings.TrimPrefix(provenance.Plan.Workspaces[0].ArtifactDigest, "sha256:"),
-		}},
-		pins: &serviceTestPinValidator{},
-		candidateProvenance: serviceTestCandidateProvenanceRepository{
-			provenance: provenance,
-		},
-	}
-
-	published, err := service.PublishCandidate(t.Context(), PublishCandidateInput{
-		ProjectID: "commerce", CandidateID: "candidate_1",
-		CandidateRevision: 4, ProvenanceDigest: provenance.Digest,
-		TargetID: "lvinst_dev", Environment: "dev",
-		IdempotencyKey: "publish-1", CreatedBy: "publisher",
-	})
-	require.NoError(t, err)
-	if published.Status != StatusReady || published.Provenance == nil ||
-		published.Provenance.Digest != provenance.Digest {
-		t.Fatalf("published release = %#v", published)
-	}
-	if repository.created.ProjectDigest != provenance.Artifact.SourceDigest ||
-		repository.created.Workspaces[0].ServingStateID != "state_candidate" ||
-		repository.created.Workspaces[0].ArtifactDigest != strings.Repeat("5", 64) {
-		t.Fatalf("candidate promotion rebuilt or retargeted artifacts: %#v", repository.created)
-	}
+	require.Equal(t, StatusReady, published.Status)
+	require.NotNil(t, published.Provenance)
+	require.Equal(t, provenance.Digest, published.Provenance.Digest)
+	require.Equal(t, provenance.Artifact.ContentDigest, repo.created.ArtifactDigest)
 }
 
 func TestPublishCandidateRejectsClientOrTargetDrift(t *testing.T) {
 	provenance := candidateServiceTestProvenance(t)
-	service := &Service{
-		candidateProvenance: serviceTestCandidateProvenanceRepository{
-			provenance: provenance,
-		},
-	}
+	service := &Service{candidateProvenance: serviceTestCandidateProvenanceRepository{provenance: provenance}}
+	base := PublishCandidateInput{Scope: projectgraph.CandidateScope{ProjectID: "project_a", Environment: "dev", BaseGenerationID: "generation_0"}, CandidateID: provenance.Candidate.ID, CandidateRevision: provenance.Candidate.Revision, ProvenanceDigest: provenance.Digest, TargetID: provenance.Plan.TargetID, IdempotencyKey: "publish_1", CreatedBy: provenance.Candidate.OwnerID}
 	for name, mutate := range map[string]func(*PublishCandidateInput){
-		"candidate revision": func(input *PublishCandidateInput) {
-			input.CandidateRevision++
-		},
-		"provenance digest": func(input *PublishCandidateInput) {
-			input.ProvenanceDigest = "sha256:" + strings.Repeat("f", 64)
-		},
-		"target": func(input *PublishCandidateInput) {
-			input.TargetID = "lvinst_other"
-		},
-		"environment": func(input *PublishCandidateInput) {
-			input.Environment = "prod"
-		},
-		"owner": func(input *PublishCandidateInput) {
-			input.CreatedBy = "other"
-		},
+		"candidate revision": func(input *PublishCandidateInput) { input.CandidateRevision++ },
+		"provenance digest":  func(input *PublishCandidateInput) { input.ProvenanceDigest = "sha256:" + strings.Repeat("f", 64) },
+		"target":             func(input *PublishCandidateInput) { input.TargetID = "target_other" },
+		"environment":        func(input *PublishCandidateInput) { input.Scope.Environment = "prod" },
+		"owner":              func(input *PublishCandidateInput) { input.CreatedBy = "other" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			input := PublishCandidateInput{
-				ProjectID: "commerce", CandidateID: provenance.Candidate.ID,
-				CandidateRevision: provenance.Candidate.Revision,
-				ProvenanceDigest:  provenance.Digest,
-				TargetID:          provenance.Plan.TargetID,
-				Environment:       provenance.Plan.Environment,
-				IdempotencyKey:    "publish-1",
-				CreatedBy:         provenance.Candidate.OwnerID,
-			}
+			input := base
 			mutate(&input)
-			if _, err := service.PublishCandidate(t.Context(), input); !errors.Is(err, ErrConflict) {
-				t.Fatalf("PublishCandidate() error = %v, want ErrConflict", err)
-			}
+			_, err := service.PublishCandidate(t.Context(), input)
+			require.ErrorIs(t, err, ErrConflict)
 		})
 	}
 }
@@ -267,46 +128,23 @@ func (r *serviceTestReleaseRepository) Create(_ context.Context, input CreateInp
 	if r.current.ID != "" {
 		return r.current, nil
 	}
-	r.current = Release{
-		ID:        stableID("rel", input.ProjectID, input.IdempotencyKey),
-		ProjectID: input.ProjectID, ProjectDigest: input.ProjectDigest,
-		Status: StatusDraft, CreatedBy: input.CreatedBy,
-		Manifest: Manifest{
-			Workspaces:  append([]WorkspaceManifest(nil), input.Workspaces...),
-			Connections: append([]ConnectionPin(nil), input.Connections...),
-		},
-		Provenance: input.Provenance,
-	}
-	for _, workspace := range input.Workspaces {
-		r.current.Artifacts = append(r.current.Artifacts, Artifact{
-			ReleaseID: r.current.ID, WorkspaceID: workspace.WorkspaceID,
-			ExpectedDigest: workspace.ArtifactDigest,
-		})
+	r.current = Release{ID: input.ID, ServingIdentity: input.ServingIdentity, ProjectDigest: input.ProjectDigest, ArtifactDigest: input.ArtifactDigest, RequestDigest: input.RequestDigest, IdempotencyKey: input.IdempotencyKey, Status: StatusDraft, CreatedBy: input.CreatedBy, Manifest: Manifest{Connections: append([]ConnectionPin(nil), input.Connections...)}, Provenance: input.Provenance}
+	return r.current, nil
+}
+func (r *serviceTestReleaseRepository) Get(_ context.Context, projectID projectgraph.ResourceID, releaseID string) (Release, error) {
+	if r.current.ID != releaseID || r.current.ServingIdentity.ProjectID != projectID {
+		return Release{}, ErrNotFound
 	}
 	return r.current, nil
 }
-func (r *serviceTestReleaseRepository) Get(context.Context, string, string) (Release, error) {
-	return r.current, nil
-}
-func (r *serviceTestReleaseRepository) List(context.Context, string) ([]Release, error) {
-	return nil, nil
-}
-func (r *serviceTestReleaseRepository) AssignArtifactTarget(_ context.Context, _, _, workspaceID, servingStateID string) error {
-	for index := range r.current.Artifacts {
-		if r.current.Artifacts[index].WorkspaceID == workspaceID {
-			r.current.Artifacts[index].ServingStateID = servingStateID
-			r.current.Manifest.Workspaces[index].ServingStateID = servingStateID
-		}
-	}
-	return nil
+func (r *serviceTestReleaseRepository) List(context.Context, projectgraph.ResourceID) ([]Release, error) {
+	return []Release{r.current}, nil
 }
 func (r *serviceTestReleaseRepository) RecordArtifact(_ context.Context, artifact Artifact) error {
 	r.recorded = true
-	for index := range r.current.Artifacts {
-		if r.current.Artifacts[index].WorkspaceID == artifact.WorkspaceID {
-			r.current.Artifacts[index].UploadedAt = "2026-07-30T00:00:00Z"
-		}
-	}
+	r.current.ArtifactUploadedAt = "2026-07-30T00:00:00Z"
+	r.current.ActualDigest = artifact.ActualDigest
+	r.current.ArtifactSizeBytes = artifact.SizeBytes
 	return nil
 }
 func (r *serviceTestReleaseRepository) BeginFinalization(context.Context, string, string, jobs.WorkflowIntent) (Release, error) {
@@ -315,7 +153,7 @@ func (r *serviceTestReleaseRepository) BeginFinalization(context.Context, string
 	}
 	return r.current, nil
 }
-func (r *serviceTestReleaseRepository) CompleteFinalization(context.Context, string, string, map[string]string) (Release, error) {
+func (r *serviceTestReleaseRepository) CompleteFinalization(context.Context, string, string, string) (Release, error) {
 	r.completed = true
 	r.current.Status = StatusReady
 	return r.current, nil
@@ -338,22 +176,13 @@ type serviceTestPinValidator struct {
 	err                error
 }
 
-func (v *serviceTestPinValidator) ValidateServingStatePins(_ context.Context, stateID, projectID string, expected map[string]string) error {
-	v.stateID, v.projectID = stateID, projectID
+func (v *serviceTestPinValidator) ValidateServingStatePins(_ context.Context, stateID servingstate.ID, projectID string, expected map[string]string) error {
+	v.stateID, v.projectID = string(stateID), projectID
 	v.expected = make(map[string]string, len(expected))
 	for key, value := range expected {
 		v.expected[key] = value
 	}
 	return v.err
-}
-
-func (v *serviceTestPinValidator) ResolveCandidatePins(
-	context.Context,
-	string,
-	[]string,
-	string,
-) (map[string]string, error) {
-	return nil, nil
 }
 
 type serviceTestArtifactStore struct {
@@ -368,67 +197,35 @@ func (s *serviceTestArtifactStore) SaveUpload(_ context.Context, _ servingstate.
 	return int64(len(content)), err
 }
 
-func base64Digest(content []byte) string {
-	sum := sha256.Sum256(content)
-	return base64.StdEncoding.EncodeToString(sum[:])
-}
+type serviceTestCandidateProvenanceRepository struct{ provenance Provenance }
 
-type serviceTestCandidateProvenanceRepository struct {
-	provenance Provenance
-}
-
-func (repository serviceTestCandidateProvenanceRepository) RetainCandidateProvenance(
-	context.Context,
-	string,
-	Provenance,
-) (Provenance, error) {
+func (repository serviceTestCandidateProvenanceRepository) RetainCandidateProvenance(context.Context, projectgraph.ResourceID, Provenance) (Provenance, error) {
 	return repository.provenance, nil
 }
-
-func (repository serviceTestCandidateProvenanceRepository) CandidateProvenance(
-	_ context.Context,
-	_ string,
-	candidateID string,
-	candidateRevision int64,
-) (Provenance, error) {
-	if candidateID != repository.provenance.Candidate.ID ||
-		candidateRevision != repository.provenance.Candidate.Revision {
+func (repository serviceTestCandidateProvenanceRepository) CandidateProvenance(_ context.Context, _ projectgraph.ResourceID, candidateID string, candidateRevision int64) (Provenance, error) {
+	if candidateID != repository.provenance.Candidate.ID || candidateRevision != repository.provenance.Candidate.Revision {
 		return Provenance{}, ErrNotFound
 	}
 	return repository.provenance, nil
 }
 
+func wireDigest(content []byte) string {
+	sum := sha256.Sum256(content)
+	return "sha-256=:" + base64.StdEncoding.EncodeToString(sum[:]) + ":"
+}
+
 func candidateServiceTestProvenance(t *testing.T) Provenance {
 	t.Helper()
+	identity := projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_candidate"}
 	provenance, err := NewProvenance(ProvenanceInput{
-		Artifact: ProjectArtifactProvenance{
-			SourceDigest:    "sha256:" + strings.Repeat("1", 64),
-			ProjectDigest:   "sha256:" + strings.Repeat("2", 64),
-			CompilerVersion: "leapview:test", SchemaVersion: 3,
-			Workspaces: []WorkspaceArtifactProvenance{{
-				WorkspaceID:    "sales",
-				ArtifactDigest: "sha256:" + strings.Repeat("3", 64),
-			}},
-		},
-		Candidate: CandidateProvenance{
-			ID: "candidate_1", Revision: 4, OwnerID: "publisher",
-		},
-		Plan: TargetPlanProvenance{
-			TargetID: "lvinst_dev", Environment: "dev",
-			BaseGeneration: "deployment_7", RuntimeVersion: "runtime:test",
-			PolicyDigest: "sha256:" + strings.Repeat("4", 64),
-			Workspaces: []TargetWorkspacePlan{{
-				WorkspaceID: "sales", ServingStateID: "state_candidate",
-				ArtifactDigest: "sha256:" + strings.Repeat("5", 64),
-				DataRevision:   "snapshot:17", DataMode: TargetDataReuseSnapshot,
-			}},
-		},
+		Artifact:  ProjectArtifactProvenance{SourceDigest: "sha256:" + strings.Repeat("1", 64), ProjectDigest: "sha256:" + strings.Repeat("2", 64), ContentDigest: "sha256:" + strings.Repeat("3", 64), CompilerVersion: "leapview:test", SchemaVersion: 3},
+		Candidate: CandidateProvenance{ID: "candidate_1", Revision: 4, OwnerID: "publisher"},
+		Plan:      GenerationPlanProvenance{Identity: identity, BaseIdentity: &projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_0"}, TargetID: "target_dev", RuntimeVersion: "runtime:test", PolicyDigest: "sha256:" + strings.Repeat("4", 64), DataRevision: "snapshot:17", DataMode: GenerationDataReuseSnapshot},
 	})
 	require.NoError(t, err)
 	return provenance
 }
 
-// Compile-time guards keep the service fakes aligned with the real interfaces.
 var _ Repository = (*serviceTestReleaseRepository)(nil)
 var _ FinalizationUnitOfWork = (*serviceTestReleaseRepository)(nil)
 var _ CandidateProvenanceRepository = serviceTestCandidateProvenanceRepository{}

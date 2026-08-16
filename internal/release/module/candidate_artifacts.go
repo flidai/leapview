@@ -3,13 +3,13 @@ package module
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
@@ -28,6 +28,7 @@ type candidateArtifactService struct {
 	validator   servingstatevalidate.Service
 	environment servingstate.Environment
 	pins        release.CandidatePinResolver
+	provenance  release.ServingStateProvenanceRepository
 }
 
 type candidateGenerationBase struct {
@@ -40,17 +41,7 @@ type candidateGenerationBase struct {
 // Prepare creates exactly one project-generation serving artifact for one
 // candidate target.
 func (service *candidateArtifactService) Prepare(ctx context.Context, request release.CandidateArtifactRequest) (release.CandidateArtifactSet, error) {
-	raw := request
-	rawSource := request.Source
-	request.CandidateID = strings.TrimSpace(request.CandidateID)
-	request.OwnerID = strings.TrimSpace(request.OwnerID)
-	request.ArtifactDigest = strings.TrimSpace(request.ArtifactDigest)
-	request.Source.ProjectID = strings.TrimSpace(request.Source.ProjectID)
-	request.Source.ArtifactDigest = strings.TrimSpace(request.Source.ArtifactDigest)
-	request.Source.ProjectPath = strings.TrimSpace(request.Source.ProjectPath)
-	request.Source.ProjectDigest = strings.TrimSpace(request.Source.ProjectDigest)
-	request.Source.ProjectArtifactPath = strings.TrimSpace(request.Source.ProjectArtifactPath)
-	if raw.CandidateID != request.CandidateID || raw.OwnerID != request.OwnerID || raw.Scope != request.Scope || raw.ArtifactDigest != request.ArtifactDigest || raw.Source.ProjectID != request.Source.ProjectID || raw.Source.ArtifactDigest != request.Source.ArtifactDigest || raw.Source.ProjectPath != request.Source.ProjectPath || raw.Source.ProjectDigest != request.Source.ProjectDigest || rawSource.ProjectArtifactPath != request.Source.ProjectArtifactPath {
+	if request.CandidateID != strings.TrimSpace(request.CandidateID) || request.OwnerID != strings.TrimSpace(request.OwnerID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.Source.ProjectID != strings.TrimSpace(request.Source.ProjectID) || request.Source.ArtifactDigest != strings.TrimSpace(request.Source.ArtifactDigest) || request.Source.ProjectPath != strings.TrimSpace(request.Source.ProjectPath) || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || request.Source.ProjectArtifactPath != strings.TrimSpace(request.Source.ProjectArtifactPath) {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactInvalid
 	}
 	if service == nil || service.states == nil || service.artifacts == nil || request.CandidateID == "" || request.Scope.Validate() != nil || request.OwnerID == "" || request.Source.ProjectArtifactPath == "" || request.Source.ProjectID != request.Scope.ProjectID.String() || request.Source.ArtifactDigest != request.ArtifactDigest || platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil || platformdigest.ValidateSHA256Identity(request.Source.ProjectDigest) != nil {
@@ -191,8 +182,24 @@ func (service *candidateArtifactService) generationBase(ctx context.Context, ide
 	if err != nil {
 		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
 	}
+	if state.ID != servingstate.ID(identity.GenerationID) {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base generation identity mismatch"))
+	}
 	if state.ProjectID != identity.ProjectID || state.Environment != servingstate.Environment(identity.Environment) {
 		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base generation identity mismatch"))
+	}
+	if service.provenance == nil {
+		return candidateGenerationBase{}, candidateArtifactUnavailable(errors.New("serving-state provenance is unavailable"))
+	}
+	baseProvenance, err := service.provenance.ProvenanceForServingState(ctx, *identity)
+	if err != nil {
+		if errors.Is(err, release.ErrNotFound) {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance not found"))
+		}
+		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
+	}
+	if err := baseProvenance.Validate(); err != nil || baseProvenance.Plan.Identity != *identity {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance identity mismatch"))
 	}
 	artifact, err := service.states.ArtifactByServingState(ctx, state.ID)
 	if err != nil {
@@ -208,25 +215,19 @@ func (service *candidateArtifactService) generationBase(ctx context.Context, ide
 	if validation.RootDir != "" {
 		defer os.RemoveAll(validation.RootDir)
 	}
-	pins := make(map[string]string, len(state.ManagedDataRevisions))
-	for connection, revision := range state.ManagedDataRevisions {
+	if artifact.ServingStateID != state.ID || artifact.Digest == "" || artifact.Digest != state.Digest || artifact.Digest != validation.Digest || state.ProjectDigest == "" || state.ProjectDigest != validation.ProjectDigest || validation.ProjectID != identity.ProjectID.String() || artifact.ManifestJSON != state.ManifestJSON || validation.ManifestJSON != artifact.ManifestJSON || baseProvenance.Artifact.ContentDigest != artifact.Digest || baseProvenance.Artifact.ProjectDigest != state.ProjectDigest {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base generation content identity mismatch"))
+	}
+	pins := make(map[string]string, len(baseProvenance.Plan.ManagedDataPins))
+	for _, pin := range baseProvenance.Plan.ManagedDataPins {
+		connection, revision := pin.ConnectionID, pin.RevisionID
 		if connection != strings.TrimSpace(connection) || revision != strings.TrimSpace(revision) || connection == "" || revision == "" {
 			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains noncanonical managed-data pins"))
 		}
+		if _, exists := pins[connection]; exists {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains duplicate managed-data pins"))
+		}
 		pins[connection] = revision
-	}
-	if len(pins) == 0 && state.ManifestJSON != "" {
-		var manifest struct {
-			ManagedDataRevisions map[string]string `json:"managedDataRevisions"`
-		}
-		if err := json.Unmarshal([]byte(state.ManifestJSON), &manifest); err == nil {
-			for connection, revision := range manifest.ManagedDataRevisions {
-				if connection != strings.TrimSpace(connection) || revision != strings.TrimSpace(revision) || connection == "" || revision == "" {
-					return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains noncanonical managed-data pins"))
-				}
-				pins[connection] = revision
-			}
-		}
 	}
 	return candidateGenerationBase{graph: validation.Graph, pins: pins, snapshotID: state.DuckLakeSnapshotID, active: true}, nil
 }
