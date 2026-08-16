@@ -96,7 +96,7 @@ policy fails closed instead of reaching a query planner.
 
 ## Owners and administration
 
-Ownership and platform administration are distinct from ordinary project-resource use. Keep platform-wide `MANAGE_PLATFORM`, project `MANAGE_GRANTS`, deployment, refresh, query, and view privileges separated according to operational responsibility.
+Ownership and platform administration are distinct from ordinary project-resource use. Keep the instance-wide `platform_admin` role, project `PROJECT_ADMIN`, and resource capabilities such as `RESOURCE_USE`, `RESOURCE_READ`, `RESOURCE_EDIT`, `RESOURCE_MANAGE`, `RESOURCE_SHARE`, and `RESOURCE_PUBLISH` separated according to operational responsibility.
 
 A service principal used by CI should exist only on the target instances and receive the project and deployment/data privileges required by that pipeline. A read-only integration should not inherit project activation or grant management.
 

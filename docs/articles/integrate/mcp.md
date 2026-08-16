@@ -21,7 +21,7 @@ LEAPVIEW_ALLOWED_HOSTS=bi.example.com
 
 The origin must have no path, query, fragment, or credentials. Reverse proxies must preserve the public scheme and host. The resulting OAuth resource and audience are exactly `https://bi.example.com/mcp`; changing the public URL creates a different resource identity.
 
-An interactive user needs browser authentication and permission to use the agent. Grant `USE_AGENT` to the principal, then grant access to the project resources its tools may use. Each tool call checks the referenced project resource and the tool's privileges and data policies. A project is not encoded in the MCP connection URL: query tools accept exact catalog refs, while catalog tools return project identity in `{kind,id}` refs.
+An interactive user needs browser authentication and an OAuth token with the `mcp:use` scope, then grants on the project resources its tools may use. Each tool call checks the referenced project resource and its canonical resource capabilities and data policies. A project is not encoded in the MCP connection URL: query tools accept exact catalog refs, while catalog tools return project identity in `{kind,id}` refs.
 
 The MCP endpoint is independent of `LEAPVIEW_AGENT_MODEL` and `LEAPVIEW_AGENT_API_KEY`. External MCP hosts can use LeapView when the built-in model is disabled.
 
@@ -94,7 +94,7 @@ General LeapView API tokens are intentionally rejected at `/mcp`. They have diff
 
 ## Connect an automated workload
 
-Use a dedicated LeapView service principal for a non-interactive MCP client. Grant it `USE_AGENT` and only the project-resource privileges its tools require. Exchange the service-principal ID and secret at the deployment's OAuth token endpoint:
+Use a dedicated LeapView service principal for a non-interactive MCP client. Request the `mcp:use` scope and grant only the canonical project-resource capabilities its tools require. Exchange the service-principal ID and secret at the deployment's OAuth token endpoint:
 
 ```sh
 curl -fsS https://bi.example.com/oauth/token \
@@ -124,7 +124,7 @@ LeapView still performs live RBAC and data-policy checks for every tool call. In
 | The client cannot discover OAuth | Confirm public DNS and TLS, then fetch both well-known URLs. Verify `LEAPVIEW_PUBLIC_URL` exactly matches the connection origin. |
 | Sign-in loops or returns to the wrong host | Check reverse-proxy scheme and host handling, allowed hosts, secure cookies, and registered browser-auth callback URLs. |
 | MCP returns `401` | Acquire a fresh OAuth token with `mcp:use` and the exact MCP resource. Do not substitute a LeapView API token. |
-| MCP returns `403` before a tool runs | Grant the principal `USE_AGENT` and the required project-resource privilege. |
+| MCP returns `403` before a tool runs | Confirm the token has `mcp:use` and the principal has the required project-resource capability. |
 | A tool returns an authorization error | Check the query's catalog ref, the principal's resource privilege, data policy, and any service-principal restrictions. |
 | Claude cannot reach an internally healthy deployment | Remote connectors run outside your private network. Expose a trusted HTTPS endpoint or use a client that can reach the deployment. |
 | A browser-origin request is rejected | Connect through an MCP host. LeapView rejects cross-origin MCP transport requests deliberately. |

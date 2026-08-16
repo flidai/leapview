@@ -61,17 +61,8 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 }
 
 func agentCommandCapability(value string) (access.Capability, bool) {
-	// Command contracts historically named agent/platform privileges. Their
-	// audit records now use the canonical resource capability vocabulary.
-	switch strings.TrimSpace(value) {
-	case "USE_AGENT", "VIEW_AGENT":
-		return access.CapabilityResourceUse, true
-	case "MANAGE_PLATFORM":
-		return access.CapabilityProjectAdmin, true
-	default:
-		capability, err := access.ParseCapability(strings.TrimSpace(value))
-		return capability, err == nil
-	}
+	capability, err := access.ParseCapability(strings.TrimSpace(value))
+	return capability, err == nil
 }
 
 func encodeAgentCommandAuditPayload(operationID string, payload agentgen.GenSchemaAgentCommandAuditPayload) (string, error) {

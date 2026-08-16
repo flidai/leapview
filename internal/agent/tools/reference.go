@@ -74,7 +74,8 @@ func AnnotationsForEffect(effect string) ToolAnnotations {
 type ToolReference struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description"`
-	Privilege    string          `json:"privilege"`
+	AuthzMode    string          `json:"authzMode"`
+	Privilege    string          `json:"privilege,omitempty"`
 	Effect       string          `json:"effect"`
 	OperationID  string          `json:"operationId"`
 	Defaults     map[string]any  `json:"defaults"`
@@ -102,12 +103,22 @@ func ReferenceCatalog(operations []APIGenOperation) ([]ToolReference, error) {
 		if !ok {
 			return nil, fmt.Errorf("canonical tool %q has no reference metadata", definition.Name)
 		}
+		if entry.authzMode != "authenticated" && entry.authzMode != "privilege" {
+			return nil, fmt.Errorf("canonical tool %q has unsupported authorization mode %q", definition.Name, entry.authzMode)
+		}
+		if entry.authzMode == "privilege" && entry.privilege == "" {
+			return nil, fmt.Errorf("canonical tool %q has no required privilege", definition.Name)
+		}
+		if entry.authzMode == "authenticated" && entry.privilege != "" {
+			return nil, fmt.Errorf("authenticated tool %q must not declare a privilege", definition.Name)
+		}
 		if !json.Valid(definition.InputSchema) || !json.Valid(definition.OutputSchema) {
 			return nil, fmt.Errorf("canonical tool %q has an invalid schema", definition.Name)
 		}
 		references = append(references, ToolReference{
 			Name: definition.Name, Description: definition.Description,
-			Privilege: entry.privilege, Effect: definition.Effect, OperationID: entry.operationID,
+			AuthzMode: entry.authzMode, Privilege: entry.privilege,
+			Effect: definition.Effect, OperationID: entry.operationID,
 			Defaults: entry.defaults, Tags: append([]string(nil), definition.Tags...),
 			Annotations:  AnnotationsForEffect(definition.Effect),
 			InputSchema:  append(json.RawMessage(nil), definition.InputSchema...),
@@ -118,6 +129,7 @@ func ReferenceCatalog(operations []APIGenOperation) ([]ToolReference, error) {
 }
 
 type toolReferenceMetadata struct {
+	authzMode   string
 	privilege   string
 	operationID string
 	defaults    map[string]any
@@ -125,24 +137,24 @@ type toolReferenceMetadata struct {
 
 func referenceMetadata(operations []APIGenOperation) map[string]toolReferenceMetadata {
 	metadata := map[string]toolReferenceMetadata{
-		AddDashboardPageToolName:        {privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
-		AddDashboardVisualToolName:      {privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
-		AssignDashboardFieldToolName:    {privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
-		CatalogSearchToolName:           {privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogSearchLimit}},
-		CatalogListToolName:             {privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogListLimit}},
-		CatalogGetToolName:              {privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
-		CreateDashboardDraftToolName:    {privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
-		ExecuteDashboardCommandToolName: {privilege: "RESOURCE_MANAGE", operationID: "manual", defaults: map[string]any{}},
-		ExportDashboardYAMLToolName:     {privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
-		ForkDashboardToolName:           {privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
-		GetDashboardDraftToolName:       {privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
-		GetDashboardToolName:            {privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
-		ListDashboardsToolName:          {privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
-		PreviewDashboardDraftToolName:   {privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
-		QueryVisualToolName:             {privilege: "RESOURCE_USE", operationID: "manual", defaults: map[string]any{"limit": maxVisualRows}},
-		SetDashboardVisibilityToolName:  {privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
-		DocsSearchToolName:              {privilege: "USE_AGENT", operationID: "manual", defaults: map[string]any{"limit": productdocs.DefaultSearchLimit}},
-		DocsReadToolName:                {privilege: "USE_AGENT", operationID: "manual", defaults: map[string]any{"limit": productdocs.DefaultReadLimit, "offset": 1}},
+		AddDashboardPageToolName:        {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
+		AddDashboardVisualToolName:      {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
+		AssignDashboardFieldToolName:    {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
+		CatalogSearchToolName:           {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogSearchLimit}},
+		CatalogListToolName:             {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogListLimit}},
+		CatalogGetToolName:              {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
+		CreateDashboardDraftToolName:    {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
+		ExecuteDashboardCommandToolName: {authzMode: "privilege", privilege: "RESOURCE_MANAGE", operationID: "manual", defaults: map[string]any{}},
+		ExportDashboardYAMLToolName:     {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
+		ForkDashboardToolName:           {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
+		GetDashboardDraftToolName:       {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
+		GetDashboardToolName:            {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
+		ListDashboardsToolName:          {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
+		PreviewDashboardDraftToolName:   {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
+		QueryVisualToolName:             {authzMode: "privilege", privilege: "RESOURCE_USE", operationID: "manual", defaults: map[string]any{"limit": maxVisualRows}},
+		SetDashboardVisibilityToolName:  {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
+		DocsSearchToolName:              {authzMode: "authenticated", operationID: "manual", defaults: map[string]any{"limit": productdocs.DefaultSearchLimit}},
+		DocsReadToolName:                {authzMode: "authenticated", operationID: "manual", defaults: map[string]any{"limit": productdocs.DefaultReadLimit, "offset": 1}},
 	}
 	for _, operation := range operations {
 		defaults := map[string]any{}
@@ -152,7 +164,8 @@ func referenceMetadata(operations []APIGenOperation) map[string]toolReferenceMet
 			}
 		}
 		metadata[operation.Tool.Name] = toolReferenceMetadata{
-			privilege: operationPrivilege(operation.Contract), operationID: operation.Contract.OperationID, defaults: defaults,
+			authzMode: operation.Contract.AuthzMode, privilege: operationPrivilege(operation.Contract),
+			operationID: operation.Contract.OperationID, defaults: defaults,
 		}
 	}
 	return metadata

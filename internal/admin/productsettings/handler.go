@@ -55,7 +55,7 @@ func (h *Handler) Bootstrap(r *http.Request, active string) (signals.ProductSett
 // CSRF token for that one unavoidable binary operation.
 func (h *Handler) Command(w http.ResponseWriter, r *http.Request) {
 	if h.config.CanManage != nil && !h.config.CanManage(r) {
-		transport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "MANAGE_PLATFORM is required", nil)
+		transport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "platform administrator access is required", nil)
 		return
 	}
 	var request CommandSignals

@@ -165,7 +165,7 @@ func TestReferenceCatalogComesFromCanonicalProviderDefinitions(t *testing.T) {
 		if tool.Effect != wantEffects[tool.Name] || tool.Annotations.ReadOnlyHint != (tool.Effect == "read") || tool.Annotations.DestructiveHint != (tool.Effect == "destructive") || tool.Annotations.IdempotentHint != (tool.Effect == "read") || tool.Annotations.OpenWorldHint {
 			t.Fatalf("tool %q annotations = %#v", tool.Name, tool.Annotations)
 		}
-		if tool.Privilege == "" || tool.OperationID == "" {
+		if tool.AuthzMode == "" || tool.OperationID == "" || (tool.AuthzMode == "privilege" && tool.Privilege == "") || (tool.AuthzMode == "authenticated" && tool.Privilege != "") {
 			t.Fatalf("tool %q metadata = %#v", tool.Name, tool)
 		}
 		gotDefaults, _ := json.Marshal(tool.Defaults)

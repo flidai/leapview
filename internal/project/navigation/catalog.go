@@ -6,9 +6,10 @@ package navigation
 import dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 
 type Catalog struct {
-	Project    Project     `json:"project"`
-	Models     []Model     `json:"models"`
-	Dashboards []Dashboard `json:"dashboards"`
+	Project        Project     `json:"project"`
+	Models         []Model     `json:"models"`
+	SemanticModels []Model     `json:"semanticModels"`
+	Dashboards     []Dashboard `json:"dashboards"`
 }
 
 type Project struct {

@@ -195,18 +195,13 @@ test('personal API tokens use capability selectors', async () => {
         profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
         security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
         tokens: { items: [], capabilities: [
-          { value: 'RESOURCE_READ', label: 'View content', description: 'View dashboards and project content.', category: 'Project' },
-          { value: 'RESOURCE_EDIT', label: 'Edit content', description: 'Create and update project content.', category: 'Project' },
-          { value: 'RESOURCE_MANAGE', label: 'Manage content', description: 'Delete and administer project content.', category: 'Project' },
-          { value: 'QUERY_DATA', label: 'Query data', description: 'Run governed queries against project data.', category: 'Data' },
-          { value: 'PREVIEW_DATA', label: 'Preview data', description: 'Preview source and model data.', category: 'Data' },
-          { value: 'REFRESH_DATA', label: 'Refresh data', description: 'Start and manage data refreshes.', category: 'Data' },
-          { value: 'VIEW_DATA', label: 'View managed data', description: 'View managed-data metadata and revisions.', category: 'Data' },
-          { value: 'INGEST_DATA', label: 'Ingest data', description: 'Upload and ingest managed data.', category: 'Data' },
-          { value: 'AUTHOR_PROJECT', label: 'Author project', description: 'Create and synchronize project candidates.', category: 'Projects and releases' },
-          { value: 'PUBLISH_RELEASE', label: 'Publish releases', description: 'Publish project releases.', category: 'Projects and releases' },
-          { value: 'USE_AGENT', label: 'Use agent', description: 'Start and continue agent conversations.', category: 'Agent' },
-          { value: 'MANAGE_PUBLICATIONS', label: 'Manage publications', description: 'Configure and control public dashboards.', category: 'Administration' },
+          { value: 'PROJECT_ADMIN', label: 'Administer project', description: 'Manage project-level access and settings.', category: 'Administration' },
+          { value: 'RESOURCE_USE', label: 'Use resource', description: 'Open and use the project resource.', category: 'Resource' },
+          { value: 'RESOURCE_READ', label: 'Read resource', description: 'View the resource and its governed data.', category: 'Resource' },
+          { value: 'RESOURCE_EDIT', label: 'Edit resource', description: 'Create and update the resource.', category: 'Resource' },
+          { value: 'RESOURCE_MANAGE', label: 'Manage resource', description: 'Delete and administer the resource.', category: 'Resource' },
+          { value: 'RESOURCE_SHARE', label: 'Share resource', description: 'Share the resource with other principals.', category: 'Resource' },
+          { value: 'RESOURCE_PUBLISH', label: 'Publish resource', description: 'Publish the resource to serving.', category: 'Resource' },
         ] },
       } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -241,12 +236,12 @@ test('personal API tokens use capability selectors', async () => {
       }
       const search = root.querySelector('.permission-search input') as HTMLInputElement
       const searchFocused = root.activeElement === search
-      search.value = 'query'
+      search.value = 'read resource'
       search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
       const filteredPermissions = Array.from(root.querySelectorAll('.permission-option .settings-label')).map((label) => label.textContent?.trim())
-      const queryPermission = root.querySelector('input[type="checkbox"][value="QUERY_DATA"]') as HTMLInputElement
-      queryPermission.click()
+      const readPermission = root.querySelector('input[type="checkbox"][value="RESOURCE_READ"]') as HTMLInputElement
+      readPermission.click()
       await personal.updateComplete
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await personal.updateComplete
@@ -274,7 +269,7 @@ test('personal API tokens use capability selectors', async () => {
       }
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
       mergePatch({ personalSettings: { tokens: { items: [
-        { id: 'token-1', name: 'Sales automation', capabilities: ['QUERY_DATA'], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '', revokedAt: '' },
+        { id: 'token-1', name: 'Sales automation', capabilities: ['RESOURCE_READ'], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '', revokedAt: '' },
       ], newToken: 'lv_created_secret' } } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await personal.updateComplete
@@ -328,13 +323,13 @@ test('personal API tokens use capability selectors', async () => {
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(true)
     expect(state.menuLayout.listOverflowY).toBe('auto')
-    expect(state.filteredPermissions).toEqual(['Query data'])
-    expect(state.selectedPermissions).toEqual(['Query data'])
+    expect(state.filteredPermissions).toEqual(['Read resource'])
+    expect(state.selectedPermissions).toEqual(['Read resource'])
     expect(state.menuClosed).toBe(true)
     expect(state.searchFocused).toBe(true)
     expect(state.triggerFocused).toBe(true)
     expect(state.command).toMatchObject({
-      action: 'create', name: 'Sales automation', capabilities: ['QUERY_DATA'], expiresAt: '',
+      action: 'create', name: 'Sales automation', capabilities: ['RESOURCE_READ'], expiresAt: '',
     })
     expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Creating…' })
     expect(state.failed).toEqual({

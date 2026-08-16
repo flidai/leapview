@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/docs_read.json) · [com
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `USE_AGENT` |
+| Authorization | `authenticated` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `documentation` |

@@ -66,10 +66,15 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/", wrap(h.Insights))
 	r.Get("/explore", wrap(h.Explore))
 	r.Get("/data", wrap(h.Data))
+	r.Get("/data/{asset}/{section}", wrap(h.DataAsset))
 	r.Get("/models", wrap(h.Models))
+	r.Get("/models/{asset}/{section}", wrap(h.ModelAsset))
 	r.Get("/semantic-models", wrap(h.SemanticModels))
+	r.Get("/semantic-models/{asset}/{section}", wrap(h.SemanticModelAsset))
 	r.Get("/pipelines", wrap(h.Pipelines))
+	r.Get("/pipelines/{asset}/{section}", wrap(h.PipelineAsset))
 	r.Get("/connections", wrap(h.Connections))
+	r.Get("/connections/{asset}/{section}", wrap(h.ConnectionAsset))
 	r.Post("/catalog/search", wrap(h.CatalogSearch))
 	r.Post("/data/search", wrap(h.DataSearch))
 	r.Post("/connections/search", wrap(h.ConnectionsSearch))
@@ -114,6 +119,48 @@ func (h *BrowserHandler) Models(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 
 func (h *BrowserHandler) SemanticModels(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	h.projectAssets(w, r, "semantic-models", string(projectview.AssetTypeSemanticModel))
+}
+
+func (h *BrowserHandler) DataAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.assetDocument(w, r, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindDashboard, projectgraph.KindPipeline, projectgraph.KindSemanticModel)
+}
+
+func (h *BrowserHandler) ModelAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.assetDocument(w, r, projectgraph.KindModel)
+}
+
+func (h *BrowserHandler) SemanticModelAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.assetDocument(w, r, projectgraph.KindSemanticModel)
+}
+
+func (h *BrowserHandler) PipelineAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.assetDocument(w, r, projectgraph.KindPipeline)
+}
+
+func (h *BrowserHandler) ConnectionAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.assetDocument(w, r, projectgraph.KindConnection)
+}
+
+func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Request, kinds ...projectgraph.Kind) {
+	if !h.authorizeAny(w, r, kinds) {
+		return
+	}
+	projectID, assets, edges, ok := h.assets(w, r)
+	if !ok {
+		return
+	}
+	asset, found := projectview.AssetByID(assets, chi.URLParam(r, "asset"))
+	if !found {
+		stdhttp.NotFound(w, r)
+		return
+	}
+	project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
+	section := chi.URLParam(r, "section")
+	if asset.Type == string(projectview.AssetTypeConnection) {
+		writeDocument(w, projectui.ConnectionAssetPageWithVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", projectui.AssetVersionsState{}))
+		return
+	}
+	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", projectui.AssetRefreshState{}, projectui.AssetVersionsState{}, h.layout(r)))
 }
 
 func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Request, area, activeType string) {
@@ -195,9 +242,14 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	case "catalog":
 		patch = projectui.CatalogBootstrapSignals(h.navigationCatalog(r), h.layout(r))
 	case "data":
-		if r.URL.Query().Get("surface") == "explore" {
+		surface := r.URL.Query().Get("surface")
+		if surface == "explore" {
 			page, explorer := h.dataExplorerSignals(r)
 			patch = projectui.DataExplorerBootstrapSignals(h.navigationCatalog(r), page, explorer, h.layout(r))
+		} else if surface == "asset" {
+			if assetPatch, ok := h.assetBootstrap(w, r); ok {
+				patch = assetPatch
+			}
 		} else if projectPatch, ok := h.projectBootstrap(w, r); ok {
 			patch = projectPatch
 		}
@@ -304,6 +356,57 @@ func (h *BrowserHandler) assets(w stdhttp.ResponseWriter, r *stdhttp.Request) (p
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return "", nil, nil, false
 	}
+	if h.CurrentUser == nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return "", nil, nil, false
+	}
+	principal, authenticated := h.CurrentUser(r)
+	if !authenticated {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusUnauthorized), stdhttp.StatusUnauthorized)
+		return "", nil, nil, false
+	}
+	if !principal.DevBypass {
+		if h.Catalog == nil {
+			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+			return "", nil, nil, false
+		}
+		allowedPage, err := h.Catalog.List(r.Context(), projectcatalog.ListRequest{PrincipalID: principal.ID, Kinds: []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline}, Limit: projectcatalog.MaxLimit})
+		if err != nil {
+			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+			return "", nil, nil, false
+		}
+		allowed := make(map[projectgraph.ResourceID]struct{}, len(allowedPage.Items))
+		for _, item := range allowedPage.Items {
+			allowed[item.Ref.ID] = struct{}{}
+		}
+		filteredAssets := graph.Assets[:0]
+		for _, asset := range graph.Assets {
+			_, mapped := catalogKindForAssetType(asset.Type)
+			if !mapped {
+				continue
+			}
+			if _, visible := allowed[asset.ID]; visible {
+				filteredAssets = append(filteredAssets, asset)
+				continue
+			}
+		}
+		graph.Assets = filteredAssets
+		visibleIDs := make(map[projectgraph.ResourceID]struct{}, len(graph.Assets))
+		for _, asset := range graph.Assets {
+			visibleIDs[asset.ID] = struct{}{}
+		}
+		filteredEdges := graph.Edges[:0]
+		for _, edge := range graph.Edges {
+			if _, from := visibleIDs[edge.FromAssetID]; !from {
+				continue
+			}
+			if _, to := visibleIDs[edge.ToAssetID]; !to {
+				continue
+			}
+			filteredEdges = append(filteredEdges, edge)
+		}
+		graph.Edges = filteredEdges
+	}
 	projectGraph := projectview.DevelopAssetGraph{Assets: make([]projectview.Asset, 0, len(graph.Assets)), Edges: make([]projectview.AssetEdge, 0, len(graph.Edges))}
 	for _, asset := range graph.Assets {
 		projectGraph.Assets = append(projectGraph.Assets, projectview.Asset{ID: projectview.AssetID(asset.ID), SnapshotID: projectview.AssetSnapshotID(asset.SnapshotID), ProjectID: asset.ProjectID, ServingStateID: projectview.ServingStateID(asset.ServingStateID), Type: projectview.AssetType(asset.Type), Key: asset.Key, ParentID: projectview.AssetID(asset.ParentID), Title: asset.Title, Description: asset.Description, SourceFile: asset.SourceFile, PayloadSchema: asset.PayloadSchema, PayloadJSON: asset.PayloadJSON, ContentHash: asset.ContentHash})
@@ -347,6 +450,9 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	selector := strings.TrimSpace(r.URL.Query().Get("asset"))
 	if selector == "" {
 		selector = strings.TrimSpace(r.URL.Query().Get("model"))
+	}
+	if selector == "" {
+		selector = strings.TrimSpace(chi.URLParam(r, "asset"))
 	}
 	if selector != "" {
 		for _, kind := range kinds {
@@ -395,6 +501,8 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 			out.Project = projectnavigation.Project{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description}
 		case projectgraph.KindModel:
 			out.Models = append(out.Models, projectnavigation.Model{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description})
+		case projectgraph.KindSemanticModel:
+			out.SemanticModels = append(out.SemanticModels, projectnavigation.Model{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description})
 		case projectgraph.KindDashboard:
 			out.Dashboards = append(out.Dashboards, projectnavigation.Dashboard{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description})
 		}
@@ -411,12 +519,31 @@ func browserFirstNonEmpty(values ...string) string {
 	return ""
 }
 
+func catalogKindForAssetType(typ string) (projectgraph.Kind, bool) {
+	switch typ {
+	case string(projectview.AssetTypeConnection):
+		return projectgraph.KindConnection, true
+	case string(projectview.AssetTypeSource):
+		return projectgraph.KindSource, true
+	case string(projectview.AssetTypeModelTable):
+		return projectgraph.KindModel, true
+	case string(projectview.AssetTypeSemanticModel):
+		return projectgraph.KindSemanticModel, true
+	case string(projectview.AssetTypeDashboard):
+		return projectgraph.KindDashboard, true
+	case string(projectview.AssetTypeRefreshPipeline):
+		return projectgraph.KindPipeline, true
+	default:
+		return "", false
+	}
+}
+
 func (h *BrowserHandler) dataExplorerSignals(r *stdhttp.Request) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal) {
 	project := h.navigationCatalog(r).Project
 	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
 	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Measures: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: 100}
 	explorer := projectsignals.DataExplorerSignal{Command: projectsignals.DataExplorerCommand{Explore: &exploreCommand, Limit: 100}, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, Models: []projectsignals.DataExploreModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: map[string]projectsignals.DataPreviewBlockSignal{}, Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: 100, RowHeight: 32}}
-	for _, model := range h.navigationCatalog(r).Models {
+	for _, model := range h.navigationCatalog(r).SemanticModels {
 		explorer.Explore.Models = append(explorer.Explore.Models, projectsignals.DataExploreModelSignal{ID: model.ID, Title: model.Title, Description: projectsignals.Optional(model.Description)})
 	}
 	if len(explorer.Explore.Models) > 0 {

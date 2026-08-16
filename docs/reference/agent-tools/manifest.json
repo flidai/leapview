@@ -4,6 +4,7 @@
     {
       "name": "add_dashboard_page",
       "description": "Add one dashboard page to a private draft using an exact expected revision.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
@@ -86,6 +87,7 @@
     {
       "name": "add_dashboard_visual",
       "description": "Add a governed dashboard visual to a private draft using an exact expected revision.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
@@ -181,6 +183,7 @@
     {
       "name": "assign_dashboard_field",
       "description": "Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
@@ -281,6 +284,7 @@
     {
       "name": "catalog_get",
       "description": "Resolve one exact authorized project resource ID and return its compact metadata.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
@@ -429,6 +433,7 @@
     {
       "name": "catalog_list",
       "description": "Browse authorized project resources. Returned refs are exact stable IDs for subsequent calls.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
@@ -590,6 +595,7 @@
     {
       "name": "catalog_search",
       "description": "Search authorized project resources by stable ID, name, description, or domain metadata.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
@@ -731,6 +737,7 @@
     {
       "name": "create_dashboard_draft",
       "description": "Create a private dashboard draft owned by the authenticated principal. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
@@ -794,7 +801,7 @@
     {
       "name": "docs_read",
       "description": "Read a bounded line window from one LeapView document returned by docs_search. Continue with nextOffset when truncated is true.",
-      "privilege": "USE_AGENT",
+      "authzMode": "authenticated",
       "effect": "read",
       "operationId": "manual",
       "defaults": {
@@ -886,7 +893,7 @@
     {
       "name": "docs_search",
       "description": "Search LeapView's version-matched product documentation. Returns ranked, bounded matches with stable document IDs and excerpts. Continue with nextCursor when hasMore is true, or use the optional path prefix to narrow broad searches.",
-      "privilege": "USE_AGENT",
+      "authzMode": "authenticated",
       "effect": "read",
       "operationId": "manual",
       "defaults": {
@@ -998,6 +1005,7 @@
     {
       "name": "execute_dashboard_command",
       "description": "Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision. Actor and agent provenance are server-bound.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_MANAGE",
       "effect": "destructive",
       "operationId": "manual",
@@ -1084,6 +1092,7 @@
     {
       "name": "export_dashboard_yaml",
       "description": "Export an authorized authored dashboard source as canonical project YAML.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
@@ -1136,6 +1145,7 @@
     {
       "name": "fork_dashboard",
       "description": "Fork an authorized project or instance dashboard source into a private draft. Agent retries that reuse the same invocation identity and payload replay the original draft.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
@@ -1202,6 +1212,7 @@
     {
       "name": "get_dashboard",
       "description": "Get one authorized dashboard's governed metadata.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
@@ -1247,6 +1258,7 @@
     {
       "name": "get_dashboard_draft",
       "description": "Read the exact current private draft and retained revision for one dashboard.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_EDIT",
       "effect": "read",
       "operationId": "manual",
@@ -1297,6 +1309,7 @@
     {
       "name": "list_dashboards",
       "description": "List the authorized project dashboard catalog.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
@@ -1343,6 +1356,7 @@
     {
       "name": "preview_dashboard_draft",
       "description": "Preview an exact private dashboard draft revision and page against the active governed runtime.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_EDIT",
       "effect": "read",
       "operationId": "manual",
@@ -1438,6 +1452,7 @@
     {
       "name": "query_dashboard_visual",
       "description": "Query an existing dashboard visual with governed filters and compact analytical output",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "queryDashboardVisualData",
@@ -1797,6 +1812,7 @@
     {
       "name": "query_semantic_model",
       "description": "Query governed semantic data with typed columns, filters, pagination, and provenance",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_USE",
       "effect": "read",
       "operationId": "querySemanticModel",
@@ -2131,6 +2147,7 @@
     {
       "name": "query_visual",
       "description": "Create one read-only visual from LeapView semantic model fields. Data is queried from semantic models; do not provide inline data.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_USE",
       "effect": "read",
       "operationId": "manual",
@@ -3100,6 +3117,7 @@
     {
       "name": "set_dashboard_visibility",
       "description": "Set a private dashboard draft's visibility using an exact expected revision.",
+      "authzMode": "privilege",
       "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",

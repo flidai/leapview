@@ -192,7 +192,7 @@ Reads are line- and byte-bounded. Continue from `nextOffset` only when the curre
 
 ## Handle authorization and errors
 
-Catalog, query, and documentation tools are read-only, idempotent, and non-destructive. Dashboard-authoring read tools are also non-mutating; its create, intent, publish, archive, and fork tools are governed writes. MCP access requires `USE_AGENT`. Catalog operations require `VIEW_ITEM`; data-query tools require `QUERY_DATA`; dashboard authoring checks `EDIT_ITEM` for draft edits and `MANAGE_ITEM` for publish/archive while continuing to enforce project-resource grants and data policies.
+Catalog, query, and documentation tools are read-only, idempotent, and non-destructive. Dashboard-authoring read tools are also non-mutating; its create, intent, publish, archive, and fork tools are governed writes. MCP access requires an authenticated OAuth session with the `mcp:use` scope. Catalog operations require `RESOURCE_READ`; data-query tools require `RESOURCE_USE`; dashboard authoring checks `RESOURCE_EDIT` for draft edits and `RESOURCE_MANAGE` for publish/archive while continuing to enforce project-resource grants and data policies.
 
 Catalog lookup deliberately does not reveal inaccessible resources:
 
