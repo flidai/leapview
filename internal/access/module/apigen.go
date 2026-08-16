@@ -139,7 +139,7 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	}
 	contract, ok := a.operations[operationID]
 	if !ok || !contract.Protected {
-		if ok && contract.AuthzMode == "none" && !contract.Protected && !apiGenHasAuthzMetadata(contract) {
+		if ok && contract.AuthzMode == "none" && !contract.Protected && contract.Command == nil && !apiGenHasNonNoneAuthzMetadata(contract) {
 			return next, true
 		}
 		return nil, false

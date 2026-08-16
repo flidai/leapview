@@ -121,6 +121,34 @@ func apigenSnapshot(t *testing.T, principalID, groupID string, resourceID projec
 	return identity, snapshot
 }
 
+func TestAPIGenPublicOperationAcceptsGeneratedNoneMetadata(t *testing.T) {
+	module := browserGuardModule(nil, Principal{}, false)
+	contract := APIGenOperationContract{
+		OperationID: "getInstance", Method: http.MethodGet, Path: "/api/v1/instance",
+		Protected: false, AuthzMode: "none",
+		Extensions: map[string]any{"x-authz": map[string]any{"mode": "none"}},
+	}
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: "project_demo"},
+		map[string]APIGenOperationContract{"getInstance": contract},
+		APIGenResourceResolvers{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, ok := authorizer.Protect("getInstance", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if !ok || handler == nil {
+		t.Fatal("public generated operation was not accepted")
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
 func apigenResourceAuthorizer(t *testing.T, principal Principal, groups []string, resourceID projectgraph.ResourceID, resourceKind projectgraph.Kind, snapshot accesssnapshot.AuthorizationSnapshot, runtimeErr error, lease runtimehost.Lease) *APIGenAuthorizer {
 	t.Helper()
 	repo := browserGuardRepository{groups: groups}
