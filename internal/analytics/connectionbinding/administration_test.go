@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +26,7 @@ func TestAdministrationRequiresDependencyPlanConfirmationForConfigurationChanges
 	})
 	require.NoError(t, err)
 	key := BindingKey{
-		Scope: binding.Scope, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
+		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	}
 	configuration := binding.Configuration()
 	configuration.Endpoint.Host = "warehouse-next.internal"
@@ -70,7 +71,7 @@ func TestAdministrationSeparatesMetadataAndRefreshAuthorization(t *testing.T) {
 	})
 	require.NoError(t, err)
 	key := BindingKey{
-		Scope: binding.Scope, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
+		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	}
 	if _, err := service.RefreshNow(context.Background(), "metadata-operator", key); !errors.Is(err, ErrUnauthorizedBinding) {
 		t.Fatalf("RefreshNow() error = %v", err)
@@ -94,7 +95,7 @@ func TestAdministrationTestUsesCandidateRuntimePathAndDistinctAuditOperation(t *
 	})
 	require.NoError(t, err)
 	key := BindingKey{
-		Scope: binding.Scope, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
+		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	}
 
 	if _, err := service.Test(context.Background(), "operator-1", key); err != nil {
@@ -113,7 +114,7 @@ func TestAdministrationListsOnlyTheRequestedTargetScope(t *testing.T) {
 	binding := validTargetBinding(t)
 	second := binding
 	second.ID = "binding_reporting"
-	second.LogicalConnectionID = "reporting"
+	second.ConnectionID = "reporting"
 	repository := &administrationRepository{binding: binding, bindings: []TargetBinding{second, binding}}
 	var authorized TargetBinding
 	service, err := NewAdministration(AdministrationConfig{
@@ -137,8 +138,8 @@ func TestAdministrationListsOnlyTheRequestedTargetScope(t *testing.T) {
 		t.Fatalf("authorized scope = %#v", authorized)
 	}
 	if len(bindings) != 2 ||
-		bindings[0].LogicalConnectionID != second.LogicalConnectionID ||
-		bindings[1].LogicalConnectionID != binding.LogicalConnectionID {
+		bindings[0].ConnectionID != second.ConnectionID ||
+		bindings[1].ConnectionID != binding.ConnectionID {
 		t.Fatalf("listed bindings = %#v", bindings)
 	}
 }
@@ -164,7 +165,7 @@ func TestAdministrationAuthorizesBeforeEnsuringWorkspaceScopeAndCreatingBinding(
 	require.NoError(t, err)
 	_, err = service.Create(context.Background(), "operator-1", TargetBindingInput{
 		ID: binding.ID, TargetID: binding.TargetID,
-		LogicalConnectionID: binding.LogicalConnectionID.String(), ConnectorKind: binding.ConnectorKind,
+		ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind,
 		AuthenticationMode: binding.AuthenticationMode, Scope: binding.Scope, Endpoint: binding.Endpoint,
 		CredentialReference: binding.CredentialReference, Enabled: binding.Enabled,
 	})
@@ -193,7 +194,7 @@ func TestAdministrationDoesNotEnsureWorkspaceScopeWhenCreateIsUnauthorized(t *te
 
 	_, err = service.Create(context.Background(), "operator-1", TargetBindingInput{
 		ID: binding.ID, TargetID: binding.TargetID,
-		LogicalConnectionID: binding.LogicalConnectionID.String(), ConnectorKind: binding.ConnectorKind,
+		ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind,
 		AuthenticationMode: binding.AuthenticationMode, Scope: binding.Scope, Endpoint: binding.Endpoint,
 		CredentialReference: binding.CredentialReference, Enabled: binding.Enabled,
 	})
@@ -216,8 +217,8 @@ func (repository *administrationRepository) Create(_ context.Context, binding Ta
 func (repository *administrationRepository) Binding(
 	context.Context,
 	BindingScope,
-	string,
-	LogicalConnectionID,
+	TargetID,
+	projectgraph.ResourceID,
 ) (TargetBinding, error) {
 	return repository.binding, nil
 }
@@ -225,7 +226,7 @@ func (repository *administrationRepository) Binding(
 func (repository *administrationRepository) List(
 	context.Context,
 	BindingScope,
-	string,
+	TargetID,
 ) ([]TargetBinding, error) {
 	return append([]TargetBinding(nil), repository.bindings...), nil
 }

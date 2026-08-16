@@ -360,7 +360,7 @@ func (manager *PoolManager) Lease() (*PoolLease, error) {
 		return nil, ErrProviderUnavailable
 	}
 	manager.active.leases++
-	evidence := RuntimeBindingEvidence{BindingEvidence: manager.binding.Evidence()}
+	evidence := manager.binding.Evidence()
 	evidence.BindingRevision = manager.active.bindingRevision
 	evidence.ValidatedVersion = manager.active.version
 	return &PoolLease{

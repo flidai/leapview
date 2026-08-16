@@ -10,7 +10,7 @@ import (
 
 func TestSelectResolverNeverFallsBackAfterAuthoritativeProviderDenial(t *testing.T) {
 	selection, err := NewResolverSelection(ResolverSelectionInput{
-		TargetID: "target-prod", Environment: "prod", TargetClass: TargetProduction, Kind: ResolverInfisical,
+		TargetID: "target-prod", ProjectID: "project_sales", Environment: "prod", TargetClass: TargetProduction, Kind: ResolverInfisical,
 	})
 	require.NoError(t, err)
 	authoritative := &countingCredentialResolver{err: ErrCredentialDenied}
@@ -27,7 +27,7 @@ func TestSelectResolverNeverFallsBackAfterAuthoritativeProviderDenial(t *testing
 
 func TestSelectResolverRequiresTheExplicitlySelectedProvider(t *testing.T) {
 	selection, err := NewResolverSelection(ResolverSelectionInput{
-		TargetID: "target-prod", Environment: "prod", TargetClass: TargetProduction, Kind: ResolverInfisical,
+		TargetID: "target-prod", ProjectID: "project_sales", Environment: "prod", TargetClass: TargetProduction, Kind: ResolverInfisical,
 	})
 	require.NoError(t, err)
 	if _, err := SelectResolver(selection, ResolverSet{Environment: &countingCredentialResolver{}}); !errors.Is(err, ErrProviderUnavailable) {

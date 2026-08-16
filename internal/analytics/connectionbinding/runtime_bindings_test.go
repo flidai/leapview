@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,15 +13,15 @@ func TestRuntimeBindingLeaserAcquiresDeterministicValidatedEvidence(t *testing.T
 	warehouse := validTargetBinding(t)
 	reporting := warehouse
 	reporting.ID = "binding_prod_reporting"
-	reporting.LogicalConnectionID = "reporting"
+	reporting.ConnectionID = "reporting"
 	repository := &runtimeBindingCatalog{
-		bindings: map[LogicalConnectionID]TargetBinding{
-			warehouse.LogicalConnectionID: warehouse,
-			reporting.LogicalConnectionID: reporting,
+		bindings: map[projectgraph.ResourceID]TargetBinding{
+			warehouse.ConnectionID: warehouse,
+			reporting.ConnectionID: reporting,
 		},
 	}
 	directory := &recordingValidatedPoolDirectory{}
-	var authorized []LogicalConnectionID
+	var authorized []projectgraph.ResourceID
 	leaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
 		Bindings: repository,
 		Pools:    directory,
@@ -28,26 +29,25 @@ func TestRuntimeBindingLeaserAcquiresDeterministicValidatedEvidence(t *testing.T
 			if actor != "principal:author_1" {
 				t.Fatalf("authorization actor = %q", actor)
 			}
-			authorized = append(authorized, binding.LogicalConnectionID)
+			authorized = append(authorized, binding.ConnectionID)
 			return nil
 		},
 	})
 	require.NoError(t, err)
 
 	leases, err := leaser.Acquire(t.Context(), RuntimeBindingRequest{
-		Actor:    "principal:author_1",
-		Scope:    warehouse.Scope,
+		Actor: "principal:author_1", Identity: servingIdentity(warehouse.Scope.ProjectID.String(), warehouse.Scope.Environment, "generation-1"),
 		TargetID: warehouse.TargetID,
 		Requirements: []Requirement{
-			{LogicalConnectionID: reporting.LogicalConnectionID, ConnectorKind: reporting.ConnectorKind},
-			{LogicalConnectionID: warehouse.LogicalConnectionID, ConnectorKind: warehouse.ConnectorKind},
+			{ConnectionID: reporting.ConnectionID, ConnectorKind: reporting.ConnectorKind},
+			{ConnectionID: warehouse.ConnectionID, ConnectorKind: warehouse.ConnectorKind},
 		},
 	})
 	require.NoError(t, err)
 	evidence := leases.Evidence()
 	if len(evidence) != 2 ||
-		evidence[0].LogicalConnection != reporting.LogicalConnectionID ||
-		evidence[1].LogicalConnection != warehouse.LogicalConnectionID {
+		evidence[0].ConnectionID != reporting.ConnectionID ||
+		evidence[1].ConnectionID != warehouse.ConnectionID {
 		t.Fatalf("deterministic evidence = %#v", evidence)
 	}
 	if len(authorized) != 2 || len(directory.acquired) != 2 {
@@ -66,14 +66,14 @@ func TestRuntimeBindingLeaserAllowsCredentialFreeCandidateAndReleasesPartialFail
 	warehouse := validTargetBinding(t)
 	reporting := warehouse
 	reporting.ID = "binding_prod_reporting"
-	reporting.LogicalConnectionID = "reporting"
+	reporting.ConnectionID = "reporting"
 	repository := &runtimeBindingCatalog{
-		bindings: map[LogicalConnectionID]TargetBinding{
-			warehouse.LogicalConnectionID: warehouse,
-			reporting.LogicalConnectionID: reporting,
+		bindings: map[projectgraph.ResourceID]TargetBinding{
+			warehouse.ConnectionID: warehouse,
+			reporting.ConnectionID: reporting,
 		},
 	}
-	directory := &recordingValidatedPoolDirectory{failOn: warehouse.LogicalConnectionID}
+	directory := &recordingValidatedPoolDirectory{failOn: warehouse.ConnectionID}
 	leaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
 		Bindings: repository, Pools: directory,
 		Authorize: func(context.Context, string, TargetBinding) error { return nil },
@@ -81,7 +81,7 @@ func TestRuntimeBindingLeaserAllowsCredentialFreeCandidateAndReleasesPartialFail
 	require.NoError(t, err)
 
 	credentialFree, err := leaser.Acquire(t.Context(), RuntimeBindingRequest{
-		Actor: "principal:author_1", Scope: warehouse.Scope, TargetID: warehouse.TargetID,
+		Actor: "principal:author_1", Identity: servingIdentity(warehouse.Scope.ProjectID.String(), warehouse.Scope.Environment, "generation-1"), TargetID: warehouse.TargetID,
 	})
 	require.NoError(t, err)
 	if len(credentialFree.Evidence()) != 0 || len(directory.acquired) != 0 {
@@ -90,10 +90,10 @@ func TestRuntimeBindingLeaserAllowsCredentialFreeCandidateAndReleasesPartialFail
 	credentialFree.Release()
 
 	_, err = leaser.Acquire(t.Context(), RuntimeBindingRequest{
-		Actor: "principal:author_1", Scope: warehouse.Scope, TargetID: warehouse.TargetID,
+		Actor: "principal:author_1", Identity: servingIdentity(warehouse.Scope.ProjectID.String(), warehouse.Scope.Environment, "generation-1"), TargetID: warehouse.TargetID,
 		Requirements: []Requirement{
-			{LogicalConnectionID: reporting.LogicalConnectionID, ConnectorKind: reporting.ConnectorKind},
-			{LogicalConnectionID: warehouse.LogicalConnectionID, ConnectorKind: warehouse.ConnectorKind},
+			{ConnectionID: reporting.ConnectionID, ConnectorKind: reporting.ConnectorKind},
+			{ConnectionID: warehouse.ConnectionID, ConnectorKind: warehouse.ConnectorKind},
 		},
 	})
 	if !errors.Is(err, ErrProviderUnavailable) {
@@ -118,18 +118,18 @@ func TestRuntimeBindingLeaserFailsClosedBeforePoolAcquisition(t *testing.T) {
 			directory := &recordingValidatedPoolDirectory{}
 			leaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
 				Bindings: &runtimeBindingCatalog{
-					bindings: map[LogicalConnectionID]TargetBinding{
-						binding.LogicalConnectionID: binding,
+					bindings: map[projectgraph.ResourceID]TargetBinding{
+						binding.ConnectionID: binding,
 					},
 				},
 				Pools: directory, Authorize: authorize,
 			})
 			require.NoError(t, err)
 			_, err = leaser.Acquire(t.Context(), RuntimeBindingRequest{
-				Actor: "principal:author_1", Scope: binding.Scope, TargetID: binding.TargetID,
+				Actor: "principal:author_1", Identity: servingIdentity(binding.Scope.ProjectID.String(), binding.Scope.Environment, "generation-1"), TargetID: binding.TargetID,
 				Requirements: []Requirement{{
-					LogicalConnectionID: binding.LogicalConnectionID,
-					ConnectorKind:       binding.ConnectorKind,
+					ConnectionID:  binding.ConnectionID,
+					ConnectorKind: binding.ConnectorKind,
 				}},
 			})
 			if !errors.Is(err, ErrUnauthorizedBinding) {
@@ -148,8 +148,8 @@ func TestRuntimeBindingLeasesExposeOnlyTheValidatedLogicalPool(t *testing.T) {
 	directory := &recordingValidatedPoolDirectory{pool: pool}
 	leaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
 		Bindings: &runtimeBindingCatalog{
-			bindings: map[LogicalConnectionID]TargetBinding{
-				binding.LogicalConnectionID: binding,
+			bindings: map[projectgraph.ResourceID]TargetBinding{
+				binding.ConnectionID: binding,
 			},
 		},
 		Pools: directory,
@@ -159,17 +159,17 @@ func TestRuntimeBindingLeasesExposeOnlyTheValidatedLogicalPool(t *testing.T) {
 	})
 	require.NoError(t, err)
 	leases, err := leaser.Acquire(t.Context(), RuntimeBindingRequest{
-		Actor: "author_1", Scope: binding.Scope, TargetID: binding.TargetID,
+		Actor: "author_1", Identity: servingIdentity(binding.Scope.ProjectID.String(), binding.Scope.Environment, "generation-1"), TargetID: binding.TargetID,
 		Requirements: []Requirement{{
-			LogicalConnectionID: binding.LogicalConnectionID,
-			ConnectorKind:       binding.ConnectorKind,
+			ConnectionID:  binding.ConnectionID,
+			ConnectorKind: binding.ConnectorKind,
 		}},
 	})
 	require.NoError(t, err)
 	defer leases.Release()
 
 	var used RuntimePool
-	if err := leases.UsePool(binding.LogicalConnectionID, func(candidate RuntimePool) error {
+	if err := leases.UsePool(binding.ConnectionID, func(candidate RuntimePool) error {
 		used = candidate
 		return nil
 	}); err != nil {
@@ -187,7 +187,7 @@ func TestRuntimeBindingLeasesExposeOnlyTheValidatedLogicalPool(t *testing.T) {
 }
 
 type runtimeBindingCatalog struct {
-	bindings map[LogicalConnectionID]TargetBinding
+	bindings map[projectgraph.ResourceID]TargetBinding
 }
 
 func (*runtimeBindingCatalog) Create(context.Context, TargetBinding) error { return nil }
@@ -195,10 +195,10 @@ func (*runtimeBindingCatalog) Create(context.Context, TargetBinding) error { ret
 func (catalog *runtimeBindingCatalog) Binding(
 	_ context.Context,
 	_ BindingScope,
-	_ string,
-	logical LogicalConnectionID,
+	_ TargetID,
+	connectionID projectgraph.ResourceID,
 ) (TargetBinding, error) {
-	binding, ok := catalog.bindings[logical]
+	binding, ok := catalog.bindings[connectionID]
 	if !ok {
 		return TargetBinding{}, ErrBindingNotFound
 	}
@@ -208,7 +208,7 @@ func (catalog *runtimeBindingCatalog) Binding(
 func (catalog *runtimeBindingCatalog) List(
 	context.Context,
 	BindingScope,
-	string,
+	TargetID,
 ) ([]TargetBinding, error) {
 	return nil, nil
 }
@@ -222,9 +222,9 @@ func (*runtimeBindingCatalog) Save(
 }
 
 type recordingValidatedPoolDirectory struct {
-	acquired []LogicalConnectionID
+	acquired []projectgraph.ResourceID
 	leases   []*recordingValidatedPoolLease
-	failOn   LogicalConnectionID
+	failOn   projectgraph.ResourceID
 	pool     RuntimePool
 }
 
@@ -233,8 +233,8 @@ func (directory *recordingValidatedPoolDirectory) AcquireValidated(
 	binding TargetBinding,
 	_ string,
 ) (ValidatedPoolLease, error) {
-	directory.acquired = append(directory.acquired, binding.LogicalConnectionID)
-	if binding.LogicalConnectionID == directory.failOn {
+	directory.acquired = append(directory.acquired, binding.ConnectionID)
+	if binding.ConnectionID == directory.failOn {
 		return nil, ErrProviderUnavailable
 	}
 	evidence := binding.Evidence()
