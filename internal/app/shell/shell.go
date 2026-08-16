@@ -219,7 +219,6 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 			Label: "Product",
 			Items: filterItems([]conditionalItem{
 				{allowed: allowed.ManagePlatform, item: Item{ID: "general", Label: "General", Href: "/admin/general", Icon: "settings"}},
-				{allowed: allowed.ManageWorkspace, item: Item{ID: "workspaces-admin", Label: "Workspaces", Href: "/admin/workspaces", Icon: "catalog"}},
 			}),
 		},
 		{

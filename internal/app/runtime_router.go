@@ -1133,7 +1133,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}, ok
 		}
 		settingsAccess := routes.accessModule.SettingsAdministration()
-		workspaceSettings := routes.workspaceModule.SettingsAdministration()
 		localPasswordEnabled := routes.accessModule.Auth() != nil && routes.accessModule.Auth().LocalAuthEnabled()
 		productCommands, commandErr := apigencommand.NewExecutor(apiaggregate.GetAPIGenCommandRuntimeContract, nil)
 		if commandErr != nil {
@@ -1174,14 +1173,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			Broker:  runtime.broker,
 			Product: persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
-			ProductUICommands:   productUICommandContract(),
-			SettingsAccess:      settingsAccess,
-			PersonalAvatar:      routes.accessModule.PersonalAvatar(),
-			AuthoringSessions:   routes.accessModule.AuthoringSessions(),
-			CurrentSession:      routes.accessModule.CurrentSessionID,
-			WorkspaceSettings:   workspaceSettings,
-			WorkspaceAccess:     settingsAccess,
-			SettingsEnvironment: policy.defaultEnvironment,
+			ProductUICommands: productUICommandContract(),
+			SettingsAccess:    settingsAccess,
+			PersonalAvatar:    routes.accessModule.PersonalAvatar(),
+			AuthoringSessions: routes.accessModule.AuthoringSessions(),
+			CurrentSession:    routes.accessModule.CurrentSessionID,
 		})
 		if err != nil {
 			return fmt.Errorf("build admin module: %w", err)

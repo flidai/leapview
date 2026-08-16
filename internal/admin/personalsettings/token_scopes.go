@@ -2,7 +2,6 @@ package personalsettings
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
@@ -26,43 +25,7 @@ func (s *Service) tokenScopes(ctx context.Context, principalID string) ([]TokenS
 			Description: "Access can apply across every current and future workspace. Prefer a single workspace.", Privileges: options,
 		})
 	}
-	if s.Workspaces == nil {
-		return scopes, nil
-	}
-	rows, err := s.Workspaces.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		return tokenWorkspaceLabel(rows[i].Title, string(rows[i].ID)) < tokenWorkspaceLabel(rows[j].Title, string(rows[j].ID))
-	})
-	for _, row := range rows {
-		workspaceID := string(row.ID)
-		privileges, privilegesErr := s.Repository.EffectivePrivileges(ctx, principalID, access.WorkspaceObject(workspaceID))
-		if privilegesErr != nil {
-			return nil, privilegesErr
-		}
-		options := tokenPrivilegeOptions(privileges)
-		if len(options) == 0 {
-			continue
-		}
-		description := strings.TrimSpace(row.Description)
-		if description == "" {
-			description = "Access limited to this workspace."
-		}
-		scopes = append(scopes, TokenScopeSignal{
-			Kind: "workspace", WorkspaceID: workspaceID,
-			Label: tokenWorkspaceLabel(row.Title, workspaceID), Description: description, Privileges: options,
-		})
-	}
 	return scopes, nil
-}
-
-func tokenWorkspaceLabel(title, id string) string {
-	if label := strings.TrimSpace(title); label != "" {
-		return label
-	}
-	return strings.TrimSpace(id)
 }
 
 func tokenPrivilegeOptions(effective []access.Privilege) []TokenPrivilegeSignal {

@@ -14,12 +14,10 @@ import (
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
-	workspaceview "github.com/flidai/leapview/internal/workspace"
 	g "maragu.dev/gomponents"
 )
 
 type AdminData struct {
-	Workspace             workspaceview.WorkspaceView
 	CSRFToken             string
 	AuthConfigured        bool
 	AccessConfigured      bool
@@ -373,9 +371,6 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 	case "general":
 		page.HeaderTitle = "General"
 		page.HeaderDetail = "Configure product identity and view instance details."
-	case "workspaces-admin":
-		page.HeaderTitle = "Workspaces"
-		page.HeaderDetail = "Review workspaces, ownership, and deployment state."
 	case "principal-detail":
 		page.HeaderTitle = "Principals"
 		page.HeaderDetail = "Manage principal identity, access status, and sessions."
@@ -1016,8 +1011,6 @@ func adminPageTitle(active string) string {
 		return "Security & sessions"
 	case "general":
 		return "General"
-	case "workspaces-admin":
-		return "Workspaces"
 	case "principals":
 		return "Principals"
 	case "profile":
@@ -1053,7 +1046,7 @@ func adminPageTitle(active string) string {
 
 func normalizeAdminSection(active string) string {
 	switch strings.TrimSpace(active) {
-	case "profile", "security", "api-tokens", "general", "workspaces-admin", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-detail", "queries", "audit", "system", "publications":
+	case "profile", "security", "api-tokens", "general", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-detail", "queries", "audit", "system", "publications":
 		return strings.TrimSpace(active)
 	default:
 		return "profile"

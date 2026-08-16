@@ -22,7 +22,6 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/internal/workload"
-	"github.com/flidai/leapview/internal/workspace"
 )
 
 type PublicationService interface {
@@ -59,11 +58,6 @@ type SettingsAccess interface {
 	access.AuditedPrincipalPreferences
 	adminsettings.ServicePrincipalSecretReader
 	personalsettings.IdentityManagementReader
-}
-
-type WorkspaceSettings interface {
-	workspace.ReadModel
-	workspace.AdministrationReadModel
 }
 
 type PersonalAvatar interface {
@@ -116,9 +110,6 @@ type Config struct {
 	PersonalAvatar        PersonalAvatar
 	AuthoringSessions     AuthoringSessions
 	CurrentSession        func(*http.Request) (string, bool)
-	WorkspaceSettings     WorkspaceSettings
-	WorkspaceAccess       access.WorkspaceAccessService
-	SettingsEnvironment   string
 }
 
 type Module struct {
@@ -166,16 +157,14 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		ReadModel: readModel, Layout: config.Layout,
 		EnsureClientID: config.EnsureClientID, Broker: config.Broker,
 		PublicationMutation: m.mutatePublication,
-		SettingsRepository:  config.SettingsAccess, WorkspaceSettings: config.WorkspaceSettings,
-		WorkspaceAccess: config.WorkspaceAccess, SettingsEnvironment: config.SettingsEnvironment,
-		CurrentCredential: config.CurrentCredential,
+		SettingsRepository:  config.SettingsAccess,
+		CurrentCredential:   config.CurrentCredential,
 	}
 	if config.SettingsAccess != nil {
 		personalService := &personalsettings.Service{
 			Repository: config.SettingsAccess, IdentityManagement: config.SettingsAccess,
 			Preferences: config.SettingsAccess,
 			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
-			Workspaces:           config.WorkspaceSettings,
 			LocalPasswordEnabled: config.LocalPasswordEnabled,
 		}
 		m.handler.PersonalSettings = &personalsettings.Handler{

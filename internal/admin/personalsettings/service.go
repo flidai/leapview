@@ -11,7 +11,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
-	"github.com/flidai/leapview/internal/workspace"
 )
 
 var (
@@ -56,17 +55,12 @@ type AuthoringReader interface {
 	RevokeSession(context.Context, string, string) error
 }
 
-type WorkspaceReader interface {
-	List(context.Context) ([]workspace.Summary, error)
-}
-
 type Service struct {
 	Repository           Repository
 	Preferences          PreferencesRepository
 	IdentityManagement   IdentityManagementReader
 	Avatar               AvatarReader
 	Authoring            AuthoringReader
-	Workspaces           WorkspaceReader
 	LocalPasswordEnabled bool
 	Now                  func() time.Time
 }

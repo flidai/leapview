@@ -7,66 +7,10 @@ package settings
 import (
 	"encoding/base64"
 	"encoding/json"
-	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
-	"github.com/flidai/leapview/internal/workspace"
 )
-
-// WorkspaceRegistrySignal is the read-only workspace registry used by the
-// settings overview.  An item includes ownership, administrators, runtime
-// deployment state, and links to the owning API resources.
-type WorkspaceRegistrySignal struct {
-	Items      []WorkspaceRegistryItemSignal `json:"items"`
-	Empty      string                        `json:"empty,omitempty"`
-	Loading    bool                          `json:"loading"`
-	Error      string                        `json:"error,omitempty"`
-	NextCursor string                        `json:"nextCursor,omitempty"`
-	HasMore    bool                          `json:"hasMore"`
-}
-
-type WorkspaceRegistryItemSignal struct {
-	ID                   string                   `json:"id"`
-	Title                string                   `json:"title"`
-	Description          string                   `json:"description,omitempty"`
-	Href                 string                   `json:"href"`
-	CreatedAt            string                   `json:"createdAt,omitempty"`
-	UpdatedAt            string                   `json:"updatedAt,omitempty"`
-	Owner                *WorkspaceSubjectSignal  `json:"owner,omitempty"`
-	Administrators       []WorkspaceSubjectSignal `json:"administrators"`
-	Environment          string                   `json:"environment,omitempty"`
-	ActiveServingStateID string                   `json:"activeServingStateId,omitempty"`
-	ServingStateStatus   string                   `json:"servingStateStatus,omitempty"`
-	ServingStateSince    string                   `json:"servingStateSince,omitempty"`
-	ProjectID            string                   `json:"projectId,omitempty"`
-	CurrentDeploymentID  string                   `json:"currentDeploymentId,omitempty"`
-	DeploymentStatus     string                   `json:"deploymentStatus,omitempty"`
-	DeploymentSince      string                   `json:"deploymentSince,omitempty"`
-	CurrentReleaseID     string                   `json:"currentReleaseId,omitempty"`
-	Links                WorkspaceLinksSignal     `json:"links"`
-}
-
-type WorkspaceSubjectSignal struct {
-	SubjectType string `json:"subjectType"`
-	SubjectID   string `json:"subjectId"`
-	Email       string `json:"email,omitempty"`
-	DisplayName string `json:"displayName"`
-	Role        string `json:"role,omitempty"`
-}
-
-type WorkspaceLinksSignal struct {
-	Self         string `json:"self"`
-	Workspace    string `json:"workspace"`
-	Project      string `json:"project,omitempty"`
-	Release      string `json:"release,omitempty"`
-	Deployment   string `json:"deployment,omitempty"`
-	Deployments  string `json:"deployments,omitempty"`
-	Connections  string `json:"connections,omitempty"`
-	Publications string `json:"publications,omitempty"`
-	Agent        string `json:"agent,omitempty"`
-}
 
 // ServiceAccountsSignal contains account rows and the selected account's
 // secret metadata. Raw secrets are only present in ServiceAccountSecretSignal
@@ -204,17 +148,6 @@ func AuditPageToken(createdAt, id string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(createdAt + "\x00" + id))
 }
 
-// WorkspaceSignalFromSummary provides a useful empty-state row when an
-// administration projection is unavailable.
-func WorkspaceSignalFromSummary(summary workspace.Summary, environment string) WorkspaceRegistryItemSignal {
-	id := string(summary.ID)
-	return WorkspaceRegistryItemSignal{ID: id, Title: summary.Title, Description: summary.Description,
-		Href: "/workspaces/" + url.PathEscape(id), CreatedAt: summary.CreatedAt, UpdatedAt: summary.UpdatedAt,
-		Environment: environment, ActiveServingStateID: string(summary.ActiveServingStateID),
-		Administrators: []WorkspaceSubjectSignal{},
-		Links:          WorkspaceLinksSignal{Self: "/api/v1/workspaces/" + url.PathEscape(id), Workspace: "/workspaces/" + url.PathEscape(id)}}
-}
-
 func ServiceAccountSignalFromPrincipal(principal access.Principal) ServiceAccountSignal {
 	return ServiceAccountSignal{ID: principal.ID, DisplayName: principal.DisplayName, Email: principal.Email,
 		Kind: string(principal.Kind), CreatedAt: principal.CreatedAt, UpdatedAt: principal.UpdatedAt, DisabledAt: principal.DisabledAt}
@@ -233,14 +166,4 @@ func AuditEventSignalFromDomain(event access.AuditEvent) AuditEventSignal {
 	return AuditEventSignal{ID: event.ID, WorkspaceID: event.WorkspaceID, PrincipalID: event.PrincipalID,
 		Action: event.Action, TargetType: event.TargetType, TargetID: event.TargetID, Privilege: string(event.Privilege),
 		Status: event.Status, RequestID: event.RequestID, CorrelationID: event.CorrelationID, Metadata: metadata, CreatedAt: event.CreatedAt}
-}
-
-func SortWorkspaceItems(items []WorkspaceRegistryItemSignal) {
-	sort.SliceStable(items, func(i, j int) bool {
-		left, right := strings.ToLower(items[i].Title), strings.ToLower(items[j].Title)
-		if left == right {
-			return items[i].ID < items[j].ID
-		}
-		return left < right
-	})
 }

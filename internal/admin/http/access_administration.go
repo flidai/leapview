@@ -106,21 +106,6 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 
 func (h Handler) loadAccessAdministration(ctx context.Context, actorID, selectedPrincipalID, selectedGroupID string) (adminsettings.AccessAdministrationSignal, error) {
 	state, err := adminsettings.LoadAccessAdministration(ctx, h.SettingsRepository, actorID, selectedPrincipalID, selectedGroupID)
-	if err != nil || h.WorkspaceSettings == nil {
-		return state, err
-	}
-	summaries, err := h.WorkspaceSettings.List(ctx)
-	if err != nil {
-		return state, err
-	}
-	state.Workspaces = make([]adminsettings.AccessWorkspaceSignal, 0, len(summaries))
-	for _, summary := range summaries {
-		name := strings.TrimSpace(summary.Title)
-		if name == "" {
-			name = string(summary.ID)
-		}
-		state.Workspaces = append(state.Workspaces, adminsettings.AccessWorkspaceSignal{ID: string(summary.ID), Name: name})
-	}
 	return state, nil
 }
 

@@ -15,7 +15,6 @@ import (
 	"github.com/flidai/leapview/internal/agent/api"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
-	"github.com/flidai/leapview/internal/workspace"
 )
 
 type Principal struct {
@@ -113,7 +112,6 @@ func (m ReadModel) GroupsListData(r *http.Request) (ui.AdminData, error) {
 
 func (m ReadModel) baseData(r *http.Request) ui.AdminData {
 	data := ui.AdminData{
-		Workspace:           workspace.WorkspaceView{ID: "platform", Title: "Platform"},
 		ListFilter:          strings.TrimSpace(r.URL.Query().Get("filter")),
 		ListQuery:           strings.TrimSpace(r.URL.Query().Get("q")),
 		CSRFToken:           m.csrfToken(r),
@@ -289,7 +287,25 @@ func groupMembersData(r *http.Request, repo AccessReader, groupID string) []ui.A
 	return members
 }
 
-func (m ReadModel) roleBindingsAndRoles(r *http.Request, repo AccessReader) ([]workspace.RoleBindingView, []workspace.RoleView, error) {
+type roleView struct {
+	Name       string
+	Privileges []string
+}
+
+type adminRoleBindingView struct {
+	ID          string
+	SubjectType string
+	SubjectID   string
+	PrincipalID string
+	GroupID     string
+	Email       string
+	DisplayName string
+	GroupName   string
+	Role        string
+	CreatedAt   string
+}
+
+func (m ReadModel) roleBindingsAndRoles(r *http.Request, repo AccessReader) ([]adminRoleBindingView, []roleView, error) {
 	if repo == nil {
 		return nil, defaultRoleViews(), nil
 	}
@@ -301,7 +317,7 @@ func (m ReadModel) roleBindingsAndRoles(r *http.Request, repo AccessReader) ([]w
 	if err != nil {
 		return nil, nil, err
 	}
-	bindings := make([]workspace.RoleBindingView, 0, len(bindingRows))
+	bindings := make([]adminRoleBindingView, 0, len(bindingRows))
 	for _, row := range bindingRows {
 		bindings = append(bindings, roleBindingView(row))
 	}
@@ -373,7 +389,7 @@ func (m ReadModel) csrfToken(r *http.Request) string {
 	return m.CSRFToken(r)
 }
 
-func buildAdminPrincipals(principals []ui.AdminPrincipal, bindings []workspace.RoleBindingView, groupsByID map[string]access.Group, membersByGroup map[string][]ui.AdminPrincipalRef) []ui.AdminPrincipal {
+func buildAdminPrincipals(principals []ui.AdminPrincipal, bindings []adminRoleBindingView, groupsByID map[string]access.Group, membersByGroup map[string][]ui.AdminPrincipalRef) []ui.AdminPrincipal {
 	byID := make(map[string]int, len(principals))
 	out := make([]ui.AdminPrincipal, 0, len(principals))
 	for _, principal := range principals {
@@ -418,7 +434,7 @@ func appendAdminGroupRefUnique(values []ui.AdminGroupRef, value ui.AdminGroupRef
 	return append(values, value)
 }
 
-func buildAdminGroups(groups []access.Group, bindings []workspace.RoleBindingView, membersByGroup map[string][]ui.AdminPrincipalRef) []ui.AdminGroup {
+func buildAdminGroups(groups []access.Group, bindings []adminRoleBindingView, membersByGroup map[string][]ui.AdminPrincipalRef) []ui.AdminGroup {
 	out := make([]ui.AdminGroup, 0, len(groups))
 	byID := make(map[string]*ui.AdminGroup, len(groups))
 	for _, group := range groups {
@@ -455,14 +471,14 @@ func buildAdminGroups(groups []access.Group, bindings []workspace.RoleBindingVie
 	return out
 }
 
-func defaultRoleViews() []workspace.RoleView {
+func defaultRoleViews() []roleView {
 	return roleViews(access.DefaultRoles())
 }
 
-func roleViews(rows []access.Role) []workspace.RoleView {
-	roles := make([]workspace.RoleView, 0, len(rows))
+func roleViews(rows []access.Role) []roleView {
+	roles := make([]roleView, 0, len(rows))
 	for _, row := range rows {
-		roles = append(roles, workspace.RoleView{Name: row.Name, Privileges: privilegeStrings(row.Privileges)})
+		roles = append(roles, roleView{Name: row.Name, Privileges: privilegeStrings(row.Privileges)})
 	}
 	return roles
 }
@@ -478,10 +494,9 @@ func privilegeStrings(values []access.Privilege) []string {
 	return out
 }
 
-func roleBindingView(row access.RoleBinding) workspace.RoleBindingView {
-	return workspace.RoleBindingView{
+func roleBindingView(row access.RoleBinding) adminRoleBindingView {
+	return adminRoleBindingView{
 		ID:          row.ID,
-		WorkspaceID: row.WorkspaceID,
 		SubjectType: string(row.SubjectType),
 		SubjectID:   row.SubjectID,
 		PrincipalID: row.PrincipalID,

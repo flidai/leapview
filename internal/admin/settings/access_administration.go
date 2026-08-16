@@ -14,7 +14,6 @@ import (
 type AccessAdministrationSignal struct {
 	Principals          []AccessPrincipalSignal      `json:"principals"`
 	Groups              []AccessGroupSignal          `json:"groups"`
-	Workspaces          []AccessWorkspaceSignal      `json:"workspaces,omitempty"`
 	Sessions            []AccessSessionSignal        `json:"sessions"`
 	RoleAssignments     []AccessRoleAssignmentSignal `json:"roleAssignments"`
 	Activity            []AccessActivitySignal       `json:"activity"`
@@ -25,11 +24,6 @@ type AccessAdministrationSignal struct {
 	Message             string                       `json:"message,omitempty"`
 	Error               string                       `json:"error,omitempty"`
 	Loading             bool                         `json:"loading"`
-}
-
-type AccessWorkspaceSignal struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
 }
 
 type AccessPrincipalCapabilitiesSignal struct {
