@@ -19,6 +19,8 @@ const routes: RouteExpectation[] = [
   { path: '/pipelines', root: 'lv-pipelines-page', shell: true },
   { path: '/connections', root: 'lv-connections-page', shell: true },
   { path: '/admin', root: 'lv-admin-page', shell: true },
+  { path: '/admin/profile', root: 'lv-admin-page', shell: true },
+  { path: '/admin/general', root: 'lv-admin-page', shell: true },
   { path: '/chats', root: 'lv-chat-page', shell: true },
   { path: '/login', root: 'lv-login-page', shell: false },
 ]
@@ -28,6 +30,7 @@ try {
   for (const route of routes) {
     await verifyRoute(route)
   }
+  await verifySidebarCollapseToggle()
   await verifyEChartsFirstNavigation()
   await verifyDashboardCommandDoesNotReopenUpdates()
   await verifyFilterShowcase()
@@ -36,6 +39,29 @@ try {
   console.log(`DatastarLit route QA passed for ${routes.length} routes at ${baseURL}`)
 } finally {
   await browser.close()
+}
+
+async function verifySidebarCollapseToggle(): Promise<void> {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  await page.addInitScript(() => localStorage.removeItem('leapview-sidebar-collapsed'))
+  const messages = collectBlockingConsoleMessages(page)
+
+  try {
+    const response = await page.goto(new URL('/data', baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!response?.ok()) throw new Error(`/data: status ${response?.status() ?? 'unknown'}`)
+    await page.waitForSelector('lv-app-shell')
+    const sidebar = page.locator('lv-app-shell').locator('lv-sidebar')
+    await expect(sidebar.locator('button.collapse-button')).toHaveAttribute('aria-label', 'Collapse navigation')
+    await sidebar.locator('button.collapse-button').click()
+    await expect(sidebar).toHaveAttribute('data-collapsed', '')
+    await expect(sidebar.locator('button.collapse-button')).toHaveAttribute('aria-label', 'Expand navigation')
+    await sidebar.locator('button.collapse-button').click()
+    await expect(sidebar).not.toHaveAttribute('data-collapsed', '')
+    await expect(sidebar.locator('button.collapse-button')).toHaveAttribute('aria-label', 'Collapse navigation')
+    assertNoBlockingConsoleMessages('sidebar collapse toggle', messages)
+  } finally {
+    await page.close()
+  }
 }
 
 async function verifyRoute(route: RouteExpectation): Promise<void> {

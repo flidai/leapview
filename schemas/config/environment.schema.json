@@ -1980,6 +1980,22 @@
       "x-lifecycle": "development",
       "x-scope": "dev server"
     },
+    "LEAPVIEW_DEV_MCP_ATTEMPTS": {
+      "default": "20",
+      "description": "Attempts made by the development MCP smoke check while the active project converges.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
+    "LEAPVIEW_DEV_MCP_INTERVAL": {
+      "default": "500ms",
+      "description": "Delay between development MCP smoke-check attempts.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
     "LEAPVIEW_DEV_PORT_COUNT": {
       "default": "100",
       "description": "Number of ports scanned by the managed development server.",
