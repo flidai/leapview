@@ -3,6 +3,7 @@ package authoring
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,26 @@ func TestLifecycleStatusesAndPointers(t *testing.T) {
 	validPublished.Published = published
 	if err := validPublished.Validate(); err != nil {
 		t.Fatalf("published lifecycle validation error = %v", err)
+	}
+}
+
+func TestLifecycleJSONRejectsLegacyWorkspaceScope(t *testing.T) {
+	draft := &Draft{ID: "draft-1", DashboardID: "sales", Revision: contractRevisionToken(), Provenance: contractProvenance()}
+	lifecycle, err := NewDashboardLifecycle(NewDashboardLifecycleInput{ProjectID: "project-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Draft: draft})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(lifecycle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "workspace") {
+		t.Fatalf("lifecycle serialization leaked legacy workspace scope: %s", encoded)
+	}
+	var decoded DashboardLifecycle
+	legacy := strings.Replace(string(encoded), "\"projectId\":\"project-1\"", "\"workspaceId\":\"legacy\",\"projectId\":\"project-1\"", 1)
+	if err := json.Unmarshal([]byte(legacy), &decoded); err == nil {
+		t.Fatal("lifecycle decoder accepted legacy workspaceId")
 	}
 }
 
@@ -212,6 +233,35 @@ func TestLifecycleRequiresProjectOwnerAndSemanticModelIdentity(t *testing.T) {
 				t.Fatal("lifecycle missing required identity unexpectedly validated")
 			}
 		})
+	}
+}
+
+func TestLifecycleRequiresCanonicalProjectIdentityAndKnownVisibility(t *testing.T) {
+	base := DashboardLifecycle{
+		ProjectID: "project-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales",
+		Title: "Sales", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Status: LifecycleStatusDraft,
+		Draft: &Draft{ID: "draft-1", DashboardID: "sales", Revision: contractRevisionToken(), Provenance: contractProvenance()},
+	}
+	for _, value := range []string{"", " project-1", "project-1 ", "project/1"} {
+		candidate := base
+		candidate.ProjectID = projectgraph.ResourceID(value)
+		if err := candidate.Validate(); err == nil {
+			t.Fatalf("project identity %q unexpectedly validated", value)
+		}
+	}
+	for _, visibility := range []Visibility{VisibilityPrivate, VisibilityRestricted, VisibilityOrganization} {
+		candidate := base
+		candidate.Visibility = visibility
+		if err := candidate.Validate(); err != nil {
+			t.Fatalf("visibility %q rejected: %v", visibility, err)
+		}
+	}
+	for _, visibility := range []Visibility{"shared", "workspace", ""} {
+		candidate := base
+		candidate.Visibility = visibility
+		if err := candidate.Validate(); err == nil {
+			t.Fatalf("visibility %q unexpectedly validated", visibility)
+		}
 	}
 }
 

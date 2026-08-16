@@ -1,11 +1,13 @@
 package authoring
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"regexp"
 	"strings"
@@ -525,6 +527,28 @@ type DashboardLifecycle struct {
 	Draft            *Draft               `json:"draft,omitempty"`
 	Published        *Published           `json:"published,omitempty"`
 	Revalidation     *RevalidationFailure `json:"revalidation,omitempty"`
+}
+
+// UnmarshalJSON keeps the persisted lifecycle contract closed. In
+// particular, legacy workspace-scoped payloads must not silently decode into
+// a project lifecycle while dropping their scope selector.
+func (d *DashboardLifecycle) UnmarshalJSON(data []byte) error {
+	type lifecycleAlias DashboardLifecycle
+	var decoded lifecycleAlias
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("dashboard lifecycle JSON contains trailing value")
+		}
+		return err
+	}
+	*d = DashboardLifecycle(decoded)
+	return nil
 }
 
 type NewDashboardLifecycleInput struct {
