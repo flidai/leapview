@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/export_dashboard_yaml.j
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `VIEW_ITEM` |
+| Required privilege | `RESOURCE_READ` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `export` |
@@ -23,26 +23,21 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/export_dashboard_yaml.j
 {
   "additionalProperties": false,
   "properties": {
-    "dashboard": {
+    "dashboardId": {
       "minLength": 1,
       "type": "string"
     },
     "sourceKind": {
       "enum": [
-        "workspace",
-        "project"
+        "project",
+        "instance"
       ],
-      "type": "string"
-    },
-    "workspace": {
-      "minLength": 1,
       "type": "string"
     }
   },
   "required": [
-    "dashboard",
-    "sourceKind",
-    "workspace"
+    "dashboardId",
+    "sourceKind"
   ],
   "type": "object"
 }

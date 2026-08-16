@@ -102,11 +102,11 @@
             "owner",
             "admin",
             "deployer",
+            "data_deployer",
             "contributor",
             "editor",
             "member",
-            "viewer",
-            "platform_admin"
+            "viewer"
           ]
         },
         "subject": {

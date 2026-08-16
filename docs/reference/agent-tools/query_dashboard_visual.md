@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_dashboard_visual.
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `QUERY_DATA` |
+| Required privilege | `RESOURCE_READ` |
 | Effect | `read` |
 | Operation | `queryDashboardVisualData` |
 | Tags | `dashboard`, `visual`, `query` |
@@ -24,6 +24,9 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_dashboard_visual.
   "additionalProperties": false,
   "properties": {
     "dashboard": {
+      "description": "Stable dashboard resource ID to query.",
+      "maxLength": 200,
+      "minLength": 1,
       "type": "string"
     },
     "limit": {
@@ -41,18 +44,12 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_dashboard_visual.
     },
     "visual": {
       "type": "string"
-    },
-    "workspace": {
-      "description": "Workspace ID to query.",
-      "minLength": 1,
-      "type": "string"
     }
   },
   "required": [
     "dashboard",
     "page",
-    "visual",
-    "workspace"
+    "visual"
   ],
   "type": "object"
 }

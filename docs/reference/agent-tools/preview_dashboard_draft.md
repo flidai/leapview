@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/preview_dashboard_draft
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `EDIT_ITEM` |
+| Required privilege | `RESOURCE_EDIT` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `preview` |
@@ -23,7 +23,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/preview_dashboard_draft
 {
   "additionalProperties": false,
   "properties": {
-    "dashboard": {
+    "dashboardId": {
       "minLength": 1,
       "type": "string"
     },
@@ -58,18 +58,13 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/preview_dashboard_draft
     "page": {
       "minLength": 1,
       "type": "string"
-    },
-    "workspace": {
-      "minLength": 1,
-      "type": "string"
     }
   },
   "required": [
-    "dashboard",
+    "dashboardId",
     "draftId",
     "expectedRevision",
-    "page",
-    "workspace"
+    "page"
   ],
   "type": "object"
 }

@@ -34,7 +34,7 @@ spec:
       WHERE order_id IS NOT NULL
 ```
 
-The generated [Model Table configuration](/docs/config/model-table) is the exact field reference. Real transformations can use several declared sources and should expose every field needed by downstream semantic models.
+The generated [Model configuration](/docs/config/model) is the exact field reference. Real transformations can use several declared sources and should expose every field needed by downstream semantic models.
 
 ## Grain and key
 

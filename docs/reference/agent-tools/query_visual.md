@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `QUERY_DATA` |
+| Required privilege | `RESOURCE_USE` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `analytics`, `visualization` |
@@ -365,11 +365,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
       },
       "type": "array"
     },
-    "model": {
-      "description": "Semantic model ID.",
-      "minLength": 1,
-      "type": "string"
-    },
     "presentation": {
       "additionalProperties": false,
       "properties": {
@@ -594,6 +589,11 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
       },
       "type": "array"
     },
+    "semanticModelId": {
+      "description": "Stable semantic_model resource ID returned by catalog_search/catalog_get.",
+      "minLength": 1,
+      "type": "string"
+    },
     "series": {
       "additionalProperties": false,
       "properties": {
@@ -672,17 +672,12 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
         "pivot"
       ],
       "type": "string"
-    },
-    "workspace": {
-      "minLength": 1,
-      "type": "string"
     }
   },
   "required": [
     "dataset",
-    "model",
-    "type",
-    "workspace"
+    "semanticModelId",
+    "type"
   ],
   "type": "object"
 }
@@ -719,38 +714,8 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
       ],
       "type": "object"
     },
-    "datasetRef": {
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "type": {
-          "enum": [
-            "workspace",
-            "dashboard",
-            "page",
-            "visual",
-            "filter",
-            "semantic_model",
-            "semantic_table",
-            "field",
-            "measure"
-          ],
-          "type": "string"
-        },
-        "workspaceId": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "type",
-        "workspaceId"
-      ],
-      "type": "object"
+    "datasetId": {
+      "type": "string"
     },
     "diagnostics": {
       "items": {
@@ -793,44 +758,14 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
           "dataType": {
             "type": "string"
           },
+          "fieldId": {
+            "type": "string"
+          },
           "format": {
             "type": "string"
           },
           "label": {
             "type": "string"
-          },
-          "ref": {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "type": {
-                "enum": [
-                  "workspace",
-                  "dashboard",
-                  "page",
-                  "visual",
-                  "filter",
-                  "semantic_model",
-                  "semantic_table",
-                  "field",
-                  "measure"
-                ],
-                "type": "string"
-              },
-              "workspaceId": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "type",
-              "workspaceId"
-            ],
-            "type": "object"
           },
           "role": {
             "enum": [
@@ -847,8 +782,8 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
           }
         },
         "required": [
+          "fieldId",
           "label",
-          "ref",
           "role"
         ],
         "type": "object"
@@ -859,6 +794,10 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
       "items": {
         "additionalProperties": false,
         "properties": {
+          "fieldId": {
+            "description": "Filtered semantic field.",
+            "type": "string"
+          },
           "operator": {
             "enum": [
               "equals",
@@ -880,71 +819,9 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
             },
             "type": "array"
           },
-          "ref": {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "type": {
-                "enum": [
-                  "workspace",
-                  "dashboard",
-                  "page",
-                  "visual",
-                  "filter",
-                  "semantic_model",
-                  "semantic_table",
-                  "field",
-                  "measure"
-                ],
-                "type": "string"
-              },
-              "workspaceId": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "type",
-              "workspaceId"
-            ],
-            "type": "object"
-          },
-          "resolvedFactRef": {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "type": {
-                "enum": [
-                  "workspace",
-                  "dashboard",
-                  "page",
-                  "visual",
-                  "filter",
-                  "semantic_model",
-                  "semantic_table",
-                  "field",
-                  "measure"
-                ],
-                "type": "string"
-              },
-              "workspaceId": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "type",
-              "workspaceId"
-            ],
-            "type": "object"
+          "resolvedFactId": {
+            "description": "Fact table selected to resolve a conformed dimension.",
+            "type": "string"
           },
           "values": {
             "description": "Comparison values. Omitted for unary operators.",
@@ -955,8 +832,8 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
           }
         },
         "required": [
-          "operator",
-          "ref"
+          "fieldId",
+          "operator"
         ],
         "type": "object"
       },
@@ -1006,44 +883,38 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
     "id": {
       "type": "string"
     },
-    "modelRef": {
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "type": {
-          "enum": [
-            "workspace",
-            "dashboard",
-            "page",
-            "visual",
-            "filter",
-            "semantic_model",
-            "semantic_table",
-            "field",
-            "measure"
-          ],
-          "type": "string"
-        },
-        "workspaceId": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "type",
-        "workspaceId"
-      ],
-      "type": "object"
-    },
     "ok": {
       "type": "boolean"
     },
     "queryId": {
       "type": "string"
+    },
+    "semanticModelRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "project",
+            "connection",
+            "source",
+            "model",
+            "semantic_model",
+            "pipeline",
+            "dashboard"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
     },
     "servingSnapshot": {
       "type": "string"
@@ -1086,14 +957,14 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
   },
   "required": [
     "completeness",
-    "datasetRef",
+    "datasetId",
     "diagnostics",
     "fields",
     "filters",
     "id",
-    "modelRef",
     "ok",
     "queryId",
+    "semanticModelRef",
     "servingSnapshot",
     "signal",
     "status",

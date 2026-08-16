@@ -4,7 +4,7 @@
     {
       "name": "add_dashboard_page",
       "description": "Add one dashboard page to a private draft using an exact expected revision.",
-      "privilege": "EDIT_ITEM",
+      "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
       "defaults": {},
@@ -55,17 +55,12 @@
           },
           "title": {
             "type": "string"
-          },
-          "workspace": {
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
           "dashboardId",
           "draftId",
-          "expectedRevision",
-          "workspace"
+          "expectedRevision"
         ],
         "type": "object"
       },
@@ -91,7 +86,7 @@
     {
       "name": "add_dashboard_visual",
       "description": "Add a governed dashboard visual to a private draft using an exact expected revision.",
-      "privilege": "EDIT_ITEM",
+      "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
       "defaults": {},
@@ -153,10 +148,6 @@
           },
           "visualId": {
             "type": "string"
-          },
-          "workspace": {
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
@@ -164,8 +155,7 @@
           "draftId",
           "expectedRevision",
           "pageId",
-          "type",
-          "workspace"
+          "type"
         ],
         "type": "object"
       },
@@ -191,7 +181,7 @@
     {
       "name": "assign_dashboard_field",
       "description": "Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision.",
-      "privilege": "EDIT_ITEM",
+      "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
       "defaults": {},
@@ -256,10 +246,6 @@
           "visualId": {
             "minLength": 1,
             "type": "string"
-          },
-          "workspace": {
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
@@ -269,8 +255,7 @@
           "fieldId",
           "pageId",
           "role",
-          "visualId",
-          "workspace"
+          "visualId"
         ],
         "type": "object"
       },
@@ -295,8 +280,8 @@
     },
     {
       "name": "catalog_get",
-      "description": "Get the compact definition and type-specific metadata for one exact catalog ref. A dashboard/page location is required when a visual or filter is shared.",
-      "privilege": "VIEW_ITEM",
+      "description": "Resolve one exact authorized project resource ID and return its compact metadata.",
+      "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
       "defaults": {},
@@ -313,54 +298,30 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
-          "location": {
-            "additionalProperties": false,
-            "properties": {
-              "dashboardId": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "pageId": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "dashboardId",
-              "pageId"
-            ],
-            "type": "object"
-          },
           "ref": {
             "additionalProperties": false,
             "properties": {
               "id": {
+                "maxLength": 256,
                 "minLength": 1,
                 "type": "string"
               },
-              "type": {
+              "kind": {
                 "enum": [
-                  "workspace",
-                  "dashboard",
-                  "page",
-                  "visual",
-                  "filter",
+                  "project",
+                  "connection",
+                  "source",
+                  "model",
                   "semantic_model",
-                  "semantic_table",
-                  "field",
-                  "measure"
+                  "pipeline",
+                  "dashboard"
                 ],
-                "type": "string"
-              },
-              "workspaceId": {
-                "minLength": 1,
                 "type": "string"
               }
             },
             "required": [
               "id",
-              "type",
-              "workspaceId"
+              "kind"
             ],
             "type": "object"
           }
@@ -374,1222 +335,86 @@
         "additionalProperties": false,
         "properties": {
           "details": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "allOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                ],
-                "properties": {
-                  "activeServingStateId": {
-                    "type": "string"
-                  },
-                  "type": {
-                    "enum": [
-                      "workspace"
-                    ],
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "activeServingStateId",
-                  "type"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "allOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                ],
-                "properties": {
-                  "filterCount": {
-                    "type": "integer"
-                  },
-                  "pageCount": {
-                    "type": "integer"
-                  },
-                  "semanticModelRef": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "id": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "type": {
-                        "enum": [
-                          "workspace",
-                          "dashboard",
-                          "page",
-                          "visual",
-                          "filter",
-                          "semantic_model",
-                          "semantic_table",
-                          "field",
-                          "measure"
-                        ],
-                        "type": "string"
-                      },
-                      "workspaceId": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "type",
-                      "workspaceId"
-                    ],
-                    "type": "object"
-                  },
-                  "type": {
-                    "enum": [
-                      "dashboard"
-                    ],
-                    "type": "string"
-                  },
-                  "visualCount": {
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "filterCount",
-                  "pageCount",
-                  "semanticModelRef",
-                  "type",
-                  "visualCount"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "allOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                ],
-                "properties": {
-                  "components": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "description": {
-                          "type": "string"
-                        },
-                        "filterId": {
-                          "type": "string"
-                        },
-                        "height": {
-                          "type": "number"
-                        },
-                        "id": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string"
-                        },
-                        "placement": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "col": {
-                              "type": "integer"
-                            },
-                            "colSpan": {
-                              "type": "integer"
-                            },
-                            "height": {
-                              "type": "number"
-                            },
-                            "row": {
-                              "type": "integer"
-                            },
-                            "rowSpan": {
-                              "type": "integer"
-                            },
-                            "width": {
-                              "type": "number"
-                            },
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "type": "object"
-                        },
-                        "ref": {
-                          "type": "string"
-                        },
-                        "title": {
-                          "type": "string"
-                        },
-                        "visualId": {
-                          "type": "string"
-                        },
-                        "width": {
-                          "type": "number"
-                        },
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind"
-                      ],
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "type": {
-                    "enum": [
-                      "page"
-                    ],
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "components",
-                  "type"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "allOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                ],
-                "properties": {
-                  "columns": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "format": {
-                          "type": "string"
-                        },
-                        "key": {
-                          "type": "string"
-                        },
-                        "label": {
-                          "type": "string"
-                        },
-                        "role": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "key",
-                        "label"
-                      ],
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "placement": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "col": {
-                        "type": "integer"
-                      },
-                      "colSpan": {
-                        "type": "integer"
-                      },
-                      "height": {
-                        "type": "number"
-                      },
-                      "row": {
-                        "type": "integer"
-                      },
-                      "rowSpan": {
-                        "type": "integer"
-                      },
-                      "width": {
-                        "type": "number"
-                      },
-                      "x": {
-                        "type": "number"
-                      },
-                      "y": {
-                        "type": "number"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "query": {
-                    "additionalProperties": {},
-                    "type": "object"
-                  },
-                  "renderer": {
-                    "type": "string"
-                  },
-                  "shape": {
-                    "type": "string"
-                  },
-                  "type": {
-                    "enum": [
-                      "visual"
-                    ],
-                    "type": "string"
-                  },
-                  "visualType": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "columns",
-                  "placement",
-                  "query",
-                  "renderer",
-                  "shape",
-                  "type",
-                  "visualType"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "allOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                ],
-                "properties": {
-                  "configuration": {
-                    "additionalProperties": {},
-                    "type": "object"
-                  },
-                  "field": {
-                    "type": "string"
-                  },
-                  "placement": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "col": {
-                        "type": "integer"
-                      },
-                      "colSpan": {
-                        "type": "integer"
-                      },
-                      "height": {
-                        "type": "number"
-                      },
-                      "row": {
-                        "type": "integer"
-                      },
-                      "rowSpan": {
-                        "type": "integer"
-                      },
-                      "width": {
-                        "type": "number"
-                      },
-                      "x": {
-                        "type": "number"
-                      },
-                      "y": {
-                        "type": "number"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "type": {
-                    "enum": [
-                      "filter"
-                    ],
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "configuration",
-                  "field",
-                  "placement",
-                  "type"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "allOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                ],
-                "properties": {
-                  "atomicMeasureCount": {
-                    "type": "integer"
-                  },
-                  "conformedDimensionCount": {
-                    "type": "integer"
-                  },
-                  "dashboardCount": {
-                    "type": "integer"
-                  },
-                  "dashboardUsage": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "type": {
-                          "enum": [
-                            "workspace",
-                            "dashboard",
-                            "page",
-                            "visual",
-                            "filter",
-                            "semantic_model",
-                            "semantic_table",
-                            "field",
-                            "measure"
-                          ],
-                          "type": "string"
-                        },
-                        "workspaceId": {
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "type",
-                        "workspaceId"
-                      ],
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "factCount": {
-                    "type": "integer"
-                  },
-                  "fieldCount": {
-                    "type": "integer"
-                  },
-                  "metricCount": {
-                    "type": "integer"
-                  },
-                  "relationshipCount": {
-                    "type": "integer"
-                  },
-                  "relationships": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "active": {
-                          "type": "boolean"
-                        },
-                        "cardinality": {
-                          "type": "string"
-                        },
-                        "description": {
-                          "type": "string"
-                        },
-                        "fromFieldRef": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "id": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "type": {
-                              "enum": [
-                                "workspace",
-                                "dashboard",
-                                "page",
-                                "visual",
-                                "filter",
-                                "semantic_model",
-                                "semantic_table",
-                                "field",
-                                "measure"
-                              ],
-                              "type": "string"
-                            },
-                            "workspaceId": {
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "type",
-                            "workspaceId"
-                          ],
-                          "type": "object"
-                        },
-                        "id": {
-                          "type": "string"
-                        },
-                        "toFieldRef": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "id": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "type": {
-                              "enum": [
-                                "workspace",
-                                "dashboard",
-                                "page",
-                                "visual",
-                                "filter",
-                                "semantic_model",
-                                "semantic_table",
-                                "field",
-                                "measure"
-                              ],
-                              "type": "string"
-                            },
-                            "workspaceId": {
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "type",
-                            "workspaceId"
-                          ],
-                          "type": "object"
-                        }
-                      },
-                      "required": [
-                        "active",
-                        "cardinality",
-                        "description",
-                        "fromFieldRef",
-                        "id",
-                        "toFieldRef"
-                      ],
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "semanticTableCount": {
-                    "type": "integer"
-                  },
-                  "type": {
-                    "enum": [
-                      "semantic_model"
-                    ],
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "atomicMeasureCount",
-                  "conformedDimensionCount",
-                  "dashboardCount",
-                  "dashboardUsage",
-                  "factCount",
-                  "fieldCount",
-                  "metricCount",
-                  "relationshipCount",
-                  "relationships",
-                  "semanticTableCount",
-                  "type"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "allOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                ],
-                "properties": {
-                  "fieldCount": {
-                    "type": "integer"
-                  },
-                  "grain": {
-                    "type": "string"
-                  },
-                  "keys": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "measureCount": {
-                    "type": "integer"
-                  },
-                  "primaryKey": {
-                    "type": "string"
-                  },
-                  "roles": {
-                    "items": {
-                      "enum": [
-                        "fact",
-                        "dimension"
-                      ],
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "source": {
-                    "type": "string"
-                  },
-                  "sources": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "type": {
-                    "enum": [
-                      "semantic_table"
-                    ],
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "fieldCount",
-                  "grain",
-                  "keys",
-                  "measureCount",
-                  "primaryKey",
-                  "roles",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "project",
+                  "connection",
                   "source",
-                  "sources",
-                  "type"
+                  "model",
+                  "semantic_model",
+                  "pipeline",
+                  "dashboard"
                 ],
-                "type": "object"
+                "type": "string"
               },
-              {
-                "additionalProperties": false,
-                "allOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                ],
-                "properties": {
-                  "bindings": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "fieldRef": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "id": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "type": {
-                              "enum": [
-                                "workspace",
-                                "dashboard",
-                                "page",
-                                "visual",
-                                "filter",
-                                "semantic_model",
-                                "semantic_table",
-                                "field",
-                                "measure"
-                              ],
-                              "type": "string"
-                            },
-                            "workspaceId": {
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "type",
-                            "workspaceId"
-                          ],
-                          "type": "object"
-                        },
-                        "relationshipPath": {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        "semanticTableRef": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "id": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "type": {
-                              "enum": [
-                                "workspace",
-                                "dashboard",
-                                "page",
-                                "visual",
-                                "filter",
-                                "semantic_model",
-                                "semantic_table",
-                                "field",
-                                "measure"
-                              ],
-                              "type": "string"
-                            },
-                            "workspaceId": {
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "type",
-                            "workspaceId"
-                          ],
-                          "type": "object"
-                        }
-                      },
-                      "required": [
-                        "fieldRef",
-                        "relationshipPath",
-                        "semanticTableRef"
-                      ],
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "dataType": {
-                    "type": "string"
-                  },
-                  "expression": {
-                    "type": "string"
-                  },
-                  "grain": {
-                    "type": "string"
-                  },
-                  "kind": {
-                    "type": "string"
-                  },
-                  "label": {
-                    "type": "string"
-                  },
-                  "nullable": {
-                    "type": "boolean"
-                  },
-                  "primaryKey": {
-                    "type": "boolean"
-                  },
-                  "sourceField": {
-                    "type": "string"
-                  },
-                  "table": {
-                    "type": "string"
-                  },
-                  "timeGrains": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "type": {
-                    "enum": [
-                      "field"
-                    ],
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "dataType",
-                  "kind",
-                  "label",
-                  "type"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "allOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                ],
-                "properties": {
-                  "aggregation": {
-                    "type": "string"
-                  },
-                  "dependencyRefs": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "type": {
-                          "enum": [
-                            "workspace",
-                            "dashboard",
-                            "page",
-                            "visual",
-                            "filter",
-                            "semantic_model",
-                            "semantic_table",
-                            "field",
-                            "measure"
-                          ],
-                          "type": "string"
-                        },
-                        "workspaceId": {
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "type",
-                        "workspaceId"
-                      ],
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "empty": {
-                    "type": "string"
-                  },
-                  "expression": {
-                    "type": "string"
-                  },
-                  "factRef": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "id": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "type": {
-                        "enum": [
-                          "workspace",
-                          "dashboard",
-                          "page",
-                          "visual",
-                          "filter",
-                          "semantic_model",
-                          "semantic_table",
-                          "field",
-                          "measure"
-                        ],
-                        "type": "string"
-                      },
-                      "workspaceId": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "type",
-                      "workspaceId"
-                    ],
-                    "type": "object"
-                  },
-                  "filters": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "fieldRef": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "id": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "type": {
-                              "enum": [
-                                "workspace",
-                                "dashboard",
-                                "page",
-                                "visual",
-                                "filter",
-                                "semantic_model",
-                                "semantic_table",
-                                "field",
-                                "measure"
-                              ],
-                              "type": "string"
-                            },
-                            "workspaceId": {
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "type",
-                            "workspaceId"
-                          ],
-                          "type": "object"
-                        },
-                        "operator": {
-                          "type": "string"
-                        },
-                        "values": {
-                          "items": {},
-                          "type": "array"
-                        }
-                      },
-                      "required": [
-                        "fieldRef",
-                        "operator",
-                        "values"
-                      ],
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "format": {
-                    "type": "string"
-                  },
-                  "hidden": {
-                    "type": "boolean"
-                  },
-                  "input": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "expression": {
-                        "type": "string"
-                      },
-                      "fieldRef": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "id": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "type": {
-                            "enum": [
-                              "workspace",
-                              "dashboard",
-                              "page",
-                              "visual",
-                              "filter",
-                              "semantic_model",
-                              "semantic_table",
-                              "field",
-                              "measure"
-                            ],
-                            "type": "string"
-                          },
-                          "workspaceId": {
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "type",
-                          "workspaceId"
-                        ],
-                        "type": "object"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "kind": {
-                    "type": "string"
-                  },
-                  "label": {
-                    "type": "string"
-                  },
-                  "table": {
-                    "type": "string"
-                  },
-                  "type": {
-                    "enum": [
-                      "measure"
-                    ],
-                    "type": "string"
-                  },
-                  "unit": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "dependencyRefs",
-                  "format",
-                  "hidden",
-                  "kind",
-                  "label",
-                  "type",
-                  "unit"
-                ],
+              "metadata": {
+                "additionalProperties": {},
                 "type": "object"
               }
-            ]
+            },
+            "required": [
+              "kind",
+              "metadata"
+            ],
+            "type": "object"
           },
           "item": {
             "additionalProperties": false,
             "properties": {
-              "capabilities": {
-                "items": {
-                  "enum": [
-                    "catalog_get",
-                    "catalog_list",
-                    "query_semantic_model",
-                    "query_dashboard_visual",
-                    "query_visual"
-                  ],
-                  "type": "string"
-                },
-                "type": "array"
-              },
               "description": {
                 "type": "string"
               },
-              "hierarchy": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "name": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "type": {
-                          "enum": [
-                            "workspace",
-                            "dashboard",
-                            "page",
-                            "visual",
-                            "filter",
-                            "semantic_model",
-                            "semantic_table",
-                            "field",
-                            "measure"
-                          ],
-                          "type": "string"
-                        },
-                        "workspaceId": {
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "type",
-                        "workspaceId"
-                      ],
-                      "type": "object"
-                    }
-                  },
-                  "required": [
-                    "name",
-                    "ref"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              "href": {
+              "displayName": {
                 "type": "string"
               },
-              "locations": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "dashboardId": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "dashboardName": {
-                      "type": "string"
-                    },
-                    "href": {
-                      "type": "string"
-                    },
-                    "pageId": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "pageName": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "dashboardId",
-                    "pageId"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
+              "domain": {
+                "type": "string"
               },
               "name": {
+                "type": "string"
+              },
+              "owner": {
                 "type": "string"
               },
               "ref": {
                 "additionalProperties": false,
                 "properties": {
                   "id": {
+                    "maxLength": 256,
                     "minLength": 1,
                     "type": "string"
                   },
-                  "type": {
+                  "kind": {
                     "enum": [
-                      "workspace",
-                      "dashboard",
-                      "page",
-                      "visual",
-                      "filter",
+                      "project",
+                      "connection",
+                      "source",
+                      "model",
                       "semantic_model",
-                      "semantic_table",
-                      "field",
-                      "measure"
+                      "pipeline",
+                      "dashboard"
                     ],
-                    "type": "string"
-                  },
-                  "workspaceId": {
-                    "minLength": 1,
                     "type": "string"
                   }
                 },
                 "required": [
                   "id",
-                  "type",
-                  "workspaceId"
+                  "kind"
                 ],
                 "type": "object"
               },
-              "workspace": {
-                "additionalProperties": false,
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  },
-                  "ref": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "id": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "type": {
-                        "enum": [
-                          "workspace",
-                          "dashboard",
-                          "page",
-                          "visual",
-                          "filter",
-                          "semantic_model",
-                          "semantic_table",
-                          "field",
-                          "measure"
-                        ],
-                        "type": "string"
-                      },
-                      "workspaceId": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "type",
-                      "workspaceId"
-                    ],
-                    "type": "object"
-                  }
+              "tags": {
+                "items": {
+                  "type": "string"
                 },
-                "required": [
-                  "name",
-                  "ref"
-                ],
-                "type": "object"
+                "type": "array"
               }
             },
             "required": [
-              "capabilities",
-              "hierarchy",
               "name",
-              "ref",
-              "workspace"
+              "ref"
             ],
             "type": "object"
           }
@@ -1603,8 +428,8 @@
     },
     {
       "name": "catalog_list",
-      "description": "Browse one deterministic level of the authorized LeapView catalog hierarchy. Omit parent to list workspaces, then pass returned refs to continue browsing.",
-      "privilege": "VIEW_ITEM",
+      "description": "Browse authorized project resources. Returned refs are exact stable IDs for subsequent calls.",
+      "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
       "defaults": {
@@ -1623,24 +448,25 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
-          "childTypes": {
+          "childKinds": {
             "items": {
               "enum": [
-                "workspace",
-                "dashboard",
-                "page",
-                "visual",
-                "filter",
+                "project",
+                "connection",
+                "source",
+                "model",
                 "semantic_model",
-                "semantic_table",
-                "field",
-                "measure"
+                "pipeline",
+                "dashboard"
               ],
               "type": "string"
             },
             "type": "array"
           },
           "cursor": {
+            "type": "string"
+          },
+          "domain": {
             "type": "string"
           },
           "limit": {
@@ -1652,32 +478,26 @@
             "additionalProperties": false,
             "properties": {
               "id": {
+                "maxLength": 256,
                 "minLength": 1,
                 "type": "string"
               },
-              "type": {
+              "kind": {
                 "enum": [
-                  "workspace",
-                  "dashboard",
-                  "page",
-                  "visual",
-                  "filter",
+                  "project",
+                  "connection",
+                  "source",
+                  "model",
                   "semantic_model",
-                  "semantic_table",
-                  "field",
-                  "measure"
+                  "pipeline",
+                  "dashboard"
                 ],
-                "type": "string"
-              },
-              "workspaceId": {
-                "minLength": 1,
                 "type": "string"
               }
             },
             "required": [
               "id",
-              "type",
-              "workspaceId"
+              "kind"
             ],
             "type": "object"
           }
@@ -1698,193 +518,58 @@
             "items": {
               "additionalProperties": false,
               "properties": {
-                "capabilities": {
-                  "items": {
-                    "enum": [
-                      "catalog_get",
-                      "catalog_list",
-                      "query_semantic_model",
-                      "query_dashboard_visual",
-                      "query_visual"
-                    ],
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
                 "description": {
                   "type": "string"
                 },
-                "hierarchy": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "type": "string"
-                      },
-                      "ref": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "id": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "type": {
-                            "enum": [
-                              "workspace",
-                              "dashboard",
-                              "page",
-                              "visual",
-                              "filter",
-                              "semantic_model",
-                              "semantic_table",
-                              "field",
-                              "measure"
-                            ],
-                            "type": "string"
-                          },
-                          "workspaceId": {
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "type",
-                          "workspaceId"
-                        ],
-                        "type": "object"
-                      }
-                    },
-                    "required": [
-                      "name",
-                      "ref"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
-                },
-                "href": {
+                "displayName": {
                   "type": "string"
                 },
-                "locations": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "dashboardId": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "dashboardName": {
-                        "type": "string"
-                      },
-                      "href": {
-                        "type": "string"
-                      },
-                      "pageId": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "pageName": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "dashboardId",
-                      "pageId"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
+                "domain": {
+                  "type": "string"
                 },
                 "name": {
+                  "type": "string"
+                },
+                "owner": {
                   "type": "string"
                 },
                 "ref": {
                   "additionalProperties": false,
                   "properties": {
                     "id": {
+                      "maxLength": 256,
                       "minLength": 1,
                       "type": "string"
                     },
-                    "type": {
+                    "kind": {
                       "enum": [
-                        "workspace",
-                        "dashboard",
-                        "page",
-                        "visual",
-                        "filter",
+                        "project",
+                        "connection",
+                        "source",
+                        "model",
                         "semantic_model",
-                        "semantic_table",
-                        "field",
-                        "measure"
+                        "pipeline",
+                        "dashboard"
                       ],
-                      "type": "string"
-                    },
-                    "workspaceId": {
-                      "minLength": 1,
                       "type": "string"
                     }
                   },
                   "required": [
                     "id",
-                    "type",
-                    "workspaceId"
+                    "kind"
                   ],
                   "type": "object"
                 },
-                "workspace": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "name": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "type": {
-                          "enum": [
-                            "workspace",
-                            "dashboard",
-                            "page",
-                            "visual",
-                            "filter",
-                            "semantic_model",
-                            "semantic_table",
-                            "field",
-                            "measure"
-                          ],
-                          "type": "string"
-                        },
-                        "workspaceId": {
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "type",
-                        "workspaceId"
-                      ],
-                      "type": "object"
-                    }
+                "tags": {
+                  "items": {
+                    "type": "string"
                   },
-                  "required": [
-                    "name",
-                    "ref"
-                  ],
-                  "type": "object"
+                  "type": "array"
                 }
               },
               "required": [
-                "capabilities",
-                "hierarchy",
                 "name",
-                "ref",
-                "workspace"
+                "ref"
               ],
               "type": "object"
             },
@@ -1904,8 +589,8 @@
     },
     {
       "name": "catalog_search",
-      "description": "Search the complete authorized LeapView BI catalog across workspaces. Use this when you know words from a resource name or description but not its exact location.",
-      "privilege": "VIEW_ITEM",
+      "description": "Search authorized project resources by stable ID, name, description, or domain metadata.",
+      "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
       "defaults": {
@@ -1924,20 +609,26 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
-          "context": {
-            "additionalProperties": false,
-            "properties": {
-              "dashboardId": {
-                "type": "string"
-              },
-              "pageId": {
-                "type": "string"
-              }
-            },
-            "type": "object"
-          },
           "cursor": {
             "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "kinds": {
+            "items": {
+              "enum": [
+                "project",
+                "connection",
+                "source",
+                "model",
+                "semantic_model",
+                "pipeline",
+                "dashboard"
+              ],
+              "type": "string"
+            },
+            "type": "array"
           },
           "limit": {
             "maximum": 25,
@@ -1947,29 +638,6 @@
           "query": {
             "minLength": 1,
             "type": "string"
-          },
-          "types": {
-            "items": {
-              "enum": [
-                "workspace",
-                "dashboard",
-                "page",
-                "visual",
-                "filter",
-                "semantic_model",
-                "semantic_table",
-                "field",
-                "measure"
-              ],
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "workspaceIds": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
           }
         },
         "required": [
@@ -1991,193 +659,58 @@
             "items": {
               "additionalProperties": false,
               "properties": {
-                "capabilities": {
-                  "items": {
-                    "enum": [
-                      "catalog_get",
-                      "catalog_list",
-                      "query_semantic_model",
-                      "query_dashboard_visual",
-                      "query_visual"
-                    ],
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
                 "description": {
                   "type": "string"
                 },
-                "hierarchy": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "type": "string"
-                      },
-                      "ref": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "id": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "type": {
-                            "enum": [
-                              "workspace",
-                              "dashboard",
-                              "page",
-                              "visual",
-                              "filter",
-                              "semantic_model",
-                              "semantic_table",
-                              "field",
-                              "measure"
-                            ],
-                            "type": "string"
-                          },
-                          "workspaceId": {
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "type",
-                          "workspaceId"
-                        ],
-                        "type": "object"
-                      }
-                    },
-                    "required": [
-                      "name",
-                      "ref"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
-                },
-                "href": {
+                "displayName": {
                   "type": "string"
                 },
-                "locations": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "dashboardId": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "dashboardName": {
-                        "type": "string"
-                      },
-                      "href": {
-                        "type": "string"
-                      },
-                      "pageId": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "pageName": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "dashboardId",
-                      "pageId"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
+                "domain": {
+                  "type": "string"
                 },
                 "name": {
+                  "type": "string"
+                },
+                "owner": {
                   "type": "string"
                 },
                 "ref": {
                   "additionalProperties": false,
                   "properties": {
                     "id": {
+                      "maxLength": 256,
                       "minLength": 1,
                       "type": "string"
                     },
-                    "type": {
+                    "kind": {
                       "enum": [
-                        "workspace",
-                        "dashboard",
-                        "page",
-                        "visual",
-                        "filter",
+                        "project",
+                        "connection",
+                        "source",
+                        "model",
                         "semantic_model",
-                        "semantic_table",
-                        "field",
-                        "measure"
+                        "pipeline",
+                        "dashboard"
                       ],
-                      "type": "string"
-                    },
-                    "workspaceId": {
-                      "minLength": 1,
                       "type": "string"
                     }
                   },
                   "required": [
                     "id",
-                    "type",
-                    "workspaceId"
+                    "kind"
                   ],
                   "type": "object"
                 },
-                "workspace": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "name": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "type": {
-                          "enum": [
-                            "workspace",
-                            "dashboard",
-                            "page",
-                            "visual",
-                            "filter",
-                            "semantic_model",
-                            "semantic_table",
-                            "field",
-                            "measure"
-                          ],
-                          "type": "string"
-                        },
-                        "workspaceId": {
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "type",
-                        "workspaceId"
-                      ],
-                      "type": "object"
-                    }
+                "tags": {
+                  "items": {
+                    "type": "string"
                   },
-                  "required": [
-                    "name",
-                    "ref"
-                  ],
-                  "type": "object"
+                  "type": "array"
                 }
               },
               "required": [
-                "capabilities",
-                "hierarchy",
                 "name",
-                "ref",
-                "workspace"
+                "ref"
               ],
               "type": "object"
             },
@@ -2198,7 +731,7 @@
     {
       "name": "create_dashboard_draft",
       "description": "Create a private dashboard draft owned by the authenticated principal. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.",
-      "privilege": "EDIT_ITEM",
+      "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
       "defaults": {},
@@ -2220,7 +753,7 @@
             "minLength": 1,
             "type": "string"
           },
-          "semanticModel": {
+          "semanticModelId": {
             "minLength": 1,
             "type": "string"
           },
@@ -2231,16 +764,11 @@
           "title": {
             "minLength": 1,
             "type": "string"
-          },
-          "workspace": {
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
-          "semanticModel",
-          "title",
-          "workspace"
+          "semanticModelId",
+          "title"
         ],
         "type": "object"
       },
@@ -2470,7 +998,7 @@
     {
       "name": "execute_dashboard_command",
       "description": "Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision. Actor and agent provenance are server-bound.",
-      "privilege": "MANAGE_ITEM",
+      "privilege": "RESOURCE_MANAGE",
       "effect": "destructive",
       "operationId": "manual",
       "defaults": {},
@@ -2525,17 +1053,12 @@
           },
           "publish": {
             "type": "object"
-          },
-          "workspace": {
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
           "dashboardId",
           "draftId",
-          "expectedRevision",
-          "workspace"
+          "expectedRevision"
         ],
         "type": "object"
       },
@@ -2561,7 +1084,7 @@
     {
       "name": "export_dashboard_yaml",
       "description": "Export an authorized authored dashboard source as canonical project YAML.",
-      "privilege": "VIEW_ITEM",
+      "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
       "defaults": {},
@@ -2579,26 +1102,21 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
-          "dashboard": {
+          "dashboardId": {
             "minLength": 1,
             "type": "string"
           },
           "sourceKind": {
             "enum": [
-              "workspace",
-              "project"
+              "project",
+              "instance"
             ],
-            "type": "string"
-          },
-          "workspace": {
-            "minLength": 1,
             "type": "string"
           }
         },
         "required": [
-          "dashboard",
-          "sourceKind",
-          "workspace"
+          "dashboardId",
+          "sourceKind"
         ],
         "type": "object"
       },
@@ -2617,8 +1135,8 @@
     },
     {
       "name": "fork_dashboard",
-      "description": "Fork an authorized workspace or retained project dashboard source into a private draft. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.",
-      "privilege": "EDIT_ITEM",
+      "description": "Fork an authorized project or instance dashboard source into a private draft. Agent retries that reuse the same invocation identity and payload replay the original draft.",
+      "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
       "defaults": {},
@@ -2640,23 +1158,15 @@
             "minLength": 1,
             "type": "string"
           },
-          "sourceDashboard": {
+          "sourceDashboardId": {
             "minLength": 1,
             "type": "string"
           },
           "sourceKind": {
             "enum": [
-              "workspace",
-              "project"
+              "project",
+              "instance"
             ],
-            "type": "string"
-          },
-          "sourceWorkspace": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "targetWorkspace": {
-            "minLength": 1,
             "type": "string"
           },
           "title": {
@@ -2665,9 +1175,8 @@
           }
         },
         "required": [
-          "sourceDashboard",
-          "sourceKind",
-          "sourceWorkspace"
+          "sourceDashboardId",
+          "sourceKind"
         ],
         "type": "object"
       },
@@ -2693,7 +1202,7 @@
     {
       "name": "get_dashboard",
       "description": "Get one authorized dashboard's governed metadata.",
-      "privilege": "VIEW_ITEM",
+      "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
       "defaults": {},
@@ -2711,18 +1220,13 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
-          "dashboard": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "workspace": {
+          "dashboardId": {
             "minLength": 1,
             "type": "string"
           }
         },
         "required": [
-          "dashboard",
-          "workspace"
+          "dashboardId"
         ],
         "type": "object"
       },
@@ -2743,7 +1247,7 @@
     {
       "name": "get_dashboard_draft",
       "description": "Read the exact current private draft and retained revision for one dashboard.",
-      "privilege": "EDIT_ITEM",
+      "privilege": "RESOURCE_EDIT",
       "effect": "read",
       "operationId": "manual",
       "defaults": {},
@@ -2761,18 +1265,13 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
-          "dashboard": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "workspace": {
+          "dashboardId": {
             "minLength": 1,
             "type": "string"
           }
         },
         "required": [
-          "dashboard",
-          "workspace"
+          "dashboardId"
         ],
         "type": "object"
       },
@@ -2797,8 +1296,8 @@
     },
     {
       "name": "list_dashboards",
-      "description": "List the authorized dashboard catalog for one workspace.",
-      "privilege": "VIEW_ITEM",
+      "description": "List the authorized project dashboard catalog.",
+      "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "manual",
       "defaults": {},
@@ -2814,16 +1313,6 @@
         "openWorldHint": false
       },
       "inputSchema": {
-        "additionalProperties": false,
-        "properties": {
-          "workspace": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "workspace"
-        ],
         "type": "object"
       },
       "outputSchema": {
@@ -2841,16 +1330,12 @@
           },
           "projectCount": {
             "type": "integer"
-          },
-          "workspaceCount": {
-            "type": "integer"
           }
         },
         "required": [
           "count",
           "items",
-          "projectCount",
-          "workspaceCount"
+          "projectCount"
         ],
         "type": "object"
       }
@@ -2858,7 +1343,7 @@
     {
       "name": "preview_dashboard_draft",
       "description": "Preview an exact private dashboard draft revision and page against the active governed runtime.",
-      "privilege": "EDIT_ITEM",
+      "privilege": "RESOURCE_EDIT",
       "effect": "read",
       "operationId": "manual",
       "defaults": {},
@@ -2876,7 +1361,7 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
-          "dashboard": {
+          "dashboardId": {
             "minLength": 1,
             "type": "string"
           },
@@ -2911,18 +1396,13 @@
           "page": {
             "minLength": 1,
             "type": "string"
-          },
-          "workspace": {
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
-          "dashboard",
+          "dashboardId",
           "draftId",
           "expectedRevision",
-          "page",
-          "workspace"
+          "page"
         ],
         "type": "object"
       },
@@ -2958,7 +1438,7 @@
     {
       "name": "query_dashboard_visual",
       "description": "Query an existing dashboard visual with governed filters and compact analytical output",
-      "privilege": "QUERY_DATA",
+      "privilege": "RESOURCE_READ",
       "effect": "read",
       "operationId": "queryDashboardVisualData",
       "defaults": {
@@ -2979,6 +1459,9 @@
         "additionalProperties": false,
         "properties": {
           "dashboard": {
+            "description": "Stable dashboard resource ID to query.",
+            "maxLength": 200,
+            "minLength": 1,
             "type": "string"
           },
           "limit": {
@@ -2996,18 +1479,12 @@
           },
           "visual": {
             "type": "string"
-          },
-          "workspace": {
-            "description": "Workspace ID to query.",
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
           "dashboard",
           "page",
-          "visual",
-          "workspace"
+          "visual"
         ],
         "type": "object"
       },
@@ -3320,7 +1797,7 @@
     {
       "name": "query_semantic_model",
       "description": "Query governed semantic data with typed columns, filters, pagination, and provenance",
-      "privilege": "QUERY_DATA",
+      "privilege": "RESOURCE_USE",
       "effect": "read",
       "operationId": "querySemanticModel",
       "defaults": {
@@ -3444,6 +1921,9 @@
             "type": "array"
           },
           "model": {
+            "description": "Stable semantic-model resource ID to query.",
+            "maxLength": 200,
+            "minLength": 1,
             "type": "string"
           },
           "pageToken": {
@@ -3502,16 +1982,10 @@
               "field"
             ],
             "type": "object"
-          },
-          "workspace": {
-            "description": "Workspace ID to query.",
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
-          "model",
-          "workspace"
+          "model"
         ],
         "type": "object"
       },
@@ -3543,15 +2017,11 @@
                     },
                     "type": {
                       "type": "string"
-                    },
-                    "workspaceId": {
-                      "type": "string"
                     }
                   },
                   "required": [
                     "id",
-                    "type",
-                    "workspaceId"
+                    "type"
                   ],
                   "type": "object"
                 },
@@ -3661,7 +2131,7 @@
     {
       "name": "query_visual",
       "description": "Create one read-only visual from LeapView semantic model fields. Data is queried from semantic models; do not provide inline data.",
-      "privilege": "QUERY_DATA",
+      "privilege": "RESOURCE_USE",
       "effect": "read",
       "operationId": "manual",
       "defaults": {
@@ -4022,11 +2492,6 @@
             },
             "type": "array"
           },
-          "model": {
-            "description": "Semantic model ID.",
-            "minLength": 1,
-            "type": "string"
-          },
           "presentation": {
             "additionalProperties": false,
             "properties": {
@@ -4251,6 +2716,11 @@
             },
             "type": "array"
           },
+          "semanticModelId": {
+            "description": "Stable semantic_model resource ID returned by catalog_search/catalog_get.",
+            "minLength": 1,
+            "type": "string"
+          },
           "series": {
             "additionalProperties": false,
             "properties": {
@@ -4329,17 +2799,12 @@
               "pivot"
             ],
             "type": "string"
-          },
-          "workspace": {
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
           "dataset",
-          "model",
-          "type",
-          "workspace"
+          "semanticModelId",
+          "type"
         ],
         "type": "object"
       },
@@ -4371,38 +2836,8 @@
             ],
             "type": "object"
           },
-          "datasetRef": {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "type": {
-                "enum": [
-                  "workspace",
-                  "dashboard",
-                  "page",
-                  "visual",
-                  "filter",
-                  "semantic_model",
-                  "semantic_table",
-                  "field",
-                  "measure"
-                ],
-                "type": "string"
-              },
-              "workspaceId": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "type",
-              "workspaceId"
-            ],
-            "type": "object"
+          "datasetId": {
+            "type": "string"
           },
           "diagnostics": {
             "items": {
@@ -4445,44 +2880,14 @@
                 "dataType": {
                   "type": "string"
                 },
+                "fieldId": {
+                  "type": "string"
+                },
                 "format": {
                   "type": "string"
                 },
                 "label": {
                   "type": "string"
-                },
-                "ref": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "id": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "type": {
-                      "enum": [
-                        "workspace",
-                        "dashboard",
-                        "page",
-                        "visual",
-                        "filter",
-                        "semantic_model",
-                        "semantic_table",
-                        "field",
-                        "measure"
-                      ],
-                      "type": "string"
-                    },
-                    "workspaceId": {
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "type",
-                    "workspaceId"
-                  ],
-                  "type": "object"
                 },
                 "role": {
                   "enum": [
@@ -4499,8 +2904,8 @@
                 }
               },
               "required": [
+                "fieldId",
                 "label",
-                "ref",
                 "role"
               ],
               "type": "object"
@@ -4511,6 +2916,10 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "fieldId": {
+                  "description": "Filtered semantic field.",
+                  "type": "string"
+                },
                 "operator": {
                   "enum": [
                     "equals",
@@ -4532,71 +2941,9 @@
                   },
                   "type": "array"
                 },
-                "ref": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "id": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "type": {
-                      "enum": [
-                        "workspace",
-                        "dashboard",
-                        "page",
-                        "visual",
-                        "filter",
-                        "semantic_model",
-                        "semantic_table",
-                        "field",
-                        "measure"
-                      ],
-                      "type": "string"
-                    },
-                    "workspaceId": {
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "type",
-                    "workspaceId"
-                  ],
-                  "type": "object"
-                },
-                "resolvedFactRef": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "id": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "type": {
-                      "enum": [
-                        "workspace",
-                        "dashboard",
-                        "page",
-                        "visual",
-                        "filter",
-                        "semantic_model",
-                        "semantic_table",
-                        "field",
-                        "measure"
-                      ],
-                      "type": "string"
-                    },
-                    "workspaceId": {
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "type",
-                    "workspaceId"
-                  ],
-                  "type": "object"
+                "resolvedFactId": {
+                  "description": "Fact table selected to resolve a conformed dimension.",
+                  "type": "string"
                 },
                 "values": {
                   "description": "Comparison values. Omitted for unary operators.",
@@ -4607,8 +2954,8 @@
                 }
               },
               "required": [
-                "operator",
-                "ref"
+                "fieldId",
+                "operator"
               ],
               "type": "object"
             },
@@ -4658,44 +3005,38 @@
           "id": {
             "type": "string"
           },
-          "modelRef": {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "type": {
-                "enum": [
-                  "workspace",
-                  "dashboard",
-                  "page",
-                  "visual",
-                  "filter",
-                  "semantic_model",
-                  "semantic_table",
-                  "field",
-                  "measure"
-                ],
-                "type": "string"
-              },
-              "workspaceId": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "type",
-              "workspaceId"
-            ],
-            "type": "object"
-          },
           "ok": {
             "type": "boolean"
           },
           "queryId": {
             "type": "string"
+          },
+          "semanticModelRef": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "project",
+                  "connection",
+                  "source",
+                  "model",
+                  "semantic_model",
+                  "pipeline",
+                  "dashboard"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "kind"
+            ],
+            "type": "object"
           },
           "servingSnapshot": {
             "type": "string"
@@ -4738,14 +3079,14 @@
         },
         "required": [
           "completeness",
-          "datasetRef",
+          "datasetId",
           "diagnostics",
           "fields",
           "filters",
           "id",
-          "modelRef",
           "ok",
           "queryId",
+          "semanticModelRef",
           "servingSnapshot",
           "signal",
           "status",
@@ -4759,7 +3100,7 @@
     {
       "name": "set_dashboard_visibility",
       "description": "Set a private dashboard draft's visibility using an exact expected revision.",
-      "privilege": "EDIT_ITEM",
+      "privilege": "RESOURCE_EDIT",
       "effect": "write",
       "operationId": "manual",
       "defaults": {},
@@ -4811,18 +3152,13 @@
               "shared"
             ],
             "type": "string"
-          },
-          "workspace": {
-            "minLength": 1,
-            "type": "string"
           }
         },
         "required": [
           "dashboardId",
           "draftId",
           "expectedRevision",
-          "visibility",
-          "workspace"
+          "visibility"
         ],
         "type": "object"
       },

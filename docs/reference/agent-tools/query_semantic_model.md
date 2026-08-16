@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `QUERY_DATA` |
+| Required privilege | `RESOURCE_USE` |
 | Effect | `read` |
 | Operation | `querySemanticModel` |
 | Tags | `semantic-model`, `query` |
@@ -128,6 +128,9 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
       "type": "array"
     },
     "model": {
+      "description": "Stable semantic-model resource ID to query.",
+      "maxLength": 200,
+      "minLength": 1,
       "type": "string"
     },
     "pageToken": {
@@ -186,16 +189,10 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
         "field"
       ],
       "type": "object"
-    },
-    "workspace": {
-      "description": "Workspace ID to query.",
-      "minLength": 1,
-      "type": "string"
     }
   },
   "required": [
-    "model",
-    "workspace"
+    "model"
   ],
   "type": "object"
 }
@@ -232,15 +229,11 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
               },
               "type": {
                 "type": "string"
-              },
-              "workspaceId": {
-                "type": "string"
               }
             },
             "required": [
               "id",
-              "type",
-              "workspaceId"
+              "type"
             ],
             "type": "object"
           },

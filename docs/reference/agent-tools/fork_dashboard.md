@@ -2,7 +2,7 @@
 
 # fork_dashboard
 
-Fork an authorized workspace or retained project dashboard source into a private draft. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.
+Fork an authorized project or instance dashboard source into a private draft. Agent retries that reuse the same invocation identity and payload replay the original draft.
 
 Machine-readable: [focused JSON](/docs/agent-tools/tools/fork_dashboard.json) · [complete manifest](/docs/agent-tools/manifest.json)
 
@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/fork_dashboard.json) ·
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `EDIT_ITEM` |
+| Required privilege | `RESOURCE_EDIT` |
 | Effect | `write` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `fork` |
@@ -27,23 +27,15 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/fork_dashboard.json) ·
       "minLength": 1,
       "type": "string"
     },
-    "sourceDashboard": {
+    "sourceDashboardId": {
       "minLength": 1,
       "type": "string"
     },
     "sourceKind": {
       "enum": [
-        "workspace",
-        "project"
+        "project",
+        "instance"
       ],
-      "type": "string"
-    },
-    "sourceWorkspace": {
-      "minLength": 1,
-      "type": "string"
-    },
-    "targetWorkspace": {
-      "minLength": 1,
       "type": "string"
     },
     "title": {
@@ -52,9 +44,8 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/fork_dashboard.json) ·
     }
   },
   "required": [
-    "sourceDashboard",
-    "sourceKind",
-    "sourceWorkspace"
+    "sourceDashboardId",
+    "sourceKind"
   ],
   "type": "object"
 }

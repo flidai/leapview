@@ -20,17 +20,17 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Installation](/docs/installation): Pull the public image locally or prepare a durable production instance.
 - [Get started with LeapView](/docs/getting-started): Choose a path from installation through your first validated dashboard change.
 - [Build your first dashboard](/docs/first-dashboard): Change a model and dashboard and deploy it locally.
-- [Project structure](/docs/project-structure): Learn how project-global resources and workspace resources are organized.
+- [Project structure](/docs/project-structure): Learn how project-wide resources are organized.
 
 ### Core concepts
 
 - [Core concepts](/docs/concepts): A map of the concepts used throughout LeapView.
-- [Projects, workspaces, and environments](/docs/concepts/projects-workspaces-environments): Understand ownership, isolation, and deployment scope.
+- [Projects and environments](/docs/concepts/projects-environments): Understand ownership, isolation, and deployment scope.
 - [Connections and sources](/docs/concepts/connections-sources): Separate physical data access from reusable logical source definitions.
 - [Managed data and revisions](/docs/concepts/managed-data): Understand immutable revisions, staging, activation, upload boundaries, and storage ownership.
 - [Model tables](/docs/concepts/model-tables): Materialize reusable analytical tables from source data.
 - [Semantic models](/docs/concepts/semantic-models): Define datasets, dimensions, measures, and relationships once.
-- [Dashboards, pages, and visuals](/docs/concepts/dashboards): Understand the presentation resources rendered by the BI workspace.
+- [Dashboards, pages, and visuals](/docs/concepts/dashboards): Understand the presentation resources rendered from the project graph.
 - [Query and interaction lifecycle](/docs/concepts/query-lifecycle): Follow a user interaction from signals through DuckDB and back.
 
 ### Use LeapView Desktop
@@ -50,7 +50,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Connect a data source](/docs/guides/build/connect-data): Add a connection and source definitions to a project.
 - [Define model tables](/docs/guides/build/model-tables): Turn source data into stable analytical tables.
 - [Build a semantic model](/docs/guides/build/semantic-model): Expose reusable fields, measures, and relationships.
-- [Create a dashboard](/docs/guides/build/dashboard): Define a workspace dashboard and its first report page.
+- [Create a dashboard](/docs/guides/build/dashboard): Define a project dashboard and its first report page.
 - [Pages and layout](/docs/guides/build/pages-layout): Compose responsive report pages from code.
 - [Filters and interactions](/docs/guides/build/filters-interactions): Configure filter cards and cross-visual selections.
 - [Tables, matrices, and pivots](/docs/guides/build/tables): Choose and configure tabular BI surfaces.
@@ -115,18 +115,18 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [add_dashboard_page](/docs/agent-tools/add_dashboard_page): Add one dashboard page to a private draft using an exact expected revision.
 - [add_dashboard_visual](/docs/agent-tools/add_dashboard_visual): Add a governed dashboard visual to a private draft using an exact expected revision.
 - [assign_dashboard_field](/docs/agent-tools/assign_dashboard_field): Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision.
-- [catalog_get](/docs/agent-tools/catalog_get): Get the compact definition and type-specific metadata for one exact catalog ref.
-- [catalog_list](/docs/agent-tools/catalog_list): Browse one deterministic level of the authorized LeapView catalog hierarchy.
-- [catalog_search](/docs/agent-tools/catalog_search): Search the complete authorized LeapView BI catalog across workspaces.
+- [catalog_get](/docs/agent-tools/catalog_get): Resolve one exact authorized project resource ID and return its compact metadata.
+- [catalog_list](/docs/agent-tools/catalog_list): Browse authorized project resources.
+- [catalog_search](/docs/agent-tools/catalog_search): Search authorized project resources by stable ID, name, description, or domain metadata.
 - [create_dashboard_draft](/docs/agent-tools/create_dashboard_draft): Create a private dashboard draft owned by the authenticated principal.
 - [docs_read](/docs/agent-tools/docs_read): Read a bounded line window from one LeapView document returned by docs_search.
 - [docs_search](/docs/agent-tools/docs_search): Search LeapView's version-matched product documentation.
 - [execute_dashboard_command](/docs/agent-tools/execute_dashboard_command): Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision.
 - [export_dashboard_yaml](/docs/agent-tools/export_dashboard_yaml): Export an authorized authored dashboard source as canonical project YAML.
-- [fork_dashboard](/docs/agent-tools/fork_dashboard): Fork an authorized workspace or retained project dashboard source into a private draft.
+- [fork_dashboard](/docs/agent-tools/fork_dashboard): Fork an authorized project or instance dashboard source into a private draft.
 - [get_dashboard](/docs/agent-tools/get_dashboard): Get one authorized dashboard's governed metadata.
 - [get_dashboard_draft](/docs/agent-tools/get_dashboard_draft): Read the exact current private draft and retained revision for one dashboard.
-- [list_dashboards](/docs/agent-tools/list_dashboards): List the authorized dashboard catalog for one workspace.
+- [list_dashboards](/docs/agent-tools/list_dashboards): List the authorized project dashboard catalog.
 - [preview_dashboard_draft](/docs/agent-tools/preview_dashboard_draft): Preview an exact private dashboard draft revision and page against the active governed runtime.
 - [query_dashboard_visual](/docs/agent-tools/query_dashboard_visual): Query an existing dashboard visual with governed filters and compact analytical output
 - [query_semantic_model](/docs/agent-tools/query_semantic_model): Query governed semantic data with typed columns, filters, pagination, and provenance
@@ -139,15 +139,14 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Project configuration](/docs/config/project): Fields and validation rules for the Project YAML resource.
 - [Connection configuration](/docs/config/connection): Fields and validation rules for the Connection YAML resource.
 - [Source configuration](/docs/config/source): Fields and validation rules for the Source YAML resource.
-- [Workspace configuration](/docs/config/workspace): Fields and validation rules for the Workspace YAML resource.
-- [Model Table configuration](/docs/config/model-table): Fields and validation rules for the ModelTable YAML resource.
+- [Model configuration](/docs/config/model): Fields and validation rules for the Model YAML resource.
 - [Semantic Model configuration](/docs/config/semantic-model): Fields and validation rules for the SemanticModel YAML resource.
+- [Pipeline configuration](/docs/config/pipeline): Fields and validation rules for the Pipeline YAML resource.
 - [Dashboard configuration](/docs/config/dashboard): Fields and validation rules for the Dashboard YAML resource.
-- [Workspace Group configuration](/docs/config/workspace-group): Fields and validation rules for the WorkspaceGroup YAML resource.
-- [Workspace Role Binding configuration](/docs/config/workspace-role-binding): Fields and validation rules for the WorkspaceRoleBinding YAML resource.
+- [Group configuration](/docs/config/group): Fields and validation rules for the Group YAML resource.
+- [Role Binding configuration](/docs/config/role-binding): Fields and validation rules for the RoleBinding YAML resource.
 - [Grant configuration](/docs/config/grant): Fields and validation rules for the Grant YAML resource.
 - [Data Policy configuration](/docs/config/data-policy): Fields and validation rules for the DataPolicy YAML resource.
-- [Refresh Pipeline configuration](/docs/config/refresh-pipeline): Fields and validation rules for the RefreshPipeline YAML resource.
 - [Dashboard Publication configuration](/docs/config/dashboard-publication): Fields and validation rules for the DashboardPublication YAML resource.
 
 #### CLI commands
@@ -173,25 +172,23 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview serve](/docs/cli/serve): Run the LeapView HTTP server
 - [leapview validate](/docs/cli/validate): Validate a configuration-as-code project
 - [leapview version](/docs/cli/version): Report the LeapView build identity
-- [leapview workspaces](/docs/cli/workspaces): Inspect workspaces
 
 #### API reference
 
 - [API reference](/docs/api): Browse the generated headless API contract.
 - [System](/docs/api/system): API capabilities and protocol discovery.
 - [Instance](/docs/api/instance): The immutable serving identity of this LeapView installation.
-- [Projects](/docs/api/projects): Read-only project registry.
+- [Projects](/docs/api/projects): Active project graph assertion.
 - [Releases](/docs/api/releases): Immutable project releases and artifacts.
-- [Current User](/docs/api/current-user): Current principal, sessions, tokens, and privileges.
-- [Workspaces](/docs/api/workspaces): Workspace and lineage discovery.
-- [Search](/docs/api/search): Progressive workspace discovery across BI assets.
+- [Current User](/docs/api/current-user): Current principal, sessions, tokens, and capabilities.
+- [Search](/docs/api/search): Progressive project-graph discovery across governed resources.
 - [BI](/docs/api/bi): Dashboard and semantic model read APIs.
 - [Connections](/docs/api/connections): Target-owned logical connection bindings, tests, refreshes, and redacted health.
 - [Deployments](/docs/api/deployments): Atomic project release deployment.
 - [Refresh Runs](/docs/api/refresh-runs): Headless refresh run operations.
 - [Agent](/docs/api/agent): Headless agent conversation and run operations.
 - [Access](/docs/api/access): Principals, groups, roles, and role bindings.
-- [Audit](/docs/api/audit): Workspace audit event discovery.
+- [Audit](/docs/api/audit): Project audit event discovery.
 - [Publications](/docs/api/publications): Anonymous public dashboard publication lifecycle.
 - [Managed Data](/docs/api/managed-data): Project-global managed-data revisions and uploads.
 

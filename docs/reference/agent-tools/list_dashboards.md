@@ -2,7 +2,7 @@
 
 # list_dashboards
 
-List the authorized dashboard catalog for one workspace.
+List the authorized project dashboard catalog.
 
 Machine-readable: [focused JSON](/docs/agent-tools/tools/list_dashboards.json) Â· [complete manifest](/docs/agent-tools/manifest.json)
 
@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/list_dashboards.json) Â
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `VIEW_ITEM` |
+| Required privilege | `RESOURCE_READ` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `catalog` |
@@ -21,16 +21,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/list_dashboards.json) Â
 
 ```json
 {
-  "additionalProperties": false,
-  "properties": {
-    "workspace": {
-      "minLength": 1,
-      "type": "string"
-    }
-  },
-  "required": [
-    "workspace"
-  ],
   "type": "object"
 }
 ```
@@ -53,16 +43,12 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/list_dashboards.json) Â
     },
     "projectCount": {
       "type": "integer"
-    },
-    "workspaceCount": {
-      "type": "integer"
     }
   },
   "required": [
     "count",
     "items",
-    "projectCount",
-    "workspaceCount"
+    "projectCount"
   ],
   "type": "object"
 }

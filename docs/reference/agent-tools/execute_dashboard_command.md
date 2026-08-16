@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/execute_dashboard_comma
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `MANAGE_ITEM` |
+| Required privilege | `RESOURCE_MANAGE` |
 | Effect | `destructive` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `command` |
@@ -60,17 +60,12 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/execute_dashboard_comma
     },
     "publish": {
       "type": "object"
-    },
-    "workspace": {
-      "minLength": 1,
-      "type": "string"
     }
   },
   "required": [
     "dashboardId",
     "draftId",
-    "expectedRevision",
-    "workspace"
+    "expectedRevision"
   ],
   "type": "object"
 }

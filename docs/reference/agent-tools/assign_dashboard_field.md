@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/assign_dashboard_field.
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `EDIT_ITEM` |
+| Required privilege | `RESOURCE_EDIT` |
 | Effect | `write` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `intent` |
@@ -70,10 +70,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/assign_dashboard_field.
     "visualId": {
       "minLength": 1,
       "type": "string"
-    },
-    "workspace": {
-      "minLength": 1,
-      "type": "string"
     }
   },
   "required": [
@@ -83,8 +79,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/assign_dashboard_field.
     "fieldId",
     "pageId",
     "role",
-    "visualId",
-    "workspace"
+    "visualId"
   ],
   "type": "object"
 }

@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/add_dashboard_visual.js
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `EDIT_ITEM` |
+| Required privilege | `RESOURCE_EDIT` |
 | Effect | `write` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `intent` |
@@ -67,10 +67,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/add_dashboard_visual.js
     },
     "visualId": {
       "type": "string"
-    },
-    "workspace": {
-      "minLength": 1,
-      "type": "string"
     }
   },
   "required": [
@@ -78,8 +74,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/add_dashboard_visual.js
     "draftId",
     "expectedRevision",
     "pageId",
-    "type",
-    "workspace"
+    "type"
   ],
   "type": "object"
 }
