@@ -1228,17 +1228,50 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		defaultEnvironment: policy.defaultEnvironment, managedDataTus: policy.managedDataTus,
 		instanceID: storage.instanceID, canonicalOrigin: storage.publicURL, buildIdentity: platform.buildIdentity,
 	}
-	apiGenAuthorizer, err := routes.accessModule.APIGenAuthorizer(accessAPIGenOperationContracts(), accessmodule.APIGenObjectResolvers{
-		Dashboard:      dashboardmodule.DashboardObjectRefs,
-		WorkspaceAsset: workspacemodule.AssetObjectRefs,
-		ProjectEnvironment: func(
-			r *http.Request,
-			_ string,
-		) []accessmodule.ObjectRef {
-			return []accessmodule.ObjectRef{accessmodule.ProjectEnvironmentObject(
-				chi.URLParam(r, "project"),
-				policy.defaultEnvironment,
-			)}
+	apiGenAuthorizer, err := routes.accessModule.APIGenAuthorizer(runtime.runtimeHostModule, accessAPIGenOperationContracts(), accessmodule.APIGenResourceResolvers{
+		Dashboard: func(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
+			id, err := projectgraph.NewResourceID(chi.URLParam(r, "dashboard"))
+			if err != nil {
+				return nil
+			}
+			resource, err := access.NewResourceRef(id, projectgraph.KindDashboard)
+			if err != nil {
+				return nil
+			}
+			return []access.ResourceRef{resource}
+		},
+		SemanticModel: func(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
+			id, err := projectgraph.NewResourceID(chi.URLParam(r, "model"))
+			if err != nil {
+				return nil
+			}
+			resource, err := access.NewResourceRef(id, projectgraph.KindSemanticModel)
+			if err != nil {
+				return nil
+			}
+			return []access.ResourceRef{resource}
+		},
+		Connection: func(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
+			id, err := projectgraph.NewResourceID(chi.URLParam(r, "connection"))
+			if err != nil {
+				return nil
+			}
+			resource, err := access.NewResourceRef(id, projectgraph.KindConnection)
+			if err != nil {
+				return nil
+			}
+			return []access.ResourceRef{resource}
+		},
+		Project: func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
+			requested, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+			if err != nil || requested != active {
+				return nil
+			}
+			resource, err := access.NewResourceRef(active, projectgraph.KindProject)
+			if err != nil {
+				return nil
+			}
+			return []access.ResourceRef{resource}
 		},
 	})
 	if err != nil {

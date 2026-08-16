@@ -2,14 +2,20 @@ package app
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	manageddata "github.com/flidai/leapview/internal/manageddata"
+	manageddatacontrol "github.com/flidai/leapview/internal/manageddata/control"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
+	"github.com/go-chi/chi/v5"
 )
 
 // authorizeProjectResources evaluates canonical resource grants against the
@@ -75,7 +81,7 @@ func authorizeProjectResources(
 
 // protectProjectResources authorizes a browser request against the immutable
 // graph-bound snapshot carried by the leased serving generation. Resource IDs
-// and capabilities are resolved before the handler runs; no workspace/object
+// and capabilities are resolved before the handler runs; no alternate
 // selector is accepted at this boundary.
 func protectProjectResources(
 	accessModule *accessmodule.Module,
@@ -84,18 +90,15 @@ func protectProjectResources(
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if accessModule == nil || runtimeHost == nil || resolve == nil {
+	if accessModule == nil || runtimeHost == nil || resolve == nil {
+		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
 		}
+	}
+	return accessModule.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := accessModule.CurrentPrincipal(r)
 		if !ok {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
-			return
-		}
-		if principal.DevBypass {
-			next(w, r)
 			return
 		}
 		projectID := runtimeHost.ProjectID()
@@ -114,9 +117,13 @@ func protectProjectResources(
 				return
 			}
 		}
+		if principal.DevBypass {
+			next(w, r)
+			return
+		}
 		allowed, err := authorizeProjectResources(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, capability)
 		if err != nil {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
 		if !allowed {
@@ -124,5 +131,99 @@ func protectProjectResources(
 			return
 		}
 		next(w, r)
+	})).ServeHTTP
+}
+
+// activeProjectResource binds project-level actions to the active serving
+// generation's exact project identity.
+func activeProjectResource(_ *http.Request, projectID projectgraph.ResourceID) []access.ResourceRef {
+	resource, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+	if err != nil {
+		return nil
 	}
+	return []access.ResourceRef{resource}
+}
+
+// protectManagedDataTransport authorizes each opaque resumable-upload request
+// against the exact connection resource captured by its upload session. The
+// transport token itself is not a project selector; it is resolved by the
+// managed-data module before the generation-bound capability decision.
+func protectManagedDataTransport(
+	accessModule *accessmodule.Module,
+	runtimeHost *runtimehostmodule.Module,
+	managedData interface {
+		ResolveTusTarget(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error)
+	},
+	next http.Handler,
+) http.Handler {
+	if accessModule == nil || runtimeHost == nil || managedData == nil || next == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		})
+	}
+	return accessModule.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodHead && r.Method != http.MethodPatch && r.Method != http.MethodDelete {
+			next.ServeHTTP(w, r)
+			return
+		}
+		uploadID := chi.URLParam(r, "*")
+		if !validTusTransportID(uploadID) {
+			http.NotFound(w, r)
+			return
+		}
+		projectID, connectionID, err := managedData.ResolveTusTarget(r.Context(), uploadID)
+		if err != nil {
+			if errors.Is(err, manageddatacontrol.ErrNotFound) || errors.Is(err, manageddata.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		activeProjectID := runtimeHost.ProjectID()
+		if err := activeProjectID.Validate(); err != nil || projectID != activeProjectID {
+			http.NotFound(w, r)
+			return
+		}
+		resource, err := access.NewResourceRef(connectionID, projectgraph.KindConnection)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		principal, ok := accessModule.CurrentPrincipal(r)
+		if !ok || strings.TrimSpace(principal.ID) == "" {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		if principal.DevBypass {
+			next.ServeHTTP(w, r)
+			return
+		}
+		allowed, err := authorizeProjectResources(r.Context(), accessModule, runtimeHost, principal.ID, activeProjectID, []access.ResourceRef{resource}, access.CapabilityResourceEdit)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if !allowed {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+func validTusTransportID(value string) bool {
+	if value != strings.TrimSpace(value) || len(value) != len("tus_")+hex.EncodedLen(32) || !strings.HasPrefix(value, "tus_") {
+		return false
+	}
+	for _, char := range value[len("tus_"):] {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }

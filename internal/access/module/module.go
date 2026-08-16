@@ -20,6 +20,7 @@ import (
 type Module struct {
 	handler                      accesshttp.Handler
 	auth                         *Auth
+	currentPrincipal             func(*http.Request) (Principal, bool)
 	repository                   func() (access.Repository, error)
 	oauth                        *mcpoauth.Service
 	oauthResource                mcpoauth.ResourceServer
@@ -88,7 +89,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		}
 		return session.ID, true
 	}
-	return &Module{auth: config.Auth, repository: config.Repository, logger: logger,
+	return &Module{auth: config.Auth, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
@@ -149,7 +150,13 @@ func (m *Module) IsPlatformAdmin(ctx context.Context, principalID string) (bool,
 }
 
 func (m *Module) CurrentPrincipal(r *http.Request) (Principal, bool) {
-	if m == nil || m.auth == nil {
+	if m == nil {
+		return Principal{}, false
+	}
+	if m.auth == nil {
+		if m.currentPrincipal != nil {
+			return m.currentPrincipal(r)
+		}
 		return LocalDeveloperPrincipal(), true
 	}
 	return m.auth.Principal(r)

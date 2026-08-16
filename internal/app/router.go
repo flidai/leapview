@@ -71,36 +71,37 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	mux.Group(func(r chi.Router) {
 		r.Use(csrf)
 		r.With(policy.rateLimits.Updates()).Get("/updates", runtime.pageStreams.ServeHTTP)
-		r.Get("/", routes.accessModule.Protect(accessmodule.PrivilegeViewItem, projectHome(runtime)))
-		r.Get("/candidates/{candidate}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
+		r.Get("/", routes.accessModule.Authenticate(http.HandlerFunc(projectHome(runtime))).ServeHTTP)
+		candidateProjectGuard := func(next http.HandlerFunc) http.HandlerFunc {
+			return protectProjectResources(
+				routes.accessModule, runtime.runtimeHostModule, access.CapabilityProjectAdmin,
+				activeProjectResource, next,
+			)
+		}
+		r.Get("/candidates/{candidate}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidatePreview(candidates, w, request)
 		}))
-		r.Get("/candidates/{candidate}/dashboards/{dashboard}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
+		r.Get("/candidates/{candidate}/dashboards/{dashboard}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardDocument(candidates, w, request)
 		}))
-		r.Get("/candidates/{candidate}/dashboards/{dashboard}/pages/{page}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
+		r.Get("/candidates/{candidate}/dashboards/{dashboard}/pages/{page}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardDocument(candidates, w, request)
 		}))
-		r.With(policy.rateLimits.Updates()).Get("/candidates/{candidate}/updates", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
+		r.With(policy.rateLimits.Updates()).Get("/candidates/{candidate}/updates", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardUpdates(candidates, w, request)
 		}))
-		r.Post("/candidates/{candidate}/commands/{command}", routes.accessModule.Protect(accessmodule.PrivilegeAuthorProject, func(w http.ResponseWriter, request *http.Request) {
+		r.Post("/candidates/{candidate}/commands/{command}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardCommand(candidates, w, request)
 		}))
 		routes.agentModule.MountAuthenticated(r, agentmodule.RouteGuard{
-			Protect: routes.accessModule.Protect, ProtectGlobal: routes.accessModule.ProtectGlobal,
-			ProtectPlatform: routes.accessModule.ProtectPlatform,
+			Authenticate:         routes.accessModule.Authenticate,
+			RequirePlatformAdmin: routes.accessModule.RequirePlatformAdmin,
 		})
-		r.Get("/chat", redirectLegacyChat)
-		r.Get("/chat/updates", http.NotFound)
-		r.Get("/chat/*", redirectLegacyChat)
-		r.Post("/chat/turns", redirectLegacyChat)
 		routes.adminModule.MountAuthenticated(r, adminmodule.RouteGuard{
-			Protect: routes.accessModule.Protect, ProtectGlobal: routes.accessModule.ProtectGlobal,
-			ProtectPlatform: routes.accessModule.ProtectPlatform,
+			Authenticate:         routes.accessModule.Authenticate,
+			RequirePlatformAdmin: routes.accessModule.RequirePlatformAdmin,
 		})
 		routes.dashboardModule.MountAuthenticated(r, dashboardmodule.RouteGuard{
-			Protect: routes.accessModule.Protect, ProtectWithObjects: routes.accessModule.ProtectWithObjects,
 			ProtectWithResources: func(capability access.Capability, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
 				return protectProjectResources(routes.accessModule, runtime.runtimeHostModule, capability, resolve, next)
 			},
@@ -127,7 +128,9 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		mux.Group(func(r chi.Router) {
 			r.Use(policy.rateLimits.API())
 			r.Use(publicProtocol)
-			routes.managedDataModule.MountTus(r, policy.managedDataTus, routes.accessModule.ProtectIngestData)
+			routes.managedDataModule.MountTus(r, policy.managedDataTus, func(next http.Handler) http.Handler {
+				return protectManagedDataTransport(routes.accessModule, runtime.runtimeHostModule, routes.managedDataModule, next)
+			})
 			apiaggregate.RegisterAPIGenRoutes(r, platform.apiGenServers)
 		})
 	}
@@ -186,18 +189,10 @@ func isPublicAPIPath(path string) bool {
 	return path == "/api/v1" || strings.HasPrefix(path, "/api/v1/") || path == "/upload-protocols" || strings.HasPrefix(path, "/upload-protocols/")
 }
 
-func redirectLegacyChat(w http.ResponseWriter, r *http.Request) {
-	target := "/chats" + strings.TrimPrefix(r.URL.Path, "/chat")
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
-	}
-	http.Redirect(w, r, target, http.StatusPermanentRedirect)
-}
-
-// projectHome keeps the Insights entry point independent of workspace
+// projectHome keeps the Insights entry point independent of project
 // selection. The composed dashboard runtime owns the single project graph;
 // redirecting to its default dashboard preserves the existing shell and
-// Datastar bootstrap flow without inventing a workspace identifier.
+// Datastar bootstrap flow without inventing a selector.
 func projectHome(runtime *runtimeServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if runtime == nil || runtime.metrics == nil {
@@ -211,22 +206,6 @@ func projectHome(runtime *runtimeServices) http.HandlerFunc {
 		}
 		http.Redirect(w, r, "/dashboards/"+dashboardID, http.StatusFound)
 	}
-}
-
-func protectGlobalAgent(access *accessmodule.Module, privilege accessmodule.Privilege, next http.Handler) http.Handler {
-	return access.ProtectGlobal(privilege, next.ServeHTTP)
-}
-
-func protect(access *accessmodule.Module, privilege accessmodule.Privilege, next http.Handler) http.Handler {
-	return access.ProtectHandler(privilege, next)
-}
-
-func protectGlobal(access *accessmodule.Module, privilege accessmodule.Privilege, next http.Handler) http.Handler {
-	return access.ProtectGlobal(privilege, next.ServeHTTP)
-}
-
-func protectWithObjects(access *accessmodule.Module, privilege accessmodule.Privilege, objectResolver accessmodule.ObjectResolver, next http.Handler) http.Handler {
-	return access.ProtectHandlerWithObjects(privilege, objectResolver, next)
 }
 
 func csrfMiddleware(access *accessmodule.Module, next http.Handler) http.Handler {

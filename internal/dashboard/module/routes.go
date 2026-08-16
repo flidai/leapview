@@ -11,8 +11,6 @@ import (
 )
 
 type RouteGuard struct {
-	Protect              func(access.Privilege, http.HandlerFunc) http.HandlerFunc
-	ProtectWithObjects   func(access.Privilege, func(*http.Request, string) []access.ObjectRef, http.HandlerFunc) http.HandlerFunc
 	ProtectWithResources func(access.Capability, func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, http.HandlerFunc) http.HandlerFunc
 }
 
@@ -51,9 +49,9 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 		return
 	}
 	h := m.handler
-	// Dashboard delivery is project-wide.  The dashboard resource ID is the
-	// only route identity; project/environment/generation are selected by the
-	// composed serving runtime rather than a workspace path segment.
+	// Dashboard delivery is project-wide. The dashboard resource ID is the only
+	// route identity; project/environment/generation are selected by the
+	// composed serving runtime.
 	protectResource := guard.ProtectWithResources
 	if protectResource == nil {
 		return
@@ -64,8 +62,8 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	// boundary performs the exact authoring decision again before exposing a
 	// draft revision or executing a command.
 	r.Get("/dashboards/{dashboard}/edit", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilder))
-	r.Get("/dashboards/{dashboard}/preview", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderPreview))
-	r.Get("/dashboards/{dashboard}/export.yaml", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderExportYAML))
+	r.Get("/dashboards/{dashboard}/preview", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderPreview))
+	r.Get("/dashboards/{dashboard}/export.yaml", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderExportYAML))
 	r.Post("/dashboards/{dashboard}/draft/command", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderCommand))
 	r.Get("/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, m.VisualizationTile))
 	r.Post("/dashboards/{dashboard}/commands/visual-window", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.VisualWindow))

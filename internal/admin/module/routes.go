@@ -4,16 +4,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/admin/productsettings"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/go-chi/chi/v5"
 )
 
 type RouteGuard struct {
-	Protect         func(access.Privilege, http.HandlerFunc) http.HandlerFunc
-	ProtectGlobal   func(access.Privilege, http.HandlerFunc) http.HandlerFunc
-	ProtectPlatform func(access.Privilege, http.HandlerFunc) http.HandlerFunc
+	Authenticate         func(http.Handler) http.Handler
+	RequirePlatformAdmin func(http.Handler) http.Handler
 }
 
 func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
@@ -21,25 +19,24 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 		return
 	}
 	h := m.handler
-	r.Get("/admin", guard.Protect("", h.AdminRoot))
-	r.Get("/admin/profile", guard.Protect("", h.Profile))
-	r.Get("/admin/security", guard.Protect("", h.Security))
-	r.Get("/admin/api-tokens", guard.Protect("", h.APITokens))
-	r.Post("/admin/personal-settings/command", guard.Protect("", h.PersonalSettingsCommand))
-	r.Get("/admin/general", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.General))
-	r.Get("/admin/workspaces", guard.ProtectGlobal(access.PrivilegeManageWorkspace, h.Workspaces))
-	r.Get("/admin/principals", guard.ProtectGlobal(access.PrivilegeManageGrants, h.Principals))
-	r.Post("/admin/principals/search", guard.ProtectGlobal(access.PrivilegeManageGrants, h.PrincipalsSearch))
-	r.Get("/admin/principals/{principal}", guard.ProtectGlobal(access.PrivilegeManageGrants, h.PrincipalDetail))
-	r.Get("/admin/groups", guard.ProtectGlobal(access.PrivilegeManageGrants, h.Groups))
-	r.Post("/admin/groups/search", guard.ProtectGlobal(access.PrivilegeManageGrants, h.GroupsSearch))
-	r.Get("/admin/groups/{group}", guard.ProtectGlobal(access.PrivilegeManageGrants, h.GroupDetail))
-	r.Post("/admin/access/command", guard.ProtectGlobal(access.PrivilegeManageGrants, h.AccessAdministrationCommand))
-	r.Get("/admin/service-accounts", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.ServiceAccounts))
-	r.Post("/admin/service-accounts/command", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.ServiceAccountCommand))
-	r.Get("/admin/authentication", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.Authentication))
-	r.Post("/admin/product-settings/command", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.ProductSettingsCommand))
-	r.Put("/admin/product-logo", guard.ProtectPlatform(access.PrivilegeManagePlatform, func(w http.ResponseWriter, request *http.Request) {
+	r.Get("/admin", authenticated(guard, h.AdminRoot))
+	r.Get("/admin/profile", authenticated(guard, h.Profile))
+	r.Get("/admin/security", authenticated(guard, h.Security))
+	r.Get("/admin/api-tokens", authenticated(guard, h.APITokens))
+	r.Post("/admin/personal-settings/command", authenticated(guard, h.PersonalSettingsCommand))
+	r.Get("/admin/general", platformAdmin(guard, h.General))
+	r.Get("/admin/principals", platformAdmin(guard, h.Principals))
+	r.Post("/admin/principals/search", platformAdmin(guard, h.PrincipalsSearch))
+	r.Get("/admin/principals/{principal}", platformAdmin(guard, h.PrincipalDetail))
+	r.Get("/admin/groups", platformAdmin(guard, h.Groups))
+	r.Post("/admin/groups/search", platformAdmin(guard, h.GroupsSearch))
+	r.Get("/admin/groups/{group}", platformAdmin(guard, h.GroupDetail))
+	r.Post("/admin/access/command", platformAdmin(guard, h.AccessAdministrationCommand))
+	r.Get("/admin/service-accounts", platformAdmin(guard, h.ServiceAccounts))
+	r.Post("/admin/service-accounts/command", platformAdmin(guard, h.ServiceAccountCommand))
+	r.Get("/admin/authentication", platformAdmin(guard, h.Authentication))
+	r.Post("/admin/product-settings/command", platformAdmin(guard, h.ProductSettingsCommand))
+	r.Put("/admin/product-logo", platformAdmin(guard, func(w http.ResponseWriter, request *http.Request) {
 		binding, err := m.productCommands.Binding(productsettings.CommandUploadLogo)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -59,15 +56,33 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 		}
 		m.UploadProductLogo(w, request.WithContext(started))
 	}))
-	r.Get("/product/logo/{digest}", guard.Protect("", m.GetProductLogo))
-	r.Get("/admin/agent", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.Agent))
-	r.Get("/admin/storage", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.Storage))
-	r.Get("/admin/storage/tables/{schema}/{table}", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.StorageTable))
-	r.Get("/admin/queries", guard.ProtectGlobal(access.PrivilegeViewAudit, h.Queries))
-	r.Post("/admin/queries/command", guard.ProtectGlobal(access.PrivilegeViewAudit, h.QueryCommand))
-	r.Get("/admin/audit", guard.ProtectGlobal(access.PrivilegeViewAudit, h.Audit))
-	r.Post("/admin/audit/command", guard.ProtectGlobal(access.PrivilegeViewAudit, h.AuditLogCommand))
-	r.Get("/admin/system", guard.ProtectPlatform(access.PrivilegeManagePlatform, h.System))
-	r.Get("/admin/publications", guard.ProtectGlobal(access.PrivilegeManagePublications, h.Publications))
-	r.Post("/admin/publications/command", guard.ProtectGlobal(access.PrivilegeManagePublications, h.PublicationCommand))
+	r.Get("/product/logo/{digest}", authenticated(guard, m.GetProductLogo))
+	r.Get("/admin/agent", platformAdmin(guard, h.Agent))
+	r.Get("/admin/storage", platformAdmin(guard, h.Storage))
+	r.Get("/admin/storage/tables/{schema}/{table}", platformAdmin(guard, h.StorageTable))
+	r.Get("/admin/queries", platformAdmin(guard, h.Queries))
+	r.Post("/admin/queries/command", platformAdmin(guard, h.QueryCommand))
+	r.Get("/admin/audit", platformAdmin(guard, h.Audit))
+	r.Post("/admin/audit/command", platformAdmin(guard, h.AuditLogCommand))
+	r.Get("/admin/system", platformAdmin(guard, h.System))
+	r.Get("/admin/publications", platformAdmin(guard, h.Publications))
+	r.Post("/admin/publications/command", platformAdmin(guard, h.PublicationCommand))
+}
+
+func authenticated(guard RouteGuard, next http.HandlerFunc) http.HandlerFunc {
+	if guard.Authenticate == nil {
+		return unavailable
+	}
+	return guard.Authenticate(http.HandlerFunc(next)).ServeHTTP
+}
+
+func platformAdmin(guard RouteGuard, next http.HandlerFunc) http.HandlerFunc {
+	if guard.RequirePlatformAdmin == nil {
+		return unavailable
+	}
+	return guard.RequirePlatformAdmin(http.HandlerFunc(next)).ServeHTTP
+}
+
+func unavailable(w http.ResponseWriter, _ *http.Request) {
+	http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 }

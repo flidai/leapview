@@ -39,24 +39,15 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 					next,
 				), true
 			case routeChat:
-				return routes.accessModule.ProtectNamed("", next), true
+				return routes.accessModule.Authenticate(next), true
 			case routeAdmin:
 				switch strings.TrimSpace(section) {
-				case "profile", "security", "api-tokens":
-					return routes.accessModule.ProtectNamed("", next), true
-				case "general", "service-accounts", "authentication", "storage", "storage-detail", "agent", "system":
-					return routes.accessModule.ProtectPlatformNamed("MANAGE_PLATFORM", next), true
-				case "workspaces-admin":
-					return routes.accessModule.ProtectGlobalNamed("MANAGE_WORKSPACE", next), true
-				case "queries", "audit":
-					return routes.accessModule.ProtectGlobalNamed("VIEW_AUDIT", next), true
-				case "publications":
-					// Publication visibility and mutation affordances are filtered by
-					// the admin read model. The stream only establishes identity; it
-					// must not reintroduce a workspace-wide publication guard.
-					return routes.accessModule.ProtectNamed("", next), true
+				case "", "profile", "security", "api-tokens":
+					return routes.accessModule.Authenticate(next), true
+				case "general", "service-accounts", "authentication", "storage", "storage-detail", "agent", "system", "principals", "principal-detail", "groups", "group-detail", "queries", "audit", "publications":
+					return routes.accessModule.RequirePlatformAdmin(next), true
 				default:
-					return routes.accessModule.ProtectGlobalNamed("MANAGE_GRANTS", next), true
+					return nil, false
 				}
 			default:
 				return nil, false
@@ -86,7 +77,7 @@ func dashboardPageStreamResource(r *http.Request, _ projectgraph.ResourceID) []a
 	if !ok || len(dashboardValues) != 1 {
 		return nil
 	}
-	dashboardID, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardValues[0]))
+	dashboardID, err := projectgraph.NewResourceID(dashboardValues[0])
 	if err != nil {
 		return nil
 	}

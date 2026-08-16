@@ -12,14 +12,12 @@ import (
 
 func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T) {
 	router := chi.NewRouter()
-	identity := func(_ access.Privilege, next http.HandlerFunc) http.HandlerFunc { return next }
-	identityObjects := func(_ access.Privilege, _ func(*http.Request, string) []access.ObjectRef, next http.HandlerFunc) http.HandlerFunc {
+	var capabilities []access.Capability
+	identityResources := func(capability access.Capability, _ func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
+		capabilities = append(capabilities, capability)
 		return next
 	}
-	identityResources := func(_ access.Capability, _ func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
-		return next
-	}
-	(&Module{handler: dashboardhttp.Handler{}}).MountAuthenticated(router, RouteGuard{Protect: identity, ProtectWithObjects: identityObjects, ProtectWithResources: identityResources})
+	(&Module{handler: dashboardhttp.Handler{}}).MountAuthenticated(router, RouteGuard{ProtectWithResources: identityResources})
 
 	want := map[string]bool{
 		"GET /dashboards/{dashboard}/edit":             false,
@@ -40,6 +38,14 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 	for route, found := range want {
 		if !found {
 			t.Errorf("missing route %s", route)
+		}
+	}
+	if len(capabilities) < 6 {
+		t.Fatalf("captured %d route capabilities, want at least 6", len(capabilities))
+	}
+	for _, index := range []int{2, 3, 4, 5} {
+		if capabilities[index] != access.CapabilityResourceEdit {
+			t.Errorf("builder route index %d capability = %q, want RESOURCE_EDIT", index, capabilities[index])
 		}
 	}
 }
