@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -65,17 +66,9 @@ type Project struct {
 // manifest. The manifest identity must match graph.ProjectID(). The input is
 // defensively copied through the canonical wire representation.
 func NewProject(graph projectgraph.ProjectGraph, project manifest.Project) (Project, error) {
-	if err := graph.Validate(); err != nil {
-		return Project{}, fmt.Errorf("project graph: %w", err)
+	if err := validateGraphManifest(graph, project); err != nil {
+		return Project{}, fmt.Errorf("project artifact: %w", err)
 	}
-	projectID := project.ID
-	if projectID == "" {
-		return Project{}, errors.New("project manifest id is required")
-	}
-	if projectID != graph.ProjectID().String() {
-		return Project{}, fmt.Errorf("%w: manifest %q, graph %q", projectgraph.ErrProjectIdentityMismatch, projectID, graph.ProjectID())
-	}
-	project.ID = projectID
 
 	wire := projectWire{Version: Version, Graph: graph, Manifest: project}
 	canonical, err := json.Marshal(wire)
@@ -122,14 +115,8 @@ func decodeCanonical(data []byte) (Project, error) {
 	if wire.Version != Version {
 		return Project{}, UnsupportedVersionError{Version: wire.Version}
 	}
-	if err := wire.Graph.Validate(); err != nil {
-		return Project{}, fmt.Errorf("decode project artifact graph: %w", err)
-	}
-	if strings.TrimSpace(wire.Manifest.ID) == "" {
-		return Project{}, errors.New("decode project artifact: manifest id is required")
-	}
-	if wire.Manifest.ID != wire.Graph.ProjectID().String() {
-		return Project{}, fmt.Errorf("%w: manifest %q, graph %q", projectgraph.ErrProjectIdentityMismatch, wire.Manifest.ID, wire.Graph.ProjectID())
+	if err := validateGraphManifest(wire.Graph, wire.Manifest); err != nil {
+		return Project{}, fmt.Errorf("decode project artifact: %w", err)
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil {
@@ -145,6 +132,206 @@ func decodeCanonical(data []byte) (Project, error) {
 		canonical: canonical,
 		digest:    "sha256:" + hex.EncodeToString(sum[:]),
 	}, nil
+}
+
+// validateGraphManifest is the single graph/manifest consistency boundary for
+// project artifacts. Resource IDs are exact map keys: names, paths, and
+// authoring metadata never provide a compatibility lookup. Access and
+// publication declarations remain manifest snapshots, not graph nodes.
+func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.Project) error {
+	if err := graph.Validate(); err != nil {
+		return fmt.Errorf("project graph: %w", err)
+	}
+	if strings.TrimSpace(project.ID) == "" {
+		return errors.New("project manifest id is required")
+	}
+	if project.ID != graph.ProjectID().String() {
+		return fmt.Errorf("%w: manifest %q, graph %q", projectgraph.ErrProjectIdentityMismatch, project.ID, graph.ProjectID())
+	}
+
+	resources := make(map[projectgraph.ResourceID]projectgraph.Resource, len(graph.Resources()))
+	for _, resource := range graph.Resources() {
+		resources[resource.ID] = resource
+	}
+	edges := make(map[projectgraph.ResourceID]map[projectgraph.ResourceID]struct{})
+	for _, edge := range graph.Edges() {
+		if edges[edge.From] == nil {
+			edges[edge.From] = make(map[projectgraph.ResourceID]struct{})
+		}
+		edges[edge.From][edge.To] = struct{}{}
+	}
+	type projection struct {
+		name string
+		kind projectgraph.Kind
+		ids  []string
+	}
+	projections := []projection{
+		{name: "connections", kind: projectgraph.KindConnection, ids: sortedManifestKeys(project.Connections)},
+		{name: "sources", kind: projectgraph.KindSource, ids: sortedManifestKeys(project.Sources)},
+		{name: "models", kind: projectgraph.KindModel, ids: sortedManifestKeys(project.Models)},
+		{name: "semanticModels", kind: projectgraph.KindSemanticModel, ids: sortedManifestKeys(project.SemanticModels)},
+		{name: "refreshPipelines", kind: projectgraph.KindPipeline, ids: sortedManifestKeys(project.RefreshPipelines)},
+		{name: "dashboardDefinitions", kind: projectgraph.KindDashboard, ids: sortedManifestKeys(project.DashboardDefinitions)},
+		{name: "dashboardSources", kind: projectgraph.KindDashboard, ids: sortedManifestKeys(project.DashboardSources)},
+	}
+	for _, item := range projections {
+		for _, id := range item.ids {
+			resource, ok := resources[projectgraph.ResourceID(id)]
+			if !ok {
+				return fmt.Errorf("manifest %s key %q is missing from graph", item.name, id)
+			}
+			if resource.Kind != item.kind {
+				return fmt.Errorf("manifest %s key %q resolves to graph kind %q, want %q", item.name, id, resource.Kind, item.kind)
+			}
+		}
+	}
+	for _, resource := range graph.Resources() {
+		if resource.Kind == projectgraph.KindProject {
+			continue
+		}
+		projectionName := manifestProjectionName(resource.Kind)
+		if projectionName == "" {
+			continue
+		}
+		if !manifestProjectionContains(project, resource.Kind, resource.ID) {
+			return fmt.Errorf("graph resource %q (%s) is absent from manifest %s", resource.ID, resource.Kind, projectionName)
+		}
+	}
+	for id, source := range project.Sources {
+		if err := requireManifestReference(resources, edges, "source", id, "connection", source.Connection, projectgraph.KindConnection); err != nil {
+			return err
+		}
+	}
+	for id, model := range project.Models {
+		for _, reference := range uniqueManifestReferences(model.Source, model.Sources, model.SourceDependencies) {
+			if err := requireManifestReference(resources, edges, "model", id, "source", reference, projectgraph.KindSource); err != nil {
+				return err
+			}
+		}
+		for _, reference := range uniqueManifestReferences("", model.ModelDependencies, nil) {
+			if err := requireManifestReference(resources, edges, "model", id, "model dependency", reference, projectgraph.KindModel); err != nil {
+				return err
+			}
+		}
+	}
+	for id, pipeline := range project.RefreshPipelines {
+		if pipeline.ID.String() != id {
+			return fmt.Errorf("manifest refreshPipelines key %q does not match definition id %q", id, pipeline.ID)
+		}
+		if err := requireManifestReference(resources, edges, "pipeline", id, "semantic model", pipeline.SemanticModelID.String(), projectgraph.KindSemanticModel); err != nil {
+			return err
+		}
+	}
+	for id, dashboard := range project.DashboardDefinitions {
+		if dashboard.ID != id {
+			return fmt.Errorf("manifest dashboardDefinitions key %q does not match definition id %q", id, dashboard.ID)
+		}
+		if err := requireManifestReference(resources, edges, "dashboard", id, "semantic model", dashboard.SemanticModel, projectgraph.KindSemanticModel); err != nil {
+			return err
+		}
+	}
+	for id, source := range project.DashboardSources {
+		if source.Document.ID.String() != id {
+			return fmt.Errorf("manifest dashboardSources key %q does not match document id %q", id, source.Document.ID)
+		}
+		if err := requireManifestReference(resources, edges, "dashboard", id, "semantic model", source.Document.SemanticModel.String(), projectgraph.KindSemanticModel); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requireManifestReference(
+	resources map[projectgraph.ResourceID]projectgraph.Resource,
+	edges map[projectgraph.ResourceID]map[projectgraph.ResourceID]struct{},
+	ownerKind, ownerID, field, reference string,
+	wantKind projectgraph.Kind,
+) error {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return fmt.Errorf("manifest %s %q requires %s reference", ownerKind, ownerID, field)
+	}
+	resource, ok := resources[projectgraph.ResourceID(reference)]
+	if !ok {
+		return fmt.Errorf("manifest %s %q %s reference %q is missing from graph", ownerKind, ownerID, field, reference)
+	}
+	if resource.Kind != wantKind {
+		return fmt.Errorf("manifest %s %q %s reference %q resolves to graph kind %q, want %q", ownerKind, ownerID, field, reference, resource.Kind, wantKind)
+	}
+	if _, ok := edges[projectgraph.ResourceID(ownerID)][projectgraph.ResourceID(reference)]; !ok {
+		return fmt.Errorf("manifest %s %q %s reference %q is missing its graph edge", ownerKind, ownerID, field, reference)
+	}
+	return nil
+}
+
+func uniqueManifestReferences(primary string, values, dependencies []string) []string {
+	seen := make(map[string]struct{}, 1+len(values)+len(dependencies))
+	for _, reference := range append(append([]string{primary}, values...), dependencies...) {
+		reference = strings.TrimSpace(reference)
+		if reference != "" {
+			seen[reference] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for reference := range seen {
+		out = append(out, reference)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedManifestKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func manifestProjectionName(kind projectgraph.Kind) string {
+	switch kind {
+	case projectgraph.KindConnection:
+		return "connections"
+	case projectgraph.KindSource:
+		return "sources"
+	case projectgraph.KindModel:
+		return "models"
+	case projectgraph.KindSemanticModel:
+		return "semanticModels"
+	case projectgraph.KindPipeline:
+		return "refreshPipelines"
+	case projectgraph.KindDashboard:
+		return "dashboardDefinitions and dashboardSources"
+	default:
+		return ""
+	}
+}
+
+func manifestProjectionContains(project manifest.Project, kind projectgraph.Kind, id projectgraph.ResourceID) bool {
+	switch kind {
+	case projectgraph.KindConnection:
+		_, ok := project.Connections[id.String()]
+		return ok
+	case projectgraph.KindSource:
+		_, ok := project.Sources[id.String()]
+		return ok
+	case projectgraph.KindModel:
+		_, ok := project.Models[id.String()]
+		return ok
+	case projectgraph.KindSemanticModel:
+		_, ok := project.SemanticModels[id.String()]
+		return ok
+	case projectgraph.KindPipeline:
+		_, ok := project.RefreshPipelines[id.String()]
+		return ok
+	case projectgraph.KindDashboard:
+		_, definitions := project.DashboardDefinitions[id.String()]
+		_, sources := project.DashboardSources[id.String()]
+		return definitions && sources
+	default:
+		return true
+	}
 }
 
 // Version returns the artifact wire version.

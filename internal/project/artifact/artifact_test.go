@@ -8,8 +8,10 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
+	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
 func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) {
@@ -17,20 +19,59 @@ func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) 
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "project:demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
-		{ID: "dashboard:sales", Kind: projectgraph.KindDashboard, Name: "sales"},
-	}, []projectgraph.Edge{{From: "project:demo", To: "connection:warehouse"}, {From: "project:demo", To: "dashboard:sales"}})
+		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
+		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
+		{ID: "semantic:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
+		{ID: "pipeline:sales", Kind: projectgraph.KindPipeline, Name: "sales_refresh"},
+		{ID: "dashboard:sales", Kind: projectgraph.KindDashboard, Name: "sales_dashboard"},
+	}, []projectgraph.Edge{
+		{From: "source:orders", To: "connection:warehouse"},
+		{From: "model:orders", To: "source:orders"},
+		{From: "semantic:sales", To: "model:orders"},
+		{From: "pipeline:sales", To: "semantic:sales"},
+		{From: "dashboard:sales", To: "semantic:sales"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return graphValue, manifest.Project{
 		ID: "project:demo", Name: "demo", Title: "Demo",
-		Connections:    map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
-		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}}},
-		NameIndex:      manifest.NameIndex{Connections: map[string]string{"warehouse": "connection:warehouse"}, SemanticModels: map[string]string{"sales": "semantic:sales"}},
+		Connections: map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
+		Sources: map[string]semanticmodel.Source{
+			"source:orders": {Connection: "connection:warehouse"},
+		},
+		Models: map[string]semanticmodel.Table{
+			"model:orders": {Source: "source:orders", SourceDependencies: []string{"source:orders"}},
+		},
+		SemanticModels: map[string]*semanticmodel.Model{
+			"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Source: "orders"}}},
+		},
+		DashboardDefinitions: map[string]dashboarddefinition.Definition{
+			"dashboard:sales": {ID: "dashboard:sales", SemanticModel: "semantic:sales"},
+		},
+		RefreshPipelines: map[string]refreshschedule.Definition{
+			"pipeline:sales": {ID: "pipeline:sales", Name: "sales_refresh", SemanticModelID: "semantic:sales"},
+		},
+		NameIndex: manifest.NameIndex{
+			Connections:    map[string]string{"warehouse": "connection:warehouse"},
+			Sources:        map[string]string{"orders": "source:orders"},
+			Models:         map[string]string{"orders_model": "model:orders"},
+			SemanticModels: map[string]string{"sales": "semantic:sales"},
+			Dashboards:     map[string]string{"sales": "dashboard:sales"},
+			Pipelines:      map[string]string{"sales_refresh": "pipeline:sales"},
+		},
 		DashboardSources: map[string]manifest.DashboardSource{
 			"dashboard:sales": {Document: dashboardauthoring.Dashboard{ID: "dashboard:sales", SemanticModel: "semantic:sales"}, Path: "dashboards/sales.yaml"},
 		},
-		ResourceFiles: map[string]string{"dashboard:sales": "dashboards/sales.yaml"},
+		ResourceFiles: map[string]string{
+			"project:demo":         "leapview.yaml",
+			"connection:warehouse": "connections/warehouse.yaml",
+			"source:orders":        "sources/orders.yaml",
+			"model:orders":         "models/orders.yaml",
+			"semantic:sales":       "semantic-models/sales.yaml",
+			"pipeline:sales":       "pipelines/sales.yaml",
+			"dashboard:sales":      "dashboards/sales.yaml",
+		},
 	}
 }
 
@@ -40,7 +81,7 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectManifest.Connections = map[string]semanticmodel.Connection{}
+	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "sqlite"}
 	second, err := NewProject(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +116,71 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	}
 	if _, ok := wire["identity"]; ok {
 		t.Fatalf("project artifact retained serving identity: %#v", wire)
+	}
+}
+
+func TestProjectAcceptsCompleteGraphManifest(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if project.ProjectID() != "project:demo" || len(project.Graph().Resources()) != 7 {
+		t.Fatalf("project = (%q, %d resources), want complete project graph", project.ProjectID(), len(project.Graph().Resources()))
+	}
+}
+
+func TestProjectRejectsManifestSemanticModelMissingFromGraph(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	delete(projectManifest.SemanticModels, "semantic:sales")
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `graph resource "semantic:sales" (semantic_model) is absent from manifest semanticModels`) {
+		t.Fatalf("NewProject() error = %v, want deterministic missing semantic model diagnostic", err)
+	}
+}
+
+func TestProjectRejectsManifestSemanticModelWrongGraphKind(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.SemanticModels["connection:warehouse"] = projectManifest.SemanticModels["semantic:sales"]
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest semanticModels key "connection:warehouse" resolves to graph kind "connection", want "semantic_model"`) {
+		t.Fatalf("NewProject() error = %v, want deterministic wrong-kind diagnostic", err)
+	}
+}
+
+func TestProjectRejectsDanglingSourceConnectionReference(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	source := projectManifest.Sources["source:orders"]
+	source.Connection = "connection:missing"
+	projectManifest.Sources["source:orders"] = source
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest source "source:orders" connection reference "connection:missing" is missing from graph`) {
+		t.Fatalf("NewProject() error = %v, want dangling source connection diagnostic", err)
+	}
+}
+
+func TestProjectRejectsWrongKindModelDependency(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	model := projectManifest.Models["model:orders"]
+	model.ModelDependencies = []string{"semantic:sales"}
+	projectManifest.Models["model:orders"] = model
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest model "model:orders" model dependency reference "semantic:sales" resolves to graph kind "semantic_model", want "model"`) {
+		t.Fatalf("NewProject() error = %v, want wrong-kind model dependency diagnostic", err)
+	}
+}
+
+func TestProjectRejectsDashboardIdentityAndSemanticReferenceDrift(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	definition := projectManifest.DashboardDefinitions["dashboard:sales"]
+	definition.SemanticModel = "semantic:missing"
+	projectManifest.DashboardDefinitions["dashboard:sales"] = definition
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest dashboard "dashboard:sales" semantic model reference "semantic:missing" is missing from graph`) {
+		t.Fatalf("NewProject() error = %v, want dangling dashboard semantic model diagnostic", err)
+	}
+
+	_, projectManifest = projectFixture(t)
+	source := projectManifest.DashboardSources["dashboard:sales"]
+	source.Document.ID = "dashboard:other"
+	projectManifest.DashboardSources["dashboard:sales"] = source
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest dashboardSources key "dashboard:sales" does not match document id "dashboard:other"`) {
+		t.Fatalf("NewProject() error = %v, want dashboard identity diagnostic", err)
 	}
 }
 

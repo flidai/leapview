@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
@@ -19,13 +20,27 @@ func bundleProject(t *testing.T) projectartifact.Project {
 	t.Helper()
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "project:demo", Kind: projectgraph.KindProject, Name: "demo", Provenance: projectgraph.Provenance{Path: "leapview.yaml"}},
+		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse", Provenance: projectgraph.Provenance{Path: "connections/warehouse.yaml"}},
 		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders", Provenance: projectgraph.Provenance{Path: "sources/orders.yaml"}},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model", Provenance: projectgraph.Provenance{Path: "models/orders.yaml"}},
-	}, []projectgraph.Edge{{From: "project:demo", To: "source:orders"}, {From: "source:orders", To: "model:orders"}})
+	}, []projectgraph.Edge{{From: "source:orders", To: "connection:warehouse"}, {From: "model:orders", To: "source:orders"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := projectartifact.NewProject(graphValue, manifest.Project{ID: "project:demo", Name: "demo", ResourceFiles: map[string]string{"project:demo": "leapview.yaml", "source:orders": "sources/orders.yaml", "model:orders": "models/orders.yaml"}})
+	project, err := projectartifact.NewProject(graphValue, manifest.Project{
+		ID:   "project:demo",
+		Name: "demo",
+		Connections: map[string]semanticmodel.Connection{
+			"connection:warehouse": {Kind: "managed"},
+		},
+		Sources: map[string]semanticmodel.Source{
+			"source:orders": {Connection: "connection:warehouse"},
+		},
+		Models: map[string]semanticmodel.Table{
+			"model:orders": {Source: "source:orders"},
+		},
+		ResourceFiles: map[string]string{"project:demo": "leapview.yaml", "connection:warehouse": "connections/warehouse.yaml", "source:orders": "sources/orders.yaml", "model:orders": "models/orders.yaml"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +48,7 @@ func bundleProject(t *testing.T) projectartifact.Project {
 }
 
 func bundlePlan(project projectartifact.Project) Plan {
-	return Plan{Project: project.ProjectID().String(), Sources: []string{"source:orders"}, Models: []string{"model:orders"}}
+	return Plan{Project: project.ProjectID().String(), Connections: []string{"connection:warehouse"}, Sources: []string{"source:orders"}, Models: []string{"model:orders"}}
 }
 
 func TestPackCompiledProjectUsesSingleDeterministicCompiledPath(t *testing.T) {
@@ -88,10 +103,16 @@ func TestPackProjectPreservesAuthoredSourcesDeterministically(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "sources"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "connections"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, "models"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "sources", "orders.yaml"), []byte("kind: Source\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte("kind: Connection\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("kind: Model\n"), 0o600); err != nil {
@@ -102,7 +123,7 @@ func TestPackProjectPreservesAuthoredSourcesDeterministically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifestValue.CatalogPath != ProjectFile || len(manifestValue.Files) != 3 {
+	if manifestValue.CatalogPath != ProjectFile || len(manifestValue.Files) != 4 {
 		t.Fatalf("manifest = %#v", manifestValue)
 	}
 	path := filepath.Join(t.TempDir(), "project.tar.gz")
@@ -123,10 +144,11 @@ func TestPackProjectIncludesOnlyManifestAndGraphProvenanceFiles(t *testing.T) {
 	root := t.TempDir()
 	projectPath := filepath.Join(root, ProjectFile)
 	files := map[string]string{
-		ProjectFile:            "apiVersion: leapview.dev/v1\nkind: Project\n",
-		"sources/orders.yaml":  "kind: Source\n",
-		"models/orders.yaml":   "kind: Model\n",
-		"unrelated/other.yaml": "must not be bundled\n",
+		ProjectFile:                  "apiVersion: leapview.dev/v1\nkind: Project\n",
+		"connections/warehouse.yaml": "kind: Connection\n",
+		"sources/orders.yaml":        "kind: Source\n",
+		"models/orders.yaml":         "kind: Model\n",
+		"unrelated/other.yaml":       "must not be bundled\n",
 	}
 	for name, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
@@ -142,8 +164,8 @@ func TestPackProjectIncludesOnlyManifestAndGraphProvenanceFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifestValue.Files) != 3 {
-		t.Fatalf("manifest files = %#v, want project + two provenance files", manifestValue.Files)
+	if len(manifestValue.Files) != 4 {
+		t.Fatalf("manifest files = %#v, want project + three provenance files", manifestValue.Files)
 	}
 	for _, file := range manifestValue.Files {
 		if file.Path == "unrelated/other.yaml" {
@@ -157,9 +179,10 @@ func TestPackProjectRequiresExactSuppliedSourceSet(t *testing.T) {
 	root := t.TempDir()
 	projectPath := filepath.Join(root, ProjectFile)
 	expected := map[string][]byte{
-		ProjectFile:           []byte("project\n"),
-		"sources/orders.yaml": []byte("source\n"),
-		"models/orders.yaml":  []byte("model\n"),
+		ProjectFile:                  []byte("project\n"),
+		"connections/warehouse.yaml": []byte("connection\n"),
+		"sources/orders.yaml":        []byte("source\n"),
+		"models/orders.yaml":         []byte("model\n"),
 	}
 	if _, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project), SourceFiles: expected}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("PackProject() exact source set error = %v", err)
@@ -170,10 +193,11 @@ func TestPackProjectRequiresExactSuppliedSourceSet(t *testing.T) {
 			"sources/orders.yaml": expected["sources/orders.yaml"],
 		},
 		"extra": {
-			ProjectFile:           expected[ProjectFile],
-			"sources/orders.yaml": expected["sources/orders.yaml"],
-			"models/orders.yaml":  expected["models/orders.yaml"],
-			"unrelated.yaml":      []byte("extra\n"),
+			ProjectFile:                  expected[ProjectFile],
+			"connections/warehouse.yaml": expected["connections/warehouse.yaml"],
+			"sources/orders.yaml":        expected["sources/orders.yaml"],
+			"models/orders.yaml":         expected["models/orders.yaml"],
+			"unrelated.yaml":             []byte("extra\n"),
 		},
 	} {
 		if _, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project), SourceFiles: files}, &bytes.Buffer{}); err == nil {
