@@ -83,20 +83,21 @@ type RunInput struct {
 }
 
 type JobRecord struct {
-	ID              string
-	Identity        projectgraph.ServingIdentity
-	SemanticModelID projectgraph.ResourceID
-	PipelineID      projectgraph.ResourceID
-	Kind            string
-	PayloadJSON     string
-	RunID           string
-	TargetType      string
-	TargetID        projectgraph.ResourceID
-	TargetRevision  int64
-	TriggerType     string
-	AttemptCount    int
-	LeaseOwner      string
-	LeaseRevision   int64
+	ID                   string
+	Identity             projectgraph.ServingIdentity
+	SemanticModelID      projectgraph.ResourceID
+	PipelineID           projectgraph.ResourceID
+	Kind                 string
+	PayloadJSON          string
+	EstimatedMemoryBytes int64
+	RunID                string
+	TargetType           string
+	TargetID             projectgraph.ResourceID
+	TargetRevision       int64
+	TriggerType          string
+	AttemptCount         int
+	LeaseOwner           string
+	LeaseRevision        int64
 }
 
 type JobQueueStats struct {
@@ -142,10 +143,8 @@ func (input RunInput) Validate() error {
 	if err := input.SemanticModelID.Validate(); err != nil {
 		return err
 	}
-	if input.PipelineID != "" {
-		if err := input.PipelineID.Validate(); err != nil {
-			return err
-		}
+	if err := input.PipelineID.Validate(); err != nil {
+		return err
 	}
 	if err := input.TargetID.Validate(); err != nil {
 		return err
@@ -164,11 +163,12 @@ func (input RunInput) Validate() error {
 	if _, ok := validJobKinds[input.JobKind]; !ok {
 		return errors.New("refresh job kind is unsupported")
 	}
-	if input.TargetType == TargetRefreshPipeline && (input.PipelineID == "" || input.PipelineID != input.TargetID) {
+	if input.TargetType == TargetRefreshPipeline && input.PipelineID != input.TargetID {
 		return errors.New("refresh pipeline target must equal pipeline id")
 	}
 	for name, value := range map[string]string{"principal id": input.PrincipalID, "parent run id": input.ParentRunID, "retry of": input.RetryOf} {
-		if err := validateOperational(value, name, false); err != nil {
+		required := name == "principal id"
+		if err := validateOperational(value, name, required); err != nil {
 			return err
 		}
 	}
@@ -185,10 +185,8 @@ func (job JobRecord) Validate() error {
 	if err := job.SemanticModelID.Validate(); err != nil {
 		return err
 	}
-	if job.PipelineID != "" {
-		if err := job.PipelineID.Validate(); err != nil {
-			return err
-		}
+	if err := job.PipelineID.Validate(); err != nil {
+		return err
 	}
 	if err := job.TargetID.Validate(); err != nil {
 		return err
@@ -202,10 +200,10 @@ func (job JobRecord) Validate() error {
 	if _, ok := validJobKinds[job.Kind]; !ok {
 		return errors.New("refresh job kind is unsupported")
 	}
-	if job.TargetType == TargetRefreshPipeline && (job.PipelineID == "" || job.PipelineID != job.TargetID) {
+	if job.TargetType == TargetRefreshPipeline && job.PipelineID != job.TargetID {
 		return errors.New("refresh pipeline target must equal pipeline id")
 	}
-	for name, value := range map[string]string{"job id": job.ID, "run id": job.RunID} {
+	for name, value := range map[string]string{"job id": job.ID, "run id": job.RunID, "principal id": job.PrincipalID} {
 		required := true
 		if err := validateOperational(value, name, required); err != nil {
 			return err

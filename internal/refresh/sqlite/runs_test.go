@@ -177,9 +177,9 @@ func TestSQLRunRepositoryFencesTerminalTransitionsAcrossReclaim(t *testing.T) {
 func TestSQLRunRepositoryFailsClaimedRunTreeAtomically(t *testing.T) {
 	store, repo, job := seedRefreshJob(t, refreshrun.RunStatusRunning, "+5 minutes")
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
-INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'child_run', 'queued');
-INSERT INTO refresh_job_runs (id, job_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
-VALUES ('child_run', 'child_job', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'running', 2);`); err != nil {
+INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'child_run', 'queued');
+INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
+VALUES ('child_run', 'child_job', 'system:refresh', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'running', 2);`); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.MarkRunTreeFailedClaimed(t.Context(), job, "pipeline failed"); err != nil {
@@ -204,9 +204,9 @@ func TestSQLRunRepositoryRejectsIneligibleChildTree(t *testing.T) {
 	store, repo, job := seedRefreshJob(t, refreshrun.RunStatusRunning, "+5 minutes")
 	defer store.Close()
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
-INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'child_run', 'queued');
-INSERT INTO refresh_job_runs (id, job_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
-VALUES ('child_run', 'child_job', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'succeeded', 2);`); err != nil {
+INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'child_run', 'queued');
+INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
+VALUES ('child_run', 'child_job', 'system:refresh', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'succeeded', 2);`); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.MarkRunTreeFailedClaimed(t.Context(), job, "pipeline failed"); !errors.Is(err, refreshrun.ErrLeaseLost) {
@@ -244,8 +244,8 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runA.TargetRevision != 1 || runB.TargetRevision != 1 {
-		t.Fatalf("cross-generation target revisions = %d/%d, want both 1", runA.TargetRevision, runB.TargetRevision)
+	if runA.TargetRevision != 1 || runB.TargetRevision != 1 || runA.PipelineID != "pipeline_daily" || runB.PipelineID != "pipeline_daily" {
+		t.Fatalf("cross-generation revisions/pipeline = %d/%d %q/%q, want both 1 and pipeline_daily", runA.TargetRevision, runB.TargetRevision, runA.PipelineID, runB.PipelineID)
 	}
 	claimedA, ok, err := repository.ClaimNextExecutableJob(t.Context(), testRunIdentity, "worker-a", time.Minute)
 	if err != nil || !ok {
@@ -328,14 +328,14 @@ func seedRefreshJob(t *testing.T, runStatus, leaseOffset string) (*platform.Stor
 	t.Cleanup(func() { _ = store.Close() })
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO refresh_jobs (
-  id, project_id, generation_id, semantic_model_id, kind, status, lease_owner, lease_revision
+  id, project_id, generation_id, semantic_model_id, pipeline_id, kind, status, lease_owner, lease_revision
 ) VALUES (
-  'job_1', 'project_sales', 'generation_a', 'semantic_sales', 'refresh_pipeline', 'running', 'worker-1', 1
+  'job_1', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'refresh_pipeline', 'running', 'worker-1', 1
 );
 INSERT INTO refresh_job_runs (
-  id, job_id, environment, target_type, target_id, target_revision, trigger_type, status, created_sequence
+  id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, status, created_sequence
 ) VALUES (
-  'run_1', 'job_1', 'dev', 'refresh_pipeline', 'pipeline_daily', 1, 'manual', ?, 1
+  'run_1', 'job_1', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 1, 'manual', ?, 1
 );`, runStatus); err != nil {
 		t.Fatalf("seed refresh job: %v", err)
 	}

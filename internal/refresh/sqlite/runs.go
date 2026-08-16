@@ -85,7 +85,7 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 	runID := newRunID("matrun")
 	if err := q.CreateRefreshJob(ctx, platformdb.CreateRefreshJobParams{
 		ID: jobID, ProjectID: normalized.Identity.ProjectID.String(), GenerationID: normalized.Identity.GenerationID,
-		SemanticModelID: normalized.SemanticModelID.String(), Kind: normalized.JobKind, PayloadJson: normalized.PayloadJSON, Status: refreshrun.RunStatusQueued,
+		SemanticModelID: normalized.SemanticModelID.String(), PipelineID: normalized.PipelineID.String(), Kind: normalized.JobKind, PayloadJson: normalized.PayloadJSON, Status: refreshrun.RunStatusQueued,
 	}); err != nil {
 		return refreshrun.RunRecord{}, err
 	}
@@ -171,12 +171,9 @@ func (r *SQLRunRepository) ListExecutableJobs(ctx context.Context, identity proj
 		if identityErr != nil || rowIdentity != identity {
 			return nil, fmt.Errorf("invalid persisted refresh job serving identity for %s", row.ID)
 		}
-		pipelineID := projectgraph.ResourceID("")
-		if row.TargetType == refreshrun.TargetRefreshPipeline {
-			pipelineID = projectgraph.ResourceID(row.TargetID)
-		}
+		pipelineID := projectgraph.ResourceID(row.PipelineID)
 		jobs = append(jobs, refreshrun.JobRecord{
-			ID: row.ID, Identity: rowIdentity, PipelineID: pipelineID, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID),
+			ID: row.ID, Identity: rowIdentity, PipelineID: pipelineID, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID), PrincipalID: row.PrincipalID.String,
 			Kind: row.Kind, PayloadJSON: row.PayloadJson, RunID: row.RunID, TargetType: row.TargetType,
 			TargetID: projectgraph.ResourceID(row.TargetID), TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, AttemptCount: int(row.AttemptCount),
 			LeaseOwner: row.LeaseOwner, LeaseRevision: row.LeaseRevision,
@@ -726,6 +723,7 @@ type materializationRunDBRow struct {
 	Environment          string
 	GenerationID         string
 	SemanticModelID      string
+	PipelineID           string
 	PrincipalID          sql.NullString
 	PrincipalDisplayName string
 	TargetType           string
@@ -744,7 +742,7 @@ type materializationRunDBRow struct {
 
 func materializationRunFromGetRow(row platformdb.GetMaterializationRunRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
-		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
+		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
 		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
@@ -753,7 +751,7 @@ func materializationRunFromGetRow(row platformdb.GetMaterializationRunRow) (refr
 
 func materializationRunFromChildRow(row platformdb.ListChildMaterializationRunsRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
-		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
+		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
 		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
@@ -762,7 +760,7 @@ func materializationRunFromChildRow(row platformdb.ListChildMaterializationRunsR
 
 func materializationRunFromLatestRow(row platformdb.LatestSuccessfulMaterializationRunRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
-		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
+		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
 		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
@@ -771,7 +769,7 @@ func materializationRunFromLatestRow(row platformdb.LatestSuccessfulMaterializat
 
 func materializationRunFromListRow(row platformdb.ListMaterializationRunsRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
-		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
+		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
 		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
@@ -780,7 +778,7 @@ func materializationRunFromListRow(row platformdb.ListMaterializationRunsRow) (r
 
 func materializationRunFromTargetListRow(row platformdb.ListTargetMaterializationRunsRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
-		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID,
+		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
 		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
@@ -793,13 +791,10 @@ func materializationRunFromDB(row materializationRunDBRow) (refreshrun.RunRecord
 		return refreshrun.RunRecord{}, fmt.Errorf("invalid refresh run serving identity: %w", err)
 	}
 	run := refreshrun.RunRecord{
-		ID: row.ID, Identity: identity, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID),
+		ID: row.ID, Identity: identity, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID), PipelineID: projectgraph.ResourceID(row.PipelineID),
 		PrincipalID: row.PrincipalID.String, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
 		TargetID: projectgraph.ResourceID(row.TargetID), TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, ParentRunID: row.ParentRunID.String, RetryOf: row.RetryOf.String, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt.String, Error: row.Error,
-	}
-	if run.TargetType == refreshrun.TargetRefreshPipeline {
-		run.PipelineID = run.TargetID
 	}
 	if run.Status == refreshrun.RunStatusQueued {
 		run.StartedAt = ""
@@ -820,6 +815,9 @@ func validateMappedRun(run refreshrun.RunRecord) error {
 	if err := run.SemanticModelID.Validate(); err != nil {
 		return fmt.Errorf("invalid refresh run semantic model id: %w", err)
 	}
+	if err := run.PipelineID.Validate(); err != nil {
+		return fmt.Errorf("invalid refresh run pipeline id: %w", err)
+	}
 	if err := run.TargetID.Validate(); err != nil {
 		return fmt.Errorf("invalid refresh run target id: %w", err)
 	}
@@ -835,7 +833,11 @@ func validateMappedRun(run refreshrun.RunRecord) error {
 		return fmt.Errorf("unsupported refresh run status %q", run.Status)
 	}
 	if run.TargetType == refreshrun.TargetRefreshPipeline {
-		run.PipelineID = run.TargetID
+		if run.PipelineID != run.TargetID {
+			return fmt.Errorf("refresh pipeline run pipeline id does not match target id")
+		}
+	} else if run.PipelineID == "" {
+		return fmt.Errorf("model-table run pipeline id is required")
 	}
 	if err := validateStoredID(run.PrincipalID, "principal id", false); err != nil {
 		return err

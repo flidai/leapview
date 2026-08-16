@@ -1,8 +1,8 @@
 -- Refresh execution, materialization runs, and durable scheduling jobs.
 
 -- name: CreateRefreshJob :exec
-INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, kind, payload_json, status, queued_at)
-VALUES (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(generation_id), sqlc.arg(semantic_model_id), sqlc.arg(kind), sqlc.arg(payload_json), sqlc.arg(status), CURRENT_TIMESTAMP);
+INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, kind, payload_json, status, queued_at)
+VALUES (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(generation_id), sqlc.arg(semantic_model_id), sqlc.arg(pipeline_id), sqlc.arg(kind), sqlc.arg(payload_json), sqlc.arg(status), CURRENT_TIMESTAMP);
 
 -- name: CreateRefreshJobRun :exec
 INSERT INTO refresh_job_runs (
@@ -86,7 +86,7 @@ WHERE id IN (
 );
 
 -- name: NextExecutableRefreshJob :one
-SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.kind, j.payload_json,
+SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, r.principal_id, j.pipeline_id, j.kind, j.payload_json,
        r.id AS run_id, r.target_type, r.target_id, r.target_revision, r.trigger_type, j.attempt_count, j.lease_owner, j.lease_revision
 FROM refresh_jobs j
 JOIN refresh_job_runs r ON r.job_id = j.id
@@ -104,7 +104,7 @@ LIMIT 1;
 
 -- name: ListExecutableRefreshJobHeads :many
 WITH eligible AS (
-  SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.kind, j.payload_json,
+  SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, r.principal_id, j.pipeline_id, j.kind, j.payload_json,
          r.id AS run_id, r.target_type, r.target_id, r.target_revision, r.trigger_type, j.attempt_count, j.lease_owner, j.lease_revision,
          ROW_NUMBER() OVER (
            PARTITION BY j.project_id
@@ -123,7 +123,7 @@ WITH eligible AS (
       OR (j.status = sqlc.arg(running_status) AND (j.lease_expires_at IS NULL OR j.lease_expires_at <= CURRENT_TIMESTAMP))
     )
 )
-SELECT id, project_id, environment, generation_id, semantic_model_id, kind, payload_json,
+SELECT id, project_id, environment, generation_id, semantic_model_id, principal_id, pipeline_id, kind, payload_json,
        run_id, target_type, target_id, target_revision, trigger_type, attempt_count, lease_owner, lease_revision
 FROM eligible
 WHERE project_position = 1
@@ -223,7 +223,7 @@ WHERE COALESCE(r.parent_run_id, '') = ''
   AND r.environment = sqlc.arg(environment);
 
 -- name: GetMaterializationRun :one
-SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, r.principal_id,
+SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
        r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status, j.created_at, j.updated_at,
        r.started_at, r.finished_at, r.error
@@ -234,7 +234,7 @@ WHERE r.id = sqlc.arg(run_id) AND j.project_id = sqlc.arg(project_id)
   AND j.generation_id = sqlc.arg(generation_id) AND r.environment = sqlc.arg(environment);
 
 -- name: ListChildMaterializationRuns :many
-SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, r.principal_id,
+SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
        r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status, j.created_at, j.updated_at,
        r.started_at, r.finished_at, r.error
@@ -246,7 +246,7 @@ WHERE j.project_id = sqlc.arg(project_id) AND j.generation_id = sqlc.arg(generat
 ORDER BY r.rowid ASC;
 
 -- name: LatestSuccessfulMaterializationRun :one
-SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, r.principal_id,
+SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
        r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status, j.created_at, j.updated_at,
        r.started_at, r.finished_at, r.error
@@ -550,7 +550,7 @@ WHERE id = sqlc.arg(generation_id)
   AND status = 'validated';
 
 -- name: ListMaterializationRuns :many
-SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, r.principal_id,
+SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
        r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status,
        j.created_at, j.updated_at, r.started_at, r.finished_at, r.error
@@ -571,7 +571,7 @@ ORDER BY j.created_at DESC, r.created_sequence DESC
 LIMIT sqlc.arg(limit);
 
 -- name: ListTargetMaterializationRuns :many
-SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, r.principal_id,
+SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
        r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status,
        j.created_at, j.updated_at, r.started_at, r.finished_at, r.error

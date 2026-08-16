@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS refresh_jobs (
   project_id TEXT NOT NULL,
   generation_id TEXT NOT NULL,
   semantic_model_id TEXT NOT NULL,
+  pipeline_id TEXT NOT NULL,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

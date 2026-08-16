@@ -70,14 +70,14 @@ func seedPublicationTree(t *testing.T, childStatus string) (*platform.Store, ref
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO serving_states (id, project_id, environment, status, source, digest, manifest_json, created_by, ducklake_snapshot_id)
 VALUES ('candidate', 'project_sales', 'dev', 'validated', 'refresh', 'digest', '{}', 'test', 42);
-INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, kind, status, lease_owner, lease_revision, lease_expires_at)
-VALUES ('root_job', 'project_sales', 'candidate', 'semantic_sales', 'refresh_pipeline', 'running', 'worker-1', 1, datetime('now', '+5 minutes'));
-INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, kind, status)
-VALUES ('child_job', 'project_sales', 'candidate', 'semantic_sales', 'child_run', 'queued');
-INSERT INTO refresh_job_runs (id, job_id, environment, target_type, target_id, target_revision, trigger_type, status, created_sequence)
-VALUES ('root_run', 'root_job', 'dev', 'refresh_pipeline', 'pipeline_daily', 1, 'manual', 'prepared', 1);
-INSERT INTO refresh_job_runs (id, job_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
-VALUES ('child_run', 'child_job', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'root_run', ?, 2);`, childStatus); err != nil {
+INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, kind, status, lease_owner, lease_revision, lease_expires_at)
+VALUES ('root_job', 'project_sales', 'candidate', 'semantic_sales', 'pipeline_daily', 'refresh_pipeline', 'running', 'worker-1', 1, datetime('now', '+5 minutes'));
+INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, kind, status)
+VALUES ('child_job', 'project_sales', 'candidate', 'semantic_sales', 'pipeline_daily', 'child_run', 'queued');
+INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, status, created_sequence)
+VALUES ('root_run', 'root_job', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 1, 'manual', 'prepared', 1);
+INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
+VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'root_run', ?, 2);`, childStatus); err != nil {
 		t.Fatal(err)
 	}
 	version := refreshschedule.DataVersion{Identity: publicationIdentity, SemanticModelID: "semantic_sales", SnapshotID: 42, RefreshedAt: time.Now().UTC(), Source: refreshschedule.DataVersionSourceRefresh, PipelineID: "pipeline_daily", RunID: "root_run", TargetRevision: 1, LeaseOwner: "worker-1", LeaseRevision: 1}

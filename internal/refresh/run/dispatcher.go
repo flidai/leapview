@@ -70,7 +70,13 @@ func (d Dispatcher) Run(ctx context.Context) {
 }
 
 func (d Dispatcher) dispatchCandidate(ctx context.Context, owner string, candidate JobRecord, queueStats JobQueueStats) bool {
-	lease, err := d.admitter().Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "system:refresh", Operation: "materialization.refresh", EstimatedMemoryBytes: 64 << 20})
+	if candidate.PrincipalID == "" || candidate.EstimatedMemoryBytes <= 0 {
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "refresh job lacks durable actor or memory estimate", "job", candidate.ID)
+		}
+		return false
+	}
+	lease, err := d.admitter().Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: candidate.PrincipalID, Operation: "materialization.refresh", EstimatedMemoryBytes: candidate.EstimatedMemoryBytes})
 	if err != nil {
 		if d.Logger != nil {
 			d.Logger.InfoContext(ctx, "refresh admission deferred", "project", candidate.Identity.ProjectID, "generation", candidate.Identity.GenerationID, "run", candidate.RunID, "error", err)
