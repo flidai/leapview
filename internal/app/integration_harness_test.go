@@ -213,25 +213,6 @@ func (h *harness) postAuthenticated(t *testing.T, path string) int {
 	return res.StatusCode
 }
 
-// The refresh-visibility test is retained as a source-level contract while
-// its former workspace deployment fixture is retired.  Keep construction
-// explicit so running that test reports the migration boundary clearly.
-type duckLakeHarness struct {
-	*harness
-	store *platform.Store
-}
-
-func newDuckLakeHarness(t *testing.T, _ ...func(*assemblyConfig)) *duckLakeHarness {
-	t.Skip("refresh visibility fixture requires canonical serving-state setup")
-	return &duckLakeHarness{harness: newHarness(t)}
-}
-
-func integrationAssetID(t *testing.T, _ *platform.Store, _, _, _ string) string {
-	t.Helper()
-	t.Skip("workspace asset lookup is retired; use project resource IDs")
-	return ""
-}
-
 type streamClient struct {
 	cancel  context.CancelFunc
 	body    io.ReadCloser

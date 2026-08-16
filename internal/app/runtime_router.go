@@ -43,6 +43,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -123,13 +124,15 @@ type persistenceInputs struct {
 }
 
 type workflowInputs struct {
-	managedDataValidation refreshmodule.CandidateValidationHook
-	managedDataResolver   runtimehostmodule.ManagedDataResolver
-	refreshPipelineClock  refreshmodule.Clock
-	agent                 *agentmodule.Service
-	agentConfig           agentmodule.ModelConfig
-	reloader              runtimeReloader
-	deploymentConfig      deploymentmodule.Config
+	managedDataValidation   refreshmodule.CandidateValidationHook
+	managedDataResolver     runtimehostmodule.ManagedDataResolver
+	refreshPipelineClock    refreshmodule.Clock
+	refreshMaterializer     refreshrun.Materializer
+	enableRefreshDispatcher bool
+	agent                   *agentmodule.Service
+	agentConfig             agentmodule.ModelConfig
+	reloader                runtimeReloader
+	deploymentConfig        deploymentmodule.Config
 }
 
 type storageInputs struct {
@@ -198,16 +201,18 @@ type capabilityAssemblyInputs struct {
 }
 
 type workflowAssemblyInputs struct {
-	AgentSettings         agentmodule.Settings
-	ManagedDataValidation refreshmodule.CandidateValidationHook
-	ManagedDataResolver   runtimehostmodule.ManagedDataResolver
-	AgentConfig           agentmodule.ModelConfig
-	Auth                  *accessmodule.Auth
-	Reloader              runtimeReloader
-	Workload              workloadControl
-	DeploymentConfig      deploymentmodule.Config
-	RefreshPipelineClock  refreshmodule.Clock
-	QueryAudit            *analyticsmodule.QueryAuditSurface
+	AgentSettings           agentmodule.Settings
+	ManagedDataValidation   refreshmodule.CandidateValidationHook
+	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
+	AgentConfig             agentmodule.ModelConfig
+	Auth                    *accessmodule.Auth
+	Reloader                runtimeReloader
+	Workload                workloadControl
+	DeploymentConfig        deploymentmodule.Config
+	RefreshPipelineClock    refreshmodule.Clock
+	RefreshMaterializer     refreshrun.Materializer
+	EnableRefreshDispatcher bool
+	QueryAudit              *analyticsmodule.QueryAuditSurface
 }
 
 type runtimeAssemblyInputs struct {
@@ -359,6 +364,8 @@ func buildApplicationSurfaces(
 	moduleWorkflow := workflowInputs{}
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
+	moduleWorkflow.refreshMaterializer = workflow.RefreshMaterializer
+	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	runtime.queryAuditProvider = queryAuditProvider
 	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, projectID projectgraph.ResourceID) QueryMetrics {
 		if provider == nil || projectID == "" {

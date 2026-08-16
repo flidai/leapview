@@ -22,6 +22,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -32,50 +33,54 @@ import (
 // while they are moved beside their owners; production has no general
 // dependency bag.
 type assemblyConfig struct {
-	Database              *sql.DB
-	PlatformHealth        platformHealth
-	AgentSettings         agentmodule.Settings
-	AdminDatabase         *sql.DB
-	ServingStateRepo      servingStateRepository
-	StorageRetention      *servingstatemodule.Retention
-	ManagedDataValidation refreshmodule.CandidateValidationHook
-	ManagedDataResolver   runtimehostmodule.ManagedDataResolver
-	ReleaseModule         *releasemodule.Module
-	JobModule             *jobsmodule.Module
-	AccessRepo            access.Repository
-	AccessModule          *accessmodule.Module
-	Agent                 *agentmodule.Service
-	AgentConfig           agentmodule.ModelConfig
-	Auth                  *accessmodule.Auth
-	Reloader              runtimeReloader
-	DuckDBDir             string
-	DuckLakeCatalogPath   string
-	DuckLakeDataPath      string
-	DefaultEnvironment    string
-	SCIMBearerToken       string
-	MetricsBearerToken    string
-	AllowedHosts          []string
-	Assets                staticasset.Resolver
-	RateLimits            apihttpmiddleware.RateLimitConfig
-	SecurityHeaders       apihttpmiddleware.SecurityHeadersConfig
-	RequestBodyLimit      apihttpmiddleware.RequestBodyLimitConfig
-	RequestLogging        bool
-	Logger                *slog.Logger
-	Workload              workloadControl
-	JobLeaseTimeout       time.Duration
-	ManagedDataModule     *manageddatamodule.Module
-	DeploymentConfig      deploymentmodule.Config
-	ManagedDataTus        http.Handler
-	MCPOAuth              MCPOAuthConfig
-	PublicURL             string
-	DesktopDiscovery      desktopdiscovery.Config
-	RefreshPipelineClock  refreshmodule.Clock
-	AnalyticsModule       *analyticsmodule.Module
-	Authoring             *authoringapplication.Application
-	DashboardAssets       dashboardmodule.Assets
-	QueryAudit            *analyticsmodule.QueryAuditSurface
-	Product               *adminmodule.ProductService
-	ProductStatus         adminmodule.ProductStatus
+	Database                *sql.DB
+	PlatformHealth          platformHealth
+	AgentSettings           agentmodule.Settings
+	AdminDatabase           *sql.DB
+	ServingStateRepo        servingStateRepository
+	StorageRetention        *servingstatemodule.Retention
+	ManagedDataValidation   refreshmodule.CandidateValidationHook
+	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
+	ReleaseModule           *releasemodule.Module
+	JobModule               *jobsmodule.Module
+	AccessRepo              access.Repository
+	AccessModule            *accessmodule.Module
+	Agent                   *agentmodule.Service
+	AgentConfig             agentmodule.ModelConfig
+	Auth                    *accessmodule.Auth
+	Reloader                runtimeReloader
+	DuckDBDir               string
+	DuckLakeCatalogPath     string
+	DuckLakeDataPath        string
+	DefaultEnvironment      string
+	SCIMBearerToken         string
+	MetricsBearerToken      string
+	AllowedHosts            []string
+	Assets                  staticasset.Resolver
+	RateLimits              apihttpmiddleware.RateLimitConfig
+	SecurityHeaders         apihttpmiddleware.SecurityHeadersConfig
+	RequestBodyLimit        apihttpmiddleware.RequestBodyLimitConfig
+	RequestLogging          bool
+	Logger                  *slog.Logger
+	Workload                workloadControl
+	JobLeaseTimeout         time.Duration
+	ManagedDataModule       *manageddatamodule.Module
+	DeploymentConfig        deploymentmodule.Config
+	ManagedDataTus          http.Handler
+	MCPOAuth                MCPOAuthConfig
+	PublicURL               string
+	DesktopDiscovery        desktopdiscovery.Config
+	RefreshPipelineClock    refreshmodule.Clock
+	RefreshMaterializer     refreshrun.Materializer
+	EnableRefreshDispatcher bool
+	RuntimeHost             *runtimehostmodule.Module
+	ProjectID               projectgraph.ResourceID
+	AnalyticsModule         *analyticsmodule.Module
+	Authoring               *authoringapplication.Application
+	DashboardAssets         dashboardmodule.Assets
+	QueryAudit              *analyticsmodule.QueryAuditSurface
+	Product                 *adminmodule.ProductService
+	ProductStatus           adminmodule.ProductStatus
 }
 
 // appTestHarness is a test fixture facade for legacy app-package tests.
@@ -174,11 +179,12 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			ManagedDataResolver: options.ManagedDataResolver, AgentConfig: options.AgentConfig,
 			Auth: options.Auth, Reloader: options.Reloader, Workload: options.Workload,
 			DeploymentConfig: options.DeploymentConfig, RefreshPipelineClock: options.RefreshPipelineClock,
+			RefreshMaterializer: options.RefreshMaterializer, EnableRefreshDispatcher: options.EnableRefreshDispatcher,
 			QueryAudit: options.QueryAudit,
 		},
 		runtimeAssemblyInputs{
-			InstanceID: instanceID,
-			DuckDBDir:  options.DuckDBDir, DuckLakeCatalogPath: options.DuckLakeCatalogPath,
+			RuntimeHost: options.RuntimeHost, ProjectID: options.ProjectID, InstanceID: instanceID,
+			DuckDBDir: options.DuckDBDir, DuckLakeCatalogPath: options.DuckLakeCatalogPath,
 			DuckLakeDataPath:   options.DuckLakeDataPath,
 			DefaultEnvironment: options.DefaultEnvironment, SCIMBearerToken: options.SCIMBearerToken,
 			MetricsBearerToken: options.MetricsBearerToken, AllowedHosts: options.AllowedHosts, Assets: options.Assets,

@@ -25,6 +25,9 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	if err != nil && database != nil {
 		return fmt.Errorf("configure refresh service: %w", err)
 	}
+	if workflow.refreshMaterializer != nil {
+		service.Materializer = workflow.refreshMaterializer
+	}
 	config := refreshmodule.Config{
 		Database: database, Service: service,
 		Analytics: runtime.analyticsModule.ProjectMaterializer(), ManagedData: workflow.managedDataResolver,
@@ -61,7 +64,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		},
 		Admission: workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,
 		Clock:            workflow.refreshPipelineClock,
-		EnableDispatcher: false,
+		EnableDispatcher: workflow.enableRefreshDispatcher,
 		EnableScheduler:  false,
 		Logger:           platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,
 		WorkloadStats: func() refreshmodule.WorkloadStats {
