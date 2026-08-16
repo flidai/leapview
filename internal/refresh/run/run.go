@@ -44,7 +44,7 @@ type RunRecord struct {
 	PrincipalID          string                       `json:"principalId,omitempty"`
 	PrincipalDisplayName string                       `json:"principalDisplayName,omitempty"`
 	TargetType           string                       `json:"targetType"`
-	TargetID             string                       `json:"targetId"`
+	TargetID             projectgraph.ResourceID      `json:"targetId"`
 	TargetRevision       int64                        `json:"targetRevision"`
 	TriggerType          string                       `json:"triggerType"`
 	ParentRunID          string                       `json:"parentRunId,omitempty"`
@@ -63,7 +63,7 @@ type RunInput struct {
 	PipelineID      projectgraph.ResourceID
 	PrincipalID     string
 	TargetType      string
-	TargetID        string
+	TargetID        projectgraph.ResourceID
 	TargetRevision  int64
 	TriggerType     string
 	ParentRunID     string
@@ -81,7 +81,7 @@ type JobRecord struct {
 	PayloadJSON     string
 	RunID           string
 	TargetType      string
-	TargetID        string
+	TargetID        projectgraph.ResourceID
 	TargetRevision  int64
 	TriggerType     string
 	AttemptCount    int
@@ -109,12 +109,8 @@ type RunRepository interface {
 }
 
 // LeaseFencedRunRepository contains worker-owned terminal transitions. The
-// claim (owner, generation, and expiry) is carried with the job so a reclaimed
+// claim (owner, revision, and expiry) is carried with the job so a reclaimed
 // or expired worker cannot mutate the authoritative run/job pair.
-//
-// Worker execution requires this contract. HTTP and reconciliation callers may
-// continue using the legacy explicit domain transitions on RunRepository, but
-// no worker path may fall back to them.
 type LeaseFencedRunRepository interface {
 	MarkRunSucceededClaimed(ctx context.Context, job JobRecord) (RunRecord, error)
 	MarkRunFailedClaimed(ctx context.Context, job JobRecord, message string) (RunRecord, error)
@@ -141,10 +137,21 @@ func (input RunInput) Validate() error {
 			return err
 		}
 	}
-	for name, value := range map[string]string{"target id": input.TargetID, "target type": input.TargetType, "trigger type": input.TriggerType} {
-		if value == "" || value != strings.TrimSpace(value) {
-			return errors.New("refresh " + name + " must be canonical")
+	if err := input.TargetID.Validate(); err != nil {
+		return err
+	}
+	for name, value := range map[string]string{"target type": input.TargetType, "trigger type": input.TriggerType, "job kind": input.JobKind} {
+		if err := validateOperational(value, name, true); err != nil {
+			return err
 		}
+	}
+	for name, value := range map[string]string{"principal id": input.PrincipalID, "parent run id": input.ParentRunID, "retry of": input.RetryOf} {
+		if err := validateOperational(value, name, false); err != nil {
+			return err
+		}
+	}
+	if input.TargetRevision < 0 {
+		return errors.New("refresh target revision must not be negative")
 	}
 	return nil
 }
@@ -161,8 +168,29 @@ func (job JobRecord) Validate() error {
 			return err
 		}
 	}
-	if job.ID == "" || job.ID != strings.TrimSpace(job.ID) || job.RunID == "" || job.RunID != strings.TrimSpace(job.RunID) {
-		return errors.New("refresh job and run identifiers must be canonical")
+	for name, value := range map[string]string{"job id": job.ID, "run id": job.RunID, "lease owner": job.LeaseOwner} {
+		required := name != "lease owner" || job.LeaseRevision > 0
+		if err := validateOperational(value, name, required); err != nil {
+			return err
+		}
+	}
+	for name, value := range map[string]string{"target type": job.TargetType, "trigger type": job.TriggerType} {
+		if err := validateOperational(value, name, true); err != nil {
+			return err
+		}
+	}
+	if job.TargetRevision < 0 || job.LeaseRevision < 0 {
+		return errors.New("refresh job revisions must not be negative")
+	}
+	return nil
+}
+
+func validateOperational(value, name string, required bool) error {
+	if !required && value == "" {
+		return nil
+	}
+	if value == "" || value != strings.TrimSpace(value) {
+		return errors.New("refresh " + name + " must be canonical")
 	}
 	return nil
 }

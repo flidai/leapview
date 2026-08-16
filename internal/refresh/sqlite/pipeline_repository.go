@@ -253,13 +253,14 @@ func (repository *Repository) ReleaseOccurrence(ctx context.Context, occurrence 
 	if err != nil {
 		return err
 	}
-	if affected == 1 {
-		if err := queries.RetryRefreshPipelineSchedules(ctx, platformdb.RetryRefreshPipelineSchedulesParams{
-			RetryAt: formatTime(occurrence.ScheduledAt), ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment,
-			PipelineID: occurrence.PipelineID.String(), GenerationID: occurrence.Identity.GenerationID, ArtifactDigest: occurrence.ArtifactDigest,
-		}); err != nil {
-			return err
-		}
+	if affected != 1 {
+		return fmt.Errorf("refresh pipeline occurrence no longer exists in serving generation")
+	}
+	if err := queries.RetryRefreshPipelineSchedules(ctx, platformdb.RetryRefreshPipelineSchedulesParams{
+		RetryAt: formatTime(occurrence.ScheduledAt), ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment,
+		PipelineID: occurrence.PipelineID.String(), GenerationID: occurrence.Identity.GenerationID, ArtifactDigest: occurrence.ArtifactDigest,
+	}); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

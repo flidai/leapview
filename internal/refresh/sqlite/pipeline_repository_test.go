@@ -38,9 +38,6 @@ func TestRepositoryReconcileAndClaimDueCoalescesCatchUp(t *testing.T) {
 		t.Fatalf("open platform store: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatalf("insert workspace: %v", err)
-	}
 	seedRefreshGenerations(t, store)
 	repo := NewRepository(store.SQLDB())
 	schedule, err := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
@@ -92,9 +89,6 @@ func TestRepositoryClaimDueDoesNotAdvanceAnotherEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatal(err)
-	}
 	seedRefreshGenerations(t, store)
 	repo := NewRepository(store.SQLDB())
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
@@ -123,9 +117,6 @@ func TestRepositoryCoalescesSimultaneouslyDueScheduleEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatal(err)
-	}
 	seedRefreshGenerations(t, store)
 	morning, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	later, _ := refreshschedule.ParseSchedule("0 7 * * *", "UTC")
@@ -151,9 +142,6 @@ func TestRepositoryReleaseOccurrenceMakesQueueFailureRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatal(err)
-	}
 	seedRefreshGenerations(t, store)
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	repo := NewRepository(store.SQLDB())
@@ -186,9 +174,6 @@ func TestRepositoryRecoversAbandonedOccurrenceClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatal(err)
-	}
 	seedRefreshGenerations(t, store)
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	repo := NewRepository(store.SQLDB())
@@ -222,9 +207,6 @@ func TestRepositoryClaimDueDeduplicatesConcurrentDispatchers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatal(err)
-	}
 	seedRefreshGenerations(t, store)
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	repo := NewRepository(store.SQLDB())
@@ -272,9 +254,6 @@ func TestRepositoryReconcileRemovesSupersededSchedules(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatal(err)
-	}
 	seedRefreshGenerations(t, store)
 	repo := NewRepository(store.SQLDB())
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
@@ -339,6 +318,12 @@ func TestRepositoryGenerationIsolationAcrossScheduleOperations(t *testing.T) {
 	if err := repo.ReleaseOccurrence(t.Context(), forged); err == nil {
 		t.Fatal("ReleaseOccurrence forged generation = nil, want isolation error")
 	}
+	if err := repo.SaveDataVersion(t.Context(), refreshschedule.DataVersion{
+		Identity: testIdentity("prod", "generation_b"), SemanticModelID: "semantic_b", SnapshotID: 7,
+		RefreshedAt: now, Source: refreshschedule.DataVersionSourceRefresh, PipelineID: "pipeline_b", RunID: "run_b",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok, err := repo.DataVersion(t.Context(), testIdentity("prod", "generation_a"), "semantic_b"); err != nil || ok {
 		t.Fatalf("generation A read of generation B data version = found=%v err=%v", ok, err)
 	}
@@ -350,9 +335,6 @@ func TestRepositorySemanticModelDataVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_a', 'project_sales', 'prod', 'active')`); err != nil {
 		t.Fatal(err)
 	}
