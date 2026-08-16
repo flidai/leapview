@@ -426,7 +426,7 @@ model SeparationOfDutyRequiredFailure {}
 interface Deployments {
   @summary("List project deployments")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @extension("x-leapview-object-scope", "project-environment")
   listDeployments(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeploymentListResponse> | CommonErrors;
 
@@ -466,14 +466,14 @@ interface Deployments {
   @summary("Get a project deployment")
   @route("/{deployment}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @extension("x-leapview-object-scope", "project-environment")
   getDeployment(@path project: string, @path deployment: string): OkJson<DeploymentResponse> | CommonErrors;
 
   @summary("List or stream deployment events")
   @route("/{deployment}/events")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @extension("x-leapview-object-scope", "project-environment")
   listDeploymentEvents(@path project: string, @path deployment: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 

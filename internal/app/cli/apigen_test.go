@@ -23,11 +23,11 @@ func TestAPIGenOperationURLUsesGeneratedContracts(t *testing.T) {
 		t.Fatalf("url = %q", u)
 	}
 
-	u, err = apiOperationURL("https://leapview.example", "queryDashboardPage", map[string]string{"workspace": "demo", "dashboard": "sales dash", "page": "overview"}, nil)
+	u, err = apiOperationURL("https://leapview.example", "queryDashboardPage", map[string]string{"dashboard": "sales dash", "page": "overview"}, nil)
 	if err != nil {
 		t.Fatalf("operation URL: %v", err)
 	}
-	if u != "https://leapview.example/api/v1/workspaces/demo/dashboards/sales%20dash/pages/overview/query" {
+	if u != "https://leapview.example/api/v1/dashboards/sales%20dash/pages/overview/query" {
 		t.Fatalf("url = %q", u)
 	}
 }

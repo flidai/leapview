@@ -116,7 +116,7 @@ op getInstance(): OkJson<InstanceResponse> | PublicInstanceErrors;
 @summary("Get mutable product identity")
 @route("/instance/settings")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.manual
 @extension("x-leapview-object-scope", "platform")
 op getProductSettings(): ProductSettingsOK | CommonErrors;
@@ -125,7 +125,7 @@ op getProductSettings(): ProductSettingsOK | CommonErrors;
 @summary("Update mutable product identity")
 @route("/instance/settings")
 @patch
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.manual
 @apigen.command(#{
   auditAction: "product.identity.updated",
@@ -144,7 +144,7 @@ op updateProductSettings(@header("If-Match") ifMatch: string, @body body: Produc
 @summary("Reset mutable product identity to its defaults")
 @route("/instance/settings/reset")
 @post
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.manual
 @apigen.command(#{
   auditAction: "product.identity.reset",
@@ -162,7 +162,7 @@ op resetProductSettings(@header("Idempotency-Key") idempotencyKey: IdempotencyKe
 @summary("Upload the product logo")
 @route("/instance/logo")
 @put
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.manual
 @apigen.command(#{
   auditAction: "product.logo.updated",
@@ -181,7 +181,7 @@ op uploadProductLogo(@header("If-Match") ifMatch: string, @header contentType: s
 @summary("Remove the product logo")
 @route("/instance/logo")
 @delete
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.manual
 @apigen.command(#{
   auditAction: "product.logo.deleted",
@@ -208,7 +208,7 @@ op getProductLogo(@path digest: string): ProductLogoImageResponse | CommonErrors
 @summary("Get redacted authentication configuration status")
 @route("/instance/authentication")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.manual
 @extension("x-leapview-object-scope", "platform")
 op getProductAuthenticationStatus(): OkJson<ProductAuthenticationStatusResponse> | CommonErrors;
@@ -217,7 +217,7 @@ op getProductAuthenticationStatus(): OkJson<ProductAuthenticationStatusResponse>
 @summary("Get redacted system status")
 @route("/instance/system")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.manual
 @extension("x-leapview-object-scope", "platform")
 op getProductSystemStatus(): OkJson<ProductSystemStatusResponse> | CommonErrors;
@@ -226,7 +226,7 @@ op getProductSystemStatus(): OkJson<ProductSystemStatusResponse> | CommonErrors;
 @summary("Get safe API and protocol availability")
 @route("/instance/api-status")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.manual
 @extension("x-leapview-object-scope", "platform")
 op getProductAPIStatus(): OkJson<ProductAPIStatusResponse> | CommonErrors;

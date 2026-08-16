@@ -12,9 +12,8 @@ enum DashboardPublicationStatus {
 
 model DashboardPublicationResponse {
   name: string;
-  workspaceId: string;
-  projectId: string;
-  dashboard: string;
+  projectId: ResourceId;
+  dashboard: ResourceId;
   defaultPage: string;
   status: DashboardPublicationStatus;
   configured: boolean;
@@ -53,20 +52,20 @@ model DashboardPublicationNotFoundFailure {}
 model DashboardPublicationNotConfiguredFailure {}
 
 @tag("Publications")
-@doc("Dashboard publication discovery and lifecycle commands within a workspace. Publication mutations complete synchronously and return the updated publication; they do not create durable asynchronous executions.")
-@route("/workspaces/{workspace}/dashboard-publications")
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PUBLICATIONS" })
+@doc("Project-wide dashboard publication discovery and lifecycle commands. Publication mutations complete synchronously and return the updated publication; they do not create durable asynchronous executions.")
+@route("/projects/{project}/dashboard-publications")
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
 interface DashboardPublications {
-  @summary("List dashboard publications in a workspace")
+  @summary("List project dashboard publications")
   @get
-  listDashboardPublications(@path workspace: string): OkJson<DashboardPublicationListResponse> | CommonErrors;
+  listDashboardPublications(@path project: ResourceId): OkJson<DashboardPublicationListResponse> | CommonErrors;
 
   @summary("Get a dashboard publication")
   @route("/{publication}")
   @get
-  getDashboardPublication(@path workspace: string, @path publication: string): OkJson<DashboardPublicationResponse> | CommonErrors;
+  getDashboardPublication(@path project: ResourceId, @path publication: string): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Suspend a dashboard publication immediately")
   @route("/{publication}/suspend")
@@ -78,7 +77,7 @@ interface DashboardPublications {
     auditAction: "dashboard_publication.suspended",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." }],
   })
-  suspendDashboardPublication(@path @apigen.target workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
+  suspendDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Resume a configured dashboard publication")
   @route("/{publication}/resume")
@@ -90,7 +89,7 @@ interface DashboardPublications {
     auditAction: "dashboard_publication.resumed",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." }],
   })
-  resumeDashboardPublication(@path @apigen.target workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
+  resumeDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Rotate a dashboard publication public ID")
   @route("/{publication}/rotate")
@@ -102,5 +101,5 @@ interface DashboardPublications {
     auditAction: "dashboard_publication.public_id_rotated",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." }],
   })
-  rotateDashboardPublication(@path @apigen.target workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
+  rotateDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 }

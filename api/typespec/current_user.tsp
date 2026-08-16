@@ -5,13 +5,12 @@ using LeapViewAPI.Protocol;
 namespace LeapViewAPI.Access;
 
 model EffectivePrivilegesResponse {
-  workspaceId: string;
-  privileges: string[];
+  projectId: ResourceId;
+  capabilities: string[];
 }
 
 model APITokenCreateRequest {
   name: string;
-  workspaceId?: string;
   @doc("Omit to keep the token dynamically constrained by the principal's effective privileges at request time. An explicit list must be a subset of the principal's current effective privileges.")
   privileges?: string[];
   expiresAt?: utcDateTime;
@@ -20,7 +19,6 @@ model APITokenCreateRequest {
 model APITokenResponse {
   id: string;
   name: string;
-  workspaceId?: string;
   @doc("Present when the token has an explicit privilege allowlist. When omitted, the principal's effective privileges are evaluated dynamically at request time.")
   privileges?: string[];
   expiresAt?: utcDateTime;
@@ -270,9 +268,9 @@ alias ListCurrentEffectivePrivilegesOK = OkJson<EffectivePrivilegesResponse>;
 @summary("List current effective privileges")
 @route("/me/effective-privileges")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "USE_WORKSPACE" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
 @extension("x-leapview-object-scope", "principal")
-op listCurrentEffectivePrivileges(@query workspace?: string): ListCurrentEffectivePrivilegesOK | CommonErrors;
+op listCurrentEffectivePrivileges(@query project?: ResourceId): ListCurrentEffectivePrivilegesOK | CommonErrors;
 
 alias ListCurrentSessionsOK = OkJson<SessionListResponse>;
 

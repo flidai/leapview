@@ -56,7 +56,6 @@ func apiCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 		},
 	}
 	addTargetTokenFlags(call, opts)
-	call.Flags().StringVar(&opts.workspaceID, "workspace", opts.workspaceID, "workspace path parameter")
 	call.Flags().StringArrayVar(&callOpts.pathParams, "path", nil, "path parameter as key=value; repeatable")
 	call.Flags().StringArrayVar(&callOpts.queryParams, "query", nil, "query parameter as key=value; repeatable")
 	call.Flags().StringVar(&callOpts.bodyJSON, "body-json", "", "request JSON body")
@@ -101,9 +100,6 @@ func runAPICall(ctx context.Context, opts *rootOptions, operationID string, call
 	pathParams, err := parseKeyValuePairs(callOpts.pathParams)
 	if err != nil {
 		return fmt.Errorf("path: %w", err)
-	}
-	if _, ok := pathParams["workspace"]; !ok && strings.Contains(contract.Path, "{workspace}") {
-		pathParams["workspace"] = opts.workspaceID
 	}
 	if err := requirePathParams(contract.Path, pathParams); err != nil {
 		return err

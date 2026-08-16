@@ -5,10 +5,8 @@ namespace LeapViewAPI.Protocol;
 
 @minLength(1)
 @maxLength(200)
+@pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 scalar ResourceId extends string;
-
-@minLength(1)
-scalar WorkspaceId extends string;
 
 @minValue(1)
 @maxValue(200)

@@ -90,7 +90,7 @@ model ManagedDataS3MultipartCompleteRequest {
 @tag("Managed Data")
 @doc("S3 multipart transport lifecycle. Part signing is a query because it issues transient upload authorization without mutating durable multipart state.")
 @route("/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads")
-@apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
 interface ManagedDataS3MultipartUploads {
@@ -119,7 +119,7 @@ interface ManagedDataS3MultipartUploads {
   @doc("Query: issues a short-lived signed part-upload request and does not change durable multipart state.")
   @route("/{multipartUpload}/parts/{partNumber}/sign")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
   @apigen.query
   @extension("x-leapview-object-scope", "project-environment")
   signManagedDataS3MultipartPart(

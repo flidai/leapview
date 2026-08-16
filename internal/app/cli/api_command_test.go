@@ -114,7 +114,7 @@ func TestAPICommandCallUsesGeneratedContract(t *testing.T) {
 
 func TestAPICommandInvokesRoleBindingOperation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/workspaces/sales/role-bindings" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/sales/role-bindings" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("X-LeapView-Client"); got != "cli" {
@@ -141,7 +141,7 @@ func TestAPICommandInvokesRoleBindingOperation(t *testing.T) {
 			"call", "createRoleBinding",
 			"--target", server.URL,
 			"--token", "token",
-			"--path", "workspace=sales",
+			"--path", "project=sales",
 			"--body-json", `{"subjectType":"principal","subjectId":"principal-viewer","role":"viewer"}`,
 			"--idempotency-key", "binding-commit-a",
 		})

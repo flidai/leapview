@@ -10,7 +10,7 @@ model AgentCommandAuditPayload {
   operationId: string;
 
   @apigen.auditInternal
-  workspaceId: string;
+  projectId: ResourceId;
 
   @apigen.auditPublic
   targetType: string;
@@ -138,7 +138,7 @@ alias GetAgentConfigOK = OkJson<AgentConfigResponse>;
 @tag("Agent")
 @doc("Platform-wide agent configuration. The update command is shared by API and administration UI invocations.")
 @route("/agent/config")
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PLATFORM" })
+@apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "platform")
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 @apigen.auditPayload(AgentCommandAuditPayload)
@@ -164,13 +164,13 @@ interface AgentConfiguration {
 interface AgentConversations {
   @summary("List agent conversations")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @apigen.cli(#{ command: #["agent", "conversations"], output: #{ mode: "raw" } })
   listAgentConversations(@query limit?: ListLimit, @query pageToken?: PageToken): ListAgentConversationsOK | CommonErrors;
 
   @summary("Create an agent conversation")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
   @apigen.ui("agent.conversation.create")
   @apigen.failsWith(AgentServiceUnavailableFailure)
   @apigen.command(#{ auditAction: "agent.conversation.created" })
@@ -179,7 +179,7 @@ interface AgentConversations {
   @summary("Archive an agent conversation")
   @route("/{conversation}")
   @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
   @apigen.failsWith(AgentConversationNotFoundFailure)
   @apigen.command(#{ auditAction: "agent.conversation.archived" })
   archiveAgentConversation(@path @apigen.target conversation: string): EmptyResponse | CommonErrors;
@@ -187,13 +187,13 @@ interface AgentConversations {
   @summary("Get an agent conversation")
   @route("/{conversation}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   getAgentConversation(@path conversation: string): GetAgentConversationOK | CommonErrors;
 
   @summary("Update an agent conversation")
   @route("/{conversation}")
   @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
   @apigen.failsWith(AgentConversationNotFoundFailure)
   @apigen.failsWith(InvalidAgentConversationFailure)
   @apigen.command(#{ auditAction: "agent.conversation.updated" })
@@ -202,31 +202,31 @@ interface AgentConversations {
   @summary("List agent messages")
   @route("/{conversation}/messages")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   listAgentMessages(@path conversation: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListAgentMessagesOK | CommonErrors;
 
   @summary("List agent runs")
   @route("/{conversation}/runs")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   listAgentRuns(@path conversation: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListAgentRunsOK | CommonErrors;
 
   @summary("Get an agent run")
   @route("/{conversation}/runs/{run}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   getAgentRun(@path conversation: string, @path run: string): GetAgentRunOK | CommonErrors;
 
   @summary("List agent run events")
   @route("/{conversation}/runs/{run}/events")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   listAgentEvents(@path conversation: string, @path run: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 
   @summary("Create an asynchronous agent run")
   @route("/{conversation}/runs")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
   @apigen.ui("agent.run.create")
   @apigen.failsWith(AgentConversationNotFoundFailure)
   @apigen.failsWith(AgentRunConflictFailure)
@@ -247,7 +247,7 @@ interface AgentConversations {
   @doc("Cancels an existing run and its queued work synchronously. The 202 response reports the resulting run state; this operation does not create a new asynchronous execution.")
   @route("/{conversation}/runs/{run}/cancel")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "USE_AGENT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
   @apigen.failsWith(AgentRunNotFoundFailure)
   @apigen.failsWith(AgentRunNotCancellableFailure)
   @apigen.failsWith(AgentServiceUnavailableFailure)

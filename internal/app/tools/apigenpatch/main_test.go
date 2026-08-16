@@ -7,13 +7,13 @@ import (
 )
 
 func TestSearchClientTransportPolicy(t *testing.T) {
-	data, err := os.ReadFile("../../../workspace/api/gen/client.apigen.gen.go")
+	data, err := os.ReadFile("../../../project/api/gen/client.apigen.gen.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := string(data)
 	for _, want := range []string{
-		"AddQuery(query, \"workspace\", request.Params.Workspace, true)",
+		"AddQuery(query, \"project\", request.Params.Project, true)",
 		"AddQuery(query, \"type\", request.Params.Type, true)",
 		"limit must be between 1 and 200",
 	} {
@@ -24,7 +24,7 @@ func TestSearchClientTransportPolicy(t *testing.T) {
 }
 
 func TestSearchClientTransportPolicyPatchIsIdempotentAndFailsClosed(t *testing.T) {
-	data, err := os.ReadFile("../../../workspace/api/gen/client.apigen.gen.go")
+	data, err := os.ReadFile("../../../project/api/gen/client.apigen.gen.go")
 	if err != nil {
 		t.Fatal(err)
 	}

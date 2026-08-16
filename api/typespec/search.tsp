@@ -2,10 +2,9 @@ using Http;
 using TypeSpec.OpenAPI;
 using LeapViewAPI.Protocol;
 
-namespace LeapViewAPI.Workspace;
+namespace LeapViewAPI.Project;
 
 enum SearchResultType {
-  workspace,
   connection,
   source,
   model_table,
@@ -23,18 +22,12 @@ enum SearchResultType {
 enum SearchContextTag {
   current_page,
   current_dashboard,
-  current_workspace,
 }
 
 model SearchReference {
-  workspaceId: string;
+  projectId: ResourceId;
   type: SearchResultType;
   id: string;
-}
-
-model SearchWorkspaceSummary {
-  id: string;
-  name: string;
 }
 
 model SearchLocation {
@@ -50,7 +43,6 @@ model SearchResult {
   name: string;
   description?: string;
   visualType?: string;
-  workspace: SearchWorkspaceSummary;
   href: string;
   locations: SearchLocation[];
   context: SearchContextTag[];
@@ -67,14 +59,13 @@ alias SearchOK = OkJson<SearchResponse>;
 @summary("Search accessible product objects")
 @route("/search")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_ITEM" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
 @apigen.cli(#{ command: #["search"], args: #[#{ source: "query", name: "q", displayName: "query" }], output: #{ mode: "raw" } })
 op search(
   @query q?: string,
-  @query workspace?: string[],
+  @query project?: ResourceId,
   @query type?: SearchResultType[],
-  @query contextWorkspace?: string,
-  @query contextDashboard?: string,
+  @query contextDashboard?: ResourceId,
   @query contextPage?: string,
   @query limit?: ListLimit,
   @query pageToken?: PageToken,

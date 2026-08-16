@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	const path = "internal/workspace/api/gen/client.apigen.gen.go"
+	const path = "internal/project/api/gen/client.apigen.gen.go"
 	source, err := os.ReadFile(path)
 	if err != nil {
 		panic(err)
@@ -54,8 +54,8 @@ func applySearchPolicy(source []byte) ([]byte, error) {
 	}
 	var err error
 	search, err = replaceGeneratedPolicy(search,
-		"AddQuery(query, \"workspace\", request.Params.Workspace, false)",
-		"AddQuery(query, \"workspace\", request.Params.Workspace, true)")
+		"AddQuery(query, \"project\", request.Params.Project, false)",
+		"AddQuery(query, \"project\", request.Params.Project, true)")
 	if err != nil {
 		return nil, err
 	}

@@ -10,7 +10,7 @@ model TargetConnectionAdministrationAuditPayload {
   targetId: string;
 
   @apigen.auditInternal
-  logicalConnection: string;
+  logicalConnection: ResourceId;
 
   @apigen.auditInternal
   revision: int64;
@@ -58,10 +58,7 @@ model ConnectionBindingDisabledFailure {}
 @apigen.failureDefinition(#{ kind: "confirmation_required", statusCode: 412, code: "CONFIRMATION_REQUIRED", publicDetail: "Dependency confirmation is required." })
 model ConfirmationRequiredFailure {}
 
-@minLength(1)
-@maxLength(128)
-@pattern("^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-scalar LogicalConnectionId extends string;
+alias LogicalConnectionId = ResourceId;
 
 @minLength(1)
 @maxLength(128)
@@ -96,7 +93,7 @@ model TargetConnectionEndpoint {
 
 @doc("A provider-side reference only. LeapView never returns or accepts the referenced secret value.")
 model TargetConnectionCredentialReference {
-  projectId: string;
+  projectId: ResourceId;
   environment: string;
   secretPath: string;
   secretKey: string;
@@ -147,7 +144,6 @@ model TargetConnectionBindingResponse {
   logicalConnection: LogicalConnectionId;
   connectorKind: TargetConnectionIdentifier;
   authenticationMode: TargetConnectionAuthenticationMode;
-  workspaceId: string;
   environment: TargetConnectionIdentifier;
   endpoint: TargetConnectionEndpoint;
   credentialReference?: TargetConnectionCredentialReference;
@@ -170,7 +166,6 @@ model TargetConnectionBindingHealthResponse {
   targetId: string;
   logicalConnection: LogicalConnectionId;
   connectorKind: TargetConnectionIdentifier;
-  workspaceId: string;
   environment: TargetConnectionIdentifier;
   bindingRevision: TargetConnectionRevision;
   validatedVersion?: string;
@@ -182,22 +177,21 @@ model TargetConnectionBindingHealthResponse {
   hasActivePool: boolean;
 }
 
-@route("/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings")
+@route("/projects/{project}/targets/{target}/connection-bindings")
 @tag("Connections")
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 interface TargetConnectionBindings {
   @summary("List target connection bindings")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   listTargetConnectionBindings(
-    @path workspace: string,
+    @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
   ): OkJson<TargetConnectionBindingListResponse> | CommonErrors;
 
   @summary("Create a target connection binding")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
   @apigen.failsWith(ConnectionBindingNotFoundFailure)
@@ -211,9 +205,8 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
   createTargetConnectionBinding(
-    @path @apigen.target workspace: string,
+    @path @apigen.target project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
     @body body: TargetConnectionBindingCreateRequest,
   ): CreatedJson<TargetConnectionBindingResponse> | CommonErrors;
@@ -221,11 +214,10 @@ interface TargetConnectionBindings {
   @summary("Get target connection binding metadata")
   @route("/{connection}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   getTargetConnectionBinding(
-    @path workspace: string,
+    @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
   ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
 
@@ -233,12 +225,11 @@ interface TargetConnectionBindings {
   @doc("Query classification: computes dependencies and a confirmation token without mutating durable binding or runtime state.")
   @route("/{connection}/plan")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   @apigen.query
   planTargetConnectionBindingChange(
-    @path workspace: string,
+    @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
     @body body: TargetConnectionBindingPlanRequest,
   ): OkJson<TargetConnectionBindingChangePlanResponse> | CommonErrors;
@@ -246,7 +237,7 @@ interface TargetConnectionBindings {
   @summary("Update target connection binding metadata")
   @route("/{connection}")
   @put
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
   @apigen.failsWith(ConnectionBindingNotFoundFailure)
@@ -261,9 +252,8 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
   updateTargetConnectionBinding(
-    @path @apigen.target workspace: string,
+    @path @apigen.target project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
     @body body: TargetConnectionBindingUpdateRequest,
   ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
@@ -272,7 +262,7 @@ interface TargetConnectionBindings {
   @doc("Command classification: testing can persist validated health/version state and promote the replacement runtime pool.")
   @route("/{connection}/test")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "TEST_CONNECTION" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
   @apigen.failsWith(ConnectionBindingNotFoundFailure)
@@ -287,9 +277,8 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionRotationAuditPayload)
   testTargetConnectionBinding(
-    @path @apigen.target workspace: string,
+    @path @apigen.target project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
   ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
@@ -297,7 +286,7 @@ interface TargetConnectionBindings {
   @summary("Refresh credentials and replace the validated target pool")
   @route("/{connection}/refresh")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "TEST_CONNECTION" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
   @apigen.failsWith(ConnectionBindingNotFoundFailure)
@@ -312,9 +301,8 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionRotationAuditPayload)
   refreshTargetConnectionBinding(
-    @path @apigen.target workspace: string,
+    @path @apigen.target project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
   ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
@@ -322,7 +310,7 @@ interface TargetConnectionBindings {
   @summary("Enable a target connection binding")
   @route("/{connection}/enable")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
   @apigen.failsWith(ConnectionBindingNotFoundFailure)
@@ -335,9 +323,8 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
   enableTargetConnectionBinding(
-    @path @apigen.target workspace: string,
+    @path @apigen.target project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
   ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
@@ -345,7 +332,7 @@ interface TargetConnectionBindings {
   @summary("Disable a target connection binding")
   @route("/{connection}/disable")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_CONNECTION_METADATA" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
   @apigen.failsWith(ConnectionBindingNotFoundFailure)
@@ -359,9 +346,8 @@ interface TargetConnectionBindings {
   })
   @apigen.auditPayload(TargetConnectionAdministrationAuditPayload)
   disableTargetConnectionBinding(
-    @path @apigen.target workspace: string,
+    @path @apigen.target project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
   ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
@@ -369,11 +355,10 @@ interface TargetConnectionBindings {
   @summary("Get redacted target connection runtime health")
   @route("/{connection}/health")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "VIEW_CONNECTION_HEALTH" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   getTargetConnectionBindingHealth(
-    @path workspace: string,
+    @path project: ResourceId,
     @path target: TargetConnectionIdentifier,
-    @path environment: TargetConnectionIdentifier,
     @path connection: LogicalConnectionId,
   ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
 }
