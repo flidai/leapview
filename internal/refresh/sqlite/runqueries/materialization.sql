@@ -146,9 +146,9 @@ WHERE id = sqlc.arg(id)
 -- name: MarkRefreshJobRunClaimed :exec
 UPDATE refresh_job_runs
 SET status = sqlc.arg(status), started_at = CURRENT_TIMESTAMP, finished_at = NULL, error = ''
-WHERE id = sqlc.arg(id)
-  AND environment = sqlc.arg(environment)
-  AND job_id IN (SELECT id FROM refresh_jobs
+WHERE refresh_job_runs.id = sqlc.arg(id)
+  AND refresh_job_runs.environment = sqlc.arg(environment)
+  AND refresh_job_runs.job_id IN (SELECT refresh_jobs.id FROM refresh_jobs
                  WHERE project_id = sqlc.arg(project_id)
                    AND generation_id = sqlc.arg(generation_id));
 
