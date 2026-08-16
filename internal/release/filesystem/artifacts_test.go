@@ -137,6 +137,16 @@ func TestArtifactStoreRejectsUnsafeServingStateID(t *testing.T) {
 	}
 }
 
+func TestArtifactStoreRejectsWhitespacePathAliases(t *testing.T) {
+	store := NewArtifactStore(t.TempDir())
+	if _, err := store.SaveUpload(t.Context(), servingstate.ID(" state_1"), &errAfterReader{data: []byte("bundle")}); err == nil {
+		t.Fatal("SaveUpload() error = nil, want non-canonical serving state id")
+	}
+	if _, err := store.SaveUpload(t.Context(), servingstate.ID("state_1 "), &errAfterReader{data: []byte("bundle")}); err == nil {
+		t.Fatal("SaveUpload() error = nil, want non-canonical serving state id")
+	}
+}
+
 func TestArtifactStoreRejectsUnsafePromoteDigest(t *testing.T) {
 	dir := t.TempDir()
 	store := NewArtifactStore(dir)
@@ -149,6 +159,17 @@ func TestArtifactStoreRejectsUnsafePromoteDigest(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "..", "escape.tar.gz")); !os.IsNotExist(err) {
 		t.Fatalf("escaped artifact stat err = %v, want not exist", err)
+	}
+}
+
+func TestArtifactStoreRejectsWhitespaceDigestAlias(t *testing.T) {
+	store := NewArtifactStore(t.TempDir())
+	if _, err := store.SaveUpload(t.Context(), servingstate.ID("state_1"), &errAfterReader{data: []byte("bundle")}); err != nil {
+		t.Fatalf("SaveUpload() error = %v", err)
+	}
+
+	if _, err := store.PromoteUploaded(t.Context(), servingstate.ID("state_1"), " abc123", "{}"); err == nil {
+		t.Fatal("PromoteUploaded() error = nil, want non-canonical digest")
 	}
 }
 

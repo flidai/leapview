@@ -101,8 +101,7 @@ func (s *ArtifactStore) DiscardUploaded(_ context.Context, servingStateID servin
 }
 
 func validateArtifactPathComponent(value, label string) error {
-	value = strings.TrimSpace(value)
-	if value == "" || value == "." || value == ".." || filepath.IsAbs(value) || filepath.Base(value) != value {
+	if value != strings.TrimSpace(value) || value == "" || value == "." || value == ".." || filepath.IsAbs(value) || filepath.Base(value) != value {
 		return fmt.Errorf("%s must be a safe path component", label)
 	}
 	return nil

@@ -71,6 +71,21 @@ func TestProvenanceRejectsDuplicateConnectionsAndWhitespaceAliases(t *testing.T)
 	require.Error(t, err)
 }
 
+func TestProvenanceRejectsSourceRevisionWhitespaceAliases(t *testing.T) {
+	for _, mutate := range []func(*SourceRevisionProvenance){
+		func(value *SourceRevisionProvenance) { value.Revision = " revision_1" },
+		func(value *SourceRevisionProvenance) { value.Repository = "https://example.com/repository " },
+		func(value *SourceRevisionProvenance) { value.Ref = " refs/heads/main" },
+		func(value *SourceRevisionProvenance) { value.ChangeID = "change_1 " },
+	} {
+		input := testGenerationInput(t, GenerationDataRefreshSources)
+		input.SourceRevision = &SourceRevisionProvenance{Revision: "revision_1", Repository: "https://example.com/repository", Ref: "refs/heads/main", ChangeID: "change_1"}
+		mutate(input.SourceRevision)
+		_, err := NewProvenance(input)
+		require.Error(t, err)
+	}
+}
+
 func testGenerationInput(t *testing.T, mode GenerationDataMode) ProvenanceInput {
 	t.Helper()
 	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_2")

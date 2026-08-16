@@ -162,12 +162,11 @@ func NormalizeSourceRevisionProvenance(value *SourceRevisionProvenance) (*Source
 		return nil, nil
 	}
 	n := *value
-	n.Revision, n.Repository, n.Ref, n.ChangeID = strings.TrimSpace(n.Revision), strings.TrimSpace(n.Repository), strings.TrimSpace(n.Ref), strings.TrimSpace(n.ChangeID)
 	for _, field := range []struct {
 		name, value string
 		limit       int
 	}{{"revision", n.Revision, 256}, {"repository", n.Repository, 2048}, {"ref", n.Ref, 1024}, {"change id", n.ChangeID, 512}} {
-		if field.value == "" && field.name == "revision" || len(field.value) > field.limit || strings.IndexFunc(field.value, unicode.IsControl) >= 0 {
+		if field.value != strings.TrimSpace(field.value) || field.value == "" && field.name == "revision" || len(field.value) > field.limit || strings.IndexFunc(field.value, unicode.IsControl) >= 0 {
 			return nil, provenanceInvalid(fmt.Errorf("source %s is invalid", field.name))
 		}
 	}
