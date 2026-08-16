@@ -329,8 +329,8 @@ func insertAudit(ctx context.Context, tx *sql.Tx, mutation Mutation, action, met
 	}
 	_, err := tx.ExecContext(ctx, `
 INSERT INTO audit_events
-  (id, workspace_id, principal_id, action, target_type, target_id, privilege, status, request_id, correlation_id, metadata_json)
-VALUES (?, NULL, NULLIF(?, ''), ?, 'product', 'instance', 'MANAGE_PLATFORM', 'success', ?, ?, ?)`,
+  (id, principal_id, action, resource_kind, resource_id, capability, status, request_id, correlation_id, metadata_json)
+VALUES (?, NULLIF(?, ''), ?, 'product', 'instance', 'RESOURCE_MANAGE', 'success', ?, ?, ?)`,
 		"audit_"+hex.EncodeToString(idBytes[:]), strings.TrimSpace(mutation.PrincipalID), action,
 		strings.TrimSpace(mutation.RequestID), strings.TrimSpace(mutation.CorrelationID), metadataJSON)
 	return err

@@ -70,7 +70,7 @@ func TestServicePersistsIdentityLogoAndAtomicAudit(t *testing.T) {
 	}
 
 	var auditCount int
-	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE target_type = 'product' AND target_id = 'instance' AND principal_id = 'principal_admin'`).Scan(&auditCount); err != nil {
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE resource_kind = 'product' AND resource_id = 'instance' AND capability = 'RESOURCE_MANAGE' AND principal_id = 'principal_admin'`).Scan(&auditCount); err != nil {
 		t.Fatal(err)
 	}
 	if auditCount != 2 {
@@ -121,7 +121,7 @@ func TestServiceRejectsStaleRevisionAndInvalidLogoWithoutAudit(t *testing.T) {
 		t.Fatal("mismatched logo Content-Type succeeded")
 	}
 	var auditCount int
-	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE target_type = 'product'`).Scan(&auditCount); err != nil {
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE resource_kind = 'product'`).Scan(&auditCount); err != nil {
 		t.Fatal(err)
 	}
 	if auditCount != 0 {
