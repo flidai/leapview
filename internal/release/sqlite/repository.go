@@ -64,7 +64,10 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 	qtx := releasedb.New(tx)
 	err = qtx.CreateAPIRelease(ctx, releasedb.CreateAPIReleaseParams{ID: input.ID, ProjectID: input.ServingIdentity.ProjectID.String(), Environment: input.ServingIdentity.Environment, GenerationID: input.ServingIdentity.GenerationID, ProjectDigest: input.ProjectDigest, ArtifactDigest: input.ArtifactDigest, RequestDigest: input.RequestDigest, IdempotencyKey: input.IdempotencyKey, ProvenanceJson: string(provenanceBytes), CreatedBy: input.CreatedBy})
 	if err != nil {
-		existing, getErr := r.Get(ctx, input.ServingIdentity.ProjectID, input.ID)
+		// Resolve idempotent replays through the transaction. Querying r.db here
+		// can deadlock when SQLite is configured with one connection because the
+		// open transaction owns that connection until this function returns.
+		existing, getErr := getRelease(ctx, qtx, input.ServingIdentity.ProjectID.String(), input.ID)
 		if getErr == nil {
 			if existing.RequestDigest != input.RequestDigest {
 				return release.Release{}, release.ErrConflict
