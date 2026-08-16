@@ -7,31 +7,31 @@ import (
 	"testing"
 	"time"
 
-	accessmodule "github.com/flidai/leapview/internal/access/module"
+	"github.com/flidai/leapview/internal/access"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConnectionRotationAuditAdapterPersistsOnlyRedactedBoundedMetadata(t *testing.T) {
-	var input accessmodule.AuditEventInput
+	var input access.AuditEventInput
 	recorder := connectionRotationAuditRecorder{
-		record: func(_ context.Context, current accessmodule.AuditEventInput) error {
+		record: func(_ context.Context, current access.AuditEventInput) error {
 			input = current
 			return nil
 		},
 	}
 	err := recorder.RecordCredentialRotation(context.Background(), analyticsmodule.ConnectionRotationAuditEvent{
-		BindingID: "binding_prod_warehouse", TargetID: "lvinst_prod", WorkspaceID: "sales",
+		BindingID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "connection_sales", ProjectID: "project:sales",
 		ProviderVersion: "secret:v2", Actor: "principal:operator-1",
 		Operation: "credential.test.requested", Outcome: "degraded",
 		Reason: "POOL_HEALTH_CHECK_FAILED", Timestamp: time.Now(),
 	})
 	require.NoError(t, err)
-	if input.WorkspaceID != "sales" || input.PrincipalID != "operator-1" ||
+	if input.ResourceID != "connection_sales" || input.PrincipalID != "operator-1" ||
 		input.Action != "credential.test.requested" ||
-		input.TargetType != "connection_binding" || input.TargetID != "binding_prod_warehouse" ||
-		input.Privilege != accessmodule.PrivilegeTestConnection || input.Status != "degraded" {
+		input.ResourceKind != "connection" ||
+		input.Capability != access.CapabilityResourceUse || input.Status != "degraded" {
 		t.Fatalf("audit input = %#v", input)
 	}
 	var envelope struct {
@@ -69,24 +69,24 @@ func TestConnectionRotationAuditAdapterPersistsOnlyRedactedBoundedMetadata(t *te
 }
 
 func TestConnectionAdministrationAuditAdapterPersistsOnlyBindingIdentity(t *testing.T) {
-	var input accessmodule.AuditEventInput
+	var input access.AuditEventInput
 	recorder := connectionAdministrationAuditRecorder{
-		record: func(_ context.Context, current accessmodule.AuditEventInput) error {
+		record: func(_ context.Context, current access.AuditEventInput) error {
 			input = current
 			return nil
 		},
 	}
 	err := recorder.RecordConnectionAdministration(context.Background(), analyticsmodule.ConnectionAdministrationAuditEvent{
-		WorkspaceID: "sales", BindingID: "binding_prod_warehouse", TargetID: "lvinst_prod",
-		LogicalConnectionID: "warehouse", Actor: "operator-1",
+		ProjectID: "project:sales", BindingID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "connection_sales",
+		Actor:  "operator-1",
 		Action: "connection.binding.updated", Outcome: "succeeded", Revision: 7,
 		Timestamp: time.Now(),
 	})
 	require.NoError(t, err)
-	if input.WorkspaceID != "sales" || input.PrincipalID != "operator-1" ||
+	if input.ResourceID != "connection_sales" || input.PrincipalID != "operator-1" ||
 		input.Action != "connection.binding.updated" ||
-		input.TargetType != "connection_binding" || input.TargetID != "binding_prod_warehouse" ||
-		input.Privilege != accessmodule.PrivilegeManageConnectionMetadata || input.Status != "succeeded" {
+		input.ResourceKind != "connection" ||
+		input.Capability != access.CapabilityResourceManage || input.Status != "succeeded" {
 		t.Fatalf("audit input = %#v", input)
 	}
 	var envelope struct {

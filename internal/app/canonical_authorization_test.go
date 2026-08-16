@@ -144,7 +144,7 @@ func TestProtectManagedDataTransportEnforcesCanonicalUploadMatrix(t *testing.T) 
 		connection  = projectgraph.ResourceID("connection_sales")
 		uploadID    = "tus_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	)
-	identity, err := projectgraph.NewServingIdentity(string(projectID), "prod", "generation_1")
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestProtectManagedDataTransportEnforcesCanonicalUploadMatrix(t *testing.T) 
 		{name: "runtime acquisition failure", method: http.MethodPatch, id: uploadID, access: allowedAccess, runtime: tusRuntime{project: projectID, err: errors.New("generation unavailable")}, resolve: resolveAllowed, want: http.StatusServiceUnavailable},
 		{name: "nil lease failure", method: http.MethodPatch, id: uploadID, access: allowedAccess, runtime: tusRuntime{project: projectID}, resolve: resolveAllowed, want: http.StatusServiceUnavailable},
 		{name: "snapshot generation mismatch", method: http.MethodPatch, id: uploadID, access: allowedAccess, runtime: tusRuntime{project: projectID, lease: tusLease{identity: func() projectgraph.ServingIdentity {
-			mismatched, err := projectgraph.NewServingIdentity(string(projectID), "prod", "generation_2")
+			mismatched, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_2")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,7 +225,7 @@ func TestProtectManagedDataTransportValidatesBeforeDevBypass(t *testing.T) {
 	const uploadID = "tus_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	projectID := projectgraph.ResourceID("project_demo")
 	connectionID := projectgraph.ResourceID("connection_sales")
-	identity, err := projectgraph.NewServingIdentity(string(projectID), "prod", "generation_1")
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_1")
 	if err != nil {
 		t.Fatal(err)
 	}

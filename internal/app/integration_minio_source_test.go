@@ -80,10 +80,12 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 	defer controller.Close()
 	refreshLease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "commerce", Operation: "minio.refresh", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
-	runtime, err := analyticsduckdb.OpenWorkspaceMaterializeRuntime(refreshLease.Context(), analyticsduckdb.WorkspaceRuntimeConfig{
+	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(refreshLease.Context(), analyticsduckdb.ProjectRuntimeConfig{
 		Models:             map[string]*semanticmodel.Model{"commerce": model},
 		Database:           db,
 		CredentialResolver: credentialResolver,
+		ProjectID:          "project:commerce",
+		Environment:        "test",
 	})
 	refreshLease.Release()
 	if err != nil {

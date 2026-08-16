@@ -32,7 +32,7 @@ func streamBootstrapBody(t *testing.T, server *appTestHarness, pageBody, authori
 		req.Header.Set("Authorization", authorization)
 	}
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "stream-first-test"})
-	rec := newSynchronizedRecorder()
+	rec := newSynchronizedResponseRecorder()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -45,7 +45,7 @@ func streamBootstrapBody(t *testing.T, server *appTestHarness, pageBody, authori
 			break
 		}
 		select {
-		case <-rec.flushed:
+		case <-time.After(10 * time.Millisecond):
 		case <-timer.C:
 			cancel()
 			<-done

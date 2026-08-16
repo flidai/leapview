@@ -19,7 +19,7 @@ func TestWorkloadMetricsBoundsDataQueries(t *testing.T) {
 		release: make(chan struct{}),
 	}
 	controller, err := workload.New(workload.Config{MaxRunning: 1, MaximumQueued: 2, Classes: map[workload.Class]workload.Policy{
-		workload.Interactive: {MaximumRunning: 1, MaximumQueued: 1, MaximumQueuedPerWorkspace: 1, QueueTimeout: time.Second},
+		workload.Interactive: {MaximumRunning: 1, MaximumQueued: 1, QueueTimeout: time.Second},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestWorkloadMetricsDoesNotAdmitWholeDashboardReads(t *testing.T) {
 		release: make(chan struct{}),
 	}
 	controller, err := workload.New(workload.Config{MaxRunning: 1, MaximumQueued: 1, Classes: map[workload.Class]workload.Policy{
-		workload.Interactive: {MaximumRunning: 1, MaximumQueued: 1, MaximumQueuedPerWorkspace: 1, QueueTimeout: time.Second},
+		workload.Interactive: {MaximumRunning: 1, MaximumQueued: 1, QueueTimeout: time.Second},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestWorkloadMetricsClassifiesAgentAndReleasesFailedQueries(t *testing.T) {
 
 func workloadTestQuery() dataquery.Query {
 	request := dataquery.SemanticRows("sales", "orders", []dataquery.Field{{Field: "orders.id"}}, nil, nil, nil, 0, 1, false)
-	request.WorkspaceID = "sales"
+	request.ProjectID = "project:sales"
 	return request
 }
 

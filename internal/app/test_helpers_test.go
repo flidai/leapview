@@ -83,7 +83,7 @@ type assemblyConfig struct {
 	ProductStatus           adminmodule.ProductStatus
 }
 
-// appTestHarness is a test fixture facade for legacy app-package tests.
+// appTestHarness is the test-only composition adapter used by app-package tests.
 // Production composition exposes only the final handler and lifecycle.
 type appTestHarness struct {
 	routes   capabilityRoutes

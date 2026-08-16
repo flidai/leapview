@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 )
 
@@ -35,13 +36,13 @@ func TestManagedDataTusRouteRejectsClientCreatedUploads(t *testing.T) {
 
 func TestManagedDataTusRouteForwardsResumableOperations(t *testing.T) {
 	store := testStore(t)
-	principal := testPrincipal(t, context.Background(), store, "publisher@example.com", "Publisher", access.RolePlatformAdmin)
+	principal := testPrincipal(t, context.Background(), store, "publisher@example.com", "Publisher")
 	token, _ := testScopedAPIToken(t, context.Background(), store, access.APITokenInput{
-		PrincipalID: principal.ID,
-		Name:        "managed-data-publisher",
-		Privileges:  []access.Privilege{access.PrivilegeIngestData},
+		PrincipalID:  principal.ID,
+		Name:         "managed-data-publisher",
+		Capabilities: []access.Capability{access.CapabilityResourceEdit},
 	})
-	auth := testAuth(store, "", AuthConfig{APITokenOnly: true})
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	var method, path string
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 		Auth: auth,

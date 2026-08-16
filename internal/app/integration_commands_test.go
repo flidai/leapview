@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/consumer"
-	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 )
 
 func TestCommandsPublishReloadPatchesToOpenStream(t *testing.T) {
@@ -102,7 +101,7 @@ func TestVisualWindowCommandPublishesOnlyRequestedVisualPatch(t *testing.T) {
 }
 
 func TestVisualWindowCommandDoesNotPublishCanceledVisualPatch(t *testing.T) {
-	h := newHarness(t, withMetricsWrapper(func(metrics *dashboardruntime.Service) integrationMetrics {
+	h := newHarness(t, withMetricsWrapper(func(metrics integrationMetrics) integrationMetrics {
 		return canceledVisualWindowMetrics{integrationMetrics: metrics}
 	}))
 	stream := h.openUpdatesStream(t, "executive-sales", "overview", runtimeSignals("cmd-table-canceled", "overview"))
@@ -133,7 +132,7 @@ func TestRefreshMaterializationsCommandIsRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal Datastar signals: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, h.serverURL(t)+h.workspaceCommandPath("/commands/refresh-materializations"), bytes.NewReader(encodedSignals))
+	req, err := http.NewRequest(http.MethodPost, h.serverURL(t)+h.commandPath("/commands/refresh-materializations"), bytes.NewReader(encodedSignals))
 	if err != nil {
 		t.Fatalf("create removed command request: %v", err)
 	}
@@ -150,7 +149,7 @@ func TestRefreshMaterializationsCommandIsRemoved(t *testing.T) {
 
 func TestCommandRejectsMalformedDatastarBody(t *testing.T) {
 	h := newHarness(t)
-	req, err := http.NewRequest(http.MethodPost, h.serverURL(t)+h.workspaceCommandPath("/commands/select"), strings.NewReader("{not-json"))
+	req, err := http.NewRequest(http.MethodPost, h.serverURL(t)+h.commandPath("/commands/select"), strings.NewReader("{not-json"))
 	if err != nil {
 		t.Fatalf("create command request: %v", err)
 	}

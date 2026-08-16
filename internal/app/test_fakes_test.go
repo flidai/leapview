@@ -181,7 +181,7 @@ func (m namedProjectMetrics) dashboardDefinition(dashboardID string) (dashboardd
 	if dashboardID != m.dashboardID {
 		return dashboarddefinition.Definition{}, nil, false
 	}
-	authored := dashboardauthoring.Dashboard{ID: m.dashboardID, Title: m.title, SemanticModel: "test", Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
+	authored := dashboardauthoring.Dashboard{ID: graph.ResourceID(m.dashboardID), Title: m.title, SemanticModel: "test", Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
 		"summary": {Type: "kpi", Title: "Summary", Query: dashboardauthoring.VisualQuery{Measures: fieldRefs("order_count")}},
 	}), Pages: m.Pages(dashboardID)}
 	model := testSemanticModel()

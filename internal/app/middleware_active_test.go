@@ -5,11 +5,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 )
 
 func TestHealthRoutesRemainUnauthenticated(t *testing.T) {
 	store := testStore(t)
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	for _, path := range []string{"/healthz", "/readyz"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)

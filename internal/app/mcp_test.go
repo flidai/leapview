@@ -17,15 +17,16 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	agentcap "github.com/flidai/leapview/internal/agent"
+	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 	store := testStore(t)
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		Auth:        testAuth(store, "test", AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
-		WorkspaceID: "test",
+		Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
 	}))
 	handler := server.Routes()
 
@@ -188,8 +189,7 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 func TestMCPGoSDKClientInteroperability(t *testing.T) {
 	store := testStore(t)
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		Auth:        testAuth(store, "test", AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
-		WorkspaceID: "test",
+		Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
 	}))
 	live := httptest.NewServer(server.Routes())
 	defer live.Close()
@@ -256,7 +256,7 @@ func TestMCPReturnsValidationFailuresAsToolErrorsAndRejectsOrigins(t *testing.T)
 	store := testStore(t)
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 
-		Auth: testAuth(store, "test", AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
+		Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
 	}))
 	handler := server.Routes()
 
@@ -294,23 +294,19 @@ func TestMCPReturnsValidationFailuresAsToolErrorsAndRejectsOrigins(t *testing.T)
 func TestMCPAcceptsOAuthTokensAndRejectsGeneralAPITokens(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO workspaces (id, title) VALUES ('other', 'Other')`); err != nil {
-		t.Fatalf("seed other workspace: %v", err)
-	}
-	principal := testPrincipal(t, ctx, store, "mcp@example.com", "MCP User", "viewer")
+	principal := testPrincipal(t, ctx, store, "mcp@example.com", "MCP User")
 	repo := testAccessRepository(store)
 	apiSecret, _, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID: principal.ID,
-		Name:        "rest-api-only",
-		WorkspaceID: "test",
-		Privileges:  []access.Privilege{access.PrivilegeUseAgent, access.PrivilegeViewItem},
+		PrincipalID:  principal.ID,
+		Name:         "rest-api-only",
+		Capabilities: []access.Capability{access.CapabilityResourceUse, access.CapabilityResourceRead},
 	})
 	if err != nil {
 		t.Fatalf("create REST API token: %v", err)
 	}
 
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		Auth:     testAuth(store, "test", AuthConfig{APITokenOnly: true}),
+		Auth:     testAuth(store, accessmodule.AuthConfig{APITokenOnly: true}),
 		MCPOAuth: MCPOAuthConfig{PublicURL: "https://leapview.example"},
 	}))
 	handler := server.Routes()
@@ -350,14 +346,14 @@ func TestMCPAcceptsOAuthTokensAndRejectsGeneralAPITokens(t *testing.T) {
 	if authorizedCatalog.Code != http.StatusOK || strings.Contains(authorizedCatalog.Body.String(), `"id":"other"`) {
 		t.Fatalf("authorized catalog leaked foreign workspace: %d body=%s", authorizedCatalog.Code, authorizedCatalog.Body.String())
 	}
-	audits, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{WorkspaceID: "other", Action: "agent_tool.called"})
+	audits, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{Action: "agent_tool.called"})
 	if err != nil {
 		t.Fatalf("list MCP tool audits: %v", err)
 	}
 	deniedTargets := map[string]bool{}
 	for _, audit := range audits {
 		if audit.Status == "denied" {
-			deniedTargets[audit.TargetID] = true
+			deniedTargets[audit.ResourceID] = true
 		}
 	}
 	wantDeniedTargets := map[string]string{
@@ -390,13 +386,13 @@ func TestMCPOAuthDiscoveryAndBrowserConsent(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
 	repo := testAccessRepository(store)
-	principal := testPrincipal(t, ctx, store, "consent@example.com", "Consent User", "viewer")
+	principal := testPrincipal(t, ctx, store, "consent@example.com", "Consent User")
 	session, err := repo.CreateSession(ctx, principal.ID, time.Hour)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		Auth:     testAuth(store, "test", AuthConfig{LocalAuth: true, CSRFKey: "0123456789abcdef0123456789abcdef"}),
+		Auth:     testAuth(store, accessmodule.AuthConfig{LocalAuth: true, CSRFKey: "0123456789abcdef0123456789abcdef"}),
 		MCPOAuth: MCPOAuthConfig{PublicURL: "https://leapview.example"},
 	}))
 	handler := server.Routes()
@@ -461,7 +457,7 @@ func TestMCPOAuthDiscoveryAndBrowserConsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list OAuth audits: %v", err)
 	}
-	if len(audits) != 1 || audits[0].Status != "success" || audits[0].TargetID != client.ClientID || audits[0].RequestID != "oauth-consent-request" {
+	if len(audits) != 1 || audits[0].Status != "success" || audits[0].ResourceID != client.ClientID || audits[0].RequestID != "oauth-consent-request" {
 		t.Fatalf("OAuth authorization audit = %#v", audits)
 	}
 }
@@ -518,13 +514,13 @@ func TestMCPUsesAPIRateAndBodyLimits(t *testing.T) {
 	store := testStore(t)
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 
-		Auth: testAuth(store, "test", AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
-		RateLimits: RateLimitConfig{
+		Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
+		RateLimits: apihttpmiddleware.RateLimitConfig{
 			Enabled:   true,
 			APILimit:  1,
 			APIWindow: time.Minute,
 		},
-		RequestBodyLimit: RequestBodyLimitConfig{Enabled: true, MaxBytes: 512},
+		RequestBodyLimit: apihttpmiddleware.RequestBodyLimitConfig{Enabled: true, MaxBytes: 512},
 	}))
 	handler := server.Routes()
 	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`
@@ -538,8 +534,8 @@ func TestMCPUsesAPIRateAndBodyLimits(t *testing.T) {
 	bodyStore := testStore(t)
 	bodyLimited := assembleRuntime(fakeMetrics{}, testStoreOptions(bodyStore, assemblyConfig{
 
-		Auth:             testAuth(bodyStore, "test", AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
-		RequestBodyLimit: RequestBodyLimitConfig{Enabled: true, MaxBytes: 16},
+		Auth:             testAuth(bodyStore, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
+		RequestBodyLimit: apihttpmiddleware.RequestBodyLimitConfig{Enabled: true, MaxBytes: 16},
 	}))
 	oversized := mcpRequest(t, bodyLimited.Routes(), "mcp-secret", "", initialize)
 	if oversized.Code != http.StatusRequestEntityTooLarge {

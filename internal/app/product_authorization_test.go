@@ -8,76 +8,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 )
-
-func TestProductAdministrationRejectsWorkspaceScopedManagePlatform(t *testing.T) {
-	store := testStore(t)
-	ctx := context.Background()
-	repository := testAccessRepository(store)
-	principal := testPrincipal(t, ctx, store, "workspace-platform@example.test", "Workspace Platform", "")
-	if _, err := repository.UpsertSecurableObject(ctx, access.WorkspaceObject("test"), ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.CreateGrant(ctx, access.GrantInput{
-		Object: access.WorkspaceObject("test"), SubjectType: access.SubjectPrincipal,
-		SubjectID: principal.ID, Privilege: access.PrivilegeManagePlatform,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: principal.ID, WorkspaceID: "test", Name: "workspace-manage-platform",
-		Privileges: []access.Privilege{access.PrivilegeManagePlatform},
-	})
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	service, err := adminmodule.NewProductService(store.SQLDB(), productAuthorizationBlobs{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test", Product: service}))
-
-	// This credential demonstrates the old ProtectGlobal behavior: a matching
-	// workspace grant was enough even though no PlatformObject grant exists.
-	broadRequest := httptest.NewRequest(http.MethodGet, "/broad-guard", nil)
-	broadRequest.Header.Set("Authorization", "Bearer "+token)
-	broadResponse := httptest.NewRecorder()
-	server.routes.accessModule.ProtectGlobal(access.PrivilegeManagePlatform, func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})(broadResponse, broadRequest)
-	if broadResponse.Code != http.StatusNoContent {
-		t.Fatalf("workspace-scoped credential did not exercise broad guard: status=%d body=%s", broadResponse.Code, broadResponse.Body.String())
-	}
-
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/instance/settings", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
-	response := httptest.NewRecorder()
-	server.Routes().ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("workspace-scoped MANAGE_PLATFORM reached product settings: status=%d body=%s", response.Code, response.Body.String())
-	}
-}
 
 func TestProductAdministrationUsesGeneratedRouteDispatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	repository := testAccessRepository(store)
-	principal := testPrincipal(t, ctx, store, "platform-admin@example.test", "Platform Admin", "")
-	if _, err := repository.CreateGrant(ctx, access.GrantInput{
-		Object: access.PlatformObject(), SubjectType: access.SubjectPrincipal,
-		SubjectID: principal.ID, Privilege: access.PrivilegeManagePlatform,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: principal.ID, Name: "platform-manage", Privileges: []access.Privilege{access.PrivilegeManagePlatform},
-	})
+	principal := testPlatformPrincipal(t, ctx, store, "platform-admin@example.test", "Platform Admin")
+	token := testAPIToken(t, ctx, store, principal.ID, "platform-manage")
 	service, err := adminmodule.NewProductService(store.SQLDB(), productAuthorizationBlobs{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test", Product: service}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Product: service}))
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/instance/settings", nil)
 	request.Header.Set("Authorization", "Bearer "+token)

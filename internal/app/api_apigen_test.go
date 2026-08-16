@@ -955,12 +955,12 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 			t.Fatalf("%s x-authz mode = %#v, want privilege", operationID, got)
 		}
 		value, valueOK := authz["privilege"].(string)
-		privilege, ok := access.ParsePrivilege(value)
-		if !valueOK || !ok {
+		capability, err := access.ParseCapability(value)
+		if !valueOK || err != nil {
 			t.Fatalf("%s missing generated privilege metadata", operationID)
 		}
-		if got := authz["privilege"]; got != string(privilege) {
-			t.Fatalf("%s x-authz privilege = %#v, want %q", operationID, got, privilege)
+		if got := authz["privilege"]; got != string(capability) {
+			t.Fatalf("%s x-authz capability = %#v, want %q", operationID, got, capability)
 		}
 		if wantName, ok := agentTools[operationID]; ok {
 			if got := toolsByOperation[operationID]; got != wantName {
@@ -979,10 +979,10 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 }
 
 func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
-	rolesByPrivilege := make(map[access.Privilege][]string)
-	for _, role := range access.DefaultRoles() {
-		for _, privilege := range role.Privileges {
-			rolesByPrivilege[privilege] = append(rolesByPrivilege[privilege], role.Name)
+	rolesByCapability := make(map[access.Capability][]string)
+	for _, role := range access.CanonicalProjectRoles() {
+		for _, capability := range access.ProjectRoleCapabilities(role) {
+			rolesByCapability[capability] = append(rolesByCapability[capability], string(role))
 		}
 	}
 	runtimeContracts := apiaggregate.GetAPIGenCommandRuntimeContracts()
@@ -1098,13 +1098,13 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 				t.Errorf("command %s target %#v is absent from %s", operationID, command.Target, contract.Path)
 			}
 			if command.AuthzMode == "privilege" {
-				privilege, ok := access.ParsePrivilege(command.Privilege)
-				if !ok {
-					t.Errorf("command %s has unknown privilege %q", operationID, command.Privilege)
+				capability, err := access.ParseCapability(command.Privilege)
+				if err != nil {
+					t.Errorf("command %s has unknown capability %q", operationID, command.Privilege)
 					continue
 				}
-				if len(rolesByPrivilege[privilege]) == 0 {
-					t.Errorf("command %s privilege %q is not granted by any authored role", operationID, privilege)
+				if len(rolesByCapability[capability]) == 0 {
+					t.Errorf("command %s capability %q is not granted by any project role", operationID, capability)
 				}
 			}
 		default:
@@ -1185,47 +1185,6 @@ func TestAPIGenAsyncExecutionContractsAreGeneratedEndToEnd(t *testing.T) {
 	}
 	if !slices.Equal(controls, wantControls) {
 		t.Errorf("synchronous controls returning 202 = %v, want %v", controls, wantControls)
-	}
-}
-
-func TestRoleBindingOperationsPublishTransportNeutralCommandContract(t *testing.T) {
-	contracts := accessgen.GetAPIGenOperationContracts()
-	expected := map[string]struct {
-		audit       string
-		idempotency string
-		concurrency string
-	}{
-		accessgen.GenCommandOperationCreateRoleBinding().APIGenOperationID(): {audit: "role_binding.created", idempotency: "required"},
-		accessgen.GenCommandOperationUpdateRoleBinding().APIGenOperationID(): {audit: "role_binding.updated", concurrency: "if-match"},
-		accessgen.GenCommandOperationDeleteRoleBinding().APIGenOperationID(): {audit: "role_binding.deleted"},
-	}
-	for operationID, want := range expected {
-		contract, ok := contracts[operationID]
-		if !ok {
-			t.Fatalf("operation %q is not generated", operationID)
-		}
-		if contract.Namespace != "LeapViewAPI.Access" || contract.Command == nil {
-			t.Fatalf("operation %q typed contract = %#v", operationID, contract)
-		}
-		command := contract.Command
-		if command.Owner != "LeapViewAPI.Access" || !command.Audit.Required || command.Audit.SuccessAction != want.audit {
-			t.Errorf("operation %q audit/owner contract = %#v", operationID, command)
-		}
-		if command.Target == nil || command.Target.Type != "project" || command.Target.Parameter != "project" {
-			t.Errorf("operation %q target = %#v", operationID, command.Target)
-		}
-		if command.AuthzMode != "privilege" || command.Privilege != string(access.PrivilegeManageGrants) {
-			t.Errorf("operation %q authorization = %#v", operationID, command)
-		}
-		if command.Idempotency != want.idempotency || command.Concurrency != want.concurrency {
-			t.Errorf("operation %q transport policies = %#v", operationID, command)
-		}
-		if len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != accessgen.GenOperationSurfaceUI {
-			t.Errorf("operation %q additional exposures = %v", operationID, command.AdditionalExposures)
-		}
-		if _, legacy := contract.Extensions["x-leapview-operation"]; legacy {
-			t.Errorf("operation %q retained the legacy generic extension", operationID)
-		}
 	}
 }
 
