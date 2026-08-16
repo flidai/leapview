@@ -82,6 +82,22 @@ func TestAuthenticateRejectsMissingPrincipal(t *testing.T) {
 	}
 }
 
+func TestAuthenticateInstallsInjectedPrincipalInRequestContext(t *testing.T) {
+	principal := Principal{ID: "principal", Kind: access.PrincipalKindUser}
+	module := browserGuardModule(nil, principal, true)
+	recorder := httptest.NewRecorder()
+	module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current, ok := PrincipalFromContext(r.Context())
+		if !ok || current != principal {
+			t.Fatalf("request principal = %#v, %t; want %#v", current, ok, principal)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
 func TestRequirePlatformAdminRejectsNonAdmin(t *testing.T) {
 	repo := browserGuardRepository{}
 	module := browserGuardModule(repo, Principal{ID: "principal"}, true)

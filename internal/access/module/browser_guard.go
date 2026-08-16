@@ -35,13 +35,6 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 		}
 		if !ok && m.auth != nil {
 			principal, credential, ok = m.auth.Authenticate(r)
-			if ok {
-				ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
-				if credential != nil {
-					ctx = context.WithValue(ctx, apiCredentialContextKey{}, *credential)
-				}
-				r = r.WithContext(ctx)
-			}
 		}
 		if !ok || strings.TrimSpace(principal.ID) == "" {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
@@ -51,7 +44,14 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Every authenticated surface consumes the canonical request principal
+		// from context. Install it for local development and injected principals
+		// too, not only for credentials resolved by Auth in this middleware.
+		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
+		if credential != nil {
+			ctx = context.WithValue(ctx, apiCredentialContextKey{}, *credential)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
