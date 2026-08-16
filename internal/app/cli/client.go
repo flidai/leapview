@@ -39,8 +39,8 @@ func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliap
 	if target == "" {
 		return cliapi.Credentials{}, fmt.Errorf("target is required")
 	}
-	// Explicit tokens remain a compatibility path for ephemeral CI and small
-	// teams, but are never persisted by the CLI.
+	// Explicit tokens support ephemeral CI and one-shot automation but are
+	// never persisted by the CLI.
 	if token != "" {
 		return client.resolveResult(
 			ctx,

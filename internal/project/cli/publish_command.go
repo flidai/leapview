@@ -79,7 +79,7 @@ func PublishCommand(
 	)
 	command.Flags().StringVar(
 		&values.Credentials.Token, "token", "",
-		"ephemeral API token compatibility path",
+		"ephemeral API token for one-shot automation",
 	)
 	command.Flags().StringVar(
 		&values.Format, "format", values.Format,

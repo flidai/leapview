@@ -96,7 +96,7 @@ func DevCommand(
 		&values.Credentials.Token,
 		"token",
 		"",
-		"ephemeral API token compatibility path",
+		"ephemeral API token for one-shot automation",
 	)
 	command.Flags().IntVar(
 		&values.UploadConcurrency,

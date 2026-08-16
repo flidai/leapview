@@ -244,8 +244,8 @@ func loadFlatDashboards(project *Project, includes []string) error {
 	return nil
 }
 
-// Kept as a tiny indirection so this file does not import appearance under a
-// second alias next to the legacy compiler helpers.
+// Kept as a tiny indirection so the dashboard decoder stays focused on the
+// project resource envelope.
 func appearanceValidate(p dashboardappearance.Patch) error {
 	return dashboardappearance.ValidatePatch(p)
 }
