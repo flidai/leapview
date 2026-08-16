@@ -4,7 +4,7 @@ import { CircleSlash2, Info, Pencil, UserPlus, X } from 'lucide'
 import { DatastarLit } from '../shared/datastar-lit'
 import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
-import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, WorkspaceRegistrySignal } from '../../generated/signals'
+import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
 import '../shared/entity-list'
 import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
 import '../shared/entity-multi-select'
@@ -96,7 +96,7 @@ const tableStyles = css`
   }
 `
 
-const emptyAccessAdministration: AccessAdministrationSignal = { principals: [], groups: [], workspaces: [], sessions: [], roleAssignments: [], activity: [], loading: true }
+const emptyAccessAdministration: AccessAdministrationSignal = { principals: [], groups: [], projects: [], sessions: [], roleAssignments: [], activity: [], loading: true }
 
 abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) {
   static styles = [entityDetailStyles, tableStyles]
@@ -204,7 +204,7 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   private renderDetail(signal: AccessAdministrationSignal, principal: AccessPrincipalSignal) {
     const source = identitySourceLabel(principal)
     const status = principal.disabledAt ? 'Disabled' : principal.blockedAt ? 'Blocked' : 'Active'
-    const workspaces = new Map((signal.workspaces || []).map((workspace) => [workspace.id, workspace.name || workspace.id]))
+    const projects = new Map((signal.projects || []).map((project) => [project.id, project.name || project.id]))
     const actions = html`
       ${principal.capabilities.canBlock ? html`<button class="primary-detail-action" @click=${() => this.blockPrincipal(principal)}>${lucideIcon(CircleSlash2, { size: 16, strokeWidth: 2 })}<span>Block access</span></button>` : nothing}
       ${principal.capabilities.canUnblock ? html`<button class="primary-detail-action" @click=${() => this.emit({ action: 'unblock_principal', principalId: principal.id })}>Unblock access</button>` : nothing}
@@ -242,7 +242,7 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
         </section>
         <section class="detail-section" aria-labelledby="user-access-title">
           <div class="card-header"><h2 id="user-access-title">Access</h2></div>
-          <div class="detail-subsection">${signal.roleAssignments.length ? html`<h3>Workspace roles</h3><div class="table-wrap"><table><thead><tr><th>Workspace</th><th>Role</th><th>Granted through</th></tr></thead><tbody>${signal.roleAssignments.map((assignment) => html`<tr><td>${workspaces.get(assignment.workspaceId) || assignment.workspaceId}</td><td>${humanizeAccessValue(assignment.role)}</td><td>${assignment.sourceType === 'group' ? html`<a href=${`/admin/groups/${encodeURIComponent(assignment.sourceId)}`}>Via ${assignment.sourceName}</a>` : 'Direct assignment'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Workspace roles</strong><span>No workspace roles assigned.</span></div>`}</div>
+          <div class="detail-subsection">${signal.roleAssignments.length ? html`<h3>Project roles</h3><div class="table-wrap"><table><thead><tr><th>Project</th><th>Role</th><th>Granted through</th></tr></thead><tbody>${signal.roleAssignments.map((assignment) => html`<tr><td>${projects.get(assignment.projectId) || assignment.projectId}</td><td>${humanizeAccessValue(assignment.role)}</td><td>${assignment.sourceType === 'group' ? html`<a href=${`/admin/groups/${encodeURIComponent(assignment.sourceId)}`}>Via ${assignment.sourceName}</a>` : 'Direct assignment'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Project roles</strong><span>No project roles assigned.</span></div>`}</div>
           <div class="detail-subsection">${principal.groups.length ? html`<h3>Groups</h3><div class="table-wrap"><table><thead><tr><th>Group</th><th>Source</th></tr></thead><tbody>${principal.groups.map((group) => html`<tr><td><a href=${`/admin/groups/${encodeURIComponent(group.id)}`}>${group.name || group.id}</a></td><td>${group.provider || 'local'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Groups</strong><span>No group memberships.</span></div>`}</div>
         </section>
         <section class="detail-section" aria-labelledby="user-security-title">
@@ -308,8 +308,8 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   }
 
   private renderCreate(signal: AccessAdministrationSignal) {
-    const workspaces = signal.workspaces || []
-    const selectedWorkspace = workspaces[0]?.id || ''
+    const projects = signal.projects || []
+    const selectedProject = projects[0]?.id || ''
     return html`<dialog data-access-create-dialog aria-labelledby="create-group-title" @cancel=${this.cancelCreate} @click=${this.closeOnBackdrop}>
       <section class="modal">
         <header class="modal-header">
@@ -318,9 +318,9 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
         </header>
         <div class="modal-body">
           ${this.feedback()}
-          ${!workspaces.length ? html`<p class="notice">Create a workspace before creating a group.</p>` : html`
+          ${!projects.length ? html`<p class="notice">Create a project before creating a group.</p>` : html`
             <form class="form" @submit=${(event: SubmitEvent) => this.createGroup(event)}>
-              <label>Workspace<select name="workspaceId" aria-label="Workspace" required><option value="">Select a workspace</option>${workspaces.map((workspace) => html`<option value=${workspace.id} ?selected=${workspace.id === selectedWorkspace}>${workspace.name || workspace.id}</option>`)}</select></label>
+              <label>Project<select name="projectId" aria-label="Project" required><option value="">Select a project</option>${projects.map((project) => html`<option value=${project.id} ?selected=${project.id === selectedProject}>${project.name || project.id}</option>`)}</select></label>
               <label>Group name<input name="displayName" required autocomplete="off" placeholder="Analytics team"></label>
               <div class="modal-actions"><button type="button" @click=${this.requestCreateClose}>Cancel</button><button class="primary" type="submit" ?disabled=${signal.loading}>Create group</button></div>
             </form>
@@ -333,7 +333,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   private renderDetail(signal: AccessAdministrationSignal, group: AccessGroupSignal) {
     const memberIDs = new Set(group.members.map((member) => member.id))
     const candidates = signal.principals.filter((principal) => principal.kind === 'user' && !memberIDs.has(principal.id))
-    const workspaces = new Map((signal.workspaces || []).map((workspace) => [workspace.id, workspace.name || workspace.id]))
+    const projects = new Map((signal.projects || []).map((project) => [project.id, project.name || project.id]))
     const provider = group.provider || 'external'
     const local = provider.toLowerCase() === 'local'
     const actions = group.capabilities.canUpdate || group.capabilities.canDelete ? html`
@@ -348,7 +348,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
     return html`${renderEntityDetail({
       label: 'Group administration', feedback: this.feedback(), backHref: '/admin/groups', backLabel: 'All groups',
       avatar: initialsForValue(group.name || group.id), title: group.name || group.id,
-      subtitle: group.workspaceId ? `${workspaces.get(group.workspaceId) || group.workspaceId} workspace` : group.externalId ? `External ID ${group.externalId}` : undefined,
+      subtitle: group.projectId ? `${projects.get(group.projectId) || group.projectId} project` : group.externalId ? `External ID ${group.externalId}` : undefined,
       badges: html`<span class="badge">${provider}</span><span class="badge status-active">${local ? 'Managed in LeapView' : 'Synchronized'}</span>`,
       actions, notice,
       sections: html`
@@ -356,7 +356,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
           <div class="section-heading"><h2 id="group-overview-title">Overview</h2></div>
           <dl class="facts">
             <div class="fact"><dt>Provider</dt><dd>${provider}</dd></div>
-            <div class="fact"><dt>Workspace</dt><dd>${group.workspaceId ? workspaces.get(group.workspaceId) || group.workspaceId : 'Global'}</dd></div>
+            <div class="fact"><dt>Project</dt><dd>${group.projectId ? projects.get(group.projectId) || group.projectId : 'Global'}</dd></div>
             <div class="fact"><dt>Created</dt><dd>${formatAccessDate(group.createdAt)}</dd></div>
             <div class="fact"><dt>Member count</dt><dd>${group.members.length}</dd></div>
             <div class="fact"><dt>Group ID</dt><dd><code title=${group.id}>${group.id}</code></dd></div>
@@ -436,8 +436,8 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
     if (event.target === event.currentTarget) this.closeDetailDialog()
   }
 
-  private createGroup(event: SubmitEvent): void { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; this.emit({ action: 'create_group', workspaceId: formValue(form, 'workspaceId'), displayName: formValue(form, 'displayName') }) }
-  private updateGroup(event: SubmitEvent, group: AccessGroupSignal): void { event.preventDefault(); this.emit({ action: 'update_group', groupId: group.id, workspaceId: group.workspaceId, displayName: formValue(event.currentTarget as HTMLFormElement, 'displayName'), revision: group.revision }); this.closeDetailDialog() }
+  private createGroup(event: SubmitEvent): void { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; this.emit({ action: 'create_group', projectId: formValue(form, 'projectId'), displayName: formValue(form, 'displayName') }) }
+  private updateGroup(event: SubmitEvent, group: AccessGroupSignal): void { event.preventDefault(); this.emit({ action: 'update_group', groupId: group.id, projectId: group.projectId, displayName: formValue(event.currentTarget as HTMLFormElement, 'displayName'), revision: group.revision }); this.closeDetailDialog() }
   private memberPickerItems(candidates: AccessPrincipalSignal[]): EntityMultiSelectItem[] {
     return candidates.map((principal) => ({ id: principal.id, label: principal.displayName || principal.email, detail: principal.displayName ? principal.email : '', kind: 'principal' }))
   }
@@ -445,11 +445,11 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   private addMembers(event: SubmitEvent, group: AccessGroupSignal): void {
     event.preventDefault()
     if (this.selectedMemberIds.length === 0) return
-    this.emit({ action: 'add_group_member', groupId: group.id, workspaceId: group.workspaceId, principalIds: [...this.selectedMemberIds] })
+    this.emit({ action: 'add_group_member', groupId: group.id, projectId: group.projectId, principalIds: [...this.selectedMemberIds] })
     this.closeDetailDialog()
   }
-  private removeMember(group: AccessGroupSignal, principalId: string, label: string): void { if (window.confirm(`Remove ${label} from ${group.name}?`)) this.emit({ action: 'remove_group_member', groupId: group.id, workspaceId: group.workspaceId, principalId }) }
-  private deleteGroup(group: AccessGroupSignal): void { if (window.confirm(`Delete ${group.name}? Access granted through this group will be removed.`)) this.emit({ action: 'delete_group', groupId: group.id, workspaceId: group.workspaceId }) }
+  private removeMember(group: AccessGroupSignal, principalId: string, label: string): void { if (window.confirm(`Remove ${label} from ${group.name}?`)) this.emit({ action: 'remove_group_member', groupId: group.id, projectId: group.projectId, principalId }) }
+  private deleteGroup(group: AccessGroupSignal): void { if (window.confirm(`Delete ${group.name}? Access granted through this group will be removed.`)) this.emit({ action: 'delete_group', groupId: group.id, projectId: group.projectId }) }
 }
 
 function identitySourceLabel(principal: AccessPrincipalSignal): string {
@@ -501,27 +501,27 @@ function formValue(form: HTMLFormElement, name: string): string {
   return (form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null)?.value.trim() || ''
 }
 
-class LeapViewWorkspaceRegistry extends DatastarLit(LitElement) {
+class LeapViewProjectRegistry extends DatastarLit(LitElement) {
   static styles = tableStyles
-  get registry(): WorkspaceRegistrySignal { return this.signal('adminWorkspaces', { items: [], loading: false, hasMore: false }) }
+  get registry(): ProjectRegistrySignal { return this.signal('adminProjects', { items: [], loading: false, hasMore: false }) }
   render() {
     const signal = this.registry
-    return html`<section class="surface" aria-label="Workspaces">
+    return html`<section class="surface" aria-label="Projects">
       ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
-      ${signal.loading ? html`<p class="muted" aria-live="polite">Loading workspaces…</p>` : nothing}
+      ${signal.loading ? html`<p class="muted" aria-live="polite">Loading projects…</p>` : nothing}
       <lv-entity-list
-        .items=${workspaceListItems(signal)}
-        .columns=${workspaceListColumns()}
+        .items=${projectListItems(signal)}
+        .columns=${projectListColumns()}
         client-filter
-        search-placeholder="Search workspaces by name, owner, or environment"
-        list-label="Workspaces"
-        empty-text=${signal.empty || 'No workspaces are available.'}
+        search-placeholder="Search projects by name, owner, or environment"
+        list-label="Projects"
+        empty-text=${signal.empty || 'No projects are available.'}
       ></lv-entity-list>
     </section>`
   }
 }
 
-function workspaceListItems(signal: WorkspaceRegistrySignal): EntityListItem[] {
+function projectListItems(signal: ProjectRegistrySignal): EntityListItem[] {
   return (signal.items ?? []).map((item) => {
     const administrators = (item.administrators ?? []).map((administrator) => administrator.displayName).filter(Boolean)
     const deployment = item.deploymentStatus || item.servingStateStatus || 'Not deployed'
@@ -529,15 +529,15 @@ function workspaceListItems(signal: WorkspaceRegistrySignal): EntityListItem[] {
       id: item.id,
       title: item.title || item.id,
       description: item.description,
-      href: item.href || item.links.workspace,
-      icon: 'workspace',
+      href: item.href || item.links.project,
+      icon: 'database',
       iconTreatment: 'plain',
       columns: {
         owner: item.owner?.displayName || 'Unassigned',
         administrators: administrators.length ? administrators.join(', ') : 'None',
         environment: item.environment || '—',
         deployment,
-        updated: formatWorkspaceDate(item.updatedAt),
+        updated: formatProjectDate(item.updatedAt),
       },
       columnTitles: {
         owner: item.owner?.email || item.owner?.displayName || '',
@@ -546,13 +546,13 @@ function workspaceListItems(signal: WorkspaceRegistrySignal): EntityListItem[] {
         updated: item.updatedAt || '',
       },
       sortValues: {
-        updated: workspaceTimestamp(item.updatedAt),
+        updated: projectTimestamp(item.updatedAt),
       },
     }
   })
 }
 
-function workspaceListColumns(): EntityListColumn[] {
+function projectListColumns(): EntityListColumn[] {
   return [
     { id: 'name', label: 'Name', width: '27%' },
     { id: 'owner', label: 'Owner', width: '18%' },
@@ -563,13 +563,13 @@ function workspaceListColumns(): EntityListColumn[] {
   ]
 }
 
-function formatWorkspaceDate(value = ''): string {
-  const timestamp = workspaceTimestamp(value)
+function formatProjectDate(value = ''): string {
+  const timestamp = projectTimestamp(value)
   if (!timestamp) return '—'
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(timestamp)
 }
 
-function workspaceTimestamp(value = ''): number {
+function projectTimestamp(value = ''): number {
   const timestamp = Date.parse(value)
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
@@ -611,20 +611,20 @@ class LeapViewAuditLog extends DatastarLit(LitElement) {
   render() {
     const signal = this.audit
     const filters = signal.filters || {}
-    const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.emit({ action: 'filter', filters: { workspaceId: value('workspaceId'), principalId: value('principalId'), action: value('action'), targetType: value('targetType'), targetId: value('targetId'), from: value('from'), to: value('to') } }) }
+    const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.emit({ action: 'filter', filters: { projectId: value('projectId'), principalId: value('principalId'), action: value('action'), targetType: value('targetType'), targetId: value('targetId'), from: value('from'), to: value('to') } }) }
     return html`<section class="surface" aria-label="Audit log"><h2>Audit log</h2><p class="muted">Read-only product activity.</p>${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
-      <form class="toolbar" @submit=${submit}><label>Workspace<input name="workspaceId" value=${filters.workspaceId || ''}></label><label>Actor<input name="principalId" value=${filters.principalId || ''}></label><label>Action<input name="action" value=${filters.action || ''}></label><label>Target type<input name="targetType" value=${filters.targetType || ''}></label><button type="submit">Filter</button><button type="button" @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
+      <form class="toolbar" @submit=${submit}><label>Project<input name="projectId" value=${filters.projectId || ''}></label><label>Actor<input name="principalId" value=${filters.principalId || ''}></label><label>Action<input name="action" value=${filters.action || ''}></label><label>Target type<input name="targetType" value=${filters.targetType || ''}></label><button type="submit">Filter</button><button type="button" @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
       ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Target</th><th>Status</th></tr></thead><tbody>${signal.items.map((event) => html`<tr><td>${event.createdAt}</td><td>${event.action}</td><td>${event.principalId || 'System'}</td><td>${event.targetType} / ${event.targetId}</td><td>${event.status || '—'}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">No audit events match these filters.</p>`}
       ${signal.hasMore ? html`<button @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>Load more</button>` : nothing}
     </section>`
   }
 }
 
-if (!customElements.get('lv-workspace-registry')) customElements.define('lv-workspace-registry', LeapViewWorkspaceRegistry)
+if (!customElements.get('lv-project-registry')) customElements.define('lv-project-registry', LeapViewProjectRegistry)
 if (!customElements.get('lv-service-accounts')) customElements.define('lv-service-accounts', LeapViewServiceAccounts)
 if (!customElements.get('lv-audit-log')) customElements.define('lv-audit-log', LeapViewAuditLog)
 if (!customElements.get('lv-principal-administration')) customElements.define('lv-principal-administration', LeapViewPrincipalAdministration)
 if (!customElements.get('lv-group-administration')) customElements.define('lv-group-administration', LeapViewGroupAdministration)
 
-export { LeapViewWorkspaceRegistry, LeapViewServiceAccounts, LeapViewAuditLog, LeapViewPrincipalAdministration, LeapViewGroupAdministration }
+export { LeapViewProjectRegistry, LeapViewServiceAccounts, LeapViewAuditLog, LeapViewPrincipalAdministration, LeapViewGroupAdministration }
 export { setDatastarLitRuntimeForTests } from '../shared/datastar-lit'

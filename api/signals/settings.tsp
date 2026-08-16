@@ -1,6 +1,6 @@
 // Settings surfaces are kept in a separate contract so they can evolve
 // independently from the shared admin page envelope. The admin stream may
-// embed these signals under `adminWorkspaces`, `adminServiceAccounts`, and
+// embed these signals under `adminProjects`, `adminServiceAccounts`, and
 // `adminAuditLog` without introducing ad-hoc browser fetches.
 import "@yacobolo/apigen";
 
@@ -8,8 +8,8 @@ namespace LeapViewUISignals;
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
-model WorkspaceRegistrySignal {
-  `items`: WorkspaceRegistryItemSignal[];
+model ProjectRegistrySignal {
+  `items`: ProjectRegistryItemSignal[];
   `empty`?: string;
   `loading`: boolean;
   `error`?: string;
@@ -17,15 +17,15 @@ model WorkspaceRegistrySignal {
   `hasMore`: boolean;
 }
 
-model WorkspaceRegistryItemSignal {
+model ProjectRegistryItemSignal {
   `id`: string;
   `title`: string;
   `description`?: string;
   `href`: string;
   `createdAt`?: string;
   `updatedAt`?: string;
-  `owner`?: WorkspaceSubjectSignal;
-  `administrators`: WorkspaceSubjectSignal[];
+  `owner`?: ProjectSubjectSignal;
+  `administrators`: ProjectSubjectSignal[];
   `environment`?: string;
   `activeServingStateId`?: string;
   `servingStateStatus`?: string;
@@ -35,10 +35,10 @@ model WorkspaceRegistryItemSignal {
   `deploymentStatus`?: string;
   `deploymentSince`?: string;
   `currentReleaseId`?: string;
-  `links`: WorkspaceLinksSignal;
+  `links`: ProjectLinksSignal;
 }
 
-model WorkspaceSubjectSignal {
+model ProjectSubjectSignal {
   `subjectType`: string;
   `subjectId`: string;
   `email`?: string;
@@ -46,10 +46,9 @@ model WorkspaceSubjectSignal {
   `role`?: string;
 }
 
-model WorkspaceLinksSignal {
+model ProjectLinksSignal {
   `self`: string;
-  `workspace`: string;
-  `project`?: string;
+  `project`: string;
   `release`?: string;
   `deployment`?: string;
   `deployments`?: string;
@@ -79,7 +78,7 @@ model ServiceAccountSecretSignal { `id`: string; `servicePrincipalId`: string; `
 model AccessAdministrationSignal {
   `principals`: AccessPrincipalSignal[];
   `groups`: AccessGroupSignal[];
-  `workspaces`?: AccessWorkspaceSignal[];
+  `projects`?: AccessProjectSignal[];
   `sessions`: AccessSessionSignal[];
   `roleAssignments`: AccessRoleAssignmentSignal[];
   `activity`: AccessActivitySignal[];
@@ -92,7 +91,7 @@ model AccessAdministrationSignal {
   `loading`: boolean;
 }
 
-model AccessWorkspaceSignal {
+model AccessProjectSignal {
   `id`: string;
   `name`: string;
 }
@@ -132,7 +131,7 @@ model AccessGroupCapabilitiesSignal {
 
 model AccessGroupSignal {
   `id`: string;
-  `workspaceId`?: string;
+  `projectId`?: string;
   `name`: string;
   `provider`: string;
   `externalId`?: string;
@@ -145,7 +144,7 @@ model AccessGroupSignal {
 model AccessGroupReferenceSignal { `id`: string; `name`: string; `provider`: string; }
 model AccessPrincipalReferenceSignal { `id`: string; `email`: string; `displayName`: string; }
 model AccessSessionSignal { `id`: string; `kind`: string; `createdAt`?: string; `lastSeenAt`?: string; `expiresAt`?: string; }
-model AccessRoleAssignmentSignal { `workspaceId`: string; `role`: string; `sourceType`: string; `sourceId`: string; `sourceName`: string; }
+model AccessRoleAssignmentSignal { `projectId`: string; `role`: string; `sourceType`: string; `sourceId`: string; `sourceName`: string; }
 model AccessActivitySignal { `id`: string; `action`: string; `actorId`?: string; `actorName`?: string; `status`?: string; `createdAt`: string; }
 
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })
@@ -156,7 +155,7 @@ model AccessAdministrationCommand {
   `principalIds`?: string[];
   `groupId`?: string;
   `sessionId`?: string;
-  `workspaceId`?: string;
+  `projectId`?: string;
   `email`?: string;
   `displayName`?: string;
   `revision`?: string;
@@ -174,8 +173,8 @@ model AuditLogSignal {
   `error`?: string;
 }
 
-model AuditEventSignal { `id`: string; `workspaceId`?: string; `principalId`?: string; `action`: string; `targetType`: string; `targetId`: string; `privilege`?: string; `status`?: string; `requestId`?: string; `correlationId`?: string; `metadata`?: Record<unknown>; `createdAt`: string; }
-model AuditLogFilters { `workspaceId`?: string; `principalId`?: string; `action`?: string; `targetType`?: string; `targetId`?: string; `from`?: string; `to`?: string; }
+model AuditEventSignal { `id`: string; `projectId`?: string; `principalId`?: string; `action`: string; `targetType`: string; `targetId`: string; `privilege`?: string; `status`?: string; `requestId`?: string; `correlationId`?: string; `metadata`?: Record<unknown>; `createdAt`: string; }
+model AuditLogFilters { `projectId`?: string; `principalId`?: string; `action`?: string; `targetType`?: string; `targetId`?: string; `from`?: string; `to`?: string; }
 
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "admin" })

@@ -45,7 +45,7 @@ export type EntityListItem = {
   iconNode?: IconNode
   iconColor?: string
   iconButtonLabel?: string
-  workspaceId?: string
+  projectId?: string
   dashboardId?: string
   iconTreatment?: 'plain' | 'framed' | 'none'
   meta?: string

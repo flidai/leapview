@@ -14,7 +14,6 @@ const pipelineRunStatuses = ['queued', 'running', 'prepared', 'succeeded', 'fail
 
 class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   @state() private runQuery = ''
-  @state() private runWorkspace = 'all'
   @state() private runStatus = 'all'
   @state() private runTrigger = 'all'
   @state() private selectedRunID = ''
@@ -285,7 +284,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   }
 
   get command(): PipelineCommandSignal {
-    return this.signal<PipelineCommandSignal>('pipelineCommand', { action: '', assetId: '', pipelineId: '', runId: '', workspaceId: '' })
+    return this.signal<PipelineCommandSignal>('pipelineCommand', { action: '', assetId: '', pipelineId: '', runId: '' })
   }
 
   get commandStatus(): PipelineCommandStatusSignal {
@@ -334,9 +333,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
           description: pipeline.description || `${pipeline.semanticModel} · ${pipeline.schedule}`,
           href: pipeline.href,
           icon: 'workflow',
-          category: pipeline.workspaceId,
           columns: {
-            workspace: pipeline.workspace,
             semanticModel: pipeline.semanticModel,
             schedule: pipeline.schedule,
             nextRun: formatDateTime(pipeline.nextRun),
@@ -353,21 +350,16 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
             label: pipeline.running ? 'Pipeline is running' : 'Run now',
             action: 'run',
             icon: 'play',
-            disabled: pipeline.running || this.commandPendingFor(pipeline.workspaceId, pipeline.pipelineId),
+            disabled: pipeline.running || this.commandPendingFor(pipeline.pipelineId),
           }] : [],
         }))}
         .columns=${[
           { id: 'name', label: 'Pipeline', width: '26%' },
-          { id: 'workspace', label: 'Workspace', width: '16%' },
           { id: 'semanticModel', label: 'Semantic model', width: '15%' },
           { id: 'schedule', label: 'Schedule', width: '19%' },
           { id: 'nextRun', label: 'Next run', width: '13%' },
           { id: 'status', label: 'Status', width: '11%' },
           { id: 'actions', label: '', width: '5%', sortable: false, render: 'actions' },
-        ]}
-        .filters=${[
-          { id: 'all', label: 'All workspaces' },
-          ...page.workspaceFilters.map((workspace) => ({ id: workspace.id, label: workspace.title })),
         ]}
         search-placeholder="Search pipelines"
         empty-text="No refresh pipelines are available."
@@ -382,10 +374,6 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
       <div class="runs">
         <div class="run-toolbar" aria-label="Run history filters">
           <input type="search" placeholder="Search pipeline or run ID" aria-label="Search pipeline runs" .value=${this.runQuery} @input=${(event: Event) => { this.runQuery = (event.currentTarget as HTMLInputElement).value }}>
-          <select aria-label="Filter runs by workspace" .value=${this.runWorkspace} @change=${(event: Event) => { this.runWorkspace = (event.currentTarget as HTMLSelectElement).value }}>
-            <option value="all">All workspaces</option>
-            ${page.workspaceFilters.map((workspace) => html`<option value=${workspace.id}>${workspace.title}</option>`)}
-          </select>
           <select aria-label="Filter runs by status" .value=${this.runStatus} @change=${(event: Event) => { this.runStatus = (event.currentTarget as HTMLSelectElement).value }}>
             <option value="all">All statuses</option>
             ${pipelineRunStatuses.map((status) => html`<option value=${status}>${capitalize(status)}</option>`)}
@@ -408,7 +396,6 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
             .columns=${[
               { id: 'status', label: 'Status', width: '120px', render: 'status' },
               { id: 'name', label: 'Pipeline', width: '200px' },
-              { id: 'workspace', label: 'Workspace', width: '150px' },
               { id: 'started', label: 'Started', width: '170px' },
               { id: 'duration', label: 'Duration', width: '90px' },
               { id: 'trigger', label: 'Trigger', width: '100px' },
@@ -427,7 +414,6 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
     return table.rows
       .filter((row) => {
         if (query && !String(row.pipeline_search || '').includes(query)) return false
-        if (this.runWorkspace !== 'all' && row.workspace_id !== this.runWorkspace) return false
         if (this.runStatus !== 'all' && row.status_value !== this.runStatus) return false
         if (this.runTrigger !== 'all' && row.trigger_value !== this.runTrigger) return false
         return true
@@ -440,7 +426,6 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
         icon: 'none',
         columns: {
           status: capitalize(runDetailValue(row, 'status_value')),
-          workspace: runDetailValue(row, 'workspace'),
           started: runDetailValue(row, 'started'),
           duration: runDetailValue(row, 'duration'),
           trigger: runDetailValue(row, 'trigger'),
@@ -460,7 +445,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
                 label: String(value.label || ''),
                 action: String(value.action || ''),
                 icon: pipelineRunActionIcon(String(value.icon || '')),
-                disabled: value.action !== 'detail' && this.commandPendingFor(String(row.workspace_id || ''), String(row.pipeline_id || ''), String(row.run_id || '')),
+                disabled: value.action !== 'detail' && this.commandPendingFor(String(row.pipeline_id || ''), String(row.run_id || '')),
               }
             })
           : [],
@@ -474,9 +459,9 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
     return html`<div class=${`command-feedback ${status.error ? 'is-error' : ''}`} role=${status.error ? 'alert' : 'status'}>${message}</div>`
   }
 
-  private commandPendingFor(workspaceId: string, pipelineId: string, runId = ''): boolean {
+  private commandPendingFor(pipelineId: string, runId = ''): boolean {
     const command = this.command
-    return this.commandStatus.loading && command.workspaceId === workspaceId && command.pipelineId === pipelineId && (!runId || command.runId === runId)
+    return this.commandStatus.loading && command.pipelineId === pipelineId && (!runId || command.runId === runId)
   }
 
   private handlePipelineAction = (event: CustomEvent<{ action: string, item: { id: string } }>): void => {
@@ -495,7 +480,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
       return
     }
     if (action !== 'retry' && action !== 'cancel') return
-    const pipeline = this.page?.pipelines.find((candidate) => candidate.workspaceId === String(row.workspace_id) && candidate.pipelineId === String(row.pipeline_id))
+    const pipeline = this.page?.pipelines.find((candidate) => candidate.pipelineId === String(row.pipeline_id))
     if (!pipeline) return
     this.emitCommand(action, pipeline, String(row.run_id || ''))
   }
@@ -507,7 +492,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   private renderRunDetail(row: Record<string, unknown>) {
     const status = runDetailValue(row, 'status_value')
     const pipeline = runDetailValue(row, 'pipeline')
-    const workspace = runDetailValue(row, 'workspace')
+    const project = runDetailValue(row, 'project')
     const error = runDetailValue(row, 'error')
     const pipelineHref = runDetailValue(row, 'pipeline_href')
     return html`
@@ -522,7 +507,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
           ${runStatusIcon(status)}
           <span>${capitalize(status)}</span>
         </div>
-        <p slot="subtitle" class="run-detail-subtitle">${pipeline} · ${workspace}</p>
+        <p slot="subtitle" class="run-detail-subtitle">${pipeline} · ${project}</p>
         <div class="run-detail-body">
           <section class="run-detail-section" aria-label="Run identity">
             <h2>Run identity</h2>
@@ -531,7 +516,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
               ${pipelineHref !== '—'
                 ? html`<div class="run-detail-fact"><span>Pipeline</span><a href=${pipelineHref}>${pipeline}</a></div>`
                 : runDetailFact('Pipeline', pipeline)}
-              ${runDetailFact('Workspace', workspace)}
+              ${runDetailFact('Project', project)}
               ${runDetailFact('Environment', runDetailValue(row, 'environment'))}
               ${runDetailFact('Semantic model', runDetailValue(row, 'semantic_model'), true)}
             </div>
@@ -573,7 +558,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
     this.dispatchEvent(new CustomEvent('lv-pipeline-command', {
       bubbles: true,
       composed: true,
-      detail: { action, workspaceId: pipeline.workspaceId, pipelineId: pipeline.pipelineId, assetId: pipeline.assetId, runId },
+      detail: { action, pipelineId: pipeline.pipelineId, assetId: pipeline.assetId, runId },
     }))
   }
 }

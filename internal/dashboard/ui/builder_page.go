@@ -39,7 +39,6 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 	builder := envelope.Builder
 	layout := builderFocusLayout(firstProvider(providers), webpage.Context{
 		Active:       "dashboards",
-		ScopeID:      builder.WorkspaceID,
 		SectionID:    builder.DashboardID,
 		SectionTitle: builder.Title,
 		PageTitle:    "Builder",
@@ -49,7 +48,6 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 	updates := dashboardBuilderUpdatesURL(builder)
 	attrs := []g.Node{
 		g.Attr("slot", "page"),
-		g.Attr("workspace-id", builder.WorkspaceID),
 		g.Attr("dashboard-id", builder.DashboardID),
 		g.Attr("draft-id", builder.DraftID),
 		builderCommandAction(actions),
@@ -100,9 +98,6 @@ func DashboardBuilderBootstrapSignals(envelope uisignals.DashboardBuilderEnvelop
 func dashboardBuilderUpdatesURL(builder uisignals.DashboardBuilderSignal) string {
 	values := url.Values{}
 	values.Set("route", string(uisignals.RouteKindDashboardBuilder))
-	if strings.TrimSpace(builder.WorkspaceID) != "" {
-		values.Set("workspace", builder.WorkspaceID)
-	}
 	if strings.TrimSpace(builder.DashboardID) != "" {
 		values.Set("dashboard", builder.DashboardID)
 	}

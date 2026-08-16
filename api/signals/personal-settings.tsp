@@ -74,7 +74,7 @@ model PersonalTokensSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model PersonalTokenScopeSignal {
   `kind`: string;
-  `workspaceId`: string;
+  `projectId`: string;
   `label`: string;
   `description`: string;
   `privileges`: PersonalTokenPrivilegeSignal[];
@@ -94,7 +94,7 @@ model PersonalTokenPrivilegeSignal {
 model PersonalTokenSignal {
   `id`: string;
   `name`: string;
-  `workspaceId`: string;
+  `projectId`: string;
   `privileges`: string[];
   `createdAt`: string;
   `lastUsedAt`: string;
@@ -143,7 +143,7 @@ model PersonalTokenCommand {
   `action`: string;
   `tokenId`: string;
   `name`: string;
-  `workspaceId`: string;
+  `projectId`: string;
   `privileges`: string[];
   `expiresAt`: string;
 }

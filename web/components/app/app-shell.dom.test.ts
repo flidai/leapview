@@ -150,7 +150,7 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
     })
 
     expect(identity).toEqual({
-      navigationLabel: 'LeapView workspace',
+      navigationLabel: 'LeapView navigation',
       name: 'LeapView',
       mobileName: 'LeapView',
       markCount: 0,
@@ -179,7 +179,7 @@ test('app shell renders custom identity with permanent LeapView attribution', as
       }
     })
     expect(identity).toEqual({
-      navigationLabel: 'Northstar Analytics workspace',
+      navigationLabel: 'Northstar Analytics navigation',
       name: 'Northstar Analytics',
       logo: '/instance-logo.png',
       attribution: 'Powered by LeapView',
@@ -575,7 +575,7 @@ test('sidebar active nav item uses a full-row highlight without selector rail', 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
       const root = sidebar.shadowRoot
-      const active = root.querySelector('a[href="/workspaces"]') as HTMLElement
+      const active = root.querySelector('a[href="/data"]') as HTMLElement
       const icon = active.querySelector('.nav-icon') as HTMLElement
       const style = getComputedStyle(active)
       const iconStyle = getComputedStyle(icon)
@@ -594,9 +594,9 @@ test('sidebar active nav item uses a full-row highlight without selector rail', 
       }
     })
 
-    expect(state.text).toBe('Workspaces')
-    expect(state.label).toBe('Workspaces')
-    expect(state.title).toBe('Workspaces')
+    expect(state.text).toBe('Data')
+    expect(state.label).toBe('Data')
+    expect(state.title).toBe('Data')
     expect(state.current).toBe('page')
     expect(state.background).toBe('rgb(239, 242, 245)')
     expect(state.controlHoverBackground).toBe('#eff2f5')
@@ -758,7 +758,7 @@ test('sidebar switches between Insights and Develop and remembers the last area 
       { label: 'Insights', current: 'false', href: '/' },
       { label: 'Develop', current: 'page', href: '/sidebar-active-nav' },
     ])
-    expect(developState.items).toEqual(['Workspaces', 'Pipelines', 'Connections'])
+    expect(developState.items).toEqual(['Data', 'Models', 'Semantic models', 'Pipelines', 'Connections'])
     expect(developState.visibleGroupLabels).toEqual([])
     expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
     expect(developState.visibleAreaSwitcherCount).toBe(1)
@@ -777,7 +777,7 @@ test('sidebar switches between Insights and Develop and remembers the last area 
 
     const insightsState = await sidebarAreaState(page)
     expect(insightsState.area).toBe('insights')
-    expect(insightsState.items).toEqual(['Dashboards', 'Explore', 'Chats'])
+    expect(insightsState.items).toEqual(['Dashboards', 'Data Explorer'])
     expect(insightsState.visibleGroupLabels).toEqual([])
 
     await page.locator('lv-app-shell').evaluate((element: any) => {
@@ -785,6 +785,43 @@ test('sidebar switches between Insights and Develop and remembers the last area 
       ;(sidebar.shadowRoot!.querySelector('.area-item[aria-label="Develop"]') as HTMLAnchorElement).click()
     })
     await page.waitForURL(`${baseURL}/sidebar-active-nav`)
+  } finally {
+    await page.close()
+  }
+})
+
+test('insights and develop navigation expose the stable route contract without subtitles', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-active-nav`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const state = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const root = sidebar.shadowRoot!
+      const links = (group: string) => Array.from(root.querySelectorAll(`#mobile-navigation .nav-group[aria-label="${group}"] a`)).map((link: Element) => ({
+        label: link.textContent?.trim(), href: link.getAttribute('href'),
+      }))
+      return {
+        insights: links('Insights'),
+        develop: links('Develop'),
+        subtitles: Array.from(root.querySelectorAll('.nav-group-label')).filter((label: Element) => {
+          const style = getComputedStyle(label)
+          return style.display !== 'none' && style.visibility !== 'hidden'
+        }).map((label: Element) => label.textContent?.trim()),
+      }
+    })
+    expect(state.insights).toEqual([
+      { label: 'Dashboards', href: '/' },
+      { label: 'Data Explorer', href: '/explore' },
+    ])
+    expect(state.develop).toEqual([
+      { label: 'Data', href: '/data' },
+      { label: 'Models', href: '/models' },
+      { label: 'Semantic models', href: '/semantic-models' },
+      { label: 'Pipelines', href: '/pipelines' },
+      { label: 'Connections', href: '/connections' },
+    ])
+    expect(state.subtitles).toEqual([])
   } finally {
     await page.close()
   }
@@ -992,7 +1029,7 @@ function signalShellDocument(): string {
         area: 'insights',
         areas: [
           { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
-          { id: 'develop', label: 'Develop', href: '/workspaces', icon: 'code' },
+          { id: 'develop', label: 'Develop', href: '/data', icon: 'code' },
         ],
         dashboardId: '',
         dashboardTitle: '',
@@ -1034,12 +1071,12 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
   const chromeConfig = compact || history || nav || admin ? {
     sidebar: {
       workspaceTitle: 'LeapView Workspace',
-      active: admin ? 'principals' : history ? 'chat' : 'workspaces',
+      active: admin ? 'principals' : history ? 'chat' : 'data',
       admin,
       area: admin ? undefined : history ? 'insights' : 'develop',
       areas: admin ? undefined : [
         { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
-        { id: 'develop', label: 'Develop', href: '/workspaces', icon: 'code' },
+        { id: 'develop', label: 'Develop', href: '/data', icon: 'code' },
       ],
       dashboardId: '',
       dashboardTitle: '',
@@ -1105,13 +1142,14 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
         label: 'Insights',
         items: [
           { id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' },
-          { id: 'data', label: 'Explore', href: '/data', icon: 'cache' },
-          { id: 'chat', label: 'Chats', href: '/chats', icon: 'chat' },
+          { id: 'data-explorer', label: 'Data Explorer', href: '/explore', icon: 'database' },
         ],
       }] : nav ? [{
         label: 'Develop',
         items: [
-          { id: 'workspaces', label: 'Workspaces', href: '/workspaces', icon: 'catalog' },
+          { id: 'data', label: 'Data', href: '/data', icon: 'database' },
+          { id: 'models', label: 'Models', href: '/models', icon: 'model' },
+          { id: 'semantic-models', label: 'Semantic models', href: '/semantic-models', icon: 'model' },
           { id: 'pipelines', label: 'Pipelines', href: '/pipelines', icon: 'workflow' },
           { id: 'connections', label: 'Connections', href: '/connections', icon: 'data' },
         ],

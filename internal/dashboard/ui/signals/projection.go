@@ -46,7 +46,7 @@ func DashboardInitialEnvelope(clientID, streamInstanceID string, catalog dashboa
 		},
 		AgentContext: AgentContextSignal{
 			Surface:        "dashboard",
-			WorkspaceID:    catalog.Workspace.ID,
+			ProjectID:      catalog.Workspace.ID,
 			DashboardID:    report.ID,
 			DashboardTitle: report.Title,
 			PageID:         activePage.ID,
@@ -72,7 +72,7 @@ func DashboardInitialEnvelope(clientID, streamInstanceID string, catalog dashboa
 			ModelTitle:     modelTitle,
 			Canvas:         DashboardPageCanvasFromDashboard(activePage.Canvas),
 			Grid:           DashboardPageGridFromDashboard(activePage.Grid),
-			Pages:          dashboardPageNav(catalog.Workspace.ID, report.ID, pages, activePage),
+			Pages:          dashboardPageNav(report.ID, pages, activePage),
 			Components:     dashboardComponents(activePage),
 		},
 		Runtime: RouteRuntimeSignal{
@@ -214,12 +214,12 @@ func ValidateDashboardEnvelope(envelope DashboardEnvelope) error {
 	return nil
 }
 
-func dashboardPageNav(workspaceID, reportID string, pages []dashboard.Page, activePage dashboard.Page) []DashboardPageNavSignal {
+func dashboardPageNav(reportID string, pages []dashboard.Page, activePage dashboard.Page) []DashboardPageNavSignal {
 	items := make([]DashboardPageNavSignal, 0, len(pages))
 	for _, page := range pages {
 		items = append(items, DashboardPageNavSignal{
 			ID: page.ID, Title: page.Title,
-			Href:   "/workspaces/" + workspaceID + "/dashboards/" + reportID + "/pages/" + page.ID,
+			Href:   "/dashboards/" + reportID + "/pages/" + page.ID,
 			Active: page.ID == activePage.ID,
 		})
 	}

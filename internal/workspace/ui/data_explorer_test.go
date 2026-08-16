@@ -9,16 +9,17 @@ import (
 
 func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 	explorer := uisignals.DataExplorerSignal{Explore: uisignals.DataExploreSignal{Command: uisignals.DataExploreCommand{
-		WorkspaceID: uisignals.Pointer("sales"), ModelID: uisignals.Pointer("commerce"), DatasetID: uisignals.Pointer("orders"),
+		ModelID: uisignals.Pointer("commerce"), DatasetID: uisignals.Pointer("orders"),
 		Dimensions: []string{"orders.status"}, Measures: []string{"order_count"},
 		Filters: []uisignals.DataExploreFilterSignal{}, Sort: []uisignals.DataExploreSortSignal{}, Limit: 100,
 	}}}
-	signals := DataExplorerBootstrapSignalsWithAgent(catalogFixture(), uisignals.DataExplorerPageSignal{}, explorer, DataExplorerAgentBootstrap{})
+	page := uisignals.DataExplorerPageSignal{Context: uisignals.DataExplorerContextSignal{Active: true, Environment: "production", GenerationID: "generation-1", ProjectID: "sales"}}
+	signals := DataExplorerBootstrapSignalsWithAgent(catalogFixture(), page, explorer, DataExplorerAgentBootstrap{})
 	context, ok := signals["agentContext"].(uisignals.AgentContextSignal)
 	if !ok {
 		t.Fatalf("agent context = %#v", signals["agentContext"])
 	}
-	if context.Surface != "data" || context.WorkspaceID != "sales" || context.ModelID != "commerce" || uisignals.ValueOrZero(context.DatasetID) != "orders" {
+	if context.Surface != "data" || context.ProjectID != "sales" || context.ModelID != "commerce" || uisignals.ValueOrZero(context.DatasetID) != "orders" {
 		t.Fatalf("agent context = %#v", context)
 	}
 	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Measures[0] != "order_count" {

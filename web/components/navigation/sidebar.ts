@@ -61,7 +61,6 @@ type SidebarConfig = {
   areas?: SidebarArea[]
   productLogoUrl?: string
   productName?: string
-  workspaceTitle?: string
   dashboardTitle?: string
   pageTitle?: string
   modelTitle?: string
@@ -139,9 +138,8 @@ const defaultConfig: SidebarConfig = {
     { id: 'develop', label: 'Develop', href: '/data', icon: 'code' },
   ],
   userSettingsHref: '/admin/profile',
-  workspaceTitle: 'LeapView Workspace',
   groups: [
-    { label: 'Workspace', items: [{ id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' }] },
+    { label: 'Insights', items: [{ id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' }, { id: 'data-explorer', label: 'Data Explorer', href: '/explore', icon: 'database' }] },
   ],
 }
 
@@ -1197,7 +1195,7 @@ class LeapViewSidebar extends LitElement {
     const productLogoUrl = this.config.productLogoUrl?.trim()
     const hasCustomIdentity = productName !== leapViewBrandName || Boolean(productLogoUrl)
     return html`
-      <aside aria-label="${productName} workspace" ?data-mobile-open=${this.mobileOpen}>
+      <aside aria-label="${productName} navigation" ?data-mobile-open=${this.mobileOpen}>
         <span
           class="resize-handle"
           role="separator"
@@ -1478,7 +1476,7 @@ class LeapViewSidebar extends LitElement {
         <lv-user-avatar .name=${userName} .imageUrl=${userAvatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>
         <span class="user-text">
           <strong class="user-name">${userName}</strong>
-          <span class="user-role">${this.config.userRole ?? 'Local workspace'}</span>
+          <span class="user-role">${this.config.userRole ?? 'Local user'}</span>
         </span>
         <span class="user-settings-icon" aria-hidden="true">${icon('settings')}</span>
       </a>

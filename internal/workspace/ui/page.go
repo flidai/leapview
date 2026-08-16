@@ -73,7 +73,7 @@ func CatalogPageForCatalogsWithOptions(catalogs []catalog.Catalog, options Catal
 
 func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSignal, csrfToken string, providers ...webpage.Provider) g.Node {
 	layout := webpage.Resolve(firstProvider(providers), catalogLayoutContext(catalog))
-	catalogUpdatesURL := updatesURL(uisignals.RouteCatalog, "q", uisignals.ValueOrZero(page.ListQuery))
+	catalogUpdatesURL := updatesURL(uisignals.RouteDashboard, "q", uisignals.ValueOrZero(page.ListQuery))
 	title := "Dashboards"
 	if productName := strings.TrimSpace(layout.Presentation.ProductName); productName != "" {
 		title = productName + " Dashboards"
@@ -197,7 +197,7 @@ func catalogPageSignal(workspaceCatalog catalog.Catalog, query string) uisignals
 
 func catalogPageBase(query string) uisignals.CatalogPageSignal {
 	return uisignals.CatalogPageSignal{
-		Kind:             uisignals.RouteCatalog,
+		Kind:             uisignals.RouteDashboard,
 		Title:            "Dashboards",
 		Description:      "Reports backed by semantic models.",
 		Dashboards:       []uisignals.CatalogDashboardSignal{},

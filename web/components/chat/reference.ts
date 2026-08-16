@@ -67,7 +67,7 @@ export function normalizeReferenceLimit(limit: number | null | undefined): numbe
 }
 
 export function referenceIdentity(reference: AgentReferenceSignal): string {
-  return `${reference.reference.workspaceId}:${reference.reference.type}:${reference.reference.id}`
+  return `${reference.reference.projectId}:${reference.reference.type}:${reference.reference.id}`
 }
 
 export function referenceKindLabel(kind: string): string {
@@ -108,7 +108,7 @@ export function referenceHierarchy(reference: AgentReferenceSignal): string[] {
 	const projected = (reference.hierarchy ?? []).map((part) => part.trim()).filter(Boolean)
 	if (projected.length > 0) return projected
 
-	const hierarchy = [reference.workspace.name.trim()].filter(Boolean)
+	const hierarchy = [reference.project.name.trim()].filter(Boolean)
 	const location = reference.locations[0]
 	if (reference.reference.type === 'page' || reference.reference.type === 'visual') {
 		if (location?.dashboardName?.trim()) hierarchy.push(location.dashboardName.trim())
@@ -121,8 +121,8 @@ export function referenceHierarchy(reference: AgentReferenceSignal): string[] {
 
 export function isOnPageReference(reference: AgentReferenceSignal, context: AgentContextSignal | null): boolean {
   if (reference.context.includes('current_page')) return true
-  return Boolean(context?.workspaceId && context.dashboardId && context.pageId
-    && reference.reference.workspaceId === context.workspaceId
+  return Boolean(context?.projectId && context.dashboardId && context.pageId
+    && reference.reference.projectId === context.projectId
     && reference.locations.some((location) => location.dashboardId === context.dashboardId && location.pageId === context.pageId))
 }
 

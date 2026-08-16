@@ -4,7 +4,7 @@ import "@yacobolo/apigen";
  * Product/platform administration signals.  This contract intentionally lives
  * beside (rather than inside) the shared admin envelope: platform settings are
  * mounted by the admin shell as a typed signal subtree and can evolve without
- * changing the workspace administration contract.
+ * changing the project administration contract.
  */
 namespace LeapViewUISignals;
 

@@ -108,11 +108,10 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 	initialURLParams := report.URLParamsFromFiltersForPage(activePage.ID, initialFilters)
 	initialURLParams["streamInstance"] = newStreamInstanceID()
 	dashboardUpdatesURL := updatesURLWithParams(catalog.Workspace.ID, report.ID, activePage.ID, initialURLParams)
-	commandBase := "/commands/"
+	commandBase := "/dashboards/" + url.PathEscape(report.ID) + "/commands/"
 	if routes.BasePath != "" {
 		values := url.Values{}
 		values.Set("route", string(uisignals.RouteDashboard))
-		values.Set("workspace", catalog.Workspace.ID)
 		values.Set("dashboard", report.ID)
 		values.Set("page", activePage.ID)
 		for key, raw := range initialURLParams {
@@ -130,7 +129,7 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 			}
 		}
 		dashboardUpdatesURL = routes.BasePath + "/updates?" + values.Encode()
-		commandBase = routes.BasePath + "/commands/"
+		commandBase = routes.BasePath + "/dashboards/" + url.PathEscape(report.ID) + "/commands/"
 	}
 	provider := firstProvider(providers)
 	layout := webpage.Resolve(provider, dashboardLayoutContext(catalog, report, model, activePage))
@@ -139,7 +138,6 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 	}
 	componentAttrs := []g.Node{
 		g.Attr("slot", "page"),
-		g.Attr("workspace-id", catalog.Workspace.ID),
 		g.Attr("dashboard-id", report.ID),
 		g.Attr("page-id", activePage.ID),
 		g.Attr("data-indicator", "agentTurnPending"),
@@ -216,7 +214,7 @@ func PublicPage(options PublicPageOptions, catalog dashboard.Catalog, report das
 		},
 		UpdatesURL: base + "/updates?" + values.Encode(),
 		Content: g.El("lv-dashboard-page",
-			g.Attr("workspace-id", catalog.Workspace.ID), g.Attr("dashboard-id", report.ID), g.Attr("page-id", activePage.ID), g.Attr("presentation", presentation),
+			g.Attr("dashboard-id", report.ID), g.Attr("page-id", activePage.ID), g.Attr("presentation", presentation),
 			g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.EventPost(commandBase+"filter", "runtime", "filterCommand")),
 			g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.EventPost(commandBase+"filter-options", "runtime", "filterOptionRequest")),
 			g.Attr("data-on:lv-page-navigate", "$navigationCommand = evt.detail; "+uiactions.EventPost(commandBase+"navigate", "runtime", "navigationCommand")),
@@ -248,7 +246,6 @@ func BootstrapSignalsWithRouteScope(routes RouteScope, clientID, streamInstanceI
 			envelope.Page.Pages[index].Href = base + "/dashboards/" + report.ID + "/pages/" + envelope.Page.Pages[index].ID
 		}
 	}
-	envelope.Runtime.WorkspaceID = uisignals.Optional(catalog.Workspace.ID)
 	signals := map[string]any{
 		"agent":                     envelope.Agent,
 		"agentContext":              envelope.AgentContext,
@@ -309,7 +306,7 @@ func PublicBootstrapSignals(clientID, streamInstanceID, publicID, presentation s
 
 func dashboardLayoutContext(catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, activePage dashboard.Page) webpage.Context {
 	context := webpage.Context{
-		Active: "dashboards", ScopeID: catalog.Workspace.ID, ScopeTitle: catalog.Workspace.Title,
+		Active:    "dashboards",
 		SectionID: report.ID, SectionTitle: report.Title,
 		PageID: activePage.ID, PageTitle: activePage.Title, Compact: true,
 	}

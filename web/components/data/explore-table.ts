@@ -47,7 +47,7 @@ class DataExploreTable extends LitElement {
     const sort = command.sort?.[0]
     const rows = result.rows ?? []
     return {
-      tableKey: `${command.workspaceId ?? ''}:${command.modelId ?? ''}:${command.datasetId ?? ''}:explore`,
+      tableKey: `${command.modelId ?? ''}:${command.datasetId ?? ''}:explore`,
       title: 'Exploration results',
       columns: (result.columns ?? []).map((column): WindowedTableColumn => ({
         key: column.key,

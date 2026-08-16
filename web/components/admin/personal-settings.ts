@@ -263,12 +263,12 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     const filtered = this.filteredTokenPrivileges(scope)
     const categories = groupTokenPrivileges(filtered)
     const platformScopes = tokens.scopes.filter((option) => option.kind === 'platform')
-    const workspaceScopes = tokens.scopes.filter((option) => option.kind !== 'platform')
+    const projectScopes = tokens.scopes.filter((option) => option.kind !== 'platform')
     const canCreate = Boolean(this.tokenName.trim() && scope && selected.length && !this.tokenCreatePending)
     return html`
       <section aria-label="API tokens">
         <div class="card token-card">
-          <div class="row"><div class="settings-field"><h3>Create a personal API token</h3><span class="settings-description">Choose only the workspace and permissions your script needs.</span></div></div>
+          <div class="row"><div class="settings-field"><h3>Create a personal API token</h3><span class="settings-description">Choose only the project and permissions your script needs.</span></div></div>
           <div class="row">
             <form class="token-form" @submit=${this.createToken}>
               <div class="token-form-grid">
@@ -288,9 +288,9 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                 <select id="token-scope" required .value=${this.tokenScopeKey} @change=${this.onTokenScopeChange}>
                   <option value="">Choose a scope</option>
                   ${platformScopes.length ? html`<optgroup label="Broad access">${platformScopes.map((option) => html`<option value=${tokenScopeKey(option)}>${option.label}</option>`)}</optgroup>` : nothing}
-                  ${workspaceScopes.length ? html`<optgroup label="Workspace access">${workspaceScopes.map((option) => html`<option value=${tokenScopeKey(option)}>${option.label}</option>`)}</optgroup>` : nothing}
+                  ${projectScopes.length ? html`<optgroup label="Project access">${projectScopes.map((option) => html`<option value=${tokenScopeKey(option)}>${option.label}</option>`)}</optgroup>` : nothing}
                 </select>
-                <span class="settings-description scope-description">${scope?.description ?? 'The token will be limited to one workspace or product-administration scope.'}</span>
+                <span class="settings-description scope-description">${scope?.description ?? 'The token will be limited to one project or product-administration scope.'}</span>
               </label>
               <div class="permissions">
                 <div class="permissions-header">
@@ -346,10 +346,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private renderToken(token: PersonalTokenSignal, scopes: PersonalTokenScopeSignal[]) {
-    const scope = scopes.find((option) => option.workspaceId === token.workspaceId)
+    const scope = scopes.find((option) => option.projectId === token.projectId)
     const options = new Map(scope?.privileges.map((privilege) => [privilege.value, privilege.label]) ?? [])
     const privileges = token.privileges.map((privilege) => options.get(privilege) ?? humanizePrivilege(privilege))
-    return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${scope?.label || token.workspaceId || 'Legacy unrestricted scope'} · ${privileges.join(', ') || 'Inherited effective privileges'} · Created ${formatDate(token.createdAt)}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ''}</span></div>${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
+    return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${scope?.label || token.projectId || 'Legacy unrestricted scope'} · ${privileges.join(', ') || 'Inherited effective privileges'} · Created ${formatDate(token.createdAt)}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ''}</span></div>${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
   }
 
   private saveProfile = (event: Event): void => { event.preventDefault(); this.send('lv-personal-profile-command', { action: 'save', displayName: this.profileName.trim() }) }
@@ -364,7 +364,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     const scope = this.selectedTokenScope(this.settings.tokens)
     if (!this.tokenName.trim() || !scope || !this.tokenPrivileges.length) return
     this.send('lv-personal-token-command', {
-      action: 'create', name: this.tokenName.trim(), workspaceId: scope.workspaceId,
+      action: 'create', name: this.tokenName.trim(), projectId: scope.projectId,
       privileges: [...this.tokenPrivileges], expiresAt: localDateTimeToRFC3339(this.tokenExpires),
     })
     this.tokenCreatePending = true
@@ -514,7 +514,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 }
 
 function tokenScopeKey(scope: PersonalTokenScopeSignal): string {
-  return scope.kind === 'platform' ? 'platform' : `workspace:${scope.workspaceId}`
+  return scope.kind === 'platform' ? 'platform' : `project:${scope.projectId}`
 }
 
 function groupTokenPrivileges(privileges: PersonalTokenPrivilegeSignal[]): Array<[string, PersonalTokenPrivilegeSignal[]]> {

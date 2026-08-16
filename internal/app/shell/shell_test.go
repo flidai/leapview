@@ -27,10 +27,10 @@ func TestProviderOwnsInsightsNavigationAndAgentHistory(t *testing.T) {
 	if chrome.Sidebar.UserSettingsHref != "/admin/profile" {
 		t.Fatalf("user settings href = %q, want /admin/profile", chrome.Sidebar.UserSettingsHref)
 	}
-	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 3 {
+	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 2 {
 		t.Fatalf("navigation = %#v", chrome.Sidebar.Groups)
 	}
-	if chrome.Sidebar.Groups[0].Items[0].ID != "dashboards" || chrome.Sidebar.Groups[0].Items[1].ID != "data" || chrome.Sidebar.Groups[0].Items[1].Label != "Explore" || chrome.Sidebar.Groups[0].Items[2].ID != "chat" {
+	if chrome.Sidebar.Groups[0].Items[0].ID != "dashboards" || chrome.Sidebar.Groups[0].Items[1].ID != "data-explorer" || chrome.Sidebar.Groups[0].Items[1].Label != "Data Explorer" || chrome.Sidebar.Groups[0].Items[1].Href != "/explore" {
 		t.Fatalf("insights navigation = %#v", chrome.Sidebar.Groups)
 	}
 	if chrome.Sidebar.UserName == nil || *chrome.Sidebar.UserName != "Ada Lovelace" {
@@ -49,7 +49,7 @@ func TestProviderOwnsInsightsNavigationAndAgentHistory(t *testing.T) {
 
 func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
 	provider := Provider(Config{Presentation: webpage.Presentation{ProductName: "LeapView"}})
-	for _, active := range []string{"workspaces", "connections", "pipelines"} {
+	for _, active := range []string{"data", "models", "semantic-models", "connections", "pipelines"} {
 		t.Run(active, func(t *testing.T) {
 			layout := provider(webpage.Context{Active: active})
 			chrome := layout.Signal.(Chrome)
@@ -63,7 +63,7 @@ func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
 			for _, item := range chrome.Sidebar.Groups[0].Items {
 				got = append(got, item.ID)
 			}
-			want := []string{"workspaces", "pipelines", "connections"}
+			want := []string{"data", "models", "semantic-models", "pipelines", "connections"}
 			if len(got) != len(want) {
 				t.Fatalf("develop navigation = %v, want %v", got, want)
 			}
@@ -81,22 +81,22 @@ func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
 
 func TestProviderPlacesExploreInInsightsNavigation(t *testing.T) {
 	provider := Provider(Config{Presentation: webpage.Presentation{ProductName: "LeapView"}})
-	layout := provider(webpage.Context{Active: "data"})
+	layout := provider(webpage.Context{Active: "data-explorer"})
 	chrome := layout.Signal.(Chrome)
-	if chrome.Sidebar.Admin || chrome.Sidebar.Area != "insights" || chrome.Sidebar.Active != "data" {
-		t.Fatalf("sidebar = %#v, want insights Explore navigation", chrome.Sidebar)
+	if chrome.Sidebar.Admin || chrome.Sidebar.Area != "insights" || chrome.Sidebar.Active != "data-explorer" {
+		t.Fatalf("sidebar = %#v, want insights Data Explorer navigation", chrome.Sidebar)
 	}
 	for _, group := range chrome.Sidebar.Groups {
 		for _, item := range group.Items {
-			if item.ID == "data" {
-				if item.Label != "Explore" || item.Href != "/data" || item.Icon != "cache" {
-					t.Fatalf("Explore item = %#v", item)
+			if item.ID == "data-explorer" {
+				if item.Label != "Data Explorer" || item.Href != "/explore" || item.Icon != "database" {
+					t.Fatalf("Data Explorer item = %#v", item)
 				}
 				return
 			}
 		}
 	}
-	t.Fatal("Insights navigation did not contain Explore")
+	t.Fatal("Insights navigation did not contain Data Explorer")
 }
 
 func TestProviderProjectsCustomProductIdentity(t *testing.T) {

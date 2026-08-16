@@ -3,10 +3,8 @@ package signals
 import workspaceview "github.com/flidai/leapview/internal/workspace"
 
 const (
-	RouteCatalog         RouteKind = "catalog"
+	RouteDashboard       RouteKind = "dashboard"
 	RoutePipelines       RouteKind = "pipelines"
-	RouteWorkspace       RouteKind = "workspace"
-	RouteWorkspaceAsset  RouteKind = "workspace_asset"
 	RouteConnections     RouteKind = "connections"
 	RouteConnectionAsset RouteKind = "connection_asset"
 	RouteData            RouteKind = "data"

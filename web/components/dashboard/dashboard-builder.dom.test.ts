@@ -73,7 +73,7 @@ test('dashboard builder renders field explorer, canvas, and properties with type
     expect(state.pageTabs).toBe(2)
     expect(state.visuals).toBe(1)
     expect(state.diagnostics).toBe(1)
-    expect(state.evidence).toContain('workspace')
+    expect(state.evidence).toContain('project')
     expect(state.builderCommand).toBe(true)
   } finally {
     await page.close()
@@ -301,11 +301,11 @@ test('dashboard builder can reload a page-scoped preview through page-base-href 
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const href = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
-      element.setAttribute('page-base-href', '/workspaces/sales/dashboards/revenue/builder?draft=draft-7')
+      element.setAttribute('page-base-href', '/dashboards/revenue/builder?draft=draft-7')
       await element.updateComplete
       return element.shadowRoot.querySelector('.page-tab[href*="page=details"]')?.getAttribute('href')
     })
-    expect(href).toBe('/workspaces/sales/dashboards/revenue/builder?draft=draft-7&page=details')
+    expect(href).toBe('/dashboards/revenue/builder?draft=draft-7&page=details')
   } finally {
     await page.close()
   }
@@ -410,7 +410,7 @@ test('dashboard builder follows the streamed exact-revision preview href', async
       mergePatch({
         builder: {
           revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' },
-          preview: { href: '/workspaces/sales/dashboards/revenue/preview?draft=draft-7&revisionId=rev-8&revisionNumber=8&revisionContentHash=sha256%3Adef' },
+          preview: { href: '/dashboards/revenue/preview?draft=draft-7&revisionId=rev-8&revisionNumber=8&revisionContentHash=sha256%3Adef' },
         },
       })
       await element.updateComplete
@@ -428,11 +428,11 @@ test('dashboard builder follows the streamed exact-revision preview href', async
 function testDocument(): string {
   const signals = {
     builder: {
-      workspaceId: 'sales', dashboardId: 'revenue', draftId: 'draft-7',
+      projectId: 'sales', dashboardId: 'revenue', draftId: 'draft-7',
       revision: { id: 'rev-7', number: 7, contentHash: 'sha256:abc' },
       title: 'Revenue draft', lifecycle: 'draft', visibility: 'private', hasUnpublishedChanges: true,
       origin: { kind: 'file', label: 'Project file', sourcePath: 'dashboards/revenue.yaml' },
-      sourceEvidence: { kind: 'workspace', workspaceId: 'sales', dashboardId: 'revenue', revision: { id: 'rev-7', number: 7, contentHash: 'sha256:abc' } },
+      sourceEvidence: { kind: 'project', projectId: 'sales', dashboardId: 'revenue', generationId: 'generation-7' },
       semanticModel: { id: 'commerce', title: 'Orders', tables: [{ id: 'orders', title: 'Orders', fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', dataType: 'string' }, { id: 'orders.total', label: 'Total', kind: 'measure', dataType: 'decimal' }] }] },
       pages: [
         { id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [{ id: 'sales-chart', title: 'Sales by status', type: 'bar', placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], filters: [] }] },
@@ -441,10 +441,10 @@ function testDocument(): string {
       selectedPageId: 'overview', selectedVisualId: 'sales-chart',
       capabilities: { canEdit: true, canShare: true, canPublish: true, canPreview: true, canExport: true, canAddPage: true, canAddVisual: true },
       diagnostics: [{ severity: 'warning', code: 'FIELD_REQUIRED', message: 'Add a measure to complete this visual.' }],
-      preview: { active: false, mode: 'draft', loading: false, href: '/workspaces/sales/dashboards/revenue/preview?draft=draft-7&revisionId=rev-7&revisionNumber=7&revisionContentHash=sha256%3Aabc' }, save: { state: 'dirty', message: '2 changes' },
+      preview: { active: false, mode: 'draft', loading: false, href: '/dashboards/revenue/preview?draft=draft-7&revisionId=rev-7&revisionNumber=7&revisionContentHash=sha256%3Aabc' }, save: { state: 'dirty', message: '2 changes' },
     },
     status: { loading: false, error: '', generation: 0, lastUpdated: '', refreshId: '', setupRequired: false, progressPercent: 100 },
-    runtime: { kind: 'dashboard_builder', workspaceId: 'sales', dashboardId: 'revenue' },
+    runtime: { kind: 'dashboard_builder', projectId: 'sales', generationId: 'generation-7', dashboardId: 'revenue' },
   }
   return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-bg-panel-muted:#f6f8fa;--lv-bg-control:#f6f8fa;--lv-bg-input:#fff;--lv-bg-accent-muted:#ddf4ff;--lv-bg-danger-muted:#ffebe9;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f;--lv-fg-warning:#9a6700;--lv-fg-success:#1a7f37;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;--lv-line-default:#d0d7de;--lv-line-muted:#d8dee4;--lv-border-width-focus:2px;--lv-radius-default:6px;--lv-radius-small:4px;--lv-radius-full:999px;--base-size-2:2px;--base-size-4:4px;--base-size-6:6px;--base-size-8:8px;--base-size-12:12px;--base-size-16:16px;--control-medium-size:32px;--control-small-size:28px;--control-small-paddingInline-normal:8px;--lv-button-radius:6px;--lv-button-padding-inline:12px;--lv-button-fg-rest:#24292f;--lv-button-bg-rest:#fff;--lv-button-bg-hover:#f6f8fa;--lv-button-accent-border-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-bg-hover:#0757b3;--lv-shadow-floating-sm:0 2px 8px rgb(0 0 0 / 12%);}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/dashboards/revenue" preview-href="/workspaces/sales/dashboards/revenue/preview?draft=draft-7&revisionId=rev-6&revisionNumber=6&revisionContentHash=sha256%3Aold"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }

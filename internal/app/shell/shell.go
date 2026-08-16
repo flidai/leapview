@@ -63,7 +63,6 @@ type Sidebar struct {
 	UserName         *string  `json:"userName,omitempty"`
 	UserRole         *string  `json:"userRole,omitempty"`
 	UserSettingsHref string   `json:"userSettingsHref"`
-	WorkspaceTitle   string   `json:"workspaceTitle"`
 }
 
 type Area struct {
@@ -126,8 +125,8 @@ func Provider(config Config) webpage.Provider {
 			ModelID: optional(context.RelatedID), ModelTitle: optional(context.RelatedTitle),
 			PageTitle: context.PageTitle, ProductLogoURL: optional(config.ProductLogoURL), ProductName: firstNonEmpty(config.Presentation.ProductName, "LeapView"),
 			UserAvatarURL: optional(config.UserAvatarURL), UserName: optional(config.UserName), UserRole: optional(config.RoleLabel),
-			UserSettingsHref: "/admin/profile", WorkspaceTitle: firstNonEmpty(context.ScopeTitle, context.ScopeID, config.Presentation.ProductName),
-			Groups: navigation,
+			UserSettingsHref: "/admin/profile",
+			Groups:           navigation,
 		}
 		if isAdmin {
 			sidebar.PrimaryAction = &Action{Label: "Back to app", Href: "/", Icon: "back"}
@@ -163,8 +162,10 @@ func productAreas() []Area {
 
 func areaForActive(active string) string {
 	switch strings.TrimSpace(active) {
-	case "data", "connections", "pipelines", "develop":
+	case "data", "models", "semantic-models", "connections", "pipelines", "develop":
 		return "develop"
+	case "data-explorer", "explore":
+		return "insights"
 	default:
 		return "insights"
 	}
@@ -182,17 +183,18 @@ func areaNavigation(area string) []Group {
 
 func insightsNavigation() []Item {
 	return []Item{
-		{ID: "dashboards", Label: "Dashboards", Href: "/", Icon: "dashboard", Meta: optional("Reports")},
-		{ID: "data", Label: "Explore", Href: "/data", Icon: "cache", Meta: optional("Ad hoc analysis")},
-		{ID: "chat", Label: "Chats", Href: "/chats", Icon: "chat", Meta: optional("Agent interface")},
+		{ID: "dashboards", Label: "Dashboards", Href: "/", Icon: "dashboard"},
+		{ID: "data-explorer", Label: "Data Explorer", Href: "/explore", Icon: "database"},
 	}
 }
 
 func developNavigation() []Item {
 	return []Item{
-		{ID: "data", Label: "Data", Href: "/data", Icon: "database", Meta: optional("Sources and physical data")},
-		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow", Meta: optional("Refresh monitoring")},
-		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data", Meta: optional("Data sources")},
+		{ID: "data", Label: "Data", Href: "/data", Icon: "database"},
+		{ID: "models", Label: "Models", Href: "/models", Icon: "model"},
+		{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "model"},
+		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"},
+		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"},
 	}
 }
 

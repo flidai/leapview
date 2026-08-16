@@ -33,7 +33,7 @@ func WorkspacesPageForEnvironmentQuery(catalog catalog.Catalog, workspaces []wor
 	page := workspaceCatalogPageSignal(workspaces, query, "")
 	page.Environment = uisignals.Optional(environment)
 	catalog = catalogWithoutWorkspaceContext(catalog)
-	return workspaceRouteDocument("Workspaces", catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspace,
+	return workspaceRouteDocument("Data", catalog, "data", roleLabel, page, uisignals.RouteData,
 		g.El("lv-workspace-page",
 			g.Attr("slot", "page"),
 			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.QueryPost("/workspaces/search", "entityListQuery", "entityListFilter")),
@@ -55,7 +55,7 @@ func WorkspacesBootstrapSignalsForEnvironmentQuery(catalog catalog.Catalog, work
 	page := workspaceCatalogPageSignal(workspaces, query, "")
 	page.Environment = uisignals.Optional(environment)
 	catalog = catalogWithoutWorkspaceContext(catalog)
-	return workspaceRouteBootstrapSignals(catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspace, nil, chromeOptions)
+	return workspaceRouteBootstrapSignals(catalog, "data", roleLabel, page, uisignals.RouteData, nil, chromeOptions)
 }
 
 func WorkspacesListResultsPatch(workspaces []workspaceview.WorkspaceView) map[string]any {
@@ -77,7 +77,7 @@ func WorkspacePageForEnvironment(catalog catalog.Catalog, workspace workspacevie
 	extras.CSRFToken = csrfToken
 	attrs = append(attrs, accessAttrs...)
 	attrs = append(attrs, workspaceAssetFilterRouteBridge(workspace.ID, environment)...)
-	return workspaceRouteDocument(workspace.Title, catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspace,
+	return workspaceRouteDocument(workspace.Title, catalog, "data", roleLabel, page, uisignals.RouteData,
 		g.El("lv-workspace-page", attrs...),
 		extras,
 		chromeOptions,
@@ -94,7 +94,7 @@ func WorkspaceBootstrapSignalsForEnvironment(catalog catalog.Catalog, workspace 
 	if access.CanManage {
 		extra = map[string]any{"workspaceAccess": WorkspaceAccessSignals(access)}
 	}
-	return workspaceRouteBootstrapSignals(catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspace, extra, chromeOptions)
+	return workspaceRouteBootstrapSignals(catalog, "data", roleLabel, page, uisignals.RouteData, extra, chromeOptions)
 }
 
 func WorkspaceAssetListResultsPatch(workspaceID string, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView) map[string]any {
@@ -257,7 +257,7 @@ func workspaceCatalogPageSignal(workspaces []workspaceview.WorkspaceView, state 
 		filter = state[1]
 	}
 	return uisignals.WorkspacePageSignal{
-		Kind:        uisignals.RouteWorkspace,
+		Kind:        uisignals.RouteData,
 		Title:       "Workspaces",
 		Description: uisignals.Pointer("View published BI workspaces. Authoring lives in Git."),
 		ListFilter:  uisignals.Optional(filter),
@@ -268,7 +268,7 @@ func workspaceCatalogPageSignal(workspaces []workspaceview.WorkspaceView, state 
 
 func workspacePageSignal(workspace workspaceview.WorkspaceView, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView, activeType, query, environment string) uisignals.WorkspacePageSignal {
 	return uisignals.WorkspacePageSignal{
-		Kind:        uisignals.RouteWorkspace,
+		Kind:        uisignals.RouteData,
 		Title:       workspace.Title,
 		Description: uisignals.Optional(workspace.Description),
 		WorkspaceID: uisignals.Optional(workspace.ID),
@@ -464,7 +464,7 @@ func workspaceAssetPageSignalWithRefresh(workspace workspaceview.WorkspaceView, 
 
 func workspaceAssetPageSignalWithRefreshAndVersions(workspace workspaceview.WorkspaceView, asset workspaceview.AssetView, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView, activeSection string, lineage assetLineageModel, refresh AssetRefreshState, versions AssetVersionsState) uisignals.WorkspaceAssetPageSignal {
 	page := baseWorkspaceAssetPageSignalWithRefreshAndVersions(workspace, asset, assets, edges, activeSection, lineage, refresh, versions)
-	page.Kind = uisignals.RouteWorkspaceAsset
+	page.Kind = uisignals.RouteData
 	page.Breadcrumbs = []uisignals.WorkspaceBreadcrumbSignal{
 		{Label: "Workspaces", Href: uisignals.Pointer("/workspaces")},
 		{Label: workspace.Title, Href: uisignals.Pointer("/workspaces/" + workspace.ID)},
@@ -656,11 +656,11 @@ func WorkspaceAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Cata
 			g.Attr("data-on:lv-run-refresh-pipeline", uiactions.CommandPost(refresh.RunCommand, refreshPath)),
 		)
 		if activeSection == "versions" {
-			return workspaceAssetRouteDocument(asset, catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspaceAsset, g.El("lv-workspace-asset-page", attrs...), extras, activeSection, chromeOptions)
+			return workspaceAssetRouteDocument(asset, catalog, "data", roleLabel, page, uisignals.RouteData, g.El("lv-workspace-asset-page", attrs...), extras, activeSection, chromeOptions)
 		}
-		return workspaceAssetRouteDocument(asset, catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspaceAsset, g.El("lv-workspace-asset-page", attrs...), extras, activeSection, chromeOptions)
+		return workspaceAssetRouteDocument(asset, catalog, "data", roleLabel, page, uisignals.RouteData, g.El("lv-workspace-asset-page", attrs...), extras, activeSection, chromeOptions)
 	}
-	return workspaceAssetRouteDocument(asset, catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspaceAsset, g.El("lv-workspace-asset-page", attrs...), workspaceDocumentExtras{}, activeSection, chromeOptions)
+	return workspaceAssetRouteDocument(asset, catalog, "data", roleLabel, page, uisignals.RouteData, g.El("lv-workspace-asset-page", attrs...), workspaceDocumentExtras{}, activeSection, chromeOptions)
 }
 
 func WorkspaceAssetBootstrapSignals(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, asset workspaceview.AssetView, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView, activeSection, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, chromeOptions ...webpage.Provider) map[string]any {
@@ -672,7 +672,7 @@ func WorkspaceAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, works
 	lineage := assetLineage(workspace.ID, asset, assets, edges)
 	page := workspaceAssetPageSignalWithRefreshAndVersions(workspace, asset, assets, edges, activeSection, lineage, refresh, versions)
 	page.Environment = uisignals.Optional(environment)
-	return workspaceRouteBootstrapSignals(catalog, "workspaces", roleLabel, page, uisignals.RouteWorkspaceAsset, nil, chromeOptions)
+	return workspaceRouteBootstrapSignals(catalog, "data", roleLabel, page, uisignals.RouteData, nil, chromeOptions)
 }
 
 func ConnectionAssetBootstrapSignals(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, asset workspaceview.AssetView, assets []workspaceview.AssetView, edges []workspaceview.AssetEdgeView, activeSection, roleLabel string, versions AssetVersionsState) map[string]any {
@@ -820,7 +820,7 @@ func workspaceStaticAssetURL(providers []webpage.Provider, path string) string {
 
 func WorkspacePermissionsPage(catalog catalog.Catalog, workspace workspaceview.WorkspaceView, bindings []workspaceview.RoleBindingView, roles []workspaceview.RoleView, csrfToken, roleLabel string, commands AccessCommandBindings) g.Node {
 	page := uisignals.WorkspacePageSignal{
-		Kind:        uisignals.RouteWorkspace,
+		Kind:        uisignals.RouteData,
 		Title:       workspace.Title,
 		Description: uisignals.Pointer("Assign workspace roles. BI assets remain authored in Git."),
 		WorkspaceID: uisignals.Optional(workspace.ID),
@@ -836,7 +836,7 @@ func WorkspacePermissionsPage(catalog catalog.Catalog, workspace workspaceview.W
 	}
 	accessAttrs, extras := workspaceAccessRouteBridge(workspace.ID, access, csrfToken, commands)
 	attrs = append(attrs, accessAttrs...)
-	return workspaceRouteDocument("Workspace permissions", catalog, "settings", roleLabel, page, uisignals.RouteWorkspace,
+	return workspaceRouteDocument("Data permissions", catalog, "settings", roleLabel, page, uisignals.RouteData,
 		g.El("lv-workspace-page", attrs...),
 		extras,
 		nil,
@@ -872,16 +872,7 @@ func workspaceRouteBootstrapSignals(catalog catalog.Catalog, active, roleLabel s
 }
 
 func runtimeForPage(routeKind uisignals.RouteKind, catalog catalog.Catalog, page any) uisignals.RouteRuntimeSignal {
-	runtime := runtimeSignal(routeKind)
-	switch typed := page.(type) {
-	case uisignals.WorkspacePageSignal:
-		runtime.WorkspaceID = uisignals.Optional(firstNonEmpty(uisignals.ValueOrZero(typed.WorkspaceID), catalog.Workspace.ID))
-	case uisignals.ConnectionsPageSignal:
-		runtime.WorkspaceID = uisignals.Optional(firstNonEmpty(uisignals.ValueOrZero(typed.WorkspaceID), catalog.Workspace.ID))
-	case uisignals.WorkspaceAssetPageSignal:
-		runtime.WorkspaceID = uisignals.Optional(firstNonEmpty(typed.WorkspaceID, catalog.Workspace.ID))
-	}
-	return runtime
+	return runtimeSignal(routeKind)
 }
 
 func workspaceRouteUpdatesURL(routeKind uisignals.RouteKind, catalog catalog.Catalog, page any, extras workspaceDocumentExtras) string {

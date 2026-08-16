@@ -30,10 +30,9 @@ func DataExplorerPage(catalog catalog.Catalog, page uisignals.DataExplorerPageSi
 	return DataExplorerPageWithAgent(catalog, page, explorer, DataExplorerAgentBootstrap{}, DataExplorerAgentCommandBindings{}, csrfToken, providers...)
 }
 
-func DataExplorerPageWithAgent(catalog catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, csrfToken string, providers ...webpage.Provider) g.Node {
-	catalog = catalogWithoutWorkspaceContext(catalog)
-	layout := webpage.Resolve(firstProvider(providers), workspaceLayoutContext(catalog, "data"))
-	explorerUpdatesURL := updatesURL(uisignals.RouteData, "workspace", uisignals.ValueOrZero(explorer.Command.WorkspaceID), "object", uisignals.ValueOrZero(explorer.Command.ObjectKey))
+func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, csrfToken string, providers ...webpage.Provider) g.Node {
+	layout := webpage.Resolve(firstProvider(providers), webpage.Context{Active: "data-explorer", PageTitle: page.Title})
+	explorerUpdatesURL := updatesURL(uisignals.RouteData, "object", uisignals.ValueOrZero(explorer.Command.ObjectKey))
 	agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
 	agentRestore := "$agent.activeConversationId = evt.detail.conversationId; " + uiactions.Get("/chats/restore", "agent")
 	return webpage.Render(layout, webpage.Spec{
@@ -57,10 +56,9 @@ func DataExplorerBootstrapSignals(catalog catalog.Catalog, page uisignals.DataEx
 	return DataExplorerBootstrapSignalsWithAgent(catalog, page, explorer, DataExplorerAgentBootstrap{}, providers...)
 }
 
-func DataExplorerBootstrapSignalsWithAgent(catalog catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, providers ...webpage.Provider) map[string]any {
-	catalog = catalogWithoutWorkspaceContext(catalog)
-	layout := webpage.Resolve(firstProvider(providers), workspaceLayoutContext(catalog, "data"))
-	context := DataExplorerAgentContext(explorer)
+func DataExplorerBootstrapSignalsWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, providers ...webpage.Provider) map[string]any {
+	layout := webpage.Resolve(firstProvider(providers), webpage.Context{Active: "data-explorer", PageTitle: page.Title})
+	context := DataExplorerAgentContext(page, explorer)
 	if agent.Agent == nil {
 		agent.Agent = uisignals.ChatSignal{
 			Conversations: []uisignals.ChatConversationSummary{}, Transcript: []uisignals.ChatTranscriptItemSignal{},
@@ -84,13 +82,12 @@ func DataExplorerBootstrapSignalsWithAgent(catalog catalog.Catalog, page uisigna
 	})
 }
 
-func DataExplorerAgentContext(explorer uisignals.DataExplorerSignal) uisignals.AgentContextSignal {
+func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal) uisignals.AgentContextSignal {
 	command := explorer.Explore.Command
-	workspaceID := uisignals.ValueOrZero(command.WorkspaceID)
 	modelID := uisignals.ValueOrZero(command.ModelID)
 	datasetID := uisignals.ValueOrZero(command.DatasetID)
 	return uisignals.AgentContextSignal{
-		Surface: "data", WorkspaceID: workspaceID, ModelID: modelID, DatasetID: &datasetID,
+		Surface: "data", ProjectID: page.Context.ProjectID, ModelID: modelID, DatasetID: &datasetID,
 		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "",
 		Exploration: &uisignals.DataExploreAgentContextSignal{
 			Dimensions: append([]string(nil), command.Dimensions...), Measures: append([]string(nil), command.Measures...),
