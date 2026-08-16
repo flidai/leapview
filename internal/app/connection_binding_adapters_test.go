@@ -99,7 +99,7 @@ func TestConnectionAdministrationAuditAdapterPersistsOnlyBindingIdentity(t *test
 		t.Fatal(err)
 	}
 	if envelope.SchemaVersion != 1 || envelope.Retention != "security" || envelope.PayloadSchema != "TargetConnectionAdministrationAuditPayload" ||
-		envelope.Payload["targetId"] != "lvinst_prod" || envelope.Payload["logicalConnection"] != "warehouse" || envelope.Payload["revision"] != float64(7) {
+		envelope.Payload["targetId"] != "lvinst_prod" || envelope.Payload["logicalConnection"] != "connection_sales" || envelope.Payload["revision"] != float64(7) {
 		t.Fatalf("audit metadata = %#v", envelope)
 	}
 	for _, forbidden := range []string{"source-secret", "connection_string", "password", "secretPath"} {
