@@ -37,6 +37,9 @@ var (
 	ErrInvalidSubjectRef = errors.New("invalid canonical subject reference")
 	// ErrInvalidProjectRole indicates an unsupported project role name.
 	ErrInvalidProjectRole = errors.New("invalid canonical project role")
+	// ErrInvalidPlatformRole indicates an unsupported instance-wide platform
+	// role name. Platform roles are deliberately distinct from project roles.
+	ErrInvalidPlatformRole = errors.New("invalid canonical platform role")
 )
 
 // ResourceRef is the canonical authorization and audit reference for one
@@ -287,27 +290,29 @@ func ValidateCapabilityForKind(kind graph.Kind, capability Capability) error {
 type ProjectRole string
 
 const (
-	ProjectRoleOwner       ProjectRole = "owner"
-	ProjectRoleAdmin       ProjectRole = "admin"
-	ProjectRoleDeployer    ProjectRole = "deployer"
-	ProjectRoleContributor ProjectRole = "contributor"
-	ProjectRoleEditor      ProjectRole = "editor"
-	ProjectRoleMember      ProjectRole = "member"
-	ProjectRoleViewer      ProjectRole = "viewer"
+	ProjectRoleOwner        ProjectRole = "owner"
+	ProjectRoleAdmin        ProjectRole = "admin"
+	ProjectRoleDeployer     ProjectRole = "deployer"
+	ProjectRoleDataDeployer ProjectRole = "data_deployer"
+	ProjectRoleContributor  ProjectRole = "contributor"
+	ProjectRoleEditor       ProjectRole = "editor"
+	ProjectRoleMember       ProjectRole = "member"
+	ProjectRoleViewer       ProjectRole = "viewer"
 )
 
 var projectRoleCapabilities = map[ProjectRole][]Capability{
-	ProjectRoleOwner:       {CapabilityProjectAdmin, CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
-	ProjectRoleAdmin:       {CapabilityProjectAdmin, CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
-	ProjectRoleDeployer:    {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourcePublish},
-	ProjectRoleContributor: {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit},
-	ProjectRoleEditor:      {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit},
-	ProjectRoleMember:      {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
-	ProjectRoleViewer:      {CapabilityResourceUse, CapabilityResourceRead},
+	ProjectRoleOwner:        {CapabilityProjectAdmin, CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
+	ProjectRoleAdmin:        {CapabilityProjectAdmin, CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
+	ProjectRoleDeployer:     {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourcePublish},
+	ProjectRoleDataDeployer: {CapabilityResourceUse, CapabilityResourceEdit},
+	ProjectRoleContributor:  {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit},
+	ProjectRoleEditor:       {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit},
+	ProjectRoleMember:       {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
+	ProjectRoleViewer:       {CapabilityResourceUse, CapabilityResourceRead},
 }
 
 var projectRoleOrder = []ProjectRole{
-	ProjectRoleOwner, ProjectRoleAdmin, ProjectRoleDeployer, ProjectRoleContributor,
+	ProjectRoleOwner, ProjectRoleAdmin, ProjectRoleDeployer, ProjectRoleDataDeployer, ProjectRoleContributor,
 	ProjectRoleEditor, ProjectRoleMember, ProjectRoleViewer,
 }
 
@@ -344,7 +349,7 @@ const PlatformRoleAdmin PlatformRole = "platform_admin"
 func ParsePlatformRole(value string) (PlatformRole, error) {
 	role := PlatformRole(strings.TrimSpace(value))
 	if role != PlatformRoleAdmin {
-		return "", fmt.Errorf("%w %q", ErrInvalidProjectRole, value)
+		return "", fmt.Errorf("%w %q", ErrInvalidPlatformRole, value)
 	}
 	return role, nil
 }

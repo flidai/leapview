@@ -39,3 +39,24 @@ func TestCanonicalAuditEventRequiresExactServingIdentityAndResource(t *testing.T
 		}
 	}
 }
+
+func TestCanonicalAuditEventCanonicalizesAndRejectsMetadata(t *testing.T) {
+	event := CanonicalAuditEvent{MetadataJSON: ` {"z":2,"a":1} `}
+	got, err := event.CanonicalMetadataJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"a":1,"z":2}` {
+		t.Fatalf("canonical metadata = %s", got)
+	}
+	for _, metadata := range []string{`{"a":1} {}`, `{"a":`, `{"a":1,"a":2}`} {
+		event.MetadataJSON = metadata
+		if _, err := event.CanonicalMetadataJSON(); err == nil {
+			t.Fatalf("accepted invalid metadata %q", metadata)
+		}
+	}
+	event.MetadataJSON = ""
+	if got, err := event.CanonicalMetadataJSON(); err != nil || got != "{}" {
+		t.Fatalf("empty metadata = %q, %v", got, err)
+	}
+}

@@ -193,6 +193,9 @@ func TestCanonicalCapabilityMatrixEnforcesKinds(t *testing.T) {
 }
 
 func TestProjectRolesExposeCapturedCanonicalCapabilityBundles(t *testing.T) {
+	if got := ProjectRoleCapabilities(ProjectRoleDataDeployer); !reflect.DeepEqual(got, []Capability{CapabilityResourceUse, CapabilityResourceEdit}) {
+		t.Fatalf("data deployer capability bundle = %#v", got)
+	}
 	for _, role := range CanonicalProjectRoles() {
 		parsed, err := ParseProjectRole(string(role))
 		if err != nil || parsed != role {
@@ -213,6 +216,9 @@ func TestProjectRolesExposeCapturedCanonicalCapabilityBundles(t *testing.T) {
 	}
 	if _, err := ParseProjectRole("platform_admin"); !errors.Is(err, ErrInvalidProjectRole) {
 		t.Fatalf("platform role crossed project boundary: %v", err)
+	}
+	if _, err := ParsePlatformRole("owner"); !errors.Is(err, ErrInvalidPlatformRole) {
+		t.Fatalf("invalid platform role error = %v", err)
 	}
 	if role, err := ParsePlatformRole("platform_admin"); err != nil || role != PlatformRoleAdmin {
 		t.Fatalf("ParsePlatformRole() = %q, %v", role, err)

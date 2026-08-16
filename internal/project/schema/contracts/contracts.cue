@@ -111,7 +111,7 @@ package contracts
 })
 
 #RoleBinding: close({
-	role!: "owner" | "admin" | "deployer" | "contributor" | "editor" | "member" | "viewer"
+	role!: "owner" | "admin" | "deployer" | "data_deployer" | "contributor" | "editor" | "member" | "viewer"
 	subject!: #AccessSubject
 })
 

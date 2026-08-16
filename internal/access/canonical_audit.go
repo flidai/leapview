@@ -2,7 +2,10 @@ package access
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/flidai/leapview/internal/project/graph"
@@ -41,7 +44,42 @@ func (event CanonicalAuditEvent) Validate() error {
 	if err := ValidateCapabilityForKind(event.Resource.Kind(), event.Capability); err != nil {
 		return fmt.Errorf("audit capability: %w", err)
 	}
+	if _, err := event.CanonicalMetadataJSON(); err != nil {
+		return fmt.Errorf("audit metadata: %w", err)
+	}
 	return nil
+}
+
+// CanonicalMetadataJSON validates and deterministically encodes the optional
+// metadata envelope. Empty metadata is represented as an explicit empty JSON
+// object; malformed, duplicate-key, and trailing values are rejected before
+// an audit event can reach storage.
+func (event CanonicalAuditEvent) CanonicalMetadataJSON() (string, error) {
+	raw := strings.TrimSpace(event.MetadataJSON)
+	if raw == "" {
+		return "{}", nil
+	}
+	if err := rejectDuplicateCanonicalJSONKeys([]byte(raw)); err != nil {
+		return "", err
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return "", err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return "", errors.New("trailing JSON value")
+		}
+		return "", err
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 // ValidateAgainst checks the exact resource kind and project identity against
@@ -73,6 +111,11 @@ func PersistCanonicalAuditEvent(ctx context.Context, recorder CanonicalAuditReco
 	if err := event.Validate(); err != nil {
 		return err
 	}
+	metadata, err := event.CanonicalMetadataJSON()
+	if err != nil {
+		return fmt.Errorf("audit metadata: %w", err)
+	}
+	event.MetadataJSON = metadata
 	if err := recorder.RecordCanonicalAuditEvent(ctx, event); err != nil {
 		return fmt.Errorf("persist canonical audit event %q: %w", event.Action, err)
 	}

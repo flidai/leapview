@@ -124,13 +124,13 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 	if err := event.Validate(); err != nil {
 		return err
 	}
+	metadata, err := event.CanonicalMetadataJSON()
+	if err != nil {
+		return fmt.Errorf("audit metadata: %w", err)
+	}
 	id, err := newID("audit")
 	if err != nil {
 		return err
-	}
-	metadata := event.MetadataJSON
-	if metadata == "" {
-		metadata = "{}"
 	}
 	_, err = r.root.ExecContext(ctx, `
 INSERT INTO authorization_audit_events

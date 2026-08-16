@@ -24,6 +24,9 @@ CREATE INDEX IF NOT EXISTS authorization_role_bindings_subject_idx
   ON authorization_role_bindings(project_id, environment, generation_id, subject_kind, subject_id);
 
 CREATE TABLE IF NOT EXISTS authorization_audit_events (
+  -- These three columns are the complete immutable ServingIdentity evidence
+  -- for the event. They intentionally are not foreign keys: audit history
+  -- must survive serving-generation retention and snapshot deletion.
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   environment TEXT NOT NULL,
@@ -37,10 +40,7 @@ CREATE TABLE IF NOT EXISTS authorization_audit_events (
   request_id TEXT NOT NULL DEFAULT '',
   correlation_id TEXT NOT NULL DEFAULT '',
   metadata_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY(project_id, environment, generation_id)
-    REFERENCES authorization_snapshots(project_id, environment, generation_id)
-    ON DELETE CASCADE
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS authorization_audit_events_scope_idx

@@ -121,3 +121,33 @@ func TestInstallAuthorizationSnapshotConcurrentSameDigest(t *testing.T) {
 		require.NoError(t, installErr)
 	}
 }
+
+func TestCanonicalAuditEventRetainsServingIdentityAfterSnapshotDeletion(t *testing.T) {
+	ctx := t.Context()
+	store, repo := openAccessRepo(t, ctx)
+	project := installerGraph(t)
+	_, err := store.SQLDB().ExecContext(ctx, `INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_audit_retention', 'project_test', 'production', 'active')`)
+	require.NoError(t, err)
+	snapshot := installerSnapshot(t, project, "generation_audit_retention", "audit")
+	require.NoError(t, repo.InstallAuthorizationSnapshot(ctx, snapshot))
+	resource, err := access.NewResourceRef("dashboard_main", graph.KindDashboard)
+	require.NoError(t, err)
+	require.NoError(t, repo.RecordCanonicalAuditEvent(ctx, access.CanonicalAuditEvent{
+		Identity: snapshot.Identity(), PrincipalID: "principal_test", Action: "dashboard.read",
+		Resource: resource, Capability: access.CapabilityResourceRead,
+		Status: "success", MetadataJSON: `{"z":2,"a":1}`,
+	}))
+	var projectID, environment, generationID string
+	require.NoError(t, store.SQLDB().QueryRowContext(ctx, `SELECT project_id, environment, generation_id FROM authorization_audit_events`).Scan(&projectID, &environment, &generationID))
+	require.Equal(t, "project_test", projectID)
+	require.Equal(t, "production", environment)
+	require.Equal(t, "generation_audit_retention", generationID)
+
+	// Serving-state retention deletes the immutable snapshot, but audit
+	// provenance remains queryable because it has no lifecycle FK.
+	_, err = store.SQLDB().ExecContext(ctx, `DELETE FROM authorization_snapshots WHERE project_id = 'project_test' AND environment = 'production' AND generation_id = 'generation_audit_retention'`)
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM authorization_audit_events WHERE generation_id = 'generation_audit_retention'`).Scan(&count))
+	require.Equal(t, 1, count)
+}
