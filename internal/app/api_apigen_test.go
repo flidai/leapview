@@ -835,7 +835,7 @@ func TestAPIGenRoutesCoverHeadlessAPINotUITransports(t *testing.T) {
 
 	for _, path := range []string{
 		"/api/v1/me",
-		"/api/v1/me/effective-privileges",
+		"/api/v1/me/effective-capabilities",
 		"/api/v1/me/api-tokens",
 		"/api/v1/me/api-tokens/{token}",
 		"/api/v1/me/sessions",

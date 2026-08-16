@@ -90,7 +90,7 @@ func tusSnapshot(t *testing.T, principalID string, connectionID projectgraph.Res
 		if err != nil {
 			t.Fatal(err)
 		}
-		grants = []accesssnapshot.Grant{{Canonical: canonical}}
+		grants = []accesssnapshot.Grant{{ID: "grant:connection-edit", Name: "connection_edit", Canonical: canonical}}
 	}
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, grants, nil)
 	if err != nil {
@@ -151,6 +151,8 @@ func TestProtectManagedDataTransportEnforcesCanonicalUploadMatrix(t *testing.T) 
 	allowedSnapshot := tusSnapshot(t, principalID, connection, true)
 	allowedLease := tusLease{identity: identity, snapshot: allowedSnapshot}
 	allowedRuntime := tusRuntime{project: projectID, lease: allowedLease}
+	deniedSnapshot := tusSnapshot(t, principalID, connection, false)
+	deniedRuntime := tusRuntime{project: projectID, lease: tusLease{identity: identity, snapshot: deniedSnapshot}}
 	allowedAccess := tusAccess{
 		principal: accessmodule.Principal{ID: principalID},
 		ok:        true,
@@ -197,7 +199,7 @@ func TestProtectManagedDataTransportEnforcesCanonicalUploadMatrix(t *testing.T) 
 			return projectID, projectgraph.ResourceID("not canonical"), nil
 		}, want: http.StatusNotFound},
 		{name: "missing principal", method: http.MethodPatch, id: uploadID, access: tusAccess{}, runtime: allowedRuntime, resolve: resolveAllowed, want: http.StatusUnauthorized},
-		{name: "authorization deny is not disclosed", method: http.MethodPatch, id: uploadID, access: tusAccess{principal: accessmodule.Principal{ID: principalID}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: principalID}}}, runtime: allowedRuntime, resolve: tusTargetResolverFunc(func(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error) {
+		{name: "authorization deny is not disclosed", method: http.MethodPatch, id: uploadID, access: tusAccess{principal: accessmodule.Principal{ID: principalID}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: principalID}}}, runtime: deniedRuntime, resolve: tusTargetResolverFunc(func(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error) {
 			return projectID, connection, nil
 		}), want: http.StatusNotFound},
 		{name: "subject lookup failure", method: http.MethodPatch, id: uploadID, access: tusAccess{principal: accessmodule.Principal{ID: principalID}, ok: true, err: errors.New("identity unavailable")}, runtime: allowedRuntime, resolve: resolveAllowed, want: http.StatusServiceUnavailable},

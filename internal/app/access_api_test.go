@@ -47,7 +47,7 @@ func TestAPITokenCapabilityAllowlistIsEnforced(t *testing.T) {
 		t.Fatalf("foreign project status = %d, want %d body=%s", foreignProjectRec.Code, http.StatusForbidden, foreignProjectRec.Body.String())
 	}
 
-	effectiveReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-privileges", nil)
+	effectiveReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-capabilities", nil)
 	effectiveReq.Header.Set("Authorization", "Bearer "+token)
 	effectiveReq.Header.Set("Accept", "application/json")
 	effectiveRec := httptest.NewRecorder()
@@ -76,7 +76,7 @@ func TestAPITokenCapabilityAllowlistIsEnforced(t *testing.T) {
 		Name:         "empty-allowlist",
 		Capabilities: []access.Capability{},
 	})
-	emptyAllowlistReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-privileges", nil)
+	emptyAllowlistReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-capabilities", nil)
 	emptyAllowlistReq.Header.Set("Authorization", "Bearer "+emptyAllowlistToken)
 	emptyAllowlistReq.Header.Set("Accept", "application/json")
 	emptyAllowlistRec := httptest.NewRecorder()
