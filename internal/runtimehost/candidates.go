@@ -335,7 +335,7 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 	restrictions := append([]CandidateRestriction(nil), value.Restrictions...)
 	for i := range restrictions {
 		p := &restrictions[i]
-		if p.ID != strings.TrimSpace(p.ID) || p.ObjectID != strings.TrimSpace(p.ObjectID) || p.PolicyType != strings.TrimSpace(p.PolicyType) || p.ExpressionJSON != strings.TrimSpace(p.ExpressionJSON) || p.ID == "" || p.ObjectID == "" || p.ExpressionJSON == "" {
+		if p.ID != strings.TrimSpace(p.ID) || p.ObjectID.String() != strings.TrimSpace(p.ObjectID.String()) || p.PolicyType != strings.TrimSpace(p.PolicyType) || p.ExpressionJSON != strings.TrimSpace(p.ExpressionJSON) || p.ID == "" || p.ObjectID == "" || p.ExpressionJSON == "" {
 			return CandidateCompatibility{}, fmt.Errorf("%w: candidate restriction identity and expression are required and canonical", ErrCandidateRuntimeInvalid)
 		}
 		if p.ObjectID.Validate() != nil || !p.ObjectKind.Valid() || p.Subject != nil && p.Subject.Validate() != nil {

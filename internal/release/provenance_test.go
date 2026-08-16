@@ -19,7 +19,7 @@ func TestProvenanceDetectsArtifactAndPlanTampering(t *testing.T) {
 	provenance, err := NewProvenance(testGenerationInput(t, GenerationDataRefreshSources))
 	require.NoError(t, err)
 	for name, mutate := range map[string]func(*Provenance){
-		"artifact": func(value *Provenance) { value.Artifact.ContentDigest = digest("tampered") },
+		"artifact": func(value *Provenance) { value.Artifact.ContentDigest = testDigest("tampered") },
 		"plan":     func(value *Provenance) { value.Plan.ManagedDataPins[0].RevisionID = "revision_other" },
 		"binding":  func(value *Provenance) { value.Plan.Bindings[0].ValidatedVersion = "provider_other" },
 	} {
@@ -76,10 +76,10 @@ func testGenerationInput(t *testing.T, mode GenerationDataMode) ProvenanceInput 
 	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_2")
 	require.NoError(t, err)
 	return ProvenanceInput{
-		Artifact:  ProjectArtifactProvenance{SourceDigest: digest("a"), ProjectDigest: digest("b"), ContentDigest: digest("c"), CompilerVersion: "compiler:v1", SchemaVersion: 1},
+		Artifact:  ProjectArtifactProvenance{SourceDigest: testDigest("a"), ProjectDigest: testDigest("b"), ContentDigest: testDigest("c"), CompilerVersion: "compiler:v1", SchemaVersion: 1},
 		Candidate: CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"},
-		Plan:      GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: digest("p"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: digest("e")}}, AuthoredConnections: nil},
+		Plan:      GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: testDigest("p"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: testDigest("e")}}, AuthoredConnections: nil},
 	}
 }
 
-func digest(value string) string { return "sha256:" + strings.Repeat(value, 64)[:64] }
+func testDigest(value string) string { return "sha256:" + strings.Repeat(value, 64)[:64] }
