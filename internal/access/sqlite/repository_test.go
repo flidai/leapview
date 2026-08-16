@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -66,7 +67,9 @@ func TestListGroupIDsForPrincipalUsesExactIndexedMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0] != first.ID || got[1] != second.ID {
+	want := []string{first.ID, second.ID}
+	sort.Strings(want)
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("group IDs = %#v, want sorted exact memberships", got)
 	}
 	if _, err := repo.ListGroupIDsForPrincipal(ctx, " "+principal.ID); err == nil {
