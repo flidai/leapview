@@ -28,9 +28,13 @@ func (r managedDataResolver) ResolveManagedData(ctx context.Context, id servings
 	if err != nil {
 		return runtimehost.ManagedDataResolution{}, err
 	}
+	roots := make(map[string]string, len(resolved.Roots))
+	for connectionID, root := range resolved.Roots {
+		roots[connectionID.String()] = root
+	}
 	return runtimehost.ManagedDataResolution{
 		RevisionID: resolved.RevisionID,
-		Roots:      resolved.Roots,
+		Roots:      roots,
 		Lifetime:   resolved.Lifetime,
 	}, nil
 }

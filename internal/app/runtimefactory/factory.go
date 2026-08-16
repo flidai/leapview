@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
-	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -60,7 +62,7 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 	if compiled.ProjectID != input.State.ProjectID {
 		return nil, fmt.Errorf("compiled artifact project = %q, want %q", compiled.ProjectID, input.State.ProjectID)
 	}
-	if err := bindManagedDataRoots(compiled.Manifest, input.ManagedData.Roots); err != nil {
+	if err := bindManagedDataRoots(&compiled.Manifest, input.ManagedData.Roots); err != nil {
 		return nil, err
 	}
 	identity, err := projectgraph.NewServingIdentity(input.State.ProjectID, string(servingstate.NormalizeEnvironment(input.State.Environment)), string(input.State.ID))
@@ -80,11 +82,31 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 	if f.dashboardRuntime == nil {
 		return nil, fmt.Errorf("dashboard runtime builder is required")
 	}
+	models := make(map[projectgraph.ResourceID]*semanticmodel.Model, len(compiled.Manifest.SemanticModels))
+	for id, model := range compiled.Manifest.SemanticModels {
+		resourceID, err := projectgraph.NewResourceID(id)
+		if err != nil {
+			return nil, fmt.Errorf("semantic model %q: %w", id, err)
+		}
+		models[resourceID] = model
+	}
+	dashboards := make(map[projectgraph.ResourceID]dashboarddefinition.Definition, len(compiled.Manifest.DashboardDefinitions))
+	for id, definition := range compiled.Manifest.DashboardDefinitions {
+		resourceID, err := projectgraph.NewResourceID(id)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard %q: %w", id, err)
+		}
+		dashboards[resourceID] = definition
+	}
+	projectDefinition, err := dashboardruntime.NewProjectDefinition(input.State.ProjectID, compiled.Manifest.Title, compiled.Manifest.Description, models, dashboards)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard project definition: %w", err)
+	}
 	runtimeInput := dashboardruntimefactory.Input{
 		Directory: duckDir, SnapshotID: input.State.DuckLakeSnapshotID,
 		Identity: identity, SemanticModelDigest: input.State.Digest,
 		ArtifactDigest: input.Artifact.Digest, SourceDataDigest: input.ManagedData.RevisionID,
-		Definition: projectartifact.DashboardProjection(compiled.Manifest),
+		Definition: projectDefinition,
 	}
 	if input.Candidate != nil {
 		runtimeInput.CandidateID = input.Candidate.CandidateID
@@ -108,7 +130,7 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 			}
 		}
 	}
-	authoredSources, err := projectartifact.AuthoredDashboardSourcesChecked(compiled.Manifest)
+	authoredSources, err := authoredDashboardSources(compiled.Manifest, input.State.ProjectID)
 	if err != nil {
 		_ = service.Close()
 		return nil, fmt.Errorf("authored dashboard sources: %w", err)

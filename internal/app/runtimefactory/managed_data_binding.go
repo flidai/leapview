@@ -8,20 +8,20 @@ import (
 	"github.com/flidai/leapview/internal/project/manifest"
 )
 
-type workspaceBindingTarget struct {
-	definition *manifest.Workspace
+type projectBindingTarget struct {
+	definition *manifest.Project
 }
 
-func bindManagedDataRoots(definition *manifest.Workspace, roots map[string]string) error {
+func bindManagedDataRoots(definition *manifest.Project, roots map[string]string) error {
 	if definition == nil {
-		return fmt.Errorf("workspace definition is required")
+		return fmt.Errorf("project definition is required")
 	}
-	return manageddataruntimebinding.BindRoots(workspaceBindingTarget{definition: definition}, roots)
+	return manageddataruntimebinding.BindRoots(projectBindingTarget{definition: definition}, roots)
 }
 
-func (t workspaceBindingTarget) ManagedConnections() []manageddataruntimebinding.Connection {
+func (t projectBindingTarget) ManagedConnections() []manageddataruntimebinding.Connection {
 	var connections []manageddataruntimebinding.Connection
-	for modelID, model := range t.definition.Models {
+	for modelID, model := range t.definition.SemanticModels {
 		if model == nil {
 			continue
 		}
@@ -40,8 +40,8 @@ func (t workspaceBindingTarget) ManagedConnections() []manageddataruntimebinding
 	return connections
 }
 
-func (t workspaceBindingTarget) BindManagedRoot(ref manageddataruntimebinding.Connection, root string) error {
-	model := t.definition.Models[ref.ModelID]
+func (t projectBindingTarget) BindManagedRoot(ref manageddataruntimebinding.Connection, root string) error {
+	model := t.definition.SemanticModels[ref.ModelID]
 	if model == nil {
 		return fmt.Errorf("semantic model %q is unavailable while binding managed data", ref.ModelID)
 	}
