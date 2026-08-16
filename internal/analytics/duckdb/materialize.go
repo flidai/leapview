@@ -396,6 +396,7 @@ type ProjectRuntimeConfig struct {
 
 type ProjectRuntime struct {
 	mu                   sync.Mutex
+	projectID            projectgraph.ResourceID
 	db                   analyticsmaterialize.Database
 	sessions             analyticsresource.SessionProvider
 	committer            duckLakeCommitter
@@ -446,6 +447,7 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		}
 	}
 	runtime := &ProjectRuntime{
+		projectID:            config.ProjectID,
 		db:                   db,
 		sessions:             db,
 		committer:            db,
@@ -507,6 +509,9 @@ func projectQueryCacheNamespace(config ProjectRuntimeConfig) string {
 }
 
 func (r *ProjectRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
+	if err := r.validateProject(request); err != nil {
+		return dataquery.Result{}, err
+	}
 	if r == nil || r.db == nil {
 		return dataquery.Result{}, fmt.Errorf("project runtime is not initialized")
 	}
@@ -529,6 +534,9 @@ func (r *ProjectRuntime) ExecuteDataQuery(ctx context.Context, request dataquery
 }
 
 func (r *ProjectRuntime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
+	if err := r.validateProject(request); err != nil {
+		return dataquery.Result{}, err
+	}
 	if r == nil || r.db == nil {
 		return dataquery.Result{}, fmt.Errorf("project runtime is not initialized")
 	}
@@ -550,8 +558,16 @@ func (r *ProjectRuntime) ExecuteDataQueryArrow(ctx context.Context, request data
 }
 
 func (r *ProjectRuntime) ExecuteDataQueryBundle(ctx context.Context, requests []dataquery.BundleRequest) (dataquery.BundleResult, error) {
+	if r == nil {
+		return dataquery.BundleResult{}, fmt.Errorf("project runtime is not initialized")
+	}
 	if len(requests) == 0 {
 		return dataquery.BundleResult{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("bundle is empty")}
+	}
+	for _, request := range requests {
+		if err := r.validateProject(request.Query); err != nil {
+			return dataquery.BundleResult{}, err
+		}
 	}
 	modelID := strings.TrimSpace(requests[0].Query.ModelID)
 	if modelID == "" && len(r.models) == 1 {
@@ -572,6 +588,22 @@ func (r *ProjectRuntime) ExecuteDataQueryBundle(ctx context.Context, requests []
 		}
 	}
 	return view.ExecuteDataQueryBundle(ctx, requests)
+}
+
+func (r *ProjectRuntime) validateProject(request dataquery.Query) error {
+	if r == nil {
+		return fmt.Errorf("project runtime is not initialized")
+	}
+	if request.ProjectID == "" {
+		return fmt.Errorf("project id is required")
+	}
+	if err := request.ProjectID.Validate(); err != nil {
+		return fmt.Errorf("project id: %w", err)
+	}
+	if request.ProjectID != r.projectID {
+		return fmt.Errorf("project id %q does not match runtime project %q", request.ProjectID, r.projectID)
+	}
+	return nil
 }
 
 func (r *ProjectRuntime) Refresh(ctx context.Context) error {

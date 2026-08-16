@@ -62,8 +62,8 @@ func (m auditedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.
 	}
 	ctx = m.auditContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if request.ProjectID == "" {
-		return dataquery.Result{}, errors.New("project ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	return dataquery.ExecuteAudited(ctx, request, m.Metrics.ExecuteDataQuery)
 }
@@ -75,8 +75,8 @@ func (m auditedMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataq
 	}
 	ctx = m.auditContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if request.ProjectID == "" {
-		return dataquery.Result{}, errors.New("project ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	return dataquery.ExecuteAudited(ctx, request, func(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 		return executor.ExecuteDataQueryArrow(ctx, request, sink)
