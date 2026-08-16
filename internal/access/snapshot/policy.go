@@ -189,7 +189,7 @@ func Decode(data []byte, project graph.ProjectGraph) (AuthorizationSnapshot, err
 }
 
 func (s AuthorizationSnapshot) Validate(project graph.ProjectGraph) error {
-	if err := s.Identity.Validate(); err != nil {
+	if err := s.identity.Validate(); err != nil {
 		return fmt.Errorf("authorization snapshot identity: %w", err)
 	}
 	_, err := NewAuthorizationSnapshot(s.identity, project, s.grants, s.dataPolicies)
@@ -217,14 +217,14 @@ func (s AuthorizationSnapshot) Digest() (string, error) {
 }
 
 func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
-	if err := s.Identity.Validate(); err != nil {
+	if err := s.identity.Validate(); err != nil {
 		return nil, fmt.Errorf("authorization snapshot identity: %w", err)
 	}
 	if err := s.project.Validate(); err != nil {
 		return nil, fmt.Errorf("authorization snapshot project graph: %w", err)
 	}
-	if s.Identity.ProjectID != s.project.ProjectID() {
-		return nil, fmt.Errorf("authorization snapshot project %q does not match graph %q", s.Identity.ProjectID, s.project.ProjectID())
+	if s.identity.ProjectID != s.project.ProjectID() {
+		return nil, fmt.Errorf("authorization snapshot project %q does not match graph %q", s.identity.ProjectID, s.project.ProjectID())
 	}
 	grants := make([]grantWire, 0, len(s.grants))
 	for _, item := range s.grants {
@@ -250,7 +250,7 @@ func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
 	}
 	sort.Slice(grants, func(i, j int) bool { return grants[i].ID < grants[j].ID })
 	sort.Slice(policies, func(i, j int) bool { return policies[i].ID < policies[j].ID })
-	return json.Marshal(snapshotWire{Identity: s.Identity, Grants: grants, DataPolicies: policies})
+	return json.Marshal(snapshotWire{Identity: s.identity, Grants: grants, DataPolicies: policies})
 }
 
 func (s *AuthorizationSnapshot) UnmarshalJSON(data []byte) error {
