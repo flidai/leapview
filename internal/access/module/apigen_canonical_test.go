@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
-	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -267,7 +267,7 @@ func TestAPIGenResourceDenialUnknownSelectorAndInfrastructureFailures(t *testing
 }
 
 func generatedAPIGenContracts() map[string]APIGenOperationContract {
-	generated := apiaggregate.GetAPIGenOperationContracts()
+	generated := accessgen.GetAPIGenOperationContracts()
 	contracts := make(map[string]APIGenOperationContract, len(generated))
 	for operationID, contract := range generated {
 		var command *APIGenCommandContract

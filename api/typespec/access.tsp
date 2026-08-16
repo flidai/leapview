@@ -138,46 +138,6 @@ model GroupMemberListResponse {
   page: PageInfo;
 }
 
-model RoleBindingRequest {
-  subjectType: string;
-  subjectId: string;
-  role: string;
-}
-
-@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
-model RoleBindingCreatedAuditPayload {
-  @apigen.auditInternal
-  operationId: string;
-
-  @apigen.auditInternal
-  role: string;
-
-  @apigen.auditPii
-  subjectId: string;
-
-  @apigen.auditInternal
-  subjectType: string;
-
-  @apigen.auditPublic
-  surface: string;
-}
-
-@apigen.failureDefinition(#{
-  kind: "invalid",
-  statusCode: 400,
-  code: "ROLE_BINDING_INVALID",
-  publicDetail: "The role binding request is invalid.",
-})
-model RoleBindingInvalidFailure {}
-
-@apigen.failureDefinition(#{
-  kind: "not_found",
-  statusCode: 404,
-  code: "ROLE_BINDING_NOT_FOUND",
-  publicDetail: "Role binding not found.",
-})
-model RoleBindingNotFoundFailure {}
-
 @apigen.failureDefinition(#{
   kind: "denied",
   statusCode: 400,
@@ -307,14 +267,6 @@ model GroupNotMutableFailure {}
 model GrantNotFoundFailure {}
 
 @apigen.failureDefinition(#{
-  kind: "invalid",
-  statusCode: 400,
-  code: "OWNERSHIP_TRANSFER_INVALID",
-  publicDetail: "The ownership transfer request is invalid.",
-})
-model OwnershipTransferInvalidFailure {}
-
-@apigen.failureDefinition(#{
   kind: "not_found",
   statusCode: 404,
   code: "DATA_POLICY_NOT_FOUND",
@@ -436,20 +388,6 @@ model GroupMemberAuditPayload {
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
-model RoleBindingAuditPayload {
-  @apigen.auditInternal
-  operationId: string;
-  @apigen.auditInternal
-  role: string;
-  @apigen.auditPii
-  subjectId: string;
-  @apigen.auditInternal
-  subjectType: string;
-  @apigen.auditPublic
-  surface: string;
-}
-
-@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model GrantAuditPayload {
   @apigen.auditInternal
   operationId: string;
@@ -470,14 +408,6 @@ model GrantAuditPayload {
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
-model OwnershipTransferAuditPayload {
-  @apigen.auditPii
-  ownerPrincipalId: string;
-  @apigen.auditPublic
-  resourceKind: ResourceKind;
-}
-
-@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model DataPolicyAuditPayload {
   @apigen.auditInternal
   resourceId: ResourceId;
@@ -485,22 +415,6 @@ model DataPolicyAuditPayload {
   resourceKind: ResourceKind;
   @apigen.auditPublic
   policyType: string;
-}
-
-model RoleBindingResponse {
-  id: string;
-  projectId: ResourceId;
-  subjectType: string;
-  subjectId: string;
-  email?: string;
-  displayName?: string;
-  role: string;
-  createdAt: utcDateTime;
-}
-
-model RoleBindingListResponse {
-  items: RoleBindingResponse[];
-  page: PageInfo;
 }
 
 model GrantRequest {
@@ -561,22 +475,6 @@ model EffectiveCapabilityListResponse {
   resourceKind: ResourceKind;
   capabilities: Capability[];
   effectiveGrants: AuthorizationDecisionResponse[];
-}
-
-model OwnershipTransferRequest {
-  resourceKind: ResourceKind;
-  resourceId: ResourceId;
-  ownerPrincipalId: string;
-}
-
-model SecurableObjectResponse {
-  id: ResourceId;
-  resourceKind: ResourceKind;
-  parentId?: ResourceId;
-  ownerPrincipalId?: string;
-  displayName?: string;
-  createdAt: utcDateTime;
-  updatedAt: utcDateTime;
 }
 
 model AuthorizationDecisionResponse {
@@ -990,56 +888,6 @@ interface Groups {
   addGroupMember(@path @apigen.target group: string, @path principal: string): AddGroupMemberOK | CommonErrors;
 }
 
-alias ListRoleBindingsOK = OkJson<RoleBindingListResponse>;
-alias CreateRoleBindingCreated = CreatedJson<RoleBindingResponse>;
-alias UpdateRoleBindingOK = OkJson<RoleBindingResponse>;
-
-@tag("Access")
-@route("/projects/{project}/role-bindings")
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-@apigen.commandDefaults(#{ guarantee: "transactional" })
-@apigen.auditPayload(RoleBindingAuditPayload)
-interface RoleBindings {
-  @summary("List role bindings")
-  @get
-  @extension("x-leapview-object-scope", "project")
-  listRoleBindings(@path project: ResourceId, @query subjectType?: string, @query subjectId?: string, @query role?: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListRoleBindingsOK | CommonErrors;
-
-  @summary("Create a role binding")
-  @post
-  @extension("x-leapview-object-scope", "project")
-  @apigen.ui("project.access.role-binding.create")
-  @apigen.failsWith(RoleBindingInvalidFailure)
-  @apigen.command(#{ auditAction: "role_binding.created" })
-  @apigen.auditPayload(RoleBindingCreatedAuditPayload)
-  createRoleBinding(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingRequest): CreateRoleBindingCreated | CommonErrors;
-
-  @summary("Get a project role binding")
-  @route("/{binding}")
-  @get
-  @extension("x-leapview-object-scope", "project")
-  getRoleBinding(@path project: ResourceId, @path binding: string): OkJson<RoleBindingResponse> | CommonErrors;
-
-  @summary("Delete a role binding")
-  @route("/{binding}")
-  @delete
-  @extension("x-leapview-object-scope", "project")
-  @apigen.ui("project.access.role-binding.delete")
-  @apigen.failsWith(RoleBindingNotFoundFailure)
-  @apigen.failsWith(RoleBindingInvalidFailure)
-  @apigen.command(#{ auditAction: "role_binding.deleted" })
-  deleteRoleBinding(@path @apigen.target project: ResourceId, @path binding: string): EmptyResponse | CommonErrors;
-
-  @summary("Update a role binding")
-  @route("/{binding}")
-  @patch
-  @extension("x-leapview-object-scope", "project")
-  @apigen.ui("project.access.role-binding.update")
-  @apigen.failsWith(RoleBindingNotFoundFailure)
-  @apigen.command(#{ auditAction: "role_binding.updated" })
-  updateRoleBinding(@path @apigen.target project: ResourceId, @path binding: string, @header("If-Match") ifMatch: string, @body body: RoleBindingRequest): UpdateRoleBindingOK | CommonErrors;
-}
-
 alias ListProjectRolesOK = OkJson<RoleListResponse>;
 
 @tag("Access")
@@ -1120,19 +968,6 @@ interface Grants {
   @apigen.auditPayload(GrantAuditPayload)
   deleteGrant(@path @apigen.target project: ResourceId, @path grant: string): EmptyResponse | CommonErrors;
 }
-
-alias TransferOwnershipOK = OkJson<SecurableObjectResponse>;
-
-@tag("Access")
-@summary("Transfer object ownership")
-@route("/projects/{project}/ownership")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-@extension("x-leapview-object-scope", "project")
-@apigen.command(#{ auditAction: "ownership.transferred", guarantee: "transactional" })
-@apigen.failsWith(OwnershipTransferInvalidFailure)
-@apigen.auditPayload(OwnershipTransferAuditPayload)
-op transferOwnership(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: OwnershipTransferRequest): TransferOwnershipOK | CommonErrors;
 
 alias ListDataPoliciesOK = OkJson<DataPolicyListResponse>;
 alias CreateDataPolicyCreated = CreatedJson<DataPolicyResponse>;
