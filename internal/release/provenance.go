@@ -40,7 +40,7 @@ type ManagedDataPin struct {
 
 type BindingEvidence struct {
 	BindingID          string `json:"bindingId"`
-	LogicalConnection  string `json:"logicalConnection"`
+	ConnectionID       string `json:"connectionId"`
 	ConnectorKind      string `json:"connectorKind"`
 	Revision           int64  `json:"revision"`
 	ValidatedVersion   string `json:"validatedVersion"`
@@ -48,8 +48,9 @@ type BindingEvidence struct {
 }
 
 type AuthoredConnectionEvidence struct {
-	LogicalConnection string `json:"logicalConnection"`
-	ConnectorKind     string `json:"connectorKind"`
+	ConnectionID  string `json:"connectionId"`
+	ConnectorKind string `json:"connectorKind"`
+	DisplayName   string `json:"displayName,omitempty"`
 }
 
 type GenerationDataMode string
@@ -72,15 +73,15 @@ type ProjectArtifactProvenance struct {
 // GenerationPlanProvenance binds candidate evidence to the exact serving identity
 // that will be published. GenerationID is the sole runtime selector.
 type GenerationPlanProvenance struct {
-	Identity            projectgraph.ServingIdentity `json:"identity"`
-	BaseIdentity        projectgraph.ServingIdentity `json:"baseIdentity"`
-	RuntimeVersion      string                       `json:"runtimeVersion"`
-	PolicyDigest        string                       `json:"policyDigest"`
-	DataRevision        string                       `json:"dataRevision"`
-	DataMode            GenerationDataMode           `json:"dataMode"`
-	ManagedDataPins     []ManagedDataPin             `json:"managedDataPins"`
-	Bindings            []BindingEvidence            `json:"bindings"`
-	AuthoredConnections []AuthoredConnectionEvidence `json:"authoredConnections"`
+	Identity            projectgraph.ServingIdentity  `json:"identity"`
+	BaseIdentity        *projectgraph.ServingIdentity `json:"baseIdentity,omitempty"`
+	RuntimeVersion      string                        `json:"runtimeVersion"`
+	PolicyDigest        string                        `json:"policyDigest"`
+	DataRevision        string                        `json:"dataRevision"`
+	DataMode            GenerationDataMode            `json:"dataMode"`
+	ManagedDataPins     []ManagedDataPin              `json:"managedDataPins"`
+	Bindings            []BindingEvidence             `json:"bindings"`
+	AuthoredConnections []AuthoredConnectionEvidence  `json:"authoredConnections"`
 }
 
 type ProvenanceInput struct {
@@ -179,7 +180,9 @@ func NormalizeSourceRevisionProvenance(value *SourceRevisionProvenance) (*Source
 }
 
 func normalizeProjectArtifactProvenance(a ProjectArtifactProvenance) (ProjectArtifactProvenance, error) {
-	a.SourceDigest, a.ProjectDigest, a.ArtifactDigest, a.CompilerVersion = strings.TrimSpace(a.SourceDigest), strings.TrimSpace(a.ProjectDigest), strings.TrimSpace(a.ArtifactDigest), strings.TrimSpace(a.CompilerVersion)
+	if !canonicalLiteral(a.SourceDigest) || !canonicalLiteral(a.ProjectDigest) || !canonicalLiteral(a.ArtifactDigest) || !canonicalLiteral(a.CompilerVersion) {
+		return ProjectArtifactProvenance{}, provenanceInvalid(errors.New("artifact provenance literals must be canonical"))
+	}
 	if platformdigest.ValidateSHA256Identity(a.SourceDigest) != nil || platformdigest.ValidateSHA256Identity(a.ProjectDigest) != nil || platformdigest.ValidateSHA256Identity(a.ArtifactDigest) != nil || a.CompilerVersion == "" || a.SchemaVersion < 1 {
 		return ProjectArtifactProvenance{}, provenanceInvalid(errors.New("source, project, artifact, compiler, and schema are required"))
 	}
@@ -187,7 +190,9 @@ func normalizeProjectArtifactProvenance(a ProjectArtifactProvenance) (ProjectArt
 }
 
 func normalizeCandidateProvenance(c CandidateProvenance) (CandidateProvenance, error) {
-	c.ID, c.OwnerID = strings.TrimSpace(c.ID), strings.TrimSpace(c.OwnerID)
+	if !canonicalLiteral(c.ID) || !canonicalLiteral(c.OwnerID) {
+		return CandidateProvenance{}, provenanceInvalid(errors.New("candidate identity literals must be canonical"))
+	}
 	if c.ID == "" || c.OwnerID == "" || c.Revision < 1 {
 		return CandidateProvenance{}, provenanceInvalid(errors.New("candidate identity, owner, and positive revision are required"))
 	}
@@ -198,13 +203,17 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 	if err := p.Identity.Validate(); err != nil {
 		return GenerationPlanProvenance{}, provenanceInvalid(err)
 	}
-	if err := p.BaseIdentity.Validate(); err != nil {
-		return GenerationPlanProvenance{}, provenanceInvalid(err)
+	if p.BaseIdentity != nil {
+		if err := p.BaseIdentity.Validate(); err != nil {
+			return GenerationPlanProvenance{}, provenanceInvalid(err)
+		}
+		if p.BaseIdentity.ProjectID != p.Identity.ProjectID || p.BaseIdentity.Environment != p.Identity.Environment {
+			return GenerationPlanProvenance{}, provenanceInvalid(errors.New("base identity scope does not match generation identity"))
+		}
 	}
-	if p.BaseIdentity.ProjectID != p.Identity.ProjectID || p.BaseIdentity.Environment != p.Identity.Environment {
-		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("base identity scope does not match generation identity"))
+	if !canonicalLiteral(p.RuntimeVersion) || !canonicalLiteral(p.PolicyDigest) || !canonicalLiteral(p.DataRevision) {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("generation plan literals must be canonical"))
 	}
-	p.RuntimeVersion, p.PolicyDigest, p.DataRevision = strings.TrimSpace(p.RuntimeVersion), strings.TrimSpace(p.PolicyDigest), strings.TrimSpace(p.DataRevision)
 	if p.RuntimeVersion == "" || platformdigest.ValidateSHA256Identity(p.PolicyDigest) != nil || p.DataRevision == "" || artifact.ArtifactDigest == "" {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("runtime, policy, data, and artifact evidence are required"))
 	}
@@ -236,11 +245,14 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 func normalizeAuthoredConnectionEvidence(values []AuthoredConnectionEvidence) ([]AuthoredConnectionEvidence, error) {
 	values = append([]AuthoredConnectionEvidence(nil), values...)
 	for i := range values {
-		values[i].LogicalConnection, values[i].ConnectorKind = strings.TrimSpace(values[i].LogicalConnection), strings.TrimSpace(values[i].ConnectorKind)
+		if values[i].ConnectionID != strings.TrimSpace(values[i].ConnectionID) || values[i].ConnectorKind != strings.TrimSpace(values[i].ConnectorKind) {
+			return nil, provenanceInvalid(errors.New("authored connection identity must be canonical"))
+		}
+		values[i].ConnectionID, values[i].ConnectorKind = strings.TrimSpace(values[i].ConnectionID), strings.TrimSpace(values[i].ConnectorKind)
 	}
-	sort.Slice(values, func(i, j int) bool { return values[i].LogicalConnection < values[j].LogicalConnection })
+	sort.Slice(values, func(i, j int) bool { return values[i].ConnectionID < values[j].ConnectionID })
 	for i, v := range values {
-		if v.LogicalConnection == "" || v.ConnectorKind == "" || i > 0 && values[i-1].LogicalConnection == v.LogicalConnection {
+		if v.ConnectionID == "" || projectgraph.ResourceID(v.ConnectionID).Validate() != nil || v.ConnectorKind == "" || i > 0 && values[i-1].ConnectionID == v.ConnectionID {
 			return nil, provenanceInvalid(errors.New("authored connection evidence must be unique"))
 		}
 	}
@@ -250,8 +262,11 @@ func normalizeAuthoredConnectionEvidence(values []AuthoredConnectionEvidence) ([
 func normalizeManagedDataPins(values []ManagedDataPin) ([]ManagedDataPin, error) {
 	values = append([]ManagedDataPin(nil), values...)
 	for i := range values {
+		if values[i].ConnectionID != strings.TrimSpace(values[i].ConnectionID) || values[i].RevisionID != strings.TrimSpace(values[i].RevisionID) {
+			return nil, provenanceInvalid(errors.New("managed-data pin identity must be canonical"))
+		}
 		values[i].ConnectionID, values[i].RevisionID = strings.TrimSpace(values[i].ConnectionID), strings.TrimSpace(values[i].RevisionID)
-		if values[i].ConnectionID == "" || platformdigest.ValidateSHA256Identity(values[i].RevisionID) != nil {
+		if values[i].ConnectionID == "" || projectgraph.ResourceID(values[i].ConnectionID).Validate() != nil || validateOperationalID(values[i].RevisionID) != nil {
 			return nil, provenanceInvalid(errors.New("managed-data pin is invalid"))
 		}
 	}
@@ -268,8 +283,11 @@ func normalizeBindingEvidence(values []BindingEvidence) ([]BindingEvidence, erro
 	values = append([]BindingEvidence(nil), values...)
 	for i := range values {
 		v := &values[i]
-		v.BindingID, v.LogicalConnection, v.ConnectorKind, v.ValidatedVersion, v.EndpointConfigHash = strings.TrimSpace(v.BindingID), strings.TrimSpace(v.LogicalConnection), strings.TrimSpace(v.ConnectorKind), strings.TrimSpace(v.ValidatedVersion), strings.TrimSpace(v.EndpointConfigHash)
-		if v.BindingID == "" || v.LogicalConnection == "" || v.ConnectorKind == "" || v.Revision < 1 || v.ValidatedVersion == "" || platformdigest.ValidateSHA256Identity(v.EndpointConfigHash) != nil {
+		if v.BindingID != strings.TrimSpace(v.BindingID) || v.ConnectionID != strings.TrimSpace(v.ConnectionID) || v.ConnectorKind != strings.TrimSpace(v.ConnectorKind) || v.ValidatedVersion != strings.TrimSpace(v.ValidatedVersion) || v.EndpointConfigHash != strings.TrimSpace(v.EndpointConfigHash) {
+			return nil, provenanceInvalid(errors.New("binding evidence identity must be canonical"))
+		}
+		v.BindingID, v.ConnectionID, v.ConnectorKind, v.ValidatedVersion, v.EndpointConfigHash = strings.TrimSpace(v.BindingID), strings.TrimSpace(v.ConnectionID), strings.TrimSpace(v.ConnectorKind), strings.TrimSpace(v.ValidatedVersion), strings.TrimSpace(v.EndpointConfigHash)
+		if validateOperationalID(v.BindingID) != nil || v.ConnectionID == "" || projectgraph.ResourceID(v.ConnectionID).Validate() != nil || v.ConnectorKind == "" || v.Revision < 1 || v.ValidatedVersion == "" || platformdigest.ValidateSHA256Identity(v.EndpointConfigHash) != nil {
 			return nil, provenanceInvalid(errors.New("binding evidence is invalid"))
 		}
 	}
@@ -280,6 +298,19 @@ func normalizeBindingEvidence(values []BindingEvidence) ([]BindingEvidence, erro
 		}
 	}
 	return values, nil
+}
+
+// validateOperationalID checks an opaque managed-data/binding identifier
+// without imposing graph-resource syntax on another subsystem's namespace.
+func validateOperationalID(value string) error {
+	if value == "" || value != strings.TrimSpace(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return errors.New("operational identity is invalid")
+	}
+	return nil
+}
+
+func canonicalLiteral(value string) bool {
+	return value == strings.TrimSpace(value) && strings.IndexFunc(value, unicode.IsControl) < 0
 }
 
 func canonicalDigest(value any) (string, error) {

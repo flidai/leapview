@@ -1,4 +1,5 @@
-// Package apiadapter translates public project deployment requests to the deployment domain.
+// Package apiadapter translates public project deployment requests to the
+// generation-scoped deployment domain.
 package apiadapter
 
 import (
@@ -7,12 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/deployment"
-	"github.com/flidai/leapview/internal/manageddata"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/jobs"
 )
@@ -29,34 +28,30 @@ const (
 	StatusSuperseded Status = "superseded"
 )
 
-type TargetStatus string
-
-const (
-	TargetStatusPending TargetStatus = "pending"
-	TargetStatusActive  TargetStatus = "active"
-	TargetStatusFailed  TargetStatus = "failed"
-)
-
+// TargetRequest is retained for candidate-publication authorization. It is a
+// target instance identity, never a workspace selector.
 type TargetRequest struct {
-	Workspace   string `json:"workspace"`
+	TargetID    string `json:"targetId"`
 	CandidateID string `json:"candidateId"`
 }
 
 type CreateRequest struct {
-	Project        string
-	Environment    string
-	Targets        []TargetRequest
-	Actor          string
-	IdempotencyKey string
-	ReleaseID      string
-	Evidence       PublishEvidence
-	RollbackOf     string
-	Workflow       func(string) (jobs.WorkflowIntent, error)
+	Project           string
+	Environment       string
+	GenerationID      string
+	ArtifactDigest    string
+	PriorGenerationID string
+	Actor             string
+	IdempotencyKey    string
+	ReleaseID         string
+	Evidence          PublishEvidence
+	RollbackOf        string
+	Workflow          func(string) (jobs.WorkflowIntent, error)
 }
 
-// PublishEvidence is the redacted immutable identity of the release and target
-// plan submitted for publication. Resolved credentials and provider references
-// are deliberately excluded.
+// PublishEvidence is the redacted immutable identity of the release and
+// generation submitted for publication. Resolved credentials and provider
+// references are deliberately excluded.
 type PublishEvidence struct {
 	ReleaseDigest     string `json:"releaseDigest"`
 	ArtifactDigest    string `json:"artifactDigest"`
@@ -64,7 +59,9 @@ type PublishEvidence struct {
 	CandidateID       string `json:"candidateId"`
 	CandidateRevision int64  `json:"candidateRevision"`
 	TargetID          string `json:"targetId"`
-	BaseGeneration    string `json:"baseGeneration"`
+	Environment       string `json:"environment"`
+	GenerationID      string `json:"generationId"`
+	BaseGenerationID  string `json:"baseGenerationId,omitempty"`
 	RuntimeVersion    string `json:"runtimeVersion"`
 	PolicyDigest      string `json:"policyDigest"`
 }
@@ -84,6 +81,9 @@ type Deployment struct {
 	ID                  string
 	Project             string
 	Environment         string
+	GenerationID        string
+	ArtifactDigest      string
+	PriorGenerationID   string
 	RequestDigest       string
 	Status              Status
 	CreatedBy           string
@@ -93,25 +93,6 @@ type Deployment struct {
 	VerificationDigest  string
 	VerifiedAt          string
 	Error               string
-	Targets             []Target
-	Connections         []Connection
-}
-
-type Target struct {
-	Workspace        string
-	CandidateID      string
-	PriorCandidateID string
-	Status           TargetStatus
-	ActivatedAt      string
-	Error            string
-}
-
-type Connection struct {
-	Connection          string
-	RevisionID          string
-	PriorRevisionID     string
-	PriorGeneration     int64
-	ActivatedGeneration int64
 }
 
 type Service interface {
@@ -121,106 +102,59 @@ type Service interface {
 	Cancel(context.Context, deployment.Scope) (deployment.Deployment, error)
 }
 
+type Adapter struct{ service Service }
+
+// Metadata is no longer consulted during deployment mapping. It remains a
+// narrow constructor parameter only while callers migrate to LEA-378's exact
+// managed-data identity handoff.
+type Metadata interface{}
+
+func New(service Service, _ Metadata) (*Adapter, error) {
+	if service == nil {
+		return nil, fmt.Errorf("deployment service is required")
+	}
+	return &Adapter{service: service}, nil
+}
+
 func (a *Adapter) Cancel(ctx context.Context, scope Scope) (Deployment, error) {
 	row, err := a.service.Cancel(ctx, deployment.Scope{ProjectID: strings.TrimSpace(scope.Project), DeploymentID: strings.TrimSpace(scope.DeploymentID)})
 	if err != nil {
 		return Deployment{}, err
 	}
-	return a.mapDeployment(ctx, row)
-}
-
-type Metadata interface {
-	CollectionByID(context.Context, string) (manageddata.Collection, error)
-	RevisionByID(context.Context, string) (manageddata.Revision, error)
-}
-
-type Adapter struct {
-	service  Service
-	metadata Metadata
-}
-
-func New(service Service, metadata Metadata) (*Adapter, error) {
-	if service == nil || metadata == nil {
-		return nil, fmt.Errorf("deployment service and managed-data metadata are required")
-	}
-	return &Adapter{service: service, metadata: metadata}, nil
+	return mapDeployment(row), nil
 }
 
 func (a *Adapter) Create(ctx context.Context, request CreateRequest) (Deployment, error) {
-	request.Project = strings.TrimSpace(request.Project)
-	request.Environment = strings.TrimSpace(request.Environment)
-	request.Actor = strings.TrimSpace(request.Actor)
-	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
-	request.ReleaseID = strings.TrimSpace(request.ReleaseID)
-	if request.Project == "" || request.Environment == "" || request.Actor == "" || request.IdempotencyKey == "" || len(request.Targets) == 0 {
-		return Deployment{}, fmt.Errorf("%w: project, environment, actor, idempotency key, and targets are required", ErrInvalid)
+	if request.Project != strings.TrimSpace(request.Project) || request.Environment != strings.TrimSpace(request.Environment) || request.GenerationID != strings.TrimSpace(request.GenerationID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) {
+		return Deployment{}, fmt.Errorf("%w: identity fields must be canonical", ErrInvalid)
+	}
+	if request.Project == "" || request.Environment == "" || request.GenerationID == "" || request.ArtifactDigest == "" || request.Actor == "" || request.IdempotencyKey == "" {
+		return Deployment{}, fmt.Errorf("%w: project, environment, generation, artifact, actor, and idempotency key are required", ErrInvalid)
+	}
+	if platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil {
+		return Deployment{}, fmt.Errorf("%w: artifact digest is invalid", ErrInvalid)
 	}
 	if request.ReleaseID != "" {
 		if err := normalizePublishEvidence(&request.Evidence); err != nil {
 			return Deployment{}, err
 		}
 	}
-
-	targets := make([]TargetRequest, 0, len(request.Targets))
-	workspaces := make(map[string]struct{}, len(request.Targets))
-	states := make(map[string]struct{}, len(request.Targets))
-	for _, target := range request.Targets {
-		target.Workspace = strings.TrimSpace(target.Workspace)
-		target.CandidateID = strings.TrimSpace(target.CandidateID)
-		if target.Workspace == "" || target.CandidateID == "" {
-			return Deployment{}, fmt.Errorf("%w: target workspace and candidate are required", ErrInvalid)
-		}
-		if _, duplicate := workspaces[target.Workspace]; duplicate {
-			return Deployment{}, fmt.Errorf("%w: duplicate workspace target %q", ErrInvalid, target.Workspace)
-		}
-		if _, duplicate := states[target.CandidateID]; duplicate {
-			return Deployment{}, fmt.Errorf("%w: duplicate candidate target %q", ErrInvalid, target.CandidateID)
-		}
-		workspaces[target.Workspace] = struct{}{}
-		states[target.CandidateID] = struct{}{}
-		targets = append(targets, target)
-	}
-	sort.Slice(targets, func(i, j int) bool {
-		if targets[i].Workspace == targets[j].Workspace {
-			return targets[i].CandidateID < targets[j].CandidateID
-		}
-		return targets[i].Workspace < targets[j].Workspace
-	})
-	digest, err := requestDigest(
-		request.Project,
-		request.Environment,
-		request.ReleaseID,
-		request.Evidence,
-		targets,
-	)
+	digest, err := requestDigest(request)
 	if err != nil {
 		return Deployment{}, err
 	}
-	input := deployment.CreateInput{
-		ID:            stableID(request.Project, request.Actor, request.IdempotencyKey),
-		ProjectID:     request.Project,
-		Environment:   request.Environment,
-		RequestDigest: digest,
-		CreatedBy:     request.Actor,
-		ReleaseID:     request.ReleaseID,
-		RollbackOf:    request.RollbackOf,
-		Targets:       make([]deployment.TargetInput, 0, len(targets)),
-	}
+	input := deployment.CreateInput{ID: stableID(request.Project, request.Actor, request.IdempotencyKey), ProjectID: request.Project, Environment: request.Environment, GenerationID: request.GenerationID, ArtifactDigest: request.ArtifactDigest, PriorGenerationID: request.PriorGenerationID, RequestDigest: digest, CreatedBy: request.Actor, ReleaseID: request.ReleaseID, RollbackOf: request.RollbackOf}
 	if request.Workflow != nil {
-		workflow, err := request.Workflow(input.ID)
+		input.Workflow, err = request.Workflow(input.ID)
 		if err != nil {
 			return Deployment{}, err
 		}
-		input.Workflow = workflow
-	}
-	for _, target := range targets {
-		input.Targets = append(input.Targets, deployment.TargetInput{WorkspaceID: target.Workspace, ServingStateID: target.CandidateID})
 	}
 	row, err := a.service.Create(ctx, input)
 	if err != nil {
 		return Deployment{}, err
 	}
-	return a.mapDeployment(ctx, row)
+	return mapDeployment(row), nil
 }
 
 func (a *Adapter) Get(ctx context.Context, scope Scope) (Deployment, error) {
@@ -228,64 +162,22 @@ func (a *Adapter) Get(ctx context.Context, scope Scope) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
-	return a.mapDeployment(ctx, row)
+	return mapDeployment(row), nil
 }
 
 func (a *Adapter) Activate(ctx context.Context, request ActivateRequest) (Deployment, error) {
-	if strings.TrimSpace(request.IdempotencyKey) == "" || strings.TrimSpace(request.Actor) == "" {
+	if request.Actor == "" || request.IdempotencyKey == "" {
 		return Deployment{}, fmt.Errorf("%w: actor and idempotency key are required", ErrInvalid)
 	}
-	row, err := a.service.Activate(ctx, deployment.ActivationRequest{
-		Scope: deployment.Scope{
-			ProjectID:    strings.TrimSpace(request.Project),
-			DeploymentID: strings.TrimSpace(request.DeploymentID),
-		},
-		ActorID: strings.TrimSpace(request.Actor),
-	})
+	row, err := a.service.Activate(ctx, deployment.ActivationRequest{Scope: deployment.Scope{ProjectID: strings.TrimSpace(request.Project), DeploymentID: strings.TrimSpace(request.DeploymentID)}, ActorID: request.Actor})
 	if err != nil {
 		return Deployment{}, err
 	}
-	return a.mapDeployment(ctx, row)
+	return mapDeployment(row), nil
 }
 
-func (a *Adapter) mapDeployment(ctx context.Context, row deployment.Deployment) (Deployment, error) {
-	result := Deployment{
-		ID: row.ID, Project: row.ProjectID, Environment: row.Environment, RequestDigest: row.RequestDigest,
-		Status: Status(row.Status), CreatedBy: row.CreatedBy,
-		CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt, Error: row.Error,
-		ActivationPrincipal: row.ActivationPrincipal,
-		VerificationDigest:  row.VerificationDigest,
-		VerifiedAt:          row.VerifiedAt,
-		Targets:             make([]Target, 0, len(row.Targets)), Connections: make([]Connection, 0, len(row.Connections)),
-	}
-	for _, target := range row.Targets {
-		result.Targets = append(result.Targets, Target{
-			Workspace: target.WorkspaceID, CandidateID: target.ServingStateID, PriorCandidateID: target.PriorServingStateID,
-			Status: TargetStatus(target.Status), ActivatedAt: target.ActivatedAt, Error: target.Error,
-		})
-	}
-	for _, pointer := range row.Connections {
-		collection, err := a.metadata.CollectionByID(ctx, pointer.CollectionID)
-		if err != nil {
-			return Deployment{}, fmt.Errorf("load managed collection %q: %w", pointer.CollectionID, err)
-		}
-		revision, err := a.metadata.RevisionByID(ctx, pointer.RevisionID)
-		if err != nil {
-			return Deployment{}, fmt.Errorf("load managed revision %q: %w", pointer.RevisionID, err)
-		}
-		connection := Connection{Connection: collection.ConnectionName, RevisionID: revision.Digest, PriorGeneration: pointer.PriorGeneration, ActivatedGeneration: pointer.ActivatedGeneration}
-		if pointer.PriorRevisionID != "" {
-			prior, err := a.metadata.RevisionByID(ctx, pointer.PriorRevisionID)
-			if err != nil {
-				return Deployment{}, fmt.Errorf("load prior managed revision %q: %w", pointer.PriorRevisionID, err)
-			}
-			connection.PriorRevisionID = prior.Digest
-		}
-		result.Connections = append(result.Connections, connection)
-	}
-	sort.Slice(result.Targets, func(i, j int) bool { return result.Targets[i].Workspace < result.Targets[j].Workspace })
-	sort.Slice(result.Connections, func(i, j int) bool { return result.Connections[i].Connection < result.Connections[j].Connection })
-	return result, nil
+func mapDeployment(row deployment.Deployment) Deployment {
+	return Deployment{ID: row.ID, Project: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest, Status: Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt, Error: row.Error, ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt}
 }
 
 func stableID(project, actor, key string) string {
@@ -294,43 +186,25 @@ func stableID(project, actor, key string) string {
 }
 
 func normalizePublishEvidence(evidence *PublishEvidence) error {
-	evidence.ReleaseDigest = strings.TrimSpace(evidence.ReleaseDigest)
-	evidence.ArtifactDigest = strings.TrimSpace(evidence.ArtifactDigest)
-	evidence.PlanDigest = strings.TrimSpace(evidence.PlanDigest)
-	evidence.CandidateID = strings.TrimSpace(evidence.CandidateID)
-	evidence.TargetID = strings.TrimSpace(evidence.TargetID)
-	evidence.BaseGeneration = strings.TrimSpace(evidence.BaseGeneration)
-	evidence.RuntimeVersion = strings.TrimSpace(evidence.RuntimeVersion)
-	evidence.PolicyDigest = strings.TrimSpace(evidence.PolicyDigest)
-	if platformdigest.ValidateSHA256Identity(evidence.ReleaseDigest) != nil ||
-		platformdigest.ValidateSHA256Identity(evidence.ArtifactDigest) != nil ||
-		platformdigest.ValidateSHA256Identity(evidence.PlanDigest) != nil ||
-		platformdigest.ValidateSHA256Identity(evidence.PolicyDigest) != nil ||
-		evidence.CandidateID == "" || evidence.CandidateRevision < 1 ||
-		evidence.TargetID == "" || evidence.BaseGeneration == "" ||
-		evidence.RuntimeVersion == "" {
+	if evidence.ReleaseDigest != strings.TrimSpace(evidence.ReleaseDigest) || evidence.ArtifactDigest != strings.TrimSpace(evidence.ArtifactDigest) || evidence.PlanDigest != strings.TrimSpace(evidence.PlanDigest) || evidence.PolicyDigest != strings.TrimSpace(evidence.PolicyDigest) || evidence.CandidateID != strings.TrimSpace(evidence.CandidateID) || evidence.TargetID != strings.TrimSpace(evidence.TargetID) || evidence.Environment != strings.TrimSpace(evidence.Environment) || evidence.GenerationID != strings.TrimSpace(evidence.GenerationID) {
+		return fmt.Errorf("%w: immutable publish evidence must be canonical", ErrInvalid)
+	}
+	if platformdigest.ValidateSHA256Identity(evidence.ReleaseDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.ArtifactDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.PlanDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.PolicyDigest) != nil || evidence.CandidateID == "" || evidence.CandidateRevision < 1 || evidence.TargetID == "" || evidence.Environment == "" || evidence.GenerationID == "" || evidence.RuntimeVersion == "" {
 		return fmt.Errorf("%w: immutable publish evidence is incomplete", ErrInvalid)
 	}
 	return nil
 }
 
-func requestDigest(
-	project,
-	environment,
-	releaseID string,
-	evidence PublishEvidence,
-	targets []TargetRequest,
-) (string, error) {
+func requestDigest(request CreateRequest) (string, error) {
 	payload := struct {
-		Project     string          `json:"project"`
-		Environment string          `json:"environment"`
-		ReleaseID   string          `json:"releaseId,omitempty"`
-		Evidence    PublishEvidence `json:"evidence,omitempty"`
-		Targets     []TargetRequest `json:"targets"`
-	}{
-		Project: project, Environment: environment, ReleaseID: releaseID,
-		Evidence: evidence, Targets: targets,
-	}
+		Project           string          `json:"project"`
+		Environment       string          `json:"environment"`
+		GenerationID      string          `json:"generationId"`
+		ArtifactDigest    string          `json:"artifactDigest"`
+		PriorGenerationID string          `json:"priorGenerationId,omitempty"`
+		ReleaseID         string          `json:"releaseId,omitempty"`
+		Evidence          PublishEvidence `json:"evidence,omitempty"`
+	}{request.Project, request.Environment, request.GenerationID, request.ArtifactDigest, request.PriorGenerationID, request.ReleaseID, request.Evidence}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("encode deployment request: %w", err)

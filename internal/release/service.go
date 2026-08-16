@@ -75,13 +75,12 @@ func NewService(options ServiceOptions) (*Service, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error) {
-	rawProject, rawEnvironment, rawGeneration, rawProjectDigest, rawArtifactDigest := input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest
-	input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ProjectDigest), strings.TrimSpace(input.ArtifactDigest)
-	input.IdempotencyKey, input.CreatedBy = strings.TrimSpace(input.IdempotencyKey), strings.TrimSpace(input.CreatedBy)
+	rawProject, rawEnvironment, rawGeneration, rawProjectDigest, rawArtifactDigest, rawIdempotency, rawCreatedBy := input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest, input.IdempotencyKey, input.CreatedBy
+	input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest, input.IdempotencyKey, input.CreatedBy = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ProjectDigest), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.IdempotencyKey), strings.TrimSpace(input.CreatedBy)
 	if input.ProjectID == "" || input.GenerationID == "" || input.Environment == "" || input.ProjectDigest == "" || input.ArtifactDigest == "" || input.IdempotencyKey == "" || input.CreatedBy == "" {
 		return Release{}, ErrInvalid
 	}
-	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawProjectDigest != input.ProjectDigest || rawArtifactDigest != input.ArtifactDigest {
+	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawProjectDigest != input.ProjectDigest || rawArtifactDigest != input.ArtifactDigest || rawIdempotency != input.IdempotencyKey || rawCreatedBy != input.CreatedBy {
 		return Release{}, fmt.Errorf("%w: canonical identity and digest fields are required", ErrInvalid)
 	}
 	identity, err := input.Identity()
@@ -93,7 +92,11 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error
 	}
 	input.Connections = append([]ConnectionPin(nil), input.Connections...)
 	for i := range input.Connections {
-		input.Connections[i].ConnectionID, input.Connections[i].RevisionID = strings.TrimSpace(input.Connections[i].ConnectionID), strings.TrimSpace(input.Connections[i].RevisionID)
+		rawConnection, rawRevision := input.Connections[i].ConnectionID, input.Connections[i].RevisionID
+		input.Connections[i].ConnectionID, input.Connections[i].RevisionID = strings.TrimSpace(rawConnection), strings.TrimSpace(rawRevision)
+		if rawConnection != input.Connections[i].ConnectionID || rawRevision != input.Connections[i].RevisionID {
+			return Release{}, ErrInvalid
+		}
 		if input.Connections[i].ConnectionID == "" || input.Connections[i].RevisionID == "" {
 			return Release{}, ErrInvalid
 		}

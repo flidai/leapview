@@ -51,7 +51,7 @@ type ManagedDataPin struct {
 
 type BindingEvidence struct {
 	BindingID          string `json:"bindingId"`
-	LogicalConnection  string `json:"logicalConnection"`
+	ConnectionID       string `json:"connectionId"`
 	ConnectorKind      string `json:"connectorKind"`
 	Revision           int64  `json:"revision"`
 	ValidatedVersion   string `json:"validatedVersion"`
@@ -59,13 +59,14 @@ type BindingEvidence struct {
 }
 
 type AuthoredConnectionEvidence struct {
-	LogicalConnection string `json:"logicalConnection"`
-	ConnectorKind     string `json:"connectorKind"`
+	ConnectionID  string `json:"connectionId"`
+	ConnectorKind string `json:"connectorKind"`
+	DisplayName   string `json:"displayName,omitempty"`
 }
 
 type GenerationPlanProvenance struct {
 	Identity            ServingIdentity              `json:"identity"`
-	BaseIdentity        ServingIdentity              `json:"baseIdentity"`
+	BaseIdentity        *ServingIdentity             `json:"baseIdentity,omitempty"`
 	RuntimeVersion      string                       `json:"runtimeVersion"`
 	PolicyDigest        string                       `json:"policyDigest"`
 	DataRevision        string                       `json:"dataRevision"`

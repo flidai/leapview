@@ -56,9 +56,6 @@ func authorizePublicationDeployment(ctx context.Context, actor, environment stri
 		} else if projectID != stateProjectID {
 			return fmt.Errorf("publication deployment spans multiple projects: %q and %q", projectID, stateProjectID)
 		}
-		if stateWorkspaceID := strings.TrimSpace(string(state.WorkspaceID)); stateWorkspaceID != strings.TrimSpace(target.Workspace) {
-			return fmt.Errorf("publication serving state %q belongs to workspace %q, want %q", target.CandidateID, stateWorkspaceID, target.Workspace)
-		}
 		var configured map[string]json.RawMessage
 		if state.DashboardPublicationsJSON != "" {
 			if err := json.Unmarshal([]byte(state.DashboardPublicationsJSON), &configured); err != nil {

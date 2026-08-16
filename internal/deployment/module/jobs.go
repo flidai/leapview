@@ -113,12 +113,8 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			return deployment.ErrApprovalConflict
 		}
 	}
-	targets := make([]apiadapter.TargetRequest, 0, len(pending.Targets))
-	for _, target := range pending.Targets {
-		targets = append(targets, apiadapter.TargetRequest{Workspace: target.Workspace, CandidateID: target.CandidateID})
-	}
 	if m.jobs.Authorize != nil {
-		if err := m.jobs.Authorize(ctx, payload.Actor, pending.Environment, targets); err != nil {
+		if err := m.jobs.Authorize(ctx, payload.Actor, pending.Environment, nil); err != nil {
 			m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
 			return err
 		}
