@@ -14,6 +14,7 @@ import (
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectcli "github.com/flidai/leapview/internal/project/cli"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/spf13/cobra"
 )
 
@@ -75,7 +76,7 @@ func (transport *candidateSynchronizationTransport) Plan(
 	}
 	body := candidateSynchronizationBody(request)
 	idempotencyKey, err := candidateSynchronizationIdempotencyKey(
-		"candidate-plan", request.ProjectID, transport.sessionID, body,
+		"candidate-plan", request.ProjectID.String(), transport.sessionID, body,
 	)
 	if err != nil {
 		return projectdevloop.SynchronizationPlan{}, err
@@ -83,7 +84,7 @@ func (transport *candidateSynchronizationTransport) Plan(
 	response, err := transport.client.PlanProjectCandidateSynchronization(
 		ctx,
 		deploymentgen.GenPlanProjectCandidateSynchronizationClientRequest{
-			Project: request.ProjectID,
+			Project: request.ProjectID.String(),
 			Headers: deploymentgen.GenPlanProjectCandidateSynchronizationClientHeaders{
 				IdempotencyKey: idempotencyKey,
 			},
@@ -112,7 +113,7 @@ func (transport *candidateSynchronizationTransport) Upload(
 	response, err := transport.client.UploadProjectCandidateSourceBlob(
 		ctx,
 		deploymentgen.GenUploadProjectCandidateSourceBlobClientRequest{
-			Project: request.ProjectID, Digest: artifact.Digest,
+			Project: request.ProjectID.String(), Digest: artifact.Digest,
 			Headers: deploymentgen.GenUploadProjectCandidateSourceBlobClientHeaders{
 				ContentType:   "application/octet-stream",
 				ContentDigest: standardCandidateContentDigest(artifact.Digest),
@@ -139,7 +140,7 @@ func (transport *candidateSynchronizationTransport) Commit(
 	}
 	body := candidateSynchronizationBody(request)
 	idempotencyKey, err := candidateSynchronizationIdempotencyKey(
-		"candidate-sync", request.ProjectID, transport.sessionID, body,
+		"candidate-sync", request.ProjectID.String(), transport.sessionID, body,
 	)
 	if err != nil {
 		return projectdevloop.Candidate{}, err
@@ -147,7 +148,7 @@ func (transport *candidateSynchronizationTransport) Commit(
 	response, err := transport.client.CommitProjectCandidateSynchronization(
 		ctx,
 		deploymentgen.GenCommitProjectCandidateSynchronizationClientRequest{
-			Project: request.ProjectID,
+			Project: request.ProjectID.String(),
 			Headers: deploymentgen.GenCommitProjectCandidateSynchronizationClientHeaders{
 				IdempotencyKey: idempotencyKey,
 			},
@@ -160,8 +161,12 @@ func (transport *candidateSynchronizationTransport) Commit(
 	if response.Body.ProvenanceDigest == nil {
 		return projectdevloop.Candidate{}, fmt.Errorf("target candidate is missing publication provenance")
 	}
+	projectID, err := projectgraph.NewResourceID(response.Body.ProjectId)
+	if err != nil {
+		return projectdevloop.Candidate{}, fmt.Errorf("target candidate project identity: %w", err)
+	}
 	return projectdevloop.Candidate{
-		ID: response.Body.Id, ProjectID: response.Body.ProjectId,
+		ID: response.Body.Id, ProjectID: projectID,
 		OwnerID:          response.Body.OwnerId,
 		ArtifactDigest:   response.Body.ArtifactDigest,
 		PreviewURL:       response.Body.PreviewUrl,

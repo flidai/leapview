@@ -63,7 +63,7 @@ func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliap
 		workload, err := accesscli.ExchangeWorkloadIdentity(ctx, accesscli.StandardOAuthClient{HTTPClient: client.http()}, accesscli.WorkloadIdentityRequest{
 			Origin: target, InstanceID: instance.Id, ProjectID: cfg.WorkloadProject,
 			ClientID: cfg.WorkloadClientID, ClientSecret: cfg.WorkloadClientSecret,
-			Privileges: []string{
+			Capabilities: []string{
 				"RESOURCE_USE",
 				"RESOURCE_READ",
 				"RESOURCE_EDIT",

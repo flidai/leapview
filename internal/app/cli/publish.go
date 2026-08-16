@@ -128,7 +128,7 @@ func writePublicationResult(
 	if targetID == "" {
 		targetID = checkpoint.TargetID
 	}
-	artifactDigest := deployment.Evidence.ArtifactDigest
+	artifactDigest := deployment.Evidence.ArtifactContentDigest
 	if artifactDigest == "" {
 		artifactDigest = checkpoint.ArtifactDigest
 	}
@@ -162,7 +162,7 @@ func writePublicationEvidence(
 		out,
 		"evidence result %s artifact %s target %s candidate %s revision %d principal %s source %s release %s\n",
 		deployment.Status,
-		deployment.Evidence.ArtifactDigest,
+		deployment.Evidence.ArtifactContentDigest,
 		deployment.Evidence.TargetId,
 		deployment.Evidence.CandidateId,
 		deployment.Evidence.CandidateRevision,
