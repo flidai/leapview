@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +27,7 @@ func TestPublishEvidenceAcceptsExactTargetRelease(t *testing.T) {
 		"prod",
 	)
 	require.NoError(t, err)
-	if evidence.ArtifactDigest != targetRelease.Provenance.ArtifactDigest ||
+	if evidence.ArtifactContentDigest != targetRelease.Provenance.Artifact.ContentDigest ||
 		evidence.PlanDigest != targetRelease.Provenance.PlanDigest ||
 		evidence.ReleaseDigest != targetRelease.Provenance.Digest ||
 		evidence.CandidateID != "candidate_1" ||
@@ -35,10 +36,8 @@ func TestPublishEvidenceAcceptsExactTargetRelease(t *testing.T) {
 		t.Fatalf("publish evidence = %#v", evidence)
 	}
 	response := publishEvidenceResponse(targetRelease)
-	if len(response.Workspaces) != 1 ||
-		len(response.Workspaces[0].ManagedDataPins) != 1 ||
-		len(response.Workspaces[0].Bindings) != 1 ||
-		response.Workspaces[0].Bindings[0].ValidatedVersion != "version_7" ||
+	if response.ArtifactContentDigest != targetRelease.ArtifactDigest ||
+		response.GenerationID != targetRelease.ServingIdentity.GenerationID ||
 		response.SourceRevision == nil ||
 		response.SourceRevision.Revision != "commit-a" {
 		t.Fatalf("redacted publish evidence response = %#v", response)
@@ -54,10 +53,10 @@ func TestPublishEvidenceRejectsCrossTargetAndIncompleteRelease(t *testing.T) {
 			value.Provenance.Plan.TargetID = "lvinst_other"
 		},
 		"environment drift": func(value *release.Release) {
-			value.Provenance.Plan.Environment = "staging"
+			value.Provenance.Plan.Identity.Environment = "staging"
 		},
-		"serving state drift": func(value *release.Release) {
-			value.Artifacts[0].ServingStateID = "state_other"
+		"generation drift": func(value *release.Release) {
+			value.ServingIdentity.GenerationID = "generation_other"
 		},
 	}
 	for name, mutate := range tests {
@@ -181,9 +180,7 @@ func TestRollbackCreatesFreshPlanFromTheRetainedPriorRelease(t *testing.T) {
 		coordinator.created.RollbackOf != "deployment_active" ||
 		coordinator.created.IdempotencyKey != "rollback-1" ||
 		coordinator.created.Evidence.PlanDigest != targetRelease.Provenance.PlanDigest ||
-		len(coordinator.created.Targets) != 1 ||
-		coordinator.created.Targets[0].CandidateID !=
-			targetRelease.Artifacts[0].ServingStateID {
+		coordinator.created.GenerationID != targetRelease.ServingIdentity.GenerationID {
 		t.Fatalf("rollback request = %#v", coordinator.created)
 	}
 }
@@ -322,13 +319,14 @@ func publishTestRelease(t *testing.T) release.Release {
 	artifactDigest := "sha256:" + strings.Repeat("a", 64)
 	projectDigest := "sha256:" + strings.Repeat("b", 64)
 	policyDigest := "sha256:" + strings.Repeat("c", 64)
+	identity, err := projectgraph.NewServingIdentity("project", "prod", "generation_4")
+	require.NoError(t, err)
+	baseIdentity, err := projectgraph.NewServingIdentity("project", "prod", "generation_3")
+	require.NoError(t, err)
 	provenance, err := release.NewProvenance(release.ProvenanceInput{
 		Artifact: release.ProjectArtifactProvenance{
-			SourceDigest:  "sha256:" + strings.Repeat("d", 64),
-			ProjectDigest: projectDigest, CompilerVersion: "test", SchemaVersion: 1,
-			Workspaces: []release.WorkspaceArtifactProvenance{{
-				WorkspaceID: "sales", ArtifactDigest: artifactDigest,
-			}},
+			SourceDigest: "sha256:" + strings.Repeat("d", 64), ProjectDigest: projectDigest,
+			ContentDigest: artifactDigest, CompilerVersion: "test", SchemaVersion: 1,
 		},
 		Candidate: release.CandidateProvenance{
 			ID: "candidate_1", Revision: 4, OwnerID: "author_1",
@@ -338,36 +336,17 @@ func publishTestRelease(t *testing.T) release.Release {
 			Repository: "https://code.example/acme/analytics",
 			Ref:        "refs/heads/main", ChangeID: "github:branch/main",
 		},
-		Plan: release.TargetPlanProvenance{
-			TargetID: "lvinst_prod", Environment: "prod",
-			BaseGeneration: "deployment_3", RuntimeVersion: "test",
-			PolicyDigest: policyDigest,
-			Workspaces: []release.TargetWorkspacePlan{{
-				WorkspaceID: "sales", ServingStateID: "state_4",
-				ArtifactDigest: artifactDigest, DataRevision: "snapshot_4",
-				DataMode: release.TargetDataRefreshSources,
-				ManagedDataPins: []release.ManagedDataPin{{
-					ConnectionID: "orders",
-					RevisionID:   "sha256:" + strings.Repeat("e", 64),
-				}},
-				Bindings: []release.BindingEvidence{{
-					BindingID: "warehouse", LogicalConnection: "warehouse",
-					ConnectorKind: "postgres", Revision: 7,
-					ValidatedVersion: "version_7", EndpointConfigHash: "sha256:" + strings.Repeat("9", 64),
-				}},
-			}},
+		Plan: release.GenerationPlanProvenance{
+			Identity: identity, BaseIdentity: &baseIdentity, TargetID: "lvinst_prod", RuntimeVersion: "test",
+			PolicyDigest: policyDigest, DataRevision: "snapshot_4", DataMode: release.GenerationDataRefreshSources,
+			ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "orders", RevisionID: "revision_4"}},
+			Bindings:        []release.BindingEvidence{{BindingID: "warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 7, ValidatedVersion: "version_7", EndpointConfigHash: "sha256:" + strings.Repeat("9", 64)}},
 		},
 	})
 	require.NoError(t, err)
 	return release.Release{
-		ID: "release_1", ProjectID: "project",
-		ProjectDigest: provenance.Artifact.SourceDigest,
-		Status:        release.StatusReady, Provenance: &provenance,
-		Artifacts: []release.Artifact{{
-			ReleaseID: "release_1", WorkspaceID: "sales",
-			ExpectedDigest: artifactDigest, ActualDigest: artifactDigest,
-			ServingStateID: "state_4",
-		}},
+		ID: "release_1", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest,
+		ArtifactDigest: artifactDigest, ActualDigest: artifactDigest, Status: release.StatusReady, Provenance: &provenance,
 	}
 }
 
@@ -425,7 +404,7 @@ func (stub *publishReleaseStub) Get(
 	projectID,
 	releaseID string,
 ) (release.Release, error) {
-	if projectID != stub.targetRelease.ProjectID ||
+	if projectID != stub.targetRelease.ServingIdentity.ProjectID.String() ||
 		releaseID != stub.targetRelease.ID {
 		return release.Release{}, release.ErrNotFound
 	}
@@ -466,7 +445,7 @@ func (stub *publishReleaseStub) DeploymentRelease(
 	projectID,
 	deploymentID string,
 ) (string, string, error) {
-	if projectID != stub.targetRelease.ProjectID {
+	if projectID != stub.targetRelease.ServingIdentity.ProjectID.String() {
 		return "", "", release.ErrNotFound
 	}
 	releaseID, ok := stub.deployments[deploymentID]
@@ -488,7 +467,7 @@ func (stub *publishReleaseStub) PriorDeploymentRelease(
 	projectID,
 	_ string,
 ) (string, error) {
-	if projectID != stub.targetRelease.ProjectID ||
+	if projectID != stub.targetRelease.ServingIdentity.ProjectID.String() ||
 		stub.priorReleaseID == "" {
 		return "", release.ErrNotFound
 	}

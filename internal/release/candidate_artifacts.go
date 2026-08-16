@@ -45,7 +45,7 @@ type CandidateGenerationArtifact struct {
 	Identity            projectgraph.ServingIdentity
 	ArtifactDigest      string
 	DataRevision        string
-	DataMode            string
+	DataMode            GenerationDataMode
 	ManagedDataPins     []ManagedDataPin
 	Connections         []CandidateConnectionRequirement
 	AuthoredConnections []CandidateAuthoredConnection

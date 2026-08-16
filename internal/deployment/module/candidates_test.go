@@ -465,7 +465,7 @@ func TestCandidateAPIStartsResumesUpdatesAndCancelsOwnedSession(t *testing.T) {
 	var created candidateAPIResponse
 	decodeCandidateResponse(t, started, &created)
 	if created.ID == "" || created.CandidateKey != "github:pull/42" ||
-		created.BaseGeneration != deployment.CandidateBaseGenerationEmpty ||
+		created.BaseGeneration != "" ||
 		created.Status != string(deployment.CandidatePreparing) {
 		t.Fatalf("created candidate = %#v", created)
 	}

@@ -414,7 +414,7 @@ func candidateReleaseProvenance(
 		Plan: release.GenerationPlanProvenance{
 			Identity: identity, BaseIdentity: baseIdentity, TargetID: candidate.TargetID,
 			RuntimeVersion: receipt.RuntimeVersion, PolicyDigest: artifacts.AuthorizationFingerprint,
-			DataRevision: artifacts.Generation.DataRevision, DataMode: release.GenerationDataMode(artifacts.Generation.DataMode),
+			DataRevision: artifacts.Generation.DataRevision, DataMode: artifacts.Generation.DataMode,
 			ManagedDataPins: append([]release.ManagedDataPin(nil), artifacts.Generation.ManagedDataPins...),
 			Bindings:        bindings, AuthoredConnections: candidateProvenanceAuthoredConnections(artifacts.Generation.AuthoredConnections),
 		},

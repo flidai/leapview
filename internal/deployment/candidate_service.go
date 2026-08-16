@@ -20,7 +20,6 @@ import (
 const (
 	defaultCandidateLifetime       = 8 * time.Hour
 	defaultCandidateQuota          = 4
-	CandidateBaseGenerationEmpty   = "empty"
 	CandidateAuditStarted          = "candidate.started"
 	CandidateAuditArtifactReplaced = "candidate.artifact_replaced"
 	CandidateAuditReady            = "candidate.ready"
