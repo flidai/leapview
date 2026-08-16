@@ -13,7 +13,7 @@ func TestWorkspaceMaterializerResolvesConnectionsAgainstActiveReleaseState(t *te
 	module := &Module{activeRuntimeBindingEvidence: activeEvidenceSource{}}
 	materializer := duckDBWorkspaceMaterializer{module: module}
 
-	resolver := materializer.connectionResolver(analyticsmaterialization.WorkspaceRequest{
+	resolver := materializer.connectionResolver(analyticsmaterialization.Request{
 		ConnectionEvidenceServingStateID: "state_active",
 		Identity:                         projectgraph.ServingIdentity{ProjectID: "sales", Environment: "prod", GenerationID: "candidate"},
 		Environment:                      servingstate.Environment("prod"),
@@ -29,7 +29,7 @@ func TestWorkspaceMaterializerResolvesConnectionsAgainstActiveReleaseState(t *te
 
 func TestWorkspaceMaterializerLeavesAuthoredConnectionsUnboundWithoutReleaseEvidence(t *testing.T) {
 	materializer := duckDBWorkspaceMaterializer{module: &Module{}}
-	require.Nil(t, materializer.connectionResolver(analyticsmaterialization.WorkspaceRequest{
+	require.Nil(t, materializer.connectionResolver(analyticsmaterialization.Request{
 		ConnectionEvidenceServingStateID: "state_active",
 	}))
 }

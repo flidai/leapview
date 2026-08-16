@@ -4,21 +4,20 @@ import "context"
 
 import projectgraph "github.com/flidai/leapview/internal/project/graph"
 
-// Publisher adapts refresh-owned workspace presentation and an optional
-// semantic-model notification port to the durable refresh workflow.
+// Publisher adapts refresh publication notifications to durable serving identity.
 type Publisher struct {
-	Workspace            func() WorkspaceSupport
-	SemanticModelVersion func(context.Context, string, string, string)
+	RefreshTarget        func(context.Context, projectgraph.ServingIdentity, string, projectgraph.ResourceID)
+	SemanticModelVersion func(context.Context, projectgraph.ServingIdentity, projectgraph.ResourceID)
 }
 
 func (p Publisher) PublishRefreshTarget(ctx context.Context, identity projectgraph.ServingIdentity, targetType string, targetID projectgraph.ResourceID) {
-	if p.Workspace != nil {
-		p.Workspace().PublishWorkspaceAssetRefreshPatchesForTarget(ctx, identity.ProjectID.String(), identity.Environment, targetType, targetID.String())
+	if p.RefreshTarget != nil {
+		p.RefreshTarget(ctx, identity, targetType, targetID)
 	}
 }
 
-func (p Publisher) PublishSemanticModelVersion(ctx context.Context, workspaceID, environment, modelID string) {
+func (p Publisher) PublishSemanticModelVersion(ctx context.Context, identity projectgraph.ServingIdentity, modelID projectgraph.ResourceID) {
 	if p.SemanticModelVersion != nil {
-		p.SemanticModelVersion(ctx, workspaceID, environment, modelID)
+		p.SemanticModelVersion(ctx, identity, modelID)
 	}
 }

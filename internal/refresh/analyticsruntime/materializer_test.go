@@ -14,12 +14,12 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
-func TestWorkspaceRefreshMaterializerResolvesCandidateManagedDataAndReleasesLifetime(t *testing.T) {
+func TestRefreshMaterializerResolvesCandidateManagedDataAndReleasesLifetime(t *testing.T) {
 	lifetime := &recordingManagedDataLifetime{}
 	resolver := &recordingManagedDataResolver{resolution: runtimehost.ManagedDataResolution{
 		Roots: map[string]string{}, Lifetime: lifetime,
 	}}
-	materializer := WorkspaceRefreshMaterializer{ManagedData: resolver}
+	materializer := RefreshMaterializer{ManagedData: resolver}
 	_, _ = materializer.Materialize(t.Context(), refresh.MaterializeInput{
 		Definition: &artifact.Definition{Models: map[string]*semanticmodel.Model{}},
 		Candidate:  servingstate.State{ID: "candidate-sales", ProjectID: projectgraph.ResourceID("sales"), Environment: "dev"}, Environment: "dev",
@@ -32,9 +32,9 @@ func TestWorkspaceRefreshMaterializerResolvesCandidateManagedDataAndReleasesLife
 	}
 }
 
-func TestWorkspaceRefreshMaterializerUsesActiveReleaseConnectionEvidence(t *testing.T) {
-	executor := &recordingWorkspaceExecutor{}
-	materializer := WorkspaceRefreshMaterializer{Executor: executor}
+func TestRefreshMaterializerUsesActiveReleaseConnectionEvidence(t *testing.T) {
+	executor := &recordingExecutor{}
+	materializer := RefreshMaterializer{Executor: executor}
 
 	_, err := materializer.Materialize(t.Context(), refresh.MaterializeInput{
 		Definition:  &artifact.Definition{Models: map[string]*semanticmodel.Model{}},
@@ -56,11 +56,11 @@ func TestWorkspaceRefreshMaterializerUsesActiveReleaseConnectionEvidence(t *test
 	}
 }
 
-type recordingWorkspaceExecutor struct {
-	request analyticsmaterialization.WorkspaceRequest
+type recordingExecutor struct {
+	request analyticsmaterialization.Request
 }
 
-func (e *recordingWorkspaceExecutor) MaterializeWorkspace(_ context.Context, request analyticsmaterialization.WorkspaceRequest) (int64, error) {
+func (e *recordingExecutor) Materialize(_ context.Context, request analyticsmaterialization.Request) (int64, error) {
 	e.request = request
 	return 42, nil
 }

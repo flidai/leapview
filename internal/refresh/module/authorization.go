@@ -2,12 +2,12 @@ package module
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-func authorizePipeline(r *http.Request, workspaceID, pipelineID string, privilege access.Privilege, config AuthorizationConfig) (bool, error) {
+func authorizePipeline(r *http.Request, identity projectgraph.ServingIdentity, pipelineID string, capability access.Capability, config AuthorizationConfig) (bool, error) {
 	if config.CurrentPrincipal == nil {
 		return false, nil
 	}
@@ -18,21 +18,19 @@ func authorizePipeline(r *http.Request, workspaceID, pipelineID string, privileg
 	if principal.DevBypass {
 		return true, nil
 	}
-	if config.CurrentCredential != nil {
-		if credential, ok := config.CurrentCredential(r); ok && !access.TokenAllows(credential.Token, workspaceID, privilege) {
-			return false, nil
-		}
-	}
 	if config.ResolvePipelineModel == nil {
 		return false, nil
 	}
-	modelID, found, err := config.ResolvePipelineModel(r.Context(), workspaceID, strings.TrimSpace(pipelineID))
+	modelID, found, err := config.ResolvePipelineModel(r.Context(), identity, pipelineID)
 	if err != nil || !found {
 		return false, err
 	}
 	if config.AuthorizeObject == nil {
 		return true, nil
 	}
-	object := access.ItemObjectWithParent(access.SecurableSemanticModel, workspaceID, modelID, access.WorkspaceObject(workspaceID))
-	return config.AuthorizeObject(r.Context(), principal.ID, privilege, object)
+	resource, err := access.NewResourceRef(projectgraph.ResourceID(modelID), projectgraph.KindModel)
+	if err != nil {
+		return false, err
+	}
+	return config.AuthorizeObject(r.Context(), principal.ID, capability, resource)
 }

@@ -26,7 +26,7 @@ func NewPublicationUnitOfWork(database *sql.DB, applyAccessSnapshot func(context
 	return &PublicationUnitOfWork{db: database, applyAccessSnapshot: applyAccessSnapshot}
 }
 
-func (u *PublicationUnitOfWork) Publish(ctx context.Context, identity projectgraph.ServingIdentity, version refreshschedule.DataVersion) error {
+func (u *PublicationUnitOfWork) Publish(ctx context.Context, identity projectgraph.ServingIdentity, servingStateID servingstate.ID, version refreshschedule.DataVersion) error {
 	if u == nil || u.db == nil {
 		return fmt.Errorf("refresh publication database is required")
 	}
@@ -35,6 +35,9 @@ func (u *PublicationUnitOfWork) Publish(ctx context.Context, identity projectgra
 	}
 	if version.Identity != identity {
 		return fmt.Errorf("refresh publication identity does not match data version")
+	}
+	if servingStateID != "" && string(servingStateID) != identity.GenerationID {
+		return fmt.Errorf("refresh publication serving state does not match identity")
 	}
 	tx, err := u.db.BeginTx(ctx, nil)
 	if err != nil {

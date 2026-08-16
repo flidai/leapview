@@ -10,12 +10,12 @@ import (
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
-type WorkspaceRefreshMaterializer struct {
-	Executor    analyticsmaterialization.WorkspaceExecutor
+type RefreshMaterializer struct {
+	Executor    analyticsmaterialization.Executor
 	ManagedData runtimehost.ManagedDataResolver
 }
 
-func (m WorkspaceRefreshMaterializer) Materialize(ctx context.Context, input refresh.MaterializeInput) (snapshotID int64, err error) {
+func (m RefreshMaterializer) Materialize(ctx context.Context, input refresh.MaterializeInput) (snapshotID int64, err error) {
 	if m.ManagedData != nil {
 		resolution, resolveErr := m.ManagedData.ResolveManagedData(ctx, input.Candidate.ID)
 		if resolveErr != nil {
@@ -25,7 +25,7 @@ func (m WorkspaceRefreshMaterializer) Materialize(ctx context.Context, input ref
 			defer func() {
 				if releaseErr := resolution.Lifetime.Release(); err == nil && releaseErr != nil {
 					snapshotID = 0
-					err = fmt.Errorf("release managed data after workspace refresh: %w", releaseErr)
+					err = fmt.Errorf("release managed data after refresh: %w", releaseErr)
 				}
 			}()
 		}
@@ -34,13 +34,13 @@ func (m WorkspaceRefreshMaterializer) Materialize(ctx context.Context, input ref
 		}
 	}
 	if m.Executor == nil {
-		return 0, fmt.Errorf("analytical workspace materializer is unavailable")
+		return 0, fmt.Errorf("analytical refresh materializer is unavailable")
 	}
 	identity, identityErr := projectgraph.NewServingIdentity(input.Candidate.ProjectID, string(input.Candidate.Environment), string(input.Candidate.ID))
 	if identityErr != nil {
 		return 0, fmt.Errorf("candidate serving identity: %w", identityErr)
 	}
-	return m.Executor.MaterializeWorkspace(ctx, analyticsmaterialization.WorkspaceRequest{
+	return m.Executor.Materialize(ctx, analyticsmaterialization.Request{
 		Models: input.Definition.Models, Identity: identity,
 		ConnectionEvidenceServingStateID: input.Active.ID,
 		Environment:                      input.Environment, TargetType: input.Plan.TargetType, TargetID: input.Plan.TargetID,

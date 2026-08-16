@@ -100,6 +100,9 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		TargetID: normalized.TargetID.String(), TriggerType: normalized.TriggerType, ParentRunID: normalized.ParentRunID,
 		RetryOf: normalized.RetryOf, Status: refreshrun.RunStatusQueued, TargetRevision: normalized.TargetRevision,
 	}); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: refresh_job_runs.environment, refresh_job_runs.target_type, refresh_job_runs.target_id") {
+			return refreshrun.RunRecord{}, refreshrun.ErrTargetActive
+		}
 		return refreshrun.RunRecord{}, err
 	}
 	if occurrence != nil {
@@ -124,7 +127,7 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 			return refreshrun.RunRecord{}, fmt.Errorf("refresh workflow contract is required")
 		}
 		dataString, encodeErr := refreshgen.EncodeGenCreateRefreshRunAuditPayload(refreshgen.GenSchemaRefreshQueuedAuditPayload{
-			Id: runID, ProjectId: normalized.Identity.ProjectID.String(),
+			Id:         runID,
 			PipelineId: normalized.TargetID.String(), SemanticModel: normalized.SemanticModelID.String(), Trigger: normalized.TriggerType,
 			RetryOf: normalized.RetryOf, Status: r.execution.InitialState,
 		})
@@ -948,7 +951,7 @@ func normalizeRunInput(input refreshrun.RunInput) (normalizedRunInput, error) {
 	}
 	return normalizedRunInput{
 		Identity: input.Identity, SemanticModelID: input.SemanticModelID, PipelineID: input.PipelineID,
-		PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes,
+		PrincipalID: input.PrincipalID, GroupIDs: append([]string{}, input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes,
 		TargetType: input.TargetType, TargetID: input.TargetID,
 		TargetRevision: input.TargetRevision, TriggerType: input.TriggerType, ParentRunID: input.ParentRunID,
 		RetryOf: input.RetryOf, JobKind: input.JobKind, PayloadJSON: payloadJSON,

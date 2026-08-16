@@ -344,7 +344,7 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 	}
 }
 
-func (m *Module) WorkspaceMaterializer() analyticsmaterialization.WorkspaceExecutor {
+func (m *Module) WorkspaceMaterializer() analyticsmaterialization.Executor {
 	if m == nil || m.environment == nil {
 		return nil
 	}
@@ -372,14 +372,14 @@ func (m *Module) Collector() prometheus.Collector {
 	return NewCollector(m.environment, m.cache)
 }
 
-func NewWorkspaceMaterializer(environment *analyticsducklake.Environment) analyticsmaterialization.WorkspaceExecutor {
+func NewWorkspaceMaterializer(environment *analyticsducklake.Environment) analyticsmaterialization.Executor {
 	return NewWorkspaceMaterializerWithCredentials(environment, analyticsduckdb.NonSecretCredentialResolver{})
 }
 
 func NewWorkspaceMaterializerWithCredentials(
 	environment *analyticsducklake.Environment,
 	credentials analyticsduckdb.CredentialResolver,
-) analyticsmaterialization.WorkspaceExecutor {
+) analyticsmaterialization.Executor {
 	if environment == nil {
 		return nil
 	}

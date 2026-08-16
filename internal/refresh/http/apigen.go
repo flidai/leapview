@@ -10,11 +10,11 @@ import (
 )
 
 type APIGenHandler interface {
-	ListRefreshRuns(stdhttp.ResponseWriter, *stdhttp.Request, string)
-	CreateRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string)
-	GetRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
-	CancelRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
-	ListRefreshRunEvents(stdhttp.ResponseWriter, *stdhttp.Request, string, string, *int32, *string)
+	ListRefreshRuns(stdhttp.ResponseWriter, *stdhttp.Request)
+	CreateRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request)
+	GetRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string)
+	CancelRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string)
+	ListRefreshRunEvents(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
 }
 
 type APIGenDispatcher struct {
@@ -25,24 +25,24 @@ func NewAPIGenDispatcher(handler APIGenHandler) *APIGenDispatcher {
 	return &APIGenDispatcher{handler: handler}
 }
 
-func (d *APIGenDispatcher) ListRefreshRuns(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string, _ refreshgen.GenListRefreshRunsParams) {
-	d.handler.ListRefreshRuns(w, r, workspace)
+func (d *APIGenDispatcher) ListRefreshRuns(w stdhttp.ResponseWriter, r *stdhttp.Request, _ refreshgen.GenListRefreshRunsParams) {
+	d.handler.ListRefreshRuns(w, r)
 }
 
-func (d *APIGenDispatcher) CreateRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string, _ refreshgen.GenCreateRefreshRunHeaders) {
-	d.handler.CreateRefreshRun(w, r, workspace)
+func (d *APIGenDispatcher) CreateRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, _ refreshgen.GenCreateRefreshRunHeaders) {
+	d.handler.CreateRefreshRun(w, r)
 }
 
-func (d *APIGenDispatcher) GetRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, run string) {
-	d.handler.GetRefreshRun(w, r, workspace, run)
+func (d *APIGenDispatcher) GetRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, run string) {
+	d.handler.GetRefreshRun(w, r, run)
 }
 
-func (d *APIGenDispatcher) CancelRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, run string, _ refreshgen.GenCancelRefreshRunHeaders) {
-	d.handler.CancelRefreshRun(w, r, workspace, run)
+func (d *APIGenDispatcher) CancelRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, run string, _ refreshgen.GenCancelRefreshRunHeaders) {
+	d.handler.CancelRefreshRun(w, r, run)
 }
 
-func (d *APIGenDispatcher) ListRefreshRunEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, run string, params refreshgen.GenListRefreshRunEventsParams, _ refreshgen.GenListRefreshRunEventsHeaders) {
-	d.handler.ListRefreshRunEvents(w, r, workspace, run, params.Limit, params.PageToken)
+func (d *APIGenDispatcher) ListRefreshRunEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, run string, params refreshgen.GenListRefreshRunEventsParams, _ refreshgen.GenListRefreshRunEventsHeaders) {
+	d.handler.ListRefreshRunEvents(w, r, run, params.Limit, params.PageToken)
 }
 
 type APIGenTransportErrorResponder struct {

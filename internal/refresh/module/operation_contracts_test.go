@@ -23,21 +23,19 @@ func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 			contract.Command.Audit.SuccessAction != auditAction ||
 			!contract.Command.Audit.Required ||
 			contract.Command.Audit.Guarantee != "best-effort" ||
-			contract.Command.Target == nil ||
-			contract.Command.Target.Parameter != "workspace" ||
-			contract.Command.Target.Type != "workspace" ||
+			(operationID == "createRefreshRun" && contract.Command.Target != nil) ||
 			contract.Command.Idempotency != "required" ||
-			(operationID == "createRefreshRun" && contract.Command.Privilege != "REFRESH_DATA") ||
-			(operationID == "cancelRefreshRun" && contract.Command.Privilege != "USE_WORKSPACE") {
+			(operationID == "createRefreshRun" && contract.Command.Privilege != "RESOURCE_USE") ||
+			(operationID == "cancelRefreshRun" && contract.Command.Privilege != "RESOURCE_USE") {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
 	}
 	create := contracts["createRefreshRun"].Command
-	if create.UI == nil || create.UI.ActionID != "workspace.refresh.run" || len(create.AdditionalExposures) != 1 || string(create.AdditionalExposures[0]) != "ui" {
+	if create.UI == nil || create.UI.ActionID != "refresh.run" || len(create.AdditionalExposures) != 1 || string(create.AdditionalExposures[0]) != "ui" {
 		t.Errorf("create refresh UI contract = %#v", create)
 	}
 	cancel := contracts["cancelRefreshRun"].Command
-	if cancel.UI == nil || cancel.UI.ActionID != "workspace.refresh.cancel" || len(cancel.AdditionalExposures) != 1 || string(cancel.AdditionalExposures[0]) != "ui" {
+	if cancel.UI == nil || cancel.UI.ActionID != "refresh.cancel" || len(cancel.AdditionalExposures) != 1 || string(cancel.AdditionalExposures[0]) != "ui" {
 		t.Errorf("cancel refresh UI contract = %#v", cancel)
 	}
 	if create.Execution == nil || create.Execution.Guarantee != "transactional" ||

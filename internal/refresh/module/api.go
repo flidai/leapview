@@ -6,13 +6,13 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
@@ -71,8 +71,8 @@ func (m *Module) verifyRunCancelled(ctx context.Context, run refreshrun.RunRecor
 				return errors.New("refresh event store is unavailable")
 			}
 			encoded, err := refreshgen.EncodeGenCancelRefreshRunAuditPayload(refreshgen.GenSchemaRefreshCancelledAuditPayload{
-				Id: run.ID, WorkspaceId: run.WorkspaceID,
-				PipelineId: strings.TrimPrefix(run.TargetID, run.WorkspaceID+"."),
+				Id:         run.ID,
+				PipelineId: run.PipelineID.String(),
 				Status:     run.Status, Trigger: run.TriggerType,
 			})
 			if err != nil {
@@ -98,7 +98,7 @@ func (m *Module) VerifyRunCancelled(ctx context.Context, run refreshrun.RunRecor
 
 func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) func(context.Context, refreshrun.JobRecord) {
 	return func(ctx context.Context, job refreshrun.JobRecord) {
-		run, err := m.GetRun(ctx, job.WorkspaceID, job.RunID)
+		run, err := m.runs.GetRun(ctx, job.Identity, job.RunID)
 		if err != nil {
 			return
 		}
@@ -113,27 +113,31 @@ func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) 
 	}
 }
 
-func (m *Module) CreateRefreshRun(w http.ResponseWriter, r *http.Request, _ string) {
+func (m *Module) CreateRefreshRun(w http.ResponseWriter, r *http.Request) {
 	m.handler.CreateRun(w, r)
 }
 
-func (m *Module) ListRefreshRuns(w http.ResponseWriter, r *http.Request, _ string) {
+func (m *Module) ListRefreshRuns(w http.ResponseWriter, r *http.Request) {
 	m.handler.ListRuns(w, r)
 }
 
-func (m *Module) GetRefreshRun(w http.ResponseWriter, r *http.Request, _, _ string) {
+func (m *Module) GetRefreshRun(w http.ResponseWriter, r *http.Request, _ string) {
 	m.handler.GetRun(w, r)
 }
 
-func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, workspaceID, runID string) {
+func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, runID string) {
 	operationID := refreshgen.GenCommandOperationCancelRefreshRun()
 	if m == nil || m.runs == nil {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
 		return
 	}
-	resolvedWorkspaceID := m.workspaceID(workspaceID)
-	prior, err := m.GetRun(r.Context(), resolvedWorkspaceID, runID)
-	if err != nil || prior.Environment != m.environment {
+	identity, identityErr := m.handler.ServingIdentity(r)
+	if identityErr != nil {
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
+		return
+	}
+	prior, err := m.runs.GetRun(r.Context(), identity, runID)
+	if err != nil || prior.Identity != identity {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
@@ -142,7 +146,7 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, worksp
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
-	allowed, err := m.authorize(r, resolvedWorkspaceID, publicPrior.PipelineID, true)
+	allowed, err := m.authorize(r, identity, publicPrior.PipelineID, true)
 	if err != nil {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.Wrap("unavailable", err))
 		return
@@ -151,7 +155,7 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, worksp
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("forbidden", "Refresh run is not accessible"))
 		return
 	}
-	row, err := m.CancelRun(r.Context(), resolvedWorkspaceID, runID)
+	row, err := m.runs.CancelRun(r.Context(), identity, runID)
 	if err != nil {
 		if errors.Is(err, refreshrun.ErrRunNotCancellable) {
 			writeRefreshCommandFailure(m, w, r, operationID, err)
@@ -173,7 +177,7 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, worksp
 		writeRefreshCommandFailure(m, w, r, operationID, err)
 		return
 	}
-	w.Header().Set("Location", "/api/v1/workspaces/"+workspaceID+"/refresh-runs/"+runID)
+	w.Header().Set("Location", "/api/v1/refresh-runs/"+runID)
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
 }
 
@@ -181,14 +185,18 @@ func writeRefreshCommandFailure(_ *Module, w http.ResponseWriter, r *http.Reques
 	apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, nil, operationID, refreshgen.GetAPIGenCommandFailureContracts, err)
 }
 
-func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, workspaceID, runID string, limit *int32, pageToken *string) {
+func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, runID string, limit *int32, pageToken *string) {
 	if m == nil || m.runs == nil {
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "REFRESH_SERVICE_UNAVAILABLE", "Refresh service is unavailable", nil)
 		return
 	}
-	resolvedWorkspaceID := m.workspaceID(workspaceID)
-	run, err := m.GetRun(r.Context(), resolvedWorkspaceID, runID)
-	if err != nil || run.Environment != m.environment {
+	identity, identityErr := m.handler.ServingIdentity(r)
+	if identityErr != nil {
+		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
+		return
+	}
+	run, err := m.runs.GetRun(r.Context(), identity, runID)
+	if err != nil || run.Identity != identity {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return
 	}
@@ -197,7 +205,7 @@ func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, wo
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return
 	}
-	allowed, err := m.authorize(r, resolvedWorkspaceID, response.PipelineID, false)
+	allowed, err := m.authorize(r, identity, response.PipelineID, false)
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "REFRESH_AUTHORIZATION_FAILED", "Refresh authorization failed", nil)
 		return
@@ -210,21 +218,14 @@ func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, wo
 		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ASYNC_EVENT_STORE_UNAVAILABLE", "Refresh events are unavailable", nil)
 		return
 	}
-	jobhttp.WriteEventPage(w, r, m.events, m.refreshExecution.ResourceKind, runID, limit, pageToken, m.refreshExecution.ResourceKind+":"+workspaceID+":"+runID)
+	jobhttp.WriteEventPage(w, r, m.events, m.refreshExecution.ResourceKind, runID, limit, pageToken, m.refreshExecution.ResourceKind+":"+runID)
 }
 
 func (m *Module) DispatchAPIGenOperation(operationID string, logger *slog.Logger, w http.ResponseWriter, r *http.Request) bool {
 	return materializehttp.DispatchAPIGenOperation(operationID, m, logger, w, r)
 }
 
-func (m *Module) workspaceID(workspaceID string) string {
-	if m.handler.WorkspaceID != nil {
-		return m.handler.WorkspaceID(workspaceID)
-	}
-	return workspaceID
-}
-
-func (m *Module) authorize(r *http.Request, workspaceID, pipelineID string, execute bool) (bool, error) {
+func (m *Module) authorize(r *http.Request, identity projectgraph.ServingIdentity, pipelineID string, execute bool) (bool, error) {
 	authorize := m.handler.AuthorizePipelineView
 	if execute {
 		authorize = m.handler.AuthorizePipelineRun
@@ -232,5 +233,5 @@ func (m *Module) authorize(r *http.Request, workspaceID, pipelineID string, exec
 	if authorize == nil {
 		return true, nil
 	}
-	return authorize(r, workspaceID, pipelineID)
+	return authorize(r, identity, pipelineID)
 }

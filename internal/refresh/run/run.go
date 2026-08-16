@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrRunNotCancellable = apigenfailure.New("not_cancellable", "refresh run is not cancellable")
+	ErrTargetActive      = apigenfailure.New("conflict", "refresh target already has an active run")
 	ErrLeaseLost         = errors.New("refresh job lease fence is no longer active")
 )
 

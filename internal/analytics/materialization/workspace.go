@@ -10,7 +10,7 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
-type WorkspaceRequest struct {
+type Request struct {
 	Models                           map[string]*semanticmodel.Model
 	Identity                         projectgraph.ServingIdentity
 	ConnectionEvidenceServingStateID servingstate.ID
@@ -22,6 +22,6 @@ type WorkspaceRequest struct {
 	Tables                           []string
 }
 
-type WorkspaceExecutor interface {
-	MaterializeWorkspace(context.Context, WorkspaceRequest) (int64, error)
+type Executor interface {
+	Materialize(context.Context, Request) (int64, error)
 }

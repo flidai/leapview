@@ -17,7 +17,7 @@ type duckDBWorkspaceMaterializer struct {
 	module      *Module
 }
 
-func (e duckDBWorkspaceMaterializer) MaterializeWorkspace(ctx context.Context, request analyticsmaterialization.WorkspaceRequest) (int64, error) {
+func (e duckDBWorkspaceMaterializer) Materialize(ctx context.Context, request analyticsmaterialization.Request) (int64, error) {
 	runtime, err := analyticsduckdb.OpenWorkspaceMaterializeRuntime(ctx, analyticsduckdb.WorkspaceRuntimeConfig{
 		Models: request.Models, Database: e.environment,
 		CredentialResolver: e.credentials,
@@ -42,7 +42,7 @@ func (e duckDBWorkspaceMaterializer) MaterializeWorkspace(ctx context.Context, r
 	return snapshotID, nil
 }
 
-func (e duckDBWorkspaceMaterializer) connectionResolver(request analyticsmaterialization.WorkspaceRequest) analyticsruntime.ConnectionResolver {
+func (e duckDBWorkspaceMaterializer) connectionResolver(request analyticsmaterialization.Request) analyticsruntime.ConnectionResolver {
 	if e.module == nil || e.module.activeRuntimeBindingEvidence == nil || request.ConnectionEvidenceServingStateID == "" {
 		return nil
 	}

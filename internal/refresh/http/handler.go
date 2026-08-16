@@ -12,9 +12,9 @@ import (
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
-	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -27,12 +27,11 @@ type Handler struct {
 	RunnerConfigured      func() bool
 	DispatchQueued        func()
 	CurrentPrincipal      func(*nethttp.Request) (Principal, bool)
-	WorkspaceID           func(string) string
-	Environment           func(*nethttp.Request) string
+	ServingIdentity       func(*nethttp.Request) (projectgraph.ServingIdentity, error)
 	RunCreated            func(context.Context, refreshrun.RunRecord) error
-	AuthorizePipelineView func(*nethttp.Request, string, string) (bool, error)
-	AuthorizePipelineRun  func(*nethttp.Request, string, string) (bool, error)
-	QueuePipeline         func(context.Context, string, string, string, string, string) (refreshrun.RunRecord, error)
+	AuthorizePipelineView func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
+	AuthorizePipelineRun  func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
+	QueuePipeline         func(context.Context, projectgraph.ServingIdentity, string, string, string) (refreshrun.RunRecord, error)
 }
 
 type materializationRunRequest struct {
@@ -44,28 +43,26 @@ type materializationRunRequest struct {
 // run. Model-table dependency runs and queue implementation details are never
 // part of the API contract.
 type PipelineRunResponse struct {
-	ID                   string `json:"id"`
-	WorkspaceID          string `json:"workspaceId"`
-	PipelineID           string `json:"pipelineId"`
-	SemanticModel        string `json:"semanticModel"`
-	PrincipalID          string `json:"principalId,omitempty"`
-	PrincipalDisplayName string `json:"principalDisplayName,omitempty"`
-	Trigger              string `json:"trigger"`
-	RetryOf              string `json:"retryOf,omitempty"`
-	Status               string `json:"status"`
-	Error                string `json:"error,omitempty"`
-	CreatedAt            string `json:"createdAt"`
-	StartedAt            string `json:"startedAt,omitempty"`
-	FinishedAt           string `json:"finishedAt,omitempty"`
+	ID                   string                       `json:"id"`
+	Identity             projectgraph.ServingIdentity `json:"identity"`
+	PipelineID           string                       `json:"pipelineId"`
+	SemanticModel        string                       `json:"semanticModel"`
+	PrincipalID          string                       `json:"principalId,omitempty"`
+	PrincipalDisplayName string                       `json:"principalDisplayName,omitempty"`
+	Trigger              string                       `json:"trigger"`
+	RetryOf              string                       `json:"retryOf,omitempty"`
+	Status               string                       `json:"status"`
+	Error                string                       `json:"error,omitempty"`
+	CreatedAt            string                       `json:"createdAt"`
+	StartedAt            string                       `json:"startedAt,omitempty"`
+	FinishedAt           string                       `json:"finishedAt,omitempty"`
 }
 
 func PipelineRunResponseFor(run refreshrun.RunRecord) (PipelineRunResponse, bool) {
-	prefix := run.WorkspaceID + "."
-	if run.ParentRunID != "" || run.TargetType != refreshrun.TargetRefreshPipeline || !strings.HasPrefix(run.TargetID, prefix) {
+	if run.ParentRunID != "" || run.TargetType != refreshrun.TargetRefreshPipeline || run.PipelineID == "" || run.TargetID != run.PipelineID {
 		return PipelineRunResponse{}, false
 	}
-	pipelineID := strings.TrimSpace(strings.TrimPrefix(run.TargetID, prefix))
-	if pipelineID == "" {
+	if run.Identity.Validate() != nil || run.PipelineID.Validate() != nil || run.SemanticModelID.Validate() != nil {
 		return PipelineRunResponse{}, false
 	}
 	createdAt, err := httptransport.NormalizeTimestamp(run.CreatedAt)
@@ -81,7 +78,7 @@ func PipelineRunResponseFor(run refreshrun.RunRecord) (PipelineRunResponse, bool
 		return PipelineRunResponse{}, false
 	}
 	return PipelineRunResponse{
-		ID: run.ID, WorkspaceID: run.WorkspaceID, PipelineID: pipelineID, SemanticModel: run.ModelID,
+		ID: run.ID, Identity: run.Identity, PipelineID: run.PipelineID.String(), SemanticModel: run.SemanticModelID.String(),
 		PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName, Trigger: run.TriggerType,
 		RetryOf: run.RetryOf, Status: run.Status, Error: run.Error, CreatedAt: createdAt,
 		StartedAt: startedAt, FinishedAt: finishedAt,
@@ -90,7 +87,7 @@ func PipelineRunResponseFor(run refreshrun.RunRecord) (PipelineRunResponse, bool
 
 func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 	operationID := refreshgen.GenCommandOperationCreateRefreshRun()
-	repo, workspaceID, ok := h.commandRunRepository(w, r, operationID)
+	repo, identity, ok := h.commandRunRepository(w, r, operationID)
 	if !ok {
 		return
 	}
@@ -116,7 +113,7 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	if h.AuthorizePipelineRun != nil {
-		allowed, err := h.AuthorizePipelineRun(r, workspaceID, input.PipelineID)
+		allowed, err := h.AuthorizePipelineRun(r, identity, input.PipelineID)
 		if err != nil {
 			writeCommandFailure(w, r, operationID, apigenfailure.Wrap("unavailable", err))
 			return
@@ -127,16 +124,16 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 		}
 	}
 	if input.RetryOf != "" {
-		prior, err := repo.GetRun(r.Context(), workspaceID, input.RetryOf)
+		prior, err := repo.GetRun(r.Context(), identity, input.RetryOf)
 		if err != nil {
-			writeCommandFailure(w, r, operationID, apigenfailure.New("invalid", "retryOf does not identify a refresh run in this workspace"))
+			writeCommandFailure(w, r, operationID, apigenfailure.New("invalid", "retryOf does not identify a refresh run"))
 			return
 		}
 		if prior.Status == refreshrun.RunStatusQueued || prior.Status == refreshrun.RunStatusRunning {
 			writeCommandFailure(w, r, operationID, apigenfailure.New("conflict", "retryOf refresh run is not terminal"))
 			return
 		}
-		if prior.Environment != h.environment(r) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.TargetID != workspaceID+"."+input.PipelineID {
+		if prior.Identity != identity || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.PipelineID.String() != input.PipelineID {
 			writeCommandFailure(w, r, operationID, apigenfailure.New("invalid", "retryOf does not belong to pipelineId"))
 			return
 		}
@@ -145,7 +142,7 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeCommandFailure(w, r, operationID, apigenfailure.New("unavailable", "refresh pipeline runner is not configured"))
 		return
 	}
-	run, err := h.QueuePipeline(r.Context(), workspaceID, h.environment(r), input.PipelineID, principalID, input.RetryOf)
+	run, err := h.QueuePipeline(r.Context(), identity, input.PipelineID, principalID, input.RetryOf)
 	if err != nil {
 		if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)
@@ -172,7 +169,7 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h Handler) ListRuns(w nethttp.ResponseWriter, r *nethttp.Request) {
-	repo, workspaceID, ok := h.runRepository(w, r)
+	repo, identity, ok := h.runRepository(w, r)
 	if !ok {
 		return
 	}
@@ -183,7 +180,7 @@ func (h Handler) ListRuns(w nethttp.ResponseWriter, r *nethttp.Request) {
 	responses := make([]PipelineRunResponse, 0, limit+1)
 	after := firstNonEmpty(r.URL.Query().Get("pageToken"), r.URL.Query().Get("after"))
 	for len(responses) <= limit {
-		runs, err := repo.ListRuns(r.Context(), workspaceID, refreshrun.RunPage{Limit: maxAPILimit, After: after, Environment: h.environment(r)})
+		runs, err := repo.ListRuns(r.Context(), identity, refreshrun.RunPage{Limit: maxAPILimit, After: after})
 		if err != nil {
 			writeJSONError(w, err, nethttp.StatusInternalServerError)
 			return
@@ -196,7 +193,7 @@ func (h Handler) ListRuns(w nethttp.ResponseWriter, r *nethttp.Request) {
 			if !valid {
 				continue
 			}
-			allowed, err := h.pipelineAllowed(r, workspaceID, response.PipelineID)
+			allowed, err := h.pipelineAllowed(r, identity, response.PipelineID)
 			if err != nil {
 				writeJSONError(w, err, nethttp.StatusInternalServerError)
 				return
@@ -222,16 +219,16 @@ func (h Handler) ListRuns(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h Handler) GetRun(w nethttp.ResponseWriter, r *nethttp.Request) {
-	repo, workspaceID, ok := h.runRepository(w, r)
+	repo, identity, ok := h.runRepository(w, r)
 	if !ok {
 		return
 	}
-	run, err := repo.GetRun(r.Context(), workspaceID, chi.URLParam(r, "run"))
+	run, err := repo.GetRun(r.Context(), identity, chi.URLParam(r, "run"))
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
-	if run.Environment != h.environment(r) {
+	if run.Identity != identity {
 		writeJSONError(w, sql.ErrNoRows, nethttp.StatusNotFound)
 		return
 	}
@@ -240,7 +237,7 @@ func (h Handler) GetRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeJSONError(w, sql.ErrNoRows, nethttp.StatusNotFound)
 		return
 	}
-	allowed, err := h.pipelineAllowed(r, workspaceID, response.PipelineID)
+	allowed, err := h.pipelineAllowed(r, identity, response.PipelineID)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusInternalServerError)
 		return
@@ -252,60 +249,61 @@ func (h Handler) GetRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, nethttp.StatusOK, response)
 }
 
-func (h Handler) pipelineAllowed(r *nethttp.Request, workspaceID, pipelineID string) (bool, error) {
+func (h Handler) pipelineAllowed(r *nethttp.Request, identity projectgraph.ServingIdentity, pipelineID string) (bool, error) {
 	if h.AuthorizePipelineView == nil {
 		return true, nil
 	}
-	return h.AuthorizePipelineView(r, workspaceID, pipelineID)
+	return h.AuthorizePipelineView(r, identity, pipelineID)
 }
 
-func (h Handler) environment(r *nethttp.Request) string {
-	if h.Environment == nil {
-		return string(servingstate.DefaultEnvironment)
-	}
-	return string(servingstate.NormalizeEnvironment(servingstate.Environment(h.Environment(r))))
-}
-
-func (h Handler) runRepository(w nethttp.ResponseWriter, r *nethttp.Request) (refreshrun.RunRepository, string, bool) {
+func (h Handler) runRepository(w nethttp.ResponseWriter, r *nethttp.Request) (refreshrun.RunRepository, projectgraph.ServingIdentity, bool) {
 	if h.Repository == nil {
 		writeJSONError(w, fmt.Errorf("platform store is required"), nethttp.StatusServiceUnavailable)
-		return nil, "", false
+		return nil, projectgraph.ServingIdentity{}, false
 	}
 	repo, err := h.Repository()
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
-		return nil, "", false
+		return nil, projectgraph.ServingIdentity{}, false
 	}
-	workspaceID := chi.URLParam(r, "workspace")
-	if h.WorkspaceID != nil {
-		workspaceID = h.WorkspaceID(workspaceID)
+	identity, err := h.servingIdentity(r)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusBadRequest)
+		return nil, projectgraph.ServingIdentity{}, false
 	}
-	if workspaceID == "" {
-		writeJSONError(w, fmt.Errorf("workspace id is required"), nethttp.StatusBadRequest)
-		return nil, "", false
-	}
-	return repo, workspaceID, true
+	return repo, identity, true
 }
 
-func (h Handler) commandRunRepository(w nethttp.ResponseWriter, r *nethttp.Request, operationID refreshgen.GenCommandOperationID) (refreshrun.RunRepository, string, bool) {
+func (h Handler) commandRunRepository(w nethttp.ResponseWriter, r *nethttp.Request, operationID refreshgen.GenCommandOperationID) (refreshrun.RunRepository, projectgraph.ServingIdentity, bool) {
 	if h.Repository == nil {
 		writeCommandFailure(w, r, operationID, apigenfailure.New("unavailable", "refresh persistence is not configured"))
-		return nil, "", false
+		return nil, projectgraph.ServingIdentity{}, false
 	}
 	repo, err := h.Repository()
 	if err != nil {
 		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("unavailable", err))
-		return nil, "", false
+		return nil, projectgraph.ServingIdentity{}, false
 	}
-	workspaceID := chi.URLParam(r, "workspace")
-	if h.WorkspaceID != nil {
-		workspaceID = h.WorkspaceID(workspaceID)
+	identity, err := h.servingIdentity(r)
+	if err != nil {
+		writeCommandFailure(w, r, operationID, apigenfailure.Wrap("invalid", err))
+		return nil, projectgraph.ServingIdentity{}, false
 	}
-	if workspaceID == "" {
-		writeCommandFailure(w, r, operationID, apigenfailure.New("invalid", "workspace id is required"))
-		return nil, "", false
+	return repo, identity, true
+}
+
+func (h Handler) servingIdentity(r *nethttp.Request) (projectgraph.ServingIdentity, error) {
+	if h.ServingIdentity == nil {
+		return projectgraph.ServingIdentity{}, errors.New("exact serving identity resolver is required")
 	}
-	return repo, workspaceID, true
+	identity, err := h.ServingIdentity(r)
+	if err != nil {
+		return projectgraph.ServingIdentity{}, err
+	}
+	if err := identity.Validate(); err != nil {
+		return projectgraph.ServingIdentity{}, err
+	}
+	return identity, nil
 }
 
 type pageResponse struct {

@@ -27,12 +27,15 @@ func TestSQLRunRepositoryRecordsInitialLifecycleInRunTransaction(t *testing.T) {
 INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_a', 'project_sales', 'dev', 'validated');`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@example.test', 'Test')`); err != nil {
+		t.Fatal(err)
+	}
 	events := jobsqlite.NewRepository(store.SQLDB())
 	repository := NewSQLRunRepositoryWithWorkflow(store.SQLDB(), events, RunWorkflowConfig{
 		ResourceKind: "refresh", InitialEvent: "refresh.queued", InitialState: "queued",
 	})
 	run, err := repository.CreateRun(t.Context(), refreshrun.RunInput{
-		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
+		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily",
 		TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
 	})
@@ -55,12 +58,15 @@ func TestSQLRunRepositoryRollsBackRunWhenInitialLifecycleFails(t *testing.T) {
 INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_a', 'project_sales', 'dev', 'validated');`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@example.test', 'Test')`); err != nil {
+		t.Fatal(err)
+	}
 	injected := errors.New("initial lifecycle unavailable")
 	repository := NewSQLRunRepositoryWithWorkflow(store.SQLDB(), jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
 		return injected
 	}), RunWorkflowConfig{ResourceKind: "refresh", InitialEvent: "refresh.queued", InitialState: "queued"})
 	_, err = repository.CreateRun(t.Context(), refreshrun.RunInput{
-		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
+		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily",
 		TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
 	})
@@ -179,7 +185,7 @@ func TestSQLRunRepositoryFailsClaimedRunTreeAtomically(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'system:refresh', '[]', 67108864, 'child_run', 'queued');
 INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
-VALUES ('child_run', 'child_job', 'system:refresh', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'running', 2);`); err != nil {
+VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'running', 2);`); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.MarkRunTreeFailedClaimed(t.Context(), job, "pipeline failed"); err != nil {
@@ -206,7 +212,7 @@ func TestSQLRunRepositoryRejectsIneligibleChildTree(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'system:refresh', '[]', 67108864, 'child_run', 'queued');
 INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
-VALUES ('child_run', 'child_job', 'system:refresh', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'succeeded', 2);`); err != nil {
+VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'succeeded', 2);`); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.MarkRunTreeFailedClaimed(t.Context(), job, "pipeline failed"); !errors.Is(err, refreshrun.ErrLeaseLost) {
@@ -227,25 +233,31 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
   ('generation_b', 'project_sales', 'dev', 'validated');`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@example.test', 'Test')`); err != nil {
+		t.Fatal(err)
+	}
 	repository := NewSQLRunRepository(store.SQLDB())
 	identityB := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_b"}
-	input := func(identity projectgraph.ServingIdentity) refreshrun.RunInput {
+	input := func(identity projectgraph.ServingIdentity, pipeline, semanticModel string) refreshrun.RunInput {
 		return refreshrun.RunInput{
-			Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
-			TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily",
+			Identity: identity, SemanticModelID: projectgraph.ResourceID(semanticModel), PipelineID: projectgraph.ResourceID(pipeline), PrincipalID: "user:test", GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
+			TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(pipeline),
 			TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
 		}
 	}
-	runA, err := repository.CreateRun(t.Context(), input(testRunIdentity))
+	runA, err := repository.CreateRun(t.Context(), input(testRunIdentity, "pipeline_daily", "semantic_sales"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	runB, err := repository.CreateRun(t.Context(), input(identityB))
+	if _, err := repository.CreateRun(t.Context(), input(identityB, "pipeline_daily", "semantic_sales")); !errors.Is(err, refreshrun.ErrTargetActive) {
+		t.Fatalf("same target across generations error = %v, want ErrTargetActive", err)
+	}
+	runB, err := repository.CreateRun(t.Context(), input(identityB, "pipeline_other", "semantic_other"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runA.TargetRevision != 1 || runB.TargetRevision != 1 || runA.PipelineID != "pipeline_daily" || runB.PipelineID != "pipeline_daily" {
-		t.Fatalf("cross-generation revisions/pipeline = %d/%d %q/%q, want both 1 and pipeline_daily", runA.TargetRevision, runB.TargetRevision, runA.PipelineID, runB.PipelineID)
+	if runA.TargetRevision != 1 || runB.TargetRevision != 1 || runA.PipelineID != "pipeline_daily" || runB.PipelineID != "pipeline_other" {
+		t.Fatalf("cross-generation revisions/pipeline = %d/%d %q/%q, want both 1 and distinct targets", runA.TargetRevision, runB.TargetRevision, runA.PipelineID, runB.PipelineID)
 	}
 	claimedA, ok, err := repository.ClaimNextExecutableJob(t.Context(), testRunIdentity, "worker-a", time.Minute)
 	if err != nil || !ok {
@@ -261,7 +273,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	if _, err := repository.MarkRunPrepared(t.Context(), claimedB); err != nil {
 		t.Fatal(err)
 	}
-	newB, err := repository.CreateRun(t.Context(), input(identityB))
+	newB, err := repository.CreateRun(t.Context(), input(identityB, "pipeline_other", "semantic_other"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +303,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 func TestMaterializationRunMappingRejectsCorruptPersistedIdentity(t *testing.T) {
 	base := materializationRunDBRow{
 		ID: "run_1", ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_a",
-		SemanticModelID: "semantic_sales", TargetType: refreshrun.TargetRefreshPipeline,
+		SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline,
 		TargetID: "pipeline_daily", TargetRevision: 1, TriggerType: refreshrun.TriggerManual,
 		Status: refreshrun.RunStatusQueued,
 	}
@@ -326,6 +338,11 @@ func seedRefreshJob(t *testing.T, runStatus, leaseOffset string) (*platform.Stor
 		t.Fatalf("open platform store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_a', 'project_sales', 'dev', 'validated');
+INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@example.test', 'Test');`); err != nil {
+		t.Fatalf("seed refresh job dependencies: %v", err)
+	}
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO refresh_jobs (
   id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status, lease_owner, lease_revision

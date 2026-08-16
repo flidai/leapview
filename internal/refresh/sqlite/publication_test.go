@@ -10,6 +10,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 var publicationIdentity = projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "candidate"}
@@ -18,7 +19,7 @@ func TestPublicationCompletesRootAndChildrenAtomically(t *testing.T) {
 	store, version := seedPublicationTree(t, "running")
 	defer store.Close()
 	unit := NewPublicationUnitOfWork(store.SQLDB(), nil)
-	if err := unit.Publish(t.Context(), publicationIdentity, version); err != nil {
+	if err := unit.Publish(t.Context(), publicationIdentity, servingstate.ID(publicationIdentity.GenerationID), version); err != nil {
 		t.Fatalf("Publish() error = %v", err)
 	}
 	assertPublicationTreeStatuses(t, store, refreshrun.RunStatusSucceeded, refreshrun.RunStatusSucceeded, refreshrun.RunStatusSucceeded, refreshrun.RunStatusSucceeded)
@@ -32,7 +33,7 @@ func TestPublicationRejectsExpiredFenceWithoutMutation(t *testing.T) {
 	}
 	before := publicationSnapshot(t, store)
 	unit := NewPublicationUnitOfWork(store.SQLDB(), nil)
-	if err := unit.Publish(t.Context(), publicationIdentity, version); !errors.Is(err, refreshrun.ErrLeaseLost) {
+	if err := unit.Publish(t.Context(), publicationIdentity, servingstate.ID(publicationIdentity.GenerationID), version); !errors.Is(err, refreshrun.ErrLeaseLost) {
 		t.Fatalf("Publish() error = %v, want ErrLeaseLost", err)
 	}
 	assertPublicationTreeStatuses(t, store, refreshrun.RunStatusPrepared, refreshrun.RunStatusRunning, refreshrun.RunStatusRunning, refreshrun.RunStatusQueued)
@@ -55,7 +56,7 @@ func TestPublicationIneligibleChildRollsBackWholeTree(t *testing.T) {
 	store, version := seedPublicationTree(t, "succeeded")
 	defer store.Close()
 	unit := NewPublicationUnitOfWork(store.SQLDB(), nil)
-	if err := unit.Publish(t.Context(), publicationIdentity, version); !errors.Is(err, refreshrun.ErrLeaseLost) {
+	if err := unit.Publish(t.Context(), publicationIdentity, servingstate.ID(publicationIdentity.GenerationID), version); !errors.Is(err, refreshrun.ErrLeaseLost) {
 		t.Fatalf("Publish() error = %v, want ErrLeaseLost", err)
 	}
 	assertPublicationTreeStatuses(t, store, refreshrun.RunStatusPrepared, refreshrun.RunStatusSucceeded, refreshrun.RunStatusRunning, refreshrun.RunStatusQueued)
@@ -70,6 +71,8 @@ func seedPublicationTree(t *testing.T, childStatus string) (*platform.Store, ref
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO serving_states (id, project_id, environment, status, source, digest, manifest_json, created_by, ducklake_snapshot_id)
 VALUES ('candidate', 'project_sales', 'dev', 'validated', 'refresh', 'digest', '{}', 'test', 42);
+INSERT INTO principals (id, email, display_name)
+VALUES ('user:test', 'test@example.test', 'Test');
 INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status, lease_owner, lease_revision, lease_expires_at)
 VALUES ('root_job', 'project_sales', 'candidate', 'semantic_sales', 'pipeline_daily', 'user:test', '[]', 67108864, 'refresh_pipeline', 'running', 'worker-1', 1, datetime('now', '+5 minutes'));
 INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status)

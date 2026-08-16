@@ -20,12 +20,17 @@ func testIdentity(environment, generation string) projectgraph.ServingIdentity {
 
 func seedRefreshGenerations(t *testing.T, store *platform.Store) {
 	t.Helper()
-	for _, environment := range []string{"dev", "prod"} {
-		if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, project_id, environment, status) VALUES (?, 'project_sales', ?, 'active')`, "generation_a", environment); err != nil {
+	for _, generation := range []struct {
+		id, environment string
+	}{
+		{id: "generation_dev_a", environment: "dev"},
+		{id: "generation_a", environment: "prod"},
+	} {
+		if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, project_id, environment, status) VALUES (?, 'project_sales', ?, 'active')`, generation.id, generation.environment); err != nil {
 			t.Fatalf("insert serving generation: %v", err)
 		}
 	}
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_b', 'project_sales', 'prod', 'active')`); err != nil {
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_b', 'project_sales', 'prod', 'validated')`); err != nil {
 		t.Fatalf("insert serving generation b: %v", err)
 	}
 }
@@ -83,7 +88,7 @@ func TestRepositoryReconcileAndClaimDueCoalescesCatchUp(t *testing.T) {
 	}
 }
 
-func TestRepositoryClaimDueDoesNotAdvanceAnotherEnvironment(t *testing.T) {
+func TestRepositoryClaimDueDoesNotAdvanceAnotherGeneration(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -93,21 +98,27 @@ func TestRepositoryClaimDueDoesNotAdvanceAnotherEnvironment(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	deployedAt := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
-	for _, environment := range []string{"dev", "prod"} {
+	for _, item := range []struct {
+		identity projectgraph.ServingIdentity
+		pipeline refreshschedule.Definition
+	}{
+		{identity: testIdentity("prod", "generation_a"), pipeline: refreshschedule.Definition{ID: "pipeline_sales_refresh_a", SemanticModelID: "semantic_sales_a"}},
+		{identity: testIdentity("prod", "generation_b"), pipeline: refreshschedule.Definition{ID: "pipeline_sales_refresh_b", SemanticModelID: "semantic_sales_b"}},
+	} {
 		if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
-			Identity: testIdentity(environment, "generation_a"), ArtifactDigest: validDigest("a"), Now: deployedAt,
-			Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Schedules: []refreshschedule.Schedule{schedule}}},
+			Identity: item.identity, ArtifactDigest: validDigest("a"), Now: deployedAt,
+			Pipelines: []refreshschedule.Definition{{ID: item.pipeline.ID, SemanticModelID: item.pipeline.SemanticModelID, Schedules: []refreshschedule.Schedule{schedule}}},
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	due, err := repo.ClaimDue(t.Context(), testIdentity("dev", "generation_a"), time.Date(2026, 7, 18, 7, 0, 0, 0, time.UTC))
-	if err != nil || len(due) != 1 || due[0].Identity.Environment != "dev" {
-		t.Fatalf("dev ClaimDue() = %#v, %v", due, err)
+	due, err := repo.ClaimDue(t.Context(), testIdentity("prod", "generation_a"), time.Date(2026, 7, 18, 7, 0, 0, 0, time.UTC))
+	if err != nil || len(due) != 1 || due[0].Identity.GenerationID != "generation_a" {
+		t.Fatalf("generation A ClaimDue() = %#v, %v", due, err)
 	}
-	prodNext, ok, err := repo.NextRun(t.Context(), testIdentity("prod", "generation_a"), "pipeline_sales_refresh")
-	if err != nil || !ok || !prodNext.Equal(time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)) {
-		t.Fatalf("prod next run = %s, found=%v, err=%v", prodNext, ok, err)
+	generationBNext, ok, err := repo.NextRun(t.Context(), testIdentity("prod", "generation_b"), "pipeline_sales_refresh_b")
+	if err != nil || !ok || !generationBNext.Equal(time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)) {
+		t.Fatalf("generation B next run = %s, found=%v, err=%v", generationBNext, ok, err)
 	}
 }
 
@@ -320,7 +331,7 @@ func TestRepositoryGenerationIsolationAcrossScheduleOperations(t *testing.T) {
 	}
 	if err := repo.SaveDataVersion(t.Context(), refreshschedule.DataVersion{
 		Identity: testIdentity("prod", "generation_b"), SemanticModelID: "semantic_b", SnapshotID: 7,
-		RefreshedAt: now, Source: refreshschedule.DataVersionSourceRefresh, PipelineID: "pipeline_b", RunID: "run_b",
+		RefreshedAt: now, Source: refreshschedule.DataVersionSourceRefresh, PipelineID: "pipeline_b",
 	}); err != nil {
 		t.Fatal(err)
 	}

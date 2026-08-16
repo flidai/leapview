@@ -7,24 +7,23 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-func TestPublisherResolvesWorkspaceSupportAtPublicationTime(t *testing.T) {
-	resolutions := 0
-	semanticModel := ""
+func TestPublisherUsesExactServingIdentityAtPublicationTime(t *testing.T) {
+	var published projectgraph.ServingIdentity
+	var semanticModel projectgraph.ResourceID
 	publisher := Publisher{
-		Workspace: func() WorkspaceSupport {
-			resolutions++
-			return WorkspaceSupport{}
+		RefreshTarget: func(_ context.Context, identity projectgraph.ServingIdentity, _ string, _ projectgraph.ResourceID) {
+			published = identity
 		},
-		SemanticModelVersion: func(_ context.Context, _, _, modelID string) {
+		SemanticModelVersion: func(_ context.Context, _ projectgraph.ServingIdentity, modelID projectgraph.ResourceID) {
 			semanticModel = modelID
 		},
 	}
 
 	publisher.PublishRefreshTarget(context.Background(), projectgraph.ServingIdentity{ProjectID: "sales", Environment: "production", GenerationID: "generation"}, "model", "orders")
-	publisher.PublishSemanticModelVersion(context.Background(), "sales", "production", "orders")
+	publisher.PublishSemanticModelVersion(context.Background(), projectgraph.ServingIdentity{ProjectID: "sales", Environment: "production", GenerationID: "generation"}, "orders")
 
-	if resolutions != 1 {
-		t.Fatalf("workspace support resolutions = %d, want 1", resolutions)
+	if published.ProjectID != "sales" || published.GenerationID != "generation" {
+		t.Fatalf("published identity = %+v", published)
 	}
 	if semanticModel != "orders" {
 		t.Fatalf("semantic model = %q, want orders", semanticModel)
