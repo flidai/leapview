@@ -76,7 +76,7 @@ func (h *harness) updatesPath() string { return "/updates" }
 
 func (h *harness) commandPath(path string) string {
 	if strings.HasPrefix(path, "/commands/") {
-		return path
+		return "/dashboards/executive-sales" + path
 	}
 	return path
 }
@@ -92,6 +92,7 @@ func (h *harness) getUpdatesWithQueryTimeout(t *testing.T, dashboardID, pageID s
 		t.Fatal(err)
 	}
 	values := url.Values{"route": {"dashboard"}, "dashboard": {dashboardID}, "page": {pageID}, "datastar": {string(encoded)}}
+	addDashboardStreamQuery(values, signals)
 	for key, vals := range query {
 		for _, value := range vals {
 			values.Add(key, value)
@@ -132,6 +133,7 @@ func (h *harness) openUpdatesStream(t *testing.T, dashboardID, pageID string, si
 		t.Fatal(err)
 	}
 	values := url.Values{"route": {"dashboard"}, "dashboard": {dashboardID}, "page": {pageID}, "datastar": {string(encoded)}}
+	addDashboardStreamQuery(values, signals)
 	ctx, cancel := context.WithCancel(context.Background())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.serverURL(t)+h.updatesPath()+"?"+values.Encode(), nil)
 	if err != nil {
@@ -156,6 +158,16 @@ func (h *harness) openUpdatesStream(t *testing.T, dashboardID, pageID string, si
 	go client.read()
 	t.Cleanup(client.close)
 	return client
+}
+
+func addDashboardStreamQuery(values url.Values, signals map[string]any) {
+	runtime, _ := signals["runtime"].(map[string]any)
+	if clientID, _ := runtime["clientId"].(string); clientID != "" {
+		values.Set("clientId", clientID)
+	}
+	if streamInstanceID, _ := runtime["streamInstanceId"].(string); streamInstanceID != "" {
+		values.Set("streamInstance", streamInstanceID)
+	}
 }
 
 func (h *harness) postCommand(t *testing.T, path string, signals map[string]any) int {

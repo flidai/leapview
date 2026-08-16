@@ -345,7 +345,29 @@ func (fakeMetrics) queryWindow(_ context.Context, _ string, _ string, _ dashboar
 	if count <= 0 {
 		count = dashboard.TableChunkSize
 	}
-	return dashboard.Table{Title: "Orders", Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "measure", Format: "decimal"}}, Cardinality: dashboard.ExactCardinality(2), AvailableRows: 2, RowCap: dashboard.TableInteractiveRowCap, ChunkSize: dashboard.TableChunkSize, Sort: dashboard.TableSort{Key: "order_id", Direction: "desc"}, Blocks: map[string]dashboard.TableBlock{"a": {Rows: []map[string]any{{"order_id": "o1", "status": "delivered"}, {"order_id": "o2", "status": "shipped"}}[:min(count, 2)]}}}, nil
+	rows := []map[string]any{{"order_id": "o1", "status": "delivered"}, {"order_id": "o2", "status": "shipped"}}
+	start := max(request.Start, 0)
+	end := min(start+count, len(rows))
+	if start > len(rows) {
+		start = len(rows)
+	}
+	if end < start {
+		end = start
+	}
+	blockID := request.Block
+	if blockID == "" || blockID == "all" {
+		blockID = "a"
+	}
+	sort := request.Sort
+	if sort.Key == "" {
+		sort = dashboard.TableSort{Key: "order_id", Direction: "desc"}
+	}
+	return dashboard.Table{
+		Title: "Orders", Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "measure", Format: "decimal"}},
+		Cardinality: dashboard.ExactCardinality(len(rows)), AvailableRows: len(rows), RowCap: dashboard.TableInteractiveRowCap, ChunkSize: dashboard.TableChunkSize,
+		ResetVersion: request.ResetVersion, Sort: sort,
+		Blocks: map[string]dashboard.TableBlock{blockID: {Start: start, RequestSeq: request.RequestSeq, ResetVersion: request.ResetVersion, Sort: sort, Rows: rows[start:end]}},
+	}, nil
 }
 
 func fieldRefs(fields ...string) []dashboardauthoring.FieldRef {
