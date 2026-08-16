@@ -31,7 +31,7 @@ func TestReleaseLifecycleOperationContracts(t *testing.T) {
 			contract.Command.Target == nil ||
 			contract.Command.Target.Parameter != "project" ||
 			contract.Command.Target.Type != "project" ||
-			contract.Command.Privilege != "PUBLISH_RELEASE" ||
+			contract.Command.Privilege != "PROJECT_ADMIN" ||
 			contract.Command.Idempotency != expected.idempotency ||
 			len(contract.Command.AdditionalExposures) != 0 {
 			t.Errorf("command contract %q = %#v", operationID, contract)
