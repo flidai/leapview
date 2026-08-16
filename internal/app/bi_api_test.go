@@ -240,7 +240,7 @@ func TestSemanticAPIQueryAuditIncludesProject(t *testing.T) {
 		t.Fatalf("events = %d, want 1: %#v", len(events), events)
 	}
 	event := events[0]
-	if event.ProjectID != "test" || event.Surface != dataquery.SurfaceAPI || event.Operation != dataquery.OperationAPIQuery {
+	if event.ProjectID != "project:test" || event.Surface != dataquery.SurfaceAPI || event.Operation != dataquery.OperationAPIQuery {
 		t.Fatalf("event metadata = %#v", event)
 	}
 	if event.RequestID != "req_api_project" || event.CorrelationID != "corr_api_project" {
@@ -462,6 +462,7 @@ type auditedDashboardMetrics struct {
 
 func (m auditedDashboardMetrics) QueryDashboardPage(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters) (dashboard.Patch, error) {
 	_, err := m.ExecuteDataQuery(ctx, dataquery.Query{
+		ProjectID: projectgraph.ResourceID("project:test"),
 		Surface:   dataquery.SurfaceDashboard,
 		Operation: dataquery.OperationDashboardAggregate,
 		ModelID:   "test",
@@ -494,6 +495,7 @@ func (m auditedDashboardMetrics) QueryDashboardPage(ctx context.Context, dashboa
 
 func (m auditedDashboardMetrics) queryWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request dashboard.TableRequest) (dashboard.Table, error) {
 	_, err := m.ExecuteDataQuery(ctx, dataquery.Query{
+		ProjectID: projectgraph.ResourceID("project:test"),
 		Surface:   dataquery.SurfaceDashboard,
 		Operation: dataquery.OperationDashboardRows,
 		ModelID:   "test",
