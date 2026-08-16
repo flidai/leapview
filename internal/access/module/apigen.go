@@ -233,8 +233,26 @@ func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolv
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
+		effective, err := a.module.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if !containsCapability(effective, capability) {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
 		next.ServeHTTP(w, r)
 	}))
+}
+
+func containsCapability(capabilities []access.Capability, expected access.Capability) bool {
+	for _, capability := range capabilities {
+		if capability == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resources []access.ResourceRef, capability access.Capability) (bool, error) {

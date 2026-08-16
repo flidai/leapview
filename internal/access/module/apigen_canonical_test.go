@@ -5,11 +5,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -121,6 +125,24 @@ func apigenResourceAuthorizer(t *testing.T, principal Principal, groups []string
 	t.Helper()
 	repo := browserGuardRepository{groups: groups}
 	module := browserGuardModule(repo, principal, true)
+	module.SetCurrentEffectiveCapabilities(func(context.Context, string) ([]access.Capability, error) {
+		subjects := []access.SubjectRef{}
+		if principal.ID != "" {
+			subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, principal.ID)
+			if err != nil {
+				return nil, err
+			}
+			subjects = append(subjects, subject)
+		}
+		for _, groupID := range groups {
+			subject, err := access.NewSubjectRef(access.SubjectKindGroup, groupID)
+			if err != nil {
+				return nil, err
+			}
+			subjects = append(subjects, subject)
+		}
+		return snapshot.EffectiveCapabilities(subjects)
+	})
 	parameter, scope := "dashboard", "dashboard"
 	resolvers := APIGenResourceResolvers{Dashboard: apigenResolver("dashboard", projectgraph.KindDashboard), SemanticModel: apigenResolver("model", projectgraph.KindSemanticModel), Connection: apigenResolver("connection", projectgraph.KindConnection), Project: apigenResolver("project", projectgraph.KindProject)}
 	switch resourceKind {
@@ -190,6 +212,80 @@ func TestAPIGenResourceSelectorsAndSubjectResolution(t *testing.T) {
 				t.Fatalf("group subject status = %d, want %d", recorder.Code, http.StatusNoContent)
 			}
 		})
+	}
+}
+
+func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{ID: "principal_alice", Email: "alice@example.test", DisplayName: "Alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceID := projectgraph.ResourceID("dashboard_sales")
+	identity, snapshot := apigenSnapshot(t, principal.ID, "", resourceID, projectgraph.KindDashboard, true, false)
+	module, err := newSurface(surfaceConfig{
+		Repository: func() (access.Repository, error) { return repository, nil },
+		Auth:       NewAuth(repository, AuthConfig{}),
+		CurrentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
+			subject, subjectErr := access.NewSubjectRef(access.SubjectKindPrincipal, principal.ID)
+			if subjectErr != nil {
+				return nil, subjectErr
+			}
+			return snapshot.EffectiveCapabilities([]access.SubjectRef{subject})
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := APIGenOperationContract{
+		OperationID: "readResource", Method: http.MethodGet,
+		Path: "/api/v1/projects/{project}/dashboard/{dashboard}", Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ"},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "dashboard"},
+	}
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: "project_demo", lease: apigenLeaseFake{identity: identity, snapshot: snapshot}},
+		map[string]APIGenOperationContract{"readResource": contract},
+		APIGenResourceResolvers{Dashboard: apigenResolver("dashboard", projectgraph.KindDashboard)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, ok := authorizer.Protect("readResource", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	if !ok {
+		t.Fatal("resource operation was not protected")
+	}
+	call := func(secret string) int {
+		request := apigenRequest(http.MethodGet, "/api/v1/projects/project_demo/dashboard/dashboard_sales", map[string]string{"project": "project_demo", "dashboard": "dashboard_sales"})
+		request.Header.Set("Authorization", "Bearer "+secret)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	dynamicSecret, dynamicToken, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "dynamic", ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := call(dynamicSecret); got != http.StatusNoContent {
+		t.Fatalf("dynamic token status = %d, want 204", got)
+	}
+	denySecret, _, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "deny-all", Capabilities: []access.Capability{}, ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := call(denySecret); got != http.StatusForbidden {
+		t.Fatalf("deny-all token status = %d, want 403", got)
+	}
+	if err := repository.RevokeAPIToken(t.Context(), dynamicToken.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := call(dynamicSecret); got != http.StatusUnauthorized {
+		t.Fatalf("revoked token status = %d, want 401", got)
 	}
 }
 
