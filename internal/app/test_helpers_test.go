@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
@@ -19,6 +20,7 @@ import (
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -40,7 +42,7 @@ type assemblyConfig struct {
 	ManagedDataResolver   runtimehostmodule.ManagedDataResolver
 	ReleaseModule         *releasemodule.Module
 	JobModule             *jobsmodule.Module
-	AccessRepo            accessmodule.Repository
+	AccessRepo            access.Repository
 	AccessModule          *accessmodule.Module
 	Agent                 *agentmodule.Service
 	AgentConfig           agentmodule.ModelConfig
@@ -49,7 +51,6 @@ type assemblyConfig struct {
 	DuckDBDir             string
 	DuckLakeCatalogPath   string
 	DuckLakeDataPath      string
-	WorkspaceID           string
 	DefaultEnvironment    string
 	SCIMBearerToken       string
 	MetricsBearerToken    string
@@ -75,31 +76,6 @@ type assemblyConfig struct {
 	QueryAudit            *analyticsmodule.QueryAuditSurface
 	Product               *adminmodule.ProductService
 	ProductStatus         adminmodule.ProductStatus
-}
-
-// registeredTestMetrics makes the test fixture's declared workspace explicit
-// while preserving any real multi-workspace routing supplied by the test.
-type registeredTestMetrics struct {
-	QueryMetrics
-	workspaceID string
-}
-
-func (m registeredTestMetrics) MetricsForWorkspace(workspaceID string) (QueryMetrics, bool) {
-	if provider, ok := m.QueryMetrics.(workspaceMetrics); ok {
-		if metrics, found := provider.MetricsForWorkspace(workspaceID); found {
-			return metrics, true
-		}
-	}
-	if m.QueryMetrics == nil {
-		return nil, false
-	}
-	if catalogWorkspaceID := m.QueryMetrics.Catalog().Workspace.ID; catalogWorkspaceID != "" && catalogWorkspaceID == workspaceID {
-		return m.QueryMetrics, true
-	}
-	if m.workspaceID != "" && m.workspaceID == workspaceID {
-		return m.QueryMetrics, true
-	}
-	return nil, false
 }
 
 // appTestHarness is a test fixture facade for legacy app-package tests.
@@ -141,10 +117,6 @@ func (s *appTestHarness) publicProtocolMiddleware(next http.Handler) http.Handle
 	return publicProtocolMiddleware(s.platform.apiProtocol, next)
 }
 
-func (s *appTestHarness) metricsForWorkspace(workspaceID string) (QueryMetrics, bool) {
-	return metricsForWorkspace(s.runtime.metrics, workspaceID)
-}
-
 func assembleRuntime(metrics QueryMetrics, options assemblyConfig) *appTestHarness {
 	server, err := assembleRuntimeChecked(context.Background(), metrics, options)
 	if err != nil {
@@ -168,11 +140,6 @@ func apiGenDispatcherForTest(server *appTestHarness) apiGenDispatcher {
 }
 
 func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options assemblyConfig) (*appTestHarness, error) {
-	if options.WorkspaceID != "" {
-		// Tests must register every workspace they address explicitly. This mirrors
-		// production's workspace catalog without reintroducing an implicit fallback.
-		metrics = registeredTestMetrics{QueryMetrics: metrics, workspaceID: options.WorkspaceID}
-	}
 	instanceID := "lvinst_test"
 	publicURL := options.PublicURL
 	if publicURL == "" {
@@ -232,23 +199,6 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 	}, nil
 }
 
-func NewRuntimeMetrics(provider runtimehost.Provider, workspaceID string) QueryMetrics {
-	return dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: workspaceID})
-}
-
-func NewDynamicRuntimeMetrics(factory func(string) runtimehost.Provider) QueryMetrics {
-	return dashboardmodule.NewDynamicRuntimeMetrics(dashboardmodule.DynamicRuntimeMetricsOptions{ProviderFactory: factory})
-}
-
-func NewMultiWorkspaceMetrics(workspaces map[string]QueryMetrics) QueryMetrics {
-	return dashboardmodule.NewMultiWorkspaceMetrics(workspaces)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
+func NewRuntimeMetrics(provider runtimehost.Provider, projectID string) QueryMetrics {
+	return dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: projectgraph.ResourceID(projectID)})
 }
