@@ -17,7 +17,6 @@ type fakeMetrics struct{}
 type assemblyConfig struct {
 	store           *platform.Store
 	AccessRepo      access.Repository
-	WorkspaceID     string
 	SCIMBearerToken string
 	RateLimits      apihttpmiddleware.RateLimitConfig
 }

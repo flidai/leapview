@@ -45,8 +45,8 @@ func (m *Module) MountAuthenticatedBrowser(r chi.Router) {
 	deviceAuthorization := m.Authenticate(http.HandlerFunc(m.DeviceAuthorizationPage))
 	r.Method(http.MethodGet, "/device", deviceAuthorization)
 	r.Method(http.MethodPost, "/device", deviceAuthorization)
-	r.Post("/auth/logout", m.Authenticate(http.HandlerFunc(m.Logout)))
-	r.Post("/auth/local/password", m.Authenticate(http.HandlerFunc(m.LocalPassword)))
+	r.Method(http.MethodPost, "/auth/logout", m.Authenticate(http.HandlerFunc(m.Logout)))
+	r.Method(http.MethodPost, "/auth/local/password", m.Authenticate(http.HandlerFunc(m.LocalPassword)))
 	r.Method(http.MethodPut, "/profile/avatar", m.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		started, _, err := accessgen.BeginGenUploadCurrentAvatarCommand(request.Context(), accessgen.GenUploadCurrentAvatarCommandInvocation{
 			Surface: apigencommand.SurfaceUI, RequestID: strings.TrimSpace(request.Header.Get("X-Request-ID")),

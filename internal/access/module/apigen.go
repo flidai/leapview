@@ -114,6 +114,9 @@ func (a *APIGenAuthorizer) AuthorizeReplay(r *http.Request) bool {
 	route := routePattern(r)
 	for id, contract := range a.operations {
 		if strings.EqualFold(contract.Method, r.Method) && (contract.Path == route || matchOperationPath(contract.Path, r.URL.Path)) {
+			if route != "" && !matchOperationPath(contract.Path, r.URL.Path) {
+				continue
+			}
 			operationID = id
 			break
 		}
@@ -294,8 +297,11 @@ func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGen
 		if contract.AuthzMode != "none" {
 			return fmt.Errorf("unprotected APIGen operation %q must use authz mode none", operationID)
 		}
-		if apiGenHasAuthzMetadata(contract) {
+		if contract.Command != nil || apiGenHasNonNoneAuthzMetadata(contract) {
 			return fmt.Errorf("unprotected APIGen operation %q carries authorization metadata", operationID)
+		}
+		if scope, ok := apiGenScope(contract); ok && scope != "" {
+			return fmt.Errorf("unprotected APIGen operation %q carries resource scope metadata", operationID)
 		}
 		return nil
 	}
@@ -375,6 +381,19 @@ func apiGenHasAuthzMetadata(contract APIGenOperationContract) bool {
 		return true
 	}
 	return false
+}
+
+func apiGenHasNonNoneAuthzMetadata(contract APIGenOperationContract) bool {
+	raw, present := contract.Extensions["x-authz"]
+	if !present {
+		return false
+	}
+	authz, ok := raw.(map[string]any)
+	if !ok {
+		return true
+	}
+	mode, ok := authz["mode"].(string)
+	return !ok || mode != "none"
 }
 
 func apiGenScope(contract APIGenOperationContract) (string, bool) {

@@ -41,6 +41,16 @@ func TestPlatformAdminGuard(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			handler := Handler{
 				Repository: func() (access.Repository, error) { return test.repository, nil },
+				CurrentEffectiveCapabilities: func(ctx context.Context, principalID string) ([]access.Capability, error) {
+					admin, err := test.repository.IsPlatformAdmin(ctx, principalID)
+					if err != nil {
+						return nil, err
+					}
+					if admin {
+						return []access.Capability{access.CapabilityProjectAdmin}, nil
+					}
+					return nil, nil
+				},
 				CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 					return test.principal, test.authenticated
 				},

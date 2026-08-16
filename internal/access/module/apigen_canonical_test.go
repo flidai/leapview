@@ -71,9 +71,9 @@ func apigenSnapshot(t *testing.T, principalID, groupID string, resourceID projec
 	if err != nil {
 		t.Fatal(err)
 	}
-	resources := []projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject}}
+	resources := []projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"}}
 	if resourceID != "project_demo" || resourceKind != projectgraph.KindProject {
-		resources = append(resources, projectgraph.Resource{ID: resourceID, Kind: resourceKind})
+		resources = append(resources, projectgraph.Resource{ID: resourceID, Kind: resourceKind, Name: resourceID.String()})
 	}
 	graph, err := projectgraph.NewProjectGraph(resources, nil)
 	if err != nil {

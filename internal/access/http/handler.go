@@ -1480,27 +1480,19 @@ func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
 		return false
 	}
-	if h.Repository == nil {
-		writeJSONError(w, errors.New("access repository is unavailable"), stdhttp.StatusInternalServerError)
+	if h.CurrentEffectiveCapabilities == nil {
+		writeJSONError(w, errors.New("active authorization snapshot is unavailable"), stdhttp.StatusInternalServerError)
 		return false
 	}
-	repo, err := h.Repository()
+	capabilities, err := h.CurrentEffectiveCapabilities(r.Context(), principal.ID)
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return false
 	}
-	checker, ok := repo.(access.PlatformRoleReader)
-	if !ok {
-		writeJSONError(w, errors.New("platform role checker is unavailable"), stdhttp.StatusInternalServerError)
-		return false
-	}
-	admin, err := checker.IsPlatformAdmin(r.Context(), principal.ID)
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return false
-	}
-	if admin {
-		return true
+	for _, capability := range capabilities {
+		if capability == access.CapabilityProjectAdmin {
+			return true
+		}
 	}
 	writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 	return false
@@ -1657,7 +1649,7 @@ func servicePrincipalSecretDTO(row access.ServicePrincipalSecret, raw string) ma
 	return out
 }
 func sessionDTOFor(row access.Session, current string) map[string]any {
-	return map[string]any{"id": row.ID, "principalId": row.PrincipalID, "kind": row.Kind, "instanceId": row.InstanceID, "profileId": row.ProfileID, "clientId": row.ClientID, "expiresAt": row.ExpiresAt, "absoluteExpiresAt": row.AbsoluteExpiresAt, "createdAt": row.CreatedAt, "lastSeenAt": row.LastSeenAt, "revokedAt": emptyToNil(row.RevokedAt), "current": row.ID == current}
+	return map[string]any{"id": row.ID, "kind": row.Kind, "instanceId": row.InstanceID, "profileId": row.ProfileID, "clientId": row.ClientID, "expiresAt": row.ExpiresAt, "absoluteExpiresAt": row.AbsoluteExpiresAt, "createdAt": row.CreatedAt, "lastSeenAt": row.LastSeenAt, "revokedAt": emptyToNil(row.RevokedAt), "current": row.ID == current}
 }
 func sessionDTO(row access.Session) map[string]any { return sessionDTOFor(row, "") }
 func auditEventDTO(row access.AuditEvent) map[string]any {

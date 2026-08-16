@@ -31,7 +31,8 @@ func TestUpdateCurrentPrincipalIfMatchSemantics(t *testing.T) {
 				management: access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: true},
 			}
 			handler := Handler{
-				Repository: func() (access.Repository, error) { return repository, nil },
+				Repository:                   func() (access.Repository, error) { return repository, nil },
+				CurrentEffectiveCapabilities: allowProjectAdmin,
 				CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 					return Principal{ID: repository.principal.ID, Kind: access.PrincipalKindUser}, true
 				},
@@ -91,7 +92,8 @@ func TestUpdatePrincipalRejectsTransactionTimeRevisionChange(t *testing.T) {
 	}
 	repository := &revisionRaceRepository{currentUserRepository: base, bumpOnTransaction: true}
 	handler := Handler{
-		Repository: func() (access.Repository, error) { return repository, nil },
+		Repository:                   func() (access.Repository, error) { return repository, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 			return Principal{ID: "admin", Kind: access.PrincipalKindUser}, true
 		},
@@ -122,7 +124,8 @@ func TestUpdateCurrentPrincipalRejectsTransactionTimeRevisionChange(t *testing.T
 	}
 	repository := &revisionRaceRepository{currentUserRepository: base}
 	handler := Handler{
-		Repository: func() (access.Repository, error) { return repository, nil },
+		Repository:                   func() (access.Repository, error) { return repository, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 			return Principal{ID: base.principal.ID, Kind: access.PrincipalKindUser}, true
 		},
@@ -158,7 +161,7 @@ func TestUpdatePrincipalRevisionAcceptsWildcardAndRejectsMissingHeader(t *testin
 				management: access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal},
 			}
 			repository := &revisionRaceRepository{currentUserRepository: base}
-			handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "admin"}, true }}
+			handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentEffectiveCapabilities: allowProjectAdmin, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "admin"}, true }}
 			request := revisionRaceRequest(stdhttp.MethodPatch, "/api/v1/principals/target", "target", `{"displayName":"After"}`)
 			if test.ifMatch != "" {
 				request.Header.Set("If-Match", test.ifMatch)

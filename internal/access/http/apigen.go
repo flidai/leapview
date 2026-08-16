@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"errors"
 	stdhttp "net/http"
 
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
@@ -10,6 +12,22 @@ import (
 // and authoring operations. Project authorization endpoints are owned by the
 // immutable serving-state authorization surface.
 type APIGenDispatcher struct{ handler Handler }
+
+// APIGenTransportErrorResponder adapts generated transport failures to the
+// access API's intentionally small JSON error envelope.
+type APIGenTransportErrorResponder struct{}
+
+func (APIGenTransportErrorResponder) RespondTransportError(_ context.Context, w stdhttp.ResponseWriter, _ *stdhttp.Request, failure accessgen.GenTransportError) {
+	status := failure.StatusCode
+	if status <= 0 {
+		status = stdhttp.StatusInternalServerError
+	}
+	detail := failure.PublicDetail
+	if detail == "" && failure.Cause != nil {
+		detail = failure.Cause.Error()
+	}
+	writeJSONError(w, errors.New(detail), status)
+}
 
 func NewAPIGenDispatcher(handler Handler) *APIGenDispatcher {
 	return &APIGenDispatcher{handler: handler}
@@ -21,7 +39,10 @@ func (d *APIGenDispatcher) GetCurrentPrincipal(w stdhttp.ResponseWriter, r *stdh
 func (d *APIGenDispatcher) ListCurrentEffectiveCapabilities(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	d.handler.ListCurrentEffectiveCapabilities(w, r)
 }
-func (d *APIGenDispatcher) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenUpdateCurrentPrincipalHeaders) {
+func (d *APIGenDispatcher) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, headers accessgen.GenUpdateCurrentPrincipalHeaders) {
+	if value := headers.IfMatch; value != "" {
+		r.Header.Set("If-Match", value)
+	}
 	d.handler.UpdateCurrentPrincipal(w, r)
 }
 func (d *APIGenDispatcher) ChangeCurrentPassword(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenChangeCurrentPasswordHeaders) {
@@ -57,7 +78,10 @@ func (d *APIGenDispatcher) GetPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 func (d *APIGenDispatcher) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
 	d.handler.DeletePrincipal(w, r)
 }
-func (d *APIGenDispatcher) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenUpdatePrincipalHeaders) {
+func (d *APIGenDispatcher) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenUpdatePrincipalHeaders) {
+	if value := headers.IfMatch; value != "" {
+		r.Header.Set("If-Match", value)
+	}
 	d.handler.UpdatePrincipal(w, r)
 }
 func (d *APIGenDispatcher) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenResetPrincipalPasswordHeaders) {
@@ -117,13 +141,13 @@ func (d *APIGenDispatcher) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Requ
 func (d *APIGenDispatcher) DeleteGroup(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.DeleteGroup(w, r)
 }
-func (d *APIGenDispatcher) ListGroupMembers(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, _ accessgen.GenListGroupMembersParams) {
+func (d *APIGenDispatcher) ListGroupMembers(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListGroupMembersParams) {
 	d.handler.ListGroupMembers(w, r)
 }
-func (d *APIGenDispatcher) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _, _ string) {
+func (d *APIGenDispatcher) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.AddGroupMember(w, r)
 }
-func (d *APIGenDispatcher) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _, _ string) {
+func (d *APIGenDispatcher) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.RemoveGroupMember(w, r)
 }
 func (d *APIGenDispatcher) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, _ accessgen.GenListAuditEventsParams) {

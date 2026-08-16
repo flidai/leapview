@@ -43,7 +43,7 @@ func TestPrincipalAdministrationResponsesExposeSourceAwareCapabilities(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentEffectiveCapabilities: allowProjectAdmin, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 		return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
 	}}
 
@@ -112,7 +112,7 @@ func TestExternalPrincipalProfileAndDeletionAreManagedByProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentEffectiveCapabilities: allowProjectAdmin, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 		return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
 	}}
 
@@ -169,7 +169,7 @@ func TestPrincipalLifecycleIsAuditedAndDisableRejectsCredentials(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO oauth_authoring_sessions (
-  id, kind, client_id, principal_id, target_id, project_id, privileges_json,
+  id, kind, client_id, principal_id, target_id, project_id, capabilities_json,
   created_at, expires_at
 ) VALUES (?, 'human_cli', 'leapview-cli', ?, 'lvinst_test', 'test', '[]', ?, ?)`,
 		"authoring_before_disable", target.ID, now.Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339)); err != nil {
@@ -185,7 +185,8 @@ INSERT INTO oauth_authoring_credentials (
 		t.Fatal(err)
 	}
 	handler := Handler{
-		Repository: func() (access.Repository, error) { return repository, nil },
+		Repository:                   func() (access.Repository, error) { return repository, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 			return Principal{ID: actor.ID, Kind: access.PrincipalKindUser, Email: actor.Email, DisplayName: actor.DisplayName}, true
 		},
@@ -216,7 +217,7 @@ INSERT INTO oauth_authoring_credentials (
 	if err := json.Unmarshal(enableRecorder.Body.Bytes(), &enabled); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := enabled["blockedAt"]; exists {
+	if enabled["blockedAt"] != nil {
 		t.Fatalf("enabled principal retained blockedAt: %v", enabled)
 	}
 	if _, err := repository.PrincipalForToken(t.Context(), sessionToken); !errors.Is(err, sql.ErrNoRows) {
@@ -278,7 +279,8 @@ func TestPrincipalLifecycleRejectsSelfDisableAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := Handler{
-		Repository: func() (access.Repository, error) { return repository, nil },
+		Repository:                   func() (access.Repository, error) { return repository, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 			return Principal{ID: actor.ID, Kind: access.PrincipalKindUser}, true
 		},

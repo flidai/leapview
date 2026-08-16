@@ -38,7 +38,7 @@ func TestGlobalGroupAPIIncludesSourceAwareSCIMGroups(t *testing.T) {
 	if _, err := repository.UpsertGroup(t.Context(), access.GroupInput{Provider: "local", ExternalID: "local-analysts", Name: "Local Analysts"}); err != nil {
 		t.Fatal(err)
 	}
-	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentEffectiveCapabilities: allowProjectAdmin, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 		return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
 	}}
 	request := func(method, path, groupID string, principalID ...string) *stdhttp.Request {

@@ -92,9 +92,9 @@ func fakeAuthoringTokenSet() access.AuthoringTokenSet {
 			Kind:     access.AuthoringSessionHumanCLI,
 			ClientID: access.AuthoringCLIClientID,
 			Scope: access.AuthoringScope{
-				TargetID:   "lvinst_prod",
-				ProjectID:  "analytics",
-				Privileges: []access.Privilege{access.PrivilegeDeploy},
+				TargetID:     "lvinst_prod",
+				ProjectID:    "analytics",
+				Capabilities: []access.Capability{access.CapabilityResourcePublish},
 			},
 		},
 	}
@@ -106,7 +106,7 @@ func TestAuthoringDeviceAuthorizationUsesRFC8628WireFormat(t *testing.T) {
 	form := url.Values{
 		"client_id":  {access.AuthoringCLIClientID},
 		"project_id": {"analytics"},
-		"scope":      {string(access.PrivilegeDeploy)},
+		"scope":      {string(access.CapabilityResourcePublish)},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/oauth/device/code", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -134,8 +134,8 @@ func TestAuthoringDeviceAuthorizationUsesRFC8628WireFormat(t *testing.T) {
 	}
 	if service.beganScope.TargetID != "lvinst_prod" ||
 		service.beganScope.ProjectID != "analytics" ||
-		len(service.beganScope.Privileges) != 1 ||
-		service.beganScope.Privileges[0] != access.PrivilegeDeploy {
+		len(service.beganScope.Capabilities) != 1 ||
+		service.beganScope.Capabilities[0] != access.CapabilityResourcePublish {
 		t.Fatalf("scope=%+v", service.beganScope)
 	}
 }
@@ -322,7 +322,7 @@ func TestAuthoringOAuthClientCredentialsIssuesExactScopeWorkloadToken(t *testing
 		"client_id":        {"sp-ci"},
 		"client_secret":    {"service-secret"},
 		"project_id":       {"analytics"},
-		"scope":            {"DEPLOY ACTIVATE_DEPLOYMENT"},
+		"scope":            {"RESOURCE_PUBLISH RESOURCE_USE"},
 		"lifetime_seconds": {"600"},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))

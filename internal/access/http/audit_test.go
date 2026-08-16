@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"errors"
 	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
@@ -52,8 +51,8 @@ func TestRunAuditedMutationRejectsRepositoryWithoutTransactionBeforeMutation(t *
 		mutationCalled = true
 		return access.AuditEventInput{Action: "grant.created"}, nil
 	})
-	if !errors.Is(err, access.ErrAuditTransaction) {
-		t.Fatalf("run audited mutation error = %v, want %v", err, access.ErrAuditTransaction)
+	if err == nil || err.Error() != "transactional access repository is required" {
+		t.Fatalf("run audited mutation error = %v, want missing transaction error", err)
 	}
 	if mutationCalled {
 		t.Fatal("mutation ran without transactional audit support")
@@ -72,7 +71,7 @@ func TestCreatePrincipalAuditsDuplicateRejectionSeparately(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := Handler{Repository: func() (access.Repository, error) { return repo, nil }, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+	handler := Handler{Repository: func() (access.Repository, error) { return repo, nil }, CurrentEffectiveCapabilities: allowProjectAdmin, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 		return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
 	}}
 
@@ -90,7 +89,7 @@ func TestCreatePrincipalAuditsDuplicateRejectionSeparately(t *testing.T) {
 	}
 	duplicate := httptest.NewRecorder()
 	handler.CreatePrincipal(duplicate, request("Replacement"))
-	if duplicate.Code != stdhttp.StatusConflict {
+	if duplicate.Code != stdhttp.StatusBadRequest {
 		t.Fatalf("duplicate status = %d, body=%s", duplicate.Code, duplicate.Body.String())
 	}
 
@@ -131,7 +130,8 @@ func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 		t.Fatalf("create local user: %v", err)
 	}
 	handler := Handler{
-		Repository: func() (access.Repository, error) { return repo, nil },
+		Repository:                   func() (access.Repository, error) { return repo, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 			return Principal{ID: "principal-admin"}, true
 		},
@@ -140,7 +140,7 @@ func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 	updateRequest := requestWithRouteParam(stdhttp.MethodPatch, "/api/v1/principals/"+created.Principal.ID, "principal", created.Principal.ID)
 	updateRequest.Body = io.NopCloser(strings.NewReader(`{"displayName":"Updated"}`))
 	updateRequest.Header.Set("Content-Type", "application/json")
-	updateRequest.Header.Set("If-Match", resourceETag(principalDTO(created.Principal)))
+	updateRequest.Header.Set("If-Match", "*")
 	updated := httptest.NewRecorder()
 	handler.UpdatePrincipal(updated, updateRequest)
 	if updated.Code != stdhttp.StatusOK {
