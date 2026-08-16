@@ -12,7 +12,6 @@ CREATE TABLE api_releases (
   request_digest TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'validating', 'ready', 'failed')),
-  manifest_json TEXT NOT NULL CHECK(json_valid(manifest_json)),
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   finalized_at TEXT,

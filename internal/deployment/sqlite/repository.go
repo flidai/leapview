@@ -4,7 +4,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -19,19 +18,8 @@ type Repository struct {
 	hooks ActivationHooks
 }
 type ActivationHooks struct {
-	ApplyAccessSnapshot       func(context.Context, transaction.Transaction, string) error
-	ReconcilePublications     func(context.Context, transaction.Transaction, PublicationReconcileInput) error
-	ApplyDashboardAppearances func(context.Context, transaction.Transaction, DashboardAppearanceActivationInput) error
-	LinkRelease               func(context.Context, transaction.Transaction, deployment.CreateInput) error
-	RecordWorkflow            jobs.WorkflowRecorder
-}
-type DashboardAppearanceActivationInput struct {
-	ProjectID, WorkspaceID, ServingStateID, ActorID string
-	Appearances                                     map[string]json.RawMessage
-}
-type PublicationReconcileInput struct {
-	ProjectID, WorkspaceID, ServingStateID, ActorID string
-	Publications                                    map[string]json.RawMessage
+	LinkRelease    func(context.Context, transaction.Transaction, deployment.CreateInput) error
+	RecordWorkflow jobs.WorkflowRecorder
 }
 
 func NewRepositoryWithHooks(db *sql.DB, hooks ActivationHooks) *Repository {
@@ -59,7 +47,7 @@ func (r *Repository) CreateDeployment(ctx context.Context, input deployment.Crea
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
-	if stateProject != input.ProjectID || stateEnv != input.Environment || stateDigest != input.ArtifactDigest || status != "validated" && status != "inactive" && status != "active" {
+	if stateProject != input.ProjectID || stateEnv != input.Environment || stateDigest != input.ArtifactDigest || status != "validated" && status != "inactive" {
 		return deployment.Deployment{}, fmt.Errorf("%w: generation is not activatable", deployment.ErrConflict)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -148,12 +136,6 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 	if stateProject != row.ProjectID || stateEnv != row.Environment || stateDigest != row.ArtifactDigest || status != "validated" && status != "inactive" && status != "active" {
 		return deployment.Deployment{}, deployment.ErrConflict
 	}
-	if r.hooks.ApplyAccessSnapshot == nil {
-		return deployment.Deployment{}, fmt.Errorf("%w: access snapshot activation is not configured", deployment.ErrConflict)
-	}
-	if err := r.hooks.ApplyAccessSnapshot(ctx, tx, row.GenerationID); err != nil {
-		return deployment.Deployment{}, err
-	}
 	var current string
 	err = tx.QueryRowContext(ctx, `SELECT serving_state_id FROM project_active_serving_states WHERE project_id=? AND environment=?`, row.ProjectID, row.Environment).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -164,17 +146,28 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 	if current != row.PriorGenerationID {
 		return deployment.Deployment{}, fmt.Errorf("%w: active generation changed", deployment.ErrConflict)
 	}
+	var result sql.Result
 	if row.PriorGenerationID != "" {
-		if _, err := tx.ExecContext(ctx, `UPDATE serving_states SET status='draining',superseded_at=CURRENT_TIMESTAMP WHERE id=? AND project_id=? AND environment=? AND status='active'`, row.PriorGenerationID, row.ProjectID, row.Environment); err != nil {
+		var drainResult sql.Result
+		drainResult, err = tx.ExecContext(ctx, `UPDATE serving_states SET status='draining',superseded_at=CURRENT_TIMESTAMP WHERE id=? AND project_id=? AND environment=? AND status='active'`, row.PriorGenerationID, row.ProjectID, row.Environment)
+		if err != nil {
 			return deployment.Deployment{}, err
 		}
+		n, _ := drainResult.RowsAffected()
+		if n != 1 {
+			return deployment.Deployment{}, fmt.Errorf("%w: prior generation changed while draining", deployment.ErrConflict)
+		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE serving_states SET status='active',activated_at=CURRENT_TIMESTAMP,error='' WHERE id=? AND project_id=? AND environment=?`, row.GenerationID, row.ProjectID, row.Environment); err != nil {
+	result, err = tx.ExecContext(ctx, `UPDATE serving_states SET status='active',activated_at=CURRENT_TIMESTAMP,error='' WHERE id=? AND project_id=? AND environment=? AND status IN ('validated','inactive')`, row.GenerationID, row.ProjectID, row.Environment)
+	if err != nil {
 		return deployment.Deployment{}, err
 	}
-	var result sql.Result
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return deployment.Deployment{}, fmt.Errorf("%w: candidate generation changed while activating", deployment.ErrConflict)
+	}
 	if row.PriorGenerationID == "" {
-		result, err = tx.ExecContext(ctx, `INSERT INTO project_active_serving_states(project_id,environment,serving_state_id,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(project_id,environment) DO UPDATE SET serving_state_id=excluded.serving_state_id,updated_at=CURRENT_TIMESTAMP WHERE serving_state_id=''`, row.ProjectID, row.Environment, row.GenerationID)
+		result, err = tx.ExecContext(ctx, `INSERT INTO project_active_serving_states(project_id,environment,serving_state_id,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)`, row.ProjectID, row.Environment, row.GenerationID)
 	} else {
 		result, err = tx.ExecContext(ctx, `UPDATE project_active_serving_states SET serving_state_id=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND environment=? AND serving_state_id=?`, row.GenerationID, row.ProjectID, row.Environment, row.PriorGenerationID)
 	}

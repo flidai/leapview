@@ -26,7 +26,7 @@ type Repository interface {
 }
 
 type ServingStateProvenanceRepository interface {
-	ProvenanceForServingState(context.Context, string) (Provenance, error)
+	ProvenanceForServingState(context.Context, projectgraph.ServingIdentity) (Provenance, error)
 }
 type FinalizationUnitOfWork interface {
 	BeginFinalization(context.Context, string, string, jobs.WorkflowIntent) (Release, error)

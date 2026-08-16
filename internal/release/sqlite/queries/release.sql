@@ -9,21 +9,21 @@ SELECT provenance_json FROM release_candidate_provenance
 WHERE project_id = ? AND candidate_id = ? AND candidate_revision = ?;
 
 -- name: CreateAPIRelease :exec
-INSERT INTO api_releases (id, project_id, environment, generation_id, project_digest, artifact_digest, request_digest, idempotency_key, status, manifest_json, provenance_json, created_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?);
+INSERT INTO api_releases (id, project_id, environment, generation_id, project_digest, artifact_digest, request_digest, idempotency_key, status, provenance_json, created_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?);
 
 -- name: CreateAPIReleaseConnection :exec
 INSERT INTO api_release_connections (release_id, connection_id, revision_id) VALUES (?, ?, ?);
 
 -- name: GetAPIReleaseByID :one
 SELECT id, project_id, environment, generation_id, project_digest, artifact_digest, artifact_actual_digest, artifact_size_bytes,
-  COALESCE(artifact_uploaded_at, '') AS artifact_uploaded_at, request_digest, idempotency_key, status, manifest_json, provenance_json,
+  COALESCE(artifact_uploaded_at, '') AS artifact_uploaded_at, request_digest, idempotency_key, status, provenance_json,
   created_by, created_at, COALESCE(finalized_at, '') AS finalized_at, error
 FROM api_releases WHERE project_id = ? AND id = ?;
 
 -- name: GetAPIReleaseByIdempotencyKey :one
 SELECT id, project_id, environment, generation_id, project_digest, artifact_digest, artifact_actual_digest, artifact_size_bytes,
-  COALESCE(artifact_uploaded_at, '') AS artifact_uploaded_at, request_digest, idempotency_key, status, manifest_json, provenance_json,
+  COALESCE(artifact_uploaded_at, '') AS artifact_uploaded_at, request_digest, idempotency_key, status, provenance_json,
   created_by, created_at, COALESCE(finalized_at, '') AS finalized_at, error
 FROM api_releases WHERE project_id = ? AND idempotency_key = ?;
 

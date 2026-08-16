@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -38,10 +39,6 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 	if input.Provenance == nil || input.ID == "" || input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" || digest.ValidateSHA256Identity(input.ProjectDigest) != nil || digest.ValidateSHA256Identity(input.ArtifactDigest) != nil || digest.ValidateSHA256Identity(input.RequestDigest) != nil {
 		return release.Release{}, release.ErrInvalid
 	}
-	manifestBytes, err := json.Marshal(release.Manifest{Connections: append([]release.ConnectionPin(nil), input.Connections...)})
-	if err != nil {
-		return release.Release{}, err
-	}
 	provenanceBytes, err := json.Marshal(input.Provenance)
 	if err != nil {
 		return release.Release{}, err
@@ -51,7 +48,7 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 		return release.Release{}, err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO api_releases (id, project_id, environment, generation_id, project_digest, artifact_digest, request_digest, idempotency_key, status, manifest_json, provenance_json, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`, input.ID, input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest, input.RequestDigest, input.IdempotencyKey, string(manifestBytes), string(provenanceBytes), input.CreatedBy)
+	_, err = tx.ExecContext(ctx, `INSERT INTO api_releases (id, project_id, environment, generation_id, project_digest, artifact_digest, request_digest, idempotency_key, status, provenance_json, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`, input.ID, input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest, input.RequestDigest, input.IdempotencyKey, string(provenanceBytes), input.CreatedBy)
 	if err != nil {
 		existing, getErr := r.Get(ctx, input.ProjectID, input.ID)
 		if getErr == nil {
@@ -97,9 +94,12 @@ func (r *Repository) List(ctx context.Context, projectID string) ([]release.Rele
 	return out, rows.Err()
 }
 
-func (r *Repository) ProvenanceForServingState(ctx context.Context, generationID string) (release.Provenance, error) {
+func (r *Repository) ProvenanceForServingState(ctx context.Context, identity projectgraph.ServingIdentity) (release.Provenance, error) {
+	if err := identity.Validate(); err != nil {
+		return release.Provenance{}, release.ErrInvalid
+	}
 	var raw string
-	err := r.db.QueryRowContext(ctx, `SELECT provenance_json FROM api_releases WHERE generation_id = ? AND status = 'ready' ORDER BY finalized_at DESC,id DESC LIMIT 1`, strings.TrimSpace(generationID)).Scan(&raw)
+	err := r.db.QueryRowContext(ctx, `SELECT provenance_json FROM api_releases WHERE project_id = ? AND environment = ? AND generation_id = ? AND status = 'ready' ORDER BY finalized_at DESC,id DESC LIMIT 1`, identity.ProjectID.String(), identity.Environment, identity.GenerationID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return release.Provenance{}, release.ErrNotFound
 	}
@@ -112,6 +112,9 @@ func (r *Repository) ProvenanceForServingState(ctx context.Context, generationID
 	}
 	if err := p.Validate(); err != nil {
 		return release.Provenance{}, err
+	}
+	if p.Plan.Identity != identity {
+		return release.Provenance{}, release.ErrConflict
 	}
 	return p, nil
 }
@@ -138,6 +141,9 @@ func (r *Repository) RetainCandidateProvenance(ctx context.Context, projectID st
 	}
 	if err := p.Validate(); err != nil {
 		return release.Provenance{}, err
+	}
+	if p.Plan.Identity.ProjectID.String() != strings.TrimSpace(projectID) {
+		return release.Provenance{}, release.ErrConflict
 	}
 	encoded, err := json.Marshal(p)
 	if err != nil {
@@ -342,18 +348,18 @@ func (r *Repository) PriorDeploymentRelease(ctx context.Context, projectID, depl
 
 func getRelease(ctx context.Context, q queryer, projectID, releaseID, idempotency string) (release.Release, error) {
 	var row release.Release
-	var status, manifest, provenance, createdAt, finalized, errorText string
+	var status, provenance, createdAt, finalized, errorText string
 	var uploaded sql.NullString
 	var query string
 	var args []any
 	if idempotency != "" {
-		query = `SELECT id,project_id,environment,generation_id,project_digest,artifact_digest,artifact_actual_digest,artifact_size_bytes,artifact_uploaded_at,request_digest,idempotency_key,status,manifest_json,provenance_json,created_by,created_at,COALESCE(finalized_at,''),error FROM api_releases WHERE project_id=? AND idempotency_key=?`
+		query = `SELECT id,project_id,environment,generation_id,project_digest,artifact_digest,artifact_actual_digest,artifact_size_bytes,artifact_uploaded_at,request_digest,idempotency_key,status,provenance_json,created_by,created_at,COALESCE(finalized_at,''),error FROM api_releases WHERE project_id=? AND idempotency_key=?`
 		args = []any{projectID, idempotency}
 	} else {
-		query = `SELECT id,project_id,environment,generation_id,project_digest,artifact_digest,artifact_actual_digest,artifact_size_bytes,artifact_uploaded_at,request_digest,idempotency_key,status,manifest_json,provenance_json,created_by,created_at,COALESCE(finalized_at,''),error FROM api_releases WHERE project_id=? AND id=?`
+		query = `SELECT id,project_id,environment,generation_id,project_digest,artifact_digest,artifact_actual_digest,artifact_size_bytes,artifact_uploaded_at,request_digest,idempotency_key,status,provenance_json,created_by,created_at,COALESCE(finalized_at,''),error FROM api_releases WHERE project_id=? AND id=?`
 		args = []any{projectID, releaseID}
 	}
-	err := q.QueryRowContext(ctx, query, args...).Scan(&row.ID, &row.ProjectID, &row.Environment, &row.GenerationID, &row.ProjectDigest, &row.ArtifactDigest, &row.ActualDigest, &row.ArtifactSizeBytes, &uploaded, &row.RequestDigest, &row.IdempotencyKey, &status, &manifest, &provenance, &row.CreatedBy, &createdAt, &finalized, &errorText)
+	err := q.QueryRowContext(ctx, query, args...).Scan(&row.ID, &row.ProjectID, &row.Environment, &row.GenerationID, &row.ProjectDigest, &row.ArtifactDigest, &row.ActualDigest, &row.ArtifactSizeBytes, &uploaded, &row.RequestDigest, &row.IdempotencyKey, &status, &provenance, &row.CreatedBy, &createdAt, &finalized, &errorText)
 	if errors.Is(err, sql.ErrNoRows) {
 		return release.Release{}, release.ErrNotFound
 	}
@@ -364,9 +370,6 @@ func getRelease(ctx context.Context, q queryer, projectID, releaseID, idempotenc
 	row.CreatedAt, row.FinalizedAt, row.Error = createdAt, finalized, errorText
 	if uploaded.Valid {
 		row.ArtifactUploadedAt = uploaded.String
-	}
-	if err := json.Unmarshal([]byte(manifest), &row.Manifest); err != nil {
-		return release.Release{}, err
 	}
 	if provenance != "" && provenance != "{}" {
 		var p release.Provenance

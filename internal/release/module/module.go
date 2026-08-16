@@ -8,6 +8,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releasefilesystem "github.com/flidai/leapview/internal/release/filesystem"
 	releasesqlite "github.com/flidai/leapview/internal/release/sqlite"
@@ -44,7 +45,7 @@ type ServingStateRepository interface {
 	validate.Repository
 	ActiveArtifact(
 		context.Context,
-		servingstate.WorkspaceID,
+		projectgraph.ResourceID,
 		servingstate.Environment,
 	) (servingstate.State, servingstate.Artifact, error)
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
@@ -109,13 +110,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 
 func (m *Module) ProvenanceForServingState(
 	ctx context.Context,
-	servingStateID string,
-	workspaceID string,
+	identity projectgraph.ServingIdentity,
 ) (release.Provenance, error) {
 	if m == nil || m.servingProvenance == nil {
 		return release.Provenance{}, release.ErrNotFound
 	}
-	return m.servingProvenance.ProvenanceForServingState(ctx, servingStateID, workspaceID)
+	return m.servingProvenance.ProvenanceForServingState(ctx, identity)
 }
 
 func (m *Module) PrepareCandidateArtifacts(
