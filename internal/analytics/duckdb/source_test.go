@@ -176,7 +176,7 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 	}
 }
 
-func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model *semanticmodel.Model) (context.Context, *analyticsducklake.Environment, *WorkspaceRuntime) {
+func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model *semanticmodel.Model) (context.Context, *analyticsducklake.Environment, *ProjectRuntime) {
 	t.Helper()
 	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
 	require.NoError(t, err)
@@ -184,7 +184,7 @@ func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model 
 	require.NoError(t, err)
 	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "schema-test", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
-	runtime, err := OpenWorkspaceMaterializeRuntime(lease.Context(), WorkspaceRuntimeConfig{Models: map[string]*semanticmodel.Model{"test": model}, Database: environment})
+	runtime, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment})
 	if err != nil {
 		lease.Release()
 		controller.Close()
@@ -203,7 +203,7 @@ func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model 
 	return analyticalLease.Context(), environment, runtime
 }
 
-func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir string, model *semanticmodel.Model) (*WorkspaceRuntime, error) {
+func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir string, model *semanticmodel.Model) (*ProjectRuntime, error) {
 	t.Helper()
 	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
 	if err != nil {
@@ -220,7 +220,7 @@ func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir str
 		return nil, err
 	}
 	defer lease.Release()
-	return OpenWorkspaceMaterializeRuntime(lease.Context(), WorkspaceRuntimeConfig{Models: map[string]*semanticmodel.Model{"test": model}, Database: environment})
+	return OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment})
 }
 
 func TestCompileSourceRelation(t *testing.T) {
@@ -487,7 +487,7 @@ func TestCompileConnectionSecret(t *testing.T) {
 		Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "LEAPVIEW_TEST_AZURE_CREDENTIALS"},
 	}
 	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-		TargetID: "test-target", Environment: "test", TargetClass: connectionbinding.TargetDevelopment,
+		TargetID: "test-target", ProjectID: "test", Environment: "test", TargetClass: connectionbinding.TargetDevelopment,
 		Kind: connectionbinding.ResolverEnvironment,
 	})
 	require.NoError(t, err)

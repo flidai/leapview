@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestRepositoryRecordsAndFiltersQueryEvents(t *testing.T) {
@@ -19,9 +20,9 @@ func TestRepositoryRecordsAndFiltersQueryEvents(t *testing.T) {
 
 	repo := NewRepository(store.SQLDB())
 	events := []queryaudit.EventInput{
-		{WorkspaceID: "sales", PrincipalID: "p1", Surface: "api", Operation: "api_query", QueryKind: "semantic_aggregate", ModelID: "sales", Target: "orders", Status: "success", QueueWaitMS: 7, PlanningMS: 3, ConnectionWaitMS: 5, DatabaseMS: 9, ExecutionMS: 11, ExecutionState: "succeeded", RowsReturned: 10, SQL: "select * from orders", QueryJSON: `{"target":"orders"}`},
-		{WorkspaceID: "sales", PrincipalID: "p2", Surface: "data_explorer", Operation: "preview_window", QueryKind: "model_table_rows", ModelID: "sales", Target: "customers", Status: "error", Error: "missing table", QueryJSON: `{"target":"customers"}`},
-		{WorkspaceID: "operations", PrincipalID: "p1", Surface: "agent", Operation: "agent_query", QueryKind: "semantic_rows", ModelID: "operations", Target: "reviews", Status: "success", QueryJSON: `{"target":"reviews"}`},
+		{ProjectID: "sales", PrincipalID: "p1", Surface: "api", Operation: "api_query", QueryKind: "semantic_aggregate", ModelID: "sales", Target: "orders", Status: "success", QueueWaitMS: 7, PlanningMS: 3, ConnectionWaitMS: 5, DatabaseMS: 9, ExecutionMS: 11, ExecutionState: "succeeded", RowsReturned: 10, SQL: "select * from orders", QueryJSON: `{"target":"orders"}`},
+		{ProjectID: "sales", PrincipalID: "p2", Surface: "data_explorer", Operation: "preview_window", QueryKind: "model_table_rows", ModelID: "sales", Target: "customers", Status: "error", Error: "missing table", QueryJSON: `{"target":"customers"}`},
+		{ProjectID: "operations", PrincipalID: "p1", Surface: "agent", Operation: "agent_query", QueryKind: "semantic_rows", ModelID: "operations", Target: "reviews", Status: "success", QueryJSON: `{"target":"reviews"}`},
 	}
 	for _, event := range events {
 		if err := repo.RecordQueryEvent(ctx, event); err != nil {
@@ -29,7 +30,7 @@ func TestRepositoryRecordsAndFiltersQueryEvents(t *testing.T) {
 		}
 	}
 
-	sales, err := repo.ListQueryEvents(ctx, queryaudit.Filter{WorkspaceID: "sales"})
+	sales, err := repo.ListQueryEvents(ctx, queryaudit.Filter{ProjectID: "sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestRepositoryRecordsAndFiltersQueryEvents(t *testing.T) {
 		t.Fatalf("execution telemetry = %#v, want admission/planning/connection/database/execution timings", search[0].EventInput)
 	}
 
-	multi, err := repo.ListQueryEvents(ctx, queryaudit.Filter{WorkspaceIDs: []string{"sales", "operations"}, Surfaces: []string{"api", "agent"}, Statuses: []string{"success"}})
+	multi, err := repo.ListQueryEvents(ctx, queryaudit.Filter{ProjectIDs: []projectgraph.ResourceID{"sales", "operations"}, Surfaces: []string{"api", "agent"}, Statuses: []string{"success"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestRepositoryRedactsSecretsBeforePersistingQueryEvents(t *testing.T) {
 
 	repo := NewRepository(store.SQLDB())
 	input := queryaudit.EventInput{
-		WorkspaceID: "sales",
+		ProjectID:   "sales",
 		PrincipalID: "p1",
 		Surface:     "api",
 		Operation:   "api_query",
@@ -107,7 +108,7 @@ func TestRepositoryRedactsSecretsBeforePersistingQueryEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	events, err := repo.ListQueryEvents(ctx, queryaudit.Filter{WorkspaceID: "sales"})
+	events, err := repo.ListQueryEvents(ctx, queryaudit.Filter{ProjectID: "sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +138,7 @@ func TestRepositoryRejectsQueryEventWithoutPrincipal(t *testing.T) {
 
 	repo := NewRepository(store.SQLDB())
 	err = repo.RecordQueryEvent(ctx, queryaudit.EventInput{
-		WorkspaceID: "sales",
+		PrincipalID: "p1",
 		Surface:     "api",
 		Operation:   "api_query",
 		QueryKind:   "semantic_rows",
@@ -147,6 +148,55 @@ func TestRepositoryRejectsQueryEventWithoutPrincipal(t *testing.T) {
 		QueryJSON:   `{"target":"orders"}`,
 	})
 	if err == nil {
+		t.Fatal("expected missing project id error")
+	}
+	err = repo.RecordQueryEvent(ctx, queryaudit.EventInput{
+		ProjectID: "sales",
+		Surface:   "api",
+		Operation: "api_query",
+		QueryKind: "semantic_rows",
+		ModelID:   "sales",
+		Target:    "orders",
+		Status:    "success",
+		QueryJSON: `{"target":"orders"}`,
+	})
+	if err == nil {
 		t.Fatal("expected missing principal error")
+	}
+}
+
+func TestRepositoryRejectsMalformedPersistedProjectID(t *testing.T) {
+	ctx := context.Background()
+	store, err := platform.Open(ctx, t.TempDir()+"/leapview.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO query_events (id, project_id, principal_id, surface) VALUES ('bad-project', 'not a project id', 'p1', 'api')`); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepository(store.SQLDB())
+	if _, err := repo.GetQueryEvent(ctx, "bad-project"); err == nil {
+		t.Fatal("expected malformed persisted project id error from GetQueryEvent")
+	}
+	if _, err := repo.ListQueryEvents(ctx, queryaudit.Filter{}); err == nil {
+		t.Fatal("expected malformed persisted project id error from ListQueryEvents")
+	}
+}
+
+func TestRepositoryRejectsInvalidProjectFilters(t *testing.T) {
+	ctx := context.Background()
+	store, err := platform.Open(ctx, t.TempDir()+"/leapview.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	repo := NewRepository(store.SQLDB())
+	if _, err := repo.ListQueryEvents(ctx, queryaudit.Filter{ProjectID: "not a project id"}); err == nil {
+		t.Fatal("expected invalid project filter error")
+	}
+	if _, err := repo.ListQueryEvents(ctx, queryaudit.Filter{ProjectIDs: []projectgraph.ResourceID{""}}); err == nil {
+		t.Fatal("expected empty project filter id error")
 	}
 }

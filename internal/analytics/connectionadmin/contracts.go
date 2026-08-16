@@ -34,10 +34,11 @@ var (
 	ErrInvalidCredentialBundle = connectionbinding.ErrInvalidCredentialBundle
 )
 
-var ParseLogicalConnectionID = connectionbinding.ParseLogicalConnectionID
+var ParseConnectionID = connectionbinding.ParseConnectionID
 
-// Administration is the synchronous lifecycle surface consumed by workspace
-// UI. It deliberately carries references, never credential secret values.
+// Administration is the synchronous lifecycle surface consumed by the
+// project resource UI. It deliberately carries references, never credential
+// secret values.
 type Administration interface {
 	List(context.Context, string, BindingScope, string) ([]TargetBinding, error)
 	Create(context.Context, string, TargetBindingInput) (TargetBinding, error)

@@ -13,6 +13,7 @@ import (
 
 	db "github.com/flidai/leapview/internal/analytics/internal/db"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Repository struct {
@@ -35,7 +36,7 @@ func (r *Repository) RecordQueryEvent(ctx context.Context, input queryaudit.Even
 	input.QueryJSON = queryaudit.RedactSensitiveText(input.QueryJSON)
 	return r.q.InsertQueryEvent(ctx, db.InsertQueryEventParams{
 		ID:               newID("queryevent"),
-		WorkspaceID:      input.WorkspaceID,
+		ProjectID:        input.ProjectID.String(),
 		PrincipalID:      input.PrincipalID,
 		Surface:          input.Surface,
 		Operation:        input.Operation,
@@ -68,10 +69,13 @@ func (r *Repository) GetQueryEvent(ctx context.Context, id string) (queryaudit.E
 	if err != nil {
 		return queryaudit.Event{}, err
 	}
-	return queryEventFromDB(row), nil
+	return queryEventFromDB(row)
 }
 
 func (r *Repository) ListQueryEvents(ctx context.Context, filter queryaudit.Filter) ([]queryaudit.Event, error) {
+	if err := filter.Validate(); err != nil {
+		return nil, err
+	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 100
@@ -83,7 +87,7 @@ func (r *Repository) ListQueryEvents(ctx context.Context, filter queryaudit.Filt
 		filter.CursorTime, filter.CursorID = decodePageToken(filter.PageToken)
 	}
 	rows, err := r.q.ListQueryEvents(ctx, db.ListQueryEventsParams{
-		WorkspaceIdsJson: jsonFilterValues(filter.WorkspaceID, filter.WorkspaceIDs),
+		ProjectIdsJson:   jsonFilterValues(filter.ProjectID.String(), resourceIDStrings(filter.ProjectIDs)),
 		PrincipalIdsJson: jsonFilterValues(filter.PrincipalID, filter.PrincipalIDs),
 		SurfacesJson:     jsonFilterValues(filter.Surface, filter.Surfaces),
 		Operation:        strings.TrimSpace(filter.Operation),
@@ -98,7 +102,11 @@ func (r *Repository) ListQueryEvents(ctx context.Context, filter queryaudit.Filt
 	}
 	events := make([]queryaudit.Event, 0, len(rows))
 	for _, row := range rows {
-		events = append(events, queryEventFromDB(row))
+		event, err := queryEventFromDB(row)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
 	}
 	return events, nil
 }
@@ -130,8 +138,8 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 
 func queryEventFilterOptionColumn(field string) (string, bool) {
 	switch field {
-	case "workspace":
-		return "workspace_id", true
+	case "project":
+		return "project_id", true
 	case "principal":
 		return "principal_id", true
 	case "surface":
@@ -174,11 +182,26 @@ func jsonFilterValues(exact string, values []string) string {
 	return string(encoded)
 }
 
-func queryEventFromDB(row db.QueryEvent) queryaudit.Event {
+func resourceIDStrings(ids []projectgraph.ResourceID) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	values := make([]string, 0, len(ids))
+	for _, id := range ids {
+		values = append(values, id.String())
+	}
+	return values
+}
+
+func queryEventFromDB(row db.QueryEvent) (queryaudit.Event, error) {
+	projectID, err := projectgraph.NewResourceID(row.ProjectID)
+	if err != nil {
+		return queryaudit.Event{}, fmt.Errorf("query event %q has invalid project id: %w", row.ID, err)
+	}
 	return queryaudit.Event{
 		ID: row.ID,
 		EventInput: queryaudit.EventInput{
-			WorkspaceID:      row.WorkspaceID,
+			ProjectID:        projectID,
 			PrincipalID:      row.PrincipalID,
 			Surface:          row.Surface,
 			Operation:        row.Operation,
@@ -205,7 +228,7 @@ func queryEventFromDB(row db.QueryEvent) queryaudit.Event {
 			QueryJSON:        row.QueryJson,
 		},
 		CreatedAt: row.CreatedAt,
-	}
+	}, nil
 }
 
 func newID(prefix string) string {
