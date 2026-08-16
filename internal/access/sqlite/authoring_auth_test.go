@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestAuthoringAuthSQLiteDeviceExchangeIsAtomicAndRefreshReplayRevokesFamily(t *testing.T) {
@@ -38,7 +39,7 @@ func TestAuthoringAuthSQLiteDeviceExchangeIsAtomicAndRefreshReplayRevokesFamily(
 	if err != nil {
 		t.Fatalf("new authoring auth service: %v", err)
 	}
-	scope, err := access.NewAuthoringScope("instance-prod", "finance", []access.Privilege{access.PrivilegeDeploy})
+	scope, err := access.NewAuthoringScope("instance-prod", graph.ResourceID("finance"), []access.Capability{access.CapabilityResourcePublish})
 	if err != nil {
 		t.Fatalf("new scope: %v", err)
 	}
@@ -93,7 +94,7 @@ func TestAuthoringAuthSQLiteDeviceExchangeIsAtomicAndRefreshReplayRevokesFamily(
 	if _, err := service.Refresh(ctx, tokens.RefreshToken); !errors.Is(err, access.ErrAuthoringRefreshReplay) {
 		t.Fatalf("replay refresh error = %v", err)
 	}
-	if _, err := service.Authenticate(ctx, rotated.AccessToken, "instance-prod", "finance", access.PrivilegeDeploy); !errors.Is(err, access.ErrInvalidAuthoringCredential) {
+	if _, err := service.Authenticate(ctx, rotated.AccessToken, "instance-prod", "finance", access.CapabilityResourcePublish); !errors.Is(err, access.ErrInvalidAuthoringCredential) {
 		t.Fatalf("authenticate replay-revoked family error = %v", err)
 	}
 	events, err := repository.ListAuditEvents(ctx, access.AuditEventFilter{})

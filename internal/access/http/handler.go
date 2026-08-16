@@ -1776,13 +1776,6 @@ func resourceETag(value any) string {
 	sum := sha256.Sum256(encoded)
 	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
-func requireIfMatch(w stdhttp.ResponseWriter, r *stdhttp.Request, current string) bool {
-	if value := strings.TrimSpace(r.Header.Get("If-Match")); value == "" || (value != "*" && value != current) {
-		writeJSONError(w, errors.New("resource changed"), stdhttp.StatusPreconditionFailed)
-		return false
-	}
-	return true
-}
 func writeAPIProblem(w stdhttp.ResponseWriter, _ *stdhttp.Request, status int, code, detail string, _ any) {
 	writeJSON(w, status, map[string]any{"code": code, "detail": detail})
 }
