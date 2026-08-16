@@ -7,6 +7,31 @@ SELECT project_id, environment, digest, status FROM serving_states WHERE id = ?;
 SELECT generation_id FROM project_active_serving_states
 WHERE project_id = ? AND environment = ?;
 
+-- Activation state transitions are deliberately named separately from the
+-- serving-state reads above.  Each method returns RowsAffected so the
+-- repository can preserve the multi-row compare-and-swap fence.
+
+-- name: DrainServingStateForActivation :execresult
+UPDATE serving_states
+SET status = 'draining', superseded_at = CURRENT_TIMESTAMP
+WHERE id = ? AND project_id = ? AND environment = ? AND status = 'active';
+
+-- name: ActivateServingStateForActivation :execresult
+UPDATE serving_states
+SET status = 'active', activated_at = CURRENT_TIMESTAMP, error = ''
+WHERE id = ? AND project_id = ? AND environment = ? AND status IN ('validated', 'inactive');
+
+-- name: InsertActiveServingStateForActivation :execresult
+INSERT INTO project_active_serving_states (project_id, environment, generation_id, updated_at)
+VALUES (?, ?, ?, CURRENT_TIMESTAMP);
+
+-- name: UpdateActiveServingStateForActivation :execresult
+UPDATE project_active_serving_states
+SET generation_id = sqlc.arg(candidate_generation_id), updated_at = CURRENT_TIMESTAMP
+WHERE project_id = sqlc.arg(project_id)
+  AND environment = sqlc.arg(environment)
+  AND generation_id = sqlc.arg(prior_generation_id);
+
 -- name: CreateProjectDeployment :exec
 INSERT INTO project_deployments (id, project_id, environment, generation_id, artifact_digest, prior_generation_id, request_digest, status, created_by)
 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?);

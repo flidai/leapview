@@ -3614,9 +3614,9 @@ func generatedCheckCommand(taskfile string) string {
 func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
 	root := repoRoot(t)
 	queryContracts := map[string][]string{
-		filepath.Join("internal", "access", "sqlite", "queries", "access.sql"): {
-			"-- name: DeleteRoleGrantTemplates :exec",
-			"-- name: InsertRoleGrantTemplate :exec",
+		filepath.Join("internal", "access", "sqlite", "queries", "authorization.sql"): {
+			"-- name: InsertAuthorizationRoleBinding :exec",
+			"-- name: InsertAuthorizationGrant :exec",
 		},
 		filepath.Join("internal", "platform", "db", "queries", "platform.sql"): {
 			"-- name: InsertPlatformSettingIfMissing :exec",
@@ -3639,9 +3639,6 @@ func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
 
 	handwrittenSQL := map[string][]string{
 		filepath.Join("internal", "platform", "store.go"): {
-			"DELETE FROM role_grant_templates",
-			"INSERT INTO role_grant_templates",
-			"INSERT INTO securable_objects",
 			"INSERT INTO platform_settings",
 		},
 		filepath.Join("internal", "manageddata", "maintenance", "sqlite", "source.go"): {

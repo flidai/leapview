@@ -58,6 +58,16 @@ WHERE id = ? AND project_id = ? AND status = 'validating';
 -- name: GetAPIReleaseDeployment :one
 SELECT release_id, COALESCE(rollback_of, '') AS rollback_of FROM api_deployment_releases WHERE project_id = ? AND deployment_id = ?;
 
+-- name: GetAPIReleaseDeploymentByDeployment :one
+SELECT project_id, release_id, COALESCE(rollback_of, '') AS rollback_of
+FROM api_deployment_releases
+WHERE deployment_id = ?;
+
+-- name: CreateAPIReleaseDeployment :exec
+INSERT INTO api_deployment_releases (deployment_id, project_id, release_id, rollback_of)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(deployment_id) DO NOTHING;
+
 -- name: ListAPIReleaseDeploymentIDs :many
 SELECT deployment_id FROM api_deployment_releases WHERE project_id = ? ORDER BY created_at DESC, deployment_id DESC;
 

@@ -28,13 +28,6 @@ func NewRepositoryWithWorkflow(db *sql.DB, workflow jobs.WorkflowRecorder) *Repo
 	return &Repository{db: db, queries: releasedb.New(db), workflow: workflow}
 }
 
-// queryer is intentionally limited to the immutable deployment-link CAS;
-// ordinary release reads/writes use generated sqlc methods above.
-type queryer interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
 func (r *Repository) Create(ctx context.Context, input release.CreateInput) (release.Release, error) {
 	if r == nil || r.db == nil {
 		return release.Release{}, release.ErrInvalid
@@ -341,19 +334,20 @@ func (r *Repository) LinkDeploymentTx(ctx context.Context, tx transaction.Transa
 	return linkDeployment(ctx, tx, projectID, deploymentID, releaseID, rollbackOf)
 }
 
-func linkDeployment(ctx context.Context, q queryer, projectID, deploymentID, releaseID, rollbackOf string) error {
+func linkDeployment(ctx context.Context, q releasedb.DBTX, projectID, deploymentID, releaseID, rollbackOf string) error {
 	if projectID == "" || deploymentID == "" || releaseID == "" ||
 		projectID != strings.TrimSpace(projectID) || deploymentID != strings.TrimSpace(deploymentID) || releaseID != strings.TrimSpace(releaseID) || rollbackOf != strings.TrimSpace(rollbackOf) {
 		return release.ErrInvalid
 	}
-	if _, err := q.ExecContext(ctx, `INSERT INTO api_deployment_releases (deployment_id,project_id,release_id,rollback_of) VALUES (?,?,?,?) ON CONFLICT(deployment_id) DO NOTHING`, deploymentID, projectID, releaseID, nullableString(rollbackOf)); err != nil {
+	queries := releasedb.New(q)
+	if err := queries.CreateAPIReleaseDeployment(ctx, releasedb.CreateAPIReleaseDeploymentParams{DeploymentID: deploymentID, ProjectID: projectID, ReleaseID: releaseID, RollbackOf: sql.NullString{String: rollbackOf, Valid: rollbackOf != ""}}); err != nil {
 		return mapError(err)
 	}
-	var existingProject, existingRelease, existingRollback string
-	if err := q.QueryRowContext(ctx, `SELECT project_id,release_id,COALESCE(rollback_of,'') FROM api_deployment_releases WHERE deployment_id=?`, deploymentID).Scan(&existingProject, &existingRelease, &existingRollback); err != nil {
+	existing, err := queries.GetAPIReleaseDeploymentByDeployment(ctx, deploymentID)
+	if err != nil {
 		return mapError(err)
 	}
-	if existingProject != projectID || existingRelease != releaseID || existingRollback != rollbackOf {
+	if existing.ProjectID != projectID || existing.ReleaseID != releaseID || existing.RollbackOf != rollbackOf {
 		return release.ErrConflict
 	}
 	return nil
@@ -409,12 +403,6 @@ func getRelease(ctx context.Context, q *releasedb.Queries, projectID, releaseID 
 	return row, nil
 }
 
-func nullableString(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
-}
 func mapError(err error) error {
 	if err == nil {
 		return nil

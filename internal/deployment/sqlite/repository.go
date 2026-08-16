@@ -134,14 +134,14 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 	if current != row.PriorGenerationID {
 		return deployment.Deployment{}, fmt.Errorf("%w: active generation changed", deployment.ErrConflict)
 	}
-	// The following state/pointer writes are one multi-row CAS fence. They
-	// intentionally remain handwritten SQL because generated sqlc methods
-	// cannot express the required ordering and RowsAffected checks across the
-	// prior generation drain, candidate activation, and active-pointer swap.
+	// The following state/pointer writes are one multi-row CAS fence. Each
+	// generated method preserves the statement's RowsAffected result so the
+	// repository can enforce the ordering and compare-and-swap checks here.
+	qtx := deploydb.New(tx)
 	var result sql.Result
 	if row.PriorGenerationID != "" {
 		var drainResult sql.Result
-		drainResult, err = tx.ExecContext(ctx, `UPDATE serving_states SET status='draining',superseded_at=CURRENT_TIMESTAMP WHERE id=? AND project_id=? AND environment=? AND status='active'`, row.PriorGenerationID, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment)
+		drainResult, err = qtx.DrainServingStateForActivation(ctx, deploydb.DrainServingStateForActivationParams{ID: row.PriorGenerationID, ProjectID: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment})
 		if err != nil {
 			return deployment.Deployment{}, err
 		}
@@ -150,7 +150,7 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 			return deployment.Deployment{}, fmt.Errorf("%w: prior generation changed while draining", deployment.ErrConflict)
 		}
 	}
-	result, err = tx.ExecContext(ctx, `UPDATE serving_states SET status='active',activated_at=CURRENT_TIMESTAMP,error='' WHERE id=? AND project_id=? AND environment=? AND status IN ('validated','inactive')`, row.ServingIdentity.GenerationID, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment)
+	result, err = qtx.ActivateServingStateForActivation(ctx, deploydb.ActivateServingStateForActivationParams{ID: row.ServingIdentity.GenerationID, ProjectID: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment})
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
@@ -159,9 +159,9 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 		return deployment.Deployment{}, fmt.Errorf("%w: candidate generation changed while activating", deployment.ErrConflict)
 	}
 	if row.PriorGenerationID == "" {
-		result, err = tx.ExecContext(ctx, `INSERT INTO project_active_serving_states(project_id,environment,generation_id,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)`, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment, row.ServingIdentity.GenerationID)
+		result, err = qtx.InsertActiveServingStateForActivation(ctx, deploydb.InsertActiveServingStateForActivationParams{ProjectID: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment, GenerationID: row.ServingIdentity.GenerationID})
 	} else {
-		result, err = tx.ExecContext(ctx, `UPDATE project_active_serving_states SET generation_id=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND environment=? AND generation_id=?`, row.ServingIdentity.GenerationID, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment, row.PriorGenerationID)
+		result, err = qtx.UpdateActiveServingStateForActivation(ctx, deploydb.UpdateActiveServingStateForActivationParams{CandidateGenerationID: row.ServingIdentity.GenerationID, ProjectID: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment, PriorGenerationID: row.PriorGenerationID})
 	}
 	if err != nil {
 		return deployment.Deployment{}, err
