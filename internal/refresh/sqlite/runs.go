@@ -149,6 +149,9 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 }
 
 func (r *SQLRunRepository) ClaimNextExecutableJob(ctx context.Context, identity projectgraph.ServingIdentity, owner string, lease time.Duration) (refreshrun.JobRecord, bool, error) {
+	if r == nil || r.db == nil {
+		return refreshrun.JobRecord{}, false, fmt.Errorf("refresh run database is required")
+	}
 	if err := identity.Validate(); err != nil {
 		return refreshrun.JobRecord{}, false, err
 	}
