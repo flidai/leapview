@@ -40,6 +40,7 @@ type RepositoryProvider func() (access.Repository, error)
 type PrincipalProvider func(*stdhttp.Request) (Principal, bool)
 type CredentialProvider func(*stdhttp.Request) (access.APICredential, bool)
 type SessionProvider func(*stdhttp.Request) (string, bool)
+type EffectiveCapabilitiesProvider func(context.Context, *stdhttp.Request, string) ([]access.Capability, error)
 
 type AuthoringAuthentication interface {
 	InstanceID() string
@@ -60,6 +61,7 @@ type Handler struct {
 	CurrentCredential            CredentialProvider
 	CurrentSession               SessionProvider
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	RequestEffectiveCapabilities EffectiveCapabilitiesProvider
 	AuthoringAuth                AuthoringAuthentication
 	Avatar                       AvatarService
 	LocalPasswordEnabled         bool
@@ -90,23 +92,14 @@ func (h Handler) ListCurrentEffectiveCapabilities(w stdhttp.ResponseWriter, r *s
 		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
 		return
 	}
-	if h.CurrentEffectiveCapabilities == nil {
+	if h.RequestEffectiveCapabilities == nil {
 		writeJSONError(w, errors.New("active authorization snapshot is unavailable"), stdhttp.StatusInternalServerError)
 		return
 	}
-	capabilities, err := h.CurrentEffectiveCapabilities(r.Context(), principal.ID)
+	capabilities, err := h.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
-	}
-	if h.CurrentCredential != nil {
-		if credential, ok := h.CurrentCredential(r); ok {
-			if credential.Token.ID != "" && credential.Token.Capabilities != nil && len(credential.Token.Capabilities) == 0 {
-				writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
-				return
-			}
-			capabilities = access.IntersectTokenCapabilities(credential.Token.Capabilities, capabilities)
-		}
 	}
 	if capabilities == nil {
 		capabilities = []access.Capability{}

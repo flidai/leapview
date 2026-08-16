@@ -92,7 +92,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		}
 		return session.ID, true
 	}
-	return &Module{auth: config.Auth, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
+	module := &Module{auth: config.Auth, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		currentProjectID:             config.CurrentProjectID,
@@ -102,7 +102,10 @@ func newSurface(config surfaceConfig) (*Module, error) {
 			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			AuthoringAuth:                config.AuthoringAuth,
 			Avatar:                       avatarService, LocalPasswordEnabled: localPasswordEnabled,
-		}}, nil
+		},
+	}
+	module.handler.RequestEffectiveCapabilities = module.RequestEffectiveCapabilities
+	return module, nil
 }
 
 func (m *Module) HTTP() accesshttp.Handler { return m.handler }
