@@ -1,8 +1,8 @@
 -- Refresh execution, materialization runs, and durable scheduling jobs.
 
 -- name: CreateRefreshJob :exec
-INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, kind, payload_json, status, queued_at)
-VALUES (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(generation_id), sqlc.arg(semantic_model_id), sqlc.arg(pipeline_id), sqlc.arg(kind), sqlc.arg(payload_json), sqlc.arg(status), CURRENT_TIMESTAMP);
+INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, payload_json, status, queued_at)
+VALUES (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(generation_id), sqlc.arg(semantic_model_id), sqlc.arg(pipeline_id), sqlc.arg(principal_id), sqlc.arg(group_ids_json), sqlc.arg(estimated_memory_bytes), sqlc.arg(kind), sqlc.arg(payload_json), sqlc.arg(status), CURRENT_TIMESTAMP);
 
 -- name: CreateRefreshJobRun :exec
 INSERT INTO refresh_job_runs (
@@ -86,7 +86,7 @@ WHERE id IN (
 );
 
 -- name: NextExecutableRefreshJob :one
-SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, r.principal_id, j.pipeline_id, j.kind, j.payload_json,
+SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, j.principal_id, j.group_ids_json, j.estimated_memory_bytes, j.kind, j.payload_json,
        r.id AS run_id, r.target_type, r.target_id, r.target_revision, r.trigger_type, j.attempt_count, j.lease_owner, j.lease_revision
 FROM refresh_jobs j
 JOIN refresh_job_runs r ON r.job_id = j.id
@@ -104,10 +104,10 @@ LIMIT 1;
 
 -- name: ListExecutableRefreshJobHeads :many
 WITH eligible AS (
-  SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, r.principal_id, j.pipeline_id, j.kind, j.payload_json,
+  SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, j.principal_id, j.group_ids_json, j.estimated_memory_bytes, j.kind, j.payload_json,
          r.id AS run_id, r.target_type, r.target_id, r.target_revision, r.trigger_type, j.attempt_count, j.lease_owner, j.lease_revision,
          ROW_NUMBER() OVER (
-           PARTITION BY j.project_id
+           PARTITION BY j.principal_id
            ORDER BY COALESCE(NULLIF(j.queued_at, ''), j.created_at) ASC, j.id ASC
          ) AS project_position,
          COALESCE(NULLIF(j.queued_at, ''), j.created_at) AS queue_position
@@ -123,7 +123,7 @@ WITH eligible AS (
       OR (j.status = sqlc.arg(running_status) AND (j.lease_expires_at IS NULL OR j.lease_expires_at <= CURRENT_TIMESTAMP))
     )
 )
-SELECT id, project_id, environment, generation_id, semantic_model_id, principal_id, pipeline_id, kind, payload_json,
+SELECT id, project_id, environment, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, payload_json,
        run_id, target_type, target_id, target_revision, trigger_type, attempt_count, lease_owner, lease_revision
 FROM eligible
 WHERE project_position = 1

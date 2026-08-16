@@ -9,7 +9,7 @@ import (
 func TestRunInputRejectsIdentityAndOperationalAliases(t *testing.T) {
 	base := RunInput{
 		Identity:        projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},
-		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", TargetType: TargetRefreshPipeline,
+		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864, TargetType: TargetRefreshPipeline,
 		TargetID: "pipeline_sales", TriggerType: TriggerManual, JobKind: JobKindRefreshPipeline,
 	}
 	if err := base.Validate(); err != nil {
@@ -35,7 +35,7 @@ func TestRunInputRejectsIdentityAndOperationalAliases(t *testing.T) {
 func TestJobRecordRequiresCanonicalLeaseFence(t *testing.T) {
 	job := JobRecord{
 		ID: "job_1", Identity: projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},
-		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", Kind: JobKindRefreshPipeline,
+		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864, Kind: JobKindRefreshPipeline,
 		RunID: "run_1", TargetType: TargetRefreshPipeline, TargetID: "pipeline_sales", TriggerType: TriggerManual,
 	}
 	if err := job.Validate(); err != nil {
@@ -59,7 +59,7 @@ func TestJobRecordRequiresCanonicalLeaseFence(t *testing.T) {
 func TestRunInputKeepsModelTargetDistinctFromPipeline(t *testing.T) {
 	input := RunInput{
 		Identity:        projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},
-		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", TargetType: TargetModelTable,
+		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864, TargetType: TargetModelTable,
 		TargetID: "model_sales_customers", TriggerType: TriggerDependency, JobKind: JobKindChildRun,
 	}
 	if err := input.Validate(); err != nil {

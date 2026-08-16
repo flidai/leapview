@@ -68,18 +68,20 @@ type RunRecord struct {
 }
 
 type RunInput struct {
-	Identity        projectgraph.ServingIdentity
-	SemanticModelID projectgraph.ResourceID
-	PipelineID      projectgraph.ResourceID
-	PrincipalID     string
-	TargetType      string
-	TargetID        projectgraph.ResourceID
-	TargetRevision  int64
-	TriggerType     string
-	ParentRunID     string
-	RetryOf         string
-	JobKind         string
-	PayloadJSON     string
+	Identity             projectgraph.ServingIdentity
+	SemanticModelID      projectgraph.ResourceID
+	PipelineID           projectgraph.ResourceID
+	PrincipalID          string
+	GroupIDs             []string
+	EstimatedMemoryBytes int64
+	TargetType           string
+	TargetID             projectgraph.ResourceID
+	TargetRevision       int64
+	TriggerType          string
+	ParentRunID          string
+	RetryOf              string
+	JobKind              string
+	PayloadJSON          string
 }
 
 type JobRecord struct {
@@ -87,6 +89,8 @@ type JobRecord struct {
 	Identity             projectgraph.ServingIdentity
 	SemanticModelID      projectgraph.ResourceID
 	PipelineID           projectgraph.ResourceID
+	PrincipalID          string
+	GroupIDs             []string
 	Kind                 string
 	PayloadJSON          string
 	EstimatedMemoryBytes int64
@@ -175,6 +179,12 @@ func (input RunInput) Validate() error {
 	if input.TargetRevision < 0 {
 		return errors.New("refresh target revision must not be negative")
 	}
+	if err := validateGroupIDs(input.GroupIDs); err != nil {
+		return err
+	}
+	if input.EstimatedMemoryBytes <= 0 {
+		return errors.New("refresh estimated memory must be positive")
+	}
 	return nil
 }
 
@@ -227,6 +237,26 @@ func (job JobRecord) Validate() error {
 	}
 	if job.TargetRevision < 0 || job.LeaseRevision < 0 {
 		return errors.New("refresh job revisions must not be negative")
+	}
+	if err := validateGroupIDs(job.GroupIDs); err != nil {
+		return err
+	}
+	if job.EstimatedMemoryBytes <= 0 {
+		return errors.New("refresh estimated memory must be positive")
+	}
+	return nil
+}
+
+func validateGroupIDs(groups []string) error {
+	seen := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		if err := validateOperational(group, "group id", true); err != nil {
+			return err
+		}
+		if _, exists := seen[group]; exists {
+			return errors.New("refresh group ids must be unique")
+		}
+		seen[group] = struct{}{}
 	}
 	return nil
 }

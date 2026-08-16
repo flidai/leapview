@@ -339,7 +339,7 @@ func TestRepositorySemanticModelDataVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
-INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, kind, status) VALUES ('job_1', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_sales_refresh', 'refresh_pipeline', 'succeeded');
+INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status) VALUES ('job_1', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_sales_refresh', 'system:refresh', '[]', 67108864, 'refresh_pipeline', 'succeeded');
 INSERT INTO refresh_job_runs (id, job_id, environment, target_type, target_id, trigger_type, status) VALUES ('run_1', 'job_1', 'prod', 'refresh_pipeline', 'sales.sales-refresh', 'manual', 'succeeded');
 `); err != nil {
 		t.Fatal(err)

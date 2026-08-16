@@ -76,7 +76,7 @@ func (d Dispatcher) dispatchCandidate(ctx context.Context, owner string, candida
 		}
 		return false
 	}
-	lease, err := d.admitter().Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: candidate.PrincipalID, Operation: "materialization.refresh", EstimatedMemoryBytes: candidate.EstimatedMemoryBytes})
+	lease, err := d.admitter().Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: candidate.PrincipalID, GroupIDs: append([]string(nil), candidate.GroupIDs...), Operation: "materialization.refresh", EstimatedMemoryBytes: candidate.EstimatedMemoryBytes})
 	if err != nil {
 		if d.Logger != nil {
 			d.Logger.InfoContext(ctx, "refresh admission deferred", "project", candidate.Identity.ProjectID, "generation", candidate.Identity.GenerationID, "run", candidate.RunID, "error", err)

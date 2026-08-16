@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -83,9 +84,15 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 	}
 	jobID := newRunID("matjob")
 	runID := newRunID("matrun")
+	groupIDsJSON, err := json.Marshal(normalized.GroupIDs)
+	if err != nil {
+		return refreshrun.RunRecord{}, fmt.Errorf("encode refresh group ids: %w", err)
+	}
 	if err := q.CreateRefreshJob(ctx, platformdb.CreateRefreshJobParams{
 		ID: jobID, ProjectID: normalized.Identity.ProjectID.String(), GenerationID: normalized.Identity.GenerationID,
-		SemanticModelID: normalized.SemanticModelID.String(), PipelineID: normalized.PipelineID.String(), Kind: normalized.JobKind, PayloadJson: normalized.PayloadJSON, Status: refreshrun.RunStatusQueued,
+		SemanticModelID: normalized.SemanticModelID.String(), PipelineID: normalized.PipelineID.String(), PrincipalID: normalized.PrincipalID,
+		GroupIdsJson: string(groupIDsJSON), EstimatedMemoryBytes: normalized.EstimatedMemoryBytes,
+		Kind: normalized.JobKind, PayloadJson: normalized.PayloadJSON, Status: refreshrun.RunStatusQueued,
 	}); err != nil {
 		return refreshrun.RunRecord{}, err
 	}
@@ -172,8 +179,13 @@ func (r *SQLRunRepository) ListExecutableJobs(ctx context.Context, identity proj
 			return nil, fmt.Errorf("invalid persisted refresh job serving identity for %s", row.ID)
 		}
 		pipelineID := projectgraph.ResourceID(row.PipelineID)
+		var groupIDs []string
+		if err := json.Unmarshal([]byte(row.GroupIdsJson), &groupIDs); err != nil {
+			return nil, fmt.Errorf("invalid persisted refresh job group ids for %s: %w", row.ID, err)
+		}
 		jobs = append(jobs, refreshrun.JobRecord{
-			ID: row.ID, Identity: rowIdentity, PipelineID: pipelineID, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID), PrincipalID: row.PrincipalID.String,
+			ID: row.ID, Identity: rowIdentity, PipelineID: pipelineID, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID), PrincipalID: row.PrincipalID,
+			GroupIDs: groupIDs, EstimatedMemoryBytes: row.EstimatedMemoryBytes,
 			Kind: row.Kind, PayloadJSON: row.PayloadJson, RunID: row.RunID, TargetType: row.TargetType,
 			TargetID: projectgraph.ResourceID(row.TargetID), TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, AttemptCount: int(row.AttemptCount),
 			LeaseOwner: row.LeaseOwner, LeaseRevision: row.LeaseRevision,
@@ -883,18 +895,20 @@ func (r *SQLRunRepository) runPageCursor(ctx context.Context, identity projectgr
 }
 
 type normalizedRunInput struct {
-	Identity        projectgraph.ServingIdentity
-	SemanticModelID projectgraph.ResourceID
-	PipelineID      projectgraph.ResourceID
-	PrincipalID     string
-	TargetType      string
-	TargetID        projectgraph.ResourceID
-	TargetRevision  int64
-	TriggerType     string
-	ParentRunID     string
-	RetryOf         string
-	JobKind         string
-	PayloadJSON     string
+	Identity             projectgraph.ServingIdentity
+	SemanticModelID      projectgraph.ResourceID
+	PipelineID           projectgraph.ResourceID
+	PrincipalID          string
+	TargetType           string
+	TargetID             projectgraph.ResourceID
+	TargetRevision       int64
+	TriggerType          string
+	ParentRunID          string
+	RetryOf              string
+	JobKind              string
+	PayloadJSON          string
+	GroupIDs             []string
+	EstimatedMemoryBytes int64
 }
 
 func normalizeRunInput(input refreshrun.RunInput) (normalizedRunInput, error) {
@@ -928,7 +942,8 @@ func normalizeRunInput(input refreshrun.RunInput) (normalizedRunInput, error) {
 	}
 	return normalizedRunInput{
 		Identity: input.Identity, SemanticModelID: input.SemanticModelID, PipelineID: input.PipelineID,
-		PrincipalID: input.PrincipalID, TargetType: input.TargetType, TargetID: input.TargetID,
+		PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes,
+		TargetType: input.TargetType, TargetID: input.TargetID,
 		TargetRevision: input.TargetRevision, TriggerType: input.TriggerType, ParentRunID: input.ParentRunID,
 		RetryOf: input.RetryOf, JobKind: input.JobKind, PayloadJSON: payloadJSON,
 	}, nil

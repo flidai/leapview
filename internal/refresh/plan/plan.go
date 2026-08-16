@@ -3,45 +3,46 @@ package plan
 
 import (
 	"fmt"
-	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshartifact "github.com/flidai/leapview/internal/refresh/artifact"
 )
 
 type Plan struct {
 	TargetType       string
-	TargetID         string
-	ModelID          string
+	TargetID         projectgraph.ResourceID
+	SemanticModelID  projectgraph.ResourceID
 	Tables           []string
 	DependencyTables []string
 }
 
-func ForPipeline(definition *refreshartifact.Definition, workspaceID, pipelineID string) (Plan, error) {
+func ForPipeline(definition *refreshartifact.Definition, projectID, pipelineID projectgraph.ResourceID) (Plan, error) {
 	if definition == nil {
-		return Plan{}, fmt.Errorf("workspace definition is required")
+		return Plan{}, fmt.Errorf("project definition is required")
 	}
-	pipelineID = strings.TrimSpace(pipelineID)
-	pipeline, ok := definition.Pipelines[pipelineID]
+	if err := projectID.Validate(); err != nil {
+		return Plan{}, err
+	}
+	if err := pipelineID.Validate(); err != nil {
+		return Plan{}, err
+	}
+	pipeline, ok := definition.Pipelines[pipelineID.String()]
 	if !ok {
 		return Plan{}, fmt.Errorf("unknown refresh pipeline %q", pipelineID)
 	}
-	model, ok := definition.Models[pipeline.SemanticModel]
+	model, ok := definition.Models[pipeline.SemanticModelID.String()]
 	if !ok {
-		return Plan{}, fmt.Errorf("refresh pipeline %q references unknown semantic model %q", pipelineID, pipeline.SemanticModel)
+		return Plan{}, fmt.Errorf("refresh pipeline %q references unknown semantic model %q", pipelineID, pipeline.SemanticModelID)
 	}
 	order, err := modelTableOrder(model)
 	if err != nil {
 		return Plan{}, err
 	}
-	targetID := strings.TrimSpace(workspaceID) + "." + pipelineID
-	if _, err := localWorkspaceAssetName(workspaceID, targetID); err != nil {
-		return Plan{}, err
-	}
 	return Plan{
 		TargetType:       "refresh_pipeline",
-		TargetID:         targetID,
-		ModelID:          pipeline.SemanticModel,
+		TargetID:         pipelineID,
+		SemanticModelID:  pipeline.SemanticModelID,
 		Tables:           order,
 		DependencyTables: append([]string(nil), order...),
 	}, nil
@@ -83,20 +84,4 @@ func modelTableOrder(model *semanticmodel.Model) ([]string, error) {
 		}
 	}
 	return order, nil
-}
-
-func localWorkspaceAssetName(workspaceID, key string) (string, error) {
-	prefix := strings.TrimSpace(workspaceID) + "."
-	key = strings.TrimSpace(key)
-	if prefix == "." {
-		return "", fmt.Errorf("workspace id is required")
-	}
-	if !strings.HasPrefix(key, prefix) {
-		return "", fmt.Errorf("asset key %q is not in workspace %q", key, workspaceID)
-	}
-	name := strings.TrimSpace(strings.TrimPrefix(key, prefix))
-	if name == "" {
-		return "", fmt.Errorf("asset key %q is missing a local name", key)
-	}
-	return name, nil
 }

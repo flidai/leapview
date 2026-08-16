@@ -156,6 +156,9 @@ CREATE TABLE IF NOT EXISTS refresh_jobs (
   generation_id TEXT NOT NULL,
   semantic_model_id TEXT NOT NULL,
   pipeline_id TEXT NOT NULL,
+  principal_id TEXT NOT NULL,
+  group_ids_json TEXT NOT NULL,
+  estimated_memory_bytes INTEGER NOT NULL CHECK(estimated_memory_bytes > 0),
   status TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

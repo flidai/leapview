@@ -32,7 +32,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES ('genera
 		ResourceKind: "refresh", InitialEvent: "refresh.queued", InitialState: "queued",
 	})
 	run, err := repository.CreateRun(t.Context(), refreshrun.RunInput{
-		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily",
+		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily",
 		TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
 	})
@@ -60,7 +60,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES ('genera
 		return injected
 	}), RunWorkflowConfig{ResourceKind: "refresh", InitialEvent: "refresh.queued", InitialState: "queued"})
 	_, err = repository.CreateRun(t.Context(), refreshrun.RunInput{
-		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily",
+		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily",
 		TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
 	})
@@ -177,7 +177,7 @@ func TestSQLRunRepositoryFencesTerminalTransitionsAcrossReclaim(t *testing.T) {
 func TestSQLRunRepositoryFailsClaimedRunTreeAtomically(t *testing.T) {
 	store, repo, job := seedRefreshJob(t, refreshrun.RunStatusRunning, "+5 minutes")
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
-INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'child_run', 'queued');
+INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'system:refresh', '[]', 67108864, 'child_run', 'queued');
 INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
 VALUES ('child_run', 'child_job', 'system:refresh', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'running', 2);`); err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestSQLRunRepositoryRejectsIneligibleChildTree(t *testing.T) {
 	store, repo, job := seedRefreshJob(t, refreshrun.RunStatusRunning, "+5 minutes")
 	defer store.Close()
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
-INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'child_run', 'queued');
+INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'system:refresh', '[]', 67108864, 'child_run', 'queued');
 INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
 VALUES ('child_run', 'child_job', 'system:refresh', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'succeeded', 2);`); err != nil {
 		t.Fatal(err)
@@ -231,7 +231,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	identityB := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_b"}
 	input := func(identity projectgraph.ServingIdentity) refreshrun.RunInput {
 		return refreshrun.RunInput{
-			Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily",
+			Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
 			TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily",
 			TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
 		}
@@ -328,9 +328,9 @@ func seedRefreshJob(t *testing.T, runStatus, leaseOffset string) (*platform.Stor
 	t.Cleanup(func() { _ = store.Close() })
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO refresh_jobs (
-  id, project_id, generation_id, semantic_model_id, pipeline_id, kind, status, lease_owner, lease_revision
+  id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status, lease_owner, lease_revision
 ) VALUES (
-  'job_1', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'refresh_pipeline', 'running', 'worker-1', 1
+  'job_1', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'user:test', '[]', 67108864, 'refresh_pipeline', 'running', 'worker-1', 1
 );
 INSERT INTO refresh_job_runs (
   id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, status, created_sequence
@@ -346,7 +346,7 @@ INSERT INTO refresh_job_runs (
 		t.Fatalf("set refresh job lease: %v", err)
 	}
 	job := refreshrun.JobRecord{
-		ID: "job_1", Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily",
+		ID: "job_1", Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
 		Kind: refreshrun.JobKindRefreshPipeline, RunID: "run_1",
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TargetRevision: 1,
 		TriggerType: refreshrun.TriggerManual, LeaseOwner: "worker-1", LeaseRevision: 1,
