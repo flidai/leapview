@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Module struct {
@@ -27,6 +28,7 @@ type Module struct {
 	desktopAuth                  *desktopauth.Service
 	authoringAuth                *access.AuthoringAuthService
 	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	currentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	logger                       *slog.Logger
 	presentation                 webpage.Presentation
 	assets                       staticasset.Resolver
@@ -37,6 +39,7 @@ type surfaceConfig struct {
 	CurrentPrincipal             func(*http.Request) (Principal, bool)
 	CurrentCredential            func(*http.Request) (access.APICredential, bool)
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	Auth                         *Auth
 	Logger                       *slog.Logger
 	OAuth                        *mcpoauth.Service
@@ -92,6 +95,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 	return &Module{auth: config.Auth, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		currentProjectID:             config.CurrentProjectID,
 		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
 			Repository: config.Repository, CurrentPrincipal: currentPrincipal,
 			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
@@ -113,6 +117,27 @@ func (m *Module) SetCurrentEffectiveCapabilities(fn func(context.Context, string
 	}
 	m.currentEffectiveCapabilities = fn
 	m.handler.CurrentEffectiveCapabilities = fn
+}
+
+// SetCurrentProjectID installs the immutable active project identity used to
+// bind request credentials to the serving generation. It is separate from
+// the capability projection because that projection is scoped by principal,
+// while this identity is scoped by the active runtime lease.
+func (m *Module) SetCurrentProjectID(fn func(context.Context) (projectgraph.ResourceID, error)) {
+	if m == nil {
+		return
+	}
+	m.currentProjectID = fn
+}
+
+// CurrentProjectID returns the active immutable project identity. A missing
+// callback fails closed instead of inferring identity from a route or mutable
+// access record.
+func (m *Module) CurrentProjectID(ctx context.Context) (projectgraph.ResourceID, error) {
+	if m == nil || m.currentProjectID == nil {
+		return "", fmt.Errorf("active project identity is unavailable")
+	}
+	return m.currentProjectID(ctx)
 }
 
 // CurrentEffectiveCapabilities returns the active-generation capability
@@ -162,6 +187,16 @@ func (m *Module) RequestEffectiveCapabilities(ctx context.Context, r *http.Reque
 		return capabilities, nil
 	}
 	if credential.Authoring != nil {
+		activeProjectID, err := m.CurrentProjectID(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("authoring credential active project: %w", err)
+		}
+		if err := activeProjectID.Validate(); err != nil {
+			return nil, fmt.Errorf("authoring credential active project: %w", err)
+		}
+		if credential.Authoring.Scope.ProjectID != activeProjectID {
+			return nil, access.ErrAuthoringScopeDenied
+		}
 		capabilities = access.IntersectTokenCapabilities(credential.Authoring.Scope.Capabilities, capabilities)
 	}
 	if credential.Token.ID != "" {

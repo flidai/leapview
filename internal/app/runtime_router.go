@@ -503,6 +503,7 @@ func buildApplicationSurfaces(
 			}
 			return snapshot.EffectiveCapabilities(subjects)
 		})
+		routes.accessModule.SetCurrentProjectID(runtimeConfig.ProjectIDResolver)
 		if routes.managedDataModule != nil {
 			routes.managedDataModule.SetAuthorizeConnection(authorizeConnection)
 		}
@@ -628,9 +629,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		var err error
 		routes.accessModule, err = accessmodule.Build(ctx, accessmodule.Config{
 			Database: database, ExistingAuth: platform.auth,
-			InstanceID: storage.instanceID, PublicURL: storage.publicURL,
-			Presentation: webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
-			Assets:       platform.assets,
+			InstanceID:       storage.instanceID,
+			PublicURL:        storage.publicURL,
+			CurrentProjectID: runtimeConfig.ProjectIDResolver,
+			Presentation:     webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
+			Assets:           platform.assets,
 		})
 		if err != nil {
 			return fmt.Errorf("build access module: %w", err)

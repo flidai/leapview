@@ -16,6 +16,7 @@ import (
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Config struct {
@@ -26,6 +27,7 @@ type Config struct {
 	InstanceID                   string
 	MCPIssuerURL                 string
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	Presentation                 webpage.Presentation
 	Assets                       staticasset.Resolver
 	AvatarBlobs                  avatar.BlobStore
@@ -38,7 +40,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
 			Auth: auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
-			Presentation: config.Presentation, Assets: config.Assets,
+			CurrentProjectID: config.CurrentProjectID,
+			Presentation:     config.Presentation, Assets: config.Assets,
 		}
 		if auth != nil {
 			surface.CurrentPrincipal = auth.Principal
@@ -94,6 +97,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		Repository:                   func() (access.Repository, error) { return repository, nil },
 		Auth:                         auth,
 		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		CurrentProjectID:             config.CurrentProjectID,
 		AuthoringAuth:                authoringAuth,
 		Avatar:                       avatarService,
 		Presentation:                 config.Presentation,

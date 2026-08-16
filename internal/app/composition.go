@@ -176,11 +176,28 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	var runtimeHostModule *runtimehostmodule.Module
+	currentProjectID := func(ctx context.Context) (projectgraph.ResourceID, error) {
+		if runtimeHostModule == nil {
+			return "", fmt.Errorf("runtime host is unavailable")
+		}
+		lease, err := runtimeHostModule.Acquire(ctx)
+		if err != nil {
+			return "", err
+		}
+		defer lease.Release()
+		projectID := lease.Identity().ProjectID
+		if err := projectID.Validate(); err != nil {
+			return "", fmt.Errorf("active runtime project identity is invalid: %w", err)
+		}
+		return projectID, nil
+	}
 	accessModule, err := accessmodule.Build(ctx, accessmodule.Config{
 		Database: store.SQLDB(), Auth: accessAuthConfig(cfg, production, cookieSecure),
 		Assets:      assets,
 		AvatarBlobs: avatarBlobs,
 		PublicURL:   publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL,
+		CurrentProjectID: currentProjectID,
 	})
 	if err != nil {
 		return fail(err)
@@ -209,7 +226,6 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
-	var runtimeHostModule *runtimehostmodule.Module
 	authorizationSnapshot := func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
 		if runtimeHostModule == nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("runtime host is unavailable")
@@ -350,18 +366,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 		return snapshot.EffectiveCapabilities(subjects)
 	})
-	projectIDResolver := func(ctx context.Context) (projectgraph.ResourceID, error) {
-		lease, err := runtimeHostModule.Acquire(ctx)
-		if err != nil {
-			return "", err
-		}
-		defer lease.Release()
-		projectID := lease.Identity().ProjectID
-		if err := projectID.Validate(); err != nil {
-			return "", fmt.Errorf("active runtime project identity is invalid: %w", err)
-		}
-		return projectID, nil
-	}
+	projectIDResolver := currentProjectID
+	accessModule.SetCurrentProjectID(projectIDResolver)
 	servingSnapshotResolver := func(ctx context.Context) (string, error) {
 		lease, err := runtimeHostModule.Acquire(ctx)
 		if err != nil {
