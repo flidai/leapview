@@ -238,9 +238,9 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 		t.Fatal("generated suspend publication command contract is missing")
 	}
 	events, err := testAccessRepository(store).ListAuditEvents(t.Context(), access.AuditEventFilter{
-		ResourceKind: "dashboard_publication", ResourceID: "pub_website", Action: contract.Command.Audit.SuccessAction,
+		ResourceKind: "project", ResourceID: "project:test", Action: contract.Command.Audit.SuccessAction,
 	})
-	if err != nil || len(events) != 1 || events[0].ResourceKind != "dashboard_publication" || events[0].Status != "success" {
+	if err != nil || len(events) != 1 || events[0].ResourceKind != "project" || events[0].ResourceID != "project:test" || events[0].Status != "success" {
 		t.Fatalf("suspend publication audit events = %#v, err = %v", events, err)
 	}
 }
