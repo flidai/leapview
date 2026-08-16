@@ -231,7 +231,6 @@ func normalizeCandidateAuthoredConnections(values []CandidateAuthoredConnection)
 		if err := values[i].ConnectionID.Validate(); err != nil {
 			return nil, ErrCandidateInvalid
 		}
-		values[i].ConnectionID, values[i].ConnectorKind = strings.TrimSpace(values[i].ConnectionID), strings.TrimSpace(values[i].ConnectorKind)
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i].ConnectionID < values[j].ConnectionID })
 	for i, value := range values {
