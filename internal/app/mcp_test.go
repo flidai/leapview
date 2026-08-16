@@ -118,8 +118,11 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 				t.Fatalf("query_visual metadata = %#v", tool)
 			}
 			properties := tool.InputSchema["properties"].(map[string]any)
-			if _, ok := properties["workspace"]; !ok {
-				t.Fatalf("global query_visual schema does not require a workspace: %#v", tool.InputSchema)
+			if _, ok := properties["semanticModelId"]; !ok {
+				t.Fatalf("query_visual schema does not expose semanticModelId: %#v", tool.InputSchema)
+			}
+			if _, ok := properties["workspace"]; ok {
+				t.Fatalf("query_visual schema still exposes legacy workspace: %#v", tool.InputSchema)
 			}
 		}
 	}
@@ -164,7 +167,7 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 		t.Fatalf("structured and text output differ: structured=%#v text=%#v", callResponse.Result.StructuredContent, textContent)
 	}
 
-	visual := mcpRequest(t, handler, "mcp-secret", "2025-11-25", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"query_visual","arguments":{"workspace":"test","type":"bar","model":"test","dataset":"orders","dimensions":[{"field":"orders.status"}],"measures":[{"field":"order_count"}],"limit":10}}}`)
+	visual := mcpRequest(t, handler, "mcp-secret", "2025-11-25", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"query_visual","arguments":{"type":"bar","semanticModelId":"test","dataset":"orders","dimensions":[{"field":"orders.status"}],"measures":[{"field":"order_count"}],"limit":10}}}`)
 	if visual.Code != http.StatusOK {
 		t.Fatalf("query_visual = %d body=%s", visual.Code, visual.Body.String())
 	}
@@ -219,13 +222,12 @@ func TestMCPGoSDKClientInteroperability(t *testing.T) {
 	result, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name: "query_visual",
 		Arguments: map[string]any{
-			"workspace":  "test",
-			"type":       "bar",
-			"model":      "test",
-			"dataset":    "orders",
-			"dimensions": []map[string]any{{"field": "orders.status"}},
-			"measures":   []map[string]any{{"field": "order_count"}},
-			"limit":      10,
+			"type":            "bar",
+			"semanticModelId": "test",
+			"dataset":         "orders",
+			"dimensions":      []map[string]any{{"field": "orders.status"}},
+			"measures":        []map[string]any{{"field": "order_count"}},
+			"limit":           10,
 		},
 	})
 	if err != nil {
@@ -324,27 +326,27 @@ func TestMCPAcceptsOAuthTokensAndRejectsGeneralAPITokens(t *testing.T) {
 		t.Fatalf("create restricted principal: %v", err)
 	}
 	restrictedToken := issueMCPUserToken(t, server, restrictedPrincipal.ID)
-	if response := mcpRequest(t, handler, restrictedToken, "", initialize); response.Code != http.StatusForbidden {
-		t.Fatalf("restricted OAuth token status = %d body=%s", response.Code, response.Body.String())
+	if response := mcpRequest(t, handler, restrictedToken, "", initialize); response.Code != http.StatusOK {
+		t.Fatalf("restricted OAuth token initialization status = %d body=%s", response.Code, response.Body.String())
 	}
 
-	foreignCalls := map[string]string{
-		"catalog_get":            `{"ref":{"workspaceId":"other","type":"workspace","id":"other"}}`,
-		"catalog_list":           `{"parent":{"workspaceId":"other","type":"workspace","id":"other"}}`,
-		"query_semantic_model":   `{"workspace":"other","model":"test","measures":[{"field":"order_count"}]}`,
-		"query_dashboard_visual": `{"workspace":"other","dashboard":"executive-sales","page":"overview","visual":"orders"}`,
-		"query_visual":           `{"workspace":"other","type":"bar","model":"test","dataset":"orders","measures":[{"field":"order_count"}]}`,
+	deniedCalls := map[string]string{
+		"catalog_get":            `{"ref":{"kind":"project","id":"project:other"}}`,
+		"catalog_list":           `{"parent":{"kind":"project","id":"project:other"}}`,
+		"query_semantic_model":   `{"model":"other","measures":[{"field":"order_count"}]}`,
+		"query_dashboard_visual": `{"dashboard":"other","page":"overview","visual":"orders"}`,
+		"query_visual":           `{"type":"bar","semanticModelId":"other","dataset":"orders","measures":[{"field":"order_count"}]}`,
 	}
-	for name, arguments := range foreignCalls {
+	for name, arguments := range deniedCalls {
 		body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"tools/call","params":{"name":%q,"arguments":%s}}`, name, name, arguments)
 		response := mcpRequest(t, handler, oauthToken, "2025-11-25", body)
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"isError":true`) {
-			t.Fatalf("foreign workspace %s response = %d body=%s", name, response.Code, response.Body.String())
+			t.Fatalf("denied project call %s response = %d body=%s", name, response.Code, response.Body.String())
 		}
 	}
 	authorizedCatalog := mcpRequest(t, handler, oauthToken, "2025-11-25", `{"jsonrpc":"2.0","id":"authorized-catalog","method":"tools/call","params":{"name":"catalog_list","arguments":{}}}`)
 	if authorizedCatalog.Code != http.StatusOK || strings.Contains(authorizedCatalog.Body.String(), `"id":"other"`) {
-		t.Fatalf("authorized catalog leaked foreign workspace: %d body=%s", authorizedCatalog.Code, authorizedCatalog.Body.String())
+		t.Fatalf("authorized catalog leaked foreign project: %d body=%s", authorizedCatalog.Code, authorizedCatalog.Body.String())
 	}
 	audits, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{Action: "agent_tool.called"})
 	if err != nil {
@@ -364,7 +366,7 @@ func TestMCPAcceptsOAuthTokensAndRejectsGeneralAPITokens(t *testing.T) {
 	}
 	for name, target := range wantDeniedTargets {
 		if !deniedTargets[target] {
-			t.Errorf("foreign workspace call %s was not audited with target %s: %#v", name, target, audits)
+			t.Errorf("denied project call %s was not audited with target %s: %#v", name, target, audits)
 		}
 	}
 	if len(deniedTargets) != len(wantDeniedTargets) {

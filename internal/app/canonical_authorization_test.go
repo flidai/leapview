@@ -72,7 +72,7 @@ func tusSnapshot(t *testing.T, principalID string, connectionID projectgraph.Res
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject}, {ID: connectionID, Kind: projectgraph.KindConnection}}, nil)
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject, Name: "project_demo"}, {ID: connectionID, Kind: projectgraph.KindConnection, Name: "connection_sales"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

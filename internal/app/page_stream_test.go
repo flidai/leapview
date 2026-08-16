@@ -63,8 +63,8 @@ func TestDashboardPageStreamResourceFailsClosedForMissingOrInvalidID(t *testing.
 	for _, url := range []string{
 		"/updates?route=dashboard",
 		"/updates?route=dashboard&dashboard=",
-		"/updates?route=dashboard&dashboard=not a resource",
-		"/updates?route=dashboard&dashboard=dashboard with spaces",
+		"/updates?route=dashboard&dashboard=not%20a%20resource",
+		"/updates?route=dashboard&dashboard=dashboard%20with%20spaces",
 		"/updates?route=dashboard&dashboard=dashboard_sales&dashboard=dashboard_finance",
 	} {
 		t.Run(url, func(t *testing.T) {

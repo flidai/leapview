@@ -53,8 +53,8 @@ func TestBIAPIListResponsesUseStandardEnvelope(t *testing.T) {
 		path string
 		name string
 	}{
-		{path: "/api/v1/workspaces/test/dashboards?limit=1", name: "dashboards"},
-		{path: "/api/v1/workspaces/test/semantic-models?limit=1", name: "semantic models"},
+		{path: "/api/v1/dashboards?limit=1", name: "dashboards"},
+		{path: "/api/v1/semantic-models?limit=1", name: "semantic models"},
 	} {
 		req := newPublicAPIRequest(http.MethodGet, tc.path, nil)
 		req.Header.Set("Accept", "application/json")
@@ -86,8 +86,8 @@ func TestBIAPIListResponsesUseStandardEnvelope(t *testing.T) {
 		path string
 		want string
 	}{
-		{path: "/api/v1/workspaces/test/dashboards/executive-sales", want: `"detail_tools"`},
-		{path: "/api/v1/workspaces/test/semantic-models/test", want: `"model_tables"`},
+		{path: "/api/v1/dashboards/executive-sales", want: `"detail_tools"`},
+		{path: "/api/v1/semantic-models/test", want: `"model_tables"`},
 	} {
 		req := newPublicAPIRequest(http.MethodGet, tc.path, nil)
 		req.Header.Set("Accept", "application/json")
@@ -101,7 +101,7 @@ func TestBIAPIListResponsesUseStandardEnvelope(t *testing.T) {
 
 func TestBIAPIListPaginationRejectsMalformedLimit(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{}))
-	req := newPublicAPIRequest(http.MethodGet, "/api/v1/workspaces/test/dashboards?limit=oops", nil)
+	req := newPublicAPIRequest(http.MethodGet, "/api/v1/dashboards?limit=oops", nil)
 	req.Header.Set("Accept", "application/json")
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
@@ -114,7 +114,7 @@ func TestBIAPIListPaginationRejectsMalformedLimit(t *testing.T) {
 func TestBIAPIQueriesBoundRowsAndPageData(t *testing.T) {
 	server := assembleRuntime(manyRowsMetrics{}, testStoreOptions(testStore(t), assemblyConfig{}))
 
-	pageReq := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/query", strings.NewReader(dashboardAPISetFilterBody(t, "overview", "state", "SP")))
+	pageReq := newPublicAPIRequest(http.MethodPost, "/api/v1/dashboards/executive-sales/pages/overview/query", strings.NewReader(dashboardAPISetFilterBody(t, "overview", "state", "SP")))
 	pageReq.Header.Set("Accept", "application/json")
 	pageReq.Header.Set("Content-Type", "application/json")
 	pageRec := httptest.NewRecorder()
@@ -123,7 +123,7 @@ func TestBIAPIQueriesBoundRowsAndPageData(t *testing.T) {
 		t.Fatalf("page query status=%d body=%s", pageRec.Code, pageRec.Body.String())
 	}
 
-	tableReq := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/order_rows/query", strings.NewReader(`{"limit":500}`))
+	tableReq := newPublicAPIRequest(http.MethodPost, "/api/v1/dashboards/executive-sales/pages/overview/visuals/order_rows/query", strings.NewReader(`{"limit":500}`))
 	tableReq.Header.Set("Accept", "application/json")
 	tableReq.Header.Set("Content-Type", "application/json")
 	tableRec := httptest.NewRecorder()
@@ -144,7 +144,7 @@ func TestBIAPIQueriesBoundRowsAndPageData(t *testing.T) {
 func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{}))
 
-	componentReq := newPublicAPIRequest(http.MethodGet, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview", nil)
+	componentReq := newPublicAPIRequest(http.MethodGet, "/api/v1/dashboards/executive-sales/pages/overview", nil)
 	componentReq.Header.Set("Accept", "application/json")
 	componentRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(componentRec, componentReq)
@@ -171,7 +171,7 @@ func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 		t.Fatalf("page response = %s", componentRec.Body.String())
 	}
 
-	visualReq := newPublicAPIRequest(http.MethodGet, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/orders", nil)
+	visualReq := newPublicAPIRequest(http.MethodGet, "/api/v1/dashboards/executive-sales/pages/overview/visuals/orders", nil)
 	visualReq.Header.Set("Accept", "application/json")
 	visualRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(visualRec, visualReq)
@@ -179,7 +179,7 @@ func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 		t.Fatalf("visual describe status=%d body=%s", visualRec.Code, visualRec.Body.String())
 	}
 
-	dataReq := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/orders/query", strings.NewReader(dashboardAPISetFilterBody(t, "overview", "state", "SP")))
+	dataReq := newPublicAPIRequest(http.MethodPost, "/api/v1/dashboards/executive-sales/pages/overview/visuals/orders/query", strings.NewReader(dashboardAPISetFilterBody(t, "overview", "state", "SP")))
 	dataReq.Header.Set("Accept", "application/json")
 	dataReq.Header.Set("Content-Type", "application/json")
 	dataRec := httptest.NewRecorder()
@@ -188,7 +188,7 @@ func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 		t.Fatalf("visual data status=%d body=%s", dataRec.Code, dataRec.Body.String())
 	}
 
-	tableReq := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/order_rows/query", strings.NewReader(`{"limit":10}`))
+	tableReq := newPublicAPIRequest(http.MethodPost, "/api/v1/dashboards/executive-sales/pages/overview/visuals/order_rows/query", strings.NewReader(`{"limit":10}`))
 	tableReq.Header.Set("Accept", "application/json")
 	tableReq.Header.Set("Content-Type", "application/json")
 	tableRec := httptest.NewRecorder()
@@ -197,7 +197,7 @@ func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 		t.Fatalf("table data status=%d body=%s", tableRec.Code, tableRec.Body.String())
 	}
 
-	filterDescribeReq := newPublicAPIRequest(http.MethodGet, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/filters/state", nil)
+	filterDescribeReq := newPublicAPIRequest(http.MethodGet, "/api/v1/dashboards/executive-sales/pages/overview/filters/state", nil)
 	filterDescribeRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(filterDescribeRec, filterDescribeReq)
 	filterDescribeBody := filterDescribeRec.Body.String()
@@ -210,7 +210,7 @@ func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 		t.Fatalf("filter describe status=%d body=%s", filterDescribeRec.Code, filterDescribeBody)
 	}
 
-	filterReq := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/filters/state/values?limit=1", strings.NewReader(`{}`))
+	filterReq := newPublicAPIRequest(http.MethodPost, "/api/v1/dashboards/executive-sales/pages/overview/filters/state/values?limit=1", strings.NewReader(`{}`))
 	filterReq.Header.Set("Accept", "application/json")
 	filterReq.Header.Set("Content-Type", "application/json")
 	filterRec := httptest.NewRecorder()
@@ -220,14 +220,14 @@ func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 	}
 }
 
-func TestSemanticAPIQueryAuditIncludesWorkspace(t *testing.T) {
+func TestSemanticAPIQueryAuditIncludesProject(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{}))
-	req := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/semantic-models/test/query", strings.NewReader(`{"dimensions":[{"field":"orders.status","alias":"status"}],"measures":[{"field":"order_count"}],"limit":1}`))
+	req := newPublicAPIRequest(http.MethodPost, "/api/v1/semantic-models/test/query", strings.NewReader(`{"dimensions":[{"field":"orders.status","alias":"status"}],"measures":[{"field":"order_count"}],"limit":1}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer dev")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Request-ID", "req_api_workspace")
-	req.Header.Set("X-Correlation-ID", "corr_api_workspace")
+	req.Header.Set("X-Request-ID", "req_api_project")
+	req.Header.Set("X-Correlation-ID", "corr_api_project")
 	rec := httptest.NewRecorder()
 
 	server.Routes().ServeHTTP(rec, req)
@@ -235,7 +235,7 @@ func TestSemanticAPIQueryAuditIncludesWorkspace(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	events := queryEventsForTest(t, server, queryaudit.Filter{ProjectID: projectgraph.ResourceID("project:test"), Search: "req_api_workspace"})
+	events := queryEventsForTest(t, server, queryaudit.Filter{ProjectID: projectgraph.ResourceID("project:test"), Search: "req_api_project"})
 	if len(events) != 1 {
 		t.Fatalf("events = %d, want 1: %#v", len(events), events)
 	}
@@ -243,28 +243,28 @@ func TestSemanticAPIQueryAuditIncludesWorkspace(t *testing.T) {
 	if event.ProjectID != "test" || event.Surface != dataquery.SurfaceAPI || event.Operation != dataquery.OperationAPIQuery {
 		t.Fatalf("event metadata = %#v", event)
 	}
-	if event.RequestID != "req_api_workspace" || event.CorrelationID != "corr_api_workspace" {
+	if event.RequestID != "req_api_project" || event.CorrelationID != "corr_api_project" {
 		t.Fatalf("request/correlation = %q/%q", event.RequestID, event.CorrelationID)
 	}
 	if strings.Contains(event.QueryJSON, "delivered") || strings.Contains(event.QueryJSON, "shipped") {
 		t.Fatalf("query event stored result row values: %s", event.QueryJSON)
 	}
 
-	listReq := newPublicAPIRequest(http.MethodGet, "/api/v1/workspaces/test/query-events?search=req_api_workspace&limit=10", nil)
+	listReq := newPublicAPIRequest(http.MethodGet, "/api/v1/projects/project:test/query-events?search=req_api_project&limit=10", nil)
 	listReq.Header.Set("Accept", "application/json")
 	listRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(listRec, listReq)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("query events status=%d body=%s", listRec.Code, listRec.Body.String())
 	}
-	if !strings.Contains(listRec.Body.String(), `"requestId":"req_api_workspace"`) || !strings.Contains(listRec.Body.String(), `"workspaceId":"test"`) {
-		t.Fatalf("query events endpoint did not return workspace-scoped event: %s", listRec.Body.String())
+	if !strings.Contains(listRec.Body.String(), `"requestId":"req_api_project"`) || !strings.Contains(listRec.Body.String(), `"projectId":"project:test"`) {
+		t.Fatalf("query events endpoint did not return project-scoped event: %s", listRec.Body.String())
 	}
 }
 
 func TestDashboardPageQueryWritesQueryEvents(t *testing.T) {
 	server := assembleRuntime(auditedDashboardMetrics{fakeMetrics: fakeMetrics{}}, testStoreOptions(testStore(t), assemblyConfig{}))
-	req := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/query", strings.NewReader(`{}`))
+	req := newPublicAPIRequest(http.MethodPost, "/api/v1/dashboards/executive-sales/pages/overview/query", strings.NewReader(`{}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer dev")
 	req.Header.Set("Content-Type", "application/json")
@@ -294,7 +294,7 @@ func TestDashboardPageQueryWritesQueryEvents(t *testing.T) {
 
 func TestDashboardTableWindowWritesQueryEvents(t *testing.T) {
 	server := assembleRuntime(auditedDashboardMetrics{fakeMetrics: fakeMetrics{}}, testStoreOptions(testStore(t), assemblyConfig{}))
-	req := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/order_rows/query", strings.NewReader(`{"limit":10}`))
+	req := newPublicAPIRequest(http.MethodPost, "/api/v1/dashboards/executive-sales/pages/overview/visuals/order_rows/query", strings.NewReader(`{"limit":10}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer dev")
 	req.Header.Set("Content-Type", "application/json")
@@ -322,10 +322,10 @@ func TestBIAPIDashboardVisualDataSurfaceNotFoundAndMalformedBody(t *testing.T) {
 		method string
 		path   string
 	}{
-		{method: http.MethodGet, path: "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/missing"},
-		{method: http.MethodPost, path: "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/missing/query"},
-		{method: http.MethodPost, path: "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/missing/query"},
-		{method: http.MethodPost, path: "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/filters/missing/values"},
+		{method: http.MethodGet, path: "/api/v1/dashboards/executive-sales/pages/overview/visuals/missing"},
+		{method: http.MethodPost, path: "/api/v1/dashboards/executive-sales/pages/overview/visuals/missing/query"},
+		{method: http.MethodPost, path: "/api/v1/dashboards/executive-sales/pages/overview/visuals/missing/query"},
+		{method: http.MethodPost, path: "/api/v1/dashboards/executive-sales/pages/overview/filters/missing/values"},
 	} {
 		req := newPublicAPIRequest(tc.method, tc.path, strings.NewReader(`{}`))
 		req.Header.Set("Accept", "application/json")
@@ -337,7 +337,7 @@ func TestBIAPIDashboardVisualDataSurfaceNotFoundAndMalformedBody(t *testing.T) {
 		}
 	}
 
-	req := newPublicAPIRequest(http.MethodPost, "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/orders/query", strings.NewReader(`{"filterState":`))
+	req := newPublicAPIRequest(http.MethodPost, "/api/v1/dashboards/executive-sales/pages/overview/visuals/orders/query", strings.NewReader(`{"filterState":`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -358,45 +358,45 @@ func TestBIAPISemanticDatasetSurface(t *testing.T) {
 	}{
 		{
 			method: http.MethodGet,
-			path:   "/api/v1/workspaces/test/semantic-models/test/fields",
+			path:   "/api/v1/semantic-models/test/fields",
 			want:   []string{`"kind":"measure"`, `"name":"order_count"`},
 		},
 		{
 			method: http.MethodPost,
-			path:   "/api/v1/workspaces/test/semantic-models/test/query",
+			path:   "/api/v1/semantic-models/test/query",
 			body:   `{"dimensions":[{"field":"orders.status","alias":"status"}],"measures":[{"field":"order_count"}],"sort":[{"field":"status","direction":"asc"}]}`,
 			want:   []string{`"columns"`, `"rows"`, `"delivered"`},
 		},
 		{
 			method: http.MethodPost,
-			path:   "/api/v1/workspaces/test/semantic-models/test/query/explain",
+			path:   "/api/v1/semantic-models/test/query/explain",
 			body:   `{"measures":[{"field":"order_count"}]}`,
 			want:   []string{`"mode":"single_fact"`, `"facts":["orders"]`, `"physicalDependencies"`},
 		},
 		{
 			method: http.MethodGet,
-			path:   "/api/v1/workspaces/test/semantic-models/test/datasets?limit=1",
+			path:   "/api/v1/semantic-models/test/datasets?limit=1",
 			want:   []string{`"items"`, `"id":"orders"`, `"page"`},
 		},
 		{
 			method: http.MethodGet,
-			path:   "/api/v1/workspaces/test/semantic-models/test/datasets/orders",
+			path:   "/api/v1/semantic-models/test/datasets/orders",
 			want:   []string{`"primaryKey":"order_id"`, `"grain":"order_id"`},
 		},
 		{
 			method: http.MethodGet,
-			path:   "/api/v1/workspaces/test/semantic-models/test/datasets/orders/fields?limit=4",
+			path:   "/api/v1/semantic-models/test/datasets/orders/fields?limit=4",
 			want:   []string{`"kind":"dimension"`, `"kind":"measure"`, `"order_count"`},
 		},
 		{
 			method: http.MethodPost,
-			path:   "/api/v1/workspaces/test/semantic-models/test/datasets/orders/preview",
+			path:   "/api/v1/semantic-models/test/datasets/orders/preview",
 			body:   `{"dimensions":[{"field":"orders.order_id"},{"field":"orders.status"}],"sort":[{"field":"order_id","direction":"asc"}],"limit":1}`,
 			want:   []string{`"order_id"`, `"o1"`, `"nextCursor"`},
 		},
 		{
 			method: http.MethodPost,
-			path:   "/api/v1/workspaces/test/semantic-models/test/datasets/orders/preview/explain",
+			path:   "/api/v1/semantic-models/test/datasets/orders/preview/explain",
 			body:   `{"dimensions":[{"field":"orders.order_id"}],"sort":[{"field":"order_id","direction":"asc"}]}`,
 			want:   []string{`"mode":"preview"`, `"sql"`, `"columns"`},
 		},
@@ -434,10 +434,10 @@ func TestBIAPISemanticDatasetErrors(t *testing.T) {
 		body   string
 		status int
 	}{
-		{method: http.MethodGet, path: "/api/v1/workspaces/test/semantic-models/test/datasets/missing", status: http.StatusNotFound},
-		{method: http.MethodPost, path: "/api/v1/workspaces/test/semantic-models/test/query", body: `{"dimensions":[{"field":"missing.field"}]}`, status: http.StatusBadRequest},
-		{method: http.MethodPost, path: "/api/v1/workspaces/test/semantic-models/test/query", body: `{"dimensions":[{"field":"orders.status"}],"sort":[{"field":"missing"}]}`, status: http.StatusBadRequest},
-		{method: http.MethodPost, path: "/api/v1/workspaces/test/semantic-models/test/query", body: `{"dimensions":`, status: http.StatusBadRequest},
+		{method: http.MethodGet, path: "/api/v1/semantic-models/test/datasets/missing", status: http.StatusNotFound},
+		{method: http.MethodPost, path: "/api/v1/semantic-models/test/query", body: `{"dimensions":[{"field":"missing.field"}]}`, status: http.StatusBadRequest},
+		{method: http.MethodPost, path: "/api/v1/semantic-models/test/query", body: `{"dimensions":[{"field":"orders.status"}],"sort":[{"field":"missing"}]}`, status: http.StatusBadRequest},
+		{method: http.MethodPost, path: "/api/v1/semantic-models/test/query", body: `{"dimensions":`, status: http.StatusBadRequest},
 	} {
 		req := newPublicAPIRequest(tc.method, tc.path, strings.NewReader(tc.body))
 		req.Header.Set("Accept", "application/json")

@@ -15,19 +15,19 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 )
 
-func TestAPITokenWorkspaceAndPrivilegeAllowlistAreEnforced(t *testing.T) {
+func TestAPITokenCapabilityAllowlistIsEnforced(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPrincipal(t, ctx, store, "token-owner@example.com", "Token Owner")
 	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
 		PrincipalID:  owner.ID,
-		Name:         "workspace-read-only",
+		Name:         "resource-use-only",
 		Capabilities: []access.Capability{access.CapabilityResourceUse},
 	})
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	publishesReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project/releases", strings.NewReader(`{"projectDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workspaces":[],"connections":[]}`))
+	publishesReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:other/releases", strings.NewReader(`{"environment":"prod","generationId":"generation:test","projectDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifactDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","connections":[]}`))
 	publishesReq.Header.Set("Authorization", "Bearer "+token)
 	publishesReq.Header.Set("Accept", "application/json")
 	publishesReq.Header.Set("Content-Type", "application/json")
@@ -38,37 +38,37 @@ func TestAPITokenWorkspaceAndPrivilegeAllowlistAreEnforced(t *testing.T) {
 		t.Fatalf("project release status = %d, want concealed %d body=%s", publishesRec.Code, http.StatusNotFound, publishesRec.Body.String())
 	}
 
-	foreignWorkspaceReq := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/other/assets", nil)
-	foreignWorkspaceReq.Header.Set("Authorization", "Bearer "+token)
-	foreignWorkspaceReq.Header.Set("Accept", "application/json")
-	foreignWorkspaceRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(foreignWorkspaceRec, foreignWorkspaceReq)
-	if foreignWorkspaceRec.Code != http.StatusForbidden {
-		t.Fatalf("foreign workspace status = %d, want %d body=%s", foreignWorkspaceRec.Code, http.StatusForbidden, foreignWorkspaceRec.Body.String())
+	foreignProjectReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project:other", nil)
+	foreignProjectReq.Header.Set("Authorization", "Bearer "+token)
+	foreignProjectReq.Header.Set("Accept", "application/json")
+	foreignProjectRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(foreignProjectRec, foreignProjectReq)
+	if foreignProjectRec.Code != http.StatusForbidden {
+		t.Fatalf("foreign project status = %d, want %d body=%s", foreignProjectRec.Code, http.StatusForbidden, foreignProjectRec.Body.String())
 	}
 
-	privilegesReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-privileges?workspace=test", nil)
-	privilegesReq.Header.Set("Authorization", "Bearer "+token)
-	privilegesReq.Header.Set("Accept", "application/json")
-	privilegesRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(privilegesRec, privilegesReq)
-	if privilegesRec.Code != http.StatusOK {
-		t.Fatalf("privileges status = %d, want %d body=%s", privilegesRec.Code, http.StatusOK, privilegesRec.Body.String())
+	effectiveReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-privileges", nil)
+	effectiveReq.Header.Set("Authorization", "Bearer "+token)
+	effectiveReq.Header.Set("Accept", "application/json")
+	effectiveRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(effectiveRec, effectiveReq)
+	if effectiveRec.Code != http.StatusOK {
+		t.Fatalf("effective capabilities status = %d, want %d body=%s", effectiveRec.Code, http.StatusOK, effectiveRec.Body.String())
 	}
-	var privilegesBody struct {
-		Privileges []string `json:"privileges"`
+	var effectiveBody struct {
+		Capabilities []string `json:"capabilities"`
 	}
-	if err := json.Unmarshal(privilegesRec.Body.Bytes(), &privilegesBody); err != nil {
-		t.Fatalf("decode privileges: %v", err)
+	if err := json.Unmarshal(effectiveRec.Body.Bytes(), &effectiveBody); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
 	}
-	if !hasString(privilegesBody.Privileges, string(access.CapabilityResourceUse)) {
-		t.Fatalf("privileges = %#v, want workspace read", privilegesBody.Privileges)
+	if !hasString(effectiveBody.Capabilities, string(access.CapabilityResourceUse)) {
+		t.Fatalf("capabilities = %#v, want resource use", effectiveBody.Capabilities)
 	}
-	if hasString(privilegesBody.Privileges, string(access.CapabilityResourceRead)) {
-		t.Fatalf("privileges = %#v, token allowlist leaked publish read", privilegesBody.Privileges)
+	if hasString(effectiveBody.Capabilities, string(access.CapabilityResourceRead)) {
+		t.Fatalf("capabilities = %#v, token allowlist leaked resource read", effectiveBody.Capabilities)
 	}
-	if strings.Contains(privilegesRec.Body.String(), "permissions") {
-		t.Fatalf("effective privileges response still uses permissions vocabulary: %s", privilegesRec.Body.String())
+	if strings.Contains(effectiveRec.Body.String(), "privileges") {
+		t.Fatalf("effective capabilities response still uses privileges vocabulary: %s", effectiveRec.Body.String())
 	}
 
 	emptyAllowlistToken, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
@@ -76,7 +76,7 @@ func TestAPITokenWorkspaceAndPrivilegeAllowlistAreEnforced(t *testing.T) {
 		Name:         "empty-allowlist",
 		Capabilities: []access.Capability{},
 	})
-	emptyAllowlistReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-privileges?workspace=test", nil)
+	emptyAllowlistReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-privileges", nil)
 	emptyAllowlistReq.Header.Set("Authorization", "Bearer "+emptyAllowlistToken)
 	emptyAllowlistReq.Header.Set("Accept", "application/json")
 	emptyAllowlistRec := httptest.NewRecorder()
@@ -210,7 +210,7 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"audited-api-token","workspaceId":"test","privileges":["USE_WORKSPACE"]}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"audited-api-token","capabilities":["RESOURCE_USE"]}`))
 	createReq.Header.Set("Authorization", "Bearer "+authSecret)
 	createReq.Header.Set("Accept", "application/json")
 	createReq.Header.Set("Content-Type", "application/json")
@@ -269,7 +269,7 @@ func TestCurrentAPITokenCreateRejectsExpiredExpiry(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	expiresAt := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"expired-api-token","workspaceId":"test","privileges":[],"expiresAt":"`+expiresAt+`"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"expired-api-token","capabilities":[],"expiresAt":"`+expiresAt+`"}`))
 	req.Header.Set("Authorization", "Bearer "+authSecret)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
@@ -361,7 +361,7 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 	}{
 		{
 			name:       "api token",
-			req:        secretCacheJSONRequest(http.MethodPost, "/api/v1/me/api-tokens", authSecret, `{"name":"deploy","workspaceId":"test","privileges":["USE_WORKSPACE"]}`),
+			req:        secretCacheJSONRequest(http.MethodPost, "/api/v1/me/api-tokens", authSecret, `{"name":"deploy","capabilities":["RESOURCE_USE"]}`),
 			wantStatus: http.StatusCreated,
 			secretMarkers: []string{
 				`"token":`,
