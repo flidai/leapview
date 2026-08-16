@@ -3,8 +3,14 @@ package schedule
 import (
 	"context"
 	"errors"
+	"regexp"
+	"strings"
 	"time"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+var artifactDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 const (
 	DataVersionSourcePublish = "publish"
@@ -12,45 +18,41 @@ const (
 )
 
 type ReconcileInput struct {
-	WorkspaceID    string
-	Environment    string
+	Identity       projectgraph.ServingIdentity
 	ArtifactDigest string
 	Pipelines      []Definition
 	Now            time.Time
 }
 
 type Occurrence struct {
-	WorkspaceID    string
-	Environment    string
-	PipelineID     string
-	SemanticModel  string
-	ArtifactDigest string
-	ScheduledAt    time.Time
+	Identity        projectgraph.ServingIdentity
+	PipelineID      projectgraph.ResourceID
+	SemanticModelID projectgraph.ResourceID
+	ArtifactDigest  string
+	ScheduledAt     time.Time
 }
 
 type DataVersion struct {
-	WorkspaceID      string
-	Environment      string
-	SemanticModel    string
-	SnapshotID       int64
-	ServingStateID   string
-	RefreshedAt      time.Time
-	Source           string
-	PipelineID       string
-	RunID            string
-	TargetGeneration int64
-	LeaseOwner       string
-	LeaseGeneration  int64
+	Identity        projectgraph.ServingIdentity
+	SemanticModelID projectgraph.ResourceID
+	SnapshotID      int64
+	RefreshedAt     time.Time
+	Source          string
+	PipelineID      projectgraph.ResourceID
+	RunID           string
+	TargetRevision  int64
+	LeaseOwner      string
+	LeaseRevision   int64
 }
 
 type Repository interface {
 	Reconcile(context.Context, ReconcileInput) error
-	ClaimDue(context.Context, string, time.Time) ([]Occurrence, error)
+	ClaimDue(context.Context, projectgraph.ServingIdentity, time.Time) ([]Occurrence, error)
 	AttachRun(context.Context, Occurrence, string) error
 	ReleaseOccurrence(context.Context, Occurrence) error
-	NextRun(context.Context, string, string, string) (time.Time, bool, error)
+	NextRun(context.Context, projectgraph.ServingIdentity, projectgraph.ResourceID) (time.Time, bool, error)
 	SaveDataVersion(context.Context, DataVersion) error
-	DataVersion(context.Context, string, string, string) (DataVersion, bool, error)
+	DataVersion(context.Context, projectgraph.ServingIdentity, projectgraph.ResourceID) (DataVersion, bool, error)
 }
 
 type Clock interface {
@@ -63,11 +65,47 @@ func (RealClock) Now() time.Time { return time.Now() }
 
 type Trigger func(context.Context, Occurrence) (string, error)
 
+// ValidateScope checks that a schedule record is bound to one immutable
+// project/environment/generation scope.  A serving generation is never
+// inferred from a legacy workspace or serving-state identifier.
+func ValidateScope(identity projectgraph.ServingIdentity) error {
+	if identity.ProjectID == "" || identity.Environment == "" {
+		return errors.New("refresh serving identity project and environment are required")
+	}
+	return identity.Validate()
+}
+
+// ValidateArtifactDigest accepts only the canonical public artifact digest;
+// callers must not trim or normalize an authored value before validating it.
+func ValidateArtifactDigest(value string) error {
+	if !artifactDigestPattern.MatchString(value) {
+		return errors.New("artifact digest must be canonical sha256")
+	}
+	return nil
+}
+
+func ValidateOperationalID(value string) error {
+	if value == "" || value != strings.TrimSpace(value) {
+		return errors.New("operational identifier must be non-empty and canonical")
+	}
+	return nil
+}
+
+func (definition Definition) Validate() error {
+	if err := definition.ID.Validate(); err != nil {
+		return err
+	}
+	if err := definition.SemanticModelID.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
 type Scheduler struct {
-	Repository  Repository
-	Clock       Clock
-	Trigger     Trigger
-	Environment string
+	Repository Repository
+	Clock      Clock
+	Trigger    Trigger
+	Identity   projectgraph.ServingIdentity
 }
 
 func (scheduler Scheduler) DispatchDue(ctx context.Context) error {
@@ -75,7 +113,7 @@ func (scheduler Scheduler) DispatchDue(ctx context.Context) error {
 	if clock == nil {
 		clock = RealClock{}
 	}
-	occurrences, err := scheduler.Repository.ClaimDue(ctx, scheduler.Environment, clock.Now())
+	occurrences, err := scheduler.Repository.ClaimDue(ctx, scheduler.Identity, clock.Now())
 	if err != nil {
 		return err
 	}

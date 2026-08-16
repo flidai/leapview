@@ -152,9 +152,9 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 
 CREATE TABLE IF NOT EXISTS refresh_jobs (
   id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  serving_state_id TEXT REFERENCES serving_states(id) ON DELETE SET NULL,
-  model_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  semantic_model_id TEXT NOT NULL,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

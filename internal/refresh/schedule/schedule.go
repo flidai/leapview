@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/robfig/cron/v3"
 )
 
@@ -14,10 +15,10 @@ const MinimumInterval = 5 * time.Minute
 
 // Definition is the deployable description of one semantic-model refresh pipeline.
 type Definition struct {
-	ID            string
-	Name          string
-	SemanticModel string
-	Schedules     []Schedule
+	ID              projectgraph.ResourceID
+	Name            string
+	SemanticModelID projectgraph.ResourceID
+	Schedules       []Schedule
 }
 
 // Schedule is a validated five-field POSIX cron schedule evaluated in Timezone.

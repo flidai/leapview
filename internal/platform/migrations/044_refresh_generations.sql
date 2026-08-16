@@ -10,7 +10,7 @@ SET target_generation = (
   FROM refresh_job_runs AS prior
   JOIN refresh_jobs AS prior_job ON prior_job.id = prior.job_id
   JOIN refresh_jobs AS current_job ON current_job.id = current.job_id
-  WHERE prior_job.workspace_id = current_job.workspace_id
+  WHERE prior_job.project_id = current_job.project_id
     AND prior.environment = current.environment
     AND prior.target_type = current.target_type
     AND prior.target_id = current.target_id
