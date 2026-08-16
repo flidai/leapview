@@ -13,6 +13,7 @@ import (
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, dashboardID, pageID, visualID string, filters dashboard.Filters) (visualizationir.VisualizationEnvelope, error) {
@@ -111,8 +112,15 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 		aggregateDomains = append(aggregateDomains, aggregate)
 	}
 	publicID := spatialTilePublicationFromContext(ctx)
+	projectID := projectgraph.ResourceID("")
 	if publicID == "" {
-		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("project spatial tile route is unavailable until the project-native route contract is installed")
+		if s.reports == nil {
+			return visualizationir.VisualizationEnvelope{}, fmt.Errorf("project spatial tile route requires dashboard report identity")
+		}
+		projectID = s.reports.projectID
+		if err := projectID.Validate(); err != nil {
+			return visualizationir.VisualizationEnvelope{}, fmt.Errorf("project spatial tile route identity: %w", err)
+		}
 	}
 	token, err := s.tiles.register(spatialTileRevision{
 		DashboardID: dashboardID, PageID: pageID, VisualID: visualID, PublicID: publicID,
@@ -122,6 +130,9 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 		return visualizationir.VisualizationEnvelope{}, err
 	}
 	tileURL := publicSpatialTileURL(publicID, visualID, token)
+	if publicID == "" {
+		tileURL = spatialTileURL(projectID, dashboardID, visualID, token)
+	}
 	envelope, err := visualizationruntime.SpatialTiledEnvelopeFromMetadata(definition, visualizationruntime.SpatialTiledMetadata{
 		Cardinality: cardinality, Extent: extent, RawDomains: rawDomains, AggregateDomains: aggregateDomains,
 		TileURL: tileURL, RawMinimumZoom: int32(effectiveRawMinimumZoom),
