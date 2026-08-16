@@ -58,6 +58,9 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 	if leaser == nil {
 		return nil, ErrProviderUnavailable
 	}
+	if request.Actor != strings.TrimSpace(request.Actor) {
+		return nil, fmt.Errorf("%w: actor must be canonical", ErrInvalidBinding)
+	}
 	request.Actor = strings.TrimSpace(request.Actor)
 	if _, err := ParseTargetID(request.TargetID.String()); err != nil {
 		return nil, err
@@ -187,6 +190,10 @@ func normalizeRuntimeRequirements(requirements []Requirement) ([]Requirement, er
 			return nil, err
 		}
 		normalized[index].ConnectionID = connectionID
+		if normalized[index].ConnectorKind != strings.TrimSpace(normalized[index].ConnectorKind) ||
+			normalized[index].ValidatedVersion != strings.TrimSpace(normalized[index].ValidatedVersion) {
+			return nil, fmt.Errorf("%w: runtime requirement identities must be canonical", ErrInvalidBinding)
+		}
 		normalized[index].ConnectorKind = strings.TrimSpace(normalized[index].ConnectorKind)
 		normalized[index].ValidatedVersion = strings.TrimSpace(normalized[index].ValidatedVersion)
 		if normalized[index].ConnectorKind == "" || normalized[index].BindingRevision < 0 {
