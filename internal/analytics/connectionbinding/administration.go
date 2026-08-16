@@ -29,7 +29,7 @@ const (
 
 type BindingKey struct {
 	Scope        BindingScope
-	TargetID     string
+	TargetID     TargetID
 	ConnectionID projectgraph.ResourceID
 }
 
@@ -57,7 +57,7 @@ type AdministrationPoolDirectory interface {
 
 type BindingCatalog interface {
 	Repository
-	List(context.Context, BindingScope, string) ([]TargetBinding, error)
+	List(context.Context, BindingScope, TargetID) ([]TargetBinding, error)
 }
 
 type AdministrationConfig struct {
@@ -144,12 +144,14 @@ func (service *Administration) List(
 	ctx context.Context,
 	actorID string,
 	scope BindingScope,
-	targetID string,
+	targetID TargetID,
 ) ([]TargetBinding, error) {
 	if service == nil {
 		return nil, ErrProviderUnavailable
 	}
-	targetID = strings.TrimSpace(targetID)
+	if _, err := ParseTargetID(targetID.String()); err != nil {
+		return nil, err
+	}
 	authorizationScope := TargetBinding{TargetID: targetID, Scope: scope}
 	if err := service.authorize(
 		ctx, strings.TrimSpace(actorID), PermissionManageConnectionMetadata, authorizationScope,
@@ -433,7 +435,7 @@ func (service *Administration) binding(ctx context.Context, key BindingKey) (Tar
 	if service == nil {
 		return TargetBinding{}, ErrProviderUnavailable
 	}
-	return service.repository.Binding(ctx, key.Scope, strings.TrimSpace(key.TargetID), key.ConnectionID)
+	return service.repository.Binding(ctx, key.Scope, key.TargetID, key.ConnectionID)
 }
 
 func bindingHealthWithoutPool(binding TargetBinding) BindingHealthStatus {

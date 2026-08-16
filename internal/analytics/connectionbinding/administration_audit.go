@@ -28,7 +28,7 @@ const AdministrationAuditSucceeded AdministrationAuditOutcome = "succeeded"
 type AdministrationAuditEvent struct {
 	ProjectID    projectgraph.ResourceID    `json:"projectId"`
 	BindingID    BindingID                  `json:"bindingId"`
-	TargetID     string                     `json:"targetId"`
+	TargetID     TargetID                   `json:"targetId"`
 	ConnectionID projectgraph.ResourceID    `json:"connectionId"`
 	Actor        string                     `json:"actor"`
 	Action       AdministrationAuditAction  `json:"action"`
@@ -72,8 +72,8 @@ func (service *Administration) recordMutation(
 		LogAttributes: []slog.Attr{
 			slog.String("project_id", binding.Scope.ProjectID.String()),
 			slog.String("principal_id", strings.TrimSpace(actor)),
-			slog.String("binding_id", binding.ID),
-			slog.String("target_id", binding.TargetID),
+			slog.String("binding_id", binding.ID.String()),
+			slog.String("target_id", binding.TargetID.String()),
 			slog.String("connection_id", binding.ConnectionID.String()),
 			slog.Int64("revision", binding.Revision),
 		},

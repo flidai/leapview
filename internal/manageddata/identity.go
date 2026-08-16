@@ -13,6 +13,10 @@ type RevisionID string
 type UploadID string
 type MultipartUploadID string
 
+func (id RevisionID) String() string        { return string(id) }
+func (id UploadID) String() string          { return string(id) }
+func (id MultipartUploadID) String() string { return string(id) }
+
 var operationalIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$`)
 
 func parseOperationalID(kind, value string) (string, error) {

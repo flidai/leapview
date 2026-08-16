@@ -42,7 +42,7 @@ func (request RefreshRequest) valid() bool {
 
 type RotationAuditEvent struct {
 	BindingID       BindingID                    `json:"bindingId"`
-	TargetID        string                       `json:"targetId"`
+	TargetID        TargetID                     `json:"targetId"`
 	Identity        projectgraph.ServingIdentity `json:"identity"`
 	ProjectID       projectgraph.ResourceID      `json:"projectId"`
 	ProviderVersion string                       `json:"providerVersion,omitempty"`

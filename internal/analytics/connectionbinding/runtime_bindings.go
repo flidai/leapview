@@ -26,7 +26,7 @@ type RuntimeBindingLeaser struct {
 type RuntimeBindingRequest struct {
 	Actor        string
 	Identity     projectgraph.ServingIdentity
-	TargetID     string
+	TargetID     TargetID
 	Requirements []Requirement
 }
 
@@ -59,7 +59,9 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 		return nil, ErrProviderUnavailable
 	}
 	request.Actor = strings.TrimSpace(request.Actor)
-	request.TargetID = strings.TrimSpace(request.TargetID)
+	if _, err := ParseTargetID(request.TargetID.String()); err != nil {
+		return nil, err
+	}
 	if request.Identity.ProjectID.String() != strings.TrimSpace(request.Identity.ProjectID.String()) ||
 		request.Identity.Environment != strings.TrimSpace(request.Identity.Environment) ||
 		request.Identity.GenerationID != strings.TrimSpace(request.Identity.GenerationID) {
@@ -108,8 +110,8 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 		if err != nil {
 			return nil, err
 		}
-		evidence := lease.Evidence()
-		evidence.Identity = request.Identity
+		persistentEvidence := lease.Evidence()
+		evidence := RuntimeBindingEvidence{BindingEvidence: persistentEvidence, Identity: request.Identity}
 		if err := validateRuntimeBindingEvidence(binding, requirement, evidence); err != nil {
 			lease.Release()
 			return nil, err

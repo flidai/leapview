@@ -246,7 +246,7 @@ func (manager *PoolManager) targetID() string {
 	}
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-	return manager.binding.TargetID
+	return manager.binding.TargetID.String()
 }
 
 func (manager *PoolManager) withAudit(
@@ -274,7 +274,7 @@ func (manager *PoolManager) withAudit(
 	operationID, command := rotationOperationID(request.Operation)
 	if !command {
 		if err := manager.audit.RecordCredentialRotation(context.WithoutCancel(ctx), event); err != nil {
-			manager.logger.ErrorContext(ctx, "best-effort credential rotation audit failed", "operation", request.Operation, "outcome", outcome, "project_id", binding.Scope.ProjectID, "principal", strings.TrimSpace(request.Actor), "binding_id", binding.ID, "target_id", binding.TargetID, "reason", reason, "error", err)
+			manager.logger.ErrorContext(ctx, "best-effort credential rotation audit failed", "operation", request.Operation, "outcome", outcome, "project_id", binding.Scope.ProjectID.String(), "principal", strings.TrimSpace(request.Actor), "binding_id", binding.ID.String(), "target_id", binding.TargetID.String(), "reason", reason, "error", err)
 		}
 		return result
 	}
@@ -292,8 +292,8 @@ func (manager *PoolManager) withAudit(
 			slog.String("outcome", string(outcome)),
 			slog.String("project_id", binding.Scope.ProjectID.String()),
 			slog.String("principal", strings.TrimSpace(request.Actor)),
-			slog.String("binding_id", binding.ID),
-			slog.String("target_id", binding.TargetID),
+			slog.String("binding_id", binding.ID.String()),
+			slog.String("target_id", binding.TargetID.String()),
 			slog.String("reason", reason),
 		},
 	})
@@ -466,7 +466,7 @@ type PoolLease struct {
 	once       sync.Once
 	manager    *PoolManager
 	generation *poolGeneration
-	evidence   RuntimeBindingEvidence
+	evidence   BindingEvidence
 }
 
 func (lease *PoolLease) Pool() RuntimePool {
@@ -476,9 +476,9 @@ func (lease *PoolLease) Pool() RuntimePool {
 	return lease.generation.pool
 }
 
-func (lease *PoolLease) Evidence() RuntimeBindingEvidence {
+func (lease *PoolLease) Evidence() BindingEvidence {
 	if lease == nil {
-		return RuntimeBindingEvidence{}
+		return BindingEvidence{}
 	}
 	return lease.evidence
 }

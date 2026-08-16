@@ -11,6 +11,9 @@ import (
 type BindingID string
 type TargetID string
 
+func (id BindingID) String() string { return string(id) }
+func (id TargetID) String() string  { return string(id) }
+
 var bindingIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$`)
 
 func ParseBindingID(value string) (BindingID, error) {

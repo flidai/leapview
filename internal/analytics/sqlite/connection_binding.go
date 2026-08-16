@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsdb "github.com/flidai/leapview/internal/analytics/internal/db"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type ConnectionBindingRepository struct {
@@ -36,10 +37,10 @@ func (repository *ConnectionBindingRepository) Create(ctx context.Context, bindi
 		return fmt.Errorf("encode non-secret endpoint: %w", err)
 	}
 	err = repository.q.CreateTargetConnectionBinding(ctx, analyticsdb.CreateTargetConnectionBindingParams{
-		ID: binding.ID, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID.String(),
+		ID: binding.ID.String(), TargetID: binding.TargetID.String(), ConnectionID: binding.ConnectionID.String(),
 		ConnectorKind: binding.ConnectorKind, AuthenticationMode: string(binding.AuthenticationMode),
-		WorkspaceID: binding.Scope.WorkspaceID, Environment: binding.Scope.Environment, EndpointJson: string(endpoint),
-		CredentialProjectID: binding.CredentialReference.ProjectID, CredentialEnvironment: binding.CredentialReference.Environment,
+		ProjectID: binding.Scope.ProjectID.String(), Environment: binding.Scope.Environment, EndpointJson: string(endpoint),
+		CredentialProjectID: binding.CredentialReference.ProjectID.String(), CredentialEnvironment: binding.CredentialReference.Environment,
 		CredentialSecretPath: binding.CredentialReference.SecretPath, CredentialSecretKey: binding.CredentialReference.SecretKey,
 		Enabled: boolInt(binding.Enabled), ValidatedVersion: binding.ValidatedVersion, Health: string(binding.Health),
 		HealthReason: binding.HealthReason, LastValidatedAt: nullableTime(binding.LastValidatedAt),
@@ -54,15 +55,15 @@ func (repository *ConnectionBindingRepository) Create(ctx context.Context, bindi
 func (repository *ConnectionBindingRepository) Binding(
 	ctx context.Context,
 	scope connectionbinding.BindingScope,
-	targetID string,
-	logicalID connectionbinding.LogicalConnectionID,
+	targetID connectionbinding.TargetID,
+	connectionID projectgraph.ResourceID,
 ) (connectionbinding.TargetBinding, error) {
 	if repository == nil || repository.q == nil {
 		return connectionbinding.TargetBinding{}, connectionbinding.ErrBindingNotFound
 	}
 	row, err := repository.q.GetTargetConnectionBinding(ctx, analyticsdb.GetTargetConnectionBindingParams{
-		TargetID: strings.TrimSpace(targetID), WorkspaceID: strings.TrimSpace(scope.WorkspaceID),
-		Environment: strings.TrimSpace(scope.Environment), LogicalConnectionID: logicalID.String(),
+		TargetID: targetID.String(), ProjectID: scope.ProjectID.String(),
+		Environment: scope.Environment, ConnectionID: connectionID.String(),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return connectionbinding.TargetBinding{}, connectionbinding.ErrBindingNotFound
@@ -76,14 +77,13 @@ func (repository *ConnectionBindingRepository) Binding(
 func (repository *ConnectionBindingRepository) List(
 	ctx context.Context,
 	scope connectionbinding.BindingScope,
-	targetID string,
+	targetID connectionbinding.TargetID,
 ) ([]connectionbinding.TargetBinding, error) {
 	if repository == nil || repository.q == nil {
 		return nil, connectionbinding.ErrBindingNotFound
 	}
 	rows, err := repository.q.ListTargetConnectionBindings(ctx, analyticsdb.ListTargetConnectionBindingsParams{
-		TargetID: strings.TrimSpace(targetID), WorkspaceID: strings.TrimSpace(scope.WorkspaceID),
-		Environment: strings.TrimSpace(scope.Environment),
+		TargetID: targetID.String(), ProjectID: scope.ProjectID.String(), Environment: scope.Environment,
 	})
 	if err != nil {
 		return nil, err
@@ -115,15 +115,15 @@ func (repository *ConnectionBindingRepository) Save(
 		return connectionbinding.TargetBinding{}, fmt.Errorf("encode non-secret endpoint: %w", err)
 	}
 	count, err := repository.q.UpdateTargetConnectionBinding(ctx, analyticsdb.UpdateTargetConnectionBindingParams{
-		EndpointJson: string(endpoint), CredentialProjectID: binding.CredentialReference.ProjectID,
+		EndpointJson: string(endpoint), CredentialProjectID: binding.CredentialReference.ProjectID.String(),
 		CredentialEnvironment: binding.CredentialReference.Environment,
 		CredentialSecretPath:  binding.CredentialReference.SecretPath, CredentialSecretKey: binding.CredentialReference.SecretKey,
 		Enabled: boolInt(binding.Enabled), ValidatedVersion: binding.ValidatedVersion, Health: string(binding.Health),
 		HealthReason: binding.HealthReason, LastValidatedAt: nullableTime(binding.LastValidatedAt),
-		UpdatedAt: sqliteTime(binding.UpdatedAt), Revision: binding.Revision, ID: binding.ID, Revision_2: expectedRevision,
-		TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID.String(),
+		UpdatedAt: sqliteTime(binding.UpdatedAt), Revision: binding.Revision, ID: binding.ID.String(), Revision_2: expectedRevision,
+		TargetID: binding.TargetID.String(), ConnectionID: binding.ConnectionID.String(),
 		ConnectorKind: binding.ConnectorKind, AuthenticationMode: string(binding.AuthenticationMode),
-		WorkspaceID: binding.Scope.WorkspaceID, Environment: binding.Scope.Environment,
+		ProjectID: binding.Scope.ProjectID.String(), Environment: binding.Scope.Environment,
 	})
 	if err != nil {
 		return connectionbinding.TargetBinding{}, err
@@ -135,7 +135,7 @@ func (repository *ConnectionBindingRepository) Save(
 }
 
 func bindingFromDB(row analyticsdb.TargetConnectionBinding) (connectionbinding.TargetBinding, error) {
-	logicalID, err := connectionbinding.ParseLogicalConnectionID(row.LogicalConnectionID)
+	connectionID, err := connectionbinding.ParseConnectionID(row.ConnectionID)
 	if err != nil {
 		return connectionbinding.TargetBinding{}, err
 	}
@@ -156,11 +156,11 @@ func bindingFromDB(row analyticsdb.TargetConnectionBinding) (connectionbinding.T
 		return connectionbinding.TargetBinding{}, fmt.Errorf("parse binding validation: %w", err)
 	}
 	binding := connectionbinding.TargetBinding{
-		ID: row.ID, TargetID: row.TargetID, LogicalConnectionID: logicalID, ConnectorKind: row.ConnectorKind,
+		ID: connectionbinding.BindingID(row.ID), TargetID: connectionbinding.TargetID(row.TargetID), ConnectionID: connectionID, ConnectorKind: row.ConnectorKind,
 		AuthenticationMode: connectionbinding.AuthenticationMode(row.AuthenticationMode),
-		Scope:              connectionbinding.BindingScope{WorkspaceID: row.WorkspaceID, Environment: row.Environment},
+		Scope:              connectionbinding.BindingScope{ProjectID: projectgraph.ResourceID(row.ProjectID), Environment: row.Environment},
 		Endpoint:           endpoint, CredentialReference: connectionbinding.CredentialReference{
-			ProjectID: row.CredentialProjectID, Environment: row.CredentialEnvironment,
+			ProjectID: projectgraph.ResourceID(row.CredentialProjectID), Environment: row.CredentialEnvironment,
 			SecretPath: row.CredentialSecretPath, SecretKey: row.CredentialSecretKey,
 		},
 		Enabled: row.Enabled == 1, ValidatedVersion: row.ValidatedVersion,

@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/flidai/leapview/internal/manageddata"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -29,10 +30,10 @@ var (
 // Repository is the read-only portion of manageddata.Repository needed to
 // reconstruct a serving state's immutable managed-data bindings.
 type Repository interface {
-	ListServingStateBindings(context.Context, string) ([]manageddata.ServingStateBinding, error)
-	CollectionByID(context.Context, string) (manageddata.Collection, error)
-	RevisionByID(context.Context, string) (manageddata.Revision, error)
-	ListRevisionFiles(context.Context, string) ([]manageddata.RevisionFile, error)
+	ListServingStateBindings(context.Context, projectgraph.ServingIdentity) ([]manageddata.ServingStateBinding, error)
+	CollectionByID(context.Context, projectgraph.ResourceID) (manageddata.Collection, error)
+	RevisionByID(context.Context, manageddata.RevisionID) (manageddata.Revision, error)
+	ListRevisionFiles(context.Context, manageddata.RevisionID) ([]manageddata.RevisionFile, error)
 }
 
 // ServingStateRepository supplies the environment that bindings must match.
@@ -48,7 +49,7 @@ type Lifetime interface {
 // bindings. Runtime-host mapping is supplied by process composition.
 type Resolution struct {
 	RevisionID string
-	Roots      map[string]string
+	Roots      map[projectgraph.ResourceID]string
 	Lifetime   Lifetime
 }
 
@@ -76,42 +77,42 @@ func New(repository Repository, servingStates ServingStateRepository, materializ
 // ResolveManagedData resolves the bindings already persisted for servingStateID.
 // RevisionID is a SHA-256 digest over canonical JSON containing the sorted
 // (project, connection, manifest digest) tuples, including for one binding.
-func (r *Resolver) ResolveManagedData(ctx context.Context, servingStateID servingstate.ID) (Resolution, error) {
-	bindings, err := r.loadBindings(ctx, servingStateID)
+func (r *Resolver) ResolveManagedData(ctx context.Context, identity projectgraph.ServingIdentity) (Resolution, error) {
+	bindings, err := r.loadBindings(ctx, identity)
 	if err != nil {
 		return Resolution{}, err
 	}
-	return r.resolveBindings(ctx, servingStateID, bindings)
+	return r.resolveBindings(ctx, identity, bindings)
 }
 
 type resolvedBinding struct {
-	project        string
-	connection     string
+	project        projectgraph.ResourceID
+	connection     projectgraph.ResourceID
 	manifestDigest string
 	manifest       manageddata.Manifest
 }
 
-func (r *Resolver) resolveBindings(ctx context.Context, servingStateID servingstate.ID, bindings []manageddata.ServingStateBinding) (Resolution, error) {
-	if !canonicalIdentifier(string(servingStateID)) {
-		return Resolution{}, invalidMetadata("serving state id is invalid")
+func (r *Resolver) resolveBindings(ctx context.Context, identity projectgraph.ServingIdentity, bindings []manageddata.ServingStateBinding) (Resolution, error) {
+	if err := identity.Validate(); err != nil {
+		return Resolution{}, invalidMetadata("serving identity is invalid")
 	}
-	state, err := r.servingStates.ByID(ctx, servingStateID)
+	state, err := r.servingStates.ByID(ctx, servingstate.ID(identity.GenerationID))
 	if err != nil {
 		return Resolution{}, sanitizeRepositoryError(ctx, "load serving state", err)
 	}
 	stateEnvironment, normalizeErr := manageddata.NormalizeEnvironment(string(state.Environment))
-	if state.ID != servingStateID || normalizeErr != nil || string(stateEnvironment) != string(state.Environment) {
+	if state.ID != servingstate.ID(identity.GenerationID) || state.ProjectID != identity.ProjectID || normalizeErr != nil || string(stateEnvironment) != identity.Environment {
 		return Resolution{}, invalidMetadata("serving state relationship or environment is invalid")
 	}
 	if len(bindings) == 0 {
-		return Resolution{Roots: map[string]string{}}, nil
+		return Resolution{Roots: map[projectgraph.ResourceID]string{}}, nil
 	}
 
 	resolved := make([]resolvedBinding, 0, len(bindings))
-	connections := make(map[string]struct{}, len(bindings))
-	collections := make(map[string]struct{}, len(bindings))
+	connections := make(map[projectgraph.ResourceID]struct{}, len(bindings))
+	collections := make(map[projectgraph.ResourceID]struct{}, len(bindings))
 	for _, binding := range bindings {
-		if binding.ServingStateID != string(servingStateID) || !canonicalIdentifier(binding.CollectionID) || !canonicalIdentifier(binding.RevisionID) {
+		if binding.Identity != identity || !binding.CollectionID.Valid() || binding.RevisionID.String() == "" {
 			return Resolution{}, invalidMetadata("binding relationship is invalid")
 		}
 		if _, duplicate := collections[binding.CollectionID]; duplicate {
@@ -119,25 +120,17 @@ func (r *Resolver) resolveBindings(ctx context.Context, servingStateID servingst
 		}
 		collections[binding.CollectionID] = struct{}{}
 
-		normalizedEnvironment, normalizeErr := manageddata.NormalizeEnvironment(string(binding.Environment))
-		if normalizeErr != nil || normalizedEnvironment != binding.Environment {
-			return Resolution{}, invalidMetadata("binding environment is invalid")
-		}
-		if binding.Environment != stateEnvironment {
-			return Resolution{}, invalidMetadata("binding environment does not match serving state")
-		}
-
 		collection, loadErr := r.repository.CollectionByID(ctx, binding.CollectionID)
 		if loadErr != nil {
 			return Resolution{}, sanitizeRepositoryError(ctx, "load collection", loadErr)
 		}
-		if collection.ID != binding.CollectionID || !validAuthoredIdentity(collection.ProjectID) || !validAuthoredIdentity(collection.ConnectionName) {
+		if collection.ID != binding.CollectionID || collection.ProjectID != identity.ProjectID || !collection.ProjectID.Valid() || !collection.ConnectionID.Valid() {
 			return Resolution{}, invalidMetadata("collection relationship or identity is invalid")
 		}
-		if _, duplicate := connections[collection.ConnectionName]; duplicate {
-			return Resolution{}, fmt.Errorf("%w: authored connection name %q is bound more than once", ErrAmbiguousConnection, collection.ConnectionName)
+		if _, duplicate := connections[collection.ConnectionID]; duplicate {
+			return Resolution{}, fmt.Errorf("%w: connection %q is bound more than once", ErrAmbiguousConnection, collection.ConnectionID)
 		}
-		connections[collection.ConnectionName] = struct{}{}
+		connections[collection.ConnectionID] = struct{}{}
 
 		revision, loadErr := r.repository.RevisionByID(ctx, binding.RevisionID)
 		if loadErr != nil {
@@ -161,7 +154,7 @@ func (r *Resolver) resolveBindings(ctx context.Context, servingStateID servingst
 			return Resolution{}, metadataErr
 		}
 		resolved = append(resolved, resolvedBinding{
-			project: collection.ProjectID, connection: collection.ConnectionName,
+			project: collection.ProjectID, connection: collection.ConnectionID,
 			manifestDigest: revision.Digest, manifest: manifest,
 		})
 	}
@@ -176,7 +169,7 @@ func (r *Resolver) resolveBindings(ctx context.Context, servingStateID servingst
 		return resolved[i].manifestDigest < resolved[j].manifestDigest
 	})
 
-	roots := make(map[string]string, len(resolved))
+	roots := make(map[projectgraph.ResourceID]string, len(resolved))
 	leases := make([]manageddata.RevisionLease, 0, len(resolved))
 	for _, binding := range resolved {
 		lease, materializeErr := r.materializer.MaterializeRevision(ctx, binding.manifestDigest, binding.manifest)
@@ -217,11 +210,11 @@ func (l *managedDataLifetime) Release() error {
 	return l.err
 }
 
-func (r *Resolver) loadBindings(ctx context.Context, servingStateID servingstate.ID) ([]manageddata.ServingStateBinding, error) {
-	if !canonicalIdentifier(string(servingStateID)) {
-		return nil, invalidMetadata("serving state id is invalid")
+func (r *Resolver) loadBindings(ctx context.Context, identity projectgraph.ServingIdentity) ([]manageddata.ServingStateBinding, error) {
+	if err := identity.Validate(); err != nil {
+		return nil, invalidMetadata("serving identity is invalid")
 	}
-	bindings, err := r.repository.ListServingStateBindings(ctx, string(servingStateID))
+	bindings, err := r.repository.ListServingStateBindings(ctx, identity)
 	if err != nil {
 		return nil, sanitizeRepositoryError(ctx, "load serving state bindings", err)
 	}
@@ -307,7 +300,7 @@ func aggregateRevisionID(bindings []resolvedBinding) string {
 	payload := make([]aggregateBinding, 0, len(bindings))
 	for _, binding := range bindings {
 		payload = append(payload, aggregateBinding{
-			Project: binding.project, Connection: binding.connection, ManifestDigest: binding.manifestDigest,
+			Project: binding.project.String(), Connection: binding.connection.String(), ManifestDigest: binding.manifestDigest,
 		})
 	}
 	canonical, err := json.Marshal(payload)

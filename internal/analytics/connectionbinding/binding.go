@@ -90,7 +90,9 @@ func (reference CredentialReference) empty() bool {
 }
 
 func (reference CredentialReference) valid() bool {
-	return reference.ProjectID.Valid() &&
+	return reference.ProjectID.String() == strings.TrimSpace(reference.ProjectID.String()) &&
+		reference.Environment == strings.TrimSpace(reference.Environment) &&
+		reference.ProjectID.Valid() &&
 		strings.TrimSpace(reference.Environment) != "" &&
 		strings.HasPrefix(strings.TrimSpace(reference.SecretPath), "/") &&
 		strings.TrimSpace(reference.SecretKey) != ""
@@ -138,7 +140,10 @@ type TargetBindingConfiguration struct {
 func NewTargetBinding(input TargetBindingInput) (TargetBinding, error) {
 	if input.ID.String() != strings.TrimSpace(input.ID.String()) ||
 		input.ConnectionID.String() != strings.TrimSpace(input.ConnectionID.String()) ||
-		input.Scope.ProjectID.String() != strings.TrimSpace(input.Scope.ProjectID.String()) {
+		input.Scope.ProjectID.String() != strings.TrimSpace(input.Scope.ProjectID.String()) ||
+		input.Scope.Environment != strings.TrimSpace(input.Scope.Environment) ||
+		input.CredentialReference.ProjectID.String() != strings.TrimSpace(input.CredentialReference.ProjectID.String()) ||
+		input.CredentialReference.Environment != strings.TrimSpace(input.CredentialReference.Environment) {
 		return TargetBinding{}, fmt.Errorf("%w: binding graph identities must be canonical", ErrInvalidBinding)
 	}
 	connectionID, err := ParseConnectionID(input.ConnectionID.String())
@@ -151,7 +156,7 @@ func NewTargetBinding(input TargetBindingInput) (TargetBinding, error) {
 	}
 	input.ConnectorKind = strings.TrimSpace(input.ConnectorKind)
 	input.Scope.ProjectID = projectgraph.ResourceID(input.Scope.ProjectID.String())
-	input.Scope.Environment = strings.TrimSpace(input.Scope.Environment)
+	// Environment is a serving-scope identity; preserve its canonical spelling.
 	input.Now = input.Now.UTC()
 	if _, err := ParseBindingID(input.ID.String()); err != nil ||
 		!identifierPattern.MatchString(input.ConnectorKind) || !input.Scope.ProjectID.Valid() ||
@@ -252,7 +257,7 @@ type Requirement struct {
 
 type BindingEvidence struct {
 	BindingID          BindingID               `json:"bindingId"`
-	TargetID           string                  `json:"targetId"`
+	TargetID           TargetID                `json:"targetId"`
 	ConnectionID       projectgraph.ResourceID `json:"connectionId"`
 	ConnectorKind      string                  `json:"connectorKind"`
 	Scope              BindingScope            `json:"scope"`

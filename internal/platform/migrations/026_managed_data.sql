@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS managed_data_collections (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
-  connection_name TEXT NOT NULL COLLATE NOCASE,
+  connection_id TEXT NOT NULL,
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
@@ -10,10 +10,10 @@ CREATE TABLE IF NOT EXISTS managed_data_collections (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   archived_at TEXT,
-  UNIQUE(project_id, connection_name),
-  CHECK(length(id) BETWEEN 1 AND 128),
-  CHECK(length(trim(project_id)) > 0),
-  CHECK(length(trim(connection_name)) > 0),
+  UNIQUE(project_id, connection_id),
+  CHECK(length(id) BETWEEN 1 AND 128 AND id = trim(id)),
+  CHECK(length(trim(project_id)) > 0 AND project_id = trim(project_id)),
+  CHECK(length(trim(connection_id)) > 0 AND connection_id = trim(connection_id)),
   CHECK(length(trim(name)) > 0),
   CHECK((status = 'archived') = (archived_at IS NOT NULL))
 );
@@ -156,7 +156,9 @@ CREATE TABLE IF NOT EXISTS managed_data_environment_pointers (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(collection_id, environment),
   FOREIGN KEY(collection_id, revision_id) REFERENCES managed_data_revisions(collection_id, id) ON DELETE RESTRICT,
-  CHECK(length(environment) BETWEEN 1 AND 128)
+  CHECK(length(environment) BETWEEN 1 AND 128 AND environment = trim(environment)),
+  CHECK(length(project_id) > 0 AND project_id = trim(project_id)),
+  CHECK(length(generation_id) > 0 AND generation_id = trim(generation_id))
 );
 
 CREATE INDEX IF NOT EXISTS managed_data_environment_pointers_revision_idx
@@ -166,12 +168,14 @@ CREATE INDEX IF NOT EXISTS project_deployments_project_environment_idx
   ON project_deployments(project_id, environment, created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS managed_data_serving_state_bindings (
-  serving_state_id TEXT NOT NULL REFERENCES serving_states(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
   collection_id TEXT NOT NULL,
   revision_id TEXT NOT NULL,
-  environment TEXT NOT NULL,
   bound_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY(serving_state_id, collection_id),
+  PRIMARY KEY(project_id, environment, generation_id, collection_id),
+  FOREIGN KEY(generation_id, project_id, environment) REFERENCES serving_states(id, project_id, environment) ON DELETE CASCADE,
   FOREIGN KEY(collection_id, revision_id) REFERENCES managed_data_revisions(collection_id, id) ON DELETE RESTRICT,
   CHECK(length(environment) BETWEEN 1 AND 128)
 );

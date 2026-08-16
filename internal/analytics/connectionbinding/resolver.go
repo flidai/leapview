@@ -22,7 +22,7 @@ const (
 )
 
 type ResolverSelection struct {
-	TargetID    string
+	TargetID    TargetID
 	ProjectID   projectgraph.ResourceID
 	Environment string
 	TargetClass TargetClass
@@ -70,18 +70,20 @@ func SelectResolver(selection ResolverSelection, resolvers ResolverSet) (Credent
 
 type Repository interface {
 	Create(context.Context, TargetBinding) error
-	Binding(context.Context, BindingScope, string, projectgraph.ResourceID) (TargetBinding, error)
+	Binding(context.Context, BindingScope, TargetID, projectgraph.ResourceID) (TargetBinding, error)
 	Save(context.Context, TargetBinding, int64) (TargetBinding, error)
 }
 
 func NewResolverSelection(input ResolverSelectionInput) (ResolverSelection, error) {
-	input.TargetID = strings.TrimSpace(input.TargetID)
+	if _, err := ParseTargetID(input.TargetID.String()); err != nil {
+		return ResolverSelection{}, err
+	}
 	if input.ProjectID.String() != strings.TrimSpace(input.ProjectID.String()) {
 		return ResolverSelection{}, fmt.Errorf("%w: resolver project identity must be canonical", ErrInvalidBinding)
 	}
 	input.ProjectID = projectgraph.ResourceID(input.ProjectID.String())
 	input.Environment = strings.TrimSpace(input.Environment)
-	if !identifierPattern.MatchString(input.TargetID) || !input.ProjectID.Valid() || !identifierPattern.MatchString(input.Environment) {
+	if !input.ProjectID.Valid() || !identifierPattern.MatchString(input.Environment) {
 		return ResolverSelection{}, fmt.Errorf("%w: resolver target and environment are required", ErrInvalidBinding)
 	}
 	if input.TargetClass != TargetProduction && input.TargetClass != TargetDevelopment {

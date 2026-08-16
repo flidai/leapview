@@ -7,7 +7,7 @@ import (
 
 type BindingHealthStatus struct {
 	BindingID        BindingID               `json:"bindingId"`
-	TargetID         string                  `json:"targetId"`
+	TargetID         TargetID                `json:"targetId"`
 	ConnectionID     projectgraph.ResourceID `json:"connectionId"`
 	ConnectorKind    string                  `json:"connectorKind"`
 	Scope            BindingScope            `json:"scope"`
