@@ -29,8 +29,8 @@ func TestReleaseRepositoryRoundTripsAndValidatesImmutableProvenance(t *testing.T
 	created, err := repo.Create(t.Context(), release.CreateInput{
 		ID: "rel_provenance", ServingIdentity: identity,
 		ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest,
-		RequestDigest: digest("6"), IdempotencyKey: "provenance", CreatedBy: "principal_1",
-		Connections: []release.ConnectionPin{{ConnectionID: "orders", RevisionID: digest("7")}}, Provenance: &provenance,
+		RequestDigest: testDigest("6"), IdempotencyKey: "provenance", CreatedBy: "principal_1",
+		Connections: []release.ConnectionPin{{ConnectionID: "orders", RevisionID: testDigest("7")}}, Provenance: &provenance,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created.Provenance)
@@ -86,7 +86,7 @@ func TestReleaseRepositoryLoadsReadyProvenanceByServingStateAfterRestart(t *test
 	eventRepo := jobsqlite.NewRepository(store.SQLDB())
 	repo := NewRepositoryWithWorkflow(store.SQLDB(), eventRepo)
 	provenance := testReleaseProvenance(t, identity)
-	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_active", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "active-provenance", CreatedBy: "principal_1", Provenance: &provenance})
+	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_active", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "active-provenance", CreatedBy: "principal_1", Provenance: &provenance})
 	require.NoError(t, err)
 	require.NoError(t, repo.RecordArtifact(t.Context(), release.Artifact{ReleaseID: created.ID, ServingIdentity: identity, ExpectedDigest: provenance.Artifact.ContentDigest, ActualDigest: provenance.Artifact.ContentDigest, SizeBytes: 42}))
 	if _, err := repo.BeginFinalization(t.Context(), created.ServingIdentity.ProjectID.String(), created.ID, jobs.WorkflowIntent{}); err != nil {
@@ -112,7 +112,7 @@ func TestPriorDeploymentReleaseSkipsRequestsThatNeverActivated(t *testing.T) {
 		insertServingState(t, store, testServingIdentity("project", "prod", generation))
 	}
 	for _, item := range []struct{ id, generation string }{{"rel_1", "generation_1"}, {"rel_failed", "generation_failed"}, {"rel_2", "generation_2"}} {
-		if _, err := db.ExecContext(t.Context(), `INSERT INTO api_releases (id, project_id, environment, generation_id, project_digest, artifact_digest, request_digest, idempotency_key, status, created_by, finalized_at) VALUES (?, 'project', 'prod', ?, ?, ?, ?, ?, 'ready', 'principal', CURRENT_TIMESTAMP)`, item.id, item.generation, digest("1"), digest("2"), digest("3"), item.id); err != nil {
+		if _, err := db.ExecContext(t.Context(), `INSERT INTO api_releases (id, project_id, environment, generation_id, project_digest, artifact_digest, request_digest, idempotency_key, status, created_by, finalized_at) VALUES (?, 'project', 'prod', ?, ?, ?, ?, ?, 'ready', 'principal', CURRENT_TIMESTAMP)`, item.id, item.generation, testDigest("1"), testDigest("2"), testDigest("3"), item.id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -126,7 +126,7 @@ func TestPriorDeploymentReleaseSkipsRequestsThatNeverActivated(t *testing.T) {
 		if item.status == "active" || item.status == "superseded" {
 			activatedAt = item.createdAt
 		}
-		if _, err := db.ExecContext(t.Context(), `INSERT INTO project_deployments (id, project_id, environment, generation_id, artifact_digest, request_digest, status, created_by, created_at, activated_at, error) VALUES (?, 'project', 'prod', ?, ?, ?, ?, 'principal', ?, ?, ?)`, item.id, item.generation, digest("2"), digest("3"), item.status, item.createdAt, activatedAt, item.failure); err != nil {
+		if _, err := db.ExecContext(t.Context(), `INSERT INTO project_deployments (id, project_id, environment, generation_id, artifact_digest, request_digest, status, created_by, created_at, activated_at, error) VALUES (?, 'project', 'prod', ?, ?, ?, ?, 'principal', ?, ?, ?)`, item.id, item.generation, testDigest("2"), testDigest("3"), item.status, item.createdAt, activatedAt, item.failure); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -151,7 +151,7 @@ func TestReleaseLifecycleIsIdempotentAndImmutable(t *testing.T) {
 	identity := testServingIdentity("commerce", "dev", "generation_1")
 	insertServingState(t, store, identity)
 	provenance := testReleaseProvenance(t, identity)
-	input := release.CreateInput{ID: "rel_1", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "release-1", CreatedBy: "principal", Provenance: &provenance, Connections: []release.ConnectionPin{{ConnectionID: "warehouse", RevisionID: digest("7")}}}
+	input := release.CreateInput{ID: "rel_1", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "release-1", CreatedBy: "principal", Provenance: &provenance, Connections: []release.ConnectionPin{{ConnectionID: "warehouse", RevisionID: testDigest("7")}}}
 	created, err := repo.Create(t.Context(), input)
 	require.NoError(t, err)
 	if created.Status != release.StatusDraft {
@@ -161,7 +161,7 @@ func TestReleaseLifecycleIsIdempotentAndImmutable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, created.ID, replayed.ID)
 	conflict := input
-	conflict.RequestDigest = digest("8")
+	conflict.RequestDigest = testDigest("8")
 	if _, err := repo.Create(t.Context(), conflict); !errors.Is(err, release.ErrConflict) {
 		t.Fatalf("conflicting replay error = %v", err)
 	}
@@ -195,7 +195,7 @@ func TestReleaseFinalizationRejectsMissingOrMismatchedArtifacts(t *testing.T) {
 	identity := testServingIdentity("commerce", "dev", "generation_missing")
 	insertServingState(t, store, identity)
 	provenance := testReleaseProvenance(t, identity)
-	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_2", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "release-2", CreatedBy: "principal", Provenance: &provenance})
+	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_2", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "release-2", CreatedBy: "principal", Provenance: &provenance})
 	require.NoError(t, err)
 	if _, err := repo.BeginFinalization(t.Context(), identity.ProjectID.String(), created.ID, jobs.WorkflowIntent{}); !errors.Is(err, release.ErrIncomplete) {
 		t.Fatalf("missing artifact error = %v", err)
@@ -211,7 +211,7 @@ func TestBeginFinalizationRollsBackWhenWorkflowCannotBeRecorded(t *testing.T) {
 	identity := testServingIdentity("commerce", "dev", "generation_atomic")
 	insertServingState(t, store, identity)
 	provenance := testReleaseProvenance(t, identity)
-	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_atomic", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "atomic", CreatedBy: "principal", Provenance: &provenance})
+	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_atomic", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "atomic", CreatedBy: "principal", Provenance: &provenance})
 	require.NoError(t, err)
 	require.NoError(t, repo.RecordArtifact(t.Context(), release.Artifact{ReleaseID: created.ID, ServingIdentity: identity, ExpectedDigest: provenance.Artifact.ContentDigest, ActualDigest: provenance.Artifact.ContentDigest, SizeBytes: 42}))
 	_, err = repo.BeginFinalization(t.Context(), identity.ProjectID.String(), created.ID, jobs.WorkflowIntent{Event: jobs.EventInput{Key: "validating", ResourceKind: "release", ResourceID: created.ID, EventType: "release.validating", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "release:" + created.ID + ":finalize"}})
@@ -234,7 +234,7 @@ func TestCompleteFinalizationRollsBackWhenReadyEventCannotBeRecorded(t *testing.
 	identity := testServingIdentity("commerce", "dev", "generation_atomic_ready")
 	insertServingState(t, store, identity)
 	provenance := testReleaseProvenance(t, identity)
-	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_atomic_ready", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "atomic-ready", CreatedBy: "principal", Provenance: &provenance})
+	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_atomic_ready", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "atomic-ready", CreatedBy: "principal", Provenance: &provenance})
 	require.NoError(t, err)
 	require.NoError(t, repo.RecordArtifact(t.Context(), release.Artifact{ReleaseID: created.ID, ServingIdentity: identity, ExpectedDigest: provenance.Artifact.ContentDigest, ActualDigest: provenance.Artifact.ContentDigest, SizeBytes: 42}))
 	// A recorder that fails only terminal events lets validating persist first.
@@ -261,7 +261,7 @@ func TestFailFinalizationRollsBackWhenFailedEventCannotBeRecorded(t *testing.T) 
 	identity := testServingIdentity("commerce", "dev", "generation_atomic_failed")
 	insertServingState(t, store, identity)
 	provenance := testReleaseProvenance(t, identity)
-	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_atomic_failed", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "atomic-failed", CreatedBy: "principal", Provenance: &provenance})
+	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_atomic_failed", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "atomic-failed", CreatedBy: "principal", Provenance: &provenance})
 	require.NoError(t, err)
 	require.NoError(t, repo.RecordArtifact(t.Context(), release.Artifact{ReleaseID: created.ID, ServingIdentity: identity, ExpectedDigest: provenance.Artifact.ContentDigest, ActualDigest: provenance.Artifact.ContentDigest, SizeBytes: 42}))
 	if _, err := repo.BeginFinalization(t.Context(), identity.ProjectID.String(), created.ID, jobs.WorkflowIntent{}); err != nil {
@@ -278,7 +278,7 @@ func TestFailFinalizationRollsBackWhenFailedEventCannotBeRecorded(t *testing.T) 
 	}
 }
 
-func digest(hexDigit string) string { return "sha256:" + strings.Repeat(hexDigit, 64) }
+func testDigest(hexDigit string) string { return "sha256:" + strings.Repeat(hexDigit, 64) }
 
 func testServingIdentity(project, environment, generation string) projectgraph.ServingIdentity {
 	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(project), environment, generation)
@@ -291,9 +291,9 @@ func testServingIdentity(project, environment, generation string) projectgraph.S
 func testReleaseProvenance(t *testing.T, identity projectgraph.ServingIdentity) release.Provenance {
 	t.Helper()
 	p, err := release.NewProvenance(release.ProvenanceInput{
-		Artifact:  release.ProjectArtifactProvenance{SourceDigest: digest("1"), ProjectDigest: digest("2"), ContentDigest: digest("3"), CompilerVersion: "leapview:test", SchemaVersion: 3},
+		Artifact:  release.ProjectArtifactProvenance{SourceDigest: testDigest("1"), ProjectDigest: testDigest("2"), ContentDigest: testDigest("3"), CompilerVersion: "leapview:test", SchemaVersion: 3},
 		Candidate: release.CandidateProvenance{ID: "cand_1", Revision: 2, OwnerID: "principal_1"},
-		Plan:      release.GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:test", PolicyDigest: digest("4"), DataRevision: "snapshot:1", DataMode: release.GenerationDataRefreshSources, ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "orders", RevisionID: digest("7")}}, Bindings: []release.BindingEvidence{{BindingID: "warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 2, ValidatedVersion: "version-7", EndpointConfigHash: digest("8")}}},
+		Plan:      release.GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:test", PolicyDigest: testDigest("4"), DataRevision: "snapshot:1", DataMode: release.GenerationDataRefreshSources, ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "orders", RevisionID: testDigest("7")}}, Bindings: []release.BindingEvidence{{BindingID: "warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 2, ValidatedVersion: "version-7", EndpointConfigHash: testDigest("8")}}},
 	})
 	require.NoError(t, err)
 	return p
