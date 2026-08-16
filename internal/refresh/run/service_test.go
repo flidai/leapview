@@ -8,12 +8,14 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 
 	"github.com/flidai/leapview/internal/refresh/artifact"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
-	"github.com/flidai/leapview/internal/workspace"
 )
+
+var serviceIdentity = projectgraph.ServingIdentity{ProjectID: "project", Environment: "dev", GenerationID: "dep_candidate"}
 
 func TestServiceExecuteClaimedJobActivatesAfterMaterializeAndPrepare(t *testing.T) {
 	ctx := context.Background()
@@ -34,14 +36,11 @@ func TestServiceExecuteClaimedJobActivatesAfterMaterializeAndPrepare(t *testing.
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
-		ID:             "job_1",
-		WorkspaceID:    "sales",
-		ServingStateID: "dep_candidate",
-		RunID:          "run_root",
-		ModelID:        "sales",
-		TargetType:     TargetRefreshPipeline,
-		TargetID:       "sales.sales-refresh",
-		Kind:           JobKindRefreshPipeline,
+		ID:       "job_1",
+		Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root",
+		SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline,
+		TargetID: "sales-refresh", TriggerType: TriggerManual,
+		Kind: JobKindRefreshPipeline,
 	})
 	if err != nil {
 		t.Fatalf("execute claimed job: %v", err)
@@ -79,14 +78,11 @@ func TestServiceExecuteClaimedJobMaterializeFailureDoesNotActivate(t *testing.T)
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
-		ID:             "job_1",
-		WorkspaceID:    "sales",
-		ServingStateID: "dep_candidate",
-		RunID:          "run_root",
-		ModelID:        "sales",
-		TargetType:     TargetRefreshPipeline,
-		TargetID:       "sales.sales-refresh",
-		Kind:           JobKindRefreshPipeline,
+		ID:       "job_1",
+		Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root",
+		SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline,
+		TargetID: "sales-refresh", TriggerType: TriggerManual,
+		Kind: JobKindRefreshPipeline,
 	})
 	if err == nil {
 		t.Fatal("execute claimed job error = nil, want materialize failure")
@@ -114,14 +110,11 @@ func TestServiceExecuteClaimedJobRuntimePrepareFailureDoesNotActivate(t *testing
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
-		ID:             "job_1",
-		WorkspaceID:    "sales",
-		ServingStateID: "dep_candidate",
-		RunID:          "run_root",
-		ModelID:        "sales",
-		TargetType:     TargetRefreshPipeline,
-		TargetID:       "sales.sales-refresh",
-		Kind:           JobKindRefreshPipeline,
+		ID:       "job_1",
+		Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root",
+		SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline,
+		TargetID: "sales-refresh", TriggerType: TriggerManual,
+		Kind: JobKindRefreshPipeline,
 	})
 	if err == nil {
 		t.Fatal("execute claimed job error = nil, want prepare failure")
@@ -151,8 +144,7 @@ func TestServiceExecuteClaimedJobRuntimeActivationFailureDoesNotPublishOrActivat
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
-		ID: "job_1", WorkspaceID: "sales", ServingStateID: "dep_candidate", RunID: "run_root", ModelID: "sales",
-		TargetType: TargetRefreshPipeline, TargetID: "sales.sales-refresh", Kind: JobKindRefreshPipeline,
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, Kind: JobKindRefreshPipeline,
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("execute claimed job error = %v, want %v", err, wantErr)
@@ -179,8 +171,7 @@ func TestServiceExecuteClaimedJobRequiresAtomicRuntimeHost(t *testing.T) {
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
-		ID: "job_1", WorkspaceID: "sales", ServingStateID: "dep_candidate", RunID: "run_root", ModelID: "sales",
-		TargetType: TargetRefreshPipeline, TargetID: "sales.sales-refresh", Kind: JobKindRefreshPipeline,
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, Kind: JobKindRefreshPipeline,
 	})
 	if err == nil || !strings.Contains(err.Error(), "runtime host is required") {
 		t.Fatalf("execute claimed job error = %v, want required runtime host", err)
@@ -198,19 +189,19 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 		Artifacts:     fakeArtifactLoader{definition: refreshTestDefinition()},
 	}
 	result, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
-		WorkspaceID: "sales", Environment: servingstate.DefaultEnvironment, PrincipalID: "principal",
+		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
 		PipelineID: "sales-refresh", TriggerType: TriggerManual,
 	})
 	if err != nil {
 		t.Fatalf("QueuePipelineRefresh() error = %v", err)
 	}
-	if result.Run.TargetType != TargetRefreshPipeline || result.Run.TargetID != "sales.sales-refresh" {
+	if result.Run.TargetType != TargetRefreshPipeline || result.Run.TargetID != "sales-refresh" {
 		t.Fatalf("root run = %#v", result.Run)
 	}
 	if len(repo.createdRuns) != 3 {
 		t.Fatalf("created runs = %#v, want pipeline root plus both model-table tasks", repo.createdRuns)
 	}
-	if repo.createdRuns[0].ModelID != "sales" || repo.createdRuns[0].TriggerType != TriggerManual {
+	if repo.createdRuns[0].SemanticModelID != "sales" || repo.createdRuns[0].TriggerType != TriggerManual {
 		t.Fatalf("root input = %#v", repo.createdRuns[0])
 	}
 }
@@ -229,7 +220,7 @@ func TestServiceQueuePipelineRefreshPinsCandidateManagedDataRevisions(t *testing
 	}
 
 	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
-		WorkspaceID: "sales", Environment: servingstate.DefaultEnvironment, PrincipalID: "principal",
+		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
 		PipelineID: "sales-refresh", TriggerType: TriggerManual,
 	})
 	if err != nil {
@@ -257,7 +248,7 @@ func TestServiceQueuePipelineRefreshFailsCandidateWhenManagedDataPinningFails(t 
 	}
 
 	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
-		WorkspaceID: "sales", Environment: servingstate.DefaultEnvironment,
+		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
 		PipelineID: "sales-refresh", TriggerType: TriggerManual,
 	})
 	if err == nil || !strings.Contains(err.Error(), "pin failed") {
@@ -276,7 +267,7 @@ func TestServiceQueuePipelineRefreshRejectsSupersededScheduledArtifact(t *testin
 		Artifacts:     fakeArtifactLoader{definition: refreshTestDefinition()},
 	}
 	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
-		WorkspaceID: "sales", Environment: servingstate.DefaultEnvironment,
+		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
 		PipelineID: "sales-refresh", TriggerType: TriggerSchedule,
 		ArtifactDigest: "sha256:superseded",
 	})
@@ -294,20 +285,16 @@ func TestServiceCreateRefreshCandidateCopiesActiveArtifactMetadata(t *testing.T)
 	service := Service{ServingStates: repo}
 	active := ServingState{
 		State: servingstate.State{
-			ID:                "dep_active",
-			WorkspaceID:       "movielens",
-			ProjectID:         "movie-project",
-			ProjectDigest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			ProjectWorkspaces: []string{"movielens", "ratings"},
-			AccessPolicyJSON:  `{"groups":{"readers":{"name":"Readers"}}}`,
-			Environment:       servingstate.DefaultEnvironment,
-			Digest:            "artifact-digest",
-			ManifestJSON:      "{}",
+			ID:               "dep_active",
+			ProjectID:        "movie-project",
+			ProjectDigest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			AccessPolicyJSON: `{"groups":{"readers":{"name":"Readers"}}}`,
+			Environment:      servingstate.DefaultEnvironment,
+			Digest:           "artifact-digest",
+			ManifestJSON:     "{}",
 		},
 		Artifact: servingstate.Artifact{
 			ServingStateID: "dep_active",
-			WorkspaceID:    "movielens",
-			Environment:    servingstate.DefaultEnvironment,
 			Digest:         "artifact-digest",
 			Format:         "tar.gz",
 			Path:           "/tmp/artifact.tgz",
@@ -315,11 +302,10 @@ func TestServiceCreateRefreshCandidateCopiesActiveArtifactMetadata(t *testing.T)
 	}
 
 	candidate, err := service.CreateRefreshCandidate(ctx, RefreshCandidateInput{
-		WorkspaceID:   "movielens",
-		Environment:   servingstate.DefaultEnvironment,
+		Identity:      projectgraph.ServingIdentity{ProjectID: "movie-project", Environment: "dev", GenerationID: "dep_active"},
 		CreatedBy:     "tester",
 		Active:        active,
-		ArtifactGraph: workspace.AssetGraph{},
+		ArtifactGraph: projectgraph.ProjectGraph{},
 	})
 	if err != nil {
 		t.Fatalf("create refresh candidate: %v", err)
@@ -331,8 +317,8 @@ func TestServiceCreateRefreshCandidateCopiesActiveArtifactMetadata(t *testing.T)
 	if repo.savedValidation.ProjectID != active.State.ProjectID {
 		t.Fatalf("candidate project = %q, want %q", repo.savedValidation.ProjectID, active.State.ProjectID)
 	}
-	if repo.savedValidation.ProjectDigest != active.State.ProjectDigest || !reflect.DeepEqual(repo.savedValidation.ProjectWorkspaces, active.State.ProjectWorkspaces) {
-		t.Fatalf("candidate project provenance = (%q, %#v), want (%q, %#v)", repo.savedValidation.ProjectDigest, repo.savedValidation.ProjectWorkspaces, active.State.ProjectDigest, active.State.ProjectWorkspaces)
+	if repo.savedValidation.ProjectDigest != active.State.ProjectDigest {
+		t.Fatalf("candidate project provenance = %q, want %q", repo.savedValidation.ProjectDigest, active.State.ProjectDigest)
 	}
 	if group := repo.savedValidation.AccessPolicy.Groups["readers"]; group.Name != "Readers" {
 		t.Fatalf("candidate access policy = %#v, want active policy", repo.savedValidation.AccessPolicy)
@@ -341,7 +327,7 @@ func TestServiceCreateRefreshCandidateCopiesActiveArtifactMetadata(t *testing.T)
 
 func refreshTestDefinition() *artifact.Definition {
 	return &artifact.Definition{Pipelines: map[string]refreshschedule.Definition{
-		"sales-refresh": {ID: "sales-refresh", Name: "sales-refresh", SemanticModel: "sales"},
+		"sales-refresh": {ID: "sales-refresh", Name: "sales-refresh", SemanticModelID: "sales"},
 	}, Models: map[string]*semanticmodel.Model{
 		"sales": {
 			Name: "sales",
@@ -371,21 +357,17 @@ type fakeRepo struct {
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		activeDeployment: servingstate.State{
-			ID:                "dep_active",
-			WorkspaceID:       "sales",
-			ProjectID:         "project",
-			ProjectDigest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			ProjectWorkspaces: []string{"sales"},
-			AccessPolicyJSON:  "{}",
-			Environment:       servingstate.DefaultEnvironment,
-			Status:            servingstate.StatusActive,
-			Digest:            "digest",
-			ManifestJSON:      "{}",
+			ID:               "dep_active",
+			ProjectID:        "project",
+			ProjectDigest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			AccessPolicyJSON: "{}",
+			Environment:      servingstate.DefaultEnvironment,
+			Status:           servingstate.StatusActive,
+			Digest:           "digest",
+			ManifestJSON:     "{}",
 		},
 		activeArtifact: servingstate.Artifact{
 			ServingStateID: "dep_active",
-			WorkspaceID:    "sales",
-			Environment:    servingstate.DefaultEnvironment,
 			Digest:         "digest",
 			Format:         "tar.gz",
 			Path:           "/tmp/artifact.tar.gz",
@@ -393,7 +375,7 @@ func newFakeRepo() *fakeRepo {
 		},
 		candidateState: servingstate.State{
 			ID:           "dep_candidate",
-			WorkspaceID:  "sales",
+			ProjectID:    "project",
 			Environment:  servingstate.DefaultEnvironment,
 			Status:       servingstate.StatusValidated,
 			Digest:       "digest",
@@ -401,8 +383,6 @@ func newFakeRepo() *fakeRepo {
 		},
 		candidateArtifact: servingstate.Artifact{
 			ServingStateID: "dep_candidate",
-			WorkspaceID:    "sales",
-			Environment:    servingstate.DefaultEnvironment,
 			Digest:         "digest",
 			Format:         "tar.gz",
 			Path:           "/tmp/artifact.tar.gz",
@@ -415,20 +395,19 @@ func newFakeRepo() *fakeRepo {
 	}
 }
 
-func (r *fakeRepo) ActiveArtifact(context.Context, servingstate.WorkspaceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
+func (r *fakeRepo) ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
 	return r.activeDeployment, r.activeArtifact, nil
 }
 
 func (r *fakeRepo) Create(context.Context, servingstate.CreateInput) (servingstate.State, error) {
-	return servingstate.State{ID: "dep_candidate", WorkspaceID: "sales", Environment: servingstate.DefaultEnvironment, Status: servingstate.StatusPending}, nil
+	return servingstate.State{ID: "dep_candidate", ProjectID: "project", Environment: servingstate.DefaultEnvironment, Status: servingstate.StatusPending}, nil
 }
 
 func (r *fakeRepo) SaveValidated(_ context.Context, servingStateID servingstate.ID, validation servingstate.Validation, artifact servingstate.Artifact) (servingstate.State, error) {
 	r.savedValidation = validation
 	r.savedArtifact = artifact
 	r.candidateState.ID = servingStateID
-	r.candidateState.WorkspaceID = artifact.WorkspaceID
-	r.candidateState.Environment = artifact.Environment
+	r.candidateState.ProjectID = "project"
 	r.candidateState.Digest = validation.Digest
 	r.candidateArtifact = artifact
 	return r.candidateState, nil
@@ -449,7 +428,7 @@ func (r *fakeRepo) RecordDuckLakeSnapshot(_ context.Context, servingStateID serv
 	return nil
 }
 
-func (r *fakeRepo) Activate(_ context.Context, _ servingstate.WorkspaceID, _ servingstate.Environment, servingStateID servingstate.ID) (servingstate.State, error) {
+func (r *fakeRepo) Activate(_ context.Context, _ projectgraph.ResourceID, _ servingstate.Environment, servingStateID servingstate.ID, _ servingstate.ID) (servingstate.State, error) {
 	r.activatedDeployment = servingStateID
 	return r.candidateState, nil
 }
@@ -466,30 +445,30 @@ func (r *fakeRepo) CreateRun(_ context.Context, input RunInput) (RunRecord, erro
 		id = "run_child"
 	}
 	r.runStatuses[id] = RunStatusQueued
-	return RunRecord{ID: id, WorkspaceID: input.WorkspaceID, ServingStateID: input.ServingStateID, TargetType: input.TargetType, TargetID: input.TargetID, TriggerType: input.TriggerType, ParentRunID: input.ParentRunID}, nil
+	return RunRecord{ID: id, Identity: input.Identity, SemanticModelID: input.SemanticModelID, PipelineID: input.PipelineID, PrincipalID: input.PrincipalID, TargetType: input.TargetType, TargetID: input.TargetID, TriggerType: input.TriggerType, ParentRunID: input.ParentRunID}, nil
 }
 
-func (r *fakeRepo) ListChildRuns(context.Context, string, string) ([]RunRecord, error) {
-	return []RunRecord{{ID: "run_child", WorkspaceID: "sales", TargetType: TargetModelTable, TargetID: "sales.customers"}}, nil
+func (r *fakeRepo) ListChildRuns(context.Context, projectgraph.ServingIdentity, string) ([]RunRecord, error) {
+	return []RunRecord{{ID: "run_child", Identity: serviceIdentity, TargetType: TargetModelTable, TargetID: "customers"}}, nil
 }
 
-func (r *fakeRepo) MarkRunRunning(_ context.Context, _ string, runID string) (RunRecord, error) {
+func (r *fakeRepo) MarkRunRunning(_ context.Context, _ projectgraph.ServingIdentity, runID string) (RunRecord, error) {
 	r.runStatuses[runID] = RunStatusRunning
 	return RunRecord{ID: runID, Status: RunStatusRunning}, nil
 }
 
-func (r *fakeRepo) MarkRunSucceeded(_ context.Context, _ string, runID string) (RunRecord, error) {
+func (r *fakeRepo) MarkRunSucceeded(_ context.Context, _ projectgraph.ServingIdentity, runID string) (RunRecord, error) {
 	r.runStatuses[runID] = RunStatusSucceeded
 	return RunRecord{ID: runID, Status: RunStatusSucceeded}, nil
 }
 
-func (r *fakeRepo) MarkRunFailed(_ context.Context, _ string, runID, _ string) (RunRecord, error) {
+func (r *fakeRepo) MarkRunFailed(_ context.Context, _ projectgraph.ServingIdentity, runID, _ string) (RunRecord, error) {
 	r.runStatuses[runID] = RunStatusFailed
 	return RunRecord{ID: runID, Status: RunStatusFailed}, nil
 }
 
 func (r *fakeRepo) MarkRunFailedClaimed(ctx context.Context, job JobRecord, message string) (RunRecord, error) {
-	return r.MarkRunFailed(ctx, job.WorkspaceID, job.RunID, message)
+	return r.MarkRunFailed(ctx, job.Identity, job.RunID, message)
 }
 
 func (r *fakeRepo) MarkRunTreeFailedClaimed(ctx context.Context, job JobRecord, message string) error {
@@ -499,7 +478,7 @@ func (r *fakeRepo) MarkRunTreeFailedClaimed(ctx context.Context, job JobRecord, 
 }
 
 func (r *fakeRepo) MarkRunSucceededClaimed(ctx context.Context, job JobRecord) (RunRecord, error) {
-	result, err := r.MarkRunSucceeded(ctx, job.WorkspaceID, job.RunID)
+	result, err := r.MarkRunSucceeded(ctx, job.Identity, job.RunID)
 	if err == nil {
 		r.runStatuses["run_child"] = RunStatusSucceeded
 	}
@@ -508,7 +487,7 @@ func (r *fakeRepo) MarkRunSucceededClaimed(ctx context.Context, job JobRecord) (
 
 func (r *fakeRepo) MarkRunPrepared(_ context.Context, job JobRecord) (RunRecord, error) {
 	r.runStatuses[job.RunID] = RunStatusPrepared
-	return RunRecord{ID: job.RunID, Status: RunStatusPrepared, TargetGeneration: job.TargetGeneration}, nil
+	return RunRecord{ID: job.RunID, Status: RunStatusPrepared}, nil
 }
 
 func (r *fakeRepo) RunMayPublish(context.Context, JobRecord) (bool, error) {
@@ -521,7 +500,7 @@ type fakeArtifactLoader struct {
 }
 
 func (l fakeArtifactLoader) Load(context.Context, servingstate.Artifact) (LoadedArtifact, error) {
-	return LoadedArtifact{Definition: l.definition, Graph: workspace.AssetGraph{}, ManagedDataRevisions: l.managedDataRevisions}, nil
+	return LoadedArtifact{Definition: l.definition, Graph: projectgraph.ProjectGraph{}, ManagedDataRevisions: l.managedDataRevisions}, nil
 }
 
 type fakeCandidateValidationHook struct {
@@ -532,11 +511,11 @@ type fakeCandidateValidationHook struct {
 
 type fakePublication struct{ repo *fakeRepo }
 
-func (p fakePublication) Publish(ctx context.Context, workspaceID servingstate.WorkspaceID, environment servingstate.Environment, servingStateID servingstate.ID, version refreshschedule.DataVersion) error {
-	if _, err := p.repo.Activate(ctx, workspaceID, environment, servingStateID); err != nil {
+func (p fakePublication) Publish(ctx context.Context, identity projectgraph.ServingIdentity, servingStateID servingstate.ID, version refreshschedule.DataVersion) error {
+	if _, err := p.repo.Activate(ctx, identity.ProjectID, servingstate.Environment(identity.Environment), servingStateID, ""); err != nil {
 		return err
 	}
-	_, err := p.repo.MarkRunSucceeded(ctx, string(workspaceID), version.RunID)
+	_, err := p.repo.MarkRunSucceeded(ctx, identity, version.RunID)
 	p.repo.runStatuses["run_child"] = RunStatusSucceeded
 	return err
 }
@@ -604,6 +583,6 @@ type fakePublisher struct {
 	targets []string
 }
 
-func (p *fakePublisher) PublishRefreshTarget(_ context.Context, _, _, _, targetID string) {
-	p.targets = append(p.targets, targetID)
+func (p *fakePublisher) PublishRefreshTarget(_ context.Context, _ projectgraph.ServingIdentity, _ string, targetID projectgraph.ResourceID) {
+	p.targets = append(p.targets, targetID.String())
 }

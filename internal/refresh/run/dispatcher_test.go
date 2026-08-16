@@ -5,22 +5,24 @@ import (
 	"testing"
 	"time"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 )
 
+var dispatcherIdentity = projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}
+
+func dispatcherJob(kind string) JobRecord {
+	return JobRecord{ID: "job_1", Identity: dispatcherIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_1", Kind: kind, TargetType: TargetRefreshPipeline, TargetID: "pipeline_sales", TriggerType: TriggerManual}
+}
+
 func TestDispatcherMarksUnsupportedJobFailed(t *testing.T) {
 	ctx := context.Background()
-	queue := &fakeQueueRepository{jobs: []JobRecord{{
-		ID:          "job_1",
-		WorkspaceID: "sales",
-		RunID:       "run_1",
-		Kind:        "unknown",
-	}}}
+	queue := &fakeQueueRepository{jobs: []JobRecord{dispatcherJob("unknown")}}
 
 	Dispatcher{
 		Runs: queue,
 		Admitter: func() workload.Admitter {
-			controller, err := workload.New(workload.Config{MaxRunning: 1, MaximumQueued: 1, Classes: map[workload.Class]workload.Policy{workload.Refresh: {MaximumRunning: 1, MaximumQueued: 1, MaximumQueuedPerWorkspace: 1}}})
+			controller, err := workload.New(workload.Config{MaxRunning: 1, MaximumQueued: 1, Classes: map[workload.Class]workload.Policy{workload.Refresh: {MaximumRunning: 1, MaximumQueued: 1}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -39,7 +41,7 @@ func TestDispatcherMarksUnsupportedJobFailed(t *testing.T) {
 }
 
 func TestDispatcherAdmissionRejectionLeavesDurableJobRetryable(t *testing.T) {
-	queue := &fakeQueueRepository{jobs: []JobRecord{{ID: "job_1", WorkspaceID: "sales", RunID: "run_1", Kind: JobKindRefreshPipeline}}}
+	queue := &fakeQueueRepository{jobs: []JobRecord{dispatcherJob(JobKindRefreshPipeline)}}
 	controller, err := workload.New(workload.Config{MaxRunning: 1, Classes: map[workload.Class]workload.Policy{
 		workload.Interactive: {MaximumRunning: 1}, workload.Refresh: {MaximumRunning: 1},
 	}})
@@ -50,7 +52,7 @@ func TestDispatcherAdmissionRejectionLeavesDurableJobRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	Dispatcher{Runs: queue, Admitter: controller, Owner: "test-owner", LeaseTimeout: time.Minute}.Run(context.Background())
+	Dispatcher{Runs: queue, Admitter: controller, Identity: dispatcherIdentity, Owner: "test-owner", LeaseTimeout: time.Minute}.Run(context.Background())
 	held.Release()
 	if len(queue.jobs) != 1 || queue.claimOwner != "" {
 		t.Fatalf("rejected job was claimed: %#v", queue)
@@ -61,7 +63,7 @@ func TestDispatcherAdmissionRejectionLeavesDurableJobRetryable(t *testing.T) {
 }
 
 func TestDispatcherReleasesRefreshPermitBeforeRunFinished(t *testing.T) {
-	queue := &fakeQueueRepository{jobs: []JobRecord{{ID: "job_1", WorkspaceID: "sales", RunID: "run_1", Kind: "unknown"}}}
+	queue := &fakeQueueRepository{jobs: []JobRecord{dispatcherJob("unknown")}}
 	controller, err := workload.New(workload.Config{MaxRunning: 1, Classes: map[workload.Class]workload.Policy{
 		workload.Refresh: {MaximumRunning: 1},
 	}})
@@ -70,7 +72,7 @@ func TestDispatcherReleasesRefreshPermitBeforeRunFinished(t *testing.T) {
 	}
 	runningAtCallback := -1
 	Dispatcher{
-		Runs: queue, Admitter: controller, Owner: "test-owner", LeaseTimeout: time.Minute,
+		Runs: queue, Admitter: controller, Identity: dispatcherIdentity, Owner: "test-owner", LeaseTimeout: time.Minute,
 		RunFinished: func(context.Context, JobRecord) { runningAtCallback = controller.Stats().Running },
 	}.Run(context.Background())
 	if runningAtCallback != 0 {
@@ -86,7 +88,7 @@ type fakeQueueRepository struct {
 	failedMessage string
 }
 
-func (r *fakeQueueRepository) ListExecutableJobs(context.Context, string, int) ([]JobRecord, error) {
+func (r *fakeQueueRepository) ListExecutableJobs(context.Context, projectgraph.ServingIdentity, int) ([]JobRecord, error) {
 	if len(r.jobs) == 0 {
 		return nil, nil
 	}
@@ -101,7 +103,7 @@ func (r *fakeQueueRepository) ClaimExecutableJob(_ context.Context, candidate Jo
 		}
 		r.jobs = append(r.jobs[:index], r.jobs[index+1:]...)
 		job.LeaseOwner = owner
-		job.LeaseGeneration++
+		job.LeaseRevision++
 		return job, true, nil
 	}
 	return JobRecord{}, false, nil
@@ -111,7 +113,7 @@ func (r *fakeQueueRepository) RenewJobLease(context.Context, JobRecord, time.Dur
 	return nil
 }
 
-func (r *fakeQueueRepository) JobQueueStats(context.Context, string) (JobQueueStats, error) {
+func (r *fakeQueueRepository) JobQueueStats(context.Context, projectgraph.ServingIdentity) (JobQueueStats, error) {
 	return JobQueueStats{}, nil
 }
 
@@ -119,30 +121,30 @@ func (r *fakeQueueRepository) CreateRun(context.Context, RunInput) (RunRecord, e
 	return RunRecord{}, nil
 }
 
-func (r *fakeQueueRepository) ListChildRuns(context.Context, string, string) ([]RunRecord, error) {
+func (r *fakeQueueRepository) ListChildRuns(context.Context, projectgraph.ServingIdentity, string) ([]RunRecord, error) {
 	return nil, nil
 }
 
-func (r *fakeQueueRepository) MarkRunRunning(context.Context, string, string) (RunRecord, error) {
+func (r *fakeQueueRepository) MarkRunRunning(context.Context, projectgraph.ServingIdentity, string) (RunRecord, error) {
 	return RunRecord{}, nil
 }
 
-func (r *fakeQueueRepository) MarkRunSucceeded(context.Context, string, string) (RunRecord, error) {
+func (r *fakeQueueRepository) MarkRunSucceeded(context.Context, projectgraph.ServingIdentity, string) (RunRecord, error) {
 	return RunRecord{}, nil
 }
 
-func (r *fakeQueueRepository) MarkRunFailed(_ context.Context, _ string, runID, message string) (RunRecord, error) {
+func (r *fakeQueueRepository) MarkRunFailed(_ context.Context, _ projectgraph.ServingIdentity, runID, message string) (RunRecord, error) {
 	r.failedRun = runID
 	r.failedMessage = message
 	return RunRecord{ID: runID, Status: RunStatusFailed, Error: message}, nil
 }
 
 func (r *fakeQueueRepository) MarkRunSucceededClaimed(ctx context.Context, job JobRecord) (RunRecord, error) {
-	return r.MarkRunSucceeded(ctx, job.WorkspaceID, job.RunID)
+	return r.MarkRunSucceeded(ctx, job.Identity, job.RunID)
 }
 
 func (r *fakeQueueRepository) MarkRunFailedClaimed(ctx context.Context, job JobRecord, message string) (RunRecord, error) {
-	return r.MarkRunFailed(ctx, job.WorkspaceID, job.RunID, message)
+	return r.MarkRunFailed(ctx, job.Identity, job.RunID, message)
 }
 
 func (r *fakeQueueRepository) MarkRunTreeFailedClaimed(ctx context.Context, job JobRecord, message string) error {
