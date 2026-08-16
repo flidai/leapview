@@ -172,10 +172,15 @@ func (s *Service) Activate(ctx context.Context, request ActivationRequest) (Depl
 		_ = s.repository.FailDeployment(ctx, row.ID, invalid)
 		return Deployment{}, invalid
 	}
+	activationInput := ActivationInput{DeploymentID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, ActivationPrincipal: request.ActorID, VerificationDigest: verification.Digest}
+	if err := ValidateActivation(activationInput); err != nil {
+		_ = s.repository.FailDeployment(ctx, row.ID, err)
+		return Deployment{}, err
+	}
 	var activated Deployment
 	if err := s.runtime.Activate(prepared, func() error {
 		var e error
-		activated, e = s.activation.ActivateDeployment(ctx, ActivationInput{DeploymentID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, ActivationPrincipal: request.ActorID, VerificationDigest: verification.Digest})
+		activated, e = s.activation.ActivateDeployment(ctx, activationInput)
 		return e
 	}); err != nil {
 		return Deployment{}, err

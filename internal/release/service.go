@@ -103,6 +103,11 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error
 	if input.Provenance == nil {
 		return Release{}, fmt.Errorf("%w: provenance is required", ErrInvalid)
 	}
+	provenance, err := cloneProvenance(*input.Provenance)
+	if err != nil {
+		return Release{}, fmt.Errorf("%w: provenance clone: %v", ErrInvalid, err)
+	}
+	input.Provenance = &provenance
 	if err := input.Provenance.Validate(); err != nil {
 		return Release{}, fmt.Errorf("%w: provenance: %v", ErrInvalid, err)
 	}
@@ -248,6 +253,18 @@ func (s *Service) CandidateProvenance(ctx context.Context, projectID, candidateI
 func stableID(prefix string, values ...string) string {
 	h := digest.SHA256Identity([]byte(strings.Join(values, "\x00")))
 	return prefix + "_" + strings.TrimPrefix(h, "sha256:")[:24]
+}
+
+func cloneProvenance(value Provenance) (Provenance, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return Provenance{}, err
+	}
+	var clone Provenance
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		return Provenance{}, err
+	}
+	return clone, nil
 }
 func errorsJoin(primary, secondary error) error {
 	return fmt.Errorf("%v; persist failure: %w", primary, secondary)

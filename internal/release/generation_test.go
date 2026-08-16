@@ -32,4 +32,20 @@ func TestProvenanceBindsExactGenerationAndBaseIdentity(t *testing.T) {
 	if err := p.Validate(); err == nil {
 		t.Fatal("partial base identity accepted")
 	}
+	if p, err = NewProvenance(ProvenanceInput{
+		Artifact:  ProjectArtifactProvenance{SourceDigest: sha('a'), ProjectDigest: sha('b'), ArtifactDigest: sha('c'), CompilerVersion: "compiler", SchemaVersion: 1},
+		Candidate: CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"},
+		Plan:      GenerationPlanProvenance{Identity: identity, BaseIdentity: projectgraph.ServingIdentity{ProjectID: "other_project", Environment: "prod", GenerationID: "generation_0"}, RuntimeVersion: "runtime", PolicyDigest: sha('d'), DataRevision: "snapshot:1", DataMode: GenerationDataReuseSnapshot},
+	}); err == nil {
+		t.Fatal("cross-project base identity accepted")
+	}
+	nonCanonical := identity
+	nonCanonical.GenerationID = " generation_1"
+	if p, err = NewProvenance(ProvenanceInput{
+		Artifact:  ProjectArtifactProvenance{SourceDigest: sha('a'), ProjectDigest: sha('b'), ArtifactDigest: sha('c'), CompilerVersion: "compiler", SchemaVersion: 1},
+		Candidate: CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"},
+		Plan:      GenerationPlanProvenance{Identity: nonCanonical, BaseIdentity: base, RuntimeVersion: "runtime", PolicyDigest: sha('d'), DataRevision: "snapshot:1", DataMode: GenerationDataReuseSnapshot},
+	}); err == nil {
+		t.Fatal("noncanonical generation identity accepted")
+	}
 }

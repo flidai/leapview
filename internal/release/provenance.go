@@ -194,11 +194,14 @@ func normalizeCandidateProvenance(c CandidateProvenance) (CandidateProvenance, e
 }
 
 func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact ProjectArtifactProvenance) (GenerationPlanProvenance, error) {
-	if _, err := projectgraph.NewServingIdentity(p.Identity.ProjectID, p.Identity.Environment, p.Identity.GenerationID); err != nil {
+	if err := p.Identity.Validate(); err != nil {
 		return GenerationPlanProvenance{}, provenanceInvalid(err)
 	}
-	if _, err := projectgraph.NewServingIdentity(p.BaseIdentity.ProjectID, p.BaseIdentity.Environment, p.BaseIdentity.GenerationID); err != nil {
+	if err := p.BaseIdentity.Validate(); err != nil {
 		return GenerationPlanProvenance{}, provenanceInvalid(err)
+	}
+	if p.BaseIdentity.ProjectID != p.Identity.ProjectID || p.BaseIdentity.Environment != p.Identity.Environment {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("base identity scope does not match generation identity"))
 	}
 	p.RuntimeVersion, p.PolicyDigest, p.DataRevision = strings.TrimSpace(p.RuntimeVersion), strings.TrimSpace(p.PolicyDigest), strings.TrimSpace(p.DataRevision)
 	if p.RuntimeVersion == "" || platformdigest.ValidateSHA256Identity(p.PolicyDigest) != nil || p.DataRevision == "" || artifact.ArtifactDigest == "" {
