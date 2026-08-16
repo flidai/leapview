@@ -39,7 +39,7 @@ func TestCandidateHTTPScopesRoutesStreamsAndSessions(t *testing.T) {
 		"client", "stream",
 	)
 	require.NoError(t, err)
-	if key.WorkspaceOrPublication != "candidate:cand_1:sales" ||
+	if key.ProjectID != config.ProjectID ||
 		key.ServingStateID != "candidate:cand_1:"+digest {
 		t.Fatalf("candidate session key = %#v", key)
 	}

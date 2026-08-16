@@ -113,12 +113,16 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 		if principalOrClient == "" {
 			principalOrClient = pagestream.ClientIDFromRequest(r, clientID)
 		}
+		dashboardID, err := projectgraph.NewResourceID(report.ID)
+		if err != nil {
+			return dashboardsession.Key{}, err
+		}
 		return dashboardsession.Key{
-			WorkspaceOrPublication: "candidate:" + config.CandidateID + ":" + config.ProjectID.String(),
-			PrincipalOrClient:      principalOrClient,
-			DashboardID:            report.ID,
-			ServingStateID:         "candidate:" + config.CandidateID + ":" + config.ArtifactDigest,
-			StreamInstanceID:       streamInstanceID,
+			ProjectID:         config.ProjectID,
+			PrincipalOrClient: principalOrClient,
+			DashboardID:       dashboardID,
+			ServingStateID:    "candidate:" + config.CandidateID + ":" + config.ArtifactDigest,
+			StreamInstanceID:  streamInstanceID,
 		}, nil
 	}
 	return handler, nil

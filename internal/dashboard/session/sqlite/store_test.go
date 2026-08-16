@@ -20,7 +20,7 @@ func TestStoreSharesCASStateAcrossReplicas(t *testing.T) {
 	t.Cleanup(func() { _ = platformStore.Close() })
 	first, second := NewStore(platformStore.SQLDB()), NewStore(platformStore.SQLDB())
 	key := session.Key{
-		WorkspaceOrPublication: "sales", PrincipalOrClient: "reader",
+		ProjectID: "sales", PrincipalOrClient: "reader",
 		DashboardID: "executive", ServingStateID: "ss-1", StreamInstanceID: "tab",
 	}
 	state := session.NewState("overview", filter.NewMachine(filter.ApplicationImmediate, map[string]filter.BindingSpec{}).Snapshot())

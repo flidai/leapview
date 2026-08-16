@@ -117,12 +117,6 @@ VALUES
    sqlc.arg(dependency_asset_ids_json), 1, sqlc.arg(active_serving_state_id),
    CURRENT_TIMESTAMP);
 
--- name: ListSupersededDashboardPublicationIDs :many
-SELECT id
-FROM dashboard_publications
-WHERE project_id <> sqlc.arg(project_id)
-  AND configured = 1;
-
 -- name: UpsertDashboardPublicationStream :exec
 INSERT INTO dashboard_publication_streams
   (publication_id, stream_id, public_id, serving_state_id, registration_id, filters_json, expires_at)

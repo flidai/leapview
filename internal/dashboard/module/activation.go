@@ -7,11 +7,12 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type PublicationActivationInput struct {
-	ProjectID, WorkspaceID, ServingStateID, ActorID string
-	Publications                                    map[string]json.RawMessage
+	ProjectID, ServingStateID, ActorID string
+	Publications                       map[string]json.RawMessage
 }
 
 type PublicationPrincipalActivator func(context.Context, transaction.Transaction, string, string) error
@@ -31,7 +32,7 @@ func ReconcilePublications(
 		publications[name] = definition
 	}
 	return publicationsqlite.ReconcileTx(ctx, tx, publication.ReconcileInput{
-		ProjectID: input.ProjectID, WorkspaceID: input.WorkspaceID,
+		ProjectID: projectgraph.ResourceID(input.ProjectID),
 		ServingStateID: input.ServingStateID, ActorID: input.ActorID,
 		Publications: publications,
 	}, activatePrincipal)

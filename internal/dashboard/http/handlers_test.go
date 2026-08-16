@@ -177,7 +177,7 @@ func TestUpdatesRecordsOneHumanViewForNewSession(t *testing.T) {
 	if len(views) != 1 {
 		t.Fatalf("recorded views = %#v, want one new-session view", views)
 	}
-	if got := views[0]; got.WorkspaceID != "workspace" || got.DashboardID != "dash" || got.PageID != "overview" || got.PrincipalID != "alice" {
+	if got := views[0]; got.ProjectID != "workspace" || got.DashboardID != "dash" || got.PageID != "overview" || got.PrincipalID != "alice" {
 		t.Fatalf("recorded view = %#v", got)
 	}
 }

@@ -21,11 +21,11 @@ func TestRepositoryDeduplicatesViewerDaysAndSummarizesGlobalUsage(t *testing.T) 
 	base := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
 
 	views := []usage.View{
-		{WorkspaceID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "alice", ViewedAt: base},
-		{WorkspaceID: "sales", DashboardID: "executive", PageID: "details", PrincipalID: "alice", ViewedAt: base.Add(time.Hour)},
-		{WorkspaceID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "bob", ViewedAt: base},
-		{WorkspaceID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "alice", ViewedAt: base.Add(24 * time.Hour)},
-		{WorkspaceID: "operations", DashboardID: "health", PageID: "overview", PrincipalID: "carol", ViewedAt: base},
+		{ProjectID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "alice", ViewedAt: base},
+		{ProjectID: "sales", DashboardID: "executive", PageID: "details", PrincipalID: "alice", ViewedAt: base.Add(time.Hour)},
+		{ProjectID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "bob", ViewedAt: base},
+		{ProjectID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "alice", ViewedAt: base.Add(24 * time.Hour)},
+		{ProjectID: "operations", DashboardID: "health", PageID: "overview", PrincipalID: "carol", ViewedAt: base},
 	}
 	for _, view := range views {
 		if err := repository.RecordView(ctx, view); err != nil {
@@ -40,7 +40,7 @@ func TestRepositoryDeduplicatesViewerDaysAndSummarizesGlobalUsage(t *testing.T) 
 	if len(summaries) != 2 {
 		t.Fatalf("summaries = %#v", summaries)
 	}
-	if got := summaries[0]; got.Key != (usage.Key{WorkspaceID: "sales", DashboardID: "executive"}) || got.ViewerCount != 2 || got.ViewerDays != 3 || !got.LastViewedAt.Equal(base.Add(24*time.Hour)) {
+	if got := summaries[0]; got.Key != (usage.Key{ProjectID: "sales", DashboardID: "executive"}) || got.ViewerCount != 2 || got.ViewerDays != 3 || !got.LastViewedAt.Equal(base.Add(24*time.Hour)) {
 		t.Fatalf("executive summary = %#v", got)
 	}
 }

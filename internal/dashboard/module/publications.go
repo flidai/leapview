@@ -52,11 +52,15 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceI
 	if invocation.Surface == "" {
 		invocation.Surface = string(apigencommand.SurfaceUI)
 	}
+	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(workspaceID))
+	if err != nil {
+		return publication.Publication{}, err
+	}
 	ctx, err := beginGeneratedPublicationInvocation(ctx, action, workspaceID, invocation)
 	if err != nil {
 		return publication.Publication{}, err
 	}
-	row, err := m.publicationService.Mutate(ctx, workspaceID, name, actorID, action)
+	row, err := m.publicationService.Mutate(ctx, projectID, name, actorID, action)
 	if err != nil {
 		return row, err
 	}
@@ -138,7 +142,12 @@ func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Reques
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATIONS_NOT_AVAILABLE", "Dashboard publications are not available", nil)
 		return
 	}
-	rows, err := m.publications.List(r.Context(), workspaceID)
+	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(workspaceID))
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_PROJECT", "Project identity is invalid", nil)
+		return
+	}
+	rows, err := m.publications.List(r.Context(), projectID)
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PUBLICATION_LIST_FAILED", "Dashboard publications could not be loaded", nil)
 		return
@@ -221,7 +230,12 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 	if m.currentActor != nil {
 		actor = m.currentActor(r)
 	}
-	row, err := m.publicationService.Mutate(r.Context(), workspaceID, name, actor, action)
+	projectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(workspaceID))
+	if parseErr != nil {
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, parseErr)
+		return
+	}
+	row, err := m.publicationService.Mutate(r.Context(), projectID, name, actor, action)
 	if err == nil {
 		logger := m.logger
 		if logger == nil {
@@ -277,7 +291,12 @@ func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, wo
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATION_NOT_FOUND", "Dashboard publication not found", nil)
 		return publication.Publication{}, false
 	}
-	row, err := m.publications.Get(r.Context(), workspaceID, name)
+	projectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(workspaceID))
+	if parseErr != nil {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_PROJECT", "Project identity is invalid", nil)
+		return publication.Publication{}, false
+	}
+	row, err := m.publications.Get(r.Context(), projectID, name)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, publication.ErrNotFound) {

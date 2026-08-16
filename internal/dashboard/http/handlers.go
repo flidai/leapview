@@ -227,12 +227,16 @@ func (h Handler) dashboardSessionKey(r *nethttp.Request, definition dashboarddef
 	if err != nil {
 		return dashboardsession.Key{}, err
 	}
+	dashboardID, err := projectgraph.NewResourceID(definition.ID)
+	if err != nil {
+		return dashboardsession.Key{}, err
+	}
 	return dashboardsession.Key{
-		WorkspaceOrPublication: projectID.String(),
-		PrincipalOrClient:      principalOrClient,
-		DashboardID:            definition.ID,
-		ServingStateID:         definition.DefaultFilterState().DefaultsRevision,
-		StreamInstanceID:       streamInstanceID,
+		ProjectID:         projectID,
+		PrincipalOrClient: principalOrClient,
+		DashboardID:       dashboardID,
+		ServingStateID:    definition.DefaultFilterState().DefaultsRevision,
+		StreamInstanceID:  streamInstanceID,
 	}, nil
 }
 

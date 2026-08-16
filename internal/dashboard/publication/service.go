@@ -3,6 +3,8 @@ package publication
 import (
 	"context"
 	"fmt"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Action string
@@ -15,9 +17,9 @@ const (
 
 type ServiceRepository interface {
 	GetByPublicID(context.Context, string) (Publication, error)
-	Suspend(context.Context, string, string, string) (Publication, error)
-	Resume(context.Context, string, string, string) (Publication, error)
-	Rotate(context.Context, string, string, string) (Publication, error)
+	Suspend(context.Context, projectgraph.ResourceID, string, string) (Publication, error)
+	Resume(context.Context, projectgraph.ResourceID, string, string) (Publication, error)
+	Rotate(context.Context, projectgraph.ResourceID, string, string) (Publication, error)
 }
 
 type Service struct {
@@ -40,7 +42,7 @@ func (s *Service) ResolvePublic(ctx context.Context, publicID string) (Publicati
 	return row, nil
 }
 
-func (s *Service) Mutate(ctx context.Context, workspaceID, name, actorID string, action Action) (Publication, error) {
+func (s *Service) Mutate(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string, action Action) (Publication, error) {
 	if s == nil || s.repository == nil {
 		return Publication{}, ErrNotFound
 	}
@@ -48,11 +50,11 @@ func (s *Service) Mutate(ctx context.Context, workspaceID, name, actorID string,
 	var err error
 	switch action {
 	case ActionSuspend:
-		row, err = s.repository.Suspend(ctx, workspaceID, name, actorID)
+		row, err = s.repository.Suspend(ctx, projectID, name, actorID)
 	case ActionResume:
-		row, err = s.repository.Resume(ctx, workspaceID, name, actorID)
+		row, err = s.repository.Resume(ctx, projectID, name, actorID)
 	case ActionRotate:
-		row, err = s.repository.Rotate(ctx, workspaceID, name, actorID)
+		row, err = s.repository.Rotate(ctx, projectID, name, actorID)
 	default:
 		return Publication{}, fmt.Errorf("%w: unsupported publication action %q", ErrConflict, action)
 	}

@@ -236,6 +236,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		handler.RecordDashboardView = usageRecorder.RecordView
 	}
 	handler.SessionKey = func(r *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) (dashboardsession.Key, error) {
+		dashboardID, err := projectgraph.NewResourceID(definition.ID)
+		if err != nil {
+			return dashboardsession.Key{}, err
+		}
 		servingStateID := definition.DefaultFilterState().DefaultsRevision
 		if config.ServingSnapshot != nil {
 			active, err := config.ServingSnapshot(r.Context())
@@ -264,11 +268,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			}
 		}
 		return dashboardsession.Key{
-			WorkspaceOrPublication: projectID.String(),
-			PrincipalOrClient:      principalOrClient,
-			DashboardID:            definition.ID,
-			ServingStateID:         servingStateID,
-			StreamInstanceID:       streamInstanceID,
+			ProjectID:         projectID,
+			PrincipalOrClient: principalOrClient,
+			DashboardID:       dashboardID,
+			ServingStateID:    servingStateID,
+			StreamInstanceID:  streamInstanceID,
 		}, nil
 	}
 	module := &Module{

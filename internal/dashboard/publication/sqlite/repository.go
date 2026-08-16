@@ -16,6 +16,7 @@ import (
 	publicationdb "github.com/flidai/leapview/internal/dashboard/internal/db"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Repository struct {
@@ -29,7 +30,7 @@ func NewRepository(db *sql.DB) *Repository {
 
 func mapPublication(row publicationdb.DashboardPublication) (publication.Publication, error) {
 	out := publication.Publication{
-		ID: row.ID, ProjectID: row.ProjectID, WorkspaceID: row.WorkspaceID, Name: row.Name,
+		ID: row.ID, ProjectID: projectgraph.ResourceID(row.ProjectID), Name: row.Name,
 		PublicID: row.PublicID, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
 		ConfigurationDigest: row.ConfigurationDigest, Configured: row.Configured == 1,
 		ServingStateID: row.ActiveServingStateID.String, SuspendedAt: row.SuspendedAt.String,
@@ -46,10 +47,10 @@ func mapPublication(row publicationdb.DashboardPublication) (publication.Publica
 	return out, nil
 }
 
-func (r *Repository) Get(ctx context.Context, workspaceID, name string) (publication.Publication, error) {
+func (r *Repository) Get(ctx context.Context, projectID projectgraph.ResourceID, name string) (publication.Publication, error) {
 	row, err := r.q.GetDashboardPublication(ctx, publicationdb.GetDashboardPublicationParams{
-		WorkspaceID: strings.TrimSpace(workspaceID),
-		Name:        strings.TrimSpace(name),
+		ProjectID: strings.TrimSpace(projectID.String()),
+		Name:      strings.TrimSpace(name),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return publication.Publication{}, publication.ErrNotFound
@@ -71,8 +72,8 @@ func (r *Repository) GetByPublicID(ctx context.Context, publicID string) (public
 	return mapPublication(row)
 }
 
-func (r *Repository) List(ctx context.Context, workspaceID string) ([]publication.Publication, error) {
-	rows, err := r.q.ListDashboardPublications(ctx, strings.TrimSpace(workspaceID))
+func (r *Repository) List(ctx context.Context, projectID projectgraph.ResourceID) ([]publication.Publication, error) {
+	rows, err := r.q.ListDashboardPublications(ctx, strings.TrimSpace(projectID.String()))
 	return mapPublications(rows, err)
 }
 
@@ -111,37 +112,37 @@ func mapPublications(rows []publicationdb.DashboardPublication, err error) ([]pu
 	return out, nil
 }
 
-func (r *Repository) Suspend(ctx context.Context, workspaceID, name, actorID string) (publication.Publication, error) {
-	return r.mutate(ctx, workspaceID, name, actorID, "suspended", func(q *publicationdb.Queries) (sql.Result, error) {
+func (r *Repository) Suspend(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string) (publication.Publication, error) {
+	return r.mutate(ctx, projectID, name, actorID, "suspended", func(q *publicationdb.Queries) (sql.Result, error) {
 		return q.SuspendDashboardPublication(ctx, publicationdb.SuspendDashboardPublicationParams{
-			ActorID: strings.TrimSpace(actorID), WorkspaceID: strings.TrimSpace(workspaceID), Name: strings.TrimSpace(name),
+			ActorID: strings.TrimSpace(actorID), ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name),
 		})
 	})
 }
 
-func (r *Repository) Resume(ctx context.Context, workspaceID, name, actorID string) (publication.Publication, error) {
-	return r.mutate(ctx, workspaceID, name, actorID, "resumed", func(q *publicationdb.Queries) (sql.Result, error) {
+func (r *Repository) Resume(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string) (publication.Publication, error) {
+	return r.mutate(ctx, projectID, name, actorID, "resumed", func(q *publicationdb.Queries) (sql.Result, error) {
 		return q.ResumeDashboardPublication(ctx, publicationdb.ResumeDashboardPublicationParams{
-			WorkspaceID: strings.TrimSpace(workspaceID), Name: strings.TrimSpace(name),
+			ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name),
 		})
 	})
 }
 
-func (r *Repository) Rotate(ctx context.Context, workspaceID, name, actorID string) (publication.Publication, error) {
+func (r *Repository) Rotate(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string) (publication.Publication, error) {
 	publicID, err := newPublicID()
 	if err != nil {
 		return publication.Publication{}, err
 	}
-	return r.mutate(ctx, workspaceID, name, actorID, "rotated", func(q *publicationdb.Queries) (sql.Result, error) {
+	return r.mutate(ctx, projectID, name, actorID, "rotated", func(q *publicationdb.Queries) (sql.Result, error) {
 		return q.RotateDashboardPublication(ctx, publicationdb.RotateDashboardPublicationParams{
-			PublicID: publicID, WorkspaceID: strings.TrimSpace(workspaceID), Name: strings.TrimSpace(name),
+			PublicID: publicID, ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name),
 		})
 	})
 }
 
 func (r *Repository) mutate(
 	ctx context.Context,
-	workspaceID, name, actorID, eventType string,
+	projectID projectgraph.ResourceID, name, actorID, eventType string,
 	mutation func(*publicationdb.Queries) (sql.Result, error),
 ) (publication.Publication, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -160,7 +161,7 @@ func (r *Repository) mutate(
 	}
 	if changed == 0 {
 		_, err := q.GetDashboardPublicationConfiguredState(ctx, publicationdb.GetDashboardPublicationConfiguredStateParams{
-			WorkspaceID: strings.TrimSpace(workspaceID), Name: strings.TrimSpace(name),
+			ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name),
 		})
 		if errors.Is(err, sql.ErrNoRows) {
 			return publication.Publication{}, publication.ErrNotFound
@@ -171,7 +172,7 @@ func (r *Repository) mutate(
 		return publication.Publication{}, publication.ErrConflict
 	}
 	stored, err := q.GetConfiguredDashboardPublication(ctx, publicationdb.GetConfiguredDashboardPublicationParams{
-		WorkspaceID: strings.TrimSpace(workspaceID), Name: strings.TrimSpace(name),
+		ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name),
 	})
 	if err != nil {
 		return publication.Publication{}, err
@@ -186,7 +187,7 @@ func (r *Repository) mutate(
 	if err := tx.Commit(); err != nil {
 		return publication.Publication{}, err
 	}
-	return r.Get(ctx, workspaceID, name)
+	return r.Get(ctx, projectID, name)
 }
 
 func ReconcileTx(
@@ -195,22 +196,18 @@ func ReconcileTx(
 	input publication.ReconcileInput,
 	activatePrincipal func(context.Context, transaction.Transaction, string, string) error,
 ) error {
-	input.ProjectID = strings.TrimSpace(input.ProjectID)
-	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
+	if err := input.ProjectID.Validate(); err != nil {
+		return fmt.Errorf("publication reconciliation requires project: %w", err)
+	}
 	input.ServingStateID = strings.TrimSpace(input.ServingStateID)
-	if input.ProjectID == "" || input.WorkspaceID == "" || input.ServingStateID == "" {
-		return fmt.Errorf("publication reconciliation requires project, workspace, and serving state")
+	if input.ServingStateID == "" {
+		return fmt.Errorf("publication reconciliation requires serving state")
 	}
 	if len(input.Publications) > 0 && activatePrincipal == nil {
 		return fmt.Errorf("publication reconciliation requires an Access principal activator")
 	}
 	q := publicationdb.New(tx)
-	if err := disableSupersededProjectPublications(ctx, q, input); err != nil {
-		return err
-	}
-	rows, err := q.ListProjectDashboardPublicationStates(ctx, publicationdb.ListProjectDashboardPublicationStatesParams{
-		ProjectID: input.ProjectID, WorkspaceID: input.WorkspaceID,
-	})
+	rows, err := q.ListProjectDashboardPublicationStates(ctx, input.ProjectID.String())
 	if err != nil {
 		return err
 	}
@@ -244,7 +241,7 @@ func ReconcileTx(
 	sort.Strings(names)
 	for _, name := range names {
 		compiled := input.Publications[name]
-		if err := activatePrincipal(ctx, tx, input.WorkspaceID, name); err != nil {
+		if err := activatePrincipal(ctx, tx, input.ProjectID.String(), name); err != nil {
 			return fmt.Errorf("reconcile publication principal %q: %w", name, err)
 		}
 		origins, err := json.Marshal(compiled.AllowedOrigins)
@@ -282,9 +279,9 @@ func ReconcileTx(
 		if err != nil {
 			return err
 		}
-		id := operationalID(input.ProjectID, input.WorkspaceID, name)
+		id := operationalID(input.ProjectID, name)
 		if err := q.CreateDashboardPublication(ctx, publicationdb.CreateDashboardPublicationParams{
-			ID: id, ProjectID: input.ProjectID, WorkspaceID: input.WorkspaceID, Name: name, PublicID: publicID,
+			ID: id, ProjectID: input.ProjectID.String(), Name: name, PublicID: publicID,
 			Dashboard: compiled.Dashboard, DefaultPage: compiled.DefaultPage,
 			ConfigurationDigest: compiled.ConfigurationDigest,
 			AllowedOriginsJson:  string(origins), DependencyAssetIdsJson: string(dependencies),
@@ -293,24 +290,6 @@ func ReconcileTx(
 			return err
 		}
 		if err := insertEvent(ctx, q, id, "configured", input.ActorID, input.ServingStateID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func disableSupersededProjectPublications(ctx context.Context, q *publicationdb.Queries, input publication.ReconcileInput) error {
-	ids, err := q.ListSupersededDashboardPublicationIDs(ctx, publicationdb.ListSupersededDashboardPublicationIDsParams{
-		WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID,
-	})
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if err := q.DisableDashboardPublication(ctx, id); err != nil {
-			return err
-		}
-		if err := insertEvent(ctx, q, id, "disabled", input.ActorID, input.ServingStateID); err != nil {
 			return err
 		}
 	}
@@ -332,7 +311,7 @@ func newPublicID() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-func operationalID(projectID, workspaceID, name string) string {
-	sum := sha256.Sum256([]byte(projectID + "\x00" + workspaceID + "\x00" + name))
+func operationalID(projectID projectgraph.ResourceID, name string) string {
+	sum := sha256.Sum256([]byte(projectID.String() + "\x00" + name))
 	return "pub_" + hex.EncodeToString(sum[:16])
 }

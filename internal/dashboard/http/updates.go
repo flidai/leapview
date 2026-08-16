@@ -21,6 +21,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/usage"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -98,7 +99,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		filterState = record.State.Filters.State
 	}
 	if newSession {
-		h.recordDashboardView(r, projectID.String(), dashboardID, activePage.ID)
+		h.recordDashboardView(r, projectID, dashboardID, activePage.ID)
 	}
 	initialFilters.CompiledState = &filterState
 	initialFilters.ServingStateID = sessionKey.ServingStateID
@@ -194,7 +195,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	_ = updates.ForwardUpdates(r.Context(), mailbox)
 }
 
-func (h Handler) recordDashboardView(r *nethttp.Request, workspaceID, dashboardID, pageID string) {
+func (h Handler) recordDashboardView(r *nethttp.Request, projectID projectgraph.ResourceID, dashboardID, pageID string) {
 	if h.RecordDashboardView == nil || h.CurrentUsagePrincipal == nil {
 		return
 	}
@@ -202,8 +203,12 @@ func (h Handler) recordDashboardView(r *nethttp.Request, workspaceID, dashboardI
 	if !human || strings.TrimSpace(principalID) == "" {
 		return
 	}
+	dashboardResourceID, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return
+	}
 	view := usage.View{
-		WorkspaceID: workspaceID, DashboardID: dashboardID, PageID: pageID,
+		ProjectID: projectID, DashboardID: dashboardResourceID, PageID: pageID,
 		PrincipalID: principalID, ViewedAt: time.Now().UTC(),
 	}
 	if err := h.RecordDashboardView(r.Context(), view); err != nil {
@@ -212,7 +217,7 @@ func (h Handler) recordDashboardView(r *nethttp.Request, workspaceID, dashboardI
 			logger = slog.Default()
 		}
 		logger.ErrorContext(r.Context(), "dashboard usage recording failed",
-			"workspace", workspaceID, "dashboard", dashboardID, "page", pageID, "error", err)
+			"project", projectID, "dashboard", dashboardID, "page", pageID, "error", err)
 	}
 }
 

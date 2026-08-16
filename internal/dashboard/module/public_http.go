@@ -21,6 +21,7 @@ import (
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -221,12 +222,16 @@ func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboard
 	handler.CSRFToken = nil
 	handler.Layout = nil
 	handler.SessionKey = func(_ *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) (dashboardsession.Key, error) {
+		dashboardID, err := projectgraph.NewResourceID(definition.ID)
+		if err != nil {
+			return dashboardsession.Key{}, err
+		}
 		return dashboardsession.Key{
-			WorkspaceOrPublication: resolved.Publication.ID,
-			PrincipalOrClient:      clientID,
-			DashboardID:            definition.ID,
-			ServingStateID:         resolved.Publication.ServingStateID,
-			StreamInstanceID:       streamInstanceID,
+			PublicationID:     resolved.Publication.ID,
+			PrincipalOrClient: clientID,
+			DashboardID:       dashboardID,
+			ServingStateID:    resolved.Publication.ServingStateID,
+			StreamInstanceID:  streamInstanceID,
 		}, nil
 	}
 	handler.CommandGuard = func(r *http.Request, _ dashboardhttp.Metrics, request command.Request, signals dashboard.Signals) error {
