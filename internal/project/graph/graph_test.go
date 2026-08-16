@@ -379,6 +379,25 @@ func TestServingIdentityCanBeValidatedBeforeArtifactBinding(t *testing.T) {
 	}
 }
 
+func TestValidateServingScopeDoesNotRequireGeneration(t *testing.T) {
+	if err := ValidateServingScope("project_demo", "production"); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []struct {
+		projectID   ResourceID
+		environment string
+	}{
+		{"", "production"},
+		{" project_demo", "production"},
+		{"project_demo", ""},
+		{"project_demo", "production/env"},
+	} {
+		if err := ValidateServingScope(scope.projectID, scope.environment); !errors.Is(err, ErrInvalidServingIdentity) {
+			t.Fatalf("ValidateServingScope(%q, %q) error = %v", scope.projectID, scope.environment, err)
+		}
+	}
+}
+
 func TestCandidateScopeSupportsInitialAndExactBaseGenerations(t *testing.T) {
 	initial := CandidateScope{ProjectID: "project_demo", Environment: "production"}
 	base, err := initial.BaseIdentity()

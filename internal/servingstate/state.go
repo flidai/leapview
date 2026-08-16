@@ -128,7 +128,7 @@ func ValidateEnvironment(value Environment) error {
 	if value == "" {
 		return fmt.Errorf("environment is required")
 	}
-	if _, err := projectgraph.NewServingIdentity(projectgraph.ResourceID("project"), string(value), "generation"); err != nil {
+	if err := projectgraph.ValidateServingEnvironment(string(value)); err != nil {
 		return fmt.Errorf("invalid environment %q: %w", value, err)
 	}
 	return nil

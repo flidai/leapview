@@ -395,14 +395,32 @@ type CandidateScope struct {
 }
 
 func (scope CandidateScope) Validate() error {
-	if scope.ProjectID.Validate() != nil || scope.ProjectID.String() != strings.TrimSpace(scope.ProjectID.String()) {
-		return fmt.Errorf("%w: candidate project id is invalid", ErrInvalidServingIdentity)
-	}
-	if scope.Environment == "" || scope.Environment != strings.TrimSpace(scope.Environment) || !resourceIDPattern.MatchString(scope.Environment) {
-		return fmt.Errorf("%w: candidate environment is invalid", ErrInvalidServingIdentity)
+	if err := ValidateServingScope(scope.ProjectID, scope.Environment); err != nil {
+		return fmt.Errorf("candidate scope: %w", err)
 	}
 	if scope.BaseGenerationID != "" && (scope.BaseGenerationID != strings.TrimSpace(scope.BaseGenerationID) || !resourceIDPattern.MatchString(scope.BaseGenerationID)) {
 		return fmt.Errorf("%w: candidate base generation is invalid", ErrInvalidServingIdentity)
+	}
+	return nil
+}
+
+// ValidateServingScope validates the stable project/environment portion of a
+// serving identity without inventing a generation. Use it for read scopes and
+// other contracts that are deliberately generation-independent.
+func ValidateServingScope(projectID ResourceID, environment string) error {
+	canonicalProjectID, err := NewResourceID(projectID.String())
+	if err != nil || canonicalProjectID != projectID {
+		return fmt.Errorf("%w: project id %q", ErrInvalidServingIdentity, projectID)
+	}
+	return ValidateServingEnvironment(environment)
+}
+
+// ValidateServingEnvironment validates an environment when its project is
+// validated separately by the owning contract.
+func ValidateServingEnvironment(environment string) error {
+	canonicalEnvironment, err := canonicalScopeValue(environment, "environment")
+	if err != nil || canonicalEnvironment != environment {
+		return fmt.Errorf("%w: environment %q", ErrInvalidServingIdentity, environment)
 	}
 	return nil
 }
@@ -546,19 +564,14 @@ type artifactWire struct {
 }
 
 func normalizeServingIdentity(identity ServingIdentity) (ServingIdentity, error) {
-	projectID, err := NewResourceID(identity.ProjectID.String())
-	if err != nil {
-		return ServingIdentity{}, fmt.Errorf("%w: project id %q (%v)", ErrInvalidServingIdentity, identity.ProjectID, err)
-	}
-	environment, err := canonicalScopeValue(identity.Environment, "environment")
-	if err != nil {
+	if err := ValidateServingScope(identity.ProjectID, identity.Environment); err != nil {
 		return ServingIdentity{}, err
 	}
 	generation, err := canonicalScopeValue(identity.GenerationID, "generation id")
 	if err != nil {
 		return ServingIdentity{}, err
 	}
-	return ServingIdentity{ProjectID: projectID, Environment: environment, GenerationID: generation}, nil
+	return ServingIdentity{ProjectID: identity.ProjectID, Environment: identity.Environment, GenerationID: generation}, nil
 }
 
 func canonicalScopeValue(value, label string) (string, error) {

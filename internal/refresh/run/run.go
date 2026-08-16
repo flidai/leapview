@@ -132,10 +132,7 @@ func ReadScopeForIdentity(identity projectgraph.ServingIdentity) (ReadScope, err
 }
 
 func (scope ReadScope) Validate() error {
-	// Reuse the serving identity grammar for the project/environment pair while
-	// keeping generation metadata out of this read contract.
-	_, err := projectgraph.NewServingIdentity(scope.ProjectID, scope.Environment, "generation")
-	return err
+	return projectgraph.ValidateServingScope(scope.ProjectID, scope.Environment)
 }
 
 func (scope ReadScope) Matches(identity projectgraph.ServingIdentity) bool {
