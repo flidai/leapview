@@ -28,7 +28,7 @@ func TestGeneratedAgentOperationClassifications(t *testing.T) {
 			t.Fatalf("%s command contract = %#v", operationID, contract.Command)
 		}
 		command := contract.Command
-		if contract.Namespace != "LeapViewAPI.Agent" || command.Owner != contract.Namespace || command.AuthzMode != "privilege" || command.Privilege != "USE_AGENT" {
+		if contract.Namespace != "LeapViewAPI.Agent" || command.Owner != contract.Namespace || command.AuthzMode != "authenticated" || command.Privilege != "" {
 			t.Errorf("%s ownership/authz = %#v", operationID, command)
 		}
 		if !command.Audit.Required || command.Audit.SuccessAction != want.audit || command.Audit.Guarantee != want.guarantee {

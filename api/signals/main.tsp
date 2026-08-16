@@ -579,14 +579,8 @@ model ChatArtifactSignal {
 }
 
 model AgentReferenceKeySignal {
-  `projectId`: string;
-  `type`: string;
-  `id`: string;
-}
-
-model AgentReferenceProjectSignal {
-  `id`: string;
-  `name`: string;
+	`kind`: string;
+	`id`: string;
 }
 
 model AgentReferenceLocationSignal {
@@ -602,7 +596,6 @@ model AgentReferenceSignal {
   `name`: string;
   `description`?: string;
 	`visualType`?: string;
-  `project`: AgentReferenceProjectSignal;
 	`hierarchy`: string[];
   `href`: string;
   `locations`: AgentReferenceLocationSignal[];

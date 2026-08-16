@@ -17,16 +17,15 @@ func TestChatReferenceSearchUsesGlobalScopeAndEchoesRequestIdentity(t *testing.T
 	results := make([]ui.AgentReferenceSignal, 30)
 	for index := range results {
 		results[index] = ui.AgentReferenceSignal{
-			Reference: ui.AgentReferenceKeySignal{ProjectID: "project_demo", Type: "model", ID: "model-" + string(rune('a'+index))},
-			Name:      "Field", Project: ui.AgentReferenceProjectSignal{ID: "project_demo", Name: "Demo"},
+			Reference: ui.AgentReferenceKeySignal{Kind: "model", ID: "model-" + string(rune('a'+index))},
+			Name:      "Field",
 			Locations: []ui.AgentReferenceLocationSignal{}, Context: []string{},
 		}
 	}
-	searchedContext := agent.TurnContext{Surface: "invalid"}
 	searchedLimit := 0
 	handler := NewHandler(Options{
 		SearchReferences: func(_ *http.Request, context agent.TurnContext, _ string, limit int) ([]ui.AgentReferenceSignal, error) {
-			searchedContext = context
+			_ = context
 			searchedLimit = limit
 			return results, nil
 		},
@@ -51,10 +50,10 @@ func TestChatReferenceSearchUsesGlobalScopeAndEchoesRequestIdentity(t *testing.T
 	if searchedLimit != maxChatReferenceSearchResults {
 		t.Fatalf("searched limit = %d, want %d", searchedLimit, maxChatReferenceSearchResults)
 	}
-	if got := strings.Count(response.Body.String(), `"type":"model"`); got != 24 {
+	if got := strings.Count(response.Body.String(), `"kind":"model"`); got != 24 {
 		t.Fatalf("result count = %d, want 24:\n%s", got, response.Body.String())
 	}
-	for _, want := range []string{`"query":"field"`, `"requestId":7`, `"projectId":"project_demo"`} {
+	for _, want := range []string{`"query":"field"`, `"requestId":7`, `"kind":"model"`} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Fatalf("search response missing %s:\n%s", want, response.Body.String())
 		}

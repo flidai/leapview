@@ -416,7 +416,7 @@ class ChatComposer extends LitElement {
 				<div class="selected-references" aria-label="Attached context">
 					${this.references.map((reference) => html`
 						<button class="reference-chip" type="button" title="Remove ${reference.name}" @click=${() => this.removeReference(reference)}>
-							${referenceIcon(reference.reference.type)}<span>${reference.name}</span>${lucideIcon(X)}
+							${referenceIcon(reference.reference.kind)}<span>${reference.name}</span>${lucideIcon(X)}
 						</button>
 					`)}
 				</div>
@@ -526,7 +526,7 @@ class ChatComposer extends LitElement {
 	}
 
 	private renderMentionOption(reference: ChatContextReference, index: number) {
-		const kindLabel = referenceKindLabel(reference.reference.type)
+						const kindLabel = referenceKindLabel(reference.reference.kind)
 		const hierarchy = referenceHierarchy(reference).join(' › ')
 		return html`
 			<button
@@ -539,7 +539,7 @@ class ChatComposer extends LitElement {
 				@mousedown=${(event: MouseEvent) => event.preventDefault()}
 				@click=${() => this.selectMention(reference)}
 			>
-				<span class="mention-icon" aria-hidden="true">${referenceIcon(reference.reference.type, reference.visualType)}</span>
+								<span class="mention-icon" aria-hidden="true">${referenceIcon(reference.reference.kind, reference.visualType)}</span>
 				<span class="mention-copy">
 					<span class="mention-title">${reference.name}</span>
 					<span class="mention-hierarchy">${hierarchy}</span>

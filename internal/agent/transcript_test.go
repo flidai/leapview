@@ -63,7 +63,7 @@ func TestTranscriptProjectsResolvedReferencesOntoUserTurn(t *testing.T) {
 		RunID:       "run_1",
 		Role:        MessageRoleUser,
 		ContentText: "Why did revenue fall?",
-		ContentJSON: `{"turn_context":{"surface":"dashboard","references":[{"reference":{"projectId":"project_demo","type":"dashboard","id":"dashboard_sales"},"name":"Sales dashboard","project":{"id":"project_demo","name":"Demo"},"hierarchy":["Demo","Sales dashboard"],"href":"/dashboards/dashboard_sales","locations":[],"context":["current_page"]}]}}`,
+		ContentJSON: `{"turn_context":{"surface":"dashboard","references":[{"reference":{"kind":"dashboard","id":"dashboard_sales"},"name":"Sales dashboard","resource":{"id":"project_demo","name":"Demo"},"hierarchy":["Demo","Sales dashboard"],"href":"/dashboards/dashboard_sales","locations":[],"context":["current_page"]}]}}`,
 	}})
 
 	if len(transcript) != 1 || len(transcript[0].References) != 1 {

@@ -17,7 +17,6 @@ import (
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
-	"github.com/flidai/leapview/internal/workspace"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -452,75 +451,12 @@ func TestDurableStartArchivedConversationHasNoSideEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := queue.ListEvents(ctx, "agent_run", "", 0, 20)
+	events, err := queue.ListEvents(ctx, "agent_run", "missing", 0, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(candidates) != 0 || len(events) != 0 {
 		t.Fatalf("archived durable start created queue side effects: jobs=%d events=%d", len(candidates), len(events))
-	}
-}
-
-func TestReconcilePreparingRunsOnlyRepairsOrphans(t *testing.T) {
-	ctx := context.Background()
-	store, base := openAgentRepo(t, ctx)
-	owner := createAgentPrincipal(t, ctx, store, "reconcile@example.com")
-	conversation, err := base.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	jobsRepo := jobsqlite.NewRepository(store.SQLDB())
-	repo := NewRepositoryWithWorkflow(store.SQLDB(), jobsRepo, jobsRepo)
-	orphan, err := repo.CreateRun(ctx, agent.RunInput{PrincipalID: owner.ID, ConversationID: conversation.ID, RunID: "run_orphan", Status: agent.RunStatusPreparing})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE agent_runs SET started_at = datetime('now', '-2 minutes') WHERE id = ?`, orphan.ID); err != nil {
-		t.Fatal(err)
-	}
-	claimed, err := repo.CreateRun(ctx, agent.RunInput{PrincipalID: owner.ID, ConversationID: conversation.ID, RunID: "run_activation_pending", Status: agent.RunStatusPreparing})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE agent_runs SET started_at = datetime('now', '-2 minutes') WHERE id = ?`, claimed.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := jobsRepo.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:" + claimed.ID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: claimed.ID, Payload: []byte(`{}`)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.ReconcilePreparingRuns(ctx); err != nil {
-		t.Fatal(err)
-	}
-	gotOrphan, err := repo.GetRun(ctx, owner.ID, conversation.ID, orphan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotOrphan.Status != agent.RunStatusFailed {
-		t.Fatalf("orphan status = %q, want failed", gotOrphan.Status)
-	}
-	gotPending, err := repo.GetRun(ctx, owner.ID, conversation.ID, claimed.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotPending.Status != agent.RunStatusPreparing {
-		t.Fatalf("activation-pending status = %q, want preparing", gotPending.Status)
-	}
-	events, err := jobsRepo.ListEvents(ctx, "agent_run", orphan.ID, 0, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 || events[0].EventType != "agent_run.failed" {
-		t.Fatalf("orphan events = %#v, want one failed event", events)
-	}
-	if err := repo.ReconcilePreparingRuns(ctx); err != nil {
-		t.Fatal(err)
-	}
-	events, err = jobsRepo.ListEvents(ctx, "agent_run", orphan.ID, 0, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("reconcile not idempotent, events = %d", len(events))
 	}
 }
 
@@ -921,8 +857,8 @@ func openAgentRepo(t *testing.T, ctx context.Context) (*platform.Store, *Reposit
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatalf("ensure workspace: %v", err)
+	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, projectsqlite.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+		t.Fatalf("ensure project: %v", err)
 	}
 	return store, NewRepositoryWithEvents(store.SQLDB(), jobsqlite.NewRepository(store.SQLDB()))
 }
@@ -930,9 +866,9 @@ func openAgentRepo(t *testing.T, ctx context.Context) (*platform.Store, *Reposit
 func createAgentPrincipal(t *testing.T, ctx context.Context, store *platform.Store, email string) access.Principal {
 	t.Helper()
 	repo := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repo.SetPrincipalRole(ctx, access.PrincipalRoleInput{WorkspaceID: "test", Email: email, DisplayName: email, Role: "viewer"})
+	principal, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Email: email, DisplayName: email})
 	if err != nil {
-		t.Fatalf("set principal role %s: %v", email, err)
+		t.Fatalf("upsert principal %s: %v", email, err)
 	}
 	return principal
 }

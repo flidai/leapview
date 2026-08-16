@@ -15,7 +15,6 @@ type AgentReferenceKeySignal = signalcontracts.AgentReferenceKeySignal
 type AgentReferenceLocationSignal = signalcontracts.AgentReferenceLocationSignal
 type AgentReferenceSearchSignal = signalcontracts.AgentReferenceSearchSignal
 type AgentReferenceSignal = signalcontracts.AgentReferenceSignal
-type AgentReferenceProjectSignal = signalcontracts.AgentReferenceProjectSignal
 type ChatArtifactSignal = signalcontracts.ChatArtifactSignal
 type ChatConversationSummary = signalcontracts.ChatConversationSummary
 type ChatSignal = signalcontracts.ChatSignal
@@ -109,9 +108,8 @@ func referenceSignalFromTurn(reference agent.TurnReference) AgentReferenceSignal
 		}
 	}
 	return AgentReferenceSignal{
-		Reference: AgentReferenceKeySignal{ProjectID: reference.Resource.ID, Type: reference.Reference.Kind, ID: reference.Reference.ID},
+		Reference: AgentReferenceKeySignal{Kind: reference.Reference.Kind, ID: reference.Reference.ID},
 		Name:      reference.Name, Description: Optional(reference.Description), VisualType: Optional(reference.VisualType),
-		Project:   AgentReferenceProjectSignal{ID: reference.Resource.ID, Name: reference.Resource.Name},
 		Hierarchy: hierarchy, Href: reference.Href, Locations: locations, Context: append([]string(nil), reference.Context...),
 	}
 }

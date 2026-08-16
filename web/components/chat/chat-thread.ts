@@ -493,11 +493,11 @@ class ChatThread extends LitElement {
 					<div class="turn-references" aria-label="Context for this message">
 						${references.map((reference) => {
 							const hierarchy = referenceHierarchy(reference).join(' › ')
-							const kind = referenceKindLabel(reference.reference.type)
+							const kind = referenceKindLabel(reference.reference.kind)
 							const tooltip = [reference.name, hierarchy, kind].filter(Boolean).join(' · ')
 							return html`
 								<a class="turn-reference" href=${reference.href} title=${tooltip} aria-label=${tooltip}>
-									<span class="turn-reference-icon" aria-hidden="true">${referenceIcon(reference.reference.type, reference.visualType)}</span>
+									<span class="turn-reference-icon" aria-hidden="true">${referenceIcon(reference.reference.kind, reference.visualType)}</span>
 									<span class="turn-reference-name">${reference.name}</span>
 								</a>
 							`

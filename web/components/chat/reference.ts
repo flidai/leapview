@@ -67,7 +67,7 @@ export function normalizeReferenceLimit(limit: number | null | undefined): numbe
 }
 
 export function referenceIdentity(reference: AgentReferenceSignal): string {
-  return `${reference.reference.projectId}:${reference.reference.type}:${reference.reference.id}`
+  return `${reference.reference.kind}:${reference.reference.id}`
 }
 
 export function referenceKindLabel(kind: string): string {
@@ -100,7 +100,7 @@ export function matchesReferenceQuery(reference: AgentReferenceSignal, query: st
     .split(/[^\p{L}\p{N}_]+/u)
     .filter((token) => token !== '' && !mentionStopWords.has(token))
   if (tokens.length === 0) return true
-  const haystack = `${reference.name} ${reference.description ?? ''} ${reference.reference.type} ${referenceHierarchy(reference).join(' ')}`.toLocaleLowerCase()
+  const haystack = `${reference.name} ${reference.description ?? ''} ${reference.reference.kind} ${referenceHierarchy(reference).join(' ')}`.toLocaleLowerCase()
   return tokens.every((token) => haystack.includes(token))
 }
 
@@ -108,12 +108,12 @@ export function referenceHierarchy(reference: AgentReferenceSignal): string[] {
 	const projected = (reference.hierarchy ?? []).map((part) => part.trim()).filter(Boolean)
 	if (projected.length > 0) return projected
 
-	const hierarchy = [reference.project.name.trim()].filter(Boolean)
+	const hierarchy: string[] = []
 	const location = reference.locations[0]
-	if (reference.reference.type === 'page' || reference.reference.type === 'visual') {
+	if (reference.reference.kind === 'page' || reference.reference.kind === 'visual') {
 		if (location?.dashboardName?.trim()) hierarchy.push(location.dashboardName.trim())
 	}
-	if (reference.reference.type === 'visual' && location?.pageName?.trim()) {
+	if (reference.reference.kind === 'visual' && location?.pageName?.trim()) {
 		hierarchy.push(location.pageName.trim())
 	}
 	return hierarchy

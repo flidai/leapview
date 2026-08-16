@@ -43,21 +43,16 @@ func (m *Module) SearchReferences(r *http.Request, _ agent.TurnContext, query st
 	}
 	out := make([]ui.AgentReferenceSignal, 0, len(page.Items))
 	for _, item := range page.Items {
-		out = append(out, referenceSignal(item, projectID))
+		out = append(out, referenceSignal(item))
 	}
 	return out, nil
 }
 
-func referenceSignal(item agenttools.CatalogItem, projectID string) ui.AgentReferenceSignal {
-	resourceID := item.Ref.ID
-	if projectID == "" && item.Ref.Kind == "project" {
-		projectID = resourceID
-	}
+func referenceSignal(item agenttools.CatalogItem) ui.AgentReferenceSignal {
 	return ui.AgentReferenceSignal{
-		Reference: ui.AgentReferenceKeySignal{ProjectID: projectID, Type: string(item.Ref.Kind), ID: resourceID},
+		Reference: ui.AgentReferenceKeySignal{Kind: string(item.Ref.Kind), ID: item.Ref.ID},
 		Name:      item.Name, Description: ui.Optional(item.Description),
-		Project:   ui.AgentReferenceProjectSignal{ID: projectID, Name: projectID},
-		Hierarchy: []string{projectID}, Locations: []ui.AgentReferenceLocationSignal{}, Context: []string{},
+		Hierarchy: []string{}, Locations: []ui.AgentReferenceLocationSignal{}, Context: []string{},
 	}
 }
 
