@@ -438,7 +438,7 @@ func (repository *candidateMemoryRepository) StartCandidate(_ context.Context, c
 
 func (repository *candidateMemoryRepository) ActiveCandidate(
 	_ context.Context,
-	targetID,
+	targetID string,
 	projectID projectgraph.ResourceID,
 	ownerID,
 	key string,
