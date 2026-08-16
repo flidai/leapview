@@ -382,7 +382,7 @@ test('mention picker opens immediately, renders compact rows, and scrolls with k
     expect(result.immediate).toEqual({ visible: true, busy: 'true', status: 'Searching…' })
     expect(result.optionHeight).toBeLessThanOrEqual(32)
     expect(result.copyDisplay).toBe('grid')
-	expect(result.hierarchyText).toBe('Sales')
+	expect(result.hierarchyText).toBe('')
 	expect(result.typeText).toBe('Visual')
 	expect(result.descriptionVisible).toBe(false)
     expect(result.scrolled).toBe(true)
@@ -447,11 +447,11 @@ test('mention picker ignores search responses from an older request', async () =
       { query: 'orders', requestId: 1 },
       { query: 'revenue', requestId: 2 },
     ])
-	expect(result.firstVisible).toBe('Orders Sales Visual')
+	expect(result.firstVisible).toBe('Orders Visual')
     expect(result.staleVisible).toBe('')
     expect(result.staleStatus).toBe('Searching…')
-	expect(result.currentVisible).toBe('Revenue Sales Measure')
-	expect(result.afterLateStale).toBe('Revenue Sales Measure')
+	expect(result.currentVisible).toBe('Revenue Measure')
+	expect(result.afterLateStale).toBe('Revenue Measure')
   } finally {
     await page.close()
   }
