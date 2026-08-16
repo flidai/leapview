@@ -187,9 +187,8 @@ func (service *CandidateService) Start(ctx context.Context, request StartCandida
 // ClaimProject establishes the singleton project/environment binding without
 // creating a candidate. CLI plan-before-upload uses this idempotent operation
 // so a source synchronization cannot race an unrelated project claim. The
-// concrete SQLite repository implements the optional port; lightweight test
-// repositories that predate durable claims retain their historical no-op
-// behavior.
+// Every candidate repository provides the same mandatory durable,
+// conflict-safe claim semantics.
 func (service *CandidateService) ClaimProject(ctx context.Context, projectID projectgraph.ResourceID, actorID string) error {
 	if service == nil || service.repository == nil {
 		return fmt.Errorf("candidate service is unavailable")
